@@ -57,7 +57,7 @@ struct HostAdmissionTimings {
 
 #[derive(Debug)]
 enum ControlledHostAdmissionOutcome {
-    SemanticCurrent((Document, AdmissionWork, HostAdmissionTimings)),
+    SemanticCurrent(Box<(Document, AdmissionWork, HostAdmissionTimings)>),
     RequiresForegroundExactAdmission {
         record_bytes: usize,
         post_read_budget_bytes: usize,
@@ -67,7 +67,7 @@ enum ControlledHostAdmissionOutcome {
 impl ControlledHostAdmissionOutcome {
     fn expect_semantic_current(self) -> (Document, AdmissionWork, HostAdmissionTimings) {
         match self {
-            Self::SemanticCurrent(result) => result,
+            Self::SemanticCurrent(result) => *result,
             Self::RequiresForegroundExactAdmission {
                 record_bytes,
                 post_read_budget_bytes,
@@ -504,7 +504,7 @@ fn admit_one_pass_host_controlled(
     if let Some(published) = semantic_current_published {
         published.store(true, Ordering::Release);
     }
-    Ok(ControlledHostAdmissionOutcome::SemanticCurrent((
+    Ok(ControlledHostAdmissionOutcome::SemanticCurrent(Box::new((
         document,
         AdmissionWork {
             source_bytes,
@@ -521,7 +521,7 @@ fn admit_one_pass_host_controlled(
             first_source_preview,
             semantic_current,
         },
-    )))
+    ))))
 }
 
 fn check_cancel(cancel: Option<&AtomicBool>) -> Result<(), FormatError> {

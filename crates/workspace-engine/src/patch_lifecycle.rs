@@ -1074,6 +1074,35 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    /// Authorize one complete saved keyed grouped-sum Query against a trusted
+    /// current snapshot.
+    ///
+    /// The caller supplies only the saved definition identity. This lifecycle
+    /// derives the complete disclosure footprint from the protected document,
+    /// including the full Products membership universe and every relevant
+    /// entity field. It deliberately performs authorization before an adapter
+    /// evaluates or projects a result, so a partial aggregate or diagnostic
+    /// cannot become a disclosure fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authorization error when the principal lacks complete Query
+    /// coverage, or a scope-derivation error when the requested definition or
+    /// any of its stable bindings cannot be resolved in this document.
+    pub fn authorize_keyed_grouped_sum_query(
+        &self,
+        document: &Document,
+        definition_id: &KeyedGroupedSumDefinitionId,
+        subject: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<BTreeSet<GrantId>, PatchLifecycleError> {
+        if document.id != self.document {
+            return Err(PatchLifecycleError::DocumentScopeMismatch);
+        }
+        let requirements = self.keyed_grouped_sum_query_disclosures(document, definition_id)?;
+        self.authorize_query(subject, &requirements, now)
+    }
+
     /// Issue and authoritatively evaluate one immutable proposal occurrence.
     ///
     /// # Errors
@@ -2703,6 +2732,110 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    fn keyed_grouped_sum_query_disclosures(
+        &self,
+        document: &Document,
+        definition_id: &KeyedGroupedSumDefinitionId,
+    ) -> Result<BTreeSet<DisclosureRequirement>, PatchLifecycleError> {
+        let definition = document
+            .keyed_grouped_sum_definitions
+            .get(definition_id)
+            .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+        let mut disclosures = BTreeSet::from([DisclosureRequirement {
+            family: OperationFamily::KeyedGroupedSumDefinition,
+            scope: ScopedSemanticSubject::new(
+                self.document_scope.clone(),
+                self.document.clone(),
+                SemanticScope::Document,
+            ),
+        }]);
+
+        for (schema_id, fields) in [
+            (
+                &definition.orders.schema,
+                [
+                    &definition.orders.lookup_key_field,
+                    &definition.orders.quantity_field,
+                ]
+                .as_slice(),
+            ),
+            (
+                &definition.products.schema,
+                [
+                    &definition.products.key_field,
+                    &definition.products.category_field,
+                    &definition.products.price_field,
+                ]
+                .as_slice(),
+            ),
+        ] {
+            let schema = document
+                .schemas
+                .get(schema_id)
+                .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+            disclosures.insert(DisclosureRequirement {
+                family: OperationFamily::KeyedGroupedSumDefinition,
+                scope: ScopedSemanticSubject::new(
+                    self.document_scope.clone(),
+                    self.document.clone(),
+                    SemanticScope::Schema(schema_id.clone()),
+                ),
+            });
+            for &field_id in fields {
+                if !schema.fields.contains_key(field_id) {
+                    return Err(PatchLifecycleError::ScopeDerivationFailed);
+                }
+                disclosures.insert(DisclosureRequirement {
+                    family: OperationFamily::KeyedGroupedSumDefinition,
+                    scope: ScopedSemanticSubject::new(
+                        self.document_scope.clone(),
+                        self.document.clone(),
+                        SemanticScope::SchemaField {
+                            schema: schema_id.clone(),
+                            field: field_id.clone(),
+                        },
+                    ),
+                });
+                for entity in document
+                    .entities
+                    .values()
+                    .filter(|entity| &entity.schema == schema_id)
+                {
+                    disclosures.insert(DisclosureRequirement {
+                        family: OperationFamily::KeyedGroupedSumDefinition,
+                        scope: self
+                            .field_scope(
+                                document,
+                                &FieldRef::new(entity.id.clone(), field_id.clone()),
+                            )
+                            .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?,
+                    });
+                }
+            }
+        }
+
+        // A formula-backed amount requires the complete Calculation outcome.
+        // Conservatively require disclosure of every formula root in the
+        // trusted snapshot before allowing the evaluator to expose whether
+        // that outcome is available.
+        for entity in document.entities.values() {
+            for (field_id, value) in &entity.fields {
+                if matches!(value, Value::Formula(_)) {
+                    disclosures.insert(DisclosureRequirement {
+                        family: OperationFamily::KeyedGroupedSumDefinition,
+                        scope: self
+                            .field_scope(
+                                document,
+                                &FieldRef::new(entity.id.clone(), field_id.clone()),
+                            )
+                            .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?,
+                    });
+                }
+            }
+        }
+        Ok(disclosures)
+    }
+
     pub(crate) fn authorize_query(
         &self,
         subject: &PrincipalId,
@@ -3014,6 +3147,11 @@ fn proposal_is_terminal(proposal: &ProposalRecord) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use tachiko_semantic_core::{
+        EntityKey, FieldDefinition, FieldKey, FieldType, KeyedGroupedSumOrdersBinding,
+        KeyedGroupedSumProductsBinding, Schema, SchemaKey,
+    };
+
     use super::*;
 
     #[test]
@@ -3039,5 +3177,321 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, PatchLifecycleError::ScopeDerivationFailed));
+    }
+
+    // The complete trusted-footprint fixture is intentionally literal so each
+    // definition binding and disclosed entity field remains reviewable here.
+    #[allow(clippy::too_many_lines)]
+    fn keyed_grouped_sum_document() -> Document {
+        let mut document = Document::empty("document", "Grouped summary");
+        let orders = SchemaId::from("orders");
+        let products = SchemaId::from("products");
+        document.schemas.insert(
+            orders.clone(),
+            Schema {
+                id: orders.clone(),
+                key: SchemaKey::from("orders"),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("order-key"),
+                        FieldDefinition {
+                            id: FieldId::from("order-key"),
+                            key: FieldKey::from("product_key"),
+                            field_type: FieldType::Text,
+                            required: true,
+                        },
+                    ),
+                    (
+                        FieldId::from("quantity"),
+                        FieldDefinition {
+                            id: FieldId::from("quantity"),
+                            key: FieldKey::from("quantity"),
+                            field_type: FieldType::Number,
+                            required: true,
+                        },
+                    ),
+                ]),
+            },
+        );
+        document.schemas.insert(
+            products.clone(),
+            Schema {
+                id: products.clone(),
+                key: SchemaKey::from("products"),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("product-key"),
+                        FieldDefinition {
+                            id: FieldId::from("product-key"),
+                            key: FieldKey::from("product_key"),
+                            field_type: FieldType::Text,
+                            required: true,
+                        },
+                    ),
+                    (
+                        FieldId::from("category"),
+                        FieldDefinition {
+                            id: FieldId::from("category"),
+                            key: FieldKey::from("category"),
+                            field_type: FieldType::Text,
+                            required: true,
+                        },
+                    ),
+                    (
+                        FieldId::from("price"),
+                        FieldDefinition {
+                            id: FieldId::from("price"),
+                            key: FieldKey::from("price"),
+                            field_type: FieldType::Number,
+                            required: true,
+                        },
+                    ),
+                ]),
+            },
+        );
+        document.entities.insert(
+            EntityId::from("order"),
+            Entity {
+                id: EntityId::from("order"),
+                key: EntityKey::from("order"),
+                schema: orders.clone(),
+                fields: BTreeMap::from([
+                    (FieldId::from("order-key"), Value::Text("P-100".to_owned())),
+                    (
+                        FieldId::from("quantity"),
+                        Value::Number(Number::new(1.0).unwrap()),
+                    ),
+                ]),
+            },
+        );
+        document.entities.insert(
+            EntityId::from("product"),
+            Entity {
+                id: EntityId::from("product"),
+                key: EntityKey::from("product"),
+                schema: products.clone(),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("product-key"),
+                        Value::Text("P-100".to_owned()),
+                    ),
+                    (
+                        FieldId::from("category"),
+                        Value::Text("hardware".to_owned()),
+                    ),
+                    (
+                        FieldId::from("price"),
+                        Value::Number(Number::new(2.0).unwrap()),
+                    ),
+                ]),
+            },
+        );
+        let definition = KeyedGroupedSumDefinitionId::from("summary");
+        document.keyed_grouped_sum_definitions.insert(
+            definition.clone(),
+            KeyedGroupedSumDefinition {
+                id: definition,
+                orders: KeyedGroupedSumOrdersBinding {
+                    schema: orders,
+                    lookup_key_field: FieldId::from("order-key"),
+                    quantity_field: FieldId::from("quantity"),
+                },
+                products: KeyedGroupedSumProductsBinding {
+                    schema: products,
+                    key_field: FieldId::from("product-key"),
+                    category_field: FieldId::from("category"),
+                    price_field: FieldId::from("price"),
+                },
+            },
+        );
+        document
+    }
+
+    #[test]
+    fn keyed_grouped_sum_query_requires_authorized_trusted_footprint() {
+        let document = keyed_grouped_sum_document();
+        let mut lifecycle = PatchLifecycle::new(
+            AuthorizationDomainId::from("domain"),
+            DocumentScopeId::from("document-occurrence"),
+            document.id.clone(),
+            SemanticApiContract::from("semantic-v1"),
+            AuthorizationPolicyVersion::from("policy-v1"),
+            PolicyMeaningId::from("policy-v1-meaning"),
+        );
+        let authority = PrincipalId::from("authority");
+        let reader = PrincipalId::from("reader");
+        lifecycle
+            .register_principal(authority.clone(), PrincipalKind::Human)
+            .unwrap();
+        lifecycle
+            .register_principal(reader.clone(), PrincipalKind::Human)
+            .unwrap();
+
+        let error = lifecycle
+            .authorize_keyed_grouped_sum_query(
+                &document,
+                &KeyedGroupedSumDefinitionId::from("summary"),
+                &reader,
+                TrustedInstant::new(1),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Query
+            }
+        ));
+
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("complete-query"),
+                authority,
+                reader.clone(),
+                vec![GrantRequirement::query(
+                    OperationFamily::KeyedGroupedSumDefinition,
+                    ScopedSemanticSubject::new(
+                        DocumentScopeId::from("document-occurrence"),
+                        document.id.clone(),
+                        SemanticScope::Document,
+                    ),
+                )],
+                None,
+            ))
+            .unwrap();
+        assert_eq!(
+            lifecycle
+                .authorize_keyed_grouped_sum_query(
+                    &document,
+                    &KeyedGroupedSumDefinitionId::from("summary"),
+                    &reader,
+                    TrustedInstant::new(1),
+                )
+                .unwrap(),
+            BTreeSet::from([GrantId::from("complete-query")])
+        );
+    }
+
+    fn keyed_grouped_sum_lifecycle(document: &Document) -> (PatchLifecycle, PrincipalId) {
+        let mut lifecycle = PatchLifecycle::new(
+            AuthorizationDomainId::from("domain"),
+            DocumentScopeId::from("document-occurrence"),
+            document.id.clone(),
+            SemanticApiContract::from("semantic-v1"),
+            AuthorizationPolicyVersion::from("policy-v1"),
+            PolicyMeaningId::from("policy-v1-meaning"),
+        );
+        lifecycle
+            .register_principal(PrincipalId::from("authority"), PrincipalKind::Human)
+            .unwrap();
+        let editor = PrincipalId::from("editor");
+        lifecycle
+            .register_principal(editor.clone(), PrincipalKind::Human)
+            .unwrap();
+        (lifecycle, editor)
+    }
+
+    fn keyed_grouped_sum_requirement(
+        action: AuthorizationAction,
+        class: MutationClass,
+        document: &Document,
+    ) -> GrantRequirement {
+        GrantRequirement::mutation(
+            action,
+            OperationFamily::KeyedGroupedSumDefinition,
+            class,
+            ScopedSemanticSubject::new(
+                DocumentScopeId::from("document-occurrence"),
+                document.id.clone(),
+                SemanticScope::Document,
+            ),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn keyed_grouped_sum_delete_requires_structure_and_destructive_command_authority() {
+        let document = keyed_grouped_sum_document();
+        let (mut lifecycle, editor) = keyed_grouped_sum_lifecycle(&document);
+        let query = GrantRequirement::query(
+            OperationFamily::KeyedGroupedSumDefinition,
+            ScopedSemanticSubject::new(
+                DocumentScopeId::from("document-occurrence"),
+                document.id.clone(),
+                SemanticScope::Document,
+            ),
+        );
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("structure-only"),
+                PrincipalId::from("authority"),
+                editor.clone(),
+                vec![
+                    query.clone(),
+                    keyed_grouped_sum_requirement(
+                        AuthorizationAction::Propose,
+                        MutationClass::Structure,
+                        &document,
+                    ),
+                ],
+                None,
+            ))
+            .unwrap();
+        let delete = || {
+            ProposalRequest::new(
+                ProposalId::from("remove-summary"),
+                SemanticRevision::from("resident/0"),
+                SemanticPatchBody::command(SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                    definition: KeyedGroupedSumDefinitionId::from("summary"),
+                }),
+                editor.clone(),
+            )
+        };
+        let error = lifecycle
+            .propose(
+                &DocumentScopeId::from("document-occurrence"),
+                &document,
+                &SemanticRevision::from("resident/0"),
+                delete(),
+                TrustedInstant::new(1),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Propose
+            }
+        ));
+
+        let (mut lifecycle, editor) = keyed_grouped_sum_lifecycle(&document);
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("structure-and-destructive"),
+                PrincipalId::from("authority"),
+                editor.clone(),
+                vec![
+                    query,
+                    keyed_grouped_sum_requirement(
+                        AuthorizationAction::Propose,
+                        MutationClass::Structure,
+                        &document,
+                    ),
+                    keyed_grouped_sum_requirement(
+                        AuthorizationAction::Propose,
+                        MutationClass::Destructive,
+                        &document,
+                    ),
+                ],
+                None,
+            ))
+            .unwrap();
+        lifecycle
+            .propose(
+                &DocumentScopeId::from("document-occurrence"),
+                &document,
+                &SemanticRevision::from("resident/0"),
+                delete(),
+                TrustedInstant::new(1),
+            )
+            .unwrap();
     }
 }

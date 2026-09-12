@@ -378,8 +378,9 @@ mod tests {
     };
 
     use super::{
-        FORMULA_UNAVAILABLE, KeyedGroupedSumOutcome, LOOKUP_AMBIGUOUS_KEY, LOOKUP_MISSING_KEY,
-        evaluate_keyed_grouped_sum,
+        FORMULA_UNAVAILABLE, INPUT_MISSING, INPUT_WRONG_KIND, KeyedGroupedSumOutcome,
+        LOOKUP_AMBIGUOUS_KEY, LOOKUP_MISSING_KEY, MAX_KEYED_GROUPED_SUM_AMBIGUITY_CANDIDATES,
+        NUMBER_NON_FINITE, RESULT_TOO_LARGE, evaluate_keyed_grouped_sum,
     };
 
     const ORDERS: &str = "orders";
@@ -674,5 +675,131 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code == LOOKUP_AMBIGUOUS_KEY)
         );
+    }
+
+    #[test]
+    fn missing_or_wrong_typed_required_input_makes_the_whole_definition_unavailable() {
+        let mut missing = base_document();
+        missing
+            .entities
+            .get_mut("p100")
+            .unwrap()
+            .fields
+            .remove(&FieldId::from(CATEGORY));
+        let KeyedGroupedSumOutcome::Unavailable(diagnostics) = evaluate(&missing) else {
+            panic!("missing required input must not publish partial groups");
+        };
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == INPUT_MISSING)
+        );
+
+        let mut wrong_kind = base_document();
+        wrong_kind.entities.get_mut("o100a").unwrap().fields.insert(
+            FieldId::from(QUANTITY),
+            Value::Text("not-a-number".to_owned()),
+        );
+        let KeyedGroupedSumOutcome::Unavailable(diagnostics) = evaluate(&wrong_kind) else {
+            panic!("wrong typed required input must not publish partial groups");
+        };
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == INPUT_WRONG_KIND)
+        );
+    }
+
+    #[test]
+    fn non_finite_contribution_or_reduction_makes_the_whole_definition_unavailable() {
+        let mut contribution_overflow = base_document();
+        contribution_overflow
+            .entities
+            .get_mut("p100")
+            .unwrap()
+            .fields
+            .insert(
+                FieldId::from(PRICE),
+                Value::Number(Number::new(1.0e308).unwrap()),
+            );
+        contribution_overflow
+            .entities
+            .get_mut("o100a")
+            .unwrap()
+            .fields
+            .insert(
+                FieldId::from(QUANTITY),
+                Value::Number(Number::new(2.0).unwrap()),
+            );
+        let KeyedGroupedSumOutcome::Unavailable(diagnostics) = evaluate(&contribution_overflow)
+        else {
+            panic!("non-finite multiplication must not publish partial groups");
+        };
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == NUMBER_NON_FINITE)
+        );
+
+        let mut reduction_overflow = base_document();
+        reduction_overflow
+            .entities
+            .get_mut("p100")
+            .unwrap()
+            .fields
+            .insert(
+                FieldId::from(PRICE),
+                Value::Number(Number::new(1.0e308).unwrap()),
+            );
+        for order in ["o100a", "o100b", "o200"] {
+            let entity = reduction_overflow.entities.get_mut(order).unwrap();
+            entity
+                .fields
+                .insert(FieldId::from(ORDER_KEY), Value::Text("P-100".to_owned()));
+            entity.fields.insert(
+                FieldId::from(QUANTITY),
+                Value::Number(Number::new(1.0).unwrap()),
+            );
+        }
+        let KeyedGroupedSumOutcome::Unavailable(diagnostics) = evaluate(&reduction_overflow) else {
+            panic!("non-finite reduction must not publish partial groups");
+        };
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == NUMBER_NON_FINITE)
+        );
+    }
+
+    #[test]
+    fn over_limit_ambiguity_is_unavailable_without_a_partial_candidate_set() {
+        let mut document = base_document();
+        for serial in 0..MAX_KEYED_GROUPED_SUM_AMBIGUITY_CANDIDATES {
+            let id = EntityId::from(format!("duplicate-{serial}"));
+            document.entities.insert(
+                id.clone(),
+                Entity {
+                    id,
+                    key: EntityKey::from(format!("duplicate-{serial}")),
+                    schema: SchemaId::from(PRODUCTS),
+                    fields: BTreeMap::from([
+                        (FieldId::from(PRODUCT_KEY), Value::Text("P-100".to_owned())),
+                        (FieldId::from(CATEGORY), Value::Text("hardware".to_owned())),
+                        (
+                            FieldId::from(PRICE),
+                            Value::Number(Number::new(2.0).unwrap()),
+                        ),
+                    ]),
+                },
+            );
+        }
+        let KeyedGroupedSumOutcome::Unavailable(diagnostics) = evaluate(&document) else {
+            panic!("over-limit ambiguity must not publish partial candidates or groups");
+        };
+        let result_too_large = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == RESULT_TOO_LARGE)
+            .expect("over-limit ambiguity must identify the unavailable outcome");
+        assert!(result_too_large.candidates.is_empty());
     }
 }

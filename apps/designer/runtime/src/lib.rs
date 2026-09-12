@@ -770,14 +770,16 @@ impl DesignerRuntime {
                 let publication = self.create_keyed_grouped_sum(&expected_revision, definition)?;
                 Ok(DesignerResponse::KeyedGroupedSumPublished(
                     KeyedGroupedSumPublishedProjection {
-                        result: self.query_keyed_grouped_sum(&definition_id),
+                        result: self.query_keyed_grouped_sum(&definition_id)?,
                         publication,
                     },
                 ))
             }
             DesignerRequest::QueryKeyedGroupedSum { definition_id } => {
                 Ok(DesignerResponse::KeyedGroupedSum(
-                    self.query_keyed_grouped_sum(&KeyedGroupedSumDefinitionId::from(definition_id)),
+                    self.query_keyed_grouped_sum(&KeyedGroupedSumDefinitionId::from(
+                        definition_id,
+                    ))?,
                 ))
             }
         }
@@ -831,43 +833,52 @@ impl DesignerRuntime {
     }
 
     fn query_keyed_grouped_sum(
-        &self,
+        &mut self,
         definition_id: &KeyedGroupedSumDefinitionId,
-    ) -> KeyedGroupedSumProjection {
+    ) -> Result<KeyedGroupedSumProjection, DesignerError> {
+        let snapshot = self.session.export_snapshot();
+        self.lifecycle.authorize_keyed_grouped_sum_query(
+            snapshot.document(),
+            definition_id,
+            &self.principal,
+            self.clock.tick(),
+        )?;
         let revision = self.current_revision().to_owned();
-        match evaluate_keyed_grouped_sum(self.session.export_snapshot().document(), definition_id) {
-            KeyedGroupedSumOutcome::Complete(groups) => KeyedGroupedSumProjection {
-                definition_id: definition_id.to_string(),
-                revision,
-                groups: groups
-                    .into_iter()
-                    .map(|group| KeyedGroupedSumGroupProjection {
-                        category: group.category,
-                        value: group.value.get(),
-                    })
-                    .collect(),
-                diagnostics: Vec::new(),
+        Ok(
+            match evaluate_keyed_grouped_sum(snapshot.document(), definition_id) {
+                KeyedGroupedSumOutcome::Complete(groups) => KeyedGroupedSumProjection {
+                    definition_id: definition_id.to_string(),
+                    revision,
+                    groups: groups
+                        .into_iter()
+                        .map(|group| KeyedGroupedSumGroupProjection {
+                            category: group.category,
+                            value: group.value.get(),
+                        })
+                        .collect(),
+                    diagnostics: Vec::new(),
+                },
+                KeyedGroupedSumOutcome::Unavailable(diagnostics) => KeyedGroupedSumProjection {
+                    definition_id: definition_id.to_string(),
+                    revision,
+                    groups: Vec::new(),
+                    diagnostics: diagnostics
+                        .into_iter()
+                        .map(|diagnostic| KeyedGroupedSumDiagnosticProjection {
+                            code: diagnostic.code.to_owned(),
+                            entity: diagnostic.entity.map(|value| value.to_string()),
+                            field: diagnostic.field.map(|value| value.to_string()),
+                            lookup_key: diagnostic.lookup_key,
+                            candidates: diagnostic
+                                .candidates
+                                .into_iter()
+                                .map(|value| value.to_string())
+                                .collect(),
+                        })
+                        .collect(),
+                },
             },
-            KeyedGroupedSumOutcome::Unavailable(diagnostics) => KeyedGroupedSumProjection {
-                definition_id: definition_id.to_string(),
-                revision,
-                groups: Vec::new(),
-                diagnostics: diagnostics
-                    .into_iter()
-                    .map(|diagnostic| KeyedGroupedSumDiagnosticProjection {
-                        code: diagnostic.code.to_owned(),
-                        entity: diagnostic.entity.map(|value| value.to_string()),
-                        field: diagnostic.field.map(|value| value.to_string()),
-                        lookup_key: diagnostic.lookup_key,
-                        candidates: diagnostic
-                            .candidates
-                            .into_iter()
-                            .map(|value| value.to_string())
-                            .collect(),
-                    })
-                    .collect(),
-            },
-        }
+        )
     }
 
     fn ensure_supported_project(&self) -> Result<(), DesignerError> {

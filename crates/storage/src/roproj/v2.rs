@@ -2,10 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{
+    Deserialize, Serialize,
+    ser::{SerializeSeq, SerializeStruct, Serializer},
+};
 use tachiko_semantic_core::{
-    Document, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    validate_keyed_grouped_sum_definitions,
+    Document, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
+    KeyedGroupedSumProductsBinding, validate_keyed_grouped_sum_definitions,
 };
 
 use super::v1::{CanonicalRoProjectV1, ROPROJ_V1_PATHS};
@@ -77,15 +80,21 @@ impl CanonicalRoProjectV2 {
             .map(CanonicalRoProjectFileV2::bytes)
     }
 
-    /// Admit only an exact canonical nineteen-file `.roproj/v2` tree.
+    /// Admit an exact nineteen-file `.roproj/v2` tree.
     ///
     /// Manifest dispatch occurs before any schema/entity/definition DTO is
     /// interpreted, so unsupported future versions fail closed at the envelope.
     ///
+    /// The eighteen non-definition files must already be exact canonical v2
+    /// bytes. The `definitions.json` member additionally admits the bounded
+    /// non-canonical family of structural whitespace, object-member order, and
+    /// definition-ID order, and the returned tree is exact canonical v2.
+    ///
     /// # Errors
     ///
-    /// Returns a typed format/representation/semantic error unless all bytes
-    /// are the canonical v2 representation of one valid semantic document.
+    /// Returns a typed format/representation/semantic error unless the tree is
+    /// the v2 representation of one valid semantic document within the bounded
+    /// non-canonical definition family above.
     pub fn try_from_files(files: Vec<(String, Vec<u8>)>) -> Result<Self, FormatError> {
         require_exact_paths(&files)?;
         dispatch_manifest(&files[0].1)?;
@@ -97,10 +106,15 @@ impl CanonicalRoProjectV2 {
         };
         let document = decode_unvalidated(&tree)?;
         let canonical = encode(&document)?;
-        if canonical != tree {
-            return invalid("tree bytes are not canonical .roproj/v2");
+        for (input, expected) in tree.files.iter().zip(&canonical.files) {
+            if input.path == "definitions.json" {
+                continue;
+            }
+            if input != expected {
+                return invalid("tree bytes are not canonical .roproj/v2");
+            }
         }
-        Ok(tree)
+        Ok(canonical)
     }
 }
 
@@ -208,6 +222,55 @@ fn decode_unvalidated(tree: &CanonicalRoProjectV2) -> Result<Document, FormatErr
     Ok(document)
 }
 
+/// `.roproj/v2`-owned closed-world wire DTO for one saved definition record.
+///
+/// These types are deliberately independent of the semantic-core
+/// `KeyedGroupedSumDefinition` family, its `serde` derives, and its field
+/// declaration order. Every nested object denies unknown members.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefinitionWire {
+    id: String,
+    orders: OrdersBindingWire,
+    products: ProductsBindingWire,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OrdersBindingWire {
+    schema: String,
+    lookup_key_field: String,
+    quantity_field: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProductsBindingWire {
+    schema: String,
+    key_field: String,
+    category_field: String,
+    price_field: String,
+}
+
+impl DefinitionWire {
+    fn into_semantic(self) -> KeyedGroupedSumDefinition {
+        KeyedGroupedSumDefinition {
+            id: self.id.into(),
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: self.orders.schema.into(),
+                lookup_key_field: self.orders.lookup_key_field.into(),
+                quantity_field: self.orders.quantity_field.into(),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: self.products.schema.into(),
+                key_field: self.products.key_field.into(),
+                category_field: self.products.category_field.into(),
+                price_field: self.products.price_field.into(),
+            },
+        }
+    }
+}
+
 fn decode_definitions(
     bytes: &[u8],
 ) -> Result<BTreeMap<KeyedGroupedSumDefinitionId, KeyedGroupedSumDefinition>, FormatError> {
@@ -218,30 +281,89 @@ fn decode_definitions(
         })?;
     inspect_roproj(source, DEFINITIONS_MAX_NESTING)
         .map_err(|error| map_frontend_error("definitions.json", error))?;
-    let definitions: Vec<KeyedGroupedSumDefinition> =
-        serde_json::from_str(source).map_err(|error| {
-            FormatError::InvalidRoProjectRepresentation {
-                message: format!("'definitions.json' does not match .roproj/v2: {error}"),
-            }
-        })?;
-    let mut map = BTreeMap::new();
-    let mut previous: Option<KeyedGroupedSumDefinitionId> = None;
-    for definition in definitions {
-        if definition.id.as_str().is_empty() {
+    let records: Vec<DefinitionWire> = serde_json::from_str(source).map_err(|error| {
+        FormatError::InvalidRoProjectRepresentation {
+            message: format!("'definitions.json' does not match .roproj/v2: {error}"),
+        }
+    })?;
+    let mut definitions = BTreeMap::new();
+    for record in records {
+        if record.id.is_empty() {
             return invalid("keyed grouped-sum definition id must not be empty");
         }
-        if let Some(previous) = &previous {
-            if previous.as_str().as_bytes() >= definition.id.as_str().as_bytes() {
-                return invalid("definitions.json ids must be unique and in unsigned UTF-8 order");
-            }
-        }
-        previous = Some(definition.id.clone());
+        let definition = record.into_semantic();
         let id = definition.id.clone();
-        if map.insert(id.clone(), definition).is_some() {
+        if definitions.insert(id.clone(), definition).is_some() {
             return invalid(&format!("duplicate keyed grouped-sum definition id '{id}'"));
         }
     }
-    Ok(map)
+    Ok(definitions)
+}
+
+/// One ordered `definitions.json` array written with the fixed member order of
+/// the v2 DTO specification rather than any derived struct layout.
+struct CanonicalDefinitions<'a>(&'a [&'a KeyedGroupedSumDefinition]);
+
+impl Serialize for CanonicalDefinitions<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut records = serializer.serialize_seq(Some(self.0.len()))?;
+        for definition in self.0 {
+            records.serialize_element(&CanonicalDefinition(definition))?;
+        }
+        records.end()
+    }
+}
+
+struct CanonicalDefinition<'a>(&'a KeyedGroupedSumDefinition);
+
+impl Serialize for CanonicalDefinition<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let definition = self.0;
+        let mut record = serializer.serialize_struct("KeyedGroupedSumDefinition", 3)?;
+        record.serialize_field("id", definition.id.as_str())?;
+        record.serialize_field("orders", &CanonicalOrdersBinding(&definition.orders))?;
+        record.serialize_field("products", &CanonicalProductsBinding(&definition.products))?;
+        record.end()
+    }
+}
+
+struct CanonicalOrdersBinding<'a>(&'a KeyedGroupedSumOrdersBinding);
+
+impl Serialize for CanonicalOrdersBinding<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let orders = self.0;
+        let mut record = serializer.serialize_struct("orders", 3)?;
+        record.serialize_field("schema", orders.schema.as_str())?;
+        record.serialize_field("lookup_key_field", orders.lookup_key_field.as_str())?;
+        record.serialize_field("quantity_field", orders.quantity_field.as_str())?;
+        record.end()
+    }
+}
+
+struct CanonicalProductsBinding<'a>(&'a KeyedGroupedSumProductsBinding);
+
+impl Serialize for CanonicalProductsBinding<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let products = self.0;
+        let mut record = serializer.serialize_struct("products", 4)?;
+        record.serialize_field("schema", products.schema.as_str())?;
+        record.serialize_field("key_field", products.key_field.as_str())?;
+        record.serialize_field("category_field", products.category_field.as_str())?;
+        record.serialize_field("price_field", products.price_field.as_str())?;
+        record.end()
+    }
 }
 
 fn render_definitions(document: &Document) -> Result<String, FormatError> {
@@ -255,7 +377,7 @@ fn render_definitions(document: &Document) -> Result<String, FormatError> {
             .as_bytes()
             .cmp(right.id.as_str().as_bytes())
     });
-    let mut output = serde_json::to_string_pretty(&definitions)?;
+    let mut output = serde_json::to_string_pretty(&CanonicalDefinitions(&definitions))?;
     output.push('\n');
     Ok(output)
 }
@@ -394,11 +516,88 @@ mod tests {
     use std::collections::BTreeMap;
 
     use tachiko_semantic_core::{
-        Document, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-        KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+        Document, FieldDefinition, FieldId, FieldKey, FieldType, KeyedGroupedSumDefinition,
+        KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+        Schema, SchemaId, SchemaKey,
     };
 
-    use super::{ROPROJ_V2_PATHS, decode, encode, migrate_v1};
+    use super::{CanonicalRoProjectV2, ROPROJ_V2_PATHS, decode, encode, migrate_v1};
+
+    fn field(id: &str, field_type: FieldType) -> (FieldId, FieldDefinition) {
+        let id = FieldId::from(id);
+        let key = FieldKey::from(format!("key_{id}"));
+        (
+            id.clone(),
+            FieldDefinition {
+                id,
+                key,
+                field_type,
+                required: true,
+            },
+        )
+    }
+
+    fn grouped_sum_document() -> Document {
+        let mut document = Document::empty("doc", "Grouped sum");
+        document.schemas.insert(
+            SchemaId::from("orders"),
+            Schema {
+                id: SchemaId::from("orders"),
+                key: SchemaKey::from("orders"),
+                fields: BTreeMap::from([
+                    field("lookup", FieldType::Text),
+                    field("quantity", FieldType::Number),
+                ]),
+            },
+        );
+        document.schemas.insert(
+            SchemaId::from("products"),
+            Schema {
+                id: SchemaId::from("products"),
+                key: SchemaKey::from("products"),
+                fields: BTreeMap::from([
+                    field("key", FieldType::Text),
+                    field("category", FieldType::Text),
+                    field("price", FieldType::Number),
+                ]),
+            },
+        );
+        for id in ["beta", "alpha"] {
+            let id = KeyedGroupedSumDefinitionId::from(id);
+            document.keyed_grouped_sum_definitions.insert(
+                id.clone(),
+                KeyedGroupedSumDefinition {
+                    id,
+                    orders: KeyedGroupedSumOrdersBinding {
+                        schema: SchemaId::from("orders"),
+                        lookup_key_field: FieldId::from("lookup"),
+                        quantity_field: FieldId::from("quantity"),
+                    },
+                    products: KeyedGroupedSumProductsBinding {
+                        schema: SchemaId::from("products"),
+                        key_field: FieldId::from("key"),
+                        category_field: FieldId::from("category"),
+                        price_field: FieldId::from("price"),
+                    },
+                },
+            );
+        }
+        document
+    }
+
+    fn with_definitions(tree: &CanonicalRoProjectV2, definitions: &[u8]) -> Vec<(String, Vec<u8>)> {
+        tree.files()
+            .iter()
+            .map(|file| {
+                let bytes = if file.path() == "definitions.json" {
+                    definitions.to_vec()
+                } else {
+                    file.bytes().to_vec()
+                };
+                (file.path().to_owned(), bytes)
+            })
+            .collect()
+    }
 
     #[test]
     fn manifest_dispatch_fails_closed_without_the_v2_format_discriminator() {
@@ -480,6 +679,126 @@ mod tests {
         let source = br#"[{"id":"x","orders":{"schema":"o","lookup_key_field":"k","quantity_field":"q"},"products":{"schema":"p","key_field":"k","category_field":"c","price_field":"x"},"unknown":true}]
 "#;
         assert!(super::decode_definitions(source).is_err());
+    }
+
+    #[test]
+    fn encoded_definitions_use_the_fixed_v2_member_order() {
+        let tree = encode(&grouped_sum_document()).unwrap();
+        let expected = concat!(
+            "[\n",
+            "  {\n",
+            "    \"id\": \"alpha\",\n",
+            "    \"orders\": {\n",
+            "      \"schema\": \"orders\",\n",
+            "      \"lookup_key_field\": \"lookup\",\n",
+            "      \"quantity_field\": \"quantity\"\n",
+            "    },\n",
+            "    \"products\": {\n",
+            "      \"schema\": \"products\",\n",
+            "      \"key_field\": \"key\",\n",
+            "      \"category_field\": \"category\",\n",
+            "      \"price_field\": \"price\"\n",
+            "    }\n",
+            "  },\n",
+            "  {\n",
+            "    \"id\": \"beta\",\n",
+            "    \"orders\": {\n",
+            "      \"schema\": \"orders\",\n",
+            "      \"lookup_key_field\": \"lookup\",\n",
+            "      \"quantity_field\": \"quantity\"\n",
+            "    },\n",
+            "    \"products\": {\n",
+            "      \"schema\": \"products\",\n",
+            "      \"key_field\": \"key\",\n",
+            "      \"category_field\": \"category\",\n",
+            "      \"price_field\": \"price\"\n",
+            "    }\n",
+            "  }\n",
+            "]\n",
+        );
+        assert_eq!(tree.file("definitions.json"), Some(expected.as_bytes()));
+    }
+
+    #[test]
+    fn non_canonical_definitions_canonicalize_to_exact_v2_output() {
+        let document = grouped_sum_document();
+        let canonical = encode(&document).unwrap();
+        // Records in reverse ID order, reordered members, and structural
+        // whitespace are all inside the bounded non-canonical input family.
+        let non_canonical = br#"[
+  {
+    "products": {"price_field":"price","category_field":"category","key_field":"key","schema":"products"},
+    "orders": {"quantity_field":"quantity","lookup_key_field":"lookup","schema":"orders"},
+    "id": "beta"
+  },
+  { "id": "alpha",
+    "orders": { "schema": "orders", "lookup_key_field": "lookup", "quantity_field": "quantity" },
+    "products": { "schema": "products", "key_field": "key", "category_field": "category", "price_field": "price" }
+  }
+]
+"#;
+        assert_ne!(canonical.file("definitions.json"), Some(&non_canonical[..]));
+        let admitted =
+            CanonicalRoProjectV2::try_from_files(with_definitions(&canonical, non_canonical))
+                .unwrap();
+        assert_eq!(admitted, canonical);
+        assert_eq!(decode(&admitted).unwrap(), document);
+    }
+
+    #[test]
+    fn duplicate_definition_ids_fail_closed_in_non_canonical_order() {
+        let source = br#"[
+  {"id":"beta","orders":{"schema":"o","lookup_key_field":"k","quantity_field":"q"},"products":{"schema":"p","key_field":"k","category_field":"c","price_field":"x"}},
+  {"id":"alpha","orders":{"schema":"o","lookup_key_field":"k","quantity_field":"q"},"products":{"schema":"p","key_field":"k","category_field":"c","price_field":"x"}},
+  {"id":"beta","orders":{"schema":"o","lookup_key_field":"k","quantity_field":"q"},"products":{"schema":"p","key_field":"k","category_field":"c","price_field":"x"}}
+]
+"#;
+        assert!(super::decode_definitions(source).is_err());
+    }
+
+    #[test]
+    fn admission_rejects_duplicate_definition_ids() {
+        let canonical = encode(&grouped_sum_document()).unwrap();
+        let duplicate = br#"[
+  {"id":"alpha","orders":{"schema":"orders","lookup_key_field":"lookup","quantity_field":"quantity"},"products":{"schema":"products","key_field":"key","category_field":"category","price_field":"price"}},
+  {"id":"alpha","orders":{"schema":"orders","lookup_key_field":"lookup","quantity_field":"quantity"},"products":{"schema":"products","key_field":"key","category_field":"category","price_field":"price"}}
+]
+"#;
+        assert!(
+            CanonicalRoProjectV2::try_from_files(with_definitions(&canonical, duplicate)).is_err()
+        );
+    }
+
+    #[test]
+    fn non_canonical_non_definition_members_still_fail_closed() {
+        let canonical = encode(&grouped_sum_document()).unwrap();
+        let mut files = canonical
+            .files()
+            .iter()
+            .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
+            .collect::<Vec<_>>();
+        files[1].1.push(b'\n');
+        assert!(CanonicalRoProjectV2::try_from_files(files).is_err());
+    }
+
+    #[test]
+    fn unknown_nested_definition_member_is_rejected() {
+        let source = br#"[{"id":"x","orders":{"schema":"o","lookup_key_field":"k","quantity_field":"q","unknown":1},"products":{"schema":"p","key_field":"k","category_field":"c","price_field":"x"}}]
+"#;
+        assert!(super::decode_definitions(source).is_err());
+    }
+
+    #[test]
+    fn malformed_definition_member_is_rejected() {
+        let missing = br#"[{"id":"x","orders":{"schema":"o","lookup_key_field":"k"},"products":{"schema":"p","key_field":"k","category_field":"c","price_field":"x"}}]
+"#;
+        assert!(super::decode_definitions(missing).is_err());
+        let wrong_type = br#"[{"id":"x","orders":{"schema":"o","lookup_key_field":"k","quantity_field":"q"},"products":{"schema":7,"key_field":"k","category_field":"c","price_field":"x"}}]
+"#;
+        assert!(super::decode_definitions(wrong_type).is_err());
+        let keyed_object = br#"{"id":"x"}
+"#;
+        assert!(super::decode_definitions(keyed_object).is_err());
     }
 
     #[test]
