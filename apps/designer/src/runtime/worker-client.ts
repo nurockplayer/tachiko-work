@@ -20,6 +20,7 @@ import type {
   KeyedGroupedSumDefinitionInput,
   KeyedGroupedSumProjection,
   KeyedGroupedSumPublishedProjection,
+  NewTableColumnInput,
   ProjectExport,
   TableProjection,
   WorkerReply,
@@ -118,6 +119,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async newBudget(): Promise<OpenedProjection> {
     return expectResponse("opened", await this.#command({type: "new_budget", occurrence_id: freshOccurrenceId()}));
+  }
+
+  async newTable(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection> {
+    return expectResponse("opened", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns}));
   }
 
   async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {

@@ -92,6 +92,11 @@ pub enum DesignerRequest {
     NewBudget {
         occurrence_id: String,
     },
+    NewTable {
+        occurrence_id: String,
+        name: String,
+        columns: Vec<NewTableColumnInput>,
+    },
     EditCells {
         expected_revision: String,
         edits: Vec<CellEdit>,
@@ -208,6 +213,8 @@ pub struct TableProjection {
     pub revision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker_profile: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_table_profile: Option<bool>,
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     pub rows: Vec<RowProjection>,
@@ -217,6 +224,17 @@ pub struct TableProjection {
 pub struct CellEdit {
     pub target: FieldTarget,
     pub input: ScalarEditInput,
+}
+
+/// Private authoring input for the bounded native table creation path.
+///
+/// The field type remains a string at the wire boundary so unsupported values
+/// can be reported as a candidate validation failure rather than an opaque
+/// request-deserialization error.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct NewTableColumnInput {
+    pub name: String,
+    pub field_type: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -266,7 +284,7 @@ pub enum ScalarEditInput {
     Date { value: String },
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoredValueProjection {
     Number { value: f64 },
@@ -274,6 +292,53 @@ pub enum StoredValueProjection {
     Boolean { value: bool },
     Date { value: Date },
     Reference { entity: String },
+}
+
+impl<'de> Deserialize<'de> for StoredValueProjection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // serde's internally tagged representation currently routes primitive
+        // fields through a map deserializer in the pinned serde_json version.
+        // Decode the small DTO as JSON first so numeric values retain their
+        // wire-level JSON number representation.
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let kind = raw
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("stored value kind must be a string"))?;
+        let (value, missing_property) = if kind == "reference" {
+            (raw.get("entity").cloned(), "entity")
+        } else {
+            (raw.get("value").cloned(), "value")
+        };
+        let value = value.ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "stored value projection is missing {missing_property}"
+            ))
+        })?;
+        match kind {
+            "number" => serde_json::from_value(value)
+                .map(|value| Self::Number { value })
+                .map_err(serde::de::Error::custom),
+            "text" => serde_json::from_value(value)
+                .map(|value| Self::Text { value })
+                .map_err(serde::de::Error::custom),
+            "boolean" => serde_json::from_value(value)
+                .map(|value| Self::Boolean { value })
+                .map_err(serde::de::Error::custom),
+            "date" => serde_json::from_value(value)
+                .map(|value| Self::Date { value })
+                .map_err(serde::de::Error::custom),
+            "reference" => serde_json::from_value(value)
+                .map(|entity| Self::Reference { entity })
+                .map_err(serde::de::Error::custom),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown stored value kind '{other}'"
+            ))),
+        }
+    }
 }
 
 impl StoredValueProjection {
@@ -294,12 +359,51 @@ pub struct FormulaProjection {
     pub source: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CalculationProjection {
     Value { value: f64 },
     Failure { code: String, message: String },
     Unavailable,
+}
+
+impl<'de> Deserialize<'de> for CalculationProjection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let status = raw
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("calculation status must be a string"))?;
+        match status {
+            "value" => {
+                let value = raw.get("value").cloned().ok_or_else(|| {
+                    serde::de::Error::custom("calculation value projection is missing value")
+                })?;
+                serde_json::from_value(value)
+                    .map(|value| Self::Value { value })
+                    .map_err(serde::de::Error::custom)
+            }
+            "failure" => {
+                let code = raw.get("code").cloned().ok_or_else(|| {
+                    serde::de::Error::custom("calculation failure is missing code")
+                })?;
+                let message = raw.get("message").cloned().ok_or_else(|| {
+                    serde::de::Error::custom("calculation failure is missing message")
+                })?;
+                Ok(Self::Failure {
+                    code: serde_json::from_value(code).map_err(serde::de::Error::custom)?,
+                    message: serde_json::from_value(message).map_err(serde::de::Error::custom)?,
+                })
+            }
+            "unavailable" => Ok(Self::Unavailable),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown calculation status '{other}'"
+            ))),
+        }
+    }
 }
 
 impl CalculationProjection {
@@ -491,6 +595,8 @@ pub enum DesignerError {
     MissingInvalidation,
     #[error("tracker operation rejected: {message}")]
     InvalidTrackerOperation { message: String },
+    #[error("table creation rejected: {message}")]
+    InvalidTableOperation { message: String },
 }
 
 impl DesignerError {
@@ -513,6 +619,7 @@ impl DesignerError {
                 ("edit_rejected", Vec::new())
             }
             Self::InvalidTrackerOperation { .. } => ("invalid_tracker_operation", Vec::new()),
+            Self::InvalidTableOperation { .. } => ("invalid_table_operation", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
             Self::UnsupportedScalarEdit { .. } => ("unsupported_edit", Vec::new()),
@@ -576,6 +683,7 @@ enum HistoryAction {
 #[derive(Clone)]
 struct CollectionSpec {
     direct_tracker_rows: bool,
+    native_table_rows: bool,
     summary: CollectionSummary,
     columns: Vec<ColumnSpec>,
     entities: Vec<tachiko_workspace_engine::EntityId>,
@@ -634,11 +742,7 @@ impl DesignerRuntime {
         let row_serial = document
             .entities
             .keys()
-            .filter_map(|id| {
-                id.as_str()
-                    .strip_prefix("tracker_row_")
-                    .and_then(|suffix| suffix.split('_').next()?.parse::<usize>().ok())
-            })
+            .filter_map(|id| row_serial_from_id(id.as_str()))
             .max()
             .unwrap_or(0);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
@@ -684,6 +788,20 @@ impl DesignerRuntime {
             }
             DesignerRequest::NewBudget { occurrence_id } => {
                 let candidate = Self::budget(&occurrence_id)?;
+                let opened = OpenedProjection {
+                    bootstrap: candidate.bootstrap_projection(),
+                    table: candidate.query_table(&candidate.default_collection)?,
+                };
+                ensure_opened_projection_size(&opened)?;
+                *self = candidate;
+                Ok(DesignerResponse::Opened(Box::new(opened)))
+            }
+            DesignerRequest::NewTable {
+                occurrence_id,
+                name,
+                columns,
+            } => {
+                let candidate = Self::new_table(&occurrence_id, &name, &columns)?;
                 let opened = OpenedProjection {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
@@ -1046,11 +1164,7 @@ impl DesignerRuntime {
     }
 
     fn query_table(&self, collection: &str) -> Result<TableProjection, DesignerError> {
-        let spec = self.collection_specs.get(collection).ok_or_else(|| {
-            DesignerError::MissingCollection {
-                collection: collection.to_owned(),
-            }
-        })?;
+        let spec = self.collection_spec(collection)?;
         if spec.columns.len() > MAX_TABLE_FIELDS || spec.entities.len() > MAX_TABLE_ROWS {
             return Err(DesignerError::CollectionTooLarge {
                 collection: collection.to_owned(),
@@ -1093,6 +1207,7 @@ impl DesignerRuntime {
             .collect();
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
+            native_table_profile: is_native_table_spec(spec).then_some(true),
             revision: field_query.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: spec
@@ -1676,11 +1791,7 @@ impl DesignerRuntime {
                 .document()
                 .entities
                 .keys()
-                .filter_map(|id| {
-                    id.as_str()
-                        .strip_prefix("tracker_row_")
-                        .and_then(|suffix| suffix.split('_').next()?.parse::<usize>().ok())
-                })
+                .filter_map(|id| row_serial_from_id(id.as_str()))
                 .max()
                 .unwrap_or(0),
         );
@@ -1722,6 +1833,67 @@ impl DesignerRuntime {
             .collect(),
         };
         document.schemas.insert(schema.id.clone(), schema);
+        Self::from_document(document, occurrence_id)
+    }
+
+    /// Create one bounded ordinary native table from user-facing labels.
+    ///
+    /// The candidate is fully admitted before a caller replaces any resident
+    /// occurrence. Stable semantic IDs are generated from the trusted fresh
+    /// occurrence namespace, never from mutable labels.
+    ///
+    /// # Errors
+    /// Returns a candidate validation failure without constructing a partial
+    /// runtime.
+    pub fn new_table(
+        occurrence_id: &str,
+        name: &str,
+        columns: &[NewTableColumnInput],
+    ) -> Result<Self, DesignerError> {
+        if name.trim().is_empty() || name.len() > MAX_PROFILE_STRING_BYTES {
+            return Err(table_error("table name must be nonempty bounded text"));
+        }
+        if columns.is_empty() || columns.len() > MAX_TABLE_FIELDS {
+            return Err(table_error("table must declare 1..32 columns"));
+        }
+        let schema_key = native_table_key(name, "table name")?;
+        let mut ids = NewTableIds::new(occurrence_id);
+        let document_id = ids.generate(SemanticIdKind::Document);
+        let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
+        let mut fields = BTreeMap::new();
+        let mut seen_keys = BTreeSet::new();
+        for column in columns {
+            if column.name.trim().is_empty() || column.name.len() > MAX_PROFILE_STRING_BYTES {
+                return Err(table_error("column names must be nonempty bounded text"));
+            }
+            let key = native_table_key(&column.name, "column name")?;
+            if !seen_keys.insert(key.clone()) {
+                return Err(table_error("duplicate column names are not allowed"));
+            }
+            let field_type = native_table_field_type(&column.field_type)?;
+            let id = FieldId::from(ids.generate(SemanticIdKind::Field));
+            fields.insert(
+                id.clone(),
+                FieldDefinition {
+                    id,
+                    key: FieldKey::from(key),
+                    field_type,
+                    required: true,
+                },
+            );
+        }
+        let schema = Schema {
+            id: schema_id.clone(),
+            key: SchemaKey::from(schema_key),
+            fields,
+        };
+        let document = Document {
+            id: document_id.into(),
+            title: name.trim().to_owned(),
+            schemas: BTreeMap::from([(schema_id, schema)]),
+            entities: BTreeMap::new(),
+            keyed_grouped_sum_definitions: BTreeMap::new(),
+        };
         Self::from_document(document, occurrence_id)
     }
 
@@ -1973,6 +2145,7 @@ impl DesignerRuntime {
         expected: &str,
         collection: &str,
     ) -> Result<PublicationProjection, DesignerError> {
+        self.tracker_spec(collection)?;
         self.paste_cells(
             expected,
             collection,
@@ -2025,11 +2198,18 @@ impl DesignerRuntime {
         rows: &[Vec<String>],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
-        let spec = self.tracker_spec(collection)?;
-        let fields = ["task", "estimate", "done"];
-        let column = fields
+        let spec = self.collection_spec(collection)?;
+        let tracker = is_tracker_spec(spec);
+        let native_table = is_native_table_spec(spec);
+        if !tracker && !native_table {
+            return Err(tracker_error(
+                "typed row paste is available only for the bounded tracker or native table profile",
+            ));
+        }
+        let column = spec
+            .columns
             .iter()
-            .position(|field| *field == start_field)
+            .position(|field| field.id.as_str() == start_field)
             .ok_or_else(|| tracker_error("starting field is unavailable"))?;
         let start = start_entity.map_or(Ok(spec.entities.len()), |id| {
             spec.entities
@@ -2042,10 +2222,10 @@ impl DesignerRuntime {
             || rows[0].is_empty()
             || rows
                 .iter()
-                .any(|row| row.len() != rows[0].len() || row.len() + column > fields.len())
+                .any(|row| row.len() != rows[0].len() || row.len() + column > spec.columns.len())
         {
             return Err(tracker_error(
-                "paste must be a nonempty rectangular range within 128 rows and three typed columns",
+                "paste must be a nonempty rectangular range within 128 rows and the declared typed columns",
             ));
         }
         if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
@@ -2061,40 +2241,40 @@ impl DesignerRuntime {
                 .entities
                 .get(start + offset)
                 .and_then(|id| document.entities.get(id));
-            let mut entity = existing.cloned().unwrap_or_else(|| {
-                tracker_row(
-                    document,
-                    self.row_serial,
-                    &self.row_namespace,
-                    &mut allocated,
-                )
-            });
+            if existing.is_none() && !tracker && (column != 0 || row.len() != spec.columns.len()) {
+                return Err(table_error(
+                    "new native table rows must provide every declared typed column",
+                ));
+            }
+            let mut entity = existing.cloned().map_or_else(
+                || {
+                    if tracker {
+                        Ok(tracker_row(
+                            document,
+                            self.row_serial,
+                            &self.row_namespace,
+                            &mut allocated,
+                        ))
+                    } else {
+                        native_table_row(
+                            document,
+                            spec,
+                            self.row_serial,
+                            &self.row_namespace,
+                            &mut allocated,
+                        )
+                    }
+                },
+                Ok,
+            )?;
             for (offset, text) in row.iter().enumerate() {
-                let field = FieldRef::new(entity.id.clone(), fields[column + offset]);
+                let field =
+                    FieldRef::new(entity.id.clone(), spec.columns[column + offset].id.clone());
                 let old = entity
                     .fields
                     .get(&field.field)
                     .ok_or_else(|| tracker_error("tracker row has a missing required value"))?;
-                let input = match old {
-                    Value::Text(_) => ScalarEditInput::Text {
-                        value: text.clone(),
-                    },
-                    Value::Number(_) => ScalarEditInput::Number {
-                        input: text.clone(),
-                    },
-                    Value::Boolean(_) => ScalarEditInput::Boolean {
-                        value: match text.as_str() {
-                            "true" => true,
-                            "false" => false,
-                            _ => {
-                                return Err(tracker_error(
-                                    "Boolean paste accepts exactly true or false",
-                                ));
-                            }
-                        },
-                    },
-                    _ => return Err(tracker_error("paste value type is unsupported")),
-                };
+                let input = pasted_scalar_input(old, text)?;
                 let value = parse_scalar(old, &input, &field)?;
                 if existing.is_some() && &value != old {
                     forward.push(SemanticCommand::set_field_value(
@@ -2116,6 +2296,19 @@ impl DesignerRuntime {
         self.record_edit(expected, forward, inverse)
     }
 
+    fn collection_spec(&self, collection: &str) -> Result<&CollectionSpec, DesignerError> {
+        self.collection_specs
+            .get(collection)
+            .or_else(|| {
+                self.collection_specs
+                    .values()
+                    .find(|spec| spec.summary.id == collection)
+            })
+            .ok_or_else(|| DesignerError::MissingCollection {
+                collection: collection.to_owned(),
+            })
+    }
+
     fn current_revision(&self) -> &str {
         self.session.revision().as_str()
     }
@@ -2124,6 +2317,28 @@ impl DesignerRuntime {
     #[must_use]
     pub fn occurrence_scope(&self) -> &str {
         self.document_scope.as_str()
+    }
+}
+
+fn pasted_scalar_input(value: &Value, text: &str) -> Result<ScalarEditInput, DesignerError> {
+    match value {
+        Value::Text(_) => Ok(ScalarEditInput::Text {
+            value: text.to_owned(),
+        }),
+        Value::Number(_) => Ok(ScalarEditInput::Number {
+            input: text.to_owned(),
+        }),
+        Value::Boolean(_) => match text {
+            "true" => Ok(ScalarEditInput::Boolean { value: true }),
+            "false" => Ok(ScalarEditInput::Boolean { value: false }),
+            _ => Err(tracker_error("Boolean paste accepts exactly true or false")),
+        },
+        Value::Date(_) => Ok(ScalarEditInput::Date {
+            value: text.to_owned(),
+        }),
+        Value::Reference(_) | Value::Formula(_) => {
+            Err(tracker_error("paste value type is unsupported"))
+        }
     }
 }
 
@@ -2607,12 +2822,16 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
         Ok(request) => {
             if let Some(occurrence_id) = match &request {
                 DesignerRequest::NewTracker { occurrence_id }
-                | DesignerRequest::NewBudget { occurrence_id } => Some(occurrence_id),
+                | DesignerRequest::NewBudget { occurrence_id }
+                | DesignerRequest::NewTable { occurrence_id, .. } => Some(occurrence_id),
                 _ => None,
             } {
                 let result = (match &request {
                     DesignerRequest::NewTracker { .. } => DesignerRuntime::tracker(occurrence_id),
                     DesignerRequest::NewBudget { .. } => DesignerRuntime::budget(occurrence_id),
+                    DesignerRequest::NewTable { name, columns, .. } => {
+                        DesignerRuntime::new_table(occurrence_id, name, columns)
+                    }
                     _ => unreachable!("only new project requests enter this branch"),
                 })
                 .and_then(|candidate| {
@@ -2740,6 +2959,10 @@ fn is_tracker_spec(spec: &CollectionSpec) -> bool {
         })
 }
 
+fn is_native_table_spec(spec: &CollectionSpec) -> bool {
+    spec.native_table_rows
+}
+
 fn copy_position(spec: &CollectionSpec, field: &FieldRef) -> Result<(usize, usize), DesignerError> {
     let row = spec
         .entities
@@ -2841,6 +3064,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                                 )
                             })
                     }),
+                    native_table_rows: is_native_table_schema(document, schema, &entities),
                     summary,
                     columns: {
                         let mut fields = schema.fields.values().collect::<Vec<_>>();
@@ -3454,6 +3678,33 @@ struct MoonfallIds {
     entities: VecDeque<String>,
 }
 
+struct NewTableIds {
+    namespace: String,
+    serial: usize,
+}
+
+impl NewTableIds {
+    fn new(namespace: &str) -> Self {
+        Self {
+            namespace: namespace.to_owned(),
+            serial: 0,
+        }
+    }
+}
+
+impl IdGenerator for NewTableIds {
+    fn generate(&mut self, kind: SemanticIdKind) -> String {
+        self.serial += 1;
+        let kind = match kind {
+            SemanticIdKind::Document => "document",
+            SemanticIdKind::Schema => "schema",
+            SemanticIdKind::Field => "field",
+            SemanticIdKind::Entity => "entity",
+        };
+        format!("native_table_{kind}_{:04}_{}", self.serial, self.namespace)
+    }
+}
+
 impl MoonfallIds {
     fn new() -> Self {
         Self {
@@ -3538,9 +3789,143 @@ fn tracker_row(
     }
 }
 
+fn native_table_row(
+    document: &Document,
+    spec: &CollectionSpec,
+    row_serial: usize,
+    namespace: &str,
+    allocated: &mut BTreeSet<EntityId>,
+) -> Result<Entity, DesignerError> {
+    let mut serial = row_serial.saturating_add(1);
+    loop {
+        let id = EntityId::from(format!("native_table_row_{serial:04}_{namespace}"));
+        let key = EntityKey::from(format!("row_{serial:04}"));
+        if !document.entities.contains_key(&id)
+            && !allocated.contains(&id)
+            && !document.entities.values().any(|entity| entity.key == key)
+        {
+            allocated.insert(id.clone());
+            let mut fields = BTreeMap::new();
+            for column in &spec.columns {
+                let value = match &column.field_type {
+                    FieldType::Text => Value::Text(String::new()),
+                    FieldType::Number => Value::Number(Number::new(0.0).expect("zero is finite")),
+                    FieldType::Boolean => Value::Boolean(false),
+                    FieldType::Date => {
+                        Value::Date(Date::parse("1970-01-01").expect("fixed Gregorian fixture"))
+                    }
+                    FieldType::Reference { .. } => {
+                        return Err(table_error(
+                            "native table rows do not support reference columns",
+                        ));
+                    }
+                };
+                fields.insert(column.id.clone(), value);
+            }
+            return Ok(Entity {
+                id,
+                key,
+                schema: SchemaId::from(spec.summary.id.clone()),
+                fields,
+            });
+        }
+        serial += 1;
+    }
+}
+
+fn is_native_table_schema(document: &Document, schema: &Schema, entities: &[EntityId]) -> bool {
+    let Some(namespace) = schema.id.as_str().strip_prefix("native_table_schema_0002_") else {
+        return false;
+    };
+    if namespace.is_empty()
+        || document.id.as_str() != format!("native_table_document_0001_{namespace}")
+        || schema.fields.is_empty()
+    {
+        return false;
+    }
+    let suffix = format!("_{namespace}");
+    schema.fields.values().all(|field| {
+        field.required
+            && opaque_native_table_id(field.id.as_str(), "native_table_field_", &suffix)
+            && matches!(
+                field.field_type,
+                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            )
+    }) && entities.iter().all(|entity| {
+        opaque_native_table_row_id(entity.as_str())
+            && document.entities.get(entity).is_some_and(|row| {
+                row.schema == schema.id && row.fields.len() == schema.fields.len()
+            })
+    })
+}
+
+fn opaque_native_table_row_id(value: &str) -> bool {
+    let Some(serial_and_namespace) = value.strip_prefix("native_table_row_") else {
+        return false;
+    };
+    let Some((serial, namespace)) = serial_and_namespace.split_once('_') else {
+        return false;
+    };
+    serial.len() == 4 && serial.bytes().all(|byte| byte.is_ascii_digit()) && !namespace.is_empty()
+}
+
+fn opaque_native_table_id(value: &str, prefix: &str, suffix: &str) -> bool {
+    value
+        .strip_prefix(prefix)
+        .and_then(|serial| serial.strip_suffix(suffix))
+        .is_some_and(|serial| serial.len() == 4 && serial.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn row_serial_from_id(id: &str) -> Option<usize> {
+    ["tracker_row_", "native_table_row_"]
+        .iter()
+        .find_map(|prefix| {
+            id.strip_prefix(prefix)
+                .and_then(|suffix| suffix.split('_').next()?.parse::<usize>().ok())
+        })
+}
+
 fn tracker_error(message: &str) -> DesignerError {
     DesignerError::InvalidTrackerOperation {
         message: message.to_owned(),
+    }
+}
+
+fn table_error(message: &str) -> DesignerError {
+    DesignerError::InvalidTableOperation {
+        message: message.to_owned(),
+    }
+}
+
+fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
+    let key = label.trim().to_ascii_lowercase();
+    let mut characters = key.chars();
+    let valid = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && characters.all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '_' | '-')
+        });
+    if valid {
+        Ok(key)
+    } else {
+        Err(table_error(&format!(
+            "{kind} must use letters, numbers, '-' or '_'"
+        )))
+    }
+}
+
+fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
+    match input.to_ascii_lowercase().as_str() {
+        "text" => Ok(FieldType::Text),
+        "number" => Ok(FieldType::Number),
+        "boolean" => Ok(FieldType::Boolean),
+        "date" => Ok(FieldType::Date),
+        _ => Err(table_error(
+            "column type must be Text, Number, Boolean, or Date",
+        )),
     }
 }
 

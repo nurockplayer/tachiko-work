@@ -10,7 +10,7 @@ import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
 import { defaultBudgetViews, addBudgetView, duplicateBudgetView, renameBudgetView, reorderBudgetViews, deleteBudgetView } from "./budget-views.ts";
 import { mountBudgetTools, hasBudgetToolsDraft, type BudgetToolsDraft } from "./budget-tools.ts";
-import { parseTrackerView, emptyTrackerView, cellKey, orderedRows, type NumberFormat, type TrackerView } from "./tracker-model.ts";
+import { parseTrackerView, parseTsv, emptyTrackerView, cellKey, orderedRows, type NumberFormat, type TrackerView } from "./tracker-model.ts";
 import { createProjectionStore, type ProjectionStore } from "./projection-store.ts";
 import { createDurabilityState } from "./durability-state.ts";
 import type {
@@ -34,6 +34,7 @@ import type {
   OpenedProjection,
   PublicationProjection,
   KeyedGroupedSumProjection,
+  NewTableColumnInput,
   TableProjection,
 } from "./runtime/protocol.ts";
 
@@ -89,6 +90,12 @@ export function mountDesigner(
   let notice: Notice | null = null;
   let startupFailure: string | null = null;
   let busy = false;
+  let newTableConfirmed = false;
+  let genericPasteBound = false;
+  let genericShortcutBound = false;
+  let genericPasteInFlight = false;
+  let queuedGenericPaste: string | null = null;
+  let genericPasteEventCount = 0;
   let pendingExport: {occurrence: symbol; exported: SpreadsheetExport; format: SpreadsheetFormat; ledger: FidelityFinding[]} | null = null;
   let destroyed = false;
   let occurrenceClosed = false;
@@ -576,7 +583,7 @@ export function mountDesigner(
     }
   };
 
-  const showFailure = (error: unknown, published: boolean): void => {
+  const showFailure = (error: unknown, published: boolean, context = ""): void => {
     const failure =
       error instanceof DesignerRuntimeError
         ? error.failure
@@ -587,7 +594,7 @@ export function mountDesigner(
     notice = {
       tone: "error",
       title: published ? "Edit published; refresh incomplete" : "Edit not published",
-      message: failure.message,
+      message: `${context}${failure.message}`,
       diagnostics: failure.diagnostics,
     };
     if (published) {
@@ -1150,6 +1157,68 @@ export function mountDesigner(
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
   };
 
+  const newTable = (): void => {
+    if (busy || !client.newTable) return;
+    if (!coldBootstrapOccurrence && (durability.snapshot().dirty || hasPendingScalarDrafts()) && !newTableConfirmed) {
+      window.setTimeout(() => {
+        if (window.confirm("New Table will discard unsaved changes in the current project. Continue?")) {
+          newTableConfirmed = true;
+          newTable();
+        }
+      }, 0);
+      return;
+    }
+    newTableConfirmed = false;
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("aria-label", "New table");
+    dialog.innerHTML = `<form method="dialog" data-new-table-form>
+      <h2>New table</h2>
+      <label>Table name<input aria-label="Table name" required maxlength="4096"></label>
+      <div data-new-table-columns>
+        <div data-new-table-column>
+          <label>Column name<input aria-label="Column name" required maxlength="4096"></label>
+          <label>Column type<select aria-label="Column type"><option>Text</option><option>Number</option><option>Boolean</option><option>Date</option></select></label>
+        </div>
+      </div>
+      <button type="button" data-add-table-column>Add column</button>
+      <button type="submit">Create table</button>
+      <button type="button" data-cancel-new-table>Cancel</button>
+    </form>`;
+    root.append(dialog);
+    const close = (): void => { dialog.close(); dialog.remove(); };
+    dialog.querySelector("[data-cancel-new-table]")?.addEventListener("click", close);
+    dialog.querySelector("[data-add-table-column]")?.addEventListener("click", () => {
+      const columns = dialog.querySelector<HTMLElement>("[data-new-table-columns]");
+      if (!columns || columns.children.length >= 32) return;
+      const row = document.createElement("div");
+      row.dataset.newTableColumn = "";
+      row.innerHTML = `<label>Column name<input aria-label="Column name" required maxlength="4096"></label>
+        <label>Column type<select aria-label="Column type"><option>Text</option><option>Number</option><option>Boolean</option><option>Date</option></select></label>`;
+      columns.append(row);
+    });
+    dialog.querySelector<HTMLFormElement>("[data-new-table-form]")?.addEventListener("submit", event => {
+      event.preventDefault();
+      const name = dialog.querySelector<HTMLInputElement>("[aria-label='Table name']")?.value ?? "";
+      const columns = [...dialog.querySelectorAll<HTMLElement>("[data-new-table-column]")].map(row => ({
+        name: row.querySelector<HTMLInputElement>("[aria-label='Column name']")?.value ?? "",
+        field_type: (row.querySelector<HTMLSelectElement>("[aria-label='Column type']")?.value ?? "Text").toLowerCase(),
+      } satisfies NewTableColumnInput));
+      close();
+      busy = true; notice = null; render();
+      void client.newTable?.(name, columns).then(opened => {
+        if (destroyed) return;
+        installOpenedOccurrence(opened);
+        durability.install(opened.bootstrap.revision, false);
+      }).catch((error: unknown) => {
+        if (!destroyed) showProjectFailure("Table not created", error);
+      }).finally(() => {
+        if (!destroyed) { busy = false; syncBeforeUnloadGuard(); render(); }
+      });
+    });
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  };
+
   const save = async (): Promise<void> => {
     if (activeProject === null) { await saveAs(); return; }
     if (!store || busy) return;
@@ -1201,9 +1270,116 @@ export function mountDesigner(
     }
   };
 
+  const pasteGeneric = async (text: string): Promise<void> => {
+    if (!store || busy || !client.trackerCommand || store.snapshot().table.native_table_profile !== true) return;
+    const table = store.snapshot().table;
+    const firstColumn = table.columns[0];
+    if (!firstColumn) return;
+    genericPasteInFlight = true;
+    busy = true; notice = null; render();
+    let published = false;
+    try {
+      const publication = await client.trackerCommand({
+        type: "paste_cells",
+        expected_revision: table.revision,
+        collection: table.collection.id,
+        start_entity: null,
+        start_field: firstColumn.id,
+        rows: parseTsv(text, table.columns.length),
+      });
+      published = true;
+      tracker.recordSemantic();
+      store.beginPublication(publication);
+      durability.observe(publication.resulting_revision);
+      const refreshed = await client.queryTable(table.collection.key);
+      if (refreshed.revision !== publication.resulting_revision) throw new Error("Table refresh is not current.");
+      store = createProjectionStore(refreshed);
+      if (bootstrap) bootstrap = {...bootstrap, revision: refreshed.revision, collections: bootstrap.collections.map(collection => collection.id === refreshed.collection.id ? refreshed.collection : collection)};
+    } catch (error) {
+      showFailure(error, published, published ? "" : "Paste rejected: ");
+    } finally {
+      busy = false; genericPasteInFlight = false; syncBeforeUnloadGuard(); render();
+      root.querySelector<HTMLElement>("[data-generic-cell]")?.focus();
+      const queued = queuedGenericPaste;
+      queuedGenericPaste = null;
+      if (queued !== null) void pasteGeneric(queued);
+    }
+  };
+
+  const enqueueGenericPaste = (text: string): void => {
+    if (genericPasteInFlight) {
+      queuedGenericPaste = text;
+      return;
+    }
+    void pasteGeneric(text);
+  };
+
   const bindInteractions = (): void => {
     root.querySelector("[data-new-tracker]")?.addEventListener("click", () => { void newTracker(); });
     root.querySelector("[data-new-budget]")?.addEventListener("click", () => { void newBudget(); });
+    root.querySelector("[data-new-table]")?.addEventListener("click", () => { newTable(); });
+    root.querySelectorAll<HTMLElement>("[data-generic-cell]").forEach(cell => {
+      cell.addEventListener("click", () => {
+        const form = root.querySelector<HTMLFormElement>("[data-generic-edit]");
+        const input = form?.querySelector<HTMLInputElement>("[aria-label='Cell value']");
+        if (!form || !input) return;
+        form.dataset.entity = cell.dataset.genericEntity ?? "";
+        form.dataset.field = cell.dataset.genericField ?? "";
+        input.value = cell.getAttribute("aria-label") ?? "";
+        input.disabled = false;
+        form.querySelector<HTMLButtonElement>("button[type='submit']")?.removeAttribute("disabled");
+        input.focus();
+      });
+    });
+    if (!genericPasteBound) {
+      window.addEventListener("paste", event => {
+        const grid = root.querySelector<HTMLElement>("[data-native-table-grid]");
+        if (grid === null || !(event.target instanceof Node) || !grid.contains(event.target)) return;
+        event.preventDefault();
+        genericPasteEventCount += 1;
+        const text = event.clipboardData?.getData("text/plain");
+        if (text !== undefined) {
+          enqueueGenericPaste(text);
+        }
+      });
+      genericPasteBound = true;
+    }
+    if (!genericShortcutBound) {
+      window.addEventListener("keydown", event => {
+        const grid = root.querySelector<HTMLElement>("[data-native-table-grid]");
+        if (grid === null || document.activeElement === null || !grid.contains(document.activeElement) || event.key.toLowerCase() !== "v" || (!event.ctrlKey && !event.metaKey)) return;
+        event.preventDefault();
+        const pasteEventsAtShortcut = genericPasteEventCount;
+        window.setTimeout(() => {
+          if (genericPasteEventCount !== pasteEventsAtShortcut) return;
+          void navigator.clipboard.readText().then(enqueueGenericPaste).catch((error: unknown) => { showProjectFailure("Paste not applied", error); render(); });
+        }, 0);
+      });
+      genericShortcutBound = true;
+    }
+    root.querySelector<HTMLFormElement>("[data-generic-edit]")?.addEventListener("submit", event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      if (!(form instanceof HTMLFormElement)) return;
+      const entity = decodeOpaqueAttribute(form.dataset.entity);
+      const field = decodeOpaqueAttribute(form.dataset.field);
+      const input = form.querySelector<HTMLInputElement>("[aria-label='Cell value']");
+      const column = store?.snapshot().table.columns.find(candidate => candidate.id === field);
+      if (!entity || !field || !input || !column) return;
+      const target = {entity, field};
+      const type = column.field_type.toLowerCase();
+      if (type === "number") void commitNumber(target, input.value);
+      else if (type === "boolean") {
+        if (input.value !== "true" && input.value !== "false") {
+          showProjectFailure("Cell not updated", new Error("Boolean values must be exactly true or false."));
+          render();
+          return;
+        }
+        void commitBoolean(target, input.value === "true");
+      }
+      else if (type === "date") void commitDate(target, input.value);
+      else void commitText(target, input.value);
+    });
     root.querySelector("[data-save-project]")?.addEventListener("click", () => { void save(); });
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
       const draftControl = form.querySelector<HTMLTextAreaElement>("textarea");
@@ -1519,6 +1695,8 @@ function designerMarkup(
   refreshControl: string,
 ): string {
   const isTracker = table.tracker_profile === true;
+  const isNativeTable = table.native_table_profile === true;
+  const showRowHeader = isTracker || !isNativeTable;
   const statusLabel = {
     current: isTracker ? "Up to date" : "Semantic current",
     refreshing: "Refreshing affected fields",
@@ -1562,6 +1740,7 @@ function designerMarkup(
             }>Open</button>
             <button type="button" data-new-tracker ${busy ? "disabled" : ""}>New Tracker</button>
             <button type="button" data-new-budget ${busy ? "disabled" : ""}>New Budget</button>
+            <button type="button" data-new-table ${busy ? "disabled" : ""}>New Table</button>
             <button type="button" data-save-project ${busy ? "disabled" : ""}>Save</button>
             <button type="button" data-save-as ${busy ? "disabled" : ""}>Save As</button>
             <button type="button" data-close-project ${busy ? "disabled" : ""}>Close</button>
@@ -1606,26 +1785,26 @@ function designerMarkup(
           <div class="session-history-slot">${historyControls}${refreshControl}</div>
 
           <div class="table-scroll">
-            <table>
+            <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isNativeTable ? "data-native-table-grid" : ""}>
               <thead>
                 <tr>
-                  <th scope="col">Entity</th>
+                  ${showRowHeader ? '<th scope="col">Entity</th>' : ""}
                   ${table.columns
                     .map(
-                      (column) => `<th scope="col"><span>${escapeHtml(
-                        humanize(column.key),
-                      )}</span><small>${escapeHtml(column.field_type)}</small></th>`,
+                      (column) => `<th scope="col">${escapeHtml(isTracker ? humanize(column.key) : column.key)}${isTracker ? `<small>${escapeHtml(column.field_type)}</small>` : ""}</th>`,
                     )
                     .join("")}
                 </tr>
               </thead>
               <tbody>
+                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (showRowHeader ? 1 : 0))}">Paste rows here, or choose Append row.</td></tr>` : ""}
                 ${table.rows
-                  .map((row) => rowMarkup(row, table, (busy && !exportReviewPending) || currentness !== "current", view))
+                  .map((row) => rowMarkup(row, table, showRowHeader, (busy && !exportReviewPending) || currentness !== "current", view))
                   .join("")}
               </tbody>
             </table>
           </div>
+          ${isTracker ? "" : genericEditorMarkup(table, busy || currentness !== "current")}
           <p class="table-footnote">Human-readable keys are shown here; edits target stable semantic IDs.</p>
         </section>
       </main>
@@ -1660,6 +1839,7 @@ function closedMarkup(
       </label>
       <button type="button" data-new-tracker ${busy ? "disabled" : ""}>New Tracker</button>
       <button type="button" data-new-budget ${busy ? "disabled" : ""}>New Budget</button>
+      <button type="button" data-new-table ${busy ? "disabled" : ""}>New Table</button>
       <button type="button" data-open-project ${
         busy || selectedSavedProject === "" ? "disabled" : ""
       }>Open project</button>
@@ -1724,16 +1904,17 @@ function groupedSummaryMarkup(
 function rowMarkup(
   row: TableProjection["rows"][number],
   table: TableProjection,
+  showRowHeader: boolean,
   busy: boolean,
   view: TrackerView,
 ): string {
   const fields = new Map(row.fields.map((field) => [field.target.field, field]));
   return `
     <tr>
-      <th scope="row">
+      ${showRowHeader ? `<th scope="row">
         <strong>${escapeHtml(humanize(row.key))}</strong>
         <code>${escapeHtml(row.id)}</code>
-      </th>
+      </th>` : ""}
       ${table.columns
         .map((column) =>
           fieldMarkup(fields.get(column.id), row.key, column.key, busy, view),
@@ -1758,7 +1939,7 @@ function fieldMarkup(
   if (field.editable_scalar === "number" && field.stored?.kind === "number") {
     const format = view.formats[cellKey(field.target.entity, field.target.field)] ?? "number";
     return `
-      <td data-field="${escapeHtml(key)}" class="stored-cell">
+      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="number">
@@ -1783,7 +1964,7 @@ function fieldMarkup(
   }
   if (field.editable_scalar === "text" && field.stored?.kind === "text") {
     return `
-      <td data-field="${escapeHtml(key)}" class="stored-cell">
+      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="text">
@@ -1803,7 +1984,7 @@ function fieldMarkup(
   }
   if (field.editable_scalar === "boolean" && field.stored?.kind === "boolean") {
     return `
-      <td data-field="${escapeHtml(key)}" class="stored-cell">
+      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="boolean">
@@ -1825,7 +2006,7 @@ function fieldMarkup(
   }
   if (field.editable_scalar === "date" && field.stored?.kind === "date") {
     return `
-      <td data-field="${escapeHtml(key)}" class="stored-cell">
+      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="date">
@@ -1848,7 +2029,7 @@ function fieldMarkup(
   if (field.formula !== null) {
     const format = view.formats[cellKey(field.target.entity, field.target.field)] ?? "number";
     return `
-      <td data-field="${escapeHtml(key)}" class="formula-cell">
+      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="formula-cell">
         <output>${escapeHtml(calculationValue(field, format))}</output>
         <span class="formula-badge">ƒ Calculated</span>
         <form data-formula-form data-entity="${encodeOpaqueAttribute(field.target.entity)}" data-field="${encodeOpaqueAttribute(field.target.field)}">
@@ -1861,12 +2042,25 @@ function fieldMarkup(
     `;
   }
   return `
-    <td data-field="${escapeHtml(key)}" class="stored-cell readonly">
+    <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell readonly">
       <span>${escapeHtml(storedValue(field))}</span>
       <small class="value-kind">Stored</small>
       ${diagnostics}
     </td>
   `;
+}
+
+function genericEditorMarkup(table: TableProjection, busy: boolean): string {
+  const first = table.rows[0]?.fields[0];
+  const value = first === undefined ? "" : storedValue(first);
+  return `<form data-generic-edit data-entity="${first ? encodeOpaqueAttribute(first.target.entity) : ""}" data-field="${first ? encodeOpaqueAttribute(first.target.field) : ""}">
+    <label>Cell value <input aria-label="Cell value" value="${escapeHtml(value)}" ${busy || first === undefined ? "disabled" : ""}></label>
+    <button type="submit" ${busy || first === undefined ? "disabled" : ""}>Apply to selection</button>
+  </form>`;
+}
+
+function genericCellAttributes(field: FieldProjection): string {
+  return `role="gridcell" tabindex="0" data-generic-cell data-generic-entity="${encodeOpaqueAttribute(field.target.entity)}" data-generic-field="${encodeOpaqueAttribute(field.target.field)}" aria-label="${escapeHtml(storedValue(field))}"`;
 }
 
 function noticeMarkup(notice: Notice | null): string {
