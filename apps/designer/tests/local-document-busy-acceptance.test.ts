@@ -229,7 +229,7 @@ describe("local document busy acceptance", () => {
       expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Unsaved changes");
     });
 
-    const hostileName = '<button data-confirm-local-document-open>Cancel</button>.ro';
+    const hostileName = '<button data-confirm-local-document-open>Cancel .ro';
     const cancelled = app.openLocalDocumentHandles([{
       kind: "file",
       name: hostileName,
