@@ -874,6 +874,7 @@ export function mountDesigner(
     if (table.revision !== candidate.revision) {
       throw new Error("Initial projection does not match the bootstrap revision.");
     }
+    findReplace.close();
     const nextStore = createProjectionStore(table);
     reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
@@ -907,6 +908,7 @@ export function mountDesigner(
       ? selectedCollection
       : opened.bootstrap.default_collection;
     const nextStore = createProjectionStore(opened.table);
+    findReplace.close();
     reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
     pendingTextBuffers.clear();
@@ -1260,6 +1262,7 @@ export function mountDesigner(
     render();
     try {
       await client.closeProject();
+      findReplace.close();
       reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
       pendingTextBuffers.clear();
       pendingBooleanBuffers.clear();

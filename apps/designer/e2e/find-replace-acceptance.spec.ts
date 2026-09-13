@@ -127,7 +127,7 @@ test("replace all previews the complete scoped set, publishes once, survives Und
   await expect(page.getByRole("gridcell", { name: "Done", exact: true })).toHaveCount(4);
 
   await saveAs(page, "find-replace.roproj");
-  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("banner").getByRole("button", { name: "Close", exact: true }).click();
   await page.getByLabel("Saved project", { exact: true }).selectOption("find-replace.roproj");
   await page.getByRole("button", { name: "Open project", exact: true }).click();
   await expect(page.getByRole("gridcell", { name: "Done", exact: true })).toHaveCount(4);
@@ -164,6 +164,27 @@ test("editing either preview input with real multi-keystroke typing invalidates 
   await page.keyboard.type("!");
   await expect(replacement).toBeFocused();
   await expect(replacement).toHaveValue("Grac!e");
+});
+
+test("reopening the same resident occurrence discards an uncommitted replace-all preview", async ({ page }) => {
+  await createFindTable(
+    page,
+    "Ada\tAda\t12\ttrue\t2026-09-13\nAda\tother\t12\tfalse\t2026-09-14\nother\tAda\t12\ttrue\t2026-09-15",
+  );
+  await saveAs(page, "find-replace-stale-preview.roproj");
+  const dialog = await openFindReplace(page);
+  await scopeToNameAndNote(dialog);
+  await dialog.getByRole("textbox", { name: "Find text", exact: true }).fill("Ada");
+  await dialog.getByRole("textbox", { name: "Replace text", exact: true }).fill("Done");
+  await dialog.getByRole("button", { name: "Preview replace all", exact: true }).click();
+  await expect(dialog.getByLabel("Replace all preview", { exact: true })).toBeVisible();
+
+  await page.getByRole("banner").getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByLabel("Saved project", { exact: true }).selectOption("find-replace-stale-preview.roproj");
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  const reopened = await openFindReplace(page);
+  await expect(reopened.getByLabel("Replace all preview", { exact: true })).toHaveCount(0);
+  await expect(reopened.getByRole("button", { name: "Commit replace all", exact: true })).toBeDisabled();
 });
 
 test("Text replacement does not rewrite a matching rendered Number value", async ({ page }) => {
