@@ -1696,6 +1696,7 @@ function designerMarkup(
 ): string {
   const isTracker = table.tracker_profile === true;
   const isNativeTable = table.native_table_profile === true;
+  const showRowHeader = isTracker || !isNativeTable;
   const statusLabel = {
     current: isTracker ? "Up to date" : "Semantic current",
     refreshing: "Refreshing affected fields",
@@ -1787,7 +1788,7 @@ function designerMarkup(
             <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isNativeTable ? "data-native-table-grid" : ""}>
               <thead>
                 <tr>
-                  ${isTracker ? '<th scope="col">Entity</th>' : ""}
+                  ${showRowHeader ? '<th scope="col">Entity</th>' : ""}
                   ${table.columns
                     .map(
                       (column) => `<th scope="col">${escapeHtml(isTracker ? humanize(column.key) : column.key)}${isTracker ? `<small>${escapeHtml(column.field_type)}</small>` : ""}</th>`,
@@ -1796,9 +1797,9 @@ function designerMarkup(
                 </tr>
               </thead>
               <tbody>
-                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (isTracker ? 1 : 0))}">Paste rows here, or choose Append row.</td></tr>` : ""}
+                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (showRowHeader ? 1 : 0))}">Paste rows here, or choose Append row.</td></tr>` : ""}
                 ${table.rows
-                  .map((row) => rowMarkup(row, table, isTracker, (busy && !exportReviewPending) || currentness !== "current", view))
+                  .map((row) => rowMarkup(row, table, showRowHeader, (busy && !exportReviewPending) || currentness !== "current", view))
                   .join("")}
               </tbody>
             </table>
