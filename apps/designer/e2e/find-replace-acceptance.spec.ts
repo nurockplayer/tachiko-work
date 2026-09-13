@@ -133,6 +133,39 @@ test("replace all previews the complete scoped set, publishes once, survives Und
   await expect(page.getByRole("gridcell", { name: "Done", exact: true })).toHaveCount(4);
 });
 
+test("editing either preview input with real multi-keystroke typing invalidates immediately without losing focus or caret", async ({ page }) => {
+  await createFindTable(
+    page,
+    "Ada\tAda\t12\ttrue\t2026-09-13\nAda\tother\t12\tfalse\t2026-09-14\nother\tAda\t12\ttrue\t2026-09-15",
+  );
+  const dialog = await openFindReplace(page);
+  await scopeToNameAndNote(dialog);
+  const find = dialog.getByRole("textbox", { name: "Find text", exact: true });
+  const replacement = dialog.getByRole("textbox", { name: "Replace text", exact: true });
+  await find.click();
+  await page.keyboard.type("Ada");
+  await replacement.click();
+  await page.keyboard.type("Done");
+  await dialog.getByRole("button", { name: "Preview replace all", exact: true }).click();
+  await expect(dialog.getByLabel("Replace all preview", { exact: true })).toBeVisible();
+
+  await find.click();
+  await page.keyboard.press(`${shortcut}+A`);
+  await page.keyboard.type("Ada again");
+  await expect(find).toBeFocused();
+  await expect(find).toHaveValue("Ada again");
+  await expect(dialog.getByLabel("Replace all preview", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Commit replace all", exact: true })).toBeDisabled();
+
+  await replacement.click();
+  await page.keyboard.press(`${shortcut}+A`);
+  await page.keyboard.type("Grace");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type("!");
+  await expect(replacement).toBeFocused();
+  await expect(replacement).toHaveValue("Grac!e");
+});
+
 test("Text replacement does not rewrite a matching rendered Number value", async ({ page }) => {
   await createFindTable(
     page,

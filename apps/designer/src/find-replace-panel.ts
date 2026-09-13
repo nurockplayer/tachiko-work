@@ -76,6 +76,10 @@ export class FindReplacePanel {
   #invalidatePreview(): void {
     this.#preview = null;
     this.#generation += 1;
+    const dialog = this.#root?.querySelector("[data-find-replace-dialog]");
+    dialog?.querySelector("[data-find-replace-preview]")?.remove();
+    const commit = dialog?.querySelector<HTMLButtonElement>("[data-find-action='commit']");
+    if (commit) commit.disabled = true;
   }
 
   #refreshMatches(): void {
@@ -116,7 +120,7 @@ export class FindReplacePanel {
       <fieldset><legend>Text fields</legend>${available.map(column => `<label><input type="checkbox" aria-label="${escapeHtml(column.key)}" value="${escapeHtml(column.id)}" ${this.#selected.has(column.id) ? "checked" : ""}>${escapeHtml(column.key)}</label>`).join("") || "<p>No Text fields are available.</p>"}</fieldset>
       <p role="status">${escapeHtml(this.#message)} ${String(this.#matches.length)} ${this.#matches.length === 1 ? "match" : "matches"}.${current ? ` Current: ${escapeHtml(current.column)} in ${escapeHtml(current.row)}.` : ""}</p>
       <div><button type="button" data-find-action="next">Find next</button><button type="button" data-find-action="current" ${this.#current < 0 ? "disabled" : ""}>Replace current</button><button type="button" data-find-action="preview">Preview replace all</button><button type="button" data-find-action="commit" ${preview === null ? "disabled" : ""}>Commit replace all</button><button type="button" data-find-action="close">Close</button></div>
-      ${preview === null ? "" : `<section aria-label="Replace all preview"><h3>Replace all preview</h3><p>${String(preview.value.changes.length)} changes at revision ${escapeHtml(preview.value.revision)}.</p><ul>${preview.value.changes.map(change => { const match = this.#matches.find(item => item.target.entity === change.target.entity && item.target.field === change.target.field); return `<li>${escapeHtml(match?.column ?? change.target.field)} in ${escapeHtml(match?.row ?? change.target.entity)}</li>`; }).join("")}</ul></section>`}
+      ${preview === null ? "" : `<section data-find-replace-preview aria-label="Replace all preview"><h3>Replace all preview</h3><p>${String(preview.value.changes.length)} changes at revision ${escapeHtml(preview.value.revision)}.</p><ul>${preview.value.changes.map(change => { const match = this.#matches.find(item => item.target.entity === change.target.entity && item.target.field === change.target.field); return `<li>${escapeHtml(match?.column ?? change.target.field)} in ${escapeHtml(match?.row ?? change.target.entity)}</li>`; }).join("")}</ul></section>`}
     </form>`;
     (root.querySelector(".table-workbench") ?? root).append(dialog);
     const find = dialog.querySelector<HTMLInputElement>("[aria-label='Find text']");
@@ -128,12 +132,10 @@ export class FindReplacePanel {
     find?.addEventListener("input", () => {
       this.#find = find.value;
       this.#invalidatePreview();
-      this.#render(disabled);
     });
     replacement?.addEventListener("input", () => {
       this.#replacement = replacement.value;
       this.#invalidatePreview();
-      this.#render(disabled);
     });
     dialog.querySelectorAll<HTMLInputElement>("input[type='checkbox']").forEach(control => { control.addEventListener("change", () => {
       if (control.checked) this.#selected.add(control.value); else this.#selected.delete(control.value);
