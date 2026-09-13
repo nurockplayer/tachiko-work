@@ -26,8 +26,9 @@ async function createFindTable(page: Page, rows: string): Promise<void> {
     await dialog.getByLabel("Column type", { exact: true }).nth(index).selectOption({ label: type });
   }
   await dialog.getByRole("button", { name: "Create table", exact: true }).click();
-  await expect(page.getByRole("grid", { name: "FindCanary cells", exact: true })).toBeVisible();
-  await page.getByRole("gridcell", { name: "Paste rows here, or choose Append row." }).click();
+  const grid = page.locator("[data-native-table-grid]");
+  await expect(grid).toBeVisible();
+  await grid.getByRole("gridcell", { name: "Paste rows here, or choose Append row." }).click();
   await paste(page, rows);
 }
 
