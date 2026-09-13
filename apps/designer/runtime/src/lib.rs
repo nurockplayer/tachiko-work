@@ -2224,7 +2224,11 @@ impl DesignerRuntime {
         let mut row_ids = RowIds::new(
             &self.row_namespace,
             self.row_serial,
-            if tracker { "tracker_row" } else { "native_table_row" },
+            if tracker {
+                "tracker_row"
+            } else {
+                "native_table_row"
+            },
         );
         for (offset, row) in rows.iter().enumerate() {
             let existing = spec
@@ -2239,18 +2243,9 @@ impl DesignerRuntime {
             let mut entity = existing.cloned().map_or_else(
                 || {
                     if tracker {
-                        Ok(tracker_row(
-                            document,
-                            &mut row_ids,
-                            &mut allocated,
-                        ))
+                        Ok(tracker_row(document, &mut row_ids, &mut allocated))
                     } else {
-                        native_table_row(
-                            document,
-                            &spec,
-                            &mut row_ids,
-                            &mut allocated,
-                        )
+                        native_table_row(document, &spec, &mut row_ids, &mut allocated)
                     }
                 },
                 Ok,

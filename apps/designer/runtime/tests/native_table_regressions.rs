@@ -198,11 +198,8 @@ fn row_paste_rejects_non_native_collections_before_row_construction() {
 
 #[test]
 fn scalar_row_authoring_survives_respelled_opaque_ids_and_reopen() {
-    let mut runtime = DesignerRuntime::from_document(
-        scalar_document(false, true),
-        OCCURRENCE,
-    )
-    .expect("a scalar-shaped document with respelled IDs must admit");
+    let mut runtime = DesignerRuntime::from_document(scalar_document(false, true), OCCURRENCE)
+        .expect("a scalar-shaped document with respelled IDs must admit");
     let initial = table(&mut runtime, "inventory");
     assert_eq!(initial.native_table_profile, Some(true));
     let initial_row = initial.rows[0].id.clone();
@@ -225,17 +222,19 @@ fn scalar_row_authoring_survives_respelled_opaque_ids_and_reopen() {
             collection: reopened_table.collection.id,
             start_entity: None,
             start_field: reopened_table.columns[0].id.clone(),
-            rows: vec![reopened_table
-                .columns
-                .iter()
-                .map(|column| match column.field_type.as_str() {
-                    "text" => "continued".to_owned(),
-                    "number" => "4".to_owned(),
-                    "boolean" => "false".to_owned(),
-                    "date" => "2026-02-01".to_owned(),
-                    other => panic!("scalar-shaped fixture has unsupported {other} column"),
-                })
-                .collect()],
+            rows: vec![
+                reopened_table
+                    .columns
+                    .iter()
+                    .map(|column| match column.field_type.as_str() {
+                        "text" => "continued".to_owned(),
+                        "number" => "4".to_owned(),
+                        "boolean" => "false".to_owned(),
+                        "date" => "2026-02-01".to_owned(),
+                        other => panic!("scalar-shaped fixture has unsupported {other} column"),
+                    })
+                    .collect(),
+            ],
         })
         .expect("reopened scalar-shaped table must allocate a row without parsing persisted IDs");
     let tachiko_designer_runtime::DesignerResponse::Published(publication) = publication else {
@@ -250,11 +249,8 @@ fn scalar_row_authoring_survives_respelled_opaque_ids_and_reopen() {
 
 #[test]
 fn legacy_looking_ids_do_not_grant_scalar_row_authoring_without_the_shape() {
-    let mut runtime = DesignerRuntime::from_document(
-        scalar_document(true, false),
-        OCCURRENCE,
-    )
-    .expect("a document with optional scalar fields must still admit normally");
+    let mut runtime = DesignerRuntime::from_document(scalar_document(true, false), OCCURRENCE)
+        .expect("a document with optional scalar fields must still admit normally");
     let initial = table(&mut runtime, "inventory");
     assert_ne!(initial.native_table_profile, Some(true));
 
@@ -270,5 +266,8 @@ fn legacy_looking_ids_do_not_grant_scalar_row_authoring_without_the_shape() {
             "2026-02-01".to_owned(),
         ]],
     });
-    assert!(result.is_err(), "legacy-looking IDs must not grant capability");
+    assert!(
+        result.is_err(),
+        "legacy-looking IDs must not grant capability"
+    );
 }
