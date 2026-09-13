@@ -189,4 +189,10 @@ test("deleting a duplicate view keeps it deleted across semantic undo and redo",
   await expect(view.getByRole("option", { name: "October Summary", exact: true })).toHaveCount(0);
   await history.getByRole("button", { name: "Redo", exact: true }).click();
   await expect(view.getByRole("option", { name: "October Summary", exact: true })).toHaveCount(0);
+
+  const collection = page.getByLabel("Collection", { exact: true });
+  const duplicateCollection = collection.locator("option", { hasText: "October-summary" });
+  await expect(duplicateCollection).toHaveCount(1);
+  await collection.selectOption(await duplicateCollection.getAttribute("value") ?? "");
+  await expect(collection.locator("option:checked")).toContainText("October-summary");
 });

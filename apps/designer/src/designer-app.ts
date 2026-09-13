@@ -131,6 +131,7 @@ export function mountDesigner(
   let groupedProductPrice = "";
   let budgetTables: TableProjection[] = [];
   const duplicatedBudgetViews = new Map<string, {view: {id: string; name: string; collection: string}; collection: CollectionSummary}>();
+  const deletedDuplicatedBudgetViews = new Set<string>();
   const findReplace = new FindReplacePanel({
     preview: async operation => {
       const snapshot = store?.snapshot();
@@ -830,7 +831,7 @@ export function mountDesigner(
     const available = new Set(loaded.map(table => table.collection.id));
     tracker.view.budgetViews.views = tracker.view.budgetViews.views.filter(view => available.has(view.collection));
     for (const record of duplicatedBudgetViews.values()) {
-      if (available.has(record.collection.id) && !tracker.view.budgetViews.views.some(view => view.id === record.view.id)) {
+      if (!deletedDuplicatedBudgetViews.has(record.collection.id) && available.has(record.collection.id) && !tracker.view.budgetViews.views.some(view => view.id === record.view.id)) {
         tracker.view.budgetViews.views.push(record.view);
       }
     }
@@ -885,7 +886,7 @@ export function mountDesigner(
           } else if (action === "delete") {
             const deleted = next.views.find(view => view.id === next?.active);
             next = deleteBudgetView(next, next.active);
-            if (deleted) duplicatedBudgetViews.delete(deleted.collection);
+            if (deleted) deletedDuplicatedBudgetViews.add(deleted.collection);
           }
           else {
             const order = next.views.map(v => v.id);
@@ -925,6 +926,7 @@ export function mountDesigner(
     store = nextStore;
     groupedTables.clear();
     duplicatedBudgetViews.clear();
+    deletedDuplicatedBudgetViews.clear();
     groupedTables.set(table.collection.key, table);
     groupedDefinitionId = candidate.keyed_grouped_sum_definition_ids?.[0] ?? null; groupedResult = null;
     groupedOrders = ""; groupedProducts = ""; groupedOrderLookup = ""; groupedOrderQuantity = "";
@@ -959,6 +961,7 @@ export function mountDesigner(
     store = nextStore;
     groupedTables.clear();
     duplicatedBudgetViews.clear();
+    deletedDuplicatedBudgetViews.clear();
     groupedTables.set(opened.table.collection.key, opened.table);
     groupedDefinitionId = opened.bootstrap.keyed_grouped_sum_definition_ids?.[0] ?? null; groupedResult = null;
     groupedOrders = ""; groupedProducts = ""; groupedOrderLookup = ""; groupedOrderQuantity = "";
@@ -1307,6 +1310,7 @@ export function mountDesigner(
         const ids = bootstrap.collections.map(collection => collection.id);
         const duplicateView = {id: duplicateViewId, name: name.trim(), collection: duplicated.collection.id};
         duplicatedBudgetViews.set(duplicated.collection.id, {view: duplicateView, collection: duplicated.collection});
+        deletedDuplicatedBudgetViews.delete(duplicated.collection.id);
         tracker.view.budgetViews = addBudgetView(
           tracker.view.budgetViews,
           duplicateView,
