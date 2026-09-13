@@ -2173,8 +2173,7 @@ impl PatchLifecycle {
             });
         }
         let schema_key_exists = super::AddressIndex::build(candidate)
-            .ok()
-            .is_some_and(|index| index.schema_id(&schema.key).is_ok());
+            .is_ok_and(|index| index.schema_id(&schema.key).is_ok());
         if schema_key_exists {
             return Err(WorkspaceError::SchemaKeyAlreadyExists {
                 schema: schema.key.clone(),
