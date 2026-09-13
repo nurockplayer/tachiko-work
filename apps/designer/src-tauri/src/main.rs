@@ -50,18 +50,53 @@ mod macos {
                 })
                 .collect()
         }
+
+        fn take_pending(&self) -> Vec<OpenedDocument> {
+            // Readiness and the sole cold-start latch share this mutex boundary.
+            // A delivery that observed `false` before we acquired the latch must
+            // recheck readiness after acquiring it, so it cannot enqueue after
+            // this one-shot take has already completed.
+            let mut pending = self
+                .pending
+                .lock()
+                .expect("pending opened-document latch is available");
+            self.frontend_ready.store(true, Ordering::Release);
+            pending.take().unwrap_or_default()
+        }
+
+        fn latch_before_frontend_ready(
+            &self,
+            documents: Vec<OpenedDocument>,
+        ) -> Result<(), Vec<OpenedDocument>> {
+            if self.frontend_ready.load(Ordering::Acquire) {
+                return Err(documents);
+            }
+
+            let mut pending = self
+                .pending
+                .lock()
+                .expect("pending opened-document latch is available");
+            if self.frontend_ready.load(Ordering::Acquire) {
+                return Err(documents);
+            }
+
+            if let Some(latched_documents) = pending.as_mut() {
+                // There is still only one cold-start handoff. If LaunchServices
+                // reports another open before the frontend is ready, retaining all
+                // grants makes the existing single-document ingress reject safely
+                // rather than silently choosing or dropping a file.
+                latched_documents.extend(documents);
+            } else {
+                *pending = Some(documents);
+            }
+            Ok(())
+        }
     }
 
     #[tauri::command]
     #[allow(clippy::needless_pass_by_value)] // Tauri extracts managed state by value.
     fn take_pending_opened_documents(state: State<'_, OpenedDocuments>) -> Vec<OpenedDocument> {
-        state.frontend_ready.store(true, Ordering::Release);
-        state
-            .pending
-            .lock()
-            .expect("pending opened-document latch is available")
-            .take()
-            .unwrap_or_default()
+        state.take_pending()
     }
 
     #[tauri::command]
@@ -96,25 +131,8 @@ mod macos {
     fn deliver_opened_documents(app: &AppHandle, urls: Vec<Url>) {
         let state = app.state::<OpenedDocuments>();
         let documents = state.grant(urls);
-        if state.frontend_ready.load(Ordering::Acquire) {
+        if let Err(documents) = state.latch_before_frontend_ready(documents) {
             let _ = app.emit(OPENED_DOCUMENTS_EVENT, documents);
-            return;
-        }
-
-        // This is the sole cold-start latch. It is taken and cleared once the
-        // frontend listener is ready; warm events are never queued here.
-        let mut pending = state
-            .pending
-            .lock()
-            .expect("pending opened-document latch is available");
-        if let Some(latched_documents) = pending.as_mut() {
-            // There is still only one cold-start handoff. If LaunchServices
-            // reports another open before the frontend is ready, retaining all
-            // grants makes the existing single-document ingress reject safely
-            // rather than silently choosing or dropping a file.
-            latched_documents.extend(documents);
-        } else {
-            *pending = Some(documents);
         }
     }
 
@@ -133,6 +151,39 @@ mod macos {
                 deliver_opened_documents(app, urls);
             }
         });
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{OpenedDocument, OpenedDocuments};
+
+        fn document(id: &str) -> OpenedDocument {
+            OpenedDocument {
+                id: id.to_owned(),
+                name: format!("{id}.ro"),
+            }
+        }
+
+        #[test]
+        fn pending_documents_are_taken_once_before_warm_delivery() {
+            let state = OpenedDocuments::default();
+            assert!(
+                state
+                    .latch_before_frontend_ready(vec![document("cold")])
+                    .is_ok()
+            );
+
+            let pending = state.take_pending();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].id, "cold");
+            assert!(state.take_pending().is_empty());
+
+            let warm = state
+                .latch_before_frontend_ready(vec![document("warm")])
+                .expect_err("ready frontend must receive direct delivery");
+            assert_eq!(warm.len(), 1);
+            assert_eq!(warm[0].id, "warm");
+        }
     }
 }
 
