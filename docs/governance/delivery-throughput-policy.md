@@ -3,7 +3,8 @@
 Status: Accepted governance policy when merged
 
 Decision issue: [#307](https://github.com/nurockplayer/tachiko-work/issues/307);
-amended by [#334](https://github.com/nurockplayer/tachiko-work/issues/334).
+amended by [#334](https://github.com/nurockplayer/tachiko-work/issues/334) and
+[#376](https://github.com/nurockplayer/tachiko-work/issues/376).
 
 ## Purpose
 
@@ -88,6 +89,28 @@ A stage that does not exist for the task does not need an artificial checkpoint.
 Re-read live Issue/PR authority and current Steward guidance at material boundaries, after an external authority change, before resuming mutation from HOLD, and before declaring merge readiness. Quiet local iteration inside an unchanged authorized stage does not require busy-wait synchronization.
 
 Keep the existing `agent-handoff:v1` and `project-steward-watch:v1` schemas unchanged and update their canonical comments in place.
+
+## Delivery integrity guardrails
+
+Operational automation must preserve a clean distinction between authoring, validation, and coordination.
+
+### Validation is non-authoring by default
+
+CI, review, and validation jobs may build, test, generate disposable artifacts, produce reports, or emit suggested patches as evidence. They must not repair tracked production source and then commit or push those repairs back to an implementation branch as part of the validation path.
+
+A failed check returns the defect to the implementation owner, which makes the repair as an ordinary reviewed commit and reruns validation. Repository-mutating automation requires separate explicit authority and must not be introduced incidentally to make a failing lane green. This rule does not prohibit generated build/test outputs, caches, reports, or other non-authoritative artifacts that are not committed and pushed as source changes.
+
+### Commits carry material repository state
+
+Do not create empty, no-op, or checkpoint-only commits merely to prove liveness, preserve acceptance ancestry, record review progress, or update handoff state. Operational progress belongs in the canonical GitHub handoff/watch/evidence surfaces. Create a commit when repository state materially changes: implementation, accepted test/specification repair, documentation, generated source that the repository intentionally versions, or another real tracked delta.
+
+Preserve already-published history normally. This rule is prospective and never authorizes force-push, history rewriting, or squashing away provenance merely because an earlier lane produced noisy commits.
+
+### High-risk contract seams escalate before direction hardens
+
+When implementation first reaches a durable format/storage contract, public consumer/API/type contract, semantic identity law, authorization/approval boundary, or another similarly expensive-to-reverse seam, the delivery lead explicitly rechecks controlling authority and the lane's risk class before committing to a direction.
+
+If current Accepted authority already selects one bounded implementation path, continue autonomously, including when that authority has already approved the relevant contract widening or stabilization. Escalate before continuing the seam only when more than one materially different direction remains plausible, the proposed widening or stabilization goes beyond what controlling authority already decides, or implementation pressure exposes a missing durable choice. In those cases obtain Project Steward reconciliation and risk-appropriate deep consultation rather than waiting for final review to discover the direction error. Routine reversible implementation details do not require escalation merely because they involve an API or type internally.
 
 ## Validation layering
 
