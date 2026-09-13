@@ -136,18 +136,12 @@ describe("local document busy acceptance", () => {
     const app = mountDesigner(root, client, host);
     await app.ready;
 
-    await app.openLocalDocumentHandles([{
-      kind: "file",
-      name: "seed.ro",
-      getFile: async () => new File(["opaque local bytes"], "seed.ro"),
-    }]);
-    client.localOpen.mockClear();
-
     const damage = root.querySelector<HTMLInputElement>(
       'input[aria-label="Damage for Iron Sword"]',
     );
     if (damage === null || damage.form === null) throw new Error("damage form is required");
     damage.value = "45";
+    damage.dispatchEvent(new InputEvent("input", { bubbles: true }));
     damage.form.requestSubmit();
     await vi.waitFor(() => {
       expect(client.editStarted).toBe(true);
@@ -161,6 +155,7 @@ describe("local document busy acceptance", () => {
     const cancelled = app.openLocalDocumentHandles([{
       kind: "file",
       name: "other.ro",
+      requiresInAppDirtyConfirmation: true,
       getFile: async () => new File(["opaque local bytes"], "other.ro"),
     }]);
     await vi.waitFor(() => {
@@ -169,12 +164,13 @@ describe("local document busy acceptance", () => {
     root.querySelector<HTMLButtonElement>("[data-cancel-local-document-open]")?.click();
     await cancelled;
     expect(client.localOpen).not.toHaveBeenCalled();
-    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Other Project");
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
     expect(root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')?.value).toBe("45");
 
     const confirmed = app.openLocalDocumentHandles([{
       kind: "file",
       name: "other.ro",
+      requiresInAppDirtyConfirmation: true,
       getFile: async () => new File(["opaque local bytes"], "other.ro"),
     }]);
     await vi.waitFor(() => {

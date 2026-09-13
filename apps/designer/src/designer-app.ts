@@ -1089,7 +1089,11 @@ export function mountDesigner(
         rejectBusyLocalDocument();
         return;
       }
-      if (!coldBootstrapOccurrence && !(await confirmDiscardDirtyLocalDocument(`Open '${document.name}'`))) return;
+      const nativeDirtyConfirmation = handles.length === 1 && handles[0]?.requiresInAppDirtyConfirmation === true;
+      const confirmed = nativeDirtyConfirmation
+        ? await confirmDiscardDirtyLocalDocument(`Open '${document.name}'`)
+        : confirmDiscardDirtyOccurrence(`Open '${document.name}'`);
+      if (!coldBootstrapOccurrence && !confirmed) return;
       busy = true;
       notice = null;
       render();

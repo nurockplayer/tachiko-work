@@ -50,6 +50,7 @@ function documentHandle(
   return {
     kind: "file",
     name: document.name,
+    requiresInAppDirtyConfirmation: true,
     async getFile(): Promise<File> {
       const bytes = openedDocumentBytes(await bridge.invoke("read_opened_document", { id: document.id }));
       return new File([bytes], document.name);
