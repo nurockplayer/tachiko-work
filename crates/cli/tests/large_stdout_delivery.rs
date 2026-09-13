@@ -131,8 +131,9 @@ fn large_structured_stdout_is_delivered_whole_through_a_pipe() {
             "piped attempt {attempt} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let _: JsonValue = serde_json::from_slice(&output.stdout)
-            .unwrap_or_else(|error| panic!("piped attempt {attempt} returned invalid JSON: {error}"));
+        let _: JsonValue = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!("piped attempt {attempt} returned invalid JSON: {error}")
+        });
         assert_eq!(
             output.stdout, reference,
             "piped attempt {attempt} differed from complete redirected stdout"
