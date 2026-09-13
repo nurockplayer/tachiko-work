@@ -88,12 +88,37 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --all-targets --locked
 ```
 
-Then make a clean local commit and run the complete release-equivalent gate on
-a supported native target (the commit does not need to be pushed):
+Then make a clean local commit and, by default, run the complete
+release-equivalent gate on a supported native target (the commit does not need
+to be pushed):
 
 ```sh
 bash scripts/release-check.sh
 ```
+
+The public-pre-alpha source/binary boundary in
+[`licensing-posture.md`](docs/governance/licensing-posture.md) has one bounded
+validation exception. The Project Steward may mark the distribution-only parts
+of `scripts/release-check.sh` not applicable to a source-integration PR only
+when all of the following are recorded on the owning Issue or PR:
+
+- the only full-gate limitation is notice/provenance closure for a future
+  packaged binary or installer;
+- every affected dependency has an identified compatible license;
+- the source change does not vendor, copy, or otherwise redistribute
+  third-party material with unsatisfied obligations; and
+- no correctness, security, data-integrity, source-package, test, or other
+  applicable repository gate is failing.
+
+For that bounded case, the authoritative source-integration gate is the fast
+workspace gate plus all applicable affected-component checks, exact-head hosted
+CI with every required job green, applicable Cargo source-package validation,
+and the normal exact-head independent review required by the repository
+delivery workflow. The PR must state that the full release-equivalent gate was
+not applicable because of the recorded distribution-only limitation and that
+no external binary distribution is authorized. This exception cannot turn an
+unknown or incompatible license, a source-redistribution obligation, or any
+other substantive failure into a pass.
 
 For ephemeral Codex validation, use the repository-local
 [`Codex Worktree Housekeeping`](docs/engineering/codex-worktree-housekeeping.md)
@@ -146,9 +171,12 @@ scan its direct consumers and tests and verify downstream compatibility.
 - Update `CHANGELOG.md` for user-visible behavior, migrations, compatibility,
   security, or distribution changes. A behavior-preserving internal refactor
   does not need a changelog entry.
-- Regenerate `THIRD_PARTY_LICENSES.md` after any `Cargo.lock` or runtime
-  dependency change with `bash scripts/generate-third-party-licenses.sh > THIRD_PARTY_LICENSES.md`;
-  the full gate rejects stale output.
+- Regenerate `THIRD_PARTY_LICENSES.md` after a runtime dependency change in a
+  closure covered by `generate-third-party-licenses.sh`; the full release gate
+  rejects stale output. For a Steward-approved source-integration exception
+  whose future binary closure cannot yet produce an approved notice, do not
+  fabricate or silently omit license text: record the distribution-only
+  limitation and keep that binary distribution blocked.
 
 ## Pull requests
 

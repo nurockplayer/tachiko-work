@@ -2,7 +2,15 @@ import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "public/designer_runtime.wasm", "public/service-worker.js", "eslint.config.js"] },
+  {
+    ignores: [
+      "dist/**",
+      "public/designer_runtime.wasm",
+      "public/service-worker.js",
+      "src-tauri/target/**",
+      "eslint.config.js",
+    ],
+  },
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {

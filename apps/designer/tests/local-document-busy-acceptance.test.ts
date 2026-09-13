@@ -128,6 +128,128 @@ const host: DesignerProjectHost = {
 };
 
 describe("local document busy acceptance", () => {
+  it("opens the initial native local document without prompting about the bootstrap occurrence", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new BusyClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    await app.openLocalDocumentHandles([{
+      kind: "file",
+      name: "initial.ro",
+      requiresInAppDirtyConfirmation: true,
+      getFile: async () => new File(["opaque local bytes"], "initial.ro"),
+    }]);
+
+    expect(root.querySelector('dialog[aria-label="Discard unsaved changes"]')).toBeNull();
+    expect(client.localOpen).toHaveBeenCalledTimes(1);
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Other Project");
+    app.destroy();
+  });
+
+  it("requires an in-app decision before a warm local launch discards dirty edits", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new BusyClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    if (damage === null || damage.form === null) throw new Error("damage form is required");
+    damage.value = "45";
+    damage.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    damage.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(client.editStarted).toBe(true);
+    });
+    client.finishEdit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain("resident/1");
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Unsaved changes");
+
+    const cancelled = app.openLocalDocumentHandles([{
+      kind: "file",
+      name: "other.ro",
+      requiresInAppDirtyConfirmation: true,
+      getFile: async () => new File(["opaque local bytes"], "other.ro"),
+    }]);
+    await vi.waitFor(() => {
+      expect(root.querySelector<HTMLDialogElement>('dialog[aria-label="Discard unsaved changes"]')).not.toBeNull();
+    });
+    root.querySelector<HTMLButtonElement>("[data-cancel-local-document-open]")?.click();
+    await cancelled;
+    expect(client.localOpen).not.toHaveBeenCalled();
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
+    expect(root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')?.value).toBe("45");
+
+    const confirmed = app.openLocalDocumentHandles([{
+      kind: "file",
+      name: "other.ro",
+      requiresInAppDirtyConfirmation: true,
+      getFile: async () => new File(["opaque local bytes"], "other.ro"),
+    }]);
+    await vi.waitFor(() => {
+      expect(root.querySelector<HTMLDialogElement>('dialog[aria-label="Discard unsaved changes"]')).not.toBeNull();
+    });
+    root.querySelector<HTMLButtonElement>("[data-confirm-local-document-open]")?.click();
+    await confirmed;
+    expect(client.localOpen).toHaveBeenCalledTimes(1);
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Other Project");
+    expect(root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')?.value).toBe("12");
+    app.destroy();
+  });
+
+  it("renders an OS-provided local filename as text before accepting a dirty replacement", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new BusyClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    if (damage === null || damage.form === null) throw new Error("damage form is required");
+    damage.value = "45";
+    damage.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    damage.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(client.editStarted).toBe(true);
+    });
+    client.finishEdit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain("resident/1");
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Unsaved changes");
+    });
+
+    const hostileName = '<button data-confirm-local-document-open>Cancel .ro';
+    const cancelled = app.openLocalDocumentHandles([{
+      kind: "file",
+      name: hostileName,
+      requiresInAppDirtyConfirmation: true,
+      getFile: async () => new File(["opaque local bytes"], hostileName),
+    }]);
+    await vi.waitFor(() => {
+      expect(root.querySelector<HTMLDialogElement>('dialog[aria-label="Discard unsaved changes"]')).not.toBeNull();
+    });
+    expect(root.querySelectorAll("[data-confirm-local-document-open]")).toHaveLength(1);
+    expect(root.querySelector("[data-confirm-local-document-open]")?.textContent).toBe("Discard and open");
+    expect(root.querySelector("[data-discard-local-document-form]")?.textContent).toContain(hostileName);
+    root.querySelector<HTMLButtonElement>("[data-cancel-local-document-open]")?.click();
+    await cancelled;
+    expect(client.localOpen).not.toHaveBeenCalled();
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
+    expect(root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')?.value).toBe("45");
+    app.destroy();
+  });
+
   it("rejects a distinct warm local launch visibly and non-destructively while Designer is busy", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

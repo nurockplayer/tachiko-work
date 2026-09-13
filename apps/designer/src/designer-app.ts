@@ -5,6 +5,7 @@ import { mountReportPanel, type ReportPanelState } from "./report-panel.ts";
 import { downloadCurrentReport } from "./report-export.ts";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
 import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
+import { FindReplacePanel } from "./find-replace-panel.ts";
 import type { CleanupPreview, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceStyle, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
@@ -119,6 +120,16 @@ export function mountDesigner(
   let groupedProductCategory = "";
   let groupedProductPrice = "";
   let budgetTables: TableProjection[] = [];
+  const findReplace = new FindReplacePanel({
+    preview: async operation => {
+      const snapshot = store?.snapshot();
+      if (!client.previewCleanup || !snapshot || busy || hasEditDrafts() || snapshot.currentness !== "current" || snapshot.table.native_table_profile !== true) {
+        throw new Error("Find / Replace is unavailable while edits are pending or the native table is not current.");
+      }
+      return client.previewCleanup(snapshot.table.revision, operation);
+    },
+    commit: async preview => commitCleanup(preview),
+  });
   const reportState: ReportPanelState = { draft: null };
   let reportOccurrence = Symbol("report occurrence");
   const hasDataEditDrafts = (): boolean => tracker.pending || pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0 || pendingDateBuffers.size > 0 || pendingFormulaBuffers.size > 0 || pendingNumberBuffers.size > 0 || hasBudgetToolsDraft(budgetToolsDraft);
@@ -261,6 +272,11 @@ export function mountDesigner(
     bindGroupedSummary();
     hydrateDraftControls();
     bindInteractions();
+    if (snapshot.table.native_table_profile === true) {
+      findReplace.mount(root, snapshot.table, busy || snapshot.currentness !== "current" || hasEditDrafts());
+    } else {
+      findReplace.close();
+    }
   };
 
   const renderReports = (): void => {
@@ -858,6 +874,7 @@ export function mountDesigner(
     if (table.revision !== candidate.revision) {
       throw new Error("Initial projection does not match the bootstrap revision.");
     }
+    findReplace.close();
     const nextStore = createProjectionStore(table);
     reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
@@ -891,6 +908,7 @@ export function mountDesigner(
       ? selectedCollection
       : opened.bootstrap.default_collection;
     const nextStore = createProjectionStore(opened.table);
+    findReplace.close();
     reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
     pendingTextBuffers.clear();
@@ -957,6 +975,53 @@ export function mountDesigner(
     window.confirm(
       `${action} will discard unsaved changes in the current project. Continue?`,
     );
+
+  /**
+   * WebKit does not consistently surface JavaScript confirmation sheets for
+   * an OS-delivered document-open event. Keep that acceptance decision inside
+   * the app, where a warm local launch is visibly cancellable on every host.
+   */
+  const confirmDiscardDirtyLocalDocument = (action: string): Promise<boolean> => {
+    if (!durability.snapshot().dirty && !hasPendingScalarDrafts()) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      const dialog = document.createElement("dialog");
+      dialog.setAttribute("aria-label", "Discard unsaved changes");
+      const form = document.createElement("form");
+      form.method = "dialog";
+      form.dataset.discardLocalDocumentForm = "";
+      const heading = document.createElement("h2");
+      heading.textContent = "Discard unsaved changes?";
+      const message = document.createElement("p");
+      message.textContent = `${action} will discard unsaved changes in the current project.`;
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.dataset.cancelLocalDocumentOpen = "";
+      cancel.textContent = "Cancel";
+      const confirm = document.createElement("button");
+      confirm.type = "button";
+      confirm.dataset.confirmLocalDocumentOpen = "";
+      confirm.textContent = "Discard and open";
+      form.append(heading, message, cancel, confirm);
+      dialog.append(form);
+      const complete = (confirmed: boolean): void => {
+        dialog.close();
+        dialog.remove();
+        resolve(confirmed);
+      };
+      cancel.addEventListener("click", () => {
+        complete(false);
+      });
+      confirm.addEventListener("click", () => {
+        complete(true);
+      });
+      root.append(dialog);
+      if (typeof dialog.showModal === "function") {
+        try { dialog.showModal(); }
+        catch { dialog.setAttribute("open", ""); }
+      } else dialog.setAttribute("open", "");
+    });
+  };
 
   const openSavedProject = async (): Promise<void> => {
     if (busy || selectedSavedProject === "") return;
@@ -1035,7 +1100,13 @@ export function mountDesigner(
         rejectBusyLocalDocument();
         return;
       }
-      if (!coldBootstrapOccurrence && !confirmDiscardDirtyOccurrence(`Open '${document.name}'`)) return;
+      if (!coldBootstrapOccurrence) {
+        const nativeDirtyConfirmation = handles.length === 1 && handles[0]?.requiresInAppDirtyConfirmation === true;
+        const confirmed = nativeDirtyConfirmation
+          ? await confirmDiscardDirtyLocalDocument(`Open '${document.name}'`)
+          : confirmDiscardDirtyOccurrence(`Open '${document.name}'`);
+        if (!confirmed) return;
+      }
       busy = true;
       notice = null;
       render();
@@ -1244,6 +1315,7 @@ export function mountDesigner(
     render();
     try {
       await client.closeProject();
+      findReplace.close();
       reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
       pendingTextBuffers.clear();
       pendingBooleanBuffers.clear();
@@ -1340,6 +1412,11 @@ export function mountDesigner(
     root.querySelector("[data-new-tracker]")?.addEventListener("click", () => { void newTracker(); });
     root.querySelector("[data-new-budget]")?.addEventListener("click", () => { void newBudget(); });
     root.querySelector("[data-new-table]")?.addEventListener("click", () => { newTable(); });
+    root.querySelector("[data-open-find-replace]")?.addEventListener("click", () => {
+      const snapshot = store?.snapshot();
+      if (!snapshot || snapshot.table.native_table_profile !== true) return;
+      findReplace.open(root, snapshot.table, busy || snapshot.currentness !== "current" || hasEditDrafts());
+    });
     root.querySelectorAll<HTMLElement>("[data-generic-cell]").forEach(cell => {
       cell.addEventListener("click", () => {
         const form = root.querySelector<HTMLFormElement>("[data-generic-edit]");
@@ -1789,7 +1866,7 @@ function designerMarkup(
 
           ${noticeMarkup(notice)}
 
-          <div class="session-history-slot">${historyControls}${refreshControl}</div>
+          <div class="session-history-slot">${historyControls}${isNativeTable ? `<button type="button" data-open-find-replace ${busy || currentness !== "current" ? "disabled" : ""}>Find / Replace</button>` : ""}${refreshControl}</div>
 
           <div class="table-scroll">
             <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isNativeTable ? "data-native-table-grid" : ""}>
