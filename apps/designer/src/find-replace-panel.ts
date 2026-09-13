@@ -125,8 +125,16 @@ export class FindReplacePanel {
     if (replacement) replacement.value = this.#replacement;
     const locked = disabled || this.#running;
     dialog.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button").forEach(control => { if (control.dataset.findAction !== "close") control.disabled = locked || control.disabled; });
-    find?.addEventListener("input", () => { this.#find = find.value; this.#invalidatePreview(); });
-    replacement?.addEventListener("input", () => { this.#replacement = replacement.value; this.#invalidatePreview(); });
+    find?.addEventListener("input", () => {
+      this.#find = find.value;
+      this.#invalidatePreview();
+      this.#render(disabled);
+    });
+    replacement?.addEventListener("input", () => {
+      this.#replacement = replacement.value;
+      this.#invalidatePreview();
+      this.#render(disabled);
+    });
     dialog.querySelectorAll<HTMLInputElement>("input[type='checkbox']").forEach(control => { control.addEventListener("change", () => {
       if (control.checked) this.#selected.add(control.value); else this.#selected.delete(control.value);
       this.#current = -1;

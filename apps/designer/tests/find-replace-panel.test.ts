@@ -67,6 +67,16 @@ describe("native Find / Replace target derivation", () => {
       { entity: "ada", field: "name" }, { entity: "ada", field: "note" },
     ] });
     await vi.waitFor(() => { expect(root.textContent).toContain("Replace all preview"); });
+    find.value = "Ada again";
+    find.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(root.textContent).not.toContain("Replace all preview");
+    expect(root.querySelector<HTMLButtonElement>("[data-find-action='commit']")?.disabled).toBe(true);
+    const refreshedFind = root.querySelector<HTMLInputElement>("[aria-label='Find text']");
+    if (!refreshedFind) throw new Error("Missing refreshed Find input");
+    refreshedFind.value = "Ada";
+    refreshedFind.dispatchEvent(new Event("input", { bubbles: true }));
+    click(root, "Preview replace all");
+    await vi.waitFor(() => { expect(request).toHaveBeenCalledTimes(2); });
     click(root, "Commit replace all");
     await vi.waitFor(() => { expect(commit).toHaveBeenCalledWith(preview); });
   });
