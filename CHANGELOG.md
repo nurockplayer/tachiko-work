@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The browser Designer now offers an ordinary active-table Find / Replace
+  workflow for selected Text fields. It uses case-sensitive literal matching,
+  stable semantic targets, revision-pinned atomic previews, and the existing
+  session Undo/Redo and save/reopen path; formulas and non-Text values remain
+  outside its replacement scope.
 - The Designer can create one bounded ordinary native table with user-defined
   Text, Number, Boolean, and Date columns. New rows require a complete typed
   input, invalid values are rejected without publication, and the table can be
