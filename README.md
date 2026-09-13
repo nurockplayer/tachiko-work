@@ -491,6 +491,13 @@ rustup toolchain install 1.85.0 --profile minimal
 bash scripts/release-check.sh
 ```
 
+The complete release-equivalent gate is the default. For the bounded
+public-pre-alpha source-integration case where a future-binary notice/provenance
+limitation makes only the distribution portion inapplicable, follow the
+Steward-owned applicability conditions and authoritative alternate gate in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Do not claim the full release gate passed,
+and do not externally distribute the affected binary.
+
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the current contribution boundary,
 [`SECURITY.md`](SECURITY.md) for responsible reporting, the
 [`licensing posture`](docs/governance/licensing-posture.md) for the
