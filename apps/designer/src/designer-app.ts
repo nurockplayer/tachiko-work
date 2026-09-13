@@ -5,6 +5,7 @@ import { mountReportPanel, type ReportPanelState } from "./report-panel.ts";
 import { downloadCurrentReport } from "./report-export.ts";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
 import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
+import { FindReplacePanel } from "./find-replace-panel.ts";
 import type { CleanupPreview, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceStyle, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
@@ -119,6 +120,16 @@ export function mountDesigner(
   let groupedProductCategory = "";
   let groupedProductPrice = "";
   let budgetTables: TableProjection[] = [];
+  const findReplace = new FindReplacePanel({
+    preview: async operation => {
+      const snapshot = store?.snapshot();
+      if (!client.previewCleanup || !snapshot || busy || hasEditDrafts() || snapshot.currentness !== "current" || snapshot.table.native_table_profile !== true) {
+        throw new Error("Find / Replace is unavailable while edits are pending or the native table is not current.");
+      }
+      return client.previewCleanup(snapshot.table.revision, operation);
+    },
+    commit: async preview => commitCleanup(preview),
+  });
   const reportState: ReportPanelState = { draft: null };
   let reportOccurrence = Symbol("report occurrence");
   const hasDataEditDrafts = (): boolean => tracker.pending || pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0 || pendingDateBuffers.size > 0 || pendingFormulaBuffers.size > 0 || pendingNumberBuffers.size > 0 || hasBudgetToolsDraft(budgetToolsDraft);
@@ -261,6 +272,11 @@ export function mountDesigner(
     bindGroupedSummary();
     hydrateDraftControls();
     bindInteractions();
+    if (snapshot.table.native_table_profile === true) {
+      findReplace.mount(root, snapshot.table, busy || snapshot.currentness !== "current" || hasEditDrafts());
+    } else {
+      findReplace.close();
+    }
   };
 
   const renderReports = (): void => {
@@ -1340,6 +1356,11 @@ export function mountDesigner(
     root.querySelector("[data-new-tracker]")?.addEventListener("click", () => { void newTracker(); });
     root.querySelector("[data-new-budget]")?.addEventListener("click", () => { void newBudget(); });
     root.querySelector("[data-new-table]")?.addEventListener("click", () => { newTable(); });
+    root.querySelector("[data-open-find-replace]")?.addEventListener("click", () => {
+      const snapshot = store?.snapshot();
+      if (!snapshot || snapshot.table.native_table_profile !== true) return;
+      findReplace.open(root, snapshot.table, busy || snapshot.currentness !== "current" || hasEditDrafts());
+    });
     root.querySelectorAll<HTMLElement>("[data-generic-cell]").forEach(cell => {
       cell.addEventListener("click", () => {
         const form = root.querySelector<HTMLFormElement>("[data-generic-edit]");
@@ -1789,7 +1810,7 @@ function designerMarkup(
 
           ${noticeMarkup(notice)}
 
-          <div class="session-history-slot">${historyControls}${refreshControl}</div>
+          <div class="session-history-slot">${historyControls}${isNativeTable ? `<button type="button" data-open-find-replace ${busy || currentness !== "current" ? "disabled" : ""}>Find / Replace</button>` : ""}${refreshControl}</div>
 
           <div class="table-scroll">
             <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isNativeTable ? "data-native-table-grid" : ""}>
