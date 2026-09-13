@@ -110,7 +110,7 @@ Preserve already-published history normally. This rule is prospective and never 
 
 When implementation first reaches a durable format/storage contract, public consumer/API/type contract, semantic identity law, authorization/approval boundary, or another similarly expensive-to-reverse seam, the delivery lead explicitly rechecks controlling authority and the lane's risk class before committing to a direction.
 
-If current Accepted authority leaves one bounded implementation path, continue autonomously. If more than one materially different direction remains plausible, the proposed change would widen or stabilize the contract, or implementation pressure exposes a missing durable choice, obtain Project Steward reconciliation and risk-appropriate deep consultation before continuing that seam rather than waiting for final review to discover the direction error. Routine reversible implementation details do not require escalation merely because they involve an API or type internally.
+If current Accepted authority already selects one bounded implementation path, continue autonomously, including when that authority has already approved the relevant contract widening or stabilization. Escalate before continuing the seam only when more than one materially different direction remains plausible, the proposed widening or stabilization goes beyond what controlling authority already decides, or implementation pressure exposes a missing durable choice. In those cases obtain Project Steward reconciliation and risk-appropriate deep consultation rather than waiting for final review to discover the direction error. Routine reversible implementation details do not require escalation merely because they involve an API or type internally.
 
 ## Validation layering
 
