@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The macOS Designer desktop host can open a supported local `.ro` selected
+  through Finder/LaunchServices on cold start or while already running, routing
+  the complete OS-selected document set through the existing safe local-document
+  ingress without granting ambient filesystem access.
 - The browser Designer now offers an ordinary active-table Find / Replace
   workflow for selected Text fields. It uses case-sensitive literal matching,
   stable semantic targets, revision-pinned atomic previews, and the existing

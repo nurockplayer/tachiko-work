@@ -976,6 +976,53 @@ export function mountDesigner(
       `${action} will discard unsaved changes in the current project. Continue?`,
     );
 
+  /**
+   * WebKit does not consistently surface JavaScript confirmation sheets for
+   * an OS-delivered document-open event. Keep that acceptance decision inside
+   * the app, where a warm local launch is visibly cancellable on every host.
+   */
+  const confirmDiscardDirtyLocalDocument = (action: string): Promise<boolean> => {
+    if (!durability.snapshot().dirty && !hasPendingScalarDrafts()) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      const dialog = document.createElement("dialog");
+      dialog.setAttribute("aria-label", "Discard unsaved changes");
+      const form = document.createElement("form");
+      form.method = "dialog";
+      form.dataset.discardLocalDocumentForm = "";
+      const heading = document.createElement("h2");
+      heading.textContent = "Discard unsaved changes?";
+      const message = document.createElement("p");
+      message.textContent = `${action} will discard unsaved changes in the current project.`;
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.dataset.cancelLocalDocumentOpen = "";
+      cancel.textContent = "Cancel";
+      const confirm = document.createElement("button");
+      confirm.type = "button";
+      confirm.dataset.confirmLocalDocumentOpen = "";
+      confirm.textContent = "Discard and open";
+      form.append(heading, message, cancel, confirm);
+      dialog.append(form);
+      const complete = (confirmed: boolean): void => {
+        dialog.close();
+        dialog.remove();
+        resolve(confirmed);
+      };
+      cancel.addEventListener("click", () => {
+        complete(false);
+      });
+      confirm.addEventListener("click", () => {
+        complete(true);
+      });
+      root.append(dialog);
+      if (typeof dialog.showModal === "function") {
+        try { dialog.showModal(); }
+        catch { dialog.setAttribute("open", ""); }
+      } else dialog.setAttribute("open", "");
+    });
+  };
+
   const openSavedProject = async (): Promise<void> => {
     if (busy || selectedSavedProject === "") return;
     if (!confirmDiscardDirtyOccurrence("Open")) return;
@@ -1053,7 +1100,13 @@ export function mountDesigner(
         rejectBusyLocalDocument();
         return;
       }
-      if (!coldBootstrapOccurrence && !confirmDiscardDirtyOccurrence(`Open '${document.name}'`)) return;
+      if (!coldBootstrapOccurrence) {
+        const nativeDirtyConfirmation = handles.length === 1 && handles[0]?.requiresInAppDirtyConfirmation === true;
+        const confirmed = nativeDirtyConfirmation
+          ? await confirmDiscardDirtyLocalDocument(`Open '${document.name}'`)
+          : confirmDiscardDirtyOccurrence(`Open '${document.name}'`);
+        if (!confirmed) return;
+      }
       busy = true;
       notice = null;
       render();
