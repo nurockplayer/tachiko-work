@@ -739,12 +739,6 @@ impl DesignerRuntime {
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
-        let row_serial = document
-            .entities
-            .keys()
-            .filter_map(|id| row_serial_from_id(id.as_str()))
-            .max()
-            .unwrap_or(0);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
             title,
@@ -758,7 +752,7 @@ impl DesignerRuntime {
             principal,
             clock: DesignerClock::default(),
             proposal_serial: 0,
-            row_serial,
+            row_serial: 0,
             row_namespace: occurrence_id.to_owned(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1785,16 +1779,6 @@ impl DesignerRuntime {
     }
 
     fn refresh_structure(&mut self) {
-        self.row_serial = self.row_serial.max(
-            self.session
-                .export_snapshot()
-                .document()
-                .entities
-                .keys()
-                .filter_map(|id| row_serial_from_id(id.as_str()))
-                .max()
-                .unwrap_or(0),
-        );
         self.collection_specs = collection_specs(self.session.export_snapshot().document());
         self.collections = self
             .collection_specs
@@ -2189,6 +2173,7 @@ impl DesignerRuntime {
         self.record_edit(expected, forward, inverse)
     }
 
+    #[allow(clippy::too_many_lines)] // One bounded, atomic typed-row admission path.
     fn paste_cells(
         &mut self,
         expected: &str,
@@ -2198,9 +2183,9 @@ impl DesignerRuntime {
         rows: &[Vec<String>],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
-        let spec = self.collection_spec(collection)?;
-        let tracker = is_tracker_spec(spec);
-        let native_table = is_native_table_spec(spec);
+        let spec = self.collection_spec(collection)?.clone();
+        let tracker = is_tracker_spec(&spec);
+        let native_table = is_native_table_spec(&spec);
         if !tracker && !native_table {
             return Err(tracker_error(
                 "typed row paste is available only for the bounded tracker or native table profile",
@@ -2236,6 +2221,11 @@ impl DesignerRuntime {
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
         let mut allocated = BTreeSet::new();
+        let mut row_ids = RowIds::new(
+            &self.row_namespace,
+            self.row_serial,
+            if tracker { "tracker_row" } else { "native_table_row" },
+        );
         for (offset, row) in rows.iter().enumerate() {
             let existing = spec
                 .entities
@@ -2251,16 +2241,14 @@ impl DesignerRuntime {
                     if tracker {
                         Ok(tracker_row(
                             document,
-                            self.row_serial,
-                            &self.row_namespace,
+                            &mut row_ids,
                             &mut allocated,
                         ))
                     } else {
                         native_table_row(
                             document,
-                            spec,
-                            self.row_serial,
-                            &self.row_namespace,
+                            &spec,
+                            &mut row_ids,
                             &mut allocated,
                         )
                     }
@@ -2293,7 +2281,9 @@ impl DesignerRuntime {
             }
         }
         inverse.reverse();
-        self.record_edit(expected, forward, inverse)
+        let publication = self.record_edit(expected, forward, inverse)?;
+        self.row_serial = row_ids.serial();
+        Ok(publication)
     }
 
     fn collection_spec(&self, collection: &str) -> Result<&CollectionSpec, DesignerError> {
@@ -2960,7 +2950,7 @@ fn is_tracker_spec(spec: &CollectionSpec) -> bool {
 }
 
 fn is_native_table_spec(spec: &CollectionSpec) -> bool {
-    spec.native_table_rows
+    spec.native_table_rows && !is_tracker_spec(spec)
 }
 
 fn copy_position(spec: &CollectionSpec, field: &FieldRef) -> Result<(usize, usize), DesignerError> {
@@ -3064,7 +3054,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                                 )
                             })
                     }),
-                    native_table_rows: is_native_table_schema(document, schema, &entities),
+                    native_table_rows: has_scalar_row_authoring_shape(document, schema, &entities),
                     summary,
                     columns: {
                         let mut fields = schema.fields.values().collect::<Vec<_>>();
@@ -3754,16 +3744,42 @@ impl IdGenerator for MoonfallIds {
     }
 }
 
+struct RowIds {
+    namespace: String,
+    serial: usize,
+    prefix: &'static str,
+}
+
+impl RowIds {
+    fn new(namespace: &str, serial: usize, prefix: &'static str) -> Self {
+        Self {
+            namespace: namespace.to_owned(),
+            serial,
+            prefix,
+        }
+    }
+
+    const fn serial(&self) -> usize {
+        self.serial
+    }
+}
+
+impl IdGenerator for RowIds {
+    fn generate(&mut self, kind: SemanticIdKind) -> String {
+        debug_assert!(matches!(kind, SemanticIdKind::Entity));
+        self.serial = self.serial.saturating_add(1);
+        format!("{}_{:04}_{}", self.prefix, self.serial, self.namespace)
+    }
+}
+
 fn tracker_row(
     document: &Document,
-    row_serial: usize,
-    namespace: &str,
+    ids: &mut RowIds,
     allocated: &mut BTreeSet<EntityId>,
 ) -> Entity {
-    let mut serial = row_serial.saturating_add(1);
     loop {
-        let id = EntityId::from(format!("tracker_row_{serial:04}_{namespace}"));
-        let key = EntityKey::from(format!("row_{serial:04}"));
+        let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
+        let key = EntityKey::from(format!("row_{:04}", ids.serial()));
         if !document.entities.contains_key(&id)
             && !allocated.contains(&id)
             && !document.entities.values().any(|entity| entity.key == key)
@@ -3785,21 +3801,18 @@ fn tracker_row(
                 .collect(),
             };
         }
-        serial += 1;
     }
 }
 
 fn native_table_row(
     document: &Document,
     spec: &CollectionSpec,
-    row_serial: usize,
-    namespace: &str,
+    ids: &mut RowIds,
     allocated: &mut BTreeSet<EntityId>,
 ) -> Result<Entity, DesignerError> {
-    let mut serial = row_serial.saturating_add(1);
     loop {
-        let id = EntityId::from(format!("native_table_row_{serial:04}_{namespace}"));
-        let key = EntityKey::from(format!("row_{serial:04}"));
+        let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
+        let key = EntityKey::from(format!("row_{:04}", ids.serial()));
         if !document.entities.contains_key(&id)
             && !allocated.contains(&id)
             && !document.entities.values().any(|entity| entity.key == key)
@@ -3829,59 +3842,38 @@ fn native_table_row(
                 fields,
             });
         }
-        serial += 1;
     }
 }
 
-fn is_native_table_schema(document: &Document, schema: &Schema, entities: &[EntityId]) -> bool {
-    let Some(namespace) = schema.id.as_str().strip_prefix("native_table_schema_0002_") else {
-        return false;
-    };
-    if namespace.is_empty()
-        || document.id.as_str() != format!("native_table_document_0001_{namespace}")
-        || schema.fields.is_empty()
-    {
-        return false;
-    }
-    let suffix = format!("_{namespace}");
-    schema.fields.values().all(|field| {
-        field.required
-            && opaque_native_table_id(field.id.as_str(), "native_table_field_", &suffix)
-            && matches!(
-                field.field_type,
-                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
-            )
-    }) && entities.iter().all(|entity| {
-        opaque_native_table_row_id(entity.as_str())
-            && document.entities.get(entity).is_some_and(|row| {
-                row.schema == schema.id && row.fields.len() == schema.fields.len()
+fn has_scalar_row_authoring_shape(
+    document: &Document,
+    schema: &Schema,
+    entities: &[EntityId],
+) -> bool {
+    (1..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
+        && schema.fields.values().all(|field| {
+            field.required
+                && matches!(
+                    field.field_type,
+                    FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                )
+        })
+        && entities.iter().all(|id| {
+            document.entities.get(id).is_some_and(|entity| {
+                entity.schema == schema.id
+                    && entity.fields.len() == schema.fields.len()
+                    && schema.fields.iter().all(|(id, field)| {
+                        entity.fields.get(id).is_some_and(|value| {
+                            matches!(
+                                (field.field_type.clone(), value),
+                                (FieldType::Text, Value::Text(_))
+                                    | (FieldType::Number, Value::Number(_))
+                                    | (FieldType::Boolean, Value::Boolean(_))
+                                    | (FieldType::Date, Value::Date(_))
+                            )
+                        })
+                    })
             })
-    })
-}
-
-fn opaque_native_table_row_id(value: &str) -> bool {
-    let Some(serial_and_namespace) = value.strip_prefix("native_table_row_") else {
-        return false;
-    };
-    let Some((serial, namespace)) = serial_and_namespace.split_once('_') else {
-        return false;
-    };
-    serial.len() == 4 && serial.bytes().all(|byte| byte.is_ascii_digit()) && !namespace.is_empty()
-}
-
-fn opaque_native_table_id(value: &str, prefix: &str, suffix: &str) -> bool {
-    value
-        .strip_prefix(prefix)
-        .and_then(|serial| serial.strip_suffix(suffix))
-        .is_some_and(|serial| serial.len() == 4 && serial.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
-fn row_serial_from_id(id: &str) -> Option<usize> {
-    ["tracker_row_", "native_table_row_"]
-        .iter()
-        .find_map(|prefix| {
-            id.strip_prefix(prefix)
-                .and_then(|suffix| suffix.split('_').next()?.parse::<usize>().ok())
         })
 }
 
