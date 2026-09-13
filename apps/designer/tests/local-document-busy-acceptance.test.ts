@@ -128,6 +128,66 @@ const host: DesignerProjectHost = {
 };
 
 describe("local document busy acceptance", () => {
+  it("requires an in-app decision before a warm local launch discards dirty edits", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new BusyClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    await app.openLocalDocumentHandles([{
+      kind: "file",
+      name: "seed.ro",
+      getFile: async () => new File(["opaque local bytes"], "seed.ro"),
+    }]);
+    client.localOpen.mockClear();
+
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    if (damage === null || damage.form === null) throw new Error("damage form is required");
+    damage.value = "45";
+    damage.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(client.editStarted).toBe(true);
+    });
+    client.finishEdit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain("resident/1");
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Unsaved changes");
+
+    const cancelled = app.openLocalDocumentHandles([{
+      kind: "file",
+      name: "other.ro",
+      getFile: async () => new File(["opaque local bytes"], "other.ro"),
+    }]);
+    await vi.waitFor(() => {
+      expect(root.querySelector<HTMLDialogElement>('dialog[aria-label="Discard unsaved changes"]')).not.toBeNull();
+    });
+    root.querySelector<HTMLButtonElement>("[data-cancel-local-document-open]")?.click();
+    await cancelled;
+    expect(client.localOpen).not.toHaveBeenCalled();
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Other Project");
+    expect(root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')?.value).toBe("45");
+
+    const confirmed = app.openLocalDocumentHandles([{
+      kind: "file",
+      name: "other.ro",
+      getFile: async () => new File(["opaque local bytes"], "other.ro"),
+    }]);
+    await vi.waitFor(() => {
+      expect(root.querySelector<HTMLDialogElement>('dialog[aria-label="Discard unsaved changes"]')).not.toBeNull();
+    });
+    root.querySelector<HTMLButtonElement>("[data-confirm-local-document-open]")?.click();
+    await confirmed;
+    expect(client.localOpen).toHaveBeenCalledTimes(1);
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Other Project");
+    expect(root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')?.value).toBe("12");
+    app.destroy();
+  });
+
   it("rejects a distinct warm local launch visibly and non-destructively while Designer is busy", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

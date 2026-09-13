@@ -976,6 +976,42 @@ export function mountDesigner(
       `${action} will discard unsaved changes in the current project. Continue?`,
     );
 
+  /**
+   * WebKit does not consistently surface JavaScript confirmation sheets for
+   * an OS-delivered document-open event. Keep that acceptance decision inside
+   * the app, where a warm local launch is visibly cancellable on every host.
+   */
+  const confirmDiscardDirtyLocalDocument = (action: string): Promise<boolean> => {
+    if (!durability.snapshot().dirty && !hasPendingScalarDrafts()) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      const dialog = document.createElement("dialog");
+      dialog.setAttribute("aria-label", "Discard unsaved changes");
+      dialog.innerHTML = `<form method="dialog" data-discard-local-document-form>
+        <h2>Discard unsaved changes?</h2>
+        <p>${action} will discard unsaved changes in the current project.</p>
+        <button type="button" data-cancel-local-document-open>Cancel</button>
+        <button type="button" data-confirm-local-document-open>Discard and open</button>
+      </form>`;
+      const complete = (confirmed: boolean): void => {
+        dialog.close();
+        dialog.remove();
+        resolve(confirmed);
+      };
+      dialog.querySelector("[data-cancel-local-document-open]")?.addEventListener("click", () => {
+        complete(false);
+      });
+      dialog.querySelector("[data-confirm-local-document-open]")?.addEventListener("click", () => {
+        complete(true);
+      });
+      root.append(dialog);
+      if (typeof dialog.showModal === "function") {
+        try { dialog.showModal(); }
+        catch { dialog.setAttribute("open", ""); }
+      } else dialog.setAttribute("open", "");
+    });
+  };
+
   const openSavedProject = async (): Promise<void> => {
     if (busy || selectedSavedProject === "") return;
     if (!confirmDiscardDirtyOccurrence("Open")) return;
@@ -1053,7 +1089,7 @@ export function mountDesigner(
         rejectBusyLocalDocument();
         return;
       }
-      if (!coldBootstrapOccurrence && !confirmDiscardDirtyOccurrence(`Open '${document.name}'`)) return;
+      if (!coldBootstrapOccurrence && !(await confirmDiscardDirtyLocalDocument(`Open '${document.name}'`))) return;
       busy = true;
       notice = null;
       render();
