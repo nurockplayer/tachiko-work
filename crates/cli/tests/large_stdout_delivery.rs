@@ -57,7 +57,7 @@ fn large_document() -> Document {
     };
 
     let payload = "x".repeat(320);
-    let entities = (0..2_400)
+    let entities = (0..4_000)
         .map(|index| {
             let id = EntityId::from(format!("record-{index:04}"));
             (
