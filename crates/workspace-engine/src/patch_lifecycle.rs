@@ -2057,10 +2057,10 @@ impl PatchLifecycle {
             .iter()
             .map(|command| DisclosureRequirement {
                 family: match command {
-                    SemanticCommand::AppendCollection { .. } => OperationFamily::AppendEntity,
-                    SemanticCommand::RemoveCollection { .. } => OperationFamily::RemoveEntity,
-                    SemanticCommand::AppendEntity { .. } => OperationFamily::AppendEntity,
-                    SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
+                    SemanticCommand::AppendCollection { .. }
+                    | SemanticCommand::AppendEntity { .. } => OperationFamily::AppendEntity,
+                    SemanticCommand::RemoveCollection { .. }
+                    | SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
                     SemanticCommand::SetFieldValue { .. } | SemanticCommand::UnsetField { .. } => {
                         OperationFamily::SetFieldValue
                     }
@@ -2634,42 +2634,11 @@ impl PatchLifecycle {
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
         match command {
-            SemanticCommand::AppendCollection { .. } | SemanticCommand::RemoveCollection { .. } => {
-                // Structural previews reveal complete collection membership
-                // and values, including all copied formula dependencies.
-                let family = if matches!(command, SemanticCommand::AppendCollection { .. }) {
-                    OperationFamily::AppendEntity
-                } else {
-                    OperationFamily::RemoveEntity
-                };
-                disclosures.insert(DisclosureRequirement {
-                    family,
-                    scope: ScopedSemanticSubject::new(
-                        self.document_scope.clone(),
-                        self.document.clone(),
-                        SemanticScope::Document,
-                    ),
-                });
-                Ok(())
+            SemanticCommand::AppendCollection { .. } | SemanticCommand::AppendEntity { .. } => {
+                self.insert_document_disclosure(OperationFamily::AppendEntity, disclosures)
             }
-            SemanticCommand::AppendEntity { .. } | SemanticCommand::RemoveEntity { .. } => {
-                // Structural previews reveal complete entity membership and values,
-                // including removed and batch-transient entities. Require the full
-                // document disclosure boundary for these provisional families.
-                let family = if matches!(command, SemanticCommand::AppendEntity { .. }) {
-                    OperationFamily::AppendEntity
-                } else {
-                    OperationFamily::RemoveEntity
-                };
-                disclosures.insert(DisclosureRequirement {
-                    family,
-                    scope: ScopedSemanticSubject::new(
-                        self.document_scope.clone(),
-                        self.document.clone(),
-                        SemanticScope::Document,
-                    ),
-                });
-                Ok(())
+            SemanticCommand::RemoveCollection { .. } | SemanticCommand::RemoveEntity { .. } => {
+                self.insert_document_disclosure(OperationFamily::RemoveEntity, disclosures)
             }
             SemanticCommand::SetFieldValue { field, value } => {
                 self.insert_field_disclosure(before, after, field, disclosures)?;
@@ -2746,6 +2715,22 @@ impl PatchLifecycle {
                 Ok(())
             }
         }
+    }
+
+    fn insert_document_disclosure(
+        &self,
+        family: OperationFamily,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) -> Result<(), PatchLifecycleError> {
+        disclosures.insert(DisclosureRequirement {
+            family,
+            scope: ScopedSemanticSubject::new(
+                self.document_scope.clone(),
+                self.document.clone(),
+                SemanticScope::Document,
+            ),
+        });
+        Ok(())
     }
 
     fn insert_change_disclosures(
