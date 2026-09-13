@@ -2635,10 +2635,12 @@ impl PatchLifecycle {
     ) -> Result<(), PatchLifecycleError> {
         match command {
             SemanticCommand::AppendCollection { .. } | SemanticCommand::AppendEntity { .. } => {
-                self.insert_document_disclosure(OperationFamily::AppendEntity, disclosures)
+                self.insert_document_disclosure(OperationFamily::AppendEntity, disclosures);
+                Ok(())
             }
             SemanticCommand::RemoveCollection { .. } | SemanticCommand::RemoveEntity { .. } => {
-                self.insert_document_disclosure(OperationFamily::RemoveEntity, disclosures)
+                self.insert_document_disclosure(OperationFamily::RemoveEntity, disclosures);
+                Ok(())
             }
             SemanticCommand::SetFieldValue { field, value } => {
                 self.insert_field_disclosure(before, after, field, disclosures)?;
@@ -2721,7 +2723,7 @@ impl PatchLifecycle {
         &self,
         family: OperationFamily,
         disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) -> Result<(), PatchLifecycleError> {
+    ) {
         disclosures.insert(DisclosureRequirement {
             family,
             scope: ScopedSemanticSubject::new(
@@ -2730,7 +2732,6 @@ impl PatchLifecycle {
                 SemanticScope::Document,
             ),
         });
-        Ok(())
     }
 
     fn insert_change_disclosures(
