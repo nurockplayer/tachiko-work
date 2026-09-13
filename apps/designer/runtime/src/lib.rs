@@ -2248,31 +2248,7 @@ impl DesignerRuntime {
                     .fields
                     .get(&field.field)
                     .ok_or_else(|| tracker_error("tracker row has a missing required value"))?;
-                let input = match old {
-                    Value::Text(_) => ScalarEditInput::Text {
-                        value: text.clone(),
-                    },
-                    Value::Number(_) => ScalarEditInput::Number {
-                        input: text.clone(),
-                    },
-                    Value::Boolean(_) => ScalarEditInput::Boolean {
-                        value: match text.as_str() {
-                            "true" => true,
-                            "false" => false,
-                            _ => {
-                                return Err(tracker_error(
-                                    "Boolean paste accepts exactly true or false",
-                                ));
-                            }
-                        },
-                    },
-                    Value::Date(_) => ScalarEditInput::Date {
-                        value: text.clone(),
-                    },
-                    Value::Reference(_) | Value::Formula(_) => {
-                        return Err(tracker_error("paste value type is unsupported"));
-                    }
-                };
+                let input = pasted_scalar_input(old, text)?;
                 let value = parse_scalar(old, &input, &field)?;
                 if existing.is_some() && &value != old {
                     forward.push(SemanticCommand::set_field_value(
@@ -2315,6 +2291,28 @@ impl DesignerRuntime {
     #[must_use]
     pub fn occurrence_scope(&self) -> &str {
         self.document_scope.as_str()
+    }
+}
+
+fn pasted_scalar_input(value: &Value, text: &str) -> Result<ScalarEditInput, DesignerError> {
+    match value {
+        Value::Text(_) => Ok(ScalarEditInput::Text {
+            value: text.to_owned(),
+        }),
+        Value::Number(_) => Ok(ScalarEditInput::Number {
+            input: text.to_owned(),
+        }),
+        Value::Boolean(_) => match text {
+            "true" => Ok(ScalarEditInput::Boolean { value: true }),
+            "false" => Ok(ScalarEditInput::Boolean { value: false }),
+            _ => Err(tracker_error("Boolean paste accepts exactly true or false")),
+        },
+        Value::Date(_) => Ok(ScalarEditInput::Date {
+            value: text.to_owned(),
+        }),
+        Value::Reference(_) | Value::Formula(_) => {
+            Err(tracker_error("paste value type is unsupported"))
+        }
     }
 }
 
