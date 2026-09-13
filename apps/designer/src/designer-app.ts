@@ -987,21 +987,32 @@ export function mountDesigner(
     return new Promise((resolve) => {
       const dialog = document.createElement("dialog");
       dialog.setAttribute("aria-label", "Discard unsaved changes");
-      dialog.innerHTML = `<form method="dialog" data-discard-local-document-form>
-        <h2>Discard unsaved changes?</h2>
-        <p>${action} will discard unsaved changes in the current project.</p>
-        <button type="button" data-cancel-local-document-open>Cancel</button>
-        <button type="button" data-confirm-local-document-open>Discard and open</button>
-      </form>`;
+      const form = document.createElement("form");
+      form.method = "dialog";
+      form.dataset.discardLocalDocumentForm = "";
+      const heading = document.createElement("h2");
+      heading.textContent = "Discard unsaved changes?";
+      const message = document.createElement("p");
+      message.textContent = `${action} will discard unsaved changes in the current project.`;
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.dataset.cancelLocalDocumentOpen = "";
+      cancel.textContent = "Cancel";
+      const confirm = document.createElement("button");
+      confirm.type = "button";
+      confirm.dataset.confirmLocalDocumentOpen = "";
+      confirm.textContent = "Discard and open";
+      form.append(heading, message, cancel, confirm);
+      dialog.append(form);
       const complete = (confirmed: boolean): void => {
         dialog.close();
         dialog.remove();
         resolve(confirmed);
       };
-      dialog.querySelector("[data-cancel-local-document-open]")?.addEventListener("click", () => {
+      cancel.addEventListener("click", () => {
         complete(false);
       });
-      dialog.querySelector("[data-confirm-local-document-open]")?.addEventListener("click", () => {
+      confirm.addEventListener("click", () => {
         complete(true);
       });
       root.append(dialog);
