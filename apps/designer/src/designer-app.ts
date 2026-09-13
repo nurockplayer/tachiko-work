@@ -1089,11 +1089,13 @@ export function mountDesigner(
         rejectBusyLocalDocument();
         return;
       }
-      const nativeDirtyConfirmation = handles.length === 1 && handles[0]?.requiresInAppDirtyConfirmation === true;
-      const confirmed = nativeDirtyConfirmation
-        ? await confirmDiscardDirtyLocalDocument(`Open '${document.name}'`)
-        : confirmDiscardDirtyOccurrence(`Open '${document.name}'`);
-      if (!coldBootstrapOccurrence && !confirmed) return;
+      if (!coldBootstrapOccurrence) {
+        const nativeDirtyConfirmation = handles.length === 1 && handles[0]?.requiresInAppDirtyConfirmation === true;
+        const confirmed = nativeDirtyConfirmation
+          ? await confirmDiscardDirtyLocalDocument(`Open '${document.name}'`)
+          : confirmDiscardDirtyOccurrence(`Open '${document.name}'`);
+        if (!confirmed) return;
+      }
       busy = true;
       notice = null;
       render();

@@ -128,6 +128,27 @@ const host: DesignerProjectHost = {
 };
 
 describe("local document busy acceptance", () => {
+  it("opens the initial native local document without prompting about the bootstrap occurrence", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new BusyClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    await app.openLocalDocumentHandles([{
+      kind: "file",
+      name: "initial.ro",
+      requiresInAppDirtyConfirmation: true,
+      getFile: async () => new File(["opaque local bytes"], "initial.ro"),
+    }]);
+
+    expect(root.querySelector('dialog[aria-label="Discard unsaved changes"]')).toBeNull();
+    expect(client.localOpen).toHaveBeenCalledTimes(1);
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Other Project");
+    app.destroy();
+  });
+
   it("requires an in-app decision before a warm local launch discards dirty edits", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
