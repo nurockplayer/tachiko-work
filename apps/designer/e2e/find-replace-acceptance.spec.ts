@@ -31,6 +31,12 @@ async function createFindTable(page: Page, rows: string): Promise<void> {
   await paste(page, rows);
 }
 
+async function saveAs(page: Page, name: string): Promise<void> {
+  page.once("dialog", prompt => prompt.accept(name));
+  await page.getByRole("button", { name: "Save As", exact: true }).click();
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
+}
+
 async function openFindReplace(page: Page): Promise<Locator> {
   const open = page.getByRole("button", { name: /find\s*\/\s*replace/i });
   await expect(open).toBeVisible();
@@ -51,20 +57,28 @@ async function scopeToNameAndNote(dialog: Locator): Promise<void> {
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
-test("find is read-only, reports the bounded Text-field match set, and navigates without publishing", async ({ page }) => {
+test("find and no-match are read-only, report the bounded Text-field match set, and navigate without publishing", async ({ page }) => {
   await createFindTable(
     page,
     "Ada\tAda\t12\ttrue\t2026-09-13\nAda\tother\t12\tfalse\t2026-09-14\nother\tAda\t12\ttrue\t2026-09-15",
   );
+  await saveAs(page, "find-readonly.roproj");
   const revision = await page.getByTestId("revision").textContent();
   const dialog = await openFindReplace(page);
   await scopeToNameAndNote(dialog);
-  await dialog.getByRole("textbox", { name: "Find text", exact: true }).fill("Ada");
+  const find = dialog.getByRole("textbox", { name: "Find text", exact: true });
+  await find.fill("Ada");
   await dialog.getByRole("button", { name: "Find next", exact: true }).click();
   await expect(dialog).toContainText(/4\s+matches?/i);
   await dialog.getByRole("button", { name: "Find next", exact: true }).click();
   await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
-  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
+
+  await find.fill("missing");
+  await dialog.getByRole("button", { name: "Find next", exact: true }).click();
+  await expect(dialog).toContainText(/0\s+matches?/i);
+  await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
 });
 
 test("replace current changes one stable Text target and leaves the remaining matches navigable", async ({ page }) => {
@@ -111,9 +125,7 @@ test("replace all previews the complete scoped set, publishes once, survives Und
   await page.getByRole("button", { name: "Redo", exact: true }).click();
   await expect(page.getByRole("gridcell", { name: "Done", exact: true })).toHaveCount(4);
 
-  page.once("dialog", prompt => prompt.accept("find-replace.roproj"));
-  await page.getByRole("button", { name: "Save As", exact: true }).click();
-  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
+  await saveAs(page, "find-replace.roproj");
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByLabel("Saved project", { exact: true }).selectOption("find-replace.roproj");
   await page.getByRole("button", { name: "Open project", exact: true }).click();
