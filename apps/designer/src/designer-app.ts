@@ -32,6 +32,7 @@ import type {
   DiagnosticProjection,
   FieldProjection,
   FieldTarget,
+  CollectionSummary,
   OpenedProjection,
   PublicationProjection,
   KeyedGroupedSumProjection,
@@ -69,12 +70,21 @@ export function mountDesigner(
         published = true;
         store.beginPublication(publication);
         durability.observe(publication.resulting_revision);
-        const table = await client.queryTable(selectedCollection);
+        let table: TableProjection;
+        try {
+          table = await client.queryTable(selectedCollection);
+        } catch (error) {
+          if (!tracker.view.budgetViews || (request.type !== "undo" && request.type !== "redo")) throw error;
+          await refreshBudgetHistory(publication.resulting_revision);
+          const fallback = bootstrap?.default_collection ?? bootstrap?.collections[0]?.key;
+          if (!fallback) throw error;
+          selectedCollection = fallback;
+          table = await client.queryTable(selectedCollection);
+        }
         if (table.revision !== publication.resulting_revision) throw new Error("Tracker refresh is not current.");
         store = createProjectionStore(table);
         if (tracker.view.budgetViews) {
-          await refreshBudgetTables(publication.resulting_revision);
-          if (bootstrap) bootstrap = {...bootstrap, revision: table.revision, collections: budgetTables.map(item => item.collection)};
+          await refreshBudgetHistory(publication.resulting_revision);
         }
         if (bootstrap) bootstrap = {...bootstrap, revision: table.revision, collections: bootstrap.collections.map(c => c.key === table.collection.key ? table.collection : c)};
       } catch (error) { showFailure(error, published); if (!published) throw error; }
@@ -120,6 +130,8 @@ export function mountDesigner(
   let groupedProductCategory = "";
   let groupedProductPrice = "";
   let budgetTables: TableProjection[] = [];
+  const duplicatedBudgetViews = new Map<string, {view: {id: string; name: string; collection: string}; collection: CollectionSummary}>();
+  const deletedDuplicatedBudgetViews = new Set<string>();
   const findReplace = new FindReplacePanel({
     preview: async operation => {
       const snapshot = store?.snapshot();
@@ -805,6 +817,29 @@ export function mountDesigner(
     budgetTables = tables;
   };
 
+  const refreshBudgetHistory = async (revision: string): Promise<void> => {
+    if (!bootstrap || !tracker.view.budgetViews) return;
+    const candidates = new Map<string, CollectionSummary>();
+    for (const collection of bootstrap.collections) candidates.set(collection.id, collection);
+    for (const record of duplicatedBudgetViews.values()) candidates.set(record.collection.id, record.collection);
+    const loaded = (await Promise.all([...candidates.values()].map(async collection => {
+      try { return await client.queryTable(collection.key); }
+      catch { return null; }
+    }))).filter((table): table is TableProjection => table !== null && table.revision === revision);
+    budgetTables = loaded;
+    bootstrap = {...bootstrap, revision, collections: loaded.map(table => table.collection)};
+    const available = new Set(loaded.map(table => table.collection.id));
+    tracker.view.budgetViews.views = tracker.view.budgetViews.views.filter(view => available.has(view.collection));
+    for (const record of duplicatedBudgetViews.values()) {
+      if (!deletedDuplicatedBudgetViews.has(record.collection.id) && available.has(record.collection.id) && !tracker.view.budgetViews.views.some(view => view.id === record.view.id)) {
+        tracker.view.budgetViews.views.push(record.view);
+      }
+    }
+    if (!tracker.view.budgetViews.views.some(view => view.id === tracker.view.budgetViews?.active)) {
+      tracker.view.budgetViews.active = tracker.view.budgetViews.views[0]?.id ?? "";
+    }
+  };
+
   const renderBudgetViews = (): void => {
     const views = tracker.view.budgetViews;
     if (!views || !bootstrap) return;
@@ -848,7 +883,11 @@ export function mountDesigner(
               next = addBudgetView(next, {id: crypto.randomUUID(), name, collection: collection.id}, ids);
             } else if (action === "duplicate") next = duplicateBudgetView(next, next.active, crypto.randomUUID(), name, ids);
             else next = renameBudgetView(next, next.active, name);
-          } else if (action === "delete") next = deleteBudgetView(next, next.active);
+          } else if (action === "delete") {
+            const deleted = next.views.find(view => view.id === next?.active);
+            next = deleteBudgetView(next, next.active);
+            if (deleted) deletedDuplicatedBudgetViews.add(deleted.collection);
+          }
           else {
             const order = next.views.map(v => v.id);
             const from = order.indexOf(next.active);
@@ -886,6 +925,8 @@ export function mountDesigner(
     bootstrap = candidate;
     store = nextStore;
     groupedTables.clear();
+    duplicatedBudgetViews.clear();
+    deletedDuplicatedBudgetViews.clear();
     groupedTables.set(table.collection.key, table);
     groupedDefinitionId = candidate.keyed_grouped_sum_definition_ids?.[0] ?? null; groupedResult = null;
     groupedOrders = ""; groupedProducts = ""; groupedOrderLookup = ""; groupedOrderQuantity = "";
@@ -919,6 +960,8 @@ export function mountDesigner(
     bootstrap = opened.bootstrap;
     store = nextStore;
     groupedTables.clear();
+    duplicatedBudgetViews.clear();
+    deletedDuplicatedBudgetViews.clear();
     groupedTables.set(opened.table.collection.key, opened.table);
     groupedDefinitionId = opened.bootstrap.keyed_grouped_sum_definition_ids?.[0] ?? null; groupedResult = null;
     groupedOrders = ""; groupedProducts = ""; groupedOrderLookup = ""; groupedOrderQuantity = "";
@@ -1228,6 +1271,61 @@ export function mountDesigner(
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
   };
 
+  const duplicateData = async (): Promise<void> => {
+    if (busy || !client.duplicateCollection || !store || !bootstrap || selectedCollection === "" || hasEditDrafts()) return;
+    const name = window.prompt("Copy data as:", "Working copy");
+    if (name === null || name.trim() === "") return;
+    const duplicateViewId = crypto.randomUUID();
+    if (tracker.view.budgetViews) {
+      const pendingCollectionId = `pending-${duplicateViewId}`;
+      try {
+        addBudgetView(
+          tracker.view.budgetViews,
+          {id: duplicateViewId, name: name.trim(), collection: pendingCollectionId},
+          [...bootstrap.collections.map(collection => collection.id), pendingCollectionId],
+        );
+      } catch (error) {
+        showProjectFailure("Data not duplicated", error);
+        render();
+        return;
+      }
+    }
+    busy = true; notice = null; render();
+    let published = false;
+    try {
+      const expectedRevision = store.snapshot().table.revision;
+      const duplicated = await client.duplicateCollection(expectedRevision, selectedCollection, name);
+      const publication = duplicated.publication;
+      published = true;
+      tracker.recordSemantic();
+      durability.observe(publication.resulting_revision);
+      const duplicatedTable = await client.queryTable(duplicated.collection.key);
+      if (duplicatedTable.revision !== publication.resulting_revision) throw new Error("Duplicated collection refresh is not current.");
+      bootstrap = {
+        ...bootstrap,
+        revision: publication.resulting_revision,
+        collections: [...bootstrap.collections, duplicated.collection],
+      };
+      if (tracker.view.budgetViews) {
+        const ids = bootstrap.collections.map(collection => collection.id);
+        const duplicateView = {id: duplicateViewId, name: name.trim(), collection: duplicated.collection.id};
+        duplicatedBudgetViews.set(duplicated.collection.id, {view: duplicateView, collection: duplicated.collection});
+        deletedDuplicatedBudgetViews.delete(duplicated.collection.id);
+        tracker.view.budgetViews = addBudgetView(
+          tracker.view.budgetViews,
+          duplicateView,
+          ids,
+        );
+        await refreshBudgetTables(publication.resulting_revision);
+      }
+      selectedCollection = duplicatedTable.collection.key;
+      store = createProjectionStore(duplicatedTable);
+      notice = {tone: "success", title: "Publication complete", message: `${name.trim()} duplicated as independent data.`, diagnostics: []};
+    } catch (error) {
+      showFailure(error, published);
+    } finally { busy = false; syncBeforeUnloadGuard(); render(); }
+  };
+
   const newTable = (): void => {
     if (busy || !client.newTable) return;
     if (!coldBootstrapOccurrence && (durability.snapshot().dirty || hasPendingScalarDrafts()) && !newTableConfirmed) {
@@ -1412,6 +1510,7 @@ export function mountDesigner(
     root.querySelector("[data-new-tracker]")?.addEventListener("click", () => { void newTracker(); });
     root.querySelector("[data-new-budget]")?.addEventListener("click", () => { void newBudget(); });
     root.querySelector("[data-new-table]")?.addEventListener("click", () => { newTable(); });
+    root.querySelector("[data-duplicate-data]")?.addEventListener("click", () => { void duplicateData(); });
     root.querySelector("[data-open-find-replace]")?.addEventListener("click", () => {
       const snapshot = store?.snapshot();
       if (!snapshot || snapshot.table.native_table_profile !== true) return;
@@ -1855,7 +1954,7 @@ function designerMarkup(
               <p class="eyebrow">Bounded semantic projection</p>
               <h2 id="table-title">${escapeHtml(humanize(table.collection.key))}</h2>
             </div>
-            <span>${String(table.rows.length)} ${table.rows.length === 1 ? "entity" : "entities"}</span>
+            <div><span>${String(table.rows.length)} ${table.rows.length === 1 ? "entity" : "entities"}</span>${isTracker ? "" : `<button type="button" data-duplicate-data ${busy || currentness !== "current" ? "disabled" : ""}>Duplicate data</button>`}</div>
           </div>
 
           <ol class="calculation-thread" aria-label="Edit publication path">
@@ -2018,7 +2117,10 @@ function fieldMarkup(
   view: TrackerView,
 ): string {
   if (field === undefined) return '<td class="empty-cell">—</td>';
-  const key = `${field.target.entity}.${field.target.field}`;
+  // Keep the DOM locator human-readable even when semantic duplication gives
+  // the copied field a fresh stable ID. Interactive controls below retain the
+  // opaque stable target IDs.
+  const key = `${field.target.entity}.${fieldKey}`;
   const diagnostics = field.diagnostics
     .map((diagnostic) => `<small class="field-error">${escapeHtml(diagnostic.message)}</small>`)
     .join("");

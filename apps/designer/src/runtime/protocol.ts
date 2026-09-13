@@ -120,6 +120,11 @@ export type KeyedGroupedSumPublishedProjection = {
   result: KeyedGroupedSumProjection;
 };
 
+export type DuplicateCollectionProjection = {
+  publication: PublicationProjection;
+  collection: CollectionSummary;
+};
+
 export type FailureProjection = {
   code: string;
   message: string;
@@ -151,6 +156,7 @@ export type DesignerRequest =
   | { type: "new_tracker"; occurrence_id: string }
   | { type: "new_budget"; occurrence_id: string }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[] }
+  | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_table"; collection: string }
   | {
@@ -187,6 +193,7 @@ export type DesignerResponse =
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "published"; payload: PublicationProjection }
+  | { type: "duplicated"; payload: DuplicateCollectionProjection }
   | { type: "project_exported"; payload: ProjectExportProjection }
   | { type: "canonical_tree_exported"; payload: ProjectExportProjection }
   | { type: "portable_ro_exported"; payload: ProjectExportProjection }

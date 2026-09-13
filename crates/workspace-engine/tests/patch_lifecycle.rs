@@ -3760,6 +3760,71 @@ fn entity_structure_authority_does_not_grant_formula_or_destructive_mutation() {
         ));
     }
 }
+
+#[test]
+fn collection_removal_with_formula_requires_formula_authority() {
+    let document = game_balance_document("game", "Game");
+    let entities = document
+        .entities
+        .values()
+        .filter(|entity| entity.schema.as_str() == "weapons")
+        .map(|entity| entity.id.clone())
+        .collect();
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "collection-structure-only",
+        "human-editor",
+        [
+            GrantRequirement::query(OperationFamily::RemoveEntity, document_scope()),
+            GrantRequirement::mutation(
+                AuthorizationAction::Propose,
+                OperationFamily::RemoveEntity,
+                MutationClass::Structure,
+                document_scope(),
+            )
+            .unwrap(),
+            GrantRequirement::mutation(
+                AuthorizationAction::Propose,
+                OperationFamily::RemoveEntity,
+                MutationClass::Schema,
+                document_scope(),
+            )
+            .unwrap(),
+            GrantRequirement::mutation(
+                AuthorizationAction::Propose,
+                OperationFamily::RemoveEntity,
+                MutationClass::Destructive,
+                document_scope(),
+            )
+            .unwrap(),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let result = lifecycle.propose(
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        ProposalRequest::new(
+            proposal_id("collection-formula-authority"),
+            revision("r1"),
+            SemanticPatchBody::command(SemanticCommand::RemoveCollection {
+                schema: "weapons".into(),
+                entities,
+            }),
+            principal("human-editor"),
+        ),
+        NOW,
+    );
+    assert!(matches!(
+        result,
+        Err(PatchLifecycleError::InsufficientCapability {
+            action: AuthorizationAction::Propose
+        })
+    ));
+}
+
 fn regression_damage_body(net_zero: bool) -> SemanticPatchBody {
     let mut commands = vec![field_command("iron_sword", "damage", number(45.0))];
     if net_zero {
