@@ -242,11 +242,12 @@ fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_
 
     let bytes = project_bytes(&mut runtime, &before_close.revision);
     tachiko_designer_runtime::close_project(&mut runtime);
-    let reopened = tachiko_designer_runtime::open_project(&mut runtime, &bytes, OCCURRENCE)
+    let reopened = tachiko_designer_runtime::open_project(&mut runtime, &bytes, SECOND_OCCURRENCE)
         .expect("saved Inventory must reopen through the actual project boundary");
     assert_eq!(reopened.table.collection, before_close.collection);
     assert_eq!(reopened.table.columns, before_close.columns);
     assert_eq!(reopened.table.rows, before_close.rows);
+    assert_eq!(reopened.table.native_table_profile, Some(true));
 
     published(request(
         &mut runtime,
@@ -263,6 +264,49 @@ fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_
         continued.rows[0].fields[0].target,
         before_close.rows[0].fields[0].target
     );
+
+}
+
+#[test]
+fn native_table_profile_survives_appends_after_fresh_reopen() {
+    let mut runtime = None;
+    let opened = opened(request(&mut runtime, &new_inventory(OCCURRENCE)));
+    let bytes = project_bytes(&mut runtime, &opened.table.revision);
+    tachiko_designer_runtime::close_project(&mut runtime);
+    let reopened = tachiko_designer_runtime::open_project(&mut runtime, &bytes, SECOND_OCCURRENCE)
+        .expect("saved Inventory must reopen as a fresh occurrence");
+    assert_eq!(reopened.table.native_table_profile, Some(true));
+
+    let first_append = published(request(
+        &mut runtime,
+        &json!({
+            "type": "paste_cells",
+            "expected_revision": reopened.table.revision,
+            "collection": reopened.table.collection.id,
+            "start_entity": null,
+            "start_field": reopened.table.columns[0].id,
+            "rows": [["continued", "4", "false", "2026-02-01"]],
+        }),
+    ));
+    let after_first_append = table(&mut runtime, &opened.table.collection.id);
+    assert_eq!(after_first_append.revision, first_append.resulting_revision);
+    assert_eq!(after_first_append.native_table_profile, Some(true));
+
+    let second_append = published(request(
+        &mut runtime,
+        &json!({
+            "type": "paste_cells",
+            "expected_revision": after_first_append.revision,
+            "collection": after_first_append.collection.id,
+            "start_entity": null,
+            "start_field": after_first_append.columns[0].id,
+            "rows": [["still-native", "5", "true", "2026-02-02"]],
+        }),
+    ));
+    let after_second_append = table(&mut runtime, &opened.table.collection.id);
+    assert_eq!(after_second_append.revision, second_append.resulting_revision);
+    assert_eq!(after_second_append.native_table_profile, Some(true));
+    assert_eq!(after_second_append.rows.len(), 2);
 }
 
 #[test]

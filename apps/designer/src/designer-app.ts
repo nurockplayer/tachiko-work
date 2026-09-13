@@ -1796,9 +1796,9 @@ function designerMarkup(
                 </tr>
               </thead>
               <tbody>
-                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + 1)}">Paste rows here, or choose Append row.</td></tr>` : ""}
+                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (isTracker ? 1 : 0))}">Paste rows here, or choose Append row.</td></tr>` : ""}
                 ${table.rows
-                  .map((row) => rowMarkup(row, table, (busy && !exportReviewPending) || currentness !== "current", view))
+                  .map((row) => rowMarkup(row, table, isTracker, (busy && !exportReviewPending) || currentness !== "current", view))
                   .join("")}
               </tbody>
             </table>
@@ -1903,16 +1903,17 @@ function groupedSummaryMarkup(
 function rowMarkup(
   row: TableProjection["rows"][number],
   table: TableProjection,
+  showRowHeader: boolean,
   busy: boolean,
   view: TrackerView,
 ): string {
   const fields = new Map(row.fields.map((field) => [field.target.field, field]));
   return `
     <tr>
-      <th scope="row">
+      ${showRowHeader ? `<th scope="row">
         <strong>${escapeHtml(humanize(row.key))}</strong>
         <code>${escapeHtml(row.id)}</code>
-      </th>
+      </th>` : ""}
       ${table.columns
         .map((column) =>
           fieldMarkup(fields.get(column.id), row.key, column.key, busy, view),

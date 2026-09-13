@@ -3846,11 +3846,23 @@ fn is_native_table_schema(document: &Document, schema: &Schema, entities: &[Enti
                 FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
             )
     }) && entities.iter().all(|entity| {
-        opaque_native_table_id(entity.as_str(), "native_table_row_", &suffix)
+        opaque_native_table_row_id(entity.as_str())
             && document.entities.get(entity).is_some_and(|row| {
                 row.schema == schema.id && row.fields.len() == schema.fields.len()
             })
     })
+}
+
+fn opaque_native_table_row_id(value: &str) -> bool {
+    let Some(serial_and_namespace) = value.strip_prefix("native_table_row_") else {
+        return false;
+    };
+    let Some((serial, namespace)) = serial_and_namespace.split_once('_') else {
+        return false;
+    };
+    serial.len() == 4
+        && serial.bytes().all(|byte| byte.is_ascii_digit())
+        && !namespace.is_empty()
 }
 
 fn opaque_native_table_id(value: &str, prefix: &str, suffix: &str) -> bool {

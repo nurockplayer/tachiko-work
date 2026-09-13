@@ -93,6 +93,7 @@ test("Driver creates Inventory, pastes typed rows, saves, reopens, and continues
   await paste(page, inventoryRows);
   await expect(page.getByRole("gridcell", { name: "0012", exact: true })).toBeVisible();
   await expect(page.getByRole("gridcell", { name: "2024-02-29", exact: true })).toBeVisible();
+  await expect(page.getByRole("rowheader")).toHaveCount(0);
   await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
   page.once("dialog", dialog => dialog.accept("inventory.roproj"));
   await page.getByRole("button", { name: "Save As", exact: true }).click();
