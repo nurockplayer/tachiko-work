@@ -12,7 +12,7 @@ Public repository access does not mean the project has reached a stable public r
 
 During public pre-alpha development, unresolved notice/provenance closure for a future packaged binary is not, by itself, a standing blocker for ordinary source integration or developer-local builds. A source change may proceed when the relevant dependency license is identified and the change itself does not vendor, copy, or otherwise redistribute third-party material in a way whose applicable obligations remain unsatisfied.
 
-This is not a waiver of open-source obligations. Unknown or incompatible licensing, unresolved obligations attached to material actually redistributed by the source repository, or another applicable repository gate still block merge. Developer-local builds do not authorize external distribution.
+This is not a waiver of open-source obligations. Unknown or incompatible licensing, unresolved obligations attached to material actually redistributed by the source repository, or another applicable repository gate still block merge. Developer-local builds do not authorize external distribution. `CONTRIBUTING.md` defines the bounded Steward-owned applicability test and alternate source-integration validation gate; it does not permit silently skipping a relevant failing check.
 
 External distribution of compiled desktop applications, DMGs/installers, tester binaries, or tagged/release artifacts remains a separate release authority boundary. Those artifacts must satisfy the applicable dependency inventory, notice, provenance, and release gates before distribution. A source merge does not authorize such distribution. See `release-process.md`.
 
