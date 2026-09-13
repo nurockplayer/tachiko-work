@@ -2135,6 +2135,7 @@ impl DesignerRuntime {
         expected: &str,
         collection: &str,
     ) -> Result<PublicationProjection, DesignerError> {
+        self.tracker_spec(collection)?;
         self.paste_cells(
             expected,
             collection,
