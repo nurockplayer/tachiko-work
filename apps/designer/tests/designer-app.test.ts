@@ -1151,7 +1151,6 @@ describe("Designer application seam", () => {
       (field) => field.target.field === "enabled",
     );
     if (nativeBoolean === undefined) throw new Error("native Boolean fixture is required");
-    nativeBoolean.editable_scalar = null;
     nativeTable.columns = nativeTable.columns.filter((column) => column.id === "enabled");
     nativeTable.rows = nativeTable.rows.map((row) => ({ ...row, fields: [nativeBoolean] }));
     vi.spyOn(client, "queryTable").mockResolvedValue(nativeTable);
@@ -1171,6 +1170,56 @@ describe("Designer application seam", () => {
     );
     expect(client.booleanEditRequests).toHaveLength(0);
     app.destroy();
+  });
+
+  it("keeps generic selection exclusive to native tables and seeds Boolean values canonically", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new ScalarClient();
+    const nativeTable = { ...structuredClone(table), native_table_profile: true };
+    nativeTable.columns = nativeTable.columns.filter((column) => column.id === "enabled");
+    nativeTable.rows = nativeTable.rows.map((row) => ({
+      ...row,
+      fields: row.fields.filter((field) => field.target.field === "enabled"),
+    }));
+    vi.spyOn(client, "queryTable").mockResolvedValue(nativeTable);
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const cell = root.querySelector<HTMLElement>("[data-generic-cell]");
+    const form = root.querySelector<HTMLFormElement>("[data-generic-edit]");
+    const input = form?.querySelector<HTMLInputElement>("[aria-label='Cell value']");
+    if (cell === null || form === null || input === null || input === undefined) {
+      throw new Error("native Boolean selection editor is required");
+    }
+    cell.click();
+    expect(input.value).toBe("true");
+    form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(client.booleanEditRequests).toEqual([{
+        expectedRevision: "resident/0",
+        target: { entity: "iron_sword", field: "enabled" },
+        value: true,
+      }]);
+    });
+    expect(root.querySelector("[role='alert']")).toBeNull();
+    app.destroy();
+  });
+
+  it("does not expose generic selection or retained window paste handlers outside a native table", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
+    const app = mountDesigner(root, new FakeClient(), host);
+    await app.ready;
+
+    expect(root.querySelector("[data-generic-edit]")).toBeNull();
+    expect(root.querySelector("[data-generic-cell]")).toBeNull();
+    app.destroy();
+    expect(removeEventListener).toHaveBeenCalledWith("paste", expect.any(Function));
+    expect(removeEventListener).toHaveBeenCalledWith("keydown", expect.any(Function));
   });
 
   it("marks only confirmed host revisions durable and reopens after occurrence teardown", async () => {

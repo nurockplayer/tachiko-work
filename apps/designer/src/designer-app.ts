@@ -1314,6 +1314,28 @@ export function mountDesigner(
     void pasteGeneric(text);
   };
 
+  const handleGenericPaste = (event: ClipboardEvent): void => {
+    if (destroyed) return;
+    const grid = root.querySelector<HTMLElement>("[data-native-table-grid]");
+    if (grid === null || !(event.target instanceof Node) || !grid.contains(event.target)) return;
+    event.preventDefault();
+    genericPasteEventCount += 1;
+    const text = event.clipboardData?.getData("text/plain");
+    if (text !== undefined) enqueueGenericPaste(text);
+  };
+
+  const handleGenericPasteShortcut = (event: KeyboardEvent): void => {
+    if (destroyed) return;
+    const grid = root.querySelector<HTMLElement>("[data-native-table-grid]");
+    if (grid === null || document.activeElement === null || !grid.contains(document.activeElement) || event.key.toLowerCase() !== "v" || (!event.ctrlKey && !event.metaKey)) return;
+    event.preventDefault();
+    const pasteEventsAtShortcut = genericPasteEventCount;
+    window.setTimeout(() => {
+      if (destroyed || genericPasteEventCount !== pasteEventsAtShortcut) return;
+      void navigator.clipboard.readText().then(enqueueGenericPaste).catch((error: unknown) => { showProjectFailure("Paste not applied", error); render(); });
+    }, 0);
+  };
+
   const bindInteractions = (): void => {
     root.querySelector("[data-new-tracker]")?.addEventListener("click", () => { void newTracker(); });
     root.querySelector("[data-new-budget]")?.addEventListener("click", () => { void newBudget(); });
@@ -1325,36 +1347,18 @@ export function mountDesigner(
         if (!form || !input) return;
         form.dataset.entity = cell.dataset.genericEntity ?? "";
         form.dataset.field = cell.dataset.genericField ?? "";
-        input.value = cell.getAttribute("aria-label") ?? "";
+        input.value = cell.dataset.genericValue ?? "";
         input.disabled = false;
         form.querySelector<HTMLButtonElement>("button[type='submit']")?.removeAttribute("disabled");
         input.focus();
       });
     });
     if (!genericPasteBound) {
-      window.addEventListener("paste", event => {
-        const grid = root.querySelector<HTMLElement>("[data-native-table-grid]");
-        if (grid === null || !(event.target instanceof Node) || !grid.contains(event.target)) return;
-        event.preventDefault();
-        genericPasteEventCount += 1;
-        const text = event.clipboardData?.getData("text/plain");
-        if (text !== undefined) {
-          enqueueGenericPaste(text);
-        }
-      });
+      window.addEventListener("paste", handleGenericPaste);
       genericPasteBound = true;
     }
     if (!genericShortcutBound) {
-      window.addEventListener("keydown", event => {
-        const grid = root.querySelector<HTMLElement>("[data-native-table-grid]");
-        if (grid === null || document.activeElement === null || !grid.contains(document.activeElement) || event.key.toLowerCase() !== "v" || (!event.ctrlKey && !event.metaKey)) return;
-        event.preventDefault();
-        const pasteEventsAtShortcut = genericPasteEventCount;
-        window.setTimeout(() => {
-          if (genericPasteEventCount !== pasteEventsAtShortcut) return;
-          void navigator.clipboard.readText().then(enqueueGenericPaste).catch((error: unknown) => { showProjectFailure("Paste not applied", error); render(); });
-        }, 0);
-      });
+      window.addEventListener("keydown", handleGenericPasteShortcut);
       genericShortcutBound = true;
     }
     root.querySelector<HTMLFormElement>("[data-generic-edit]")?.addEventListener("submit", event => {
@@ -1649,6 +1653,9 @@ export function mountDesigner(
     destroy: () => {
       reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
       destroyed = true; pendingExport = null; busy = false;
+      if (genericPasteBound) window.removeEventListener("paste", handleGenericPaste);
+      if (genericShortcutBound) window.removeEventListener("keydown", handleGenericPasteShortcut);
+      genericPasteBound = false; genericShortcutBound = false; queuedGenericPaste = null;
       syncBeforeUnloadGuard();
       root.replaceChildren();
       void client.close();
@@ -1799,12 +1806,12 @@ function designerMarkup(
               <tbody>
                 ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (showRowHeader ? 1 : 0))}">Paste rows here, or choose Append row.</td></tr>` : ""}
                 ${table.rows
-                  .map((row) => rowMarkup(row, table, showRowHeader, (busy && !exportReviewPending) || currentness !== "current", view))
+                  .map((row) => rowMarkup(row, table, showRowHeader, isNativeTable, (busy && !exportReviewPending) || currentness !== "current", view))
                   .join("")}
               </tbody>
             </table>
           </div>
-          ${isTracker ? "" : genericEditorMarkup(table, busy || currentness !== "current")}
+          ${isNativeTable ? genericEditorMarkup(table, busy || currentness !== "current") : ""}
           <p class="table-footnote">Human-readable keys are shown here; edits target stable semantic IDs.</p>
         </section>
       </main>
@@ -1905,6 +1912,7 @@ function rowMarkup(
   row: TableProjection["rows"][number],
   table: TableProjection,
   showRowHeader: boolean,
+  nativeTable: boolean,
   busy: boolean,
   view: TrackerView,
 ): string {
@@ -1917,7 +1925,7 @@ function rowMarkup(
       </th>` : ""}
       ${table.columns
         .map((column) =>
-          fieldMarkup(fields.get(column.id), row.key, column.key, busy, view),
+          fieldMarkup(fields.get(column.id), row.key, column.key, nativeTable, busy, view),
         )
         .join("")}
     </tr>
@@ -1928,6 +1936,7 @@ function fieldMarkup(
   field: FieldProjection | undefined,
   entityKey: string,
   fieldKey: string,
+  nativeTable: boolean,
   busy: boolean,
   view: TrackerView,
 ): string {
@@ -1939,7 +1948,7 @@ function fieldMarkup(
   if (field.editable_scalar === "number" && field.stored?.kind === "number") {
     const format = view.formats[cellKey(field.target.entity, field.target.field)] ?? "number";
     return `
-      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell">
+      <td ${genericCellAttributes(field, nativeTable)} data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="number">
@@ -1964,7 +1973,7 @@ function fieldMarkup(
   }
   if (field.editable_scalar === "text" && field.stored?.kind === "text") {
     return `
-      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell">
+      <td ${genericCellAttributes(field, nativeTable)} data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="text">
@@ -1984,7 +1993,7 @@ function fieldMarkup(
   }
   if (field.editable_scalar === "boolean" && field.stored?.kind === "boolean") {
     return `
-      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell">
+      <td ${genericCellAttributes(field, nativeTable)} data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="boolean">
@@ -2006,7 +2015,7 @@ function fieldMarkup(
   }
   if (field.editable_scalar === "date" && field.stored?.kind === "date") {
     return `
-      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell">
+      <td ${genericCellAttributes(field, nativeTable)} data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="date">
@@ -2029,7 +2038,7 @@ function fieldMarkup(
   if (field.formula !== null) {
     const format = view.formats[cellKey(field.target.entity, field.target.field)] ?? "number";
     return `
-      <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="formula-cell">
+      <td data-field="${escapeHtml(key)}" class="formula-cell">
         <output>${escapeHtml(calculationValue(field, format))}</output>
         <span class="formula-badge">ƒ Calculated</span>
         <form data-formula-form data-entity="${encodeOpaqueAttribute(field.target.entity)}" data-field="${encodeOpaqueAttribute(field.target.field)}">
@@ -2042,7 +2051,7 @@ function fieldMarkup(
     `;
   }
   return `
-    <td ${genericCellAttributes(field)} data-field="${escapeHtml(key)}" class="stored-cell readonly">
+    <td data-field="${escapeHtml(key)}" class="stored-cell readonly">
       <span>${escapeHtml(storedValue(field))}</span>
       <small class="value-kind">Stored</small>
       ${diagnostics}
@@ -2051,16 +2060,29 @@ function fieldMarkup(
 }
 
 function genericEditorMarkup(table: TableProjection, busy: boolean): string {
-  const first = table.rows[0]?.fields[0];
-  const value = first === undefined ? "" : storedValue(first);
+  const first = table.rows.flatMap((row) => row.fields).find((field) => field.editable_scalar !== null && field.formula === null && field.stored !== null);
+  const value = first === undefined ? "" : genericCellValue(first);
   return `<form data-generic-edit data-entity="${first ? encodeOpaqueAttribute(first.target.entity) : ""}" data-field="${first ? encodeOpaqueAttribute(first.target.field) : ""}">
     <label>Cell value <input aria-label="Cell value" value="${escapeHtml(value)}" ${busy || first === undefined ? "disabled" : ""}></label>
     <button type="submit" ${busy || first === undefined ? "disabled" : ""}>Apply to selection</button>
   </form>`;
 }
 
-function genericCellAttributes(field: FieldProjection): string {
-  return `role="gridcell" tabindex="0" data-generic-cell data-generic-entity="${encodeOpaqueAttribute(field.target.entity)}" data-generic-field="${encodeOpaqueAttribute(field.target.field)}" aria-label="${escapeHtml(storedValue(field))}"`;
+function genericCellAttributes(field: FieldProjection, nativeTable: boolean): string {
+  if (!nativeTable || field.editable_scalar === null || field.formula !== null || field.stored === null) return "";
+  return `role="gridcell" tabindex="0" data-generic-cell data-generic-entity="${encodeOpaqueAttribute(field.target.entity)}" data-generic-field="${encodeOpaqueAttribute(field.target.field)}" data-generic-value="${escapeHtml(genericCellValue(field))}" aria-label="${escapeHtml(storedValue(field))}"`;
+}
+
+function genericCellValue(field: FieldProjection): string {
+  const stored = field.stored;
+  if (stored === null) return "";
+  switch (stored.kind) {
+    case "number": return String(stored.value);
+    case "text": return stored.value;
+    case "boolean": return String(stored.value);
+    case "date": return stored.value;
+    case "reference": return "";
+  }
 }
 
 function noticeMarkup(notice: Notice | null): string {
