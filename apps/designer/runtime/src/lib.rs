@@ -3860,9 +3860,7 @@ fn opaque_native_table_row_id(value: &str) -> bool {
     let Some((serial, namespace)) = serial_and_namespace.split_once('_') else {
         return false;
     };
-    serial.len() == 4
-        && serial.bytes().all(|byte| byte.is_ascii_digit())
-        && !namespace.is_empty()
+    serial.len() == 4 && serial.bytes().all(|byte| byte.is_ascii_digit()) && !namespace.is_empty()
 }
 
 fn opaque_native_table_id(value: &str, prefix: &str, suffix: &str) -> bool {

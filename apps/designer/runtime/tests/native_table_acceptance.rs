@@ -264,7 +264,6 @@ fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_
         continued.rows[0].fields[0].target,
         before_close.rows[0].fields[0].target
     );
-
 }
 
 #[test]
@@ -304,7 +303,10 @@ fn native_table_profile_survives_appends_after_fresh_reopen() {
         }),
     ));
     let after_second_append = table(&mut runtime, &opened.table.collection.id);
-    assert_eq!(after_second_append.revision, second_append.resulting_revision);
+    assert_eq!(
+        after_second_append.revision,
+        second_append.resulting_revision
+    );
     assert_eq!(after_second_append.native_table_profile, Some(true));
     assert_eq!(after_second_append.rows.len(), 2);
 }
