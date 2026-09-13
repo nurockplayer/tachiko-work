@@ -13,10 +13,10 @@ async function newBudget(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Budget Items", exact: true })).toBeVisible();
 }
 
-async function selectCollection(page: Page, name: string): Promise<void> {
-  const collection = page.getByLabel("Collection", { exact: true });
-  await collection.selectOption({ label: name });
-  await expect(collection.locator("option:checked")).toHaveText(name);
+async function selectView(page: Page, name: string): Promise<void> {
+  const view = page.getByLabel("View", { exact: true });
+  await view.selectOption({ label: name });
+  await expect(view.locator("option:checked")).toHaveText(name);
 }
 
 async function applyScalar(page: Page, label: string, value: string): Promise<void> {
@@ -56,9 +56,9 @@ async function duplicateActiveData(page: Page, name: string): Promise<void> {
   const duplicate = page.getByRole("button", { name: /^Duplicate (?:table(?: data)?|data)$/i });
   await expect(duplicate).toBeVisible();
   await duplicate.click();
-  const collection = page.getByLabel("Collection", { exact: true });
-  await expect(collection.getByRole("option", { name, exact: true })).toHaveCount(1);
-  await expect(collection.locator("option:checked")).toHaveText(name);
+  const view = page.getByLabel("View", { exact: true });
+  await expect(view.getByRole("option", { name, exact: true })).toHaveCount(1);
+  await expect(view.locator("option:checked")).toHaveText(name);
 }
 
 async function namedAction(page: Page, action: string, name: string): Promise<void> {
@@ -75,7 +75,7 @@ async function reopen(page: Page, name: string): Promise<void> {
 
 test("duplicated Driver data is independent, retargets internal formulas, and keeps external dependencies", async ({ page }) => {
   await newBudget(page);
-  await selectCollection(page, "Budget Summary");
+  await selectView(page, "Budget Summary");
 
   await formula(page, summary("Remaining"), [
     { reference: summary("Planned Total") },
@@ -94,27 +94,27 @@ test("duplicated Driver data is independent, retargets internal formulas, and ke
   const copyAfterInternalEdit = await cell(page, "remaining").locator("output").textContent();
   expect(copyAfterInternalEdit).not.toBe(copyBefore);
 
-  await selectCollection(page, "Budget Summary");
+  await selectView(page, "Budget Summary");
   await expect(cell(page, "remaining").locator("output")).toHaveText(sourceBefore ?? "");
 
-  await selectCollection(page, "Budget Items");
+  await selectView(page, "Budget Items");
   await applyScalar(page, "Actual for Utilities", "200");
 
-  await selectCollection(page, "Budget Summary");
+  await selectView(page, "Budget Summary");
   const sourceAfterExternalEdit = await cell(page, "remaining").locator("output").textContent();
   expect(sourceAfterExternalEdit).not.toBe(sourceBefore);
 
-  await selectCollection(page, "October Summary");
+  await selectView(page, "October Summary");
   const copyAfterExternalEdit = await cell(page, "remaining").locator("output").textContent();
   expect(copyAfterExternalEdit).not.toBe(copyAfterInternalEdit);
 
-  await selectCollection(page, "Budget Summary");
+  await selectView(page, "Budget Summary");
   await expect(cell(page, "planned_total").locator("output")).not.toHaveText("1,000");
 });
 
 test("duplicate is one reversible semantic action and survives save/reopen as a separate collection", async ({ page }) => {
   await newBudget(page);
-  await selectCollection(page, "Budget Summary");
+  await selectView(page, "Budget Summary");
   const sourcePlanned = await cell(page, "planned_total").locator("output").textContent();
 
   await duplicateActiveData(page, "October Summary");
@@ -122,16 +122,16 @@ test("duplicate is one reversible semantic action and survives save/reopen as a 
 
   const history = page.getByRole("region", { name: "Session history", exact: true });
   await history.getByRole("button", { name: "Undo", exact: true }).click();
-  await expect(page.getByLabel("Collection", { exact: true }).getByRole("option", { name: "October Summary", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("View", { exact: true }).getByRole("option", { name: "October Summary", exact: true })).toHaveCount(0);
   await history.getByRole("button", { name: "Redo", exact: true }).click();
-  await expect(page.getByLabel("Collection", { exact: true }).getByRole("option", { name: "October Summary", exact: true })).toHaveCount(1);
+  await expect(page.getByLabel("View", { exact: true }).getByRole("option", { name: "October Summary", exact: true })).toHaveCount(1);
 
   await namedAction(page, "Save As", "budget-duplicate.roproj");
   await expect(page.getByTestId("durability")).toContainText("Saved");
   await reopen(page, "budget-duplicate.roproj");
 
-  await selectCollection(page, "Budget Summary");
+  await selectView(page, "Budget Summary");
   await expect(cell(page, "planned_total").locator("output")).toHaveText(sourcePlanned ?? "");
-  await selectCollection(page, "October Summary");
+  await selectView(page, "October Summary");
   await expect(cell(page, "planned_total").locator("output")).toHaveText(sourcePlanned ?? "");
 });
