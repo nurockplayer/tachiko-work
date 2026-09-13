@@ -89,7 +89,7 @@ export function orderedRows(table: TableProjection, view: TrackerView): TablePro
     const positions = new Map(view.order.map((id, index) => [id, index]));
     return [...table.rows].sort((a, b) => (positions.get(a.id) ?? Infinity) - (positions.get(b.id) ?? Infinity));
 }
-export function parseTsv(text: string): string[][] {
+export function parseTsv(text: string, maxColumns = 3): string[][] {
     if (text.length > 48000 || text.includes("\0"))
         throw new Error("Paste is limited to 48,000 characters and cannot contain NUL.");
     const rows: string[][] = [];
@@ -135,8 +135,8 @@ export function parseTsv(text: string): string[][] {
         row.push(value);
         rows.push(row);
     }
-    if (rows.length === 0 || rows.length > 128 || rows.some(r => r.length !== rows[0]?.length || r.length > 3))
-        throw new Error("Paste a rectangular range of up to 128 rows and 3 columns.");
+    if (rows.length === 0 || rows.length > 128 || rows.some(r => r.length !== rows[0]?.length || r.length > maxColumns))
+        throw new Error(`Paste a rectangular range of up to 128 rows and ${String(maxColumns)} columns.`);
     return rows;
 }
 export const encodeTsv = (rows: string[][]): string => rows.map(row => row.map(value => value === "" || /[\t\r\n"]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value).join("\t")).join("\r\n");

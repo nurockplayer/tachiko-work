@@ -14,6 +14,7 @@ import type {
   KeyedGroupedSumDefinitionInput,
   KeyedGroupedSumProjection,
   KeyedGroupedSumPublishedProjection,
+  NewTableColumnInput,
   TableProjection,
   FailureProjection,
 } from "./protocol.ts";
@@ -30,6 +31,7 @@ export interface DesignerClient {
   copyFormula?(expectedRevision: string, request: FormulaCopy): Promise<PublicationProjection>;
   newTracker?(): Promise<OpenedProjection>;
   newBudget?(): Promise<OpenedProjection>;
+  newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;

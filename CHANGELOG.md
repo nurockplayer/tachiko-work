@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The Designer can create one bounded ordinary native table with user-defined
+  Text, Number, Boolean, and Date columns. New rows require a complete typed
+  input, invalid values are rejected without publication, and the table can be
+  saved, reopened, and edited through the existing private runtime boundary.
 - The experimental Designer consumer kit is built from one captured Git commit
   and includes an exact asset digest inventory, capability names, and existing
   license notices. Packaging rejects a dirty checkout and publishes only to an
