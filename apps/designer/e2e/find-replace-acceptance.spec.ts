@@ -13,7 +13,7 @@ async function createFindTable(page: Page, rows: string): Promise<void> {
   await page.getByRole("button", { name: "New Table", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "New table", exact: true });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel("Table name", { exact: true }).fill("Find canary");
+  await dialog.getByLabel("Table name", { exact: true }).fill("FindCanary");
   for (const [index, name, type] of [
     [0, "name", "Text"],
     [1, "note", "Text"],
@@ -26,7 +26,7 @@ async function createFindTable(page: Page, rows: string): Promise<void> {
     await dialog.getByLabel("Column type", { exact: true }).nth(index).selectOption({ label: type });
   }
   await dialog.getByRole("button", { name: "Create table", exact: true }).click();
-  await expect(page.getByRole("grid", { name: "Find canary cells", exact: true })).toBeVisible();
+  await expect(page.getByRole("grid", { name: "FindCanary cells", exact: true })).toBeVisible();
   await page.getByRole("gridcell", { name: "Paste rows here, or choose Append row." }).click();
   await paste(page, rows);
 }
