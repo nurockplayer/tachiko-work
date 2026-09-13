@@ -68,9 +68,19 @@ mod macos {
             &self,
             documents: Vec<OpenedDocument>,
         ) -> Result<(), Vec<OpenedDocument>> {
+            self.latch_before_frontend_ready_after_initial_read(documents, || {})
+        }
+
+        fn latch_before_frontend_ready_after_initial_read(
+            &self,
+            documents: Vec<OpenedDocument>,
+            after_initial_read: impl FnOnce(),
+        ) -> Result<(), Vec<OpenedDocument>> {
             if self.frontend_ready.load(Ordering::Acquire) {
                 return Err(documents);
             }
+
+            after_initial_read();
 
             let mut pending = self
                 .pending
@@ -155,6 +165,11 @@ mod macos {
 
     #[cfg(test)]
     mod tests {
+        use std::{
+            sync::{Arc, mpsc},
+            thread,
+        };
+
         use super::{OpenedDocument, OpenedDocuments};
 
         fn document(id: &str) -> OpenedDocument {
@@ -183,6 +198,44 @@ mod macos {
                 .expect_err("ready frontend must receive direct delivery");
             assert_eq!(warm.len(), 1);
             assert_eq!(warm[0].id, "warm");
+        }
+
+        #[test]
+        fn pending_latch_rechecks_readiness_after_the_one_shot_take() {
+            let state = Arc::new(OpenedDocuments::default());
+            let (initial_read, initial_read_complete) = mpsc::channel();
+            let (resume_latch, resume_latch_wait) = mpsc::channel();
+            let delivery_state = Arc::clone(&state);
+
+            let delivery = thread::spawn(move || {
+                delivery_state.latch_before_frontend_ready_after_initial_read(
+                    vec![document("cold")],
+                    || {
+                        initial_read
+                            .send(())
+                            .expect("test must observe the initial readiness read");
+                        resume_latch_wait
+                            .recv()
+                            .expect("test must resume the blocked delivery");
+                    },
+                )
+            });
+
+            initial_read_complete
+                .recv()
+                .expect("delivery must read not-ready before the frontend take");
+            assert!(state.take_pending().is_empty());
+            resume_latch
+                .send(())
+                .expect("delivery must remain available after the one-shot take");
+
+            let documents = delivery
+                .join()
+                .expect("delivery thread must not panic")
+                .expect_err("delivery must not latch after the one-shot take");
+            assert_eq!(documents.len(), 1);
+            assert_eq!(documents[0].id, "cold");
+            assert!(state.take_pending().is_empty());
         }
     }
 }
