@@ -1331,19 +1331,27 @@ impl DesignerRuntime {
         let target_key = duplicate_collection_key(name)?;
         let snapshot = self.session.export_snapshot();
         let document = snapshot.document();
-        let source_spec = self
-            .collection_specs
-            .get(collection)
-            .ok_or_else(|| DesignerError::MissingCollection {
+        let source_spec = self.collection_specs.get(collection).ok_or_else(|| {
+            DesignerError::MissingCollection {
                 collection: collection.to_owned(),
-            })?;
+            }
+        })?;
         if document.schemas.len() >= MAX_COLLECTIONS {
             return Err(table_error("collection capacity is exhausted"));
         }
-        if document.schemas.values().any(|schema| schema.key.as_str() == target_key) {
+        if document
+            .schemas
+            .values()
+            .any(|schema| schema.key.as_str() == target_key)
+        {
             return Err(table_error("collection name already exists"));
         }
-        if document.entities.len().saturating_add(source_spec.entities.len()) > MAX_TOTAL_ENTITIES {
+        if document
+            .entities
+            .len()
+            .saturating_add(source_spec.entities.len())
+            > MAX_TOTAL_ENTITIES
+        {
             return Err(table_error("entity capacity is exhausted"));
         }
         let source_schema = document
@@ -1387,7 +1395,9 @@ impl DesignerRuntime {
         for source_id in &source_spec.entities {
             let target_id = loop {
                 let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
-                if !document.entities.contains_key(&id) && !entity_map.values().any(|used| used == &id) {
+                if !document.entities.contains_key(&id)
+                    && !entity_map.values().any(|used| used == &id)
+                {
                     break id;
                 }
             };
@@ -1400,13 +1410,14 @@ impl DesignerRuntime {
         };
         let mut entities = Vec::with_capacity(source_spec.entities.len());
         for source_id in &source_spec.entities {
-            let source = document
-                .entities
-                .get(source_id)
-                .ok_or_else(|| DesignerError::MissingCollection {
+            let source = document.entities.get(source_id).ok_or_else(|| {
+                DesignerError::MissingCollection {
                     collection: collection.to_owned(),
-                })?;
-            let target_id = entity_map.get(source_id).ok_or_else(|| table_error("entity mapping is incomplete"))?;
+                }
+            })?;
+            let target_id = entity_map
+                .get(source_id)
+                .ok_or_else(|| table_error("entity mapping is incomplete"))?;
             let entity_key = format!("{}-{}", source.key, target_key);
             if entity_key.len() > MAX_PROFILE_STRING_BYTES {
                 return Err(table_error("copied entity key exceeds the bounded profile"));
@@ -1422,23 +1433,19 @@ impl DesignerRuntime {
                 let target_field = field_map
                     .get(source_field)
                     .ok_or_else(|| table_error("field mapping is incomplete"))?;
-                let value = remap_duplicate_value(
-                    value,
-                    &entity_map,
-                    &field_map,
-                )?;
+                let value = remap_duplicate_value(value, &entity_map, &field_map)?;
                 copied.fields.insert(target_field.clone(), value);
             }
             entities.push(copied);
         }
         let forward = vec![SemanticCommand::AppendCollection { schema, entities }];
         let inverse = match &forward[0] {
-            SemanticCommand::AppendCollection { schema, entities } => vec![
-                SemanticCommand::RemoveCollection {
+            SemanticCommand::AppendCollection { schema, entities } => {
+                vec![SemanticCommand::RemoveCollection {
                     schema: schema.id.clone(),
                     entities: entities.iter().map(|entity| entity.id.clone()).collect(),
-                },
-            ],
+                }]
+            }
             _ => unreachable!("duplicate collection always creates an append command"),
         };
         let publication = self.publish_commands(expected_revision, forward.clone())?;
@@ -3184,7 +3191,10 @@ fn remap_duplicate_value(
 ) -> Result<Value, DesignerError> {
     match value {
         Value::Reference(entity) => Ok(Value::Reference(
-            entities.get(entity).cloned().unwrap_or_else(|| entity.clone()),
+            entities
+                .get(entity)
+                .cloned()
+                .unwrap_or_else(|| entity.clone()),
         )),
         Value::Formula(expression) => {
             let mut expression = expression.clone();
@@ -3208,15 +3218,12 @@ fn map_duplicate_expression(
         Expression::Reference(reference) => {
             if let Some(entity) = entities.get(&reference.entity) {
                 reference.entity = entity.clone();
-                reference.field = fields
-                    .get(&reference.field)
-                    .cloned()
-                    .ok_or_else(|| {
-                        table_error(&format!(
-                            "internal formula reference '{}' has no copied field",
-                            reference.field
-                        ))
-                    })?;
+                reference.field = fields.get(&reference.field).cloned().ok_or_else(|| {
+                    table_error(&format!(
+                        "internal formula reference '{}' has no copied field",
+                        reference.field
+                    ))
+                })?;
             }
             Ok(())
         }
@@ -4125,7 +4132,13 @@ fn duplicate_collection_key(label: &str) -> Result<String, DesignerError> {
     let normalized = label
         .trim()
         .chars()
-        .map(|character| if character.is_whitespace() { '-' } else { character })
+        .map(|character| {
+            if character.is_whitespace() {
+                '-'
+            } else {
+                character
+            }
+        })
         .collect::<String>();
     native_table_key(&normalized, "collection name")
 }

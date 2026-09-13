@@ -4,7 +4,10 @@ use tachiko_designer_runtime::{
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 
-fn table(runtime: &mut DesignerRuntime, collection: &str) -> tachiko_designer_runtime::TableProjection {
+fn table(
+    runtime: &mut DesignerRuntime,
+    collection: &str,
+) -> tachiko_designer_runtime::TableProjection {
     let DesignerResponse::Table(table) = runtime
         .handle(DesignerRequest::QueryTable {
             collection: collection.to_owned(),
@@ -16,7 +19,10 @@ fn table(runtime: &mut DesignerRuntime, collection: &str) -> tachiko_designer_ru
     table
 }
 
-fn field<'a>(table: &'a tachiko_designer_runtime::TableProjection, key: &str) -> &'a FieldProjection {
+fn field<'a>(
+    table: &'a tachiko_designer_runtime::TableProjection,
+    key: &str,
+) -> &'a FieldProjection {
     let field_id = table
         .columns
         .iter()
@@ -60,14 +66,18 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
     let copy = table(&mut runtime, "october-summary");
     assert_ne!(source.collection.id, copy.collection.id);
     assert_eq!(source.rows.len(), copy.rows.len());
-    assert!(source
-        .columns
-        .iter()
-        .all(|column| copy.columns.iter().all(|other| other.id != column.id)));
-    assert!(source
-        .rows
-        .iter()
-        .all(|row| copy.rows.iter().all(|other| other.id != row.id)));
+    assert!(
+        source
+            .columns
+            .iter()
+            .all(|column| copy.columns.iter().all(|other| other.id != column.id))
+    );
+    assert!(
+        source
+            .rows
+            .iter()
+            .all(|row| copy.rows.iter().all(|other| other.id != row.id))
+    );
     let copied_remaining = field(&copy, "remaining");
     let copied_source = copied_remaining.formula.as_ref().unwrap().source.clone();
     assert!(copied_source.contains("october-summary"));
@@ -89,8 +99,14 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
         })
         .unwrap();
     let source_after = table(&mut runtime, "budget_summary");
-    assert_eq!(field(&source_after, "planned_total").stored, field(&source, "planned_total").stored);
-    assert_eq!(field(&source_after, "remaining").formula, field(&source, "remaining").formula);
+    assert_eq!(
+        field(&source_after, "planned_total").stored,
+        field(&source, "planned_total").stored
+    );
+    assert_eq!(
+        field(&source_after, "remaining").formula,
+        field(&source, "remaining").formula
+    );
 
     runtime
         .handle(DesignerRequest::Undo {
@@ -112,29 +128,36 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
             expected_revision: "resident/6".into(),
         })
         .unwrap();
-    assert!(runtime
-        .handle(DesignerRequest::QueryTable {
-            collection: "october-summary".into(),
-        })
-        .is_err());
+    assert!(
+        runtime
+            .handle(DesignerRequest::QueryTable {
+                collection: "october-summary".into(),
+            })
+            .is_err()
+    );
     runtime
         .handle(DesignerRequest::Redo {
             expected_revision: "resident/7".into(),
         })
         .unwrap();
-    assert_eq!(table(&mut runtime, "october-summary").rows.len(), copy.rows.len());
+    assert_eq!(
+        table(&mut runtime, "october-summary").rows.len(),
+        copy.rows.len()
+    );
 }
 
 #[test]
 fn duplicate_collection_rejects_stale_revision_without_mutating_bytes() {
     let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
     let before = runtime.export_project("resident/0").unwrap();
-    assert!(runtime
-        .handle(DesignerRequest::DuplicateCollection {
-            expected_revision: "resident/1".into(),
-            collection: "budget_summary".into(),
-            name: "October Summary".into(),
-        })
-        .is_err());
+    assert!(
+        runtime
+            .handle(DesignerRequest::DuplicateCollection {
+                expected_revision: "resident/1".into(),
+                collection: "budget_summary".into(),
+                name: "October Summary".into(),
+            })
+            .is_err()
+    );
     assert_eq!(runtime.export_project("resident/0").unwrap(), before);
 }
