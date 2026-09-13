@@ -213,6 +213,8 @@ pub struct TableProjection {
     pub revision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker_profile: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_table_profile: Option<bool>,
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     pub rows: Vec<RowProjection>,
@@ -675,6 +677,7 @@ enum HistoryAction {
 #[derive(Clone)]
 struct CollectionSpec {
     direct_tracker_rows: bool,
+    native_table_rows: bool,
     summary: CollectionSummary,
     columns: Vec<ColumnSpec>,
     entities: Vec<tachiko_workspace_engine::EntityId>,
@@ -1198,6 +1201,7 @@ impl DesignerRuntime {
             .collect();
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
+            native_table_profile: is_native_table_spec(spec).then_some(true),
             revision: field_query.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: spec
@@ -2189,6 +2193,13 @@ impl DesignerRuntime {
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
         let spec = self.collection_spec(collection)?;
+        let tracker = is_tracker_spec(spec);
+        let native_table = is_native_table_spec(spec);
+        if !tracker && !native_table {
+            return Err(tracker_error(
+                "typed row paste is available only for the bounded tracker or native table profile",
+            ));
+        }
         let column = spec
             .columns
             .iter()
@@ -2224,24 +2235,32 @@ impl DesignerRuntime {
                 .entities
                 .get(start + offset)
                 .and_then(|id| document.entities.get(id));
-            let mut entity = existing.cloned().unwrap_or_else(|| {
-                if is_tracker_spec(spec) {
-                    tracker_row(
-                        document,
-                        self.row_serial,
-                        &self.row_namespace,
-                        &mut allocated,
-                    )
-                } else {
-                    native_table_row(
-                        document,
-                        spec,
-                        self.row_serial,
-                        &self.row_namespace,
-                        &mut allocated,
-                    )
-                }
-            });
+            if existing.is_none() && !tracker && (column != 0 || row.len() != spec.columns.len()) {
+                return Err(table_error(
+                    "new native table rows must provide every declared typed column",
+                ));
+            }
+            let mut entity = existing.cloned().map_or_else(
+                || {
+                    if tracker {
+                        Ok(tracker_row(
+                            document,
+                            self.row_serial,
+                            &self.row_namespace,
+                            &mut allocated,
+                        ))
+                    } else {
+                        native_table_row(
+                            document,
+                            spec,
+                            self.row_serial,
+                            &self.row_namespace,
+                            &mut allocated,
+                        )
+                    }
+                },
+                Ok,
+            )?;
             for (offset, text) in row.iter().enumerate() {
                 let field =
                     FieldRef::new(entity.id.clone(), spec.columns[column + offset].id.clone());
@@ -2934,6 +2953,10 @@ fn is_tracker_spec(spec: &CollectionSpec) -> bool {
         })
 }
 
+fn is_native_table_spec(spec: &CollectionSpec) -> bool {
+    spec.native_table_rows
+}
+
 fn copy_position(spec: &CollectionSpec, field: &FieldRef) -> Result<(usize, usize), DesignerError> {
     let row = spec
         .entities
@@ -3035,6 +3058,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                                 )
                             })
                     }),
+                    native_table_rows: is_native_table_schema(document, schema, &entities),
                     summary,
                     columns: {
                         let mut fields = schema.fields.values().collect::<Vec<_>>();
@@ -3765,7 +3789,7 @@ fn native_table_row(
     row_serial: usize,
     namespace: &str,
     allocated: &mut BTreeSet<EntityId>,
-) -> Entity {
+) -> Result<Entity, DesignerError> {
     let mut serial = row_serial.saturating_add(1);
     loop {
         let id = EntityId::from(format!("native_table_row_{serial:04}_{namespace}"));
@@ -3775,35 +3799,65 @@ fn native_table_row(
             && !document.entities.values().any(|entity| entity.key == key)
         {
             allocated.insert(id.clone());
-            let fields = spec
-                .columns
-                .iter()
-                .map(|column| {
-                    let value = match &column.field_type {
-                        FieldType::Text => Value::Text(String::new()),
-                        FieldType::Number => {
-                            Value::Number(Number::new(0.0).expect("zero is finite"))
-                        }
-                        FieldType::Boolean => Value::Boolean(false),
-                        FieldType::Date => {
-                            Value::Date(Date::parse("1970-01-01").expect("fixed Gregorian fixture"))
-                        }
-                        FieldType::Reference { .. } => {
-                            unreachable!("native table profile excludes reference columns")
-                        }
-                    };
-                    (column.id.clone(), value)
-                })
-                .collect();
-            break Entity {
+            let mut fields = BTreeMap::new();
+            for column in &spec.columns {
+                let value = match &column.field_type {
+                    FieldType::Text => Value::Text(String::new()),
+                    FieldType::Number => Value::Number(Number::new(0.0).expect("zero is finite")),
+                    FieldType::Boolean => Value::Boolean(false),
+                    FieldType::Date => {
+                        Value::Date(Date::parse("1970-01-01").expect("fixed Gregorian fixture"))
+                    }
+                    FieldType::Reference { .. } => {
+                        return Err(table_error(
+                            "native table rows do not support reference columns",
+                        ));
+                    }
+                };
+                fields.insert(column.id.clone(), value);
+            }
+            return Ok(Entity {
                 id,
                 key,
                 schema: SchemaId::from(spec.summary.id.clone()),
                 fields,
-            };
+            });
         }
         serial += 1;
     }
+}
+
+fn is_native_table_schema(document: &Document, schema: &Schema, entities: &[EntityId]) -> bool {
+    let Some(namespace) = schema.id.as_str().strip_prefix("native_table_schema_0002_") else {
+        return false;
+    };
+    if namespace.is_empty()
+        || document.id.as_str() != format!("native_table_document_0001_{namespace}")
+        || schema.fields.is_empty()
+    {
+        return false;
+    }
+    let suffix = format!("_{namespace}");
+    schema.fields.values().all(|field| {
+        field.required
+            && opaque_native_table_id(field.id.as_str(), "native_table_field_", &suffix)
+            && matches!(
+                field.field_type,
+                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            )
+    }) && entities.iter().all(|entity| {
+        opaque_native_table_id(entity.as_str(), "native_table_row_", &suffix)
+            && document.entities.get(entity).is_some_and(|row| {
+                row.schema == schema.id && row.fields.len() == schema.fields.len()
+            })
+    })
+}
+
+fn opaque_native_table_id(value: &str, prefix: &str, suffix: &str) -> bool {
+    value
+        .strip_prefix(prefix)
+        .and_then(|serial| serial.strip_suffix(suffix))
+        .is_some_and(|serial| serial.len() == 4 && serial.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 fn row_serial_from_id(id: &str) -> Option<usize> {

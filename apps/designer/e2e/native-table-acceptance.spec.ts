@@ -122,6 +122,16 @@ test("cancelled New Table preserves a dirty current occurrence", async ({ page }
   await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
 });
 
+test("New Table dialog text paste stays in the dialog", async ({ page }) => {
+  await page.goto("/");
+  const dialog = await openNewTableDialog(page);
+  const name = dialog.getByLabel("Table name", { exact: true });
+  await name.focus();
+  await paste(page, "Inventory");
+  await expect(name).toHaveValue("Inventory");
+  await expect(page.getByRole("grid", { name: "Weapons cells", exact: true })).toBeVisible();
+});
+
 test("invalid New Table candidate preserves a dirty current occurrence", async ({ page }) => {
   await createDirtyTracker(page);
 
@@ -219,6 +229,25 @@ test("invalid typed paste does not publish into newly created Inventory", async 
   await expect(page.getByRole("alert")).toContainText(/invalid|rejected/i);
   await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
   await expect(page.getByRole("gridcell", { name: "0012", exact: true })).toBeVisible();
+});
+
+test("new Inventory rows require every declared typed value", async ({ page }) => {
+  await createInventory(page);
+  await page.getByRole("gridcell", { name: "Paste rows here, or choose Append row." }).click();
+  await paste(page, "only item");
+  await expect(page.getByRole("alert")).toContainText(/complete|every|rejected/i);
+  await expect(page.getByRole("gridcell", { name: "Paste rows here, or choose Append row." })).toBeVisible();
+});
+
+test("native-table Boolean editor rejects text other than true or false", async ({ page }) => {
+  await createInventory(page);
+  await page.getByRole("gridcell", { name: "Paste rows here, or choose Append row." }).click();
+  await paste(page, "0012\t3\ttrue\t2024-02-29");
+  await page.getByRole("gridcell", { name: "True", exact: true }).click();
+  await page.getByLabel("Cell value", { exact: true }).fill("yes");
+  await page.getByRole("button", { name: "Apply to selection", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(/Boolean values must be exactly true or false/);
+  await expect(page.getByRole("gridcell", { name: "True", exact: true })).toBeVisible();
 });
 
 test("built Designer WASM admits the same Inventory candidate as the native seed", async () => {

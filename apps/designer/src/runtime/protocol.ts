@@ -54,6 +54,7 @@ export type FieldProjection = {
 
 export type TableProjection = {
   tracker_profile?: boolean;
+  native_table_profile?: boolean;
   revision: string;
   collection: CollectionSummary;
   columns: Array<{ id: string; key: string; field_type: string; dropdown_options?: string[] }>;

@@ -1141,6 +1141,38 @@ describe("Designer application seam", () => {
     app.destroy();
   });
 
+  it("rejects invalid Boolean text in the native-table editor before publication", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new FakeClient();
+    const nativeTable = { ...structuredClone(table), native_table_profile: true };
+    const nativeBoolean = nativeTable.rows[0]?.fields.find(
+      (field) => field.target.field === "enabled",
+    );
+    if (nativeBoolean === undefined) throw new Error("native Boolean fixture is required");
+    nativeBoolean.editable_scalar = null;
+    nativeTable.columns = nativeTable.columns.filter((column) => column.id === "enabled");
+    nativeTable.rows = nativeTable.rows.map((row) => ({ ...row, fields: [nativeBoolean] }));
+    vi.spyOn(client, "queryTable").mockResolvedValue(nativeTable);
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const form = root.querySelector<HTMLFormElement>("[data-generic-edit]");
+    const input = form?.querySelector<HTMLInputElement>("[aria-label='Cell value']");
+    if (form === null || input === null || input === undefined) {
+      throw new Error("native-table editor is required");
+    }
+    input.value = "yes";
+    form.requestSubmit();
+
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+      "Boolean values must be exactly true or false",
+    );
+    expect(client.booleanEditRequests).toHaveLength(0);
+    app.destroy();
+  });
+
   it("marks only confirmed host revisions durable and reopens after occurrence teardown", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

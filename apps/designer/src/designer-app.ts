@@ -1271,7 +1271,7 @@ export function mountDesigner(
   };
 
   const pasteGeneric = async (text: string): Promise<void> => {
-    if (!store || busy || !client.trackerCommand) return;
+    if (!store || busy || !client.trackerCommand || store.snapshot().table.native_table_profile !== true) return;
     const table = store.snapshot().table;
     const firstColumn = table.columns[0];
     if (!firstColumn) return;
@@ -1333,7 +1333,8 @@ export function mountDesigner(
     });
     if (!genericPasteBound) {
       window.addEventListener("paste", event => {
-        if (root.querySelector("[data-generic-grid]") === null) return;
+        const grid = root.querySelector<HTMLElement>("[data-native-table-grid]");
+        if (grid === null || !(event.target instanceof Node) || !grid.contains(event.target)) return;
         event.preventDefault();
         genericPasteEventCount += 1;
         const text = event.clipboardData?.getData("text/plain");
@@ -1345,7 +1346,8 @@ export function mountDesigner(
     }
     if (!genericShortcutBound) {
       window.addEventListener("keydown", event => {
-        if (root.querySelector("[data-generic-grid]") === null || event.key.toLowerCase() !== "v" || (!event.ctrlKey && !event.metaKey)) return;
+        const grid = root.querySelector<HTMLElement>("[data-native-table-grid]");
+        if (grid === null || document.activeElement === null || !grid.contains(document.activeElement) || event.key.toLowerCase() !== "v" || (!event.ctrlKey && !event.metaKey)) return;
         event.preventDefault();
         const pasteEventsAtShortcut = genericPasteEventCount;
         window.setTimeout(() => {
@@ -1367,7 +1369,14 @@ export function mountDesigner(
       const target = {entity, field};
       const type = column.field_type.toLowerCase();
       if (type === "number") void commitNumber(target, input.value);
-      else if (type === "boolean") void commitBoolean(target, input.value === "true");
+      else if (type === "boolean") {
+        if (input.value !== "true" && input.value !== "false") {
+          showProjectFailure("Cell not updated", new Error("Boolean values must be exactly true or false."));
+          render();
+          return;
+        }
+        void commitBoolean(target, input.value === "true");
+      }
       else if (type === "date") void commitDate(target, input.value);
       else void commitText(target, input.value);
     });
@@ -1686,6 +1695,7 @@ function designerMarkup(
   refreshControl: string,
 ): string {
   const isTracker = table.tracker_profile === true;
+  const isNativeTable = table.native_table_profile === true;
   const statusLabel = {
     current: isTracker ? "Up to date" : "Semantic current",
     refreshing: "Refreshing affected fields",
@@ -1774,7 +1784,7 @@ function designerMarkup(
           <div class="session-history-slot">${historyControls}${refreshControl}</div>
 
           <div class="table-scroll">
-            <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isTracker ? "" : "data-generic-grid"}>
+            <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isNativeTable ? "data-native-table-grid" : ""}>
               <thead>
                 <tr>
                   ${isTracker ? '<th scope="col">Entity</th>' : ""}
