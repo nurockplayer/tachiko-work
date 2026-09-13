@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The macOS Designer desktop host can open a supported local `.ro` selected
+  through Finder/LaunchServices on cold start or while already running, routing
+  the complete OS-selected document set through the existing safe local-document
+  ingress without granting ambient filesystem access.
 - The Designer can create one bounded ordinary native table with user-defined
   Text, Number, Boolean, and Date columns. New rows require a complete typed
   input, invalid values are rejected without publication, and the table can be
