@@ -1268,6 +1268,21 @@ export function mountDesigner(
     if (busy || !client.duplicateCollection || !store || !bootstrap || selectedCollection === "" || hasEditDrafts()) return;
     const name = window.prompt("Copy data as:", "Working copy");
     if (name === null || name.trim() === "") return;
+    const duplicateViewId = crypto.randomUUID();
+    if (tracker.view.budgetViews) {
+      const pendingCollectionId = `pending-${duplicateViewId}`;
+      try {
+        addBudgetView(
+          tracker.view.budgetViews,
+          {id: duplicateViewId, name: name.trim(), collection: pendingCollectionId},
+          [...bootstrap.collections.map(collection => collection.id), pendingCollectionId],
+        );
+      } catch (error) {
+        showProjectFailure("Data not duplicated", error);
+        render();
+        return;
+      }
+    }
     busy = true; notice = null; render();
     let published = false;
     try {
@@ -1286,7 +1301,7 @@ export function mountDesigner(
       };
       if (tracker.view.budgetViews) {
         const ids = bootstrap.collections.map(collection => collection.id);
-        const duplicateView = {id: crypto.randomUUID(), name: name.trim(), collection: duplicated.collection.id};
+        const duplicateView = {id: duplicateViewId, name: name.trim(), collection: duplicated.collection.id};
         duplicatedBudgetViews.set(duplicated.collection.id, {view: duplicateView, collection: duplicated.collection});
         tracker.view.budgetViews = addBudgetView(
           tracker.view.budgetViews,

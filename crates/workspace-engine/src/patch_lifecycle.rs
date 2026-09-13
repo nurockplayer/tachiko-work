@@ -2273,6 +2273,14 @@ impl PatchLifecycle {
                     .unwrap_or_else(|| EntityId::from("collection")),
             });
         }
+        let contains_formula = entities.iter().any(|entity| {
+            candidate.entities.get(entity).is_some_and(|record| {
+                record
+                    .fields
+                    .values()
+                    .any(|value| matches!(value, Value::Formula(_)))
+            })
+        });
         for entity in entities {
             candidate.entities.remove(entity);
         }
@@ -2285,6 +2293,17 @@ impl PatchLifecycle {
             writes.insert(AssociatedWriteRequirement {
                 family: OperationFamily::RemoveEntity,
                 mutation_class: class,
+                scope: ScopedSemanticSubject::new(
+                    self.document_scope.clone(),
+                    self.document.clone(),
+                    SemanticScope::Document,
+                ),
+            });
+        }
+        if contains_formula {
+            writes.insert(AssociatedWriteRequirement {
+                family: OperationFamily::RemoveEntity,
+                mutation_class: MutationClass::Formula,
                 scope: ScopedSemanticSubject::new(
                     self.document_scope.clone(),
                     self.document.clone(),

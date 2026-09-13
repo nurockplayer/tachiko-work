@@ -4183,7 +4183,30 @@ fn parse_scalar(
 }
 #[cfg(test)]
 mod tests {
-    use super::{DesignerError, DesignerRuntime, MAX_WIDTH_FINITE_JSON_NUMBER, ProposalId};
+    use super::{
+        DesignerError, DesignerRequest, DesignerRuntime, EntityId, MAX_WIDTH_FINITE_JSON_NUMBER,
+        ProposalId,
+    };
+
+    fn assert_duplicate_rejected_without_publication(runtime: &mut DesignerRuntime) {
+        let before = runtime.export_project("resident/0").unwrap();
+        let error = runtime
+            .handle(DesignerRequest::DuplicateCollection {
+                expected_revision: "resident/0".to_owned(),
+                collection: "budget_summary".to_owned(),
+                name: "October Summary".to_owned(),
+            })
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::InvalidTableOperation { .. } | DesignerError::MissingCollection { .. }
+        ));
+        assert_eq!(runtime.current_revision(), "resident/0");
+        assert_eq!(
+            runtime.export_project("resident/0").unwrap().bytes,
+            before.bytes
+        );
+    }
 
     #[test]
     fn formula_requests_do_not_retain_admitted_rejections_or_completed_proposals() {
@@ -4298,6 +4321,76 @@ mod tests {
             assert!(runtime.undo.is_empty());
             assert!(runtime.redo.is_empty());
         }
+    }
+
+    #[test]
+    fn duplicate_collection_rejects_invalid_cached_mappings_atomically() {
+        let mut missing_entity =
+            DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        missing_entity
+            .collection_specs
+            .get_mut("budget_summary")
+            .unwrap()
+            .entities
+            .push(EntityId::from("missing-entity"));
+        assert_duplicate_rejected_without_publication(&mut missing_entity);
+
+        let mut missing_field =
+            DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        let external_entity = missing_field.collection_specs["budget_items"].entities[0].clone();
+        missing_field
+            .collection_specs
+            .get_mut("budget_summary")
+            .unwrap()
+            .entities
+            .push(external_entity);
+        assert_duplicate_rejected_without_publication(&mut missing_field);
+
+        let mut invalid_schema =
+            DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        invalid_schema
+            .collection_specs
+            .get_mut("budget_summary")
+            .unwrap()
+            .summary
+            .id = "missing-schema".into();
+        assert_duplicate_rejected_without_publication(&mut invalid_schema);
+    }
+
+    #[test]
+    fn duplicate_collection_rejects_collection_capacity_without_publication() {
+        let mut runtime = DesignerRuntime::new_table(
+            "00000000-0000-4000-8000-000000000000",
+            "Source",
+            &[super::NewTableColumnInput {
+                name: "Value".to_owned(),
+                field_type: "number".to_owned(),
+            }],
+        )
+        .unwrap();
+        for index in 0..31 {
+            runtime
+                .handle(DesignerRequest::DuplicateCollection {
+                    expected_revision: format!("resident/{index}"),
+                    collection: "source".to_owned(),
+                    name: format!("Copy {index}"),
+                })
+                .unwrap();
+        }
+        let before = runtime.export_project("resident/31").unwrap();
+        let error = runtime
+            .handle(DesignerRequest::DuplicateCollection {
+                expected_revision: "resident/31".to_owned(),
+                collection: "source".to_owned(),
+                name: "Capacity overflow".to_owned(),
+            })
+            .unwrap_err();
+        assert!(matches!(error, DesignerError::InvalidTableOperation { .. }));
+        assert_eq!(runtime.current_revision(), "resident/31");
+        assert_eq!(
+            runtime.export_project("resident/31").unwrap().bytes,
+            before.bytes
+        );
     }
 
     #[test]

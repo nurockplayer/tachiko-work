@@ -61,6 +61,20 @@ async function duplicateActiveData(page: Page, name: string): Promise<void> {
   await expect(view.locator("option:checked")).toHaveText(name);
 }
 
+async function attemptDuplicateActiveData(page: Page, name: string): Promise<void> {
+  page.once("dialog", dialog => dialog.accept(name));
+  await page.getByRole("button", { name: /^Duplicate (?:table(?: data)?|data)$/i }).click();
+}
+
+async function addBudgetViews(page: Page, count: number): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    const name = `Extra view ${String(index)}`;
+    page.once("dialog", dialog => dialog.accept(name));
+    await page.getByRole("button", { name: "Add view", exact: true }).click();
+    await expect(page.getByLabel("View", { exact: true }).locator("option:checked")).toHaveText(name);
+  }
+}
+
 async function namedAction(page: Page, action: string, name: string): Promise<void> {
   page.once("dialog", dialog => dialog.accept(name));
   await page.getByRole("button", { name: action, exact: true }).click();
@@ -134,4 +148,24 @@ test("duplicate is one reversible semantic action and survives save/reopen as a 
   await expect(cell(page, "planned_total").locator("output")).toHaveText(sourcePlanned ?? "");
   await selectView(page, "October Summary");
   await expect(cell(page, "planned_total").locator("output")).toHaveText(sourcePlanned ?? "");
+});
+
+test("duplicate preflight rejects an overlong view name without semantic publication", async ({ page }) => {
+  await newBudget(page);
+  const revision = await page.getByTestId("revision").textContent();
+  const name = "x".repeat(81);
+  await attemptDuplicateActiveData(page, name);
+  await expect(page.getByRole("alert")).toContainText("Data not duplicated");
+  await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
+  await expect(page.getByLabel("View", { exact: true }).getByRole("option", { name, exact: true })).toHaveCount(0);
+});
+
+test("duplicate preflight rejects the 33rd Budget view without semantic publication", async ({ page }) => {
+  await newBudget(page);
+  await addBudgetViews(page, 30);
+  const revision = await page.getByTestId("revision").textContent();
+  await attemptDuplicateActiveData(page, "Overflow view");
+  await expect(page.getByRole("alert")).toContainText("Data not duplicated");
+  await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
+  await expect(page.getByLabel("View", { exact: true }).getByRole("option", { name: "Overflow view", exact: true })).toHaveCount(0);
 });

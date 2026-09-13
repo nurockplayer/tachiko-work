@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The browser Designer can duplicate an ordinary data collection into a new
+  independently addressable collection with fresh semantic identities,
+  remapped internal formulas, preserved external references, and one bounded
+  reversible session action. Invalid, stale, or over-capacity copies are
+  rejected atomically.
 - The macOS Designer desktop host can open a supported local `.ro` selected
   through Finder/LaunchServices on cold start or while already running, routing
   the complete OS-selected document set through the existing safe local-document
