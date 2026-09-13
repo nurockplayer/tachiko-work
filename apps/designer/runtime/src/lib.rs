@@ -97,6 +97,11 @@ pub enum DesignerRequest {
         name: String,
         columns: Vec<NewTableColumnInput>,
     },
+    DuplicateCollection {
+        expected_revision: String,
+        collection: String,
+        name: String,
+    },
     EditCells {
         expected_revision: String,
         edits: Vec<CellEdit>,
@@ -804,6 +809,15 @@ impl DesignerRuntime {
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
+            DesignerRequest::DuplicateCollection {
+                expected_revision,
+                collection,
+                name,
+            } => Ok(DesignerResponse::Published(self.duplicate_collection(
+                &expected_revision,
+                &collection,
+                &name,
+            )?)),
             DesignerRequest::EditCells {
                 expected_revision,
                 edits,
@@ -1302,6 +1316,139 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
+    /// Duplicate one semantic collection into a fresh schema/field/entity
+    /// identity graph. Formula references are remapped only when both their
+    /// entity and field belong to the copied collection; external references
+    /// remain bound to their original stable targets.
+    #[allow(clippy::too_many_lines)] // Keep the bounded identity mapping atomic.
+    fn duplicate_collection(
+        &mut self,
+        expected_revision: &str,
+        collection: &str,
+        name: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let target_key = duplicate_collection_key(name)?;
+        let snapshot = self.session.export_snapshot();
+        let document = snapshot.document();
+        let source_spec = self
+            .collection_specs
+            .get(collection)
+            .ok_or_else(|| DesignerError::MissingCollection {
+                collection: collection.to_owned(),
+            })?;
+        if document.schemas.len() >= MAX_COLLECTIONS {
+            return Err(table_error("collection capacity is exhausted"));
+        }
+        if document.schemas.values().any(|schema| schema.key.as_str() == target_key) {
+            return Err(table_error("collection name already exists"));
+        }
+        if document.entities.len().saturating_add(source_spec.entities.len()) > MAX_TOTAL_ENTITIES {
+            return Err(table_error("entity capacity is exhausted"));
+        }
+        let source_schema = document
+            .schemas
+            .get(&SchemaId::from(source_spec.summary.id.clone()))
+            .ok_or_else(|| DesignerError::MissingCollection {
+                collection: collection.to_owned(),
+            })?;
+        let mut ids = NewTableIds::new(&format!("{}/duplicate", self.row_namespace));
+        let schema_id = loop {
+            let id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
+            if !document.schemas.contains_key(&id) {
+                break id;
+            }
+        };
+        let mut field_map = BTreeMap::<FieldId, FieldId>::new();
+        let mut fields = BTreeMap::new();
+        for field in source_schema.fields.values() {
+            let field_id = loop {
+                let id = FieldId::from(ids.generate(SemanticIdKind::Field));
+                if !document
+                    .schemas
+                    .values()
+                    .any(|schema| schema.fields.contains_key(&id))
+                    && !fields.contains_key(&id)
+                {
+                    break id;
+                }
+            };
+            field_map.insert(field.id.clone(), field_id.clone());
+            let mut definition = field.clone();
+            definition.id = field_id.clone();
+            if let FieldType::Reference { schema } = &mut definition.field_type {
+                if schema == &source_schema.id {
+                    *schema = schema_id.clone();
+                }
+            }
+            fields.insert(field_id, definition);
+        }
+        let mut entity_map = BTreeMap::<EntityId, EntityId>::new();
+        for source_id in &source_spec.entities {
+            let target_id = loop {
+                let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
+                if !document.entities.contains_key(&id) && !entity_map.values().any(|used| used == &id) {
+                    break id;
+                }
+            };
+            entity_map.insert(source_id.clone(), target_id);
+        }
+        let schema = Schema {
+            id: schema_id.clone(),
+            key: SchemaKey::from(target_key.clone()),
+            fields,
+        };
+        let mut entities = Vec::with_capacity(source_spec.entities.len());
+        for source_id in &source_spec.entities {
+            let source = document
+                .entities
+                .get(source_id)
+                .ok_or_else(|| DesignerError::MissingCollection {
+                    collection: collection.to_owned(),
+                })?;
+            let target_id = entity_map.get(source_id).ok_or_else(|| table_error("entity mapping is incomplete"))?;
+            let entity_key = format!("{}-{}", source.key, target_key);
+            if entity_key.len() > MAX_PROFILE_STRING_BYTES {
+                return Err(table_error("copied entity key exceeds the bounded profile"));
+            }
+            let entity_key = native_table_key(&entity_key, "copied entity key")?;
+            let mut copied = Entity {
+                id: target_id.clone(),
+                key: EntityKey::from(entity_key),
+                schema: schema_id.clone(),
+                fields: BTreeMap::new(),
+            };
+            for (source_field, value) in &source.fields {
+                let target_field = field_map
+                    .get(source_field)
+                    .ok_or_else(|| table_error("field mapping is incomplete"))?;
+                let value = remap_duplicate_value(
+                    value,
+                    &entity_map,
+                    &field_map,
+                )?;
+                copied.fields.insert(target_field.clone(), value);
+            }
+            entities.push(copied);
+        }
+        let forward = vec![SemanticCommand::AppendCollection { schema, entities }];
+        let inverse = match &forward[0] {
+            SemanticCommand::AppendCollection { schema, entities } => vec![
+                SemanticCommand::RemoveCollection {
+                    schema: schema.id.clone(),
+                    entities: entities.iter().map(|entity| entity.id.clone()).collect(),
+                },
+            ],
+            _ => unreachable!("duplicate collection always creates an append command"),
+        };
+        let publication = self.publish_commands(expected_revision, forward.clone())?;
+        self.record_history_entry(HistoryEntry {
+            forward: HistoryAction::Commands(forward),
+            inverse: HistoryAction::Commands(inverse),
+        });
+        Ok(publication)
+    }
+
     // The trusted host supplies a fresh UUID per occurrence. Callers compare
     // the complete opaque token; its spelling is not a semantic or security API.
     fn next_proposal_id(&mut self) -> Result<ProposalId, DesignerError> {
@@ -1674,6 +1821,18 @@ impl DesignerRuntime {
         let mut candidate = self.session.export_snapshot().document().clone();
         for command in &commands {
             match command {
+                SemanticCommand::AppendCollection { schema, entities } => {
+                    candidate.schemas.insert(schema.id.clone(), schema.clone());
+                    for entity in entities {
+                        candidate.entities.insert(entity.id.clone(), entity.clone());
+                    }
+                }
+                SemanticCommand::RemoveCollection { schema, entities } => {
+                    for entity in entities {
+                        candidate.entities.remove(entity);
+                    }
+                    candidate.schemas.remove(schema);
+                }
                 SemanticCommand::SetFieldValue { field, value } => {
                     if let Some(entity) = candidate.entities.get_mut(&field.entity) {
                         entity.fields.insert(field.field.clone(), value.clone());
@@ -3018,6 +3177,61 @@ fn map_copy_references(
     }
 }
 
+fn remap_duplicate_value(
+    value: &Value,
+    entities: &BTreeMap<EntityId, EntityId>,
+    fields: &BTreeMap<FieldId, FieldId>,
+) -> Result<Value, DesignerError> {
+    match value {
+        Value::Reference(entity) => Ok(Value::Reference(
+            entities.get(entity).cloned().unwrap_or_else(|| entity.clone()),
+        )),
+        Value::Formula(expression) => {
+            let mut expression = expression.clone();
+            map_duplicate_expression(&mut expression, entities, fields)?;
+            Ok(Value::Formula(expression))
+        }
+        Value::Number(number) => Ok(Value::Number(*number)),
+        Value::Text(text) => Ok(Value::Text(text.clone())),
+        Value::Boolean(value) => Ok(Value::Boolean(*value)),
+        Value::Date(value) => Ok(Value::Date(*value)),
+    }
+}
+
+fn map_duplicate_expression(
+    expression: &mut Expression,
+    entities: &BTreeMap<EntityId, EntityId>,
+    fields: &BTreeMap<FieldId, FieldId>,
+) -> Result<(), DesignerError> {
+    match expression {
+        Expression::Number(_) => Ok(()),
+        Expression::Reference(reference) => {
+            if let Some(entity) = entities.get(&reference.entity) {
+                reference.entity = entity.clone();
+                reference.field = fields
+                    .get(&reference.field)
+                    .cloned()
+                    .ok_or_else(|| {
+                        table_error(&format!(
+                            "internal formula reference '{}' has no copied field",
+                            reference.field
+                        ))
+                    })?;
+            }
+            Ok(())
+        }
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            map_duplicate_expression(left, entities, fields)?;
+            map_duplicate_expression(right, entities, fields)
+        }
+    }
+}
+
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
     document
         .schemas
@@ -3474,7 +3688,10 @@ fn designer_lifecycle(
             ),
             (OperationFamily::FormulaUpdate, MutationClass::Formula),
             (OperationFamily::AppendEntity, MutationClass::Structure),
+            (OperationFamily::AppendEntity, MutationClass::Schema),
+            (OperationFamily::AppendEntity, MutationClass::Formula),
             (OperationFamily::RemoveEntity, MutationClass::Structure),
+            (OperationFamily::RemoveEntity, MutationClass::Schema),
             (OperationFamily::RemoveEntity, MutationClass::Destructive),
             (OperationFamily::RemoveEntity, MutationClass::Formula),
             (
@@ -3902,6 +4119,15 @@ fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
             "{kind} must use letters, numbers, '-' or '_'"
         )))
     }
+}
+
+fn duplicate_collection_key(label: &str) -> Result<String, DesignerError> {
+    let normalized = label
+        .trim()
+        .chars()
+        .map(|character| if character.is_whitespace() { '-' } else { character })
+        .collect::<String>();
+    native_table_key(&normalized, "collection name")
 }
 
 fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {

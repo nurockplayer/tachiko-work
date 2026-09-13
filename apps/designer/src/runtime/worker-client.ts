@@ -125,6 +125,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns}));
   }
 
+  async duplicateCollection(expectedRevision: string, collection: string, name: string): Promise<PublicationProjection> {
+    return expectResponse("published", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name}));
+  }
+
   async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command(request));
   }

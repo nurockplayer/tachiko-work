@@ -151,6 +151,7 @@ export type DesignerRequest =
   | { type: "new_tracker"; occurrence_id: string }
   | { type: "new_budget"; occurrence_id: string }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[] }
+  | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_table"; collection: string }
   | {
