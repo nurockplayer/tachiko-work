@@ -110,10 +110,14 @@ test("Driver creates Inventory, pastes typed rows, saves, reopens, and continues
 test("cancelled New Table preserves a dirty current occurrence", async ({ page }) => {
   await createDirtyTracker(page);
 
-  const confirmation = page.waitForEvent("dialog");
+  let dismissed = false;
+  page.once("dialog", dialog => {
+    dismissed = true;
+    void dialog.dismiss();
+  });
   await page.getByRole("button", { name: "New Table", exact: true }).click();
-  await (await confirmation).dismiss();
 
+  await expect.poll(() => dismissed).toBe(true);
   await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
   await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
 });
