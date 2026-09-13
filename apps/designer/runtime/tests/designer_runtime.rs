@@ -935,6 +935,33 @@ fn table_query_keeps_stored_formula_and_calculated_values_distinct() {
 }
 
 #[test]
+fn query_table_wire_reply_round_trips_reference_values() {
+    let mut runtime = Some(moonfall());
+    let reply = process_wire_request(
+        &mut runtime,
+        br#"{"type":"query_table","collection":"items"}"#,
+    );
+    let DesignerWireReply::Ok {
+        response: DesignerResponse::Table(table),
+    } = serde_json::from_slice(&reply).expect("item table wire reply must decode")
+    else {
+        panic!("item table query must produce a table reply");
+    };
+
+    let reference = table.rows[0]
+        .fields
+        .iter()
+        .find(|field| field.target.field == "grants_weapon")
+        .and_then(|field| field.stored.as_ref());
+    assert_eq!(
+        reference,
+        Some(&StoredValueProjection::Reference {
+            entity: "iron_sword".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn date_projection_and_edit_use_the_rust_semantic_authority() {
     let mut runtime = DesignerRuntime::from_document(date_document(), OCCURRENCE_ONE)
         .expect("date project should fit the bounded Designer profile");

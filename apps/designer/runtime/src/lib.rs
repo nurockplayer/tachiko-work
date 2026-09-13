@@ -308,10 +308,16 @@ impl<'de> Deserialize<'de> for StoredValueProjection {
             .get("kind")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| serde::de::Error::custom("stored value kind must be a string"))?;
-        let value = raw
-            .get("value")
-            .cloned()
-            .ok_or_else(|| serde::de::Error::custom("stored value projection is missing value"))?;
+        let (value, missing_property) = if kind == "reference" {
+            (raw.get("entity").cloned(), "entity")
+        } else {
+            (raw.get("value").cloned(), "value")
+        };
+        let value = value.ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "stored value projection is missing {missing_property}"
+            ))
+        })?;
         match kind {
             "number" => serde_json::from_value(value)
                 .map(|value| Self::Number { value })
