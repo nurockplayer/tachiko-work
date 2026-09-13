@@ -882,7 +882,11 @@ export function mountDesigner(
               next = addBudgetView(next, {id: crypto.randomUUID(), name, collection: collection.id}, ids);
             } else if (action === "duplicate") next = duplicateBudgetView(next, next.active, crypto.randomUUID(), name, ids);
             else next = renameBudgetView(next, next.active, name);
-          } else if (action === "delete") next = deleteBudgetView(next, next.active);
+          } else if (action === "delete") {
+            const deleted = next.views.find(view => view.id === next?.active);
+            next = deleteBudgetView(next, next.active);
+            if (deleted) duplicatedBudgetViews.delete(deleted.collection);
+          }
           else {
             const order = next.views.map(v => v.id);
             const from = order.indexOf(next.active);
@@ -1287,13 +1291,13 @@ export function mountDesigner(
     let published = false;
     try {
       const expectedRevision = store.snapshot().table.revision;
-      const publication = await client.duplicateCollection(expectedRevision, selectedCollection, name);
+      const duplicated = await client.duplicateCollection(expectedRevision, selectedCollection, name);
+      const publication = duplicated.publication;
       published = true;
       tracker.recordSemantic();
       durability.observe(publication.resulting_revision);
-      const targetKey = name.trim().toLowerCase().replace(/\s/g, "-");
-      const duplicated = await client.queryTable(targetKey);
-      if (duplicated.revision !== publication.resulting_revision) throw new Error("Duplicated collection refresh is not current.");
+      const duplicatedTable = await client.queryTable(duplicated.collection.key);
+      if (duplicatedTable.revision !== publication.resulting_revision) throw new Error("Duplicated collection refresh is not current.");
       bootstrap = {
         ...bootstrap,
         revision: publication.resulting_revision,
@@ -1310,8 +1314,8 @@ export function mountDesigner(
         );
         await refreshBudgetTables(publication.resulting_revision);
       }
-      selectedCollection = duplicated.collection.key;
-      store = createProjectionStore(duplicated);
+      selectedCollection = duplicatedTable.collection.key;
+      store = createProjectionStore(duplicatedTable);
       notice = {tone: "success", title: "Publication complete", message: `${name.trim()} duplicated as independent data.`, diagnostics: []};
     } catch (error) {
       showFailure(error, published);

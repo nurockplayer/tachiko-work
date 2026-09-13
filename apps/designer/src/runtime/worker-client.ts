@@ -17,6 +17,7 @@ import type {
   OpenedProjection,
   OccurrenceProjection,
   PublicationProjection,
+  DuplicateCollectionProjection,
   KeyedGroupedSumDefinitionInput,
   KeyedGroupedSumProjection,
   KeyedGroupedSumPublishedProjection,
@@ -125,8 +126,8 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns}));
   }
 
-  async duplicateCollection(expectedRevision: string, collection: string, name: string): Promise<PublicationProjection> {
-    return expectResponse("published", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name}));
+  async duplicateCollection(expectedRevision: string, collection: string, name: string): Promise<DuplicateCollectionProjection> {
+    return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name}));
   }
 
   async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
@@ -445,6 +446,10 @@ function expectResponse(
   type: "published",
   response: DesignerResponse,
 ): PublicationProjection;
+function expectResponse(
+  type: "duplicated",
+  response: DesignerResponse,
+): DuplicateCollectionProjection;
 function expectResponse(type: "keyed_grouped_sum", response: DesignerResponse): KeyedGroupedSumProjection;
 function expectResponse(type: "keyed_grouped_sum_published", response: DesignerResponse): KeyedGroupedSumPublishedProjection;
 function expectResponse(

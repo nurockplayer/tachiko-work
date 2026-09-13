@@ -120,6 +120,11 @@ export type KeyedGroupedSumPublishedProjection = {
   result: KeyedGroupedSumProjection;
 };
 
+export type DuplicateCollectionProjection = {
+  publication: PublicationProjection;
+  collection: CollectionSummary;
+};
+
 export type FailureProjection = {
   code: string;
   message: string;
@@ -188,6 +193,7 @@ export type DesignerResponse =
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "published"; payload: PublicationProjection }
+  | { type: "duplicated"; payload: DuplicateCollectionProjection }
   | { type: "project_exported"; payload: ProjectExportProjection }
   | { type: "canonical_tree_exported"; payload: ProjectExportProjection }
   | { type: "portable_ro_exported"; payload: ProjectExportProjection }

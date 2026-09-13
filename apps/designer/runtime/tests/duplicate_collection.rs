@@ -161,3 +161,42 @@ fn duplicate_collection_rejects_stale_revision_without_mutating_bytes() {
     );
     assert_eq!(runtime.export_project("resident/0").unwrap(), before);
 }
+
+#[test]
+fn duplicate_collection_does_not_reuse_identities_after_undo() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    runtime
+        .handle(DesignerRequest::DuplicateCollection {
+            expected_revision: "resident/0".into(),
+            collection: "budget_summary".into(),
+            name: "January Summary".into(),
+        })
+        .unwrap();
+    let first = table(&mut runtime, "january-summary");
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/1".into(),
+        })
+        .unwrap();
+    runtime
+        .handle(DesignerRequest::DuplicateCollection {
+            expected_revision: "resident/2".into(),
+            collection: "budget_summary".into(),
+            name: "February Summary".into(),
+        })
+        .unwrap();
+    let second = table(&mut runtime, "february-summary");
+    assert_ne!(first.collection.id, second.collection.id);
+    assert!(
+        first
+            .columns
+            .iter()
+            .all(|column| second.columns.iter().all(|other| other.id != column.id))
+    );
+    assert!(
+        first
+            .rows
+            .iter()
+            .all(|row| second.rows.iter().all(|other| other.id != row.id))
+    );
+}

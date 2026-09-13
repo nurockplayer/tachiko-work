@@ -169,3 +169,24 @@ test("duplicate preflight rejects the 33rd Budget view without semantic publicat
   await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
   await expect(page.getByLabel("View", { exact: true }).getByRole("option", { name: "Overflow view", exact: true })).toHaveCount(0);
 });
+
+test("duplicate uses the runtime canonical key for Unicode whitespace", async ({ page }) => {
+  await newBudget(page);
+  const name = "October\u0085Summary";
+  await duplicateActiveData(page, name);
+  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+});
+
+test("deleting a duplicate view keeps it deleted across semantic undo and redo", async ({ page }) => {
+  await newBudget(page);
+  await duplicateActiveData(page, "October Summary");
+  await page.getByRole("button", { name: "Delete view", exact: true }).click();
+  const view = page.getByLabel("View", { exact: true });
+  await expect(view.getByRole("option", { name: "October Summary", exact: true })).toHaveCount(0);
+
+  const history = page.getByRole("region", { name: "Session history", exact: true });
+  await history.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(view.getByRole("option", { name: "October Summary", exact: true })).toHaveCount(0);
+  await history.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(view.getByRole("option", { name: "October Summary", exact: true })).toHaveCount(0);
+});

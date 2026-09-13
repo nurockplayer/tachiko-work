@@ -178,6 +178,7 @@ pub enum DesignerResponse {
     Table(TableProjection),
     Fields(FieldBatchProjection),
     Published(PublicationProjection),
+    Duplicated(DuplicateCollectionProjection),
     CleanupPreview(CleanupPreview),
     ImportPreview(Box<interop_adapter::SourceWorkbook>),
     Imported(Box<ImportedProjection>),
@@ -523,6 +524,12 @@ pub struct PublicationProjection {
     pub affected_calculations: Vec<FieldTarget>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DuplicateCollectionProjection {
+    pub publication: PublicationProjection,
+    pub collection: CollectionSummary,
+}
+
 /// One exact-revision canonical project prepared for a host durability commit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectExport {
@@ -670,6 +677,7 @@ pub struct DesignerRuntime {
     undo: Vec<HistoryEntry>,
     redo: Vec<HistoryEntry>,
     pending_cleanup: Option<PendingCleanup>,
+    duplicate_serial: usize,
 }
 
 #[derive(Clone)]
@@ -762,6 +770,7 @@ impl DesignerRuntime {
             undo: Vec::new(),
             redo: Vec::new(),
             pending_cleanup: None,
+            duplicate_serial: 0,
         };
         runtime.ensure_supported_project()?;
         Ok(runtime)
@@ -813,7 +822,7 @@ impl DesignerRuntime {
                 expected_revision,
                 collection,
                 name,
-            } => Ok(DesignerResponse::Published(self.duplicate_collection(
+            } => Ok(DesignerResponse::Duplicated(self.duplicate_collection(
                 &expected_revision,
                 &collection,
                 &name,
@@ -1326,7 +1335,7 @@ impl DesignerRuntime {
         expected_revision: &str,
         collection: &str,
         name: &str,
-    ) -> Result<PublicationProjection, DesignerError> {
+    ) -> Result<DuplicateCollectionProjection, DesignerError> {
         self.check_revision(expected_revision)?;
         let target_key = duplicate_collection_key(name)?;
         let snapshot = self.session.export_snapshot();
@@ -1360,7 +1369,10 @@ impl DesignerRuntime {
             .ok_or_else(|| DesignerError::MissingCollection {
                 collection: collection.to_owned(),
             })?;
-        let mut ids = NewTableIds::new(&format!("{}/duplicate", self.row_namespace));
+        let mut ids = NewTableIds::with_serial(
+            &format!("{}/duplicate", self.row_namespace),
+            self.duplicate_serial,
+        );
         let schema_id = loop {
             let id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
             if !document.schemas.contains_key(&id) {
@@ -1449,11 +1461,20 @@ impl DesignerRuntime {
             _ => unreachable!("duplicate collection always creates an append command"),
         };
         let publication = self.publish_commands(expected_revision, forward.clone())?;
+        self.duplicate_serial = ids.serial;
         self.record_history_entry(HistoryEntry {
             forward: HistoryAction::Commands(forward),
             inverse: HistoryAction::Commands(inverse),
         });
-        Ok(publication)
+        let collection = self
+            .collection_specs
+            .get(&target_key)
+            .map(|spec| spec.summary.clone())
+            .ok_or_else(|| table_error("duplicated collection projection is unavailable"))?;
+        Ok(DuplicateCollectionProjection {
+            publication,
+            collection,
+        })
     }
 
     // The trusted host supplies a fresh UUID per occurrence. Callers compare
@@ -3894,9 +3915,13 @@ struct NewTableIds {
 
 impl NewTableIds {
     fn new(namespace: &str) -> Self {
+        Self::with_serial(namespace, 0)
+    }
+
+    fn with_serial(namespace: &str, serial: usize) -> Self {
         Self {
             namespace: namespace.to_owned(),
-            serial: 0,
+            serial,
         }
     }
 }
