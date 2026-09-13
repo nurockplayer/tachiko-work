@@ -29,6 +29,7 @@ fn document() -> Document {
                 fields: BTreeMap::new(),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

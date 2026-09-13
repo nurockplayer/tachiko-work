@@ -139,6 +139,7 @@ fn formula_document(input: Number, expression: Expression) -> Document {
     Document {
         id: DocumentId::from("document-stable"),
         title: "Portable conformance".to_owned(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
@@ -205,6 +206,7 @@ fn date_document(value: Date) -> Document {
     Document {
         id: DocumentId::from("date-document"),
         title: "Portable Date conformance".to_owned(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
@@ -613,6 +615,7 @@ fn complete_oracle_record() -> Record {
     let document = Document {
         id: DocumentId::from("oracle-document-stable"),
         title: "Complete oracle parity".to_owned(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
@@ -1048,6 +1051,7 @@ fn oracle_document() -> Document {
     Document {
         id: "oracle-document".into(),
         title: "Full formula oracle".to_owned(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
@@ -1314,6 +1318,7 @@ fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
     Document {
         id: "disjoint-cycles".into(),
         title: "Disjoint cycles".to_owned(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
@@ -1533,6 +1538,7 @@ fn analysis_document() -> Document {
     Document {
         id: DocumentId::from("portable-analysis-document"),
         title: "Portable analysis conformance".to_owned(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
         schemas: BTreeMap::from([(
             schema.clone(),
             Schema {

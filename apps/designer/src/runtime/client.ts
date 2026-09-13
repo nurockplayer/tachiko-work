@@ -5,9 +5,16 @@ import type {
   BootstrapProjection,
   FieldBatchProjection,
   FieldTarget,
+  CanonicalTreeExport,
+  CanonicalProjectFile,
+  OccurrenceProjection,
   OpenedProjection,
   ProjectExport,
   PublicationProjection,
+  KeyedGroupedSumDefinitionInput,
+  KeyedGroupedSumProjection,
+  KeyedGroupedSumPublishedProjection,
+  NewTableColumnInput,
   TableProjection,
   FailureProjection,
 } from "./protocol.ts";
@@ -24,12 +31,19 @@ export interface DesignerClient {
   copyFormula?(expectedRevision: string, request: FormulaCopy): Promise<PublicationProjection>;
   newTracker?(): Promise<OpenedProjection>;
   newBudget?(): Promise<OpenedProjection>;
+  newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  openCanonicalTree?(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
   openLocalDocument?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
+  exportCanonicalTree?(expectedRevision: string): Promise<CanonicalTreeExport>;
+  exportPortableRo?(expectedRevision: string): Promise<ProjectExport>;
+  verifyPortableRo?(bytes: ArrayBuffer): Promise<void>;
+  openPortableRo?(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  observeOccurrence?(): Promise<OccurrenceProjection>;
   closeProject(): Promise<void>;
   queryTable(collection: string): Promise<TableProjection>;
   queryFields(
@@ -61,6 +75,8 @@ export interface DesignerClient {
     target: FieldTarget,
     source: string,
   ): Promise<PublicationProjection>;
+  createKeyedGroupedSum?(expectedRevision: string, definition: KeyedGroupedSumDefinitionInput): Promise<KeyedGroupedSumPublishedProjection>;
+  queryKeyedGroupedSum?(definitionId: string): Promise<KeyedGroupedSumProjection>;
   close(): void | Promise<void>;
 }
 

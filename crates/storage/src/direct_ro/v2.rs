@@ -113,6 +113,12 @@ pub(crate) struct BinaryArgsV2 {
 
 impl DocumentV2 {
     pub(crate) fn from_semantic(document: &Document) -> Result<Self, CodecError> {
+        if !document.keyed_grouped_sum_definitions.is_empty() {
+            return invalid(
+                "direct .ro/v2 cannot encode saved keyed grouped-sum definitions; use .roproj/v2"
+                    .to_owned(),
+            );
+        }
         validate_semantic_expressions(document)?;
         Ok(Self {
             format_version: FORMAT_VERSION,
@@ -165,6 +171,7 @@ impl DocumentV2 {
                 .into_iter()
                 .map(|(id, entity)| Ok((EntityId::from(id), entity.into_semantic()?)))
                 .collect::<Result<_, CodecError>>()?,
+            keyed_grouped_sum_definitions: BTreeMap::new(),
         })
     }
 }

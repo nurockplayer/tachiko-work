@@ -50,6 +50,7 @@ fn document(fields: Vec<(&str, FieldType, Value)>) -> Document {
                 fields: values,
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -507,6 +508,7 @@ fn generated_reference_document(targets: &[usize]) -> Document {
                 fields: values,
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -662,6 +664,7 @@ fn compatibility_projection_of_a_long_failed_chain_is_stack_safe() {
                 fields: values,
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
 
     let failures = failed(calculate_complete(&document));

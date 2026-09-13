@@ -2,9 +2,9 @@
 
 Decision state: Accepted target under [ADR-0037](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
 
-Implementation state: Not implemented. This versioned DTO contract grants no
-production storage, runtime, CLI, Designer, API, or package implementation
-authority.
+Implementation state: Implemented for the storage-owned v2 codec and the
+bounded Designer save/reopen journey. It does not authorize a public API or
+SDK wire contract, a portable-package v2, or unrelated runtime/CLI behavior.
 
 Editable-directory namespace: `.roproj`; format version: `2`
 

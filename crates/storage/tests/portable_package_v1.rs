@@ -478,6 +478,7 @@ fn reference_document() -> Document {
                 },
             ),
         ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

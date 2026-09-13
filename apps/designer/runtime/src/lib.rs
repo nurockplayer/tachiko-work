@@ -10,16 +10,21 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tachiko_storage::{
-    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS,
-    encode_roproj_v1, from_bytes, to_canonical_string,
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2, FormatError,
+    ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, decode_portable_package_v1, decode_roproj_v1,
+    decode_roproj_v2, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2, from_bytes,
+    to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey,
-    SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
+    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, KeyedGroupedSumDefinition,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value, WorkspaceError,
+    analyze_field, create_document,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
+    keyed_grouped_sum_operations::{KeyedGroupedSumOutcome, evaluate_keyed_grouped_sum},
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
@@ -27,7 +32,7 @@ use tachiko_workspace_engine::{
         ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
         SemanticPatchBody, SemanticRevision, SemanticScope, TrustedInstant,
     },
-    resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
+    resident_session::{ResidentSnapshot, ResidentWorkspaceSession, TrustedPublicationTimeSource},
     validate,
 };
 use thiserror::Error;
@@ -87,6 +92,11 @@ pub enum DesignerRequest {
     NewBudget {
         occurrence_id: String,
     },
+    NewTable {
+        occurrence_id: String,
+        name: String,
+        columns: Vec<NewTableColumnInput>,
+    },
     EditCells {
         expected_revision: String,
         edits: Vec<CellEdit>,
@@ -145,6 +155,13 @@ pub enum DesignerRequest {
         target: FieldTarget,
         source: String,
     },
+    CreateKeyedGroupedSum {
+        expected_revision: String,
+        definition: KeyedGroupedSumDefinitionInput,
+    },
+    QueryKeyedGroupedSum {
+        definition_id: String,
+    },
 }
 
 /// App-private responses returned by the Designer runtime adapter.
@@ -161,6 +178,12 @@ pub enum DesignerResponse {
     Imported(Box<ImportedProjection>),
     SpreadsheetExported(SpreadsheetExportProjection),
     ProjectExported(ProjectExportProjection),
+    CanonicalTreeExported(ProjectExportProjection),
+    PortableRoExported(ProjectExportProjection),
+    PortableRoVerified(PortableRoVerification),
+    OccurrenceObserved(OccurrenceProjection),
+    KeyedGroupedSum(KeyedGroupedSumProjection),
+    KeyedGroupedSumPublished(KeyedGroupedSumPublishedProjection),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -175,6 +198,7 @@ pub struct BootstrapProjection {
     pub revision: String,
     pub default_collection: String,
     pub collections: Vec<CollectionSummary>,
+    pub keyed_grouped_sum_definition_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -189,6 +213,8 @@ pub struct TableProjection {
     pub revision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker_profile: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_table_profile: Option<bool>,
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     pub rows: Vec<RowProjection>,
@@ -198,6 +224,17 @@ pub struct TableProjection {
 pub struct CellEdit {
     pub target: FieldTarget,
     pub input: ScalarEditInput,
+}
+
+/// Private authoring input for the bounded native table creation path.
+///
+/// The field type remains a string at the wire boundary so unsupported values
+/// can be reported as a candidate validation failure rather than an opaque
+/// request-deserialization error.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct NewTableColumnInput {
+    pub name: String,
+    pub field_type: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -247,7 +284,7 @@ pub enum ScalarEditInput {
     Date { value: String },
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoredValueProjection {
     Number { value: f64 },
@@ -255,6 +292,53 @@ pub enum StoredValueProjection {
     Boolean { value: bool },
     Date { value: Date },
     Reference { entity: String },
+}
+
+impl<'de> Deserialize<'de> for StoredValueProjection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // serde's internally tagged representation currently routes primitive
+        // fields through a map deserializer in the pinned serde_json version.
+        // Decode the small DTO as JSON first so numeric values retain their
+        // wire-level JSON number representation.
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let kind = raw
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("stored value kind must be a string"))?;
+        let (value, missing_property) = if kind == "reference" {
+            (raw.get("entity").cloned(), "entity")
+        } else {
+            (raw.get("value").cloned(), "value")
+        };
+        let value = value.ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "stored value projection is missing {missing_property}"
+            ))
+        })?;
+        match kind {
+            "number" => serde_json::from_value(value)
+                .map(|value| Self::Number { value })
+                .map_err(serde::de::Error::custom),
+            "text" => serde_json::from_value(value)
+                .map(|value| Self::Text { value })
+                .map_err(serde::de::Error::custom),
+            "boolean" => serde_json::from_value(value)
+                .map(|value| Self::Boolean { value })
+                .map_err(serde::de::Error::custom),
+            "date" => serde_json::from_value(value)
+                .map(|value| Self::Date { value })
+                .map_err(serde::de::Error::custom),
+            "reference" => serde_json::from_value(value)
+                .map(|entity| Self::Reference { entity })
+                .map_err(serde::de::Error::custom),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown stored value kind '{other}'"
+            ))),
+        }
+    }
 }
 
 impl StoredValueProjection {
@@ -275,12 +359,51 @@ pub struct FormulaProjection {
     pub source: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CalculationProjection {
     Value { value: f64 },
     Failure { code: String, message: String },
     Unavailable,
+}
+
+impl<'de> Deserialize<'de> for CalculationProjection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let status = raw
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("calculation status must be a string"))?;
+        match status {
+            "value" => {
+                let value = raw.get("value").cloned().ok_or_else(|| {
+                    serde::de::Error::custom("calculation value projection is missing value")
+                })?;
+                serde_json::from_value(value)
+                    .map(|value| Self::Value { value })
+                    .map_err(serde::de::Error::custom)
+            }
+            "failure" => {
+                let code = raw.get("code").cloned().ok_or_else(|| {
+                    serde::de::Error::custom("calculation failure is missing code")
+                })?;
+                let message = raw.get("message").cloned().ok_or_else(|| {
+                    serde::de::Error::custom("calculation failure is missing message")
+                })?;
+                Ok(Self::Failure {
+                    code: serde_json::from_value(code).map_err(serde::de::Error::custom)?,
+                    message: serde_json::from_value(message).map_err(serde::de::Error::custom)?,
+                })
+            }
+            "unavailable" => Ok(Self::Unavailable),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown calculation status '{other}'"
+            ))),
+        }
+    }
 }
 
 impl CalculationProjection {
@@ -346,6 +469,47 @@ pub struct FieldBatchProjection {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct KeyedGroupedSumDefinitionInput {
+    pub id: String,
+    pub orders_schema: String,
+    pub order_lookup_key_field: String,
+    pub order_quantity_field: String,
+    pub products_schema: String,
+    pub product_key_field: String,
+    pub product_category_field: String,
+    pub product_price_field: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KeyedGroupedSumProjection {
+    pub definition_id: String,
+    pub revision: String,
+    pub groups: Vec<KeyedGroupedSumGroupProjection>,
+    pub diagnostics: Vec<KeyedGroupedSumDiagnosticProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KeyedGroupedSumGroupProjection {
+    pub category: String,
+    pub value: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct KeyedGroupedSumDiagnosticProjection {
+    pub code: String,
+    pub entity: Option<String>,
+    pub field: Option<String>,
+    pub lookup_key: Option<String>,
+    pub candidates: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KeyedGroupedSumPublishedProjection {
+    pub publication: PublicationProjection,
+    pub result: KeyedGroupedSumProjection,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PublicationProjection {
     pub base_revision: String,
     pub resulting_revision: String,
@@ -365,6 +529,25 @@ pub struct ProjectExport {
 pub struct ProjectExportProjection {
     pub revision: String,
     pub byte_length: usize,
+}
+
+/// An app-private transfer record containing every exact canonical v1 file.
+/// Its bytes are not a portable `.ro` artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalTreeExport {
+    pub revision: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OccurrenceProjection {
+    pub scope: String,
+    pub revision: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PortableRoVerification {
+    pub accepted: bool,
 }
 
 #[derive(Debug, Error)]
@@ -412,6 +595,8 @@ pub enum DesignerError {
     MissingInvalidation,
     #[error("tracker operation rejected: {message}")]
     InvalidTrackerOperation { message: String },
+    #[error("table creation rejected: {message}")]
+    InvalidTableOperation { message: String },
 }
 
 impl DesignerError {
@@ -434,6 +619,7 @@ impl DesignerError {
                 ("edit_rejected", Vec::new())
             }
             Self::InvalidTrackerOperation { .. } => ("invalid_tracker_operation", Vec::new()),
+            Self::InvalidTableOperation { .. } => ("invalid_table_operation", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
             Self::UnsupportedScalarEdit { .. } => ("unsupported_edit", Vec::new()),
@@ -497,6 +683,7 @@ enum HistoryAction {
 #[derive(Clone)]
 struct CollectionSpec {
     direct_tracker_rows: bool,
+    native_table_rows: bool,
     summary: CollectionSummary,
     columns: Vec<ColumnSpec>,
     entities: Vec<tachiko_workspace_engine::EntityId>,
@@ -552,16 +739,6 @@ impl DesignerRuntime {
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
-        let row_serial = document
-            .entities
-            .keys()
-            .filter_map(|id| {
-                id.as_str()
-                    .strip_prefix("tracker_row_")
-                    .and_then(|suffix| suffix.split('_').next()?.parse::<usize>().ok())
-            })
-            .max()
-            .unwrap_or(0);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
             title,
@@ -575,7 +752,7 @@ impl DesignerRuntime {
             principal,
             clock: DesignerClock::default(),
             proposal_serial: 0,
-            row_serial,
+            row_serial: 0,
             row_namespace: occurrence_id.to_owned(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -605,6 +782,20 @@ impl DesignerRuntime {
             }
             DesignerRequest::NewBudget { occurrence_id } => {
                 let candidate = Self::budget(&occurrence_id)?;
+                let opened = OpenedProjection {
+                    bootstrap: candidate.bootstrap_projection(),
+                    table: candidate.query_table(&candidate.default_collection)?,
+                };
+                ensure_opened_projection_size(&opened)?;
+                *self = candidate;
+                Ok(DesignerResponse::Opened(Box::new(opened)))
+            }
+            DesignerRequest::NewTable {
+                occurrence_id,
+                name,
+                columns,
+            } => {
+                let candidate = Self::new_table(&occurrence_id, &name, &columns)?;
                 let opened = OpenedProjection {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
@@ -707,6 +898,26 @@ impl DesignerRuntime {
                 &target,
                 &source,
             )?)),
+            DesignerRequest::CreateKeyedGroupedSum {
+                expected_revision,
+                definition,
+            } => {
+                let definition_id = KeyedGroupedSumDefinitionId::from(definition.id.clone());
+                let publication = self.create_keyed_grouped_sum(&expected_revision, definition)?;
+                Ok(DesignerResponse::KeyedGroupedSumPublished(
+                    KeyedGroupedSumPublishedProjection {
+                        result: self.query_keyed_grouped_sum(&definition_id)?,
+                        publication,
+                    },
+                ))
+            }
+            DesignerRequest::QueryKeyedGroupedSum { definition_id } => {
+                Ok(DesignerResponse::KeyedGroupedSum(
+                    self.query_keyed_grouped_sum(&KeyedGroupedSumDefinitionId::from(
+                        definition_id,
+                    ))?,
+                ))
+            }
         }
     }
 
@@ -716,7 +927,94 @@ impl DesignerRuntime {
             revision: self.session.revision().as_str().to_owned(),
             default_collection: self.default_collection.clone(),
             collections: self.collections.clone(),
+            keyed_grouped_sum_definition_ids: self
+                .session
+                .export_snapshot()
+                .document()
+                .keyed_grouped_sum_definitions
+                .keys()
+                .map(ToString::to_string)
+                .collect(),
         }
+    }
+
+    fn create_keyed_grouped_sum(
+        &mut self,
+        expected_revision: &str,
+        input: KeyedGroupedSumDefinitionInput,
+    ) -> Result<PublicationProjection, DesignerError> {
+        if input.id.is_empty() {
+            return Err(tracker_error(
+                "grouped summary definition identity is required",
+            ));
+        }
+        let definition = KeyedGroupedSumDefinition {
+            id: KeyedGroupedSumDefinitionId::from(input.id),
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: SchemaId::from(input.orders_schema),
+                lookup_key_field: FieldId::from(input.order_lookup_key_field),
+                quantity_field: FieldId::from(input.order_quantity_field),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: SchemaId::from(input.products_schema),
+                key_field: FieldId::from(input.product_key_field),
+                category_field: FieldId::from(input.product_category_field),
+                price_field: FieldId::from(input.product_price_field),
+            },
+        };
+        self.publish_commands(
+            expected_revision,
+            vec![SemanticCommand::UpsertKeyedGroupedSumDefinition { definition }],
+        )
+    }
+
+    fn query_keyed_grouped_sum(
+        &mut self,
+        definition_id: &KeyedGroupedSumDefinitionId,
+    ) -> Result<KeyedGroupedSumProjection, DesignerError> {
+        let snapshot = self.session.export_snapshot();
+        self.lifecycle.authorize_keyed_grouped_sum_query(
+            snapshot.document(),
+            definition_id,
+            &self.principal,
+            self.clock.tick(),
+        )?;
+        let revision = self.current_revision().to_owned();
+        Ok(
+            match evaluate_keyed_grouped_sum(snapshot.document(), definition_id) {
+                KeyedGroupedSumOutcome::Complete(groups) => KeyedGroupedSumProjection {
+                    definition_id: definition_id.to_string(),
+                    revision,
+                    groups: groups
+                        .into_iter()
+                        .map(|group| KeyedGroupedSumGroupProjection {
+                            category: group.category,
+                            value: group.value.get(),
+                        })
+                        .collect(),
+                    diagnostics: Vec::new(),
+                },
+                KeyedGroupedSumOutcome::Unavailable(diagnostics) => KeyedGroupedSumProjection {
+                    definition_id: definition_id.to_string(),
+                    revision,
+                    groups: Vec::new(),
+                    diagnostics: diagnostics
+                        .into_iter()
+                        .map(|diagnostic| KeyedGroupedSumDiagnosticProjection {
+                            code: diagnostic.code.to_owned(),
+                            entity: diagnostic.entity.map(|value| value.to_string()),
+                            field: diagnostic.field.map(|value| value.to_string()),
+                            lookup_key: diagnostic.lookup_key,
+                            candidates: diagnostic
+                                .candidates
+                                .into_iter()
+                                .map(|value| value.to_string())
+                                .collect(),
+                        })
+                        .collect(),
+                },
+            },
+        )
     }
 
     fn ensure_supported_project(&self) -> Result<(), DesignerError> {
@@ -785,6 +1083,9 @@ impl DesignerRuntime {
         let snapshot = self.session.export_snapshot();
         let bytes = if document_contains_date(snapshot.document()) {
             encode_project_record_v2(snapshot.document())?
+        } else if !snapshot.document().keyed_grouped_sum_definitions.is_empty() {
+            let tree = encode_roproj_v2(snapshot.document())?;
+            encode_project_bundle_v2(&tree)?
         } else {
             let tree = encode_roproj_v1(snapshot.document())?;
             encode_project_bundle_v1(&tree)?
@@ -795,12 +1096,69 @@ impl DesignerRuntime {
         })
     }
 
+    /// Export the exact current snapshot as the complete canonical v1 tree.
+    ///
+    /// The returned bytes use the app-private host/WASM transfer record. The
+    /// bridge decodes that record only into opaque path/byte entries; callers
+    /// must not present it as a portable `.ro` artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stale-revision, storage, or bounded-transfer failure without
+    /// mutating the resident occurrence.
+    pub fn export_canonical_tree(
+        &self,
+        expected_revision: &str,
+    ) -> Result<CanonicalTreeExport, DesignerError> {
+        let snapshot = self.exact_snapshot(expected_revision)?;
+        let tree = encode_v1_tree(snapshot.document())?;
+        Ok(CanonicalTreeExport {
+            revision: snapshot.revision().as_str().to_owned(),
+            bytes: encode_project_bundle_v1(&tree)?,
+        })
+    }
+
+    /// Export the exact current snapshot as a genuine portable-package/v1
+    /// `.ro` artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stale-revision, storage, or bounded-transfer failure without
+    /// mutating the resident occurrence.
+    pub fn export_portable_ro(
+        &self,
+        expected_revision: &str,
+    ) -> Result<ProjectExport, DesignerError> {
+        let snapshot = self.exact_snapshot(expected_revision)?;
+        let tree = encode_v1_tree(snapshot.document())?;
+        Ok(ProjectExport {
+            revision: snapshot.revision().as_str().to_owned(),
+            bytes: encode_portable_package_v1(&tree)?,
+        })
+    }
+
+    /// Project the trusted identity of the live resident occurrence.
+    #[must_use]
+    pub fn observe_occurrence(&self) -> OccurrenceProjection {
+        OccurrenceProjection {
+            scope: self.occurrence_scope().to_owned(),
+            revision: self.current_revision().to_owned(),
+        }
+    }
+
+    fn exact_snapshot(&self, expected_revision: &str) -> Result<ResidentSnapshot, DesignerError> {
+        let current = self.current_revision();
+        if current != expected_revision {
+            return Err(DesignerError::StaleQuery {
+                requested: expected_revision.to_owned(),
+                current: current.to_owned(),
+            });
+        }
+        Ok(self.session.export_snapshot())
+    }
+
     fn query_table(&self, collection: &str) -> Result<TableProjection, DesignerError> {
-        let spec = self.collection_specs.get(collection).ok_or_else(|| {
-            DesignerError::MissingCollection {
-                collection: collection.to_owned(),
-            }
-        })?;
+        let spec = self.collection_spec(collection)?;
         if spec.columns.len() > MAX_TABLE_FIELDS || spec.entities.len() > MAX_TABLE_ROWS {
             return Err(DesignerError::CollectionTooLarge {
                 collection: collection.to_owned(),
@@ -843,6 +1201,7 @@ impl DesignerRuntime {
             .collect();
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
+            native_table_profile: is_native_table_spec(spec).then_some(true),
             revision: field_query.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: spec
@@ -1305,6 +1664,7 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
+    #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
     fn publish_commands(
         &mut self,
         expected_revision: &str,
@@ -1340,6 +1700,14 @@ impl DesignerRuntime {
                 }
                 SemanticCommand::FormulaUpdate(_) => {
                     return Err(tracker_error("unsupported history command"));
+                }
+                SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
+                    candidate
+                        .keyed_grouped_sum_definitions
+                        .insert(definition.id.clone(), definition.clone());
+                }
+                SemanticCommand::RemoveKeyedGroupedSumDefinition { definition } => {
+                    candidate.keyed_grouped_sum_definitions.remove(definition);
                 }
             }
         }
@@ -1411,20 +1779,6 @@ impl DesignerRuntime {
     }
 
     fn refresh_structure(&mut self) {
-        self.row_serial = self.row_serial.max(
-            self.session
-                .export_snapshot()
-                .document()
-                .entities
-                .keys()
-                .filter_map(|id| {
-                    id.as_str()
-                        .strip_prefix("tracker_row_")
-                        .and_then(|suffix| suffix.split('_').next()?.parse::<usize>().ok())
-                })
-                .max()
-                .unwrap_or(0),
-        );
         self.collection_specs = collection_specs(self.session.export_snapshot().document());
         self.collections = self
             .collection_specs
@@ -1463,6 +1817,67 @@ impl DesignerRuntime {
             .collect(),
         };
         document.schemas.insert(schema.id.clone(), schema);
+        Self::from_document(document, occurrence_id)
+    }
+
+    /// Create one bounded ordinary native table from user-facing labels.
+    ///
+    /// The candidate is fully admitted before a caller replaces any resident
+    /// occurrence. Stable semantic IDs are generated from the trusted fresh
+    /// occurrence namespace, never from mutable labels.
+    ///
+    /// # Errors
+    /// Returns a candidate validation failure without constructing a partial
+    /// runtime.
+    pub fn new_table(
+        occurrence_id: &str,
+        name: &str,
+        columns: &[NewTableColumnInput],
+    ) -> Result<Self, DesignerError> {
+        if name.trim().is_empty() || name.len() > MAX_PROFILE_STRING_BYTES {
+            return Err(table_error("table name must be nonempty bounded text"));
+        }
+        if columns.is_empty() || columns.len() > MAX_TABLE_FIELDS {
+            return Err(table_error("table must declare 1..32 columns"));
+        }
+        let schema_key = native_table_key(name, "table name")?;
+        let mut ids = NewTableIds::new(occurrence_id);
+        let document_id = ids.generate(SemanticIdKind::Document);
+        let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
+        let mut fields = BTreeMap::new();
+        let mut seen_keys = BTreeSet::new();
+        for column in columns {
+            if column.name.trim().is_empty() || column.name.len() > MAX_PROFILE_STRING_BYTES {
+                return Err(table_error("column names must be nonempty bounded text"));
+            }
+            let key = native_table_key(&column.name, "column name")?;
+            if !seen_keys.insert(key.clone()) {
+                return Err(table_error("duplicate column names are not allowed"));
+            }
+            let field_type = native_table_field_type(&column.field_type)?;
+            let id = FieldId::from(ids.generate(SemanticIdKind::Field));
+            fields.insert(
+                id.clone(),
+                FieldDefinition {
+                    id,
+                    key: FieldKey::from(key),
+                    field_type,
+                    required: true,
+                },
+            );
+        }
+        let schema = Schema {
+            id: schema_id.clone(),
+            key: SchemaKey::from(schema_key),
+            fields,
+        };
+        let document = Document {
+            id: document_id.into(),
+            title: name.trim().to_owned(),
+            schemas: BTreeMap::from([(schema_id, schema)]),
+            entities: BTreeMap::new(),
+            keyed_grouped_sum_definitions: BTreeMap::new(),
+        };
         Self::from_document(document, occurrence_id)
     }
 
@@ -1714,6 +2129,7 @@ impl DesignerRuntime {
         expected: &str,
         collection: &str,
     ) -> Result<PublicationProjection, DesignerError> {
+        self.tracker_spec(collection)?;
         self.paste_cells(
             expected,
             collection,
@@ -1757,6 +2173,7 @@ impl DesignerRuntime {
         self.record_edit(expected, forward, inverse)
     }
 
+    #[allow(clippy::too_many_lines)] // One bounded, atomic typed-row admission path.
     fn paste_cells(
         &mut self,
         expected: &str,
@@ -1766,11 +2183,18 @@ impl DesignerRuntime {
         rows: &[Vec<String>],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
-        let spec = self.tracker_spec(collection)?;
-        let fields = ["task", "estimate", "done"];
-        let column = fields
+        let spec = self.collection_spec(collection)?.clone();
+        let tracker = is_tracker_spec(&spec);
+        let native_table = is_native_table_spec(&spec);
+        if !tracker && !native_table {
+            return Err(tracker_error(
+                "typed row paste is available only for the bounded tracker or native table profile",
+            ));
+        }
+        let column = spec
+            .columns
             .iter()
-            .position(|field| *field == start_field)
+            .position(|field| field.id.as_str() == start_field)
             .ok_or_else(|| tracker_error("starting field is unavailable"))?;
         let start = start_entity.map_or(Ok(spec.entities.len()), |id| {
             spec.entities
@@ -1783,10 +2207,10 @@ impl DesignerRuntime {
             || rows[0].is_empty()
             || rows
                 .iter()
-                .any(|row| row.len() != rows[0].len() || row.len() + column > fields.len())
+                .any(|row| row.len() != rows[0].len() || row.len() + column > spec.columns.len())
         {
             return Err(tracker_error(
-                "paste must be a nonempty rectangular range within 128 rows and three typed columns",
+                "paste must be a nonempty rectangular range within 128 rows and the declared typed columns",
             ));
         }
         if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
@@ -1797,45 +2221,43 @@ impl DesignerRuntime {
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
         let mut allocated = BTreeSet::new();
+        let mut row_ids = RowIds::new(
+            &self.row_namespace,
+            self.row_serial,
+            if tracker {
+                "tracker_row"
+            } else {
+                "native_table_row"
+            },
+        );
         for (offset, row) in rows.iter().enumerate() {
             let existing = spec
                 .entities
                 .get(start + offset)
                 .and_then(|id| document.entities.get(id));
-            let mut entity = existing.cloned().unwrap_or_else(|| {
-                tracker_row(
-                    document,
-                    self.row_serial,
-                    &self.row_namespace,
-                    &mut allocated,
-                )
-            });
+            if existing.is_none() && !tracker && (column != 0 || row.len() != spec.columns.len()) {
+                return Err(table_error(
+                    "new native table rows must provide every declared typed column",
+                ));
+            }
+            let mut entity = existing.cloned().map_or_else(
+                || {
+                    if tracker {
+                        Ok(tracker_row(document, &mut row_ids, &mut allocated))
+                    } else {
+                        native_table_row(document, &spec, &mut row_ids, &mut allocated)
+                    }
+                },
+                Ok,
+            )?;
             for (offset, text) in row.iter().enumerate() {
-                let field = FieldRef::new(entity.id.clone(), fields[column + offset]);
+                let field =
+                    FieldRef::new(entity.id.clone(), spec.columns[column + offset].id.clone());
                 let old = entity
                     .fields
                     .get(&field.field)
                     .ok_or_else(|| tracker_error("tracker row has a missing required value"))?;
-                let input = match old {
-                    Value::Text(_) => ScalarEditInput::Text {
-                        value: text.clone(),
-                    },
-                    Value::Number(_) => ScalarEditInput::Number {
-                        input: text.clone(),
-                    },
-                    Value::Boolean(_) => ScalarEditInput::Boolean {
-                        value: match text.as_str() {
-                            "true" => true,
-                            "false" => false,
-                            _ => {
-                                return Err(tracker_error(
-                                    "Boolean paste accepts exactly true or false",
-                                ));
-                            }
-                        },
-                    },
-                    _ => return Err(tracker_error("paste value type is unsupported")),
-                };
+                let input = pasted_scalar_input(old, text)?;
                 let value = parse_scalar(old, &input, &field)?;
                 if existing.is_some() && &value != old {
                     forward.push(SemanticCommand::set_field_value(
@@ -1854,7 +2276,22 @@ impl DesignerRuntime {
             }
         }
         inverse.reverse();
-        self.record_edit(expected, forward, inverse)
+        let publication = self.record_edit(expected, forward, inverse)?;
+        self.row_serial = row_ids.serial();
+        Ok(publication)
+    }
+
+    fn collection_spec(&self, collection: &str) -> Result<&CollectionSpec, DesignerError> {
+        self.collection_specs
+            .get(collection)
+            .or_else(|| {
+                self.collection_specs
+                    .values()
+                    .find(|spec| spec.summary.id == collection)
+            })
+            .ok_or_else(|| DesignerError::MissingCollection {
+                collection: collection.to_owned(),
+            })
     }
 
     fn current_revision(&self) -> &str {
@@ -1865,6 +2302,28 @@ impl DesignerRuntime {
     #[must_use]
     pub fn occurrence_scope(&self) -> &str {
         self.document_scope.as_str()
+    }
+}
+
+fn pasted_scalar_input(value: &Value, text: &str) -> Result<ScalarEditInput, DesignerError> {
+    match value {
+        Value::Text(_) => Ok(ScalarEditInput::Text {
+            value: text.to_owned(),
+        }),
+        Value::Number(_) => Ok(ScalarEditInput::Number {
+            input: text.to_owned(),
+        }),
+        Value::Boolean(_) => match text {
+            "true" => Ok(ScalarEditInput::Boolean { value: true }),
+            "false" => Ok(ScalarEditInput::Boolean { value: false }),
+            _ => Err(tracker_error("Boolean paste accepts exactly true or false")),
+        },
+        Value::Date(_) => Ok(ScalarEditInput::Date {
+            value: text.to_owned(),
+        }),
+        Value::Reference(_) | Value::Formula(_) => {
+            Err(tracker_error("paste value type is unsupported"))
+        }
     }
 }
 
@@ -1909,6 +2368,42 @@ pub fn open_local_document(
     let (candidate, opened) = admit_document(document, occurrence_id)?;
     *runtime = Some(candidate);
     Ok(opened)
+}
+
+/// Verify and admit a portable-package/v1 `.ro` candidate before replacing
+/// the resident occurrence.
+///
+/// This accepts only the genuine storage codec. It does not widen the
+/// app-private project-transfer format used by [`open_project`].
+///
+/// # Errors
+///
+/// Returns storage, profile, or projection failures while preserving the
+/// current resident occurrence.
+pub fn open_portable_ro(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<OpenedProjection, DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    let verified = decode_portable_package_v1(input)?;
+    let document = decode_roproj_v1(verified.tree())?;
+    let (candidate, opened) = admit_document(document, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+/// Completely verify one portable-package/v1 `.ro` artifact without changing
+/// the resident occurrence.
+///
+/// # Errors
+///
+/// Returns a bounded-transfer or storage failure without changing the resident
+/// occurrence.
+pub fn verify_portable_ro(input: &[u8]) -> Result<(), DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    decode_portable_package_v1(input)?;
+    Ok(())
 }
 
 /// Inspect a fully admitted project without replacing any resident occurrence.
@@ -2063,26 +2558,35 @@ fn budget_item(
 }
 
 fn encode_project_bundle_v1(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, DesignerError> {
-    let total = tree.files().iter().try_fold(
+    encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))
+}
+
+fn encode_project_bundle_v2(tree: &CanonicalRoProjectV2) -> Result<Vec<u8>, DesignerError> {
+    encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))
+}
+
+fn encode_project_bundle<'a>(
+    files: impl IntoIterator<Item = (&'a str, &'a [u8])>,
+) -> Result<Vec<u8>, DesignerError> {
+    let files = files.into_iter().collect::<Vec<_>>();
+    let total = files.iter().try_fold(
         PROJECT_BUNDLE_V1_MAGIC.len() + size_of::<u32>(),
-        |total, file| {
-            let path_length = u16::try_from(file.path().len()).map_err(|_| {
-                DesignerError::InvalidProjectTransfer {
+        |total, (path, bytes)| {
+            let path_length =
+                u16::try_from(path.len()).map_err(|_| DesignerError::InvalidProjectTransfer {
                     message: "a canonical path exceeds the private transfer profile".to_owned(),
-                }
-            })?;
-            let byte_length = u32::try_from(file.bytes().len()).map_err(|_| {
-                DesignerError::ProjectTransferTooLarge {
-                    actual: file.bytes().len(),
+                })?;
+            let byte_length =
+                u32::try_from(bytes.len()).map_err(|_| DesignerError::ProjectTransferTooLarge {
+                    actual: bytes.len(),
                     maximum: MAX_PROJECT_TRANSFER_BYTES,
-                }
-            })?;
+                })?;
             Ok::<usize, DesignerError>(
                 total
                     .saturating_add(size_of_val(&path_length))
                     .saturating_add(size_of_val(&byte_length))
-                    .saturating_add(file.path().len())
-                    .saturating_add(file.bytes().len()),
+                    .saturating_add(path.len())
+                    .saturating_add(bytes.len()),
             )
         },
     )?;
@@ -2090,23 +2594,23 @@ fn encode_project_bundle_v1(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, Desi
     let mut output = Vec::with_capacity(total);
     output.extend_from_slice(PROJECT_BUNDLE_V1_MAGIC);
     output.extend_from_slice(
-        &u32::try_from(tree.files().len())
+        &u32::try_from(files.len())
             .expect("canonical project file count fits u32")
             .to_le_bytes(),
     );
-    for file in tree.files() {
+    for (path, bytes) in files {
         output.extend_from_slice(
-            &u16::try_from(file.path().len())
+            &u16::try_from(path.len())
                 .expect("canonical project paths fit u16")
                 .to_le_bytes(),
         );
         output.extend_from_slice(
-            &u32::try_from(file.bytes().len())
+            &u32::try_from(bytes.len())
                 .expect("bounded project file lengths fit u32")
                 .to_le_bytes(),
         );
-        output.extend_from_slice(file.path().as_bytes());
-        output.extend_from_slice(file.bytes());
+        output.extend_from_slice(path.as_bytes());
+        output.extend_from_slice(bytes);
     }
     Ok(output)
 }
@@ -2167,8 +2671,25 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             message: "project transfer contains trailing bytes".to_owned(),
         });
     }
-    let mut files = Vec::with_capacity(ROPROJ_V1_PATHS.len());
-    for path in ROPROJ_V1_PATHS {
+    let manifest = files_by_path.get("manifest.json").ok_or_else(|| {
+        DesignerError::InvalidProjectTransfer {
+            message: "project transfer is missing 'manifest.json'".to_owned(),
+        }
+    })?;
+    let version = serde_json::from_slice::<serde_json::Value>(manifest)
+        .ok()
+        .and_then(|value| value.get("format_version")?.as_u64());
+    let expected_paths: &[&str] = match version {
+        Some(1) => &ROPROJ_V1_PATHS,
+        Some(2) => &ROPROJ_V2_PATHS,
+        _ => {
+            return Err(DesignerError::InvalidProjectTransfer {
+                message: "project manifest has no supported format version".to_owned(),
+            });
+        }
+    };
+    let mut files = Vec::with_capacity(expected_paths.len());
+    for &path in expected_paths {
         let bytes =
             files_by_path
                 .remove(path)
@@ -2182,10 +2703,22 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             message: format!("project transfer contains unexpected path '{extra}'"),
         });
     }
-    match CanonicalRoProjectV1::try_from_files_with_profile(files, ensure_cheap_document_profile) {
-        Ok((_, document)) => Ok(document),
-        Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
-        Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
+    match version {
+        Some(1) => match CanonicalRoProjectV1::try_from_files_with_profile(
+            files,
+            ensure_cheap_document_profile,
+        ) {
+            Ok((_, document)) => Ok(document),
+            Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
+            Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
+        },
+        Some(2) => {
+            let tree = CanonicalRoProjectV2::try_from_files(files)?;
+            let document = decode_roproj_v2(&tree)?;
+            ensure_cheap_document_profile(&document)?;
+            Ok(document)
+        }
+        _ => unreachable!("manifest version was dispatched above"),
     }
 }
 
@@ -2195,6 +2728,15 @@ fn document_contains_date(document: &Document) -> bool {
         .values()
         .flat_map(|schema| schema.fields.values())
         .any(|field| field.field_type == FieldType::Date)
+}
+
+fn encode_v1_tree(document: &Document) -> Result<CanonicalRoProjectV1, DesignerError> {
+    if document_contains_date(document) {
+        return Err(DesignerError::UnsupportedProject {
+            message: "canonical .roproj/v1 and portable-package/v1 do not support Date fields; use the existing private project export".to_owned(),
+        });
+    }
+    Ok(encode_roproj_v1(document)?)
 }
 
 fn enforce_project_transfer_limit(actual: usize) -> Result<(), DesignerError> {
@@ -2265,12 +2807,16 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
         Ok(request) => {
             if let Some(occurrence_id) = match &request {
                 DesignerRequest::NewTracker { occurrence_id }
-                | DesignerRequest::NewBudget { occurrence_id } => Some(occurrence_id),
+                | DesignerRequest::NewBudget { occurrence_id }
+                | DesignerRequest::NewTable { occurrence_id, .. } => Some(occurrence_id),
                 _ => None,
             } {
                 let result = (match &request {
                     DesignerRequest::NewTracker { .. } => DesignerRuntime::tracker(occurrence_id),
                     DesignerRequest::NewBudget { .. } => DesignerRuntime::budget(occurrence_id),
+                    DesignerRequest::NewTable { name, columns, .. } => {
+                        DesignerRuntime::new_table(occurrence_id, name, columns)
+                    }
                     _ => unreachable!("only new project requests enter this branch"),
                 })
                 .and_then(|candidate| {
@@ -2398,6 +2944,10 @@ fn is_tracker_spec(spec: &CollectionSpec) -> bool {
         })
 }
 
+fn is_native_table_spec(spec: &CollectionSpec) -> bool {
+    spec.native_table_rows && !is_tracker_spec(spec)
+}
+
 fn copy_position(spec: &CollectionSpec, field: &FieldRef) -> Result<(usize, usize), DesignerError> {
     let row = spec
         .entities
@@ -2499,6 +3049,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                                 )
                             })
                     }),
+                    native_table_rows: has_scalar_row_authoring_shape(document, schema, &entities),
                     summary,
                     columns: {
                         let mut fields = schema.fields.values().collect::<Vec<_>>();
@@ -2810,6 +3361,7 @@ fn ensure_static_profile(
         revision: "resident/0".to_owned(),
         default_collection: default_collection.to_owned(),
         collections: collections.to_vec(),
+        keyed_grouped_sum_definition_ids: Vec::new(),
     };
     ensure_projection_size(&bootstrap).map_err(|error| DesignerError::UnsupportedProject {
         message: error.to_string(),
@@ -2925,6 +3477,10 @@ fn designer_lifecycle(
             (OperationFamily::RemoveEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Destructive),
             (OperationFamily::RemoveEntity, MutationClass::Formula),
+            (
+                OperationFamily::KeyedGroupedSumDefinition,
+                MutationClass::Structure,
+            ),
         ]
         .into_iter()
         .flat_map(|(family, class)| {
@@ -3107,6 +3663,33 @@ struct MoonfallIds {
     entities: VecDeque<String>,
 }
 
+struct NewTableIds {
+    namespace: String,
+    serial: usize,
+}
+
+impl NewTableIds {
+    fn new(namespace: &str) -> Self {
+        Self {
+            namespace: namespace.to_owned(),
+            serial: 0,
+        }
+    }
+}
+
+impl IdGenerator for NewTableIds {
+    fn generate(&mut self, kind: SemanticIdKind) -> String {
+        self.serial += 1;
+        let kind = match kind {
+            SemanticIdKind::Document => "document",
+            SemanticIdKind::Schema => "schema",
+            SemanticIdKind::Field => "field",
+            SemanticIdKind::Entity => "entity",
+        };
+        format!("native_table_{kind}_{:04}_{}", self.serial, self.namespace)
+    }
+}
+
 impl MoonfallIds {
     fn new() -> Self {
         Self {
@@ -3156,16 +3739,42 @@ impl IdGenerator for MoonfallIds {
     }
 }
 
+struct RowIds {
+    namespace: String,
+    serial: usize,
+    prefix: &'static str,
+}
+
+impl RowIds {
+    fn new(namespace: &str, serial: usize, prefix: &'static str) -> Self {
+        Self {
+            namespace: namespace.to_owned(),
+            serial,
+            prefix,
+        }
+    }
+
+    const fn serial(&self) -> usize {
+        self.serial
+    }
+}
+
+impl IdGenerator for RowIds {
+    fn generate(&mut self, kind: SemanticIdKind) -> String {
+        debug_assert!(matches!(kind, SemanticIdKind::Entity));
+        self.serial = self.serial.saturating_add(1);
+        format!("{}_{:04}_{}", self.prefix, self.serial, self.namespace)
+    }
+}
+
 fn tracker_row(
     document: &Document,
-    row_serial: usize,
-    namespace: &str,
+    ids: &mut RowIds,
     allocated: &mut BTreeSet<EntityId>,
 ) -> Entity {
-    let mut serial = row_serial.saturating_add(1);
     loop {
-        let id = EntityId::from(format!("tracker_row_{serial:04}_{namespace}"));
-        let key = EntityKey::from(format!("row_{serial:04}"));
+        let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
+        let key = EntityKey::from(format!("row_{:04}", ids.serial()));
         if !document.entities.contains_key(&id)
             && !allocated.contains(&id)
             && !document.entities.values().any(|entity| entity.key == key)
@@ -3187,13 +3796,123 @@ fn tracker_row(
                 .collect(),
             };
         }
-        serial += 1;
     }
+}
+
+fn native_table_row(
+    document: &Document,
+    spec: &CollectionSpec,
+    ids: &mut RowIds,
+    allocated: &mut BTreeSet<EntityId>,
+) -> Result<Entity, DesignerError> {
+    loop {
+        let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
+        let key = EntityKey::from(format!("row_{:04}", ids.serial()));
+        if !document.entities.contains_key(&id)
+            && !allocated.contains(&id)
+            && !document.entities.values().any(|entity| entity.key == key)
+        {
+            allocated.insert(id.clone());
+            let mut fields = BTreeMap::new();
+            for column in &spec.columns {
+                let value = match &column.field_type {
+                    FieldType::Text => Value::Text(String::new()),
+                    FieldType::Number => Value::Number(Number::new(0.0).expect("zero is finite")),
+                    FieldType::Boolean => Value::Boolean(false),
+                    FieldType::Date => {
+                        Value::Date(Date::parse("1970-01-01").expect("fixed Gregorian fixture"))
+                    }
+                    FieldType::Reference { .. } => {
+                        return Err(table_error(
+                            "native table rows do not support reference columns",
+                        ));
+                    }
+                };
+                fields.insert(column.id.clone(), value);
+            }
+            return Ok(Entity {
+                id,
+                key,
+                schema: SchemaId::from(spec.summary.id.clone()),
+                fields,
+            });
+        }
+    }
+}
+
+fn has_scalar_row_authoring_shape(
+    document: &Document,
+    schema: &Schema,
+    entities: &[EntityId],
+) -> bool {
+    (1..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
+        && schema.fields.values().all(|field| {
+            field.required
+                && matches!(
+                    field.field_type,
+                    FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                )
+        })
+        && entities.iter().all(|id| {
+            document.entities.get(id).is_some_and(|entity| {
+                entity.schema == schema.id
+                    && entity.fields.len() == schema.fields.len()
+                    && schema.fields.iter().all(|(id, field)| {
+                        entity.fields.get(id).is_some_and(|value| {
+                            matches!(
+                                (field.field_type.clone(), value),
+                                (FieldType::Text, Value::Text(_))
+                                    | (FieldType::Number, Value::Number(_))
+                                    | (FieldType::Boolean, Value::Boolean(_))
+                                    | (FieldType::Date, Value::Date(_))
+                            )
+                        })
+                    })
+            })
+        })
 }
 
 fn tracker_error(message: &str) -> DesignerError {
     DesignerError::InvalidTrackerOperation {
         message: message.to_owned(),
+    }
+}
+
+fn table_error(message: &str) -> DesignerError {
+    DesignerError::InvalidTableOperation {
+        message: message.to_owned(),
+    }
+}
+
+fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
+    let key = label.trim().to_ascii_lowercase();
+    let mut characters = key.chars();
+    let valid = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && characters.all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '_' | '-')
+        });
+    if valid {
+        Ok(key)
+    } else {
+        Err(table_error(&format!(
+            "{kind} must use letters, numbers, '-' or '_'"
+        )))
+    }
+}
+
+fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
+    match input.to_ascii_lowercase().as_str() {
+        "text" => Ok(FieldType::Text),
+        "number" => Ok(FieldType::Number),
+        "boolean" => Ok(FieldType::Boolean),
+        "date" => Ok(FieldType::Date),
+        _ => Err(table_error(
+            "column type must be Text, Number, Boolean, or Date",
+        )),
     }
 }
 

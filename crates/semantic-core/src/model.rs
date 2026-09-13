@@ -8,6 +8,8 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
+use crate::{KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId};
+
 macro_rules! text_newtype {
     ($name:ident) => {
         #[derive(
@@ -348,6 +350,9 @@ pub struct Document {
     pub title: String,
     pub schemas: BTreeMap<SchemaId, Schema>,
     pub entities: BTreeMap<EntityId, Entity>,
+    #[serde(default)]
+    pub keyed_grouped_sum_definitions:
+        BTreeMap<KeyedGroupedSumDefinitionId, KeyedGroupedSumDefinition>,
 }
 
 impl Document {
@@ -358,6 +363,7 @@ impl Document {
             title: title.into(),
             schemas: BTreeMap::new(),
             entities: BTreeMap::new(),
+            keyed_grouped_sum_definitions: BTreeMap::new(),
         }
     }
 }

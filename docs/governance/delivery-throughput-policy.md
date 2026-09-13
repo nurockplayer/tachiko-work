@@ -2,7 +2,9 @@
 
 Status: Accepted governance policy when merged
 
-Decision issue: [#307](https://github.com/nurockplayer/tachiko-work/issues/307)
+Decision issue: [#307](https://github.com/nurockplayer/tachiko-work/issues/307);
+amended by [#334](https://github.com/nurockplayer/tachiko-work/issues/334) and
+[#376](https://github.com/nurockplayer/tachiko-work/issues/376).
 
 ## Purpose
 
@@ -88,6 +90,28 @@ Re-read live Issue/PR authority and current Steward guidance at material boundar
 
 Keep the existing `agent-handoff:v1` and `project-steward-watch:v1` schemas unchanged and update their canonical comments in place.
 
+## Delivery integrity guardrails
+
+Operational automation must preserve a clean distinction between authoring, validation, and coordination.
+
+### Validation is non-authoring by default
+
+CI, review, and validation jobs may build, test, generate disposable artifacts, produce reports, or emit suggested patches as evidence. They must not repair tracked production source and then commit or push those repairs back to an implementation branch as part of the validation path.
+
+A failed check returns the defect to the implementation owner, which makes the repair as an ordinary reviewed commit and reruns validation. Repository-mutating automation requires separate explicit authority and must not be introduced incidentally to make a failing lane green. This rule does not prohibit generated build/test outputs, caches, reports, or other non-authoritative artifacts that are not committed and pushed as source changes.
+
+### Commits carry material repository state
+
+Do not create empty, no-op, or checkpoint-only commits merely to prove liveness, preserve acceptance ancestry, record review progress, or update handoff state. Operational progress belongs in the canonical GitHub handoff/watch/evidence surfaces. Create a commit when repository state materially changes: implementation, accepted test/specification repair, documentation, generated source that the repository intentionally versions, or another real tracked delta.
+
+Preserve already-published history normally. This rule is prospective and never authorizes force-push, history rewriting, or squashing away provenance merely because an earlier lane produced noisy commits.
+
+### High-risk contract seams escalate before direction hardens
+
+When implementation first reaches a durable format/storage contract, public consumer/API/type contract, semantic identity law, authorization/approval boundary, or another similarly expensive-to-reverse seam, the delivery lead explicitly rechecks controlling authority and the lane's risk class before committing to a direction.
+
+If current Accepted authority already selects one bounded implementation path, continue autonomously, including when that authority has already approved the relevant contract widening or stabilization. Escalate before continuing the seam only when more than one materially different direction remains plausible, the proposed widening or stabilization goes beyond what controlling authority already decides, or implementation pressure exposes a missing durable choice. In those cases obtain Project Steward reconciliation and risk-appropriate deep consultation rather than waiting for final review to discover the direction error. Routine reversible implementation details do not require escalation merely because they involve an API or type internally.
+
 ## Validation layering
 
 Validation should shorten the inner implementation loop while preserving exact-head confidence.
@@ -120,10 +144,40 @@ The Project Steward owns the bounded specification and executable acceptance han
 
 This split is intended to reduce implementation search space: the delivery agent should usually be able to drive from a concrete failing/target acceptance boundary to a passing exact head without inventing the product contract during implementation.
 
+## Single-lane acceptance and implementation
+
+For one Ready implementation slice, Steward acceptance and delivery
+implementation normally share one eventual PR. Do not merge a standalone
+acceptance-only PR and then open a second implementation PR for the same slice
+by default.
+
+Before Ready, the Steward may open a Draft PR solely to expose Steward-owned
+acceptance/evidence for review. Production mutation remains prohibited until the
+Ready gate is satisfied. After promotion, reuse that exact PR for production
+implementation, applicable unit tests, validation, and review rather than
+opening a successor implementation PR.
+
+A separate acceptance PR is justified only when the acceptance artifact is
+independently valuable durable repository state that must land before
+implementation, or when the Steward explicitly records a Guarded sequencing
+reason. All branch protection, exact-head validation, known-blocker, and
+risk-tier review rules remain applicable.
+
 ## Rollout
 
-Apply this policy prospectively to newly Readied work and at the next material checkpoint of already active lanes. Do not restart sound active work solely to rename its risk class.
+Apply this policy prospectively to newly Readied work and at the next material checkpoint of already active lanes. Do not restart a sound active PR merely to combine it with another lane, rename it, or reclassify its risk.
+
+Re-evaluate queued or pre-Ready work before activation. Combine slices only when
+the anti-fragmentation conditions are met; do not combine Guarded semantic,
+schema, or storage slices merely to reduce PR count.
 
 Existing repository authority remains in force. Where an older Issue prompt hard-codes a stronger review or validation route, obey that Issue until the Project Steward explicitly reconciles it; do not silently downgrade an already-dispatched contract.
 
 After rollout, prefer measuring product throughput by completed user-visible capability and milestone convergence, not by raw Issue count or agent activity.
+
+For the next 20 completed implementation or maintenance outcomes, record a
+lightweight comparison of PRs per shipped outcome, median Ready-to-merge elapsed
+time, substantive review findings, and reverts or post-merge correctness
+regressions. Success requires materially less PR/coordination overhead without
+an observed increase in escaped correctness or data-integrity failures; raw
+PR-count reduction alone is not success.

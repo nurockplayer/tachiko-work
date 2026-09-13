@@ -29,6 +29,10 @@ parallel Ready lanes, and keep GitHub checkpoints at material stage boundaries.
 
 ## Delivery continuity
 
+This operating mode is named **Stewarded Continuous Delivery (SCD)** in the
+[canonical delivery workflow](docs/governance/project-governance.md#repository-delivery-workflow).
+The name does not create a second readiness, handoff, review, or merge policy.
+
 For a Ready Issue with an active agent-owned PR, continue the bounded one-Issue
 delivery loop autonomously until a canonical stop or escalation condition is
 actually reached.

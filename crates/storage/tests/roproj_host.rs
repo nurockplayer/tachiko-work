@@ -1123,6 +1123,7 @@ fn bounded_document() -> Document {
                 },
             ),
         ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -1175,5 +1176,6 @@ fn numeric_bridge_document() -> Document {
                 ]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }

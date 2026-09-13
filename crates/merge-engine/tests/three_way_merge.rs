@@ -54,6 +54,7 @@ fn balance_document(damage: f64, attack_interval: f64) -> Document {
                 ]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

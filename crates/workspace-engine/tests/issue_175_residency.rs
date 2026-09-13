@@ -264,6 +264,7 @@ fn synthetic_document(entity_count: usize) -> Document {
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -317,6 +318,7 @@ fn oracle_chain_document(entity_count: usize, cycle: bool) -> Document {
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

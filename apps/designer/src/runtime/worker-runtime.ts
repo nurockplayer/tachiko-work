@@ -56,6 +56,48 @@ export function startDesignerWorker(wasmUrl: string): void {
             }
             break;
           }
+          case "export_canonical_tree": {
+            const reply = runtime.exportCanonicalTree(event.data.expected_revision);
+            if (reply.status === "error") {
+              scope.postMessage({ id: event.data.id, ...reply });
+            } else {
+              scope.postMessage(
+                { id: event.data.id, status: "canonical_tree_exported", export: reply.export },
+                reply.export.files.map(file => file.bytes),
+              );
+            }
+            break;
+          }
+          case "export_portable_ro": {
+            const reply = runtime.exportPortableRo(event.data.expected_revision);
+            if (reply.status === "error") {
+              scope.postMessage({ id: event.data.id, ...reply });
+            } else {
+              scope.postMessage(
+                { id: event.data.id, status: "portable_ro_exported", export: reply.export },
+                [reply.export.bytes],
+              );
+            }
+            break;
+          }
+          case "verify_portable_ro": {
+            const reply = runtime.verifyPortableRo(new Uint8Array(event.data.bytes));
+            scope.postMessage({ id: event.data.id, ...reply });
+            break;
+          }
+          case "open_portable_ro": {
+            const reply = runtime.openPortableRo(
+              new Uint8Array(event.data.bytes),
+              event.data.occurrence_id,
+            );
+            scope.postMessage({ id: event.data.id, ...reply });
+            break;
+          }
+          case "observe_occurrence": {
+            const reply = runtime.observeOccurrence();
+            scope.postMessage({ id: event.data.id, ...reply });
+            break;
+          }
           case "close_project":
             runtime.closeProject();
             scope.postMessage({ id: event.data.id, status: "closed" });

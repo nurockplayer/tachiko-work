@@ -18,6 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
+use tachiko_semantic_core::{KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId};
 use thiserror::Error;
 
 use super::{
@@ -107,6 +108,7 @@ pub enum OperationFamily {
     FormulaInverseRestore,
     AnalysisQuery,
     FieldCapabilityDiscovery,
+    KeyedGroupedSumDefinition,
 }
 
 /// Accepted MVP semantic mutation classes.
@@ -310,6 +312,18 @@ pub enum SemanticCommand {
     },
     FormulaUpdate(FormulaUpdateCommand),
     FormulaInverseRestore(FormulaInverseRestoreCommand),
+    /// Persist one complete saved keyed lookup + grouped-sum definition.
+    ///
+    /// The definition is a document-level structure rather than an inferred
+    /// formula or view setting, so its proposal remains subject to the normal
+    /// lifecycle authorization and publication boundary.
+    UpsertKeyedGroupedSumDefinition {
+        definition: KeyedGroupedSumDefinition,
+    },
+    /// Remove one saved keyed lookup + grouped-sum definition by stable ID.
+    RemoveKeyedGroupedSumDefinition {
+        definition: KeyedGroupedSumDefinitionId,
+    },
 }
 
 impl SemanticCommand {
@@ -1058,6 +1072,37 @@ impl PatchLifecycle {
         self.effective_policy = version;
         self.policy_selection = next_selection;
         Ok(())
+    }
+
+    /// Authorize one complete saved keyed grouped-sum Query against a trusted
+    /// current snapshot.
+    ///
+    /// The caller supplies only the saved definition identity. This lifecycle
+    /// derives the complete disclosure footprint from the exact definition and
+    /// protected document: both candidate memberships, every Orders key and
+    /// quantity, the full Products key universe, the matched Products'
+    /// category/price, and—only when a required matched operand is
+    /// formula-backed—every document formula root. It deliberately performs
+    /// authorization before an adapter evaluates or projects a result, so a
+    /// partial aggregate or diagnostic cannot become a disclosure fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authorization error when the principal lacks complete Query
+    /// coverage, or a scope-derivation error when the requested definition or
+    /// any of its stable bindings cannot be resolved in this document.
+    pub fn authorize_keyed_grouped_sum_query(
+        &self,
+        document: &Document,
+        definition_id: &KeyedGroupedSumDefinitionId,
+        subject: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<BTreeSet<GrantId>, PatchLifecycleError> {
+        if document.id != self.document {
+            return Err(PatchLifecycleError::DocumentScopeMismatch);
+        }
+        let requirements = self.keyed_grouped_sum_query_disclosures(document, definition_id)?;
+        self.authorize_query(subject, &requirements, now)
     }
 
     /// Issue and authoritatively evaluate one immutable proposal occurrence.
@@ -2007,6 +2052,10 @@ impl PatchLifecycle {
                     SemanticCommand::FormulaInverseRestore(_) => {
                         OperationFamily::FormulaInverseRestore
                     }
+                    SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+                    | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {
+                        OperationFamily::KeyedGroupedSumDefinition
+                    }
                 },
                 scope: ScopedSemanticSubject::new(
                     self.document_scope.clone(),
@@ -2211,6 +2260,46 @@ impl PatchLifecycle {
                         command.value(),
                     )?;
                 }
+                SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
+                    // ADR-0036: create and update both require only
+                    // `Structure`; an in-place update with the same stable
+                    // identity is not a `Destructive` capability.
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::KeyedGroupedSumDefinition,
+                        mutation_class: MutationClass::Structure,
+                        scope: ScopedSemanticSubject::new(
+                            self.document_scope.clone(),
+                            self.document.clone(),
+                            SemanticScope::Document,
+                        ),
+                    });
+                    candidate
+                        .keyed_grouped_sum_definitions
+                        .insert(definition.id.clone(), definition.clone());
+                }
+                SemanticCommand::RemoveKeyedGroupedSumDefinition { definition } => {
+                    if candidate
+                        .keyed_grouped_sum_definitions
+                        .remove(definition)
+                        .is_none()
+                    {
+                        return Err(WorkspaceError::MissingKeyedGroupedSumDefinition {
+                            definition: definition.clone(),
+                        });
+                    }
+                    let scope = ScopedSemanticSubject::new(
+                        self.document_scope.clone(),
+                        self.document.clone(),
+                        SemanticScope::Document,
+                    );
+                    for mutation_class in [MutationClass::Structure, MutationClass::Destructive] {
+                        writes.insert(AssociatedWriteRequirement {
+                            family: OperationFamily::KeyedGroupedSumDefinition,
+                            mutation_class,
+                            scope: scope.clone(),
+                        });
+                    }
+                }
             }
         }
         Ok((candidate, writes))
@@ -2223,6 +2312,36 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        // The v1 semantic diff deliberately refuses to represent saved
+        // grouped-summary definition changes. That refusal is not a
+        // publication veto: validate the candidate and preserve the normal
+        // lifecycle/authorization path with an empty v1 diff projection.
+        if base.keyed_grouped_sum_definitions != candidate.keyed_grouped_sum_definitions {
+            match super::validate(&candidate)
+                .and_then(|()| super::preflight_formula_projections(&candidate))
+            {
+                Ok(()) => {}
+                Err(WorkspaceError::InvalidDocument { report, .. }) => {
+                    return Err(PatchLifecycleError::ValidationFailed { report });
+                }
+                Err(source) => {
+                    return Err(PatchLifecycleError::CommandRejected {
+                        source: Box::new(source),
+                    });
+                }
+            }
+            let disclosure_requirements = self.derive_disclosures(base, &candidate, body, &[])?;
+            return Ok(EvaluatedPatch {
+                validation_report: super::validation_report(&candidate),
+                document: candidate,
+                semantic_changes: Vec::new(),
+                formula_impacts: Vec::new(),
+                footprint: AuthorizationFootprint {
+                    disclosure_requirements,
+                    associated_write_requirements,
+                },
+            });
+        }
         let edit = match finalize_edit(base, candidate) {
             Ok(edit) => edit,
             Err(WorkspaceError::InvalidDocument { report, .. }) => {
@@ -2419,6 +2538,18 @@ impl PatchLifecycle {
                     disclosures,
                 )
             }
+            SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+            | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {
+                disclosures.insert(DisclosureRequirement {
+                    family: OperationFamily::KeyedGroupedSumDefinition,
+                    scope: ScopedSemanticSubject::new(
+                        self.document_scope.clone(),
+                        self.document.clone(),
+                        SemanticScope::Document,
+                    ),
+                });
+                Ok(())
+            }
         }
     }
 
@@ -2589,6 +2720,169 @@ impl PatchLifecycle {
             Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => {}
         }
         Ok(())
+    }
+
+    fn keyed_grouped_sum_query_disclosures(
+        &self,
+        document: &Document,
+        definition_id: &KeyedGroupedSumDefinitionId,
+    ) -> Result<BTreeSet<DisclosureRequirement>, PatchLifecycleError> {
+        let definition = document
+            .keyed_grouped_sum_definitions
+            .get(definition_id)
+            .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+        validate_keyed_grouped_sum_bindings(document, definition)?;
+
+        let mut disclosures =
+            BTreeSet::from([self.keyed_grouped_sum_disclosure(SemanticScope::Document)]);
+
+        // Candidate membership for both bound schemas.
+        for subject in [
+            SemanticScope::Schema(definition.orders.schema.clone()),
+            SemanticScope::Schema(definition.products.schema.clone()),
+        ] {
+            disclosures.insert(self.keyed_grouped_sum_disclosure(subject));
+        }
+
+        // Required type facts for the always-bound Orders operands and the
+        // complete Products key universe.
+        for subject in keyed_grouped_sum_type_facts(definition) {
+            disclosures.insert(self.keyed_grouped_sum_disclosure(subject));
+        }
+
+        let orders_fields = [
+            &definition.orders.lookup_key_field,
+            &definition.orders.quantity_field,
+        ];
+        let orders_entities =
+            keyed_grouped_sum_schema_entities(document, &definition.orders.schema);
+        let products_entities =
+            keyed_grouped_sum_schema_entities(document, &definition.products.schema);
+
+        // Orders membership plus every current Order's local key and quantity
+        // are dependencies.
+        for order in &orders_entities {
+            for field in orders_fields {
+                self.insert_keyed_grouped_sum_entity_field(
+                    document,
+                    &order.id,
+                    field,
+                    &mut disclosures,
+                )?;
+            }
+        }
+
+        // The entire Products key universe is a dependency, not only the rows
+        // that currently match.
+        for product in &products_entities {
+            self.insert_keyed_grouped_sum_entity_field(
+                document,
+                &product.id,
+                &definition.products.key_field,
+                &mut disclosures,
+            )?;
+        }
+
+        // A successful exact match additionally depends on that product's
+        // category and price values. Unmatched and ambiguous Products disclose
+        // only their key.
+        let (matched_products, formula_operand_required) =
+            keyed_grouped_sum_matched_products(document, definition);
+        for product in &products_entities {
+            if !matched_products.contains(&product.id) {
+                continue;
+            }
+            for field in [
+                &definition.products.category_field,
+                &definition.products.price_field,
+            ] {
+                self.insert_keyed_grouped_sum_entity_field(
+                    document,
+                    &product.id,
+                    field,
+                    &mut disclosures,
+                )?;
+            }
+        }
+        if !matched_products.is_empty() {
+            for subject in [
+                SemanticScope::SchemaField {
+                    schema: definition.products.schema.clone(),
+                    field: definition.products.category_field.clone(),
+                },
+                SemanticScope::SchemaField {
+                    schema: definition.products.schema.clone(),
+                    field: definition.products.price_field.clone(),
+                },
+            ] {
+                disclosures.insert(self.keyed_grouped_sum_disclosure(subject));
+            }
+        }
+
+        // A required successfully matched formula-backed operand needs the
+        // whole authoritative document Calculation outcome, including every
+        // formula root that determines whether a complete CalculationState
+        // exists. It is required only when such an operand participates, so an
+        // all-literal Query never discloses unrelated formula roots.
+        if formula_operand_required {
+            self.insert_keyed_grouped_sum_formula_roots(document, &mut disclosures)?;
+        }
+        Ok(disclosures)
+    }
+
+    fn insert_keyed_grouped_sum_entity_field(
+        &self,
+        document: &Document,
+        entity: &EntityId,
+        field: &FieldId,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) -> Result<(), PatchLifecycleError> {
+        disclosures.insert(DisclosureRequirement {
+            family: OperationFamily::KeyedGroupedSumDefinition,
+            scope: self
+                .field_scope(document, &FieldRef::new(entity.clone(), field.clone()))
+                .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?,
+        });
+        Ok(())
+    }
+
+    fn insert_keyed_grouped_sum_formula_roots(
+        &self,
+        document: &Document,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) -> Result<(), PatchLifecycleError> {
+        for entity in document.entities.values() {
+            for (field_id, value) in &entity.fields {
+                if let Value::Formula(expression) = value {
+                    self.insert_keyed_grouped_sum_entity_field(
+                        document,
+                        &entity.id,
+                        field_id,
+                        disclosures,
+                    )?;
+                    for reference in expression_references(expression) {
+                        self.insert_keyed_grouped_sum_entity_field(
+                            document,
+                            &reference.entity,
+                            &reference.field,
+                            disclosures,
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn keyed_grouped_sum_disclosure(&self, subject: SemanticScope) -> DisclosureRequirement {
+        DisclosureRequirement {
+            family: OperationFamily::KeyedGroupedSumDefinition,
+            scope: ScopedSemanticSubject::new(
+                self.document_scope.clone(),
+                self.document.clone(),
+                subject,
+            ),
+        }
     }
 
     pub(crate) fn authorize_query(
@@ -2789,6 +3083,117 @@ fn formula_impacts(changes: &[SemanticChange]) -> Vec<FormulaImpactEvidence> {
         .collect()
 }
 
+// Fail closed when a stable binding cannot be resolved to a current schema
+// field; no partial footprint is derived from an unresolvable definition.
+fn validate_keyed_grouped_sum_bindings(
+    document: &Document,
+    definition: &KeyedGroupedSumDefinition,
+) -> Result<(), PatchLifecycleError> {
+    let orders_schema = document
+        .schemas
+        .get(&definition.orders.schema)
+        .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+    let products_schema = document
+        .schemas
+        .get(&definition.products.schema)
+        .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+    for field in [
+        &definition.orders.lookup_key_field,
+        &definition.orders.quantity_field,
+    ] {
+        if !orders_schema.fields.contains_key(field) {
+            return Err(PatchLifecycleError::ScopeDerivationFailed);
+        }
+    }
+    for field in [
+        &definition.products.key_field,
+        &definition.products.category_field,
+        &definition.products.price_field,
+    ] {
+        if !products_schema.fields.contains_key(field) {
+            return Err(PatchLifecycleError::ScopeDerivationFailed);
+        }
+    }
+    Ok(())
+}
+
+// Type facts that are disclosed for every Query regardless of matches.
+fn keyed_grouped_sum_type_facts(definition: &KeyedGroupedSumDefinition) -> [SemanticScope; 3] {
+    [
+        SemanticScope::SchemaField {
+            schema: definition.orders.schema.clone(),
+            field: definition.orders.lookup_key_field.clone(),
+        },
+        SemanticScope::SchemaField {
+            schema: definition.orders.schema.clone(),
+            field: definition.orders.quantity_field.clone(),
+        },
+        SemanticScope::SchemaField {
+            schema: definition.products.schema.clone(),
+            field: definition.products.key_field.clone(),
+        },
+    ]
+}
+
+fn keyed_grouped_sum_schema_entities<'a>(
+    document: &'a Document,
+    schema: &SchemaId,
+) -> Vec<&'a Entity> {
+    document
+        .entities
+        .values()
+        .filter(|entity| &entity.schema == schema)
+        .collect()
+}
+
+// Determines which Products rows a definition exposes, mirroring the
+// evaluator's exact Text match: one candidate is a successful match, zero or
+// many are not. The boolean reports whether a successfully matched required
+// operand is formula-backed, which pulls in the whole Calculation footprint.
+fn keyed_grouped_sum_matched_products(
+    document: &Document,
+    definition: &KeyedGroupedSumDefinition,
+) -> (BTreeSet<EntityId>, bool) {
+    let mut product_index: BTreeMap<&str, Vec<&Entity>> = BTreeMap::new();
+    for product in document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == definition.products.schema)
+    {
+        if let Some(Value::Text(key)) = product.fields.get(&definition.products.key_field) {
+            product_index.entry(key.as_str()).or_default().push(product);
+        }
+    }
+    let mut matched = BTreeSet::new();
+    let mut formula_operand_required = false;
+    for order in document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == definition.orders.schema)
+    {
+        let Some(Value::Text(key)) = order.fields.get(&definition.orders.lookup_key_field) else {
+            continue;
+        };
+        let Some(candidates) = product_index.get(key.as_str()) else {
+            continue;
+        };
+        if candidates.len() != 1 {
+            continue;
+        }
+        let product = candidates[0];
+        matched.insert(product.id.clone());
+        formula_operand_required |= matches!(
+            order.fields.get(&definition.orders.quantity_field),
+            Some(Value::Formula(_))
+        );
+        formula_operand_required |= matches!(
+            product.fields.get(&definition.products.price_field),
+            Some(Value::Formula(_))
+        );
+    }
+    (matched, formula_operand_required)
+}
+
 fn expression_references(expression: &Expression) -> BTreeSet<FieldRef> {
     let mut references = BTreeSet::new();
     let mut pending = vec![expression];
@@ -2902,6 +3307,14 @@ fn proposal_is_terminal(proposal: &ProposalRecord) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::keyed_grouped_sum_operations::{
+        KeyedGroupedSumGroup, KeyedGroupedSumOutcome, evaluate_keyed_grouped_sum,
+    };
+    use tachiko_semantic_core::{
+        EntityKey, FieldDefinition, FieldKey, FieldType, KeyedGroupedSumOrdersBinding,
+        KeyedGroupedSumProductsBinding, Schema, SchemaKey,
+    };
+
     use super::*;
 
     #[test]
@@ -2919,6 +3332,7 @@ mod tests {
             title: "Document".to_owned(),
             schemas: BTreeMap::new(),
             entities: BTreeMap::new(),
+            keyed_grouped_sum_definitions: BTreeMap::new(),
         };
 
         let error = lifecycle
@@ -2926,5 +3340,784 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, PatchLifecycleError::ScopeDerivationFailed));
+    }
+
+    // The complete trusted-footprint fixture is intentionally literal so each
+    // definition binding and disclosed entity field remains reviewable here.
+    #[allow(clippy::too_many_lines)]
+    fn keyed_grouped_sum_document() -> Document {
+        let mut document = Document::empty("document", "Grouped summary");
+        let orders = SchemaId::from("orders");
+        let products = SchemaId::from("products");
+        document.schemas.insert(
+            orders.clone(),
+            Schema {
+                id: orders.clone(),
+                key: SchemaKey::from("orders"),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("order-key"),
+                        FieldDefinition {
+                            id: FieldId::from("order-key"),
+                            key: FieldKey::from("product_key"),
+                            field_type: FieldType::Text,
+                            required: true,
+                        },
+                    ),
+                    (
+                        FieldId::from("quantity"),
+                        FieldDefinition {
+                            id: FieldId::from("quantity"),
+                            key: FieldKey::from("quantity"),
+                            field_type: FieldType::Number,
+                            required: true,
+                        },
+                    ),
+                ]),
+            },
+        );
+        document.schemas.insert(
+            products.clone(),
+            Schema {
+                id: products.clone(),
+                key: SchemaKey::from("products"),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("product-key"),
+                        FieldDefinition {
+                            id: FieldId::from("product-key"),
+                            key: FieldKey::from("product_key"),
+                            field_type: FieldType::Text,
+                            required: true,
+                        },
+                    ),
+                    (
+                        FieldId::from("category"),
+                        FieldDefinition {
+                            id: FieldId::from("category"),
+                            key: FieldKey::from("category"),
+                            field_type: FieldType::Text,
+                            required: true,
+                        },
+                    ),
+                    (
+                        FieldId::from("price"),
+                        FieldDefinition {
+                            id: FieldId::from("price"),
+                            key: FieldKey::from("price"),
+                            field_type: FieldType::Number,
+                            required: true,
+                        },
+                    ),
+                ]),
+            },
+        );
+        document.entities.insert(
+            EntityId::from("order"),
+            Entity {
+                id: EntityId::from("order"),
+                key: EntityKey::from("order"),
+                schema: orders.clone(),
+                fields: BTreeMap::from([
+                    (FieldId::from("order-key"), Value::Text("P-100".to_owned())),
+                    (
+                        FieldId::from("quantity"),
+                        Value::Number(Number::new(1.0).unwrap()),
+                    ),
+                ]),
+            },
+        );
+        document.entities.insert(
+            EntityId::from("product"),
+            Entity {
+                id: EntityId::from("product"),
+                key: EntityKey::from("product"),
+                schema: products.clone(),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("product-key"),
+                        Value::Text("P-100".to_owned()),
+                    ),
+                    (
+                        FieldId::from("category"),
+                        Value::Text("hardware".to_owned()),
+                    ),
+                    (
+                        FieldId::from("price"),
+                        Value::Number(Number::new(2.0).unwrap()),
+                    ),
+                ]),
+            },
+        );
+        let definition = KeyedGroupedSumDefinitionId::from("summary");
+        document.keyed_grouped_sum_definitions.insert(
+            definition.clone(),
+            KeyedGroupedSumDefinition {
+                id: definition,
+                orders: KeyedGroupedSumOrdersBinding {
+                    schema: orders,
+                    lookup_key_field: FieldId::from("order-key"),
+                    quantity_field: FieldId::from("quantity"),
+                },
+                products: KeyedGroupedSumProductsBinding {
+                    schema: products,
+                    key_field: FieldId::from("product-key"),
+                    category_field: FieldId::from("category"),
+                    price_field: FieldId::from("price"),
+                },
+            },
+        );
+        document
+    }
+
+    #[test]
+    fn keyed_grouped_sum_query_requires_authorized_trusted_footprint() {
+        let document = keyed_grouped_sum_document();
+        let mut lifecycle = PatchLifecycle::new(
+            AuthorizationDomainId::from("domain"),
+            DocumentScopeId::from("document-occurrence"),
+            document.id.clone(),
+            SemanticApiContract::from("semantic-v1"),
+            AuthorizationPolicyVersion::from("policy-v1"),
+            PolicyMeaningId::from("policy-v1-meaning"),
+        );
+        let authority = PrincipalId::from("authority");
+        let reader = PrincipalId::from("reader");
+        lifecycle
+            .register_principal(authority.clone(), PrincipalKind::Human)
+            .unwrap();
+        lifecycle
+            .register_principal(reader.clone(), PrincipalKind::Human)
+            .unwrap();
+
+        let error = lifecycle
+            .authorize_keyed_grouped_sum_query(
+                &document,
+                &KeyedGroupedSumDefinitionId::from("summary"),
+                &reader,
+                TrustedInstant::new(1),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Query
+            }
+        ));
+
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("complete-query"),
+                authority,
+                reader.clone(),
+                vec![GrantRequirement::query(
+                    OperationFamily::KeyedGroupedSumDefinition,
+                    ScopedSemanticSubject::new(
+                        DocumentScopeId::from("document-occurrence"),
+                        document.id.clone(),
+                        SemanticScope::Document,
+                    ),
+                )],
+                None,
+            ))
+            .unwrap();
+        assert_eq!(
+            lifecycle
+                .authorize_keyed_grouped_sum_query(
+                    &document,
+                    &KeyedGroupedSumDefinitionId::from("summary"),
+                    &reader,
+                    TrustedInstant::new(1),
+                )
+                .unwrap(),
+            BTreeSet::from([GrantId::from("complete-query")])
+        );
+    }
+
+    fn keyed_grouped_sum_lifecycle(document: &Document) -> (PatchLifecycle, PrincipalId) {
+        let mut lifecycle = PatchLifecycle::new(
+            AuthorizationDomainId::from("domain"),
+            DocumentScopeId::from("document-occurrence"),
+            document.id.clone(),
+            SemanticApiContract::from("semantic-v1"),
+            AuthorizationPolicyVersion::from("policy-v1"),
+            PolicyMeaningId::from("policy-v1-meaning"),
+        );
+        lifecycle
+            .register_principal(PrincipalId::from("authority"), PrincipalKind::Human)
+            .unwrap();
+        let editor = PrincipalId::from("editor");
+        lifecycle
+            .register_principal(editor.clone(), PrincipalKind::Human)
+            .unwrap();
+        (lifecycle, editor)
+    }
+
+    fn keyed_grouped_sum_requirement(
+        action: AuthorizationAction,
+        class: MutationClass,
+        document: &Document,
+    ) -> GrantRequirement {
+        GrantRequirement::mutation(
+            action,
+            OperationFamily::KeyedGroupedSumDefinition,
+            class,
+            ScopedSemanticSubject::new(
+                DocumentScopeId::from("document-occurrence"),
+                document.id.clone(),
+                SemanticScope::Document,
+            ),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn keyed_grouped_sum_delete_requires_structure_and_destructive_command_authority() {
+        let document = keyed_grouped_sum_document();
+        let (mut lifecycle, editor) = keyed_grouped_sum_lifecycle(&document);
+        let query = GrantRequirement::query(
+            OperationFamily::KeyedGroupedSumDefinition,
+            ScopedSemanticSubject::new(
+                DocumentScopeId::from("document-occurrence"),
+                document.id.clone(),
+                SemanticScope::Document,
+            ),
+        );
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("structure-only"),
+                PrincipalId::from("authority"),
+                editor.clone(),
+                vec![
+                    query.clone(),
+                    keyed_grouped_sum_requirement(
+                        AuthorizationAction::Propose,
+                        MutationClass::Structure,
+                        &document,
+                    ),
+                ],
+                None,
+            ))
+            .unwrap();
+        let delete = || {
+            ProposalRequest::new(
+                ProposalId::from("remove-summary"),
+                SemanticRevision::from("resident/0"),
+                SemanticPatchBody::command(SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                    definition: KeyedGroupedSumDefinitionId::from("summary"),
+                }),
+                editor.clone(),
+            )
+        };
+        let error = lifecycle
+            .propose(
+                &DocumentScopeId::from("document-occurrence"),
+                &document,
+                &SemanticRevision::from("resident/0"),
+                delete(),
+                TrustedInstant::new(1),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Propose
+            }
+        ));
+
+        let (mut lifecycle, editor) = keyed_grouped_sum_lifecycle(&document);
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("structure-and-destructive"),
+                PrincipalId::from("authority"),
+                editor.clone(),
+                vec![
+                    query,
+                    keyed_grouped_sum_requirement(
+                        AuthorizationAction::Propose,
+                        MutationClass::Structure,
+                        &document,
+                    ),
+                    keyed_grouped_sum_requirement(
+                        AuthorizationAction::Propose,
+                        MutationClass::Destructive,
+                        &document,
+                    ),
+                ],
+                None,
+            ))
+            .unwrap();
+        lifecycle
+            .propose(
+                &DocumentScopeId::from("document-occurrence"),
+                &document,
+                &SemanticRevision::from("resident/0"),
+                delete(),
+                TrustedInstant::new(1),
+            )
+            .unwrap();
+    }
+
+    fn keyed_grouped_sum_query_requirement(subject: SemanticScope) -> DisclosureRequirement {
+        DisclosureRequirement {
+            family: OperationFamily::KeyedGroupedSumDefinition,
+            scope: ScopedSemanticSubject::new(
+                DocumentScopeId::from("document-occurrence"),
+                DocumentId::from("document"),
+                subject,
+            ),
+        }
+    }
+
+    fn keyed_grouped_sum_schema_field(schema: &str, field: &str) -> SemanticScope {
+        SemanticScope::SchemaField {
+            schema: SchemaId::from(schema),
+            field: FieldId::from(field),
+        }
+    }
+
+    fn keyed_grouped_sum_entity_field(entity: &str, schema: &str, field: &str) -> SemanticScope {
+        SemanticScope::EntityField {
+            entity: EntityId::from(entity),
+            schema: SchemaId::from(schema),
+            field: FieldId::from(field),
+        }
+    }
+
+    // Adds one Products row whose key matches no Orders row. Its category and
+    // price are never disclosed by a Query.
+    fn keyed_grouped_sum_unmatched_product_document() -> Document {
+        let mut document = keyed_grouped_sum_document();
+        document.entities.insert(
+            EntityId::from("unmatched-product"),
+            Entity {
+                id: EntityId::from("unmatched-product"),
+                key: EntityKey::from("unmatched-product"),
+                schema: SchemaId::from("products"),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("product-key"),
+                        Value::Text("P-404".to_owned()),
+                    ),
+                    (
+                        FieldId::from("category"),
+                        Value::Text("unmatched".to_owned()),
+                    ),
+                    (
+                        FieldId::from("price"),
+                        Value::Number(Number::new(9.0).unwrap()),
+                    ),
+                ]),
+            },
+        );
+        document
+    }
+
+    fn keyed_grouped_sum_query_footprint(document: &Document) -> BTreeSet<DisclosureRequirement> {
+        let (lifecycle, _) = keyed_grouped_sum_lifecycle(document);
+        lifecycle
+            .keyed_grouped_sum_query_disclosures(
+                document,
+                &KeyedGroupedSumDefinitionId::from("summary"),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn keyed_grouped_sum_create_and_update_require_structure_only() {
+        let document = keyed_grouped_sum_document();
+        let upsert = |id: &str| {
+            let mut definition = document
+                .keyed_grouped_sum_definitions
+                .values()
+                .next()
+                .expect("fixture definition")
+                .clone();
+            definition.id = KeyedGroupedSumDefinitionId::from(id);
+            SemanticPatchBody::command(SemanticCommand::UpsertKeyedGroupedSumDefinition {
+                definition,
+            })
+        };
+
+        let (mut lifecycle, editor) = keyed_grouped_sum_lifecycle(&document);
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("structure-only"),
+                PrincipalId::from("authority"),
+                editor.clone(),
+                vec![keyed_grouped_sum_requirement(
+                    AuthorizationAction::Propose,
+                    MutationClass::Structure,
+                    &document,
+                )],
+                None,
+            ))
+            .unwrap();
+        for (proposal, definition) in [("create-summary", "fresh"), ("update-summary", "summary")] {
+            lifecycle
+                .propose(
+                    &DocumentScopeId::from("document-occurrence"),
+                    &document,
+                    &SemanticRevision::from("resident/0"),
+                    ProposalRequest::new(
+                        ProposalId::from(proposal),
+                        SemanticRevision::from("resident/0"),
+                        upsert(definition),
+                        editor.clone(),
+                    ),
+                    TrustedInstant::new(1),
+                )
+                .unwrap();
+        }
+
+        // `Destructive` alone is not the upsert capability.
+        let (mut lifecycle, editor) = keyed_grouped_sum_lifecycle(&document);
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("destructive-only"),
+                PrincipalId::from("authority"),
+                editor.clone(),
+                vec![keyed_grouped_sum_requirement(
+                    AuthorizationAction::Propose,
+                    MutationClass::Destructive,
+                    &document,
+                )],
+                None,
+            ))
+            .unwrap();
+        let error = lifecycle
+            .propose(
+                &DocumentScopeId::from("document-occurrence"),
+                &document,
+                &SemanticRevision::from("resident/0"),
+                ProposalRequest::new(
+                    ProposalId::from("destructive-upsert"),
+                    SemanticRevision::from("resident/0"),
+                    upsert("fresh"),
+                    editor.clone(),
+                ),
+                TrustedInstant::new(1),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Propose
+            }
+        ));
+    }
+
+    #[test]
+    fn keyed_grouped_sum_query_footprint_is_least_privilege_for_unmatched_products() {
+        let document = keyed_grouped_sum_unmatched_product_document();
+        let footprint = keyed_grouped_sum_query_footprint(&document);
+
+        let expected = BTreeSet::from([
+            keyed_grouped_sum_query_requirement(SemanticScope::Document),
+            keyed_grouped_sum_query_requirement(SemanticScope::Schema(SchemaId::from("orders"))),
+            keyed_grouped_sum_query_requirement(SemanticScope::Schema(SchemaId::from("products"))),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_schema_field(
+                "orders",
+                "order-key",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_schema_field(
+                "orders", "quantity",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_schema_field(
+                "products",
+                "product-key",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_schema_field(
+                "products", "category",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_schema_field(
+                "products", "price",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "order-key",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order", "orders", "quantity",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "product",
+                "products",
+                "product-key",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "unmatched-product",
+                "products",
+                "product-key",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "product", "products", "category",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "product", "products", "price",
+            )),
+        ]);
+        assert_eq!(footprint, expected);
+    }
+
+    #[test]
+    fn keyed_grouped_sum_query_footprint_includes_calculation_roots_only_when_required() {
+        let with_unrelated_root = || {
+            let mut document = keyed_grouped_sum_unmatched_product_document();
+            document
+                .entities
+                .get_mut(&EntityId::from("unmatched-product"))
+                .expect("unmatched product")
+                .fields
+                .insert(
+                    FieldId::from("price"),
+                    Value::Formula(Expression::Number(Number::new(9.0).unwrap())),
+                );
+            document
+        };
+        let unrelated_root = keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+            "unmatched-product",
+            "products",
+            "price",
+        ));
+
+        // No required operand is formula-backed, so the unrelated root stays
+        // out even though it is a document formula.
+        assert!(
+            !keyed_grouped_sum_query_footprint(&with_unrelated_root()).contains(&unrelated_root)
+        );
+
+        // A formula-backed required quantity pulls in the whole Calculation
+        // footprint, including the unrelated root.
+        let mut quantity_backed = with_unrelated_root();
+        quantity_backed
+            .entities
+            .get_mut(&EntityId::from("order"))
+            .expect("order")
+            .fields
+            .insert(
+                FieldId::from("quantity"),
+                Value::Formula(Expression::Number(Number::new(1.0).unwrap())),
+            );
+        assert!(keyed_grouped_sum_query_footprint(&quantity_backed).contains(&unrelated_root));
+
+        // The same holds for a formula-backed matched price.
+        let mut price_backed = with_unrelated_root();
+        price_backed
+            .entities
+            .get_mut(&EntityId::from("product"))
+            .expect("matched product")
+            .fields
+            .insert(
+                FieldId::from("price"),
+                Value::Formula(Expression::Number(Number::new(2.0).unwrap())),
+            );
+        assert!(keyed_grouped_sum_query_footprint(&price_backed).contains(&unrelated_root));
+    }
+
+    // Steward HOLD oracle: `quantity` is required by the grouped definition,
+    // and its two-hop bound formula chain is quantity -> quantity-mid ->
+    // quantity-base. The unrelated formula is present to prove that required
+    // formula calculation includes every root and its own static input, while
+    // unrelated-scalar must remain outside the trusted footprint.
+    fn keyed_grouped_sum_formula_dependency_document() -> Document {
+        let mut document = keyed_grouped_sum_document();
+        let orders = document
+            .schemas
+            .get_mut(&SchemaId::from("orders"))
+            .expect("orders schema");
+        for field in [
+            "quantity-mid",
+            "quantity-base",
+            "unrelated-formula",
+            "unrelated-input",
+            "unrelated-scalar",
+        ] {
+            let id = FieldId::from(field);
+            orders.fields.insert(
+                id.clone(),
+                FieldDefinition {
+                    id,
+                    key: FieldKey::from(field),
+                    field_type: FieldType::Number,
+                    required: true,
+                },
+            );
+        }
+        let order = document
+            .entities
+            .get_mut(&EntityId::from("order"))
+            .expect("orders entity");
+        order.fields.insert(
+            FieldId::from("quantity"),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                "order",
+                "quantity-mid",
+            ))),
+        );
+        order.fields.insert(
+            FieldId::from("quantity-mid"),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                "order",
+                "quantity-base",
+            ))),
+        );
+        order.fields.insert(
+            FieldId::from("quantity-base"),
+            Value::Number(Number::new(3.0).unwrap()),
+        );
+        order.fields.insert(
+            FieldId::from("unrelated-formula"),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                "order",
+                "unrelated-input",
+            ))),
+        );
+        order.fields.insert(
+            FieldId::from("unrelated-input"),
+            Value::Number(Number::new(11.0).unwrap()),
+        );
+        order.fields.insert(
+            FieldId::from("unrelated-scalar"),
+            Value::Number(Number::new(13.0).unwrap()),
+        );
+        document
+    }
+
+    fn formula_dependency_oracle_scopes() -> BTreeSet<DisclosureRequirement> {
+        BTreeSet::from([
+            // This narrow set isolates the additional formula-root and static
+            // dependency facts. Existing focused coverage owns the ordinary
+            // definition membership, binding type, and local value scopes.
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order", "orders", "quantity",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "quantity-mid",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "quantity-base",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "unrelated-formula",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "unrelated-input",
+            )),
+        ])
+    }
+
+    fn query_grant_requirements(
+        requirements: impl IntoIterator<Item = DisclosureRequirement>,
+    ) -> Vec<GrantRequirement> {
+        requirements
+            .into_iter()
+            .map(|requirement| GrantRequirement::query(requirement.family, requirement.scope))
+            .collect()
+    }
+
+    #[test]
+    fn keyed_grouped_sum_formula_dependency_footprint_matches_steward_oracle() {
+        let document = keyed_grouped_sum_formula_dependency_document();
+        let footprint = keyed_grouped_sum_query_footprint(&document);
+        let oracle = formula_dependency_oracle_scopes();
+        let unrelated_scalar = keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+            "order",
+            "orders",
+            "unrelated-scalar",
+        ));
+
+        // This is intentionally RED on the frozen implementation: it records
+        // ADR-0036/ADR-0018 dependency closure independently of its current
+        // formula-root-only implementation.
+        assert!(oracle.is_subset(&footprint));
+        assert!(!footprint.contains(&unrelated_scalar));
+    }
+
+    #[test]
+    fn keyed_grouped_sum_formula_dependency_narrow_grant_denies_then_succeeds() {
+        let document = keyed_grouped_sum_formula_dependency_document();
+        let oracle = formula_dependency_oracle_scopes();
+        let omitted = keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+            "order",
+            "orders",
+            "quantity-base",
+        ));
+        let (mut lifecycle, reader) = keyed_grouped_sum_lifecycle(&document);
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("narrow-without-referenced-input"),
+                PrincipalId::from("authority"),
+                reader.clone(),
+                query_grant_requirements(oracle.iter().filter(|scope| *scope != &omitted).cloned()),
+                None,
+            ))
+            .unwrap();
+        let error = lifecycle
+            .authorize_query(&reader, &oracle, TrustedInstant::new(1))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Query
+            }
+        ));
+
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("referenced-input"),
+                PrincipalId::from("authority"),
+                reader.clone(),
+                query_grant_requirements([omitted]),
+                None,
+            ))
+            .unwrap();
+        assert!(
+            lifecycle
+                .authorize_query(&reader, &oracle, TrustedInstant::new(1))
+                .is_ok()
+        );
+        assert_eq!(
+            evaluate_keyed_grouped_sum(&document, &KeyedGroupedSumDefinitionId::from("summary")),
+            KeyedGroupedSumOutcome::Complete(vec![KeyedGroupedSumGroup {
+                category: "hardware".to_owned(),
+                value: Number::new(6.0).unwrap(),
+            }])
+        );
+    }
+
+    #[test]
+    fn keyed_grouped_sum_all_literal_control_excludes_unrelated_formula_closure() {
+        let mut document = keyed_grouped_sum_formula_dependency_document();
+        document
+            .entities
+            .get_mut(&EntityId::from("order"))
+            .expect("orders entity")
+            .fields
+            .insert(
+                FieldId::from("quantity"),
+                Value::Number(Number::new(3.0).unwrap()),
+            );
+        let footprint = keyed_grouped_sum_query_footprint(&document);
+        for field in [
+            "quantity-mid",
+            "quantity-base",
+            "unrelated-formula",
+            "unrelated-input",
+            "unrelated-scalar",
+        ] {
+            assert!(!footprint.contains(&keyed_grouped_sum_query_requirement(
+                keyed_grouped_sum_entity_field("order", "orders", field),
+            )));
+        }
     }
 }

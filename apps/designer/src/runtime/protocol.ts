@@ -16,6 +16,7 @@ export type BootstrapProjection = {
   revision: string;
   default_collection: string;
   collections: CollectionSummary[];
+  keyed_grouped_sum_definition_ids?: string[];
 };
 
 export type OpenedProjection = {
@@ -53,6 +54,7 @@ export type FieldProjection = {
 
 export type TableProjection = {
   tracker_profile?: boolean;
+  native_table_profile?: boolean;
   revision: string;
   collection: CollectionSummary;
   columns: Array<{ id: string; key: string; field_type: string; dropdown_options?: string[] }>;
@@ -82,6 +84,42 @@ export type ProjectExport = {
   bytes: ArrayBuffer;
 };
 
+/** Opaque canonical-v1 path/byte entries from the Rust storage codec. */
+export type CanonicalProjectFile = { path: string; bytes: ArrayBuffer };
+
+export type CanonicalTreeExport = {
+  revision: string;
+  files: CanonicalProjectFile[];
+};
+
+export type OccurrenceProjection = {
+  scope: string;
+  revision: string;
+};
+
+export type KeyedGroupedSumDefinitionInput = {
+  id: string;
+  orders_schema: string;
+  order_lookup_key_field: string;
+  order_quantity_field: string;
+  products_schema: string;
+  product_key_field: string;
+  product_category_field: string;
+  product_price_field: string;
+};
+
+export type KeyedGroupedSumProjection = {
+  definition_id: string;
+  revision: string;
+  groups: Array<{category: string; value: number}>;
+  diagnostics: Array<{code: string; entity: string | null; field: string | null; lookup_key: string | null; candidates: string[]}>;
+};
+
+export type KeyedGroupedSumPublishedProjection = {
+  publication: PublicationProjection;
+  result: KeyedGroupedSumProjection;
+};
+
 export type FailureProjection = {
   code: string;
   message: string;
@@ -94,6 +132,8 @@ export type TrackerCommand =
   | { type: "append_row"; expected_revision: string; collection: string }
   | { type: "remove_rows"; expected_revision: string; entities: string[] }
   | { type: "undo" | "redo"; expected_revision: string };
+
+export type NewTableColumnInput = {name: string; field_type: string};
 
 export type FormulaCopy = {
   source: FieldTarget;
@@ -110,6 +150,7 @@ export type DesignerRequest =
   | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
   | { type: "new_tracker"; occurrence_id: string }
   | { type: "new_budget"; occurrence_id: string }
+  | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[] }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_table"; collection: string }
   | {
@@ -132,7 +173,9 @@ export type DesignerRequest =
       expected_revision: string;
       target: FieldTarget;
       source: string;
-    };
+    }
+  | {type: "create_keyed_grouped_sum"; expected_revision: string; definition: KeyedGroupedSumDefinitionInput}
+  | {type: "query_keyed_grouped_sum"; definition_id: string};
 
 export type DesignerResponse =
   | {type: "cleanup_preview"; payload: CleanupPreview}
@@ -144,7 +187,13 @@ export type DesignerResponse =
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "published"; payload: PublicationProjection }
-  | { type: "project_exported"; payload: ProjectExportProjection };
+  | { type: "project_exported"; payload: ProjectExportProjection }
+  | { type: "canonical_tree_exported"; payload: ProjectExportProjection }
+  | { type: "portable_ro_exported"; payload: ProjectExportProjection }
+  | { type: "portable_ro_verified"; payload: { accepted: boolean } }
+  | { type: "occurrence_observed"; payload: OccurrenceProjection }
+  | { type: "keyed_grouped_sum"; payload: KeyedGroupedSumProjection }
+  | { type: "keyed_grouped_sum_published"; payload: KeyedGroupedSumPublishedProjection };
 
 export type DesignerWireReply =
   | { status: "ok"; response: DesignerResponse }
@@ -167,12 +216,19 @@ export type WorkerRequest =
     }
   | { id: number; kind: "inspect_project"; bytes: ArrayBuffer }
   | { id: number; kind: "export_project"; expected_revision: string }
+  | { id: number; kind: "export_canonical_tree"; expected_revision: string }
+  | { id: number; kind: "export_portable_ro"; expected_revision: string }
+  | { id: number; kind: "verify_portable_ro"; bytes: ArrayBuffer }
+  | { id: number; kind: "open_portable_ro"; occurrence_id: string; bytes: ArrayBuffer }
+  | { id: number; kind: "observe_occurrence" }
   | { id: number; kind: "close_project" };
 
 export type WorkerReply =
   | {id: number; status: "spreadsheet_exported"; export: SpreadsheetExport}
   | { id: number; status: "ok"; response: DesignerResponse }
   | { id: number; status: "project_exported"; export: ProjectExport }
+  | { id: number; status: "canonical_tree_exported"; export: CanonicalTreeExport }
+  | { id: number; status: "portable_ro_exported"; export: ProjectExport }
   | { id: number; status: "closed" }
   | { id: number; status: "error"; error: FailureProjection };
 

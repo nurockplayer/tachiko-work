@@ -76,6 +76,7 @@ fn document_with_order(reverse: bool) -> Document {
                 fields: values,
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -241,6 +242,7 @@ fn invalid_v2_relationship_cannot_be_serialized() {
             },
         )]),
         entities: BTreeMap::new(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
 
     let error = to_canonical_string(&document).unwrap_err();

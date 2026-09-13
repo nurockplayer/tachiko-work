@@ -1,4 +1,5 @@
 import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
+import { projectTransferFromEntries } from "../host/project-transfer.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
@@ -7,12 +8,19 @@ import type {
   FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
+  CanonicalTreeExport,
+  CanonicalProjectFile,
   DesignerRequest,
   DesignerResponse,
   FieldBatchProjection,
   FieldTarget,
   OpenedProjection,
+  OccurrenceProjection,
   PublicationProjection,
+  KeyedGroupedSumDefinitionInput,
+  KeyedGroupedSumProjection,
+  KeyedGroupedSumPublishedProjection,
+  NewTableColumnInput,
   ProjectExport,
   TableProjection,
   WorkerReply,
@@ -113,6 +121,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", await this.#command({type: "new_budget", occurrence_id: freshOccurrenceId()}));
   }
 
+  async newTable(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection> {
+    return expectResponse("opened", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns}));
+  }
+
   async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command(request));
   }
@@ -156,6 +168,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", reply.response);
   }
 
+  async openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection> {
+    return this.openProject(projectTransferFromEntries(files));
+  }
+
   async openLocalDocument(bytes: ArrayBuffer): Promise<OpenedProjection> {
     const reply = await this.#send(
       {
@@ -184,6 +200,65 @@ export class WorkerDesignerClient implements DesignerClient {
     return reply.export;
   }
 
+  async exportCanonicalTree(expectedRevision: string): Promise<CanonicalTreeExport> {
+    const reply = await this.#send({
+      id: this.#claimId(),
+      kind: "export_canonical_tree",
+      expected_revision: expectedRevision,
+    });
+    if (reply.status !== "canonical_tree_exported") {
+      throw new Error(`Expected canonical tree export, received '${reply.status}'.`);
+    }
+    return reply.export;
+  }
+
+  async exportPortableRo(expectedRevision: string): Promise<ProjectExport> {
+    const reply = await this.#send({
+      id: this.#claimId(),
+      kind: "export_portable_ro",
+      expected_revision: expectedRevision,
+    });
+    if (reply.status !== "portable_ro_exported") {
+      throw new Error(`Expected portable .ro export, received '${reply.status}'.`);
+    }
+    return reply.export;
+  }
+
+  async verifyPortableRo(bytes: ArrayBuffer): Promise<void> {
+    const copy = bytes.slice(0);
+    const reply = await this.#send(
+      { id: this.#claimId(), kind: "verify_portable_ro", bytes: copy },
+      [copy],
+    );
+    if (reply.status !== "ok" || reply.response.type !== "portable_ro_verified" || !reply.response.payload.accepted) {
+      throw new Error(`Expected portable .ro verification, received '${reply.status}'.`);
+    }
+  }
+
+  async openPortableRo(bytes: ArrayBuffer): Promise<OpenedProjection> {
+    const reply = await this.#send(
+      {
+        id: this.#claimId(),
+        kind: "open_portable_ro",
+        occurrence_id: freshOccurrenceId(),
+        bytes,
+      },
+      [bytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected portable .ro open response, received '${reply.status}'.`);
+    }
+    return expectResponse("opened", reply.response);
+  }
+
+  async observeOccurrence(): Promise<OccurrenceProjection> {
+    const reply = await this.#send({ id: this.#claimId(), kind: "observe_occurrence" });
+    if (reply.status !== "ok") {
+      throw new Error(`Expected occurrence observation, received '${reply.status}'.`);
+    }
+    return expectResponse("occurrence_observed", reply.response);
+  }
+
   async closeProject(): Promise<void> {
     const reply = await this.#send({ id: this.#claimId(), kind: "close_project" });
     if (reply.status !== "closed") {
@@ -210,6 +285,14 @@ export class WorkerDesignerClient implements DesignerClient {
         fields,
       }),
     );
+  }
+
+  async createKeyedGroupedSum(expectedRevision: string, definition: KeyedGroupedSumDefinitionInput): Promise<KeyedGroupedSumPublishedProjection> {
+    return expectResponse("keyed_grouped_sum_published", await this.#command({type: "create_keyed_grouped_sum", expected_revision: expectedRevision, definition}));
+  }
+
+  async queryKeyedGroupedSum(definitionId: string): Promise<KeyedGroupedSumProjection> {
+    return expectResponse("keyed_grouped_sum", await this.#command({type: "query_keyed_grouped_sum", definition_id: definitionId}));
   }
 
   async editNumber(
@@ -358,12 +441,18 @@ function expectResponse(
   type: "published",
   response: DesignerResponse,
 ): PublicationProjection;
+function expectResponse(type: "keyed_grouped_sum", response: DesignerResponse): KeyedGroupedSumProjection;
+function expectResponse(type: "keyed_grouped_sum_published", response: DesignerResponse): KeyedGroupedSumPublishedProjection;
+function expectResponse(
+  type: "occurrence_observed",
+  response: DesignerResponse,
+): OccurrenceProjection;
 function expectResponse(
   type: DesignerResponse["type"],
   response: DesignerResponse,
-): DesignerResponse["payload"] {
+): unknown {
   if (response.type !== type) {
     throw new Error(`Expected '${type}' response, received '${response.type}'.`);
   }
-  return response.payload;
+  return "payload" in response ? response.payload : undefined;
 }

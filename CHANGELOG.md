@@ -6,6 +6,25 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The Designer can create one bounded ordinary native table with user-defined
+  Text, Number, Boolean, and Date columns. New rows require a complete typed
+  input, invalid values are rejected without publication, and the table can be
+  saved, reopened, and edited through the existing private runtime boundary.
+- The experimental Designer consumer kit is built from one captured Git commit
+  and includes an exact asset digest inventory, capability names, and existing
+  license notices. Packaging rejects a dirty checkout and publishes only to an
+  absent destination using an atomic no-replace rename. The same kit exposes
+  revision-pinned canonical `.roproj/v1` files, genuine portable `.ro` codec
+  export/verification/open, and the runtime's actual occurrence identity.
+  Unsupported v1 data rejects without changing the active occurrence; existing
+  private project export retains its Date-capable round trip.
+- The Designer can now create one saved live keyed grouped summary over the
+  bounded Orders/Products definition, recompute it from current source values,
+  and save/reopen it through canonical `.roproj/v2`. The explicit v1-to-v2
+  migration path preserves v1 reads without rewriting on open; v2 definitions
+  retain stable bindings only and never persist evaluated groups, diagnostics,
+  or caches. Existing delta, merge, and portable-package v1 boundaries reject
+  this v2-only meaning rather than dropping it.
 - The browser Designer can export the exact native Driver Tracker profile as
   values-only CSV or typed XLSX for 0–128 current rows. This outbound-only path
   preserves stable row mapping and supported cell styles without fabricating

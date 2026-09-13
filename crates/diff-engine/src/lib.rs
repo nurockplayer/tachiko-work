@@ -224,6 +224,8 @@ impl EntityDescriptor {
 
 #[derive(Debug, Error)]
 pub enum DiffError {
+    #[error("tachiko.semantic-delta/v1 does not support keyed grouped-sum definition changes")]
+    UnsupportedKeyedGroupedSumDefinitionChange,
     #[error("could not calculate the original document: {0}")]
     BeforeCalculation(#[source] CalculationError),
     #[error("could not calculate the changed document: {0}")]
@@ -236,6 +238,9 @@ pub enum DiffError {
 ///
 /// Returns [`DiffError`] when either document cannot be calculated.
 pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {
+    if before.keyed_grouped_sum_definitions != after.keyed_grouped_sum_definitions {
+        return Err(DiffError::UnsupportedKeyedGroupedSumDefinitionChange);
+    }
     let before_calculation = calculate(before).map_err(DiffError::BeforeCalculation)?;
     let after_calculation = calculate(after).map_err(DiffError::AfterCalculation)?;
     let mut changes = Vec::new();

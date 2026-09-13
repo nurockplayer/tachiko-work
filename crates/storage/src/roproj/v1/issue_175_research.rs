@@ -57,7 +57,7 @@ struct HostAdmissionTimings {
 
 #[derive(Debug)]
 enum ControlledHostAdmissionOutcome {
-    SemanticCurrent((Document, AdmissionWork, HostAdmissionTimings)),
+    SemanticCurrent(Box<(Document, AdmissionWork, HostAdmissionTimings)>),
     RequiresForegroundExactAdmission {
         record_bytes: usize,
         post_read_budget_bytes: usize,
@@ -67,7 +67,7 @@ enum ControlledHostAdmissionOutcome {
 impl ControlledHostAdmissionOutcome {
     fn expect_semantic_current(self) -> (Document, AdmissionWork, HostAdmissionTimings) {
         match self {
-            Self::SemanticCurrent(result) => result,
+            Self::SemanticCurrent(result) => *result,
             Self::RequiresForegroundExactAdmission {
                 record_bytes,
                 post_read_budget_bytes,
@@ -478,6 +478,7 @@ fn admit_one_pass_host_controlled(
         title: manifest.document.title,
         schemas,
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
     check_cancel(cancel)?;
     if let Some(reached) = pause_before_final_validation {
@@ -503,7 +504,7 @@ fn admit_one_pass_host_controlled(
     if let Some(published) = semantic_current_published {
         published.store(true, Ordering::Release);
     }
-    Ok(ControlledHostAdmissionOutcome::SemanticCurrent((
+    Ok(ControlledHostAdmissionOutcome::SemanticCurrent(Box::new((
         document,
         AdmissionWork {
             source_bytes,
@@ -520,7 +521,7 @@ fn admit_one_pass_host_controlled(
             first_source_preview,
             semantic_current,
         },
-    )))
+    ))))
 }
 
 fn check_cancel(cancel: Option<&AtomicBool>) -> Result<(), FormatError> {
@@ -2168,6 +2169,7 @@ fn mixed_document(entity_count: usize, text_char_count: usize) -> Document {
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -2221,6 +2223,7 @@ fn dependency_chain_document(entity_count: usize, cycle: bool) -> Document {
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -2535,6 +2538,7 @@ fn single_schema_document(
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -2654,6 +2658,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
         title: "Issue 175 physically late invalid pressure".to_owned(),
         schemas,
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -3408,6 +3413,7 @@ fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
                 fields: BTreeMap::from([(field_id, Value::Formula(expression))]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
     let temp = ResearchTempDirectory::new();
     let root = temp.path().join("formula-validation-cancel.roproj");

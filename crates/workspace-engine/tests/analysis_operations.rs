@@ -109,6 +109,7 @@ fn analysis_document() -> Document {
                 weapon("gamma", "melee", Some(3.0), 60.0, 1.5),
             ),
         ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

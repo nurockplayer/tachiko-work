@@ -12,8 +12,8 @@ use crate::interop_adapter::{
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply,
-    ensure_wire_reply_size, inspect_project, open_local_document, open_project,
-    process_wire_request, request_too_large_reply,
+    ensure_wire_reply_size, inspect_project, open_local_document, open_portable_ro, open_project,
+    process_wire_request, request_too_large_reply, verify_portable_ro,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
@@ -158,6 +158,79 @@ pub extern "C" fn tachiko_designer_project_open() {
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_open_local_document() {
     process_project_candidate(true, true);
+}
+
+/// Fully verify and admit a genuine portable-package/v1 `.ro` candidate.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_portable_ro_open() {
+    let project = PROJECT.with(|project| std::mem::take(&mut *project.borrow_mut()));
+    RUNTIME.with(|runtime| {
+        let mut runtime = runtime.borrow_mut();
+        let reply = if PROJECT_TOO_LARGE.replace(false) {
+            DesignerWireReply::Error {
+                error: DesignerError::ProjectTransferTooLarge {
+                    actual: MAX_PROJECT_TRANSFER_BYTES.saturating_add(1),
+                    maximum: MAX_PROJECT_TRANSFER_BYTES,
+                }
+                .failure_projection(current_revision(runtime.as_ref())),
+            }
+        } else if REQUEST_TOO_LARGE.replace(false) {
+            DesignerWireReply::Error {
+                error: DesignerError::InvalidOccurrenceIdentity
+                    .failure_projection(current_revision(runtime.as_ref())),
+            }
+        } else {
+            REQUEST.with(|request| {
+                let request = request.borrow();
+                let Ok(occurrence_id) = std::str::from_utf8(&request) else {
+                    return DesignerWireReply::Error {
+                        error: DesignerError::InvalidOccurrenceIdentity
+                            .failure_projection(current_revision(runtime.as_ref())),
+                    };
+                };
+                match open_portable_ro(&mut runtime, &project, occurrence_id) {
+                    Ok(opened) => DesignerWireReply::Ok {
+                        response: DesignerResponse::Opened(Box::new(opened)),
+                    },
+                    Err(error) => DesignerWireReply::Error {
+                        error: error.failure_projection(current_revision(runtime.as_ref())),
+                    },
+                }
+            })
+        };
+        set_response(&reply);
+    });
+}
+
+/// Verify a genuine portable-package/v1 `.ro` artifact without replacing the
+/// resident occurrence.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_portable_ro_verify() {
+    let project = PROJECT.with(|project| std::mem::take(&mut *project.borrow_mut()));
+    RUNTIME.with(|runtime| {
+        let runtime = runtime.borrow();
+        let reply = if PROJECT_TOO_LARGE.replace(false) {
+            DesignerWireReply::Error {
+                error: DesignerError::ProjectTransferTooLarge {
+                    actual: MAX_PROJECT_TRANSFER_BYTES.saturating_add(1),
+                    maximum: MAX_PROJECT_TRANSFER_BYTES,
+                }
+                .failure_projection(current_revision(runtime.as_ref())),
+            }
+        } else {
+            match verify_portable_ro(&project) {
+                Ok(()) => DesignerWireReply::Ok {
+                    response: DesignerResponse::PortableRoVerified(crate::PortableRoVerification {
+                        accepted: true,
+                    }),
+                },
+                Err(error) => DesignerWireReply::Error {
+                    error: error.failure_projection(current_revision(runtime.as_ref())),
+                },
+            }
+        };
+        set_response(&reply);
+    });
 }
 
 /// Inspect a fully admitted candidate without replacing resident state.
@@ -607,6 +680,117 @@ pub extern "C" fn tachiko_designer_project_export() {
         };
         set_response(&reply);
     });
+}
+
+/// Encode the exact expected resident revision into the project arena as the
+/// complete canonical v1 tree's private path/byte transfer record.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_canonical_tree_export() {
+    export_project_bytes(
+        DesignerRuntime::export_canonical_tree,
+        DesignerResponse::CanonicalTreeExported,
+    );
+}
+
+/// Encode the exact expected resident revision into the project arena as a
+/// genuine portable-package/v1 `.ro` artifact.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_portable_ro_export() {
+    export_project_bytes(
+        DesignerRuntime::export_portable_ro,
+        DesignerResponse::PortableRoExported,
+    );
+}
+
+/// Read the trusted scope of the active resident occurrence.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_occurrence_observe() {
+    RUNTIME.with(|runtime| {
+        let runtime = runtime.borrow();
+        let reply = match runtime.as_ref() {
+            Some(runtime) => DesignerWireReply::Ok {
+                response: DesignerResponse::OccurrenceObserved(runtime.observe_occurrence()),
+            },
+            None => DesignerWireReply::Error {
+                error: crate::FailureProjection {
+                    code: "no_project_open".to_owned(),
+                    message: "No Designer project is open.".to_owned(),
+                    current_revision: "unavailable".to_owned(),
+                    diagnostics: Vec::new(),
+                },
+            },
+        };
+        set_response(&reply);
+    });
+}
+
+fn export_project_bytes<E>(
+    export: fn(&DesignerRuntime, &str) -> Result<E, DesignerError>,
+    response: fn(ProjectExportProjection) -> DesignerResponse,
+) where
+    E: IntoProjectExport,
+{
+    RUNTIME.with(|runtime| {
+        let runtime = runtime.borrow();
+        let reply = if let Some(runtime) = runtime.as_ref() {
+            REQUEST.with(|request| {
+                let request = request.borrow();
+                match std::str::from_utf8(&request) {
+                    Ok(expected_revision) => match export(runtime, expected_revision) {
+                        Ok(export) => {
+                            let export = export.into_project_export();
+                            let byte_length = export.bytes.len();
+                            PROJECT.with(|project| *project.borrow_mut() = export.bytes);
+                            DesignerWireReply::Ok {
+                                response: response(ProjectExportProjection {
+                                    revision: export.revision,
+                                    byte_length,
+                                }),
+                            }
+                        }
+                        Err(error) => DesignerWireReply::Error {
+                            error: error.failure_projection(runtime.current_revision()),
+                        },
+                    },
+                    Err(_) => DesignerWireReply::Error {
+                        error: DesignerError::InvalidProjectTransfer {
+                            message: "expected revision is not UTF-8".to_owned(),
+                        }
+                        .failure_projection(runtime.current_revision()),
+                    },
+                }
+            })
+        } else {
+            DesignerWireReply::Error {
+                error: crate::FailureProjection {
+                    code: "no_project_open".to_owned(),
+                    message: "No Designer project is open.".to_owned(),
+                    current_revision: "unavailable".to_owned(),
+                    diagnostics: Vec::new(),
+                },
+            }
+        };
+        set_response(&reply);
+    });
+}
+
+trait IntoProjectExport {
+    fn into_project_export(self) -> crate::ProjectExport;
+}
+
+impl IntoProjectExport for crate::ProjectExport {
+    fn into_project_export(self) -> crate::ProjectExport {
+        self
+    }
+}
+
+impl IntoProjectExport for crate::CanonicalTreeExport {
+    fn into_project_export(self) -> crate::ProjectExport {
+        crate::ProjectExport {
+            revision: self.revision,
+            bytes: self.bytes,
+        }
+    }
 }
 
 /// Release project bytes after the Worker has copied an export receipt.

@@ -5,8 +5,9 @@ Decision state: **Accepted**
 Authority: [ADR-0037](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md),
 [Issue #327](https://github.com/nurockplayer/tachiko-work/issues/327)
 
-Implementation state: Not implemented. This contract grants no production codec,
-host, CLI, package, or frontend implementation authority.
+Implementation state: Implemented for the storage-owned canonical codec and
+the bounded Designer save/reopen journey. This contract does not authorize a
+portable-package v2, a public SDK/wire contract, or broader host/CLI behavior.
 
 ## Scope
 

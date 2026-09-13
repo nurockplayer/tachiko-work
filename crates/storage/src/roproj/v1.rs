@@ -336,6 +336,11 @@ struct UnorderedRoProjectV1 {
 /// Returns [`FormatError::InvalidDocument`] when semantic validation fails or
 /// [`FormatError::Json`] when canonical JSON string encoding fails.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV1, FormatError> {
+    if !document.keyed_grouped_sum_definitions.is_empty() {
+        return invalid_representation(
+            "saved keyed grouped-sum definitions require .roproj/v2".to_owned(),
+        );
+    }
     super::super::check_document(document)?;
     validate_semantic_expression_limits(document)?;
     encode_validated(document)
@@ -420,6 +425,7 @@ fn decode_unvalidated(tree: &CanonicalRoProjectV1) -> Result<Document, FormatErr
         title: manifest.document.title,
         schemas,
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
     Ok(document)
 }
@@ -643,6 +649,7 @@ impl UnorderedRoProjectV1 {
             title: self.manifest.document.title,
             schemas,
             entities,
+            keyed_grouped_sum_definitions: BTreeMap::new(),
         })
     }
 }

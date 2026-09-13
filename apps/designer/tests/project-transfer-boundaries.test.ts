@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { projectTransferFromFiles } from "../src/host/project-transfer.ts";
+import { projectTransferFromEntries, projectTransferFromFiles } from "../src/host/project-transfer.ts";
 
 function entry(path: string, bytes = new Uint8Array(0)) {
   return {
@@ -32,6 +32,15 @@ function fileList(selected: ReturnType<typeof entry>[]): FileList {
 }
 
 describe("Designer directory transfer boundaries", () => {
+  it("leaves incomplete opaque entries for Rust canonical admission to reject", () => {
+    const output = projectTransferFromEntries([
+      { path: "manifest.json", bytes: new Uint8Array([1]).buffer },
+    ]);
+    expect(new Uint8Array(output).slice(0, 12)).toEqual(
+      new Uint8Array([0x54, 0x57, 0x44, 0x50, 0x52, 0x4f, 0x4a, 0x31, 1, 0, 0, 0]),
+    );
+  });
+
   it("rejects an empty selection", async () => {
     await expect(projectTransferFromFiles(fileList([]))).rejects.toThrow("No project directory was selected.");
   });

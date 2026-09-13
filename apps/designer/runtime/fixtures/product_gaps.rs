@@ -71,6 +71,7 @@ pub fn document() -> Document {
                 4.0,
             ),
         ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
