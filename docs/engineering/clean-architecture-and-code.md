@@ -179,11 +179,20 @@ gates remain authoritative.
 The [runtime/host boundary](../architecture/frontend-backend-boundary.md)
 separates accepted in-memory changes from persistence and external effects.
 A host explicitly takes an authorized snapshot/materialization input and
-performs the permitted durable write. `.roproj/v1` remains the canonical durable
-editable representation under its format authority; it is not a second live
-interactive state owner.
+performs the permitted durable write. The [`.roproj` editable-directory
+representation](../specs/storage-versioning-and-migration.md) remains
+version-owned under its applicable format and migration authority; support and
+durable behavior are version- and host-operation-specific. It is not a second
+live interactive state owner.
 
-### Proposed engineering guidance: preserve effect truth
+### Existing authority: truthful semantic and external-effect outcomes
+
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+requires each coordinated effect domain to retain its actual outcome. A later
+persistence, projection, delivery or reporting failure cannot rewrite a known
+semantic-publication outcome.
+
+### Proposed engineering guidance: make effect truth observable
 
 Make it possible to distinguish an operation rejected before publication, a
 semantic operation that succeeded, and a later projection or persistence
@@ -424,9 +433,10 @@ For each bounded lane:
 2. Confirm genuine Ready scope, acceptance/evidence and decomposition. New
    discretionary choices go to Astra under #374; durable product/architecture
    conflicts or material acceptance changes go through Steward authority.
-3. Implement or delegate the settled direction with unit tests. A worker
-   returns new choices to Terra instead of bypassing consultation. Keep
-   refactoring limited to the accepted task and maintain one publication owner.
+3. Implement or delegate the settled direction with applicable unit tests and
+   evidence. A worker returns new choices to Terra instead of bypassing
+   consultation. Keep refactoring limited to the accepted task and maintain
+   one publication owner.
 4. Run applicable checks at the exact final material head. Account for every
    material acceptance amendment and unresolved substantive review finding.
 5. Obtain a fresh independent final review at the required risk depth. In the
