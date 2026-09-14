@@ -15,6 +15,12 @@ Use a DX-driven, tooling-minimalist, automation-first approach:
 
 Tachiko Work is currently Rust-first. Preserve the checked-in Cargo workflow, lockfile, crate boundaries, and validation gates documented in `CONTRIBUTING.md`.
 
+For architecture placement and code-quality review, read the
+[`Clean Architecture and Clean Code playbook`](docs/engineering/clean-architecture-and-code.md).
+Respect its decision state and the adoption record in Issue #402. Its illustrative
+module layouts and future guard ideas do not authorize refactors, new contracts,
+or changes to the existing SCD gates.
+
 For issue-driven repository work, follow the canonical
 [`Repository delivery workflow`](docs/governance/project-governance.md#repository-delivery-workflow).
 It defines the Ready gate, provider-neutral Steward/delivery-agent split,
