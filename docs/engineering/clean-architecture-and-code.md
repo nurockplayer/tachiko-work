@@ -2,12 +2,14 @@
 
 Decision issue: [#402](https://github.com/nurockplayer/tachiko-work/issues/402)
 
-**Decision state: Proposed engineering guidance; not Accepted product authority.**
-This draft is prepared for a focused documentation review. Existing Accepted
-rules remain binding through their original authorities. New engineering
-conventions require explicit adoption in #402; new guards and source refactors
-require separate scoped readiness. Reading or merging explanatory text must not
-silently stabilize a new product contract.
+**Decision state: Adopted engineering guidance, effective when
+[PR #403](https://github.com/nurockplayer/tachiko-work/pull/403) lands on `main`;
+not Accepted product authority.**
+The Steward adopted these engineering conventions in
+[#402](https://github.com/nurockplayer/tachiko-work/issues/402#issuecomment-5668289450).
+Existing Accepted rules remain binding through their original authorities. New
+guards and source refactors require separate scoped readiness. Reading or
+merging explanatory text must not silently stabilize a new product contract.
 
 Baseline inspected: `fb9fe34a5777ff31b5f1951941914372ae6d55ea` on 2026-09-15 JST.
 This is not a full source audit or a claim that all repository tests were run.
