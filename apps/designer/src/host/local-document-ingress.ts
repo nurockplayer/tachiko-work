@@ -3,6 +3,8 @@ export type LocalDocumentHandle = {
   kind: string;
   name: string;
   getFile(): Promise<File>;
+  /** Native Tauri open events need an in-app prompt because WebKit may suppress window.confirm(). */
+  requiresInAppDirtyConfirmation?: true;
 };
 
 export type LocalDocument = {

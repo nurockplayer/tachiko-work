@@ -291,6 +291,20 @@ impl AuthorizationFootprint {
 /// Typed stable-ID semantic command used identically by Propose and Execute.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SemanticCommand {
+    /// Append one complete independently addressable collection.
+    ///
+    /// The schema and its entities are admitted as one structural command so
+    /// a collection copy can never publish with only part of its identity
+    /// graph installed.
+    AppendCollection {
+        schema: super::Schema,
+        entities: Vec<Entity>,
+    },
+    /// Remove one complete collection and its entities as one inverse action.
+    RemoveCollection {
+        schema: SchemaId,
+        entities: Vec<EntityId>,
+    },
     /// Append one typed entity with a fresh stable identity to an existing schema.
     AppendEntity {
         entity: Entity,
@@ -2043,8 +2057,10 @@ impl PatchLifecycle {
             .iter()
             .map(|command| DisclosureRequirement {
                 family: match command {
-                    SemanticCommand::AppendEntity { .. } => OperationFamily::AppendEntity,
-                    SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
+                    SemanticCommand::AppendCollection { .. }
+                    | SemanticCommand::AppendEntity { .. } => OperationFamily::AppendEntity,
+                    SemanticCommand::RemoveCollection { .. }
+                    | SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
                     SemanticCommand::SetFieldValue { .. } | SemanticCommand::UnsetField { .. } => {
                         OperationFamily::SetFieldValue
                     }
@@ -2137,6 +2153,167 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    fn plan_append_collection(
+        &self,
+        base: &Document,
+        candidate: &mut Document,
+        schema: &super::Schema,
+        entities: &[Entity],
+        writes: &mut BTreeSet<AssociatedWriteRequirement>,
+    ) -> Result<(), WorkspaceError> {
+        if base.schemas.contains_key(&schema.id) || candidate.schemas.contains_key(&schema.id) {
+            return Err(WorkspaceError::GeneratedIdCollision {
+                kind: super::SemanticIdKind::Schema,
+                id: schema.id.to_string(),
+            });
+        }
+        if !super::is_valid_identifier(schema.key.as_str()) {
+            return Err(WorkspaceError::InvalidSchemaKey {
+                schema: schema.key.clone(),
+            });
+        }
+        let schema_key_exists = super::AddressIndex::build(candidate)
+            .is_ok_and(|index| index.schema_id(&schema.key).is_ok());
+        if schema_key_exists {
+            return Err(WorkspaceError::SchemaKeyAlreadyExists {
+                schema: schema.key.clone(),
+            });
+        }
+        let mut appended = candidate.clone();
+        appended.schemas.insert(schema.id.clone(), schema.clone());
+        let mut seen_entities = BTreeSet::new();
+        for entity in entities {
+            if entity.schema != schema.id {
+                return Err(WorkspaceError::MissingSchema {
+                    schema: entity.schema.clone(),
+                });
+            }
+            if !seen_entities.insert(entity.id.clone())
+                || base.entities.contains_key(&entity.id)
+                || appended.entities.contains_key(&entity.id)
+            {
+                return Err(WorkspaceError::GeneratedIdCollision {
+                    kind: super::SemanticIdKind::Entity,
+                    id: entity.id.to_string(),
+                });
+            }
+            appended.entities.insert(entity.id.clone(), entity.clone());
+        }
+        super::preflight_formula_structures(&appended)?;
+        writes.insert(AssociatedWriteRequirement {
+            family: OperationFamily::AppendEntity,
+            mutation_class: MutationClass::Structure,
+            scope: ScopedSemanticSubject::new(
+                self.document_scope.clone(),
+                self.document.clone(),
+                SemanticScope::Document,
+            ),
+        });
+        writes.insert(AssociatedWriteRequirement {
+            family: OperationFamily::AppendEntity,
+            mutation_class: MutationClass::Schema,
+            scope: ScopedSemanticSubject::new(
+                self.document_scope.clone(),
+                self.document.clone(),
+                SemanticScope::Document,
+            ),
+        });
+        if entities.iter().any(|entity| {
+            entity
+                .fields
+                .values()
+                .any(|value| matches!(value, Value::Formula(_)))
+        }) {
+            writes.insert(AssociatedWriteRequirement {
+                family: OperationFamily::AppendEntity,
+                mutation_class: MutationClass::Formula,
+                scope: ScopedSemanticSubject::new(
+                    self.document_scope.clone(),
+                    self.document.clone(),
+                    SemanticScope::Document,
+                ),
+            });
+        }
+        *candidate = appended;
+        Ok(())
+    }
+
+    fn plan_remove_collection(
+        &self,
+        _base: &Document,
+        candidate: &mut Document,
+        schema: &SchemaId,
+        entities: &[EntityId],
+        writes: &mut BTreeSet<AssociatedWriteRequirement>,
+    ) -> Result<(), WorkspaceError> {
+        if !candidate.schemas.contains_key(schema) {
+            return Err(WorkspaceError::MissingSchema {
+                schema: schema.clone(),
+            });
+        }
+        let expected = candidate
+            .entities
+            .values()
+            .filter(|entity| entity.schema == *schema)
+            .map(|entity| entity.id.clone())
+            .collect::<BTreeSet<_>>();
+        let selected = entities.iter().cloned().collect::<BTreeSet<_>>();
+        if expected != selected {
+            return Err(WorkspaceError::MissingEntityId {
+                entity: entities
+                    .iter()
+                    .find(|entity| !expected.contains(*entity))
+                    .cloned()
+                    .or_else(|| {
+                        expected
+                            .iter()
+                            .find(|entity| !selected.contains(*entity))
+                            .cloned()
+                    })
+                    .unwrap_or_else(|| EntityId::from("collection")),
+            });
+        }
+        let contains_formula = entities.iter().any(|entity| {
+            candidate.entities.get(entity).is_some_and(|record| {
+                record
+                    .fields
+                    .values()
+                    .any(|value| matches!(value, Value::Formula(_)))
+            })
+        });
+        for entity in entities {
+            candidate.entities.remove(entity);
+        }
+        candidate.schemas.remove(schema);
+        for class in [
+            MutationClass::Structure,
+            MutationClass::Schema,
+            MutationClass::Destructive,
+        ] {
+            writes.insert(AssociatedWriteRequirement {
+                family: OperationFamily::RemoveEntity,
+                mutation_class: class,
+                scope: ScopedSemanticSubject::new(
+                    self.document_scope.clone(),
+                    self.document.clone(),
+                    SemanticScope::Document,
+                ),
+            });
+        }
+        if contains_formula {
+            writes.insert(AssociatedWriteRequirement {
+                family: OperationFamily::RemoveEntity,
+                mutation_class: MutationClass::Formula,
+                scope: ScopedSemanticSubject::new(
+                    self.document_scope.clone(),
+                    self.document.clone(),
+                    SemanticScope::Document,
+                ),
+            });
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_lines)] // Keep the closed command catalogue together.
     fn plan_commands(
         &self,
@@ -2147,6 +2324,24 @@ impl PatchLifecycle {
         let mut writes = BTreeSet::new();
         for command in body.commands() {
             match command {
+                SemanticCommand::AppendCollection { schema, entities } => {
+                    self.plan_append_collection(
+                        document,
+                        &mut candidate,
+                        schema,
+                        entities,
+                        &mut writes,
+                    )?;
+                }
+                SemanticCommand::RemoveCollection { schema, entities } => {
+                    self.plan_remove_collection(
+                        document,
+                        &mut candidate,
+                        schema,
+                        entities,
+                        &mut writes,
+                    )?;
+                }
                 SemanticCommand::AppendEntity { entity } => {
                     self.plan_append_entity(document, &mut candidate, entity, &mut writes)?;
                 }
@@ -2457,23 +2652,12 @@ impl PatchLifecycle {
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
         match command {
-            SemanticCommand::AppendEntity { .. } | SemanticCommand::RemoveEntity { .. } => {
-                // Structural previews reveal complete entity membership and values,
-                // including removed and batch-transient entities. Require the full
-                // document disclosure boundary for these provisional families.
-                let family = if matches!(command, SemanticCommand::AppendEntity { .. }) {
-                    OperationFamily::AppendEntity
-                } else {
-                    OperationFamily::RemoveEntity
-                };
-                disclosures.insert(DisclosureRequirement {
-                    family,
-                    scope: ScopedSemanticSubject::new(
-                        self.document_scope.clone(),
-                        self.document.clone(),
-                        SemanticScope::Document,
-                    ),
-                });
+            SemanticCommand::AppendCollection { .. } | SemanticCommand::AppendEntity { .. } => {
+                self.insert_document_disclosure(OperationFamily::AppendEntity, disclosures);
+                Ok(())
+            }
+            SemanticCommand::RemoveCollection { .. } | SemanticCommand::RemoveEntity { .. } => {
+                self.insert_document_disclosure(OperationFamily::RemoveEntity, disclosures);
                 Ok(())
             }
             SemanticCommand::SetFieldValue { field, value } => {
@@ -2553,6 +2737,21 @@ impl PatchLifecycle {
         }
     }
 
+    fn insert_document_disclosure(
+        &self,
+        family: OperationFamily,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) {
+        disclosures.insert(DisclosureRequirement {
+            family,
+            scope: ScopedSemanticSubject::new(
+                self.document_scope.clone(),
+                self.document.clone(),
+                SemanticScope::Document,
+            ),
+        });
+    }
+
     fn insert_change_disclosures(
         &self,
         before: &Document,
@@ -2562,7 +2761,12 @@ impl PatchLifecycle {
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
         match change {
-            SemanticChange::EntityAdded { .. } | SemanticChange::EntityRemoved { .. } => Ok(()),
+            SemanticChange::SchemaAdded { .. }
+            | SemanticChange::SchemaRemoved { .. }
+            | SemanticChange::SchemaFieldAdded { .. }
+            | SemanticChange::SchemaFieldRemoved { .. }
+            | SemanticChange::EntityAdded { .. }
+            | SemanticChange::EntityRemoved { .. } => Ok(()),
             SemanticChange::FieldAdded { field, value } => {
                 // A value-slot initialization is not a schema/identity mutation.
                 // Admit only the existing optional declaration and its exact
@@ -3023,6 +3227,16 @@ fn command_families_for_field(
     body.commands()
         .iter()
         .filter_map(|command| match command {
+            SemanticCommand::AppendCollection { entities, .. }
+                if entities.iter().any(|entity| entity.id == field.entity) =>
+            {
+                Some(OperationFamily::AppendEntity)
+            }
+            SemanticCommand::RemoveCollection { entities, .. }
+                if entities.iter().any(|entity| entity == &field.entity) =>
+            {
+                Some(OperationFamily::RemoveEntity)
+            }
             SemanticCommand::AppendEntity { entity } if entity.id == field.entity => {
                 Some(OperationFamily::AppendEntity)
             }

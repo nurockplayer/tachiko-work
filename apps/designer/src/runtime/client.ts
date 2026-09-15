@@ -11,6 +11,7 @@ import type {
   OpenedProjection,
   ProjectExport,
   PublicationProjection,
+  DuplicateCollectionProjection,
   KeyedGroupedSumDefinitionInput,
   KeyedGroupedSumProjection,
   KeyedGroupedSumPublishedProjection,
@@ -32,6 +33,7 @@ export interface DesignerClient {
   newTracker?(): Promise<OpenedProjection>;
   newBudget?(): Promise<OpenedProjection>;
   newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
+  duplicateCollection?(expectedRevision: string, collection: string, name: string): Promise<DuplicateCollectionProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tachiko Work Designer",
+  "version": "0.1.0",
+  "identifier": "com.tachikowork.designer",
+  "build": {
+    "beforeBuildCommand": "pnpm run build",
+    "beforeDevCommand": "pnpm dev -- --host 127.0.0.1 --port 1420",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Tachiko Work Designer",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "fileAssociations": [
+      {
+        "name": "Tachiko Work document",
+        "ext": ["ro"],
+        "mimeType": "application/octet-stream",
+        "role": "Editor",
+        "exportedType": {
+          "identifier": "com.tachikowork.designer.ro",
+          "conformsTo": ["public.data"]
+        }
+      }
+    ]
+  }
+}
