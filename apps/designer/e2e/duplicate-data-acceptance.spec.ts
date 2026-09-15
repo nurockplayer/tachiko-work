@@ -72,6 +72,7 @@ async function addBudgetViews(page: Page, count: number): Promise<void> {
     page.once("dialog", dialog => dialog.accept(name));
     await page.getByRole("button", { name: "Add view", exact: true }).click();
     await expect(page.getByLabel("View", { exact: true }).locator("option:checked")).toHaveText(name);
+    await expect(page.getByRole("button", { name: "Add view", exact: true })).toBeEnabled();
   }
 }
 
