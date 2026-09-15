@@ -14,6 +14,14 @@ Rust engines own semantic facts, Git remains an optional review/storage protocol
 and AI operates through semantic queries and typed proposals rather than raw file
 or UI mutation.
 
+That shared semantic/application engine has a name: **Tachikore**. **Tachiko
+Work** remains the platform/product and this repository; Tachikore names the
+composed Rust semantic/application engine and resident runtime beneath semantic
+clients. Across the wider Tachiko project, **Tachiko Sheet** remains the
+spreadsheet client/product. Tachikore is an architecture/product name, not a
+ninth workspace crate; see
+[ADR-0038](docs/decisions/ADR-0038-tachikore-semantic-application-engine-name.md).
+
 The first product wedge is **game-balance data for technical designers and
 developers**. The complete workflow remains CLI-first, and the repository now
 also contains the first browser Designer vertical slice: a bounded typed table
@@ -444,6 +452,12 @@ changes `iron_sword.attack_interval` to `0.8`, the merged document has DPS
 producing new semantic inputs and rerunning the command.
 
 ## Workspace
+
+Collectively, the shared semantic/application engine and resident runtime are
+named **Tachikore**. This is a product/architecture name for the composed engine,
+not a replacement for any one crate: `semantic-core` remains the lowest
+semantic-model layer and `workspace-engine` remains the application/runtime
+boundary under ADR-0016.
 
 - `semantic-core`: document, schema, typed values/references, validation
 - `storage`: canonical `.ro` parsing, versioning, and serialization
