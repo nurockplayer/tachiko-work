@@ -17,6 +17,16 @@ validation, and semantic changes. Files, cells, paths, and UI state are
 representations or projections; they are not automatically the source of that
 meaning.
 
+The shared semantic/application engine and resident runtime described below are
+collectively named **Tachikore**. Tachiko Work remains the platform/product and
+repository; Tachikore names the engine beneath semantic clients. It is not a
+ninth Rust crate and it is not another semantic authority: `semantic-core`
+remains the lowest semantic-model layer while `workspace-engine` remains the
+application/runtime boundary under
+[ADR-0016](docs/decisions/ADR-0016-milestone-02-rust-crate-layering.md). The
+naming decision is recorded in
+[ADR-0038](docs/decisions/ADR-0038-tachikore-semantic-application-engine-name.md).
+
 The high-level flow is:
 
 ```text
@@ -30,7 +40,7 @@ Human / AI / CLI / graphical clients
                 │
                 ▼
  resident shared Rust semantic/application runtime
-                │
+                │              (Tachikore)
                 ▼
  semantic model · formulas · validation · diff/merge
                 │
@@ -111,7 +121,7 @@ underlying contracts:
 | Area | Boundary and current reading | Read next |
 | --- | --- | --- |
 | Semantic model and core | Typed meaning, stable identity, references, and progressive strengthening belong to the semantic foundation. | [Semantic core rationale](docs/architecture/semantic-core-rationale.md), [document model](docs/architecture/document-model.md), [semantic data model](docs/specs/semantic-data-model.md), [ADR-0021](docs/decisions/ADR-0021-progressive-semantic-strengthening.md) |
-| Semantic API and resident runtime | `workspace-engine` and the lower Rust engines provide the shared application authority. The transport-neutral API and resident topology are Accepted; current Rust source, session, and transport shapes remain replaceable where stated. | [Rust crate architecture](docs/architecture/rust-crate-architecture.md), [Semantic API specification](docs/specs/semantic-api.md), [ADR-0020](docs/decisions/ADR-0020-first-class-headless-semantic-api.md), [ADR-0022](docs/decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md) |
+| Semantic API and resident runtime | `workspace-engine` and the lower Rust engines provide the shared application authority collectively named Tachikore. The transport-neutral API and resident topology are Accepted; current Rust source, session, and transport shapes remain replaceable where stated. | [Rust crate architecture](docs/architecture/rust-crate-architecture.md), [Semantic API specification](docs/specs/semantic-api.md), [ADR-0020](docs/decisions/ADR-0020-first-class-headless-semantic-api.md), [ADR-0022](docs/decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md), [ADR-0038](docs/decisions/ADR-0038-tachikore-semantic-application-engine-name.md) |
 | Formulas and validation | Formula meaning, finite deterministic calculation, staged validation, diagnostics, and operation gates are semantic/runtime responsibilities rather than frontend conventions. | [Formula engine specification](docs/specs/formula-engine-spec.md), [validation engine](docs/specs/validation-engine.md), [diagnostics contract](docs/specs/diagnostics-contract.md), [ADR-0018](docs/decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md), [ADR-0019](docs/decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md) |
 | Persistence and formats | `.roproj/v1` is the canonical editable representation. The implemented `direct-ro/v2` path is the current direct JSON writer, while portable-package/v1 is a derived single-file `.ro` artifact; legacy direct `.ro` v1 input is an explicit migration path. Storage codecs and host publication do not redefine semantic meaning. | [.ro and .roproj architecture](docs/architecture/ro-and-roproj-format.md), [`.roproj/v1` specification](docs/specs/roproj-format.md), [portable package specification](docs/specs/portable-package-v1.md), [ADR-0003](docs/decisions/ADR-0003-ro-and-roproj-representation.md), [ADR-0023](docs/decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md), [ADR-0025](docs/decisions/ADR-0025-portable-package-v1.md) |
 | Git-native workflow | Git is an optional storage and collaboration protocol for reviewable semantic work, not the semantic model or the end-user UI. Semantic delta and conflict evidence remain distinct from raw text merging. | [Git-native workflow](docs/architecture/git-native-workflow.md), [semantic delta](docs/specs/semantic-diff-spec.md), [conflict resolution](docs/specs/conflict-resolution.md), [ADR-0030](docs/decisions/ADR-0030-canonical-semantic-delta.md), [ADR-0031](docs/decisions/ADR-0031-semantic-merge-conflict-protocol.md) |
