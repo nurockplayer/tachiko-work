@@ -4,6 +4,8 @@ export default defineConfig({
   testDir: "./e2e",
   testIgnore: "experimental-client.spec.ts",
   fullyParallel: false,
+  // Full Designer journeys are resource-intensive; keep their concurrent load bounded.
+  workers: 2,
   retries: 0,
   reporter: "line",
   use: {
