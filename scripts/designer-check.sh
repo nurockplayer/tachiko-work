@@ -14,6 +14,10 @@ command -v rg >/dev/null 2>&1 || {
   echo "designer-check: ripgrep (rg) is required for exported-client boundary checks" >&2
   exit 1
 }
+command -v node >/dev/null 2>&1 || {
+  echo "designer-check: Node.js is required for Designer unsafe-surface checks" >&2
+  exit 1
+}
 designer_pnpm_version="$(pnpm --dir "${designer_dir}" --version)"
 if [[ "${designer_pnpm_version}" != "11.25.0" ]]; then
   echo "designer-check: pnpm 11.25.0 is required; found ${designer_pnpm_version}" >&2
@@ -21,20 +25,10 @@ if [[ "${designer_pnpm_version}" != "11.25.0" ]]; then
 fi
 
 # The standalone runtime permits Rust 2024 `#[unsafe(no_mangle)]` only for the
-# private WASM C ABI. Do not let that crate-level lint exception become a
-# general unsafe escape hatch.
-if rg -n --glob '*.rs' '\bunsafe[[:space:]]*\{|\bunsafe[[:space:]]+(fn|impl|trait)\b' "${runtime_src}"; then
-  echo "designer-check: unsafe blocks/functions/impls/traits are outside the approved Designer runtime boundary" >&2
-  exit 1
-fi
-if rg -n -P --glob '*.rs' '#\[unsafe\((?!no_mangle\))' "${runtime_src}"; then
-  echo "designer-check: only #[unsafe(no_mangle)] is approved for Designer runtime unsafe attributes" >&2
-  exit 1
-fi
-if rg -n --glob '*.rs' '#\[unsafe\(no_mangle\)\]' "${runtime_src}" -g '!wasm.rs'; then
-  echo "designer-check: #[unsafe(no_mangle)] is allowed only in runtime/src/wasm.rs" >&2
-  exit 1
-fi
+# private WASM C ABI. The lexical scanner rejects every other real `unsafe`
+# token, including multiline forms, while ignoring comments and literals.
+node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_src}"
+node "${repo_root}/scripts/designer-unsafe-surface-check-test.mjs"
 
 pnpm --dir "${designer_dir}" install --frozen-lockfile
 pnpm --dir "${designer_dir}" peers check
