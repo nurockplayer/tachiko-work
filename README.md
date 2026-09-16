@@ -1,7 +1,7 @@
 # Tachiko Work
 
 <p align="center">
-  <img src="docs/assets/brand/tachiko-work-hero.png" alt="Tachiko Work concept: typed data, validated changes, and human approval" width="100%">
+  <img src="docs/assets/brand/tachiko-work-hero.webp" alt="Tachiko Work concept: typed data, validated changes, and human approval" width="100%">
 </p>
 
 **Make structured data understandable to people, software, and AI — then check every change before it becomes real.**
@@ -39,7 +39,7 @@ Tachiko keeps enough structure to answer those questions directly instead of
 reconstructing meaning from raw cells or file layout every time.
 
 <p align="center">
-  <img src="docs/assets/brand/tachiko-work-verified-change.png" alt="Concept flow from a request to a typed, validated and approved change" width="100%">
+  <img src="docs/assets/brand/tachiko-work-verified-change.webp" alt="Concept flow from a request to a typed, validated and approved change" width="100%">
 </p>
 
 ## What Tachiko does
@@ -55,7 +55,7 @@ reconstructing meaning from raw cells or file layout every time.
 ## How a safe change works
 
 <p align="center">
-  <img src="docs/assets/brand/tachiko-work-how-it-works.png" alt="Conceptual Tachiko workflow from human intent through typed proposal, deterministic validation, impact analysis and approval" width="100%">
+  <img src="docs/assets/brand/tachiko-work-how-it-works.webp" alt="Conceptual Tachiko workflow from human intent through typed proposal, deterministic validation, impact analysis and approval" width="100%">
 </p>
 
 1. **Start with an intent.** A human, UI, CLI, or AI client asks for a change.
