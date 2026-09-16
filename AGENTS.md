@@ -63,6 +63,38 @@ applies: no genuinely Ready Issue remains after live-state recalibration; an
 unresolved durable architecture or product decision exists; Accepted authority
 conflicts; or an external permission or service requires human action.
 
+## Rust ownership, async, and unsafe boundaries
+
+Treat compiler pressure around ownership, lifetimes, async state machines, and
+pinning as a design signal rather than something to silence mechanically.
+Before changing code in this area, identify the ownership/lifetime boundary and
+prefer restructuring ownership over adding indirection.
+
+- Do not introduce `Arc`, `Mutex`, broad `clone()`, `Box::pin`, boxed futures,
+  `async move`, `spawn_blocking`, or `unsafe` solely to make the compiler accept
+  a design. Each such escape hatch must have a semantic reason independent of
+  the compiler error it happens to resolve.
+- When `.await` is involved, identify which values and borrows cross each
+  suspension point. Explain any `Send` or `'static` requirement instead of
+  assuming task spawning requires ownership inflation everywhere.
+- Do not hold a lock guard, mutable borrow, or other exclusive resource across
+  `.await` unless the behavior is intentional, bounded, and explicitly
+  justified.
+- Changes involving `Pin`, manual `Future::poll`, self-referential structures,
+  unsafe blocks/functions/impls, or comparable soundness-sensitive mechanics
+  require the repository's **Guarded** delivery route and fresh independent
+  deep review.
+- The app-local `apps/designer/runtime` crate permits Rust `unsafe_code` only
+  because its browser ABI uses Rust 2024 `#[unsafe(no_mangle)]` export
+  attributes. That exception is not permission to add unsafe blocks, unsafe
+  functions, unsafe impls, or unrelated unsafe attributes. Expanding the unsafe
+  surface requires explicit Issue scope and Guarded review.
+
+When these mechanics are touched, record the ownership/async boundary and any
+escape-hatch justification in the owning Issue or PR evidence. If they are not
+touched, mark the PR boundary check as not applicable rather than inventing a
+justification.
+
 ## JavaScript and TypeScript
 
 Node.js is used by parts of the release and WASM validation workflow. If package-managed JavaScript or TypeScript tooling is introduced or modified:
