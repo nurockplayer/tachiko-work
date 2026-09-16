@@ -8,6 +8,11 @@ import { WorkerDesignerClient } from "./runtime/worker-client.ts";
 import type {
   CanonicalProjectFile,
   CanonicalTreeExport,
+  DelegatedApprovalProjection,
+  DelegatedExecutionProjection,
+  DelegatedProposalProjection,
+  DelegatedReviewProjection,
+  FieldTarget,
   OccurrenceProjection,
   OpenedProjection,
   ProjectExport,
@@ -35,18 +40,18 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   observeOccurrence(): Promise<OccurrenceProjection>;
   proposeDelegatedScalar(
     expectedRevision: string,
-    target: import("./runtime/protocol.ts").FieldTarget,
+    target: FieldTarget,
     input: string,
-  ): Promise<import("./runtime/protocol.ts").DelegatedProposalProjection>;
+  ): Promise<DelegatedProposalProjection>;
   previewDelegatedProposal(
     proposalId: string,
-  ): Promise<import("./runtime/protocol.ts").DelegatedReviewProjection>;
+  ): Promise<DelegatedReviewProjection>;
   approveDelegatedProposal(
     proposalId: string,
-  ): Promise<import("./runtime/protocol.ts").DelegatedApprovalProjection>;
+  ): Promise<DelegatedApprovalProjection>;
   executeDelegatedProposal(
     proposalId: string,
-  ): Promise<import("./runtime/protocol.ts").DelegatedExecutionProjection>;
+  ): Promise<DelegatedExecutionProjection>;
 }
 
 /**
