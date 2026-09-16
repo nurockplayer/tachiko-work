@@ -76,14 +76,14 @@ export interface DesignerClient {
     target: FieldTarget,
     value: string,
   ): Promise<PublicationProjection>;
-  proposeDelegatedScalar(
+  proposeDelegatedScalar?(
     expectedRevision: string,
     target: FieldTarget,
     input: string,
   ): Promise<DelegatedProposalProjection>;
-  previewDelegatedProposal(proposalId: string): Promise<DelegatedReviewProjection>;
-  approveDelegatedProposal(proposalId: string): Promise<DelegatedApprovalProjection>;
-  executeDelegatedProposal(proposalId: string): Promise<DelegatedExecutionProjection>;
+  previewDelegatedProposal?(proposalId: string): Promise<DelegatedReviewProjection>;
+  approveDelegatedProposal?(proposalId: string): Promise<DelegatedApprovalProjection>;
+  executeDelegatedProposal?(proposalId: string): Promise<DelegatedExecutionProjection>;
   updateFormula?(
     expectedRevision: string,
     target: FieldTarget,

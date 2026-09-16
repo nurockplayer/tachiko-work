@@ -8,7 +8,8 @@ import path from "node:path";
 
 const kitRoot = process.env.WORK_CLIENT_KIT;
 if (!kitRoot) throw new Error("WORK_CLIENT_KIT is required for the delegated proposal driver.");
-const { chromium } = await import(process.env.WORK_PLAYWRIGHT_MODULE ?? "playwright-core");
+const playwright = await import(process.env.WORK_PLAYWRIGHT_MODULE ?? "playwright-core");
+const { chromium } = playwright.default ?? playwright;
 const mime = { ".js": "text/javascript", ".wasm": "application/wasm" };
 const pageHtml = `<!doctype html><meta charset="utf-8"><input id="fixture" type="file" webkitdirectory multiple><script type="module">
 let client, mod, revision, fixtureBytes, fields;

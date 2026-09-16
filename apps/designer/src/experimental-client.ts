@@ -33,6 +33,20 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   verifyPortableRo(bytes: ArrayBuffer): Promise<void>;
   openPortableRo(bytes: ArrayBuffer): Promise<OpenedProjection>;
   observeOccurrence(): Promise<OccurrenceProjection>;
+  proposeDelegatedScalar(
+    expectedRevision: string,
+    target: import("./runtime/protocol.ts").FieldTarget,
+    input: string,
+  ): Promise<import("./runtime/protocol.ts").DelegatedProposalProjection>;
+  previewDelegatedProposal(
+    proposalId: string,
+  ): Promise<import("./runtime/protocol.ts").DelegatedReviewProjection>;
+  approveDelegatedProposal(
+    proposalId: string,
+  ): Promise<import("./runtime/protocol.ts").DelegatedApprovalProjection>;
+  executeDelegatedProposal(
+    proposalId: string,
+  ): Promise<import("./runtime/protocol.ts").DelegatedExecutionProjection>;
 }
 
 /**
