@@ -66,6 +66,17 @@ fn bytes(runtime: &DesignerRuntime, revision: &str) -> Vec<u8> {
 
 #[test]
 fn delegated_bridge_preserves_the_eight_fixed_proposal_lifecycle_cases() {
+    proposal_and_review_never_publish();
+    execute_requires_exact_approval();
+    approval_publishes_once_and_replay_fails();
+    human_edit_invalidates_the_exact_proposal();
+    revoked_authority_cannot_publish();
+    revoked_query_reveals_no_evidence();
+    altered_execution_has_no_admission_path();
+    reopen_does_not_retain_prior_approval();
+}
+
+fn proposal_and_review_never_publish() {
     // M2-01: proposal/review never publishes canonical state.
     let mut first = runtime();
     let initial = bytes(&first, "resident/0");
@@ -76,15 +87,22 @@ fn delegated_bridge_preserves_the_eight_fixed_proposal_lifecycle_cases() {
     };
     assert_eq!(first_review.outcome, DelegatedOutcome::Ready);
     assert_eq!(bytes(&first, "resident/0"), initial);
+}
 
+fn execute_requires_exact_approval() {
     // M2-02: delegated execution has no approval bypass.
-    let DesignerResponse::DelegatedExecution(unapproved) = execute(&mut first, &first_proposal)
+    let mut runtime = runtime();
+    let initial = bytes(&runtime, "resident/0");
+    let proposal_id = proposal(&mut runtime);
+    let DesignerResponse::DelegatedExecution(unapproved) = execute(&mut runtime, &proposal_id)
     else {
         panic!("expected delegated execution response");
     };
     assert_eq!(unapproved.outcome, DelegatedOutcome::Denied);
-    assert_eq!(bytes(&first, "resident/0"), initial);
+    assert_eq!(bytes(&runtime, "resident/0"), initial);
+}
 
+fn approval_publishes_once_and_replay_fails() {
     // M2-03: exact Human approval publishes once; replay cannot publish again.
     let mut second = runtime();
     let second_proposal = proposal(&mut second);
@@ -124,7 +142,9 @@ fn delegated_bridge_preserves_the_eight_fixed_proposal_lifecycle_cases() {
         bytes(&second, &publication.resulting_revision),
         after_publish
     );
+}
 
+fn human_edit_invalidates_the_exact_proposal() {
     // M2-04: an intervening ordinary Human edit invalidates the exact proposal.
     let mut third = runtime();
     let third_proposal = proposal(&mut third);
@@ -150,7 +170,9 @@ fn delegated_bridge_preserves_the_eight_fixed_proposal_lifecycle_cases() {
         bytes(&third, &human_edit.resulting_revision),
         third_after_human
     );
+}
 
+fn revoked_authority_cannot_publish() {
     // M2-05: revoking the delegated grant denies publication.
     let mut fourth = runtime();
     let fourth_proposal = proposal(&mut fourth);
@@ -165,7 +187,9 @@ fn delegated_bridge_preserves_the_eight_fixed_proposal_lifecycle_cases() {
     };
     assert_eq!(revoked.outcome, DelegatedOutcome::Denied);
     assert_eq!(bytes(&fourth, "resident/0"), before_revoke);
+}
 
+fn revoked_query_reveals_no_evidence() {
     // M2-06: revoked delegated Query exposes neither proposal evidence nor values.
     let mut fifth = runtime();
     let fifth_proposal = proposal(&mut fifth);
@@ -178,7 +202,9 @@ fn delegated_bridge_preserves_the_eight_fixed_proposal_lifecycle_cases() {
     assert_eq!(hidden.outcome, DelegatedOutcome::Denied);
     assert!(hidden.disclosed_subjects.is_empty());
     assert!(hidden.disclosed_values.is_empty());
+}
 
+fn altered_execution_has_no_admission_path() {
     // M2-07: the execution endpoint has no alternate-body admission path.
     let mut sixth = runtime();
     let sixth_proposal = proposal(&mut sixth);
@@ -198,7 +224,9 @@ fn delegated_bridge_preserves_the_eight_fixed_proposal_lifecycle_cases() {
     };
     assert_eq!(altered.outcome, DelegatedOutcome::Denied);
     assert_eq!(bytes(&sixth, "resident/0"), before_altered);
+}
 
+fn reopen_does_not_retain_prior_approval() {
     // M2-08: a fresh occurrence does not retain prior proposal/approval state.
     let mut seventh = runtime();
     let seventh_proposal = proposal(&mut seventh);

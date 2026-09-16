@@ -4073,6 +4073,15 @@ fn designer_lifecycle(
         .collect::<Result<Vec<_>, _>>()?,
         None,
     ))?;
+    provision_delegated_scalar_grants(&mut lifecycle, delegated_principal, &scope)?;
+    Ok(lifecycle)
+}
+
+fn provision_delegated_scalar_grants(
+    lifecycle: &mut PatchLifecycle,
+    delegated_principal: PrincipalId,
+    scope: &ScopedSemanticSubject,
+) -> Result<(), DesignerError> {
     lifecycle.provision_grant(Grant::new(
         GrantId::from(DESIGNER_DELEGATED_WRITE_GRANT),
         PrincipalId::from("designer-host-authority"),
@@ -4099,11 +4108,11 @@ fn designer_lifecycle(
         delegated_principal,
         vec![GrantRequirement::query(
             OperationFamily::SetFieldValue,
-            scope,
+            scope.clone(),
         )],
         None,
     ))?;
-    Ok(lifecycle)
+    Ok(())
 }
 
 pub(crate) fn encode_reply(reply: &DesignerWireReply) -> Vec<u8> {
