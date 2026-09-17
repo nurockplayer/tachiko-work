@@ -1,6 +1,6 @@
 # Tachiko Work brand and launch visuals
 
-These are founder-approved launch and brand visuals for Tachiko Work. The PNGs in this directory are lightweight documentation previews of the approved full-resolution compositions used for launch/media work.
+These are founder-approved launch and brand visuals for Tachiko Work. The PNGs in this directory are the full-resolution compositions used directly by the root README and for launch/media work.
 
 ## Assets
 
@@ -14,5 +14,3 @@ These are founder-approved launch and brand visuals for Tachiko Work. The PNGs i
 These generated visuals communicate the product direction and the GPT-6 Astra Challenge story. They are **not** screenshots of a shipped release, executable acceptance evidence, or proof that the illustrated Astra integration is already present on `main`.
 
 Product status and capability claims remain governed by the root README, roadmap/specifications, Issues/PRs, and executable evidence. Tachiko Work remains a public pre-alpha until its existing release gates say otherwise.
-
-The full-resolution launch originals are intentionally kept outside the repository for Product Hunt and other media use; these copies keep the repository lightweight while preserving the approved visual language.
