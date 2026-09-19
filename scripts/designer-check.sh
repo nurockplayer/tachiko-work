@@ -44,6 +44,8 @@ pnpm --dir "${designer_dir}" lint
 pnpm --dir "${designer_dir}" typecheck
 pnpm --dir "${designer_dir}" test
 pnpm --dir "${designer_dir}" build
+# The frontend build runs another Cargo/WASM build; re-scan after it as well.
+node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_root}"
 pnpm --dir "${designer_dir}" exec playwright test
 bash "${repo_root}/scripts/export-experimental-designer-client-immutable-source-test.sh"
 bash "${repo_root}/scripts/experimental-designer-client-source-boundary-test.sh"

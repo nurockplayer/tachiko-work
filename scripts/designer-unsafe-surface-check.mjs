@@ -293,13 +293,21 @@ function scan(root) {
   const allSourceFiles = sourceFiles(resolvedRoot);
   const globalIncludeNames = new Set(["include"]);
   const globalUnsafeMacroNames = new Set(UNSAFE_MACROS);
+  function isUseAlias(tokens, index) {
+    for (let previous = index - 1; previous >= 0; previous -= 1) {
+      if (tokens[previous].value === ";") return false;
+      if (tokens[previous].value === "=" || tokens[previous].value === "=>") return false;
+      if (tokens[previous].value === "use") return true;
+    }
+    return false;
+  }
   let aliasesChanged;
   do {
     aliasesChanged = false;
     for (const sourcePath of allSourceFiles) {
       const sourceTokens = tokensFor(readFileSync(sourcePath, "utf8"), sourcePath);
       for (let index = 0; index + 2 < sourceTokens.length; index += 1) {
-        if (sourceTokens[index + 1]?.value !== "as" || sourceTokens[index + 2]?.kind !== "identifier") continue;
+        if (!isUseAlias(sourceTokens, index) || sourceTokens[index + 1]?.value !== "as" || sourceTokens[index + 2]?.kind !== "identifier") continue;
         const importedName = normalizedIdentifier(sourceTokens[index].value);
         const aliasName = normalizedIdentifier(sourceTokens[index + 2].value);
         if (globalIncludeNames.has(importedName) && !globalIncludeNames.has(aliasName)) {
@@ -318,7 +326,7 @@ function scan(root) {
     seen.add(sourcePath);
     const sourceTokens = tokensFor(readFileSync(sourcePath, "utf8"), sourcePath);
     for (let index = 0; index + 2 < sourceTokens.length; index += 1) {
-      if (sourceTokens[index + 1]?.value !== "as" || sourceTokens[index + 2]?.kind !== "identifier") continue;
+      if (!isUseAlias(sourceTokens, index) || sourceTokens[index + 1]?.value !== "as" || sourceTokens[index + 2]?.kind !== "identifier") continue;
       const importedName = normalizedIdentifier(sourceTokens[index].value);
       const aliasName = normalizedIdentifier(sourceTokens[index + 2].value);
       if (globalIncludeNames.has(importedName)) globalIncludeNames.add(aliasName);
@@ -347,13 +355,14 @@ function scan(root) {
     for (const sourcePath of allSourceFiles) collectIncludedAliases(sourcePath, new Set());
     includedAliasChanged = includeCount !== globalIncludeNames.size || unsafeMacroCount !== globalUnsafeMacroNames.size;
   } while (includedAliasChanged);
-  function moduleFileDirectory(filePath) {
-    if (CARGO_TARGET_ROOTS.has(filePath)) return dirname(filePath);
+  function moduleFileDirectory(filePath, isCrateRoot = false) {
+    if (isCrateRoot && CARGO_TARGET_ROOTS.has(filePath)) return dirname(filePath);
     const fileName = basename(filePath);
     const stem = fileName.replace(/\.[^.]+$/, "");
     return ["lib", "main", "mod", "build"].includes(stem) ? dirname(filePath) : join(dirname(filePath), stem);
   }
-  function scanFile(path, logicalDirectory = moduleFileDirectory(path), inheritedScope = {}) {
+  function scanFile(path, logicalDirectory, inheritedScope = {}, isCrateRoot = false) {
+    if (logicalDirectory === undefined) logicalDirectory = moduleFileDirectory(path, isCrateRoot);
     const visitKey = `${path}\0${logicalDirectory}\0${[...(inheritedScope.includeNames ?? [])].sort().join(",")}\0${[...(inheritedScope.unsafeMacroNames ?? [])].sort().join(",")}`;
     if (visited.has(visitKey)) return;
     visited.add(visitKey);
@@ -374,7 +383,7 @@ function scan(root) {
     do {
       changed = false;
       for (let index = 0; index + 2 < tokens.length; index += 1) {
-        if (tokens[index + 1]?.value !== "as" || tokens[index + 2]?.kind !== "identifier") continue;
+        if (!isUseAlias(tokens, index) || tokens[index + 1]?.value !== "as" || tokens[index + 2]?.kind !== "identifier") continue;
         const importedName = normalizedIdentifier(tokens[index].value);
         const aliasName = normalizedIdentifier(tokens[index + 2].value);
         if (includeNames.has(importedName) && !includeNames.has(aliasName)) {
@@ -397,7 +406,15 @@ function scan(root) {
       const useTokens = tokens.slice(index, useEnd === -1 ? tokens.length : useEnd);
       const hasGlob = useTokens.some((candidate) => candidate.value === "*");
       const hasBracedUse = useTokens.some((candidate) => candidate.value === "{");
-      if (hasGlob && useRoot !== "tachiko_designer_runtime" && !(useRoot === "super" && hasBracedUse)) {
+      const hasAuditableInternalGlob = useRoot === "super" && hasBracedUse && useTokens.some((candidate, candidateIndex) =>
+        candidate.value === "*" && (
+          (useTokens[candidateIndex - 1]?.value === "::" && useTokens[candidateIndex - 2]?.kind === "identifier" &&
+            ["{", ","].includes(useTokens[candidateIndex - 3]?.value)) ||
+          (useTokens[candidateIndex - 1]?.value === ":" && useTokens[candidateIndex - 2]?.value === ":" &&
+            useTokens[candidateIndex - 3]?.kind === "identifier" && ["{", ","].includes(useTokens[candidateIndex - 4]?.value))
+        )
+      );
+      if (hasGlob && useRoot !== "tachiko_designer_runtime" && !hasAuditableInternalGlob) {
         fail(`${path}:${tokens[index].line}:${tokens[index].column}: glob import ${useRoot} cannot be audited by the unsafe-surface scanner`);
       }
       for (let nested = index + 1; nested < tokens.length && tokens[nested].value !== ";"; nested += 1) {
@@ -536,6 +553,18 @@ function scan(root) {
                 shadowedNames.has(normalizedIdentifier(tokens[nested].value))) {
                 fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: cfg_attr helper ${tokens[nested].value} may expand outside the auditable source surface`);
               }
+              if (tokens[nested].value === "derive" && tokens[nested + 1]?.value === "(") {
+                let deriveDepth = 1;
+                for (let deriveIndex = nested + 2; deriveIndex < tokens.length && deriveDepth > 0; deriveIndex += 1) {
+                  if (tokens[deriveIndex].value === "(") deriveDepth += 1;
+                  if (tokens[deriveIndex].value === ")") deriveDepth -= 1;
+                  if (tokens[deriveIndex].kind !== "identifier") continue;
+                  const deriveName = normalizedIdentifier(tokens[deriveIndex].value);
+                  if ((!KNOWN_SAFE_DERIVES.has(deriveName) && !trustedDerives.has(deriveName)) || shadowedNames.has(deriveName)) {
+                    fail(`${path}:${tokens[deriveIndex].line}:${tokens[deriveIndex].column}: cfg_attr derive ${tokens[deriveIndex].value} may expand outside the auditable source surface`);
+                  }
+                }
+              }
             }
             if (tokens[nested].value === "::" || (tokens[nested].value === ":" && tokens[nested + 1]?.value === ":")) {
               fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: qualified cfg_attr helper may expand outside the auditable source surface`);
@@ -627,7 +656,7 @@ function scan(root) {
           const parentInlineDirectory = inlineModuleDirectories.at(-1);
           let moduleDirectory = parentInlineDirectory
             ? join(parentInlineDirectory, moduleName)
-            : join(moduleFileDirectory(path), moduleName);
+            : join(moduleFileDirectory(path, isCrateRoot), moduleName);
           for (let previous = index - 1; previous >= 0 && previous >= index - 20; previous -= 1) {
             if (tokens[previous].value === "path" && tokens[previous + 1]?.value === "=" && tokens[previous + 2]?.kind === "string") {
               moduleDirectory = pathAttributeDirectory(tokens[previous + 2].value, pathAttributeBaseDirectory()) ?? moduleDirectory;
@@ -648,7 +677,10 @@ function scan(root) {
     return { includeNames, unsafeMacroNames };
   }
   for (const path of allSourceFiles) {
-    scanFile(path, undefined, { includeNames: globalIncludeNames, unsafeMacroNames: globalUnsafeMacroNames });
+    const fileName = basename(path);
+    const fileStem = fileName.replace(/\.[^.]+$/, "");
+    const isCrateRoot = CARGO_TARGET_ROOTS.has(path) || fileName === "build.rs" || ["lib", "main", "mod", "build"].includes(fileStem);
+    scanFile(path, undefined, { includeNames: globalIncludeNames, unsafeMacroNames: globalUnsafeMacroNames }, isCrateRoot);
   }
 }
 
