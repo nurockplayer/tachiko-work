@@ -364,18 +364,6 @@ function scan(root) {
       fail(`cannot read ${path}: ${error.message}`);
     }
     const tokens = tokensFor(source, path);
-    const qualifiedMacroPattern = /(?:^|[^\p{XID_Continue}])([\p{XID_Start}_][\p{XID_Continue}_]*)::([\p{XID_Start}_][\p{XID_Continue}_]*)!\s*[({[]/gu;
-    for (const match of source.matchAll(qualifiedMacroPattern)) {
-      const rootName = normalizedIdentifier(match[1]);
-      const macroName = normalizedIdentifier(match[2]);
-      if (!["alloc", "core", "std"].includes(rootName) && !(rootName === "serde_json" && macroName === "json")) {
-        fail(`${path}: qualified macro ${match[2]}! cannot be audited by the unsafe-surface scanner`);
-      }
-    }
-    if (/#\s*\[\s*[A-Za-z_][A-Za-z0-9_]*\s*::/.test(source) ||
-      /#\s*\[\s*cfg_attr[\s\S]*::/.test(source)) {
-      fail(`${path}: qualified attribute helper cannot be audited by the unsafe-surface scanner`);
-    }
     const includeNames = new Set(["include", ...(inheritedScope.includeNames ?? [])]);
     const unsafeMacroNames = new Set([...UNSAFE_MACROS, ...(inheritedScope.unsafeMacroNames ?? [])]);
     const importedMacroNames = new Set();
@@ -485,9 +473,11 @@ function scan(root) {
     function trustedMacroInvocation(index) {
       const macroName = normalizedIdentifier(tokens[index].value);
       if (!KNOWN_SAFE_MACROS.has(macroName)) return false;
-      if (tokens[index - 1]?.value !== "::") return true;
-      let rootIndex = index - 2;
-      while (rootIndex >= 2 && tokens[rootIndex - 1]?.value === "::") rootIndex -= 2;
+      let rootIndex = index - 1;
+      if (tokens[rootIndex]?.value === "::") rootIndex -= 1;
+      else if (tokens[rootIndex]?.value === ":" && tokens[rootIndex - 1]?.value === ":") rootIndex -= 2;
+      else return true;
+      while (rootIndex >= 2 && tokens[rootIndex - 1]?.value === ":" && tokens[rootIndex - 2]?.value === ":") rootIndex -= 2;
       const rootName = normalizedIdentifier(tokens[rootIndex]?.value ?? "");
       return ["alloc", "core", "std"].includes(rootName) || (rootName === "serde_json" && macroName === "json");
     }
@@ -495,15 +485,30 @@ function scan(root) {
       const token = tokens[index];
       if (token.value === "#" && tokens[index + 1]?.value === "[" && tokens[index + 2]?.kind === "identifier") {
         const attributeName = normalizedIdentifier(tokens[index + 2].value);
-        if (tokens[index + 3]?.value === "::") {
+        if (tokens[index + 3]?.value === "::" || (tokens[index + 3]?.value === ":" && tokens[index + 4]?.value === ":")) {
           fail(`${path}:${token.line}:${token.column}: qualified attribute ${attributeName} may expand outside the auditable source surface`);
         }
         if (!KNOWN_SAFE_ATTRIBUTES.has(attributeName)) {
           fail(`${path}:${token.line}:${token.column}: attribute ${attributeName} may expand outside the auditable source surface`);
         }
         if (attributeName === "cfg_attr") {
+          let depth = 1;
+          let predicateDone = false;
+          let helperChecked = false;
           for (let nested = index + 3; nested < tokens.length && tokens[nested].value !== "]"; nested += 1) {
-            if (tokens[nested].value === "::") {
+            if (tokens[nested].value === "(") depth += 1;
+            if (tokens[nested].value === ")") depth -= 1;
+            if (depth === 1 && tokens[nested].value === ",") {
+              predicateDone = true;
+              continue;
+            }
+            if (predicateDone && !helperChecked && tokens[nested].kind === "identifier") {
+              helperChecked = true;
+              if (!KNOWN_SAFE_ATTRIBUTES.has(normalizedIdentifier(tokens[nested].value))) {
+                fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: cfg_attr helper ${tokens[nested].value} may expand outside the auditable source surface`);
+              }
+            }
+            if (tokens[nested].value === "::" || (tokens[nested].value === ":" && tokens[nested + 1]?.value === ":")) {
               fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: qualified cfg_attr helper may expand outside the auditable source surface`);
             }
           }
