@@ -74,6 +74,33 @@ export type PublicationProjection = {
   affected_calculations: FieldTarget[];
 };
 
+export type DelegatedOutcome = "ready" | "approved" | "published" | "denied";
+
+/** App-private proposal/review DTOs; they never carry principals, grants, approvals, or clocks. */
+export type DelegatedProposalProjection = {
+  proposal_id: string;
+  base_revision: string;
+  target: FieldTarget;
+  value: StoredValueProjection;
+};
+
+export type DelegatedReviewProjection = {
+  outcome: DelegatedOutcome;
+  proposal: DelegatedProposalProjection | null;
+  disclosed_subjects: FieldTarget[];
+  disclosed_values: StoredValueProjection[];
+};
+
+export type DelegatedApprovalProjection = {
+  outcome: DelegatedOutcome;
+  proposal_id: string;
+};
+
+export type DelegatedExecutionProjection = {
+  outcome: DelegatedOutcome;
+  publication: PublicationProjection | null;
+};
+
 export type ProjectExportProjection = {
   revision: string;
   byte_length: number;
@@ -175,6 +202,31 @@ export type DesignerRequest =
         | { kind: "date"; value: string };
     }
   | {
+      type: "delegated_propose";
+      expected_revision: string;
+      target: FieldTarget;
+      input:
+        | { kind: "number"; input: string }
+        | { kind: "text"; value: string }
+        | { kind: "boolean"; value: boolean }
+        | { kind: "date"; value: string };
+    }
+  | { type: "delegated_preview"; proposal_id: string }
+  | { type: "delegated_approve"; proposal_id: string }
+  | { type: "delegated_execute"; proposal_id: string }
+  | {
+      type: "delegated_execute_altered";
+      proposal_id: string;
+      target: FieldTarget;
+      input:
+        | { kind: "number"; input: string }
+        | { kind: "text"; value: string }
+        | { kind: "boolean"; value: boolean }
+        | { kind: "date"; value: string };
+    }
+  | { type: "delegated_revoke_authority" }
+  | { type: "delegated_revoke_query" }
+  | {
       type: "formula_update";
       expected_revision: string;
       target: FieldTarget;
@@ -193,6 +245,10 @@ export type DesignerResponse =
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "published"; payload: PublicationProjection }
+  | { type: "delegated_proposal"; payload: DelegatedProposalProjection }
+  | { type: "delegated_review"; payload: DelegatedReviewProjection }
+  | { type: "delegated_approval"; payload: DelegatedApprovalProjection }
+  | { type: "delegated_execution"; payload: DelegatedExecutionProjection }
   | { type: "duplicated"; payload: DuplicateCollectionProjection }
   | { type: "project_exported"; payload: ProjectExportProjection }
   | { type: "canonical_tree_exported"; payload: ProjectExportProjection }

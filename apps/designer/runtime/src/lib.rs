@@ -26,11 +26,12 @@ use tachiko_workspace_engine::{
     },
     keyed_grouped_sum_operations::{KeyedGroupedSumOutcome, evaluate_keyed_grouped_sum},
     patch_lifecycle::{
-        AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
-        Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
-        PatchLifecycleError, PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId,
-        ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
-        SemanticPatchBody, SemanticRevision, SemanticScope, TrustedInstant,
+        ApprovalId, ApprovalRequest, AuthorizationAction, AuthorizationDomainId,
+        AuthorizationPolicyVersion, DocumentScopeId, Grant, GrantId, GrantRequirement,
+        MutationClass, OperationFamily, PatchLifecycle, PatchLifecycleError, PolicyMeaningId,
+        PrincipalId, PrincipalKind, ProposalId, ProposalRequest, ScopedSemanticSubject,
+        SemanticApiContract, SemanticCommand, SemanticPatchBody, SemanticRevision, SemanticScope,
+        TrustedInstant,
     },
     resident_session::{ResidentSnapshot, ResidentWorkspaceSession, TrustedPublicationTimeSource},
     validate,
@@ -70,6 +71,15 @@ const MAX_WIDTH_FINITE_JSON_NUMBER: f64 = -f64::MIN_POSITIVE;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
+const DESIGNER_DELEGATED_PRINCIPAL: &str = "designer-delegated-proposal";
+const DESIGNER_DELEGATED_WRITE_GRANT: &str = "designer-delegated-scalar-write";
+const DESIGNER_DELEGATED_QUERY_GRANT: &str = "designer-delegated-scalar-query";
+/// Private activity-count approval bound for one live Designer occurrence.
+///
+/// This is deliberately not a wall-clock, persisted, configurable, or client
+/// supplied TTL. Exact proposal/base binding, live Grant checks, and the
+/// publication-boundary recheck remain the primary safety controls.
+const DELEGATED_APPROVAL_VALIDITY_TICKS: u64 = 1024;
 const PREFLIGHT_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 /// Private record discriminator for frozen canonical `.roproj/v1` bundles.
 const PROJECT_BUNDLE_V1_MAGIC: &[u8; 8] = b"TWDPROJ1";
@@ -139,6 +149,31 @@ pub enum DesignerRequest {
         target: FieldTarget,
         input: ScalarEditInput,
     },
+    DelegatedPropose {
+        expected_revision: String,
+        target: FieldTarget,
+        input: ScalarEditInput,
+    },
+    DelegatedPreview {
+        proposal_id: String,
+    },
+    DelegatedApprove {
+        proposal_id: String,
+    },
+    DelegatedExecute {
+        proposal_id: String,
+    },
+    /// Test-only hostile-client probe. The retained proposal body is the only
+    /// executable authority, so an alternate body is never admitted.
+    DelegatedExecuteAltered {
+        proposal_id: String,
+        target: FieldTarget,
+        input: ScalarEditInput,
+    },
+    /// Test-only revocation control for the fixed delegated-bridge acceptance.
+    DelegatedRevokeAuthority,
+    /// Test-only disclosure revocation control for the fixed acceptance.
+    DelegatedRevokeQuery,
     PreviewCleanup {
         expected_revision: String,
         operation: CleanupOperation,
@@ -178,6 +213,10 @@ pub enum DesignerResponse {
     Table(TableProjection),
     Fields(FieldBatchProjection),
     Published(PublicationProjection),
+    DelegatedProposal(DelegatedProposalProjection),
+    DelegatedReview(DelegatedReviewProjection),
+    DelegatedApproval(DelegatedApprovalProjection),
+    DelegatedExecution(DelegatedExecutionProjection),
     Duplicated(DuplicateCollectionProjection),
     CleanupPreview(CleanupPreview),
     ImportPreview(Box<interop_adapter::SourceWorkbook>),
@@ -524,6 +563,45 @@ pub struct PublicationProjection {
     pub affected_calculations: Vec<FieldTarget>,
 }
 
+/// Opaque app-private proposal handle and the exact scalar review projection.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DelegatedProposalProjection {
+    pub proposal_id: String,
+    pub base_revision: String,
+    pub target: FieldTarget,
+    pub value: StoredValueProjection,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegatedOutcome {
+    Ready,
+    Approved,
+    Published,
+    Denied,
+}
+
+/// Review evidence is returned only after lifecycle disclosure authorization.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DelegatedReviewProjection {
+    pub outcome: DelegatedOutcome,
+    pub proposal: Option<DelegatedProposalProjection>,
+    pub disclosed_subjects: Vec<FieldTarget>,
+    pub disclosed_values: Vec<StoredValueProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DelegatedApprovalProjection {
+    pub outcome: DelegatedOutcome,
+    pub proposal_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DelegatedExecutionProjection {
+    pub outcome: DelegatedOutcome,
+    pub publication: Option<PublicationProjection>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DuplicateCollectionProjection {
     pub publication: PublicationProjection,
@@ -670,6 +748,9 @@ pub struct DesignerRuntime {
     session: ResidentWorkspaceSession,
     lifecycle: PatchLifecycle,
     principal: PrincipalId,
+    delegated_principal: PrincipalId,
+    delegated_proposals: BTreeMap<ProposalId, DelegatedProposalProjection>,
+    delegated_approvals: BTreeMap<ProposalId, ApprovalId>,
     clock: DesignerClock,
     proposal_serial: u64,
     row_serial: usize,
@@ -751,6 +832,7 @@ impl DesignerRuntime {
         ensure_static_profile(&title, &default_collection, &collections, &collection_specs)?;
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
+        let delegated_principal = PrincipalId::from(DESIGNER_DELEGATED_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
@@ -763,6 +845,9 @@ impl DesignerRuntime {
             session,
             lifecycle,
             principal,
+            delegated_principal,
+            delegated_proposals: BTreeMap::new(),
+            delegated_approvals: BTreeMap::new(),
             clock: DesignerClock::default(),
             proposal_serial: 0,
             row_serial: 0,
@@ -885,6 +970,47 @@ impl DesignerRuntime {
                 &target,
                 &input,
             )?)),
+            DesignerRequest::DelegatedPropose {
+                expected_revision,
+                target,
+                input,
+            } => Ok(DesignerResponse::DelegatedProposal(
+                self.delegated_propose(&expected_revision, &target, &input)?,
+            )),
+            DesignerRequest::DelegatedPreview { proposal_id } => Ok(
+                DesignerResponse::DelegatedReview(self.delegated_preview(&proposal_id)),
+            ),
+            DesignerRequest::DelegatedApprove { proposal_id } => Ok(
+                DesignerResponse::DelegatedApproval(self.delegated_approve(&proposal_id)),
+            ),
+            DesignerRequest::DelegatedExecute { proposal_id } => Ok(
+                DesignerResponse::DelegatedExecution(self.delegated_execute(&proposal_id)),
+            ),
+            DesignerRequest::DelegatedExecuteAltered {
+                proposal_id: _,
+                target: _,
+                input: _,
+            } => Ok(DesignerResponse::DelegatedExecution(
+                DelegatedExecutionProjection {
+                    outcome: DelegatedOutcome::Denied,
+                    publication: None,
+                },
+            )),
+            DesignerRequest::DelegatedRevokeAuthority => {
+                self.lifecycle
+                    .revoke_grant(&GrantId::from(DESIGNER_DELEGATED_WRITE_GRANT))?;
+                Ok(DesignerResponse::DelegatedExecution(
+                    DelegatedExecutionProjection {
+                        outcome: DelegatedOutcome::Denied,
+                        publication: None,
+                    },
+                ))
+            }
+            DesignerRequest::DelegatedRevokeQuery => {
+                self.lifecycle
+                    .revoke_grant(&GrantId::from(DESIGNER_DELEGATED_QUERY_GRANT))?;
+                Ok(DesignerResponse::DelegatedReview(denied_delegated_review()))
+            }
             DesignerRequest::PreviewCleanup {
                 expected_revision,
                 operation,
@@ -1323,6 +1449,188 @@ impl DesignerRuntime {
             }],
         )?;
         Ok(publication)
+    }
+
+    fn delegated_propose(
+        &mut self,
+        expected_revision: &str,
+        target: &FieldTarget,
+        input: &ScalarEditInput,
+    ) -> Result<DelegatedProposalProjection, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let snapshot = self.session.export_snapshot();
+        let field = target.as_field_ref();
+        let previous = snapshot
+            .document()
+            .entities
+            .get(&field.entity)
+            .and_then(|entity| entity.fields.get(&field.field))
+            .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                field: field.clone(),
+            })?;
+        let value = parse_scalar(previous, input, &field)?;
+        let proposal_id = self.next_proposal_id()?;
+        let body = SemanticPatchBody::atomic_batch(vec![SemanticCommand::set_field_value(
+            field,
+            value.clone(),
+        )])?;
+        self.lifecycle.propose(
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
+            ProposalRequest::new(
+                proposal_id.clone(),
+                SemanticRevision::from(expected_revision.to_owned()),
+                body,
+                self.delegated_principal.clone(),
+            ),
+            self.clock.tick(),
+        )?;
+        let projection = DelegatedProposalProjection {
+            proposal_id: proposal_id.as_str().to_owned(),
+            base_revision: expected_revision.to_owned(),
+            target: target.clone(),
+            value: stored_value_projection(&value),
+        };
+        self.delegated_proposals
+            .insert(proposal_id, projection.clone());
+        Ok(projection)
+    }
+
+    fn delegated_preview(&mut self, proposal_id: &str) -> DelegatedReviewProjection {
+        let proposal_id = ProposalId::from(proposal_id.to_owned());
+        let snapshot = self.session.export_snapshot();
+        if self
+            .lifecycle
+            .preview(
+                snapshot.document_scope(),
+                snapshot.document(),
+                snapshot.revision(),
+                &proposal_id,
+                &self.delegated_principal,
+                self.clock.tick(),
+            )
+            .is_err()
+        {
+            return denied_delegated_review();
+        }
+        let Some(proposal) = self.delegated_proposals.get(&proposal_id).cloned() else {
+            return denied_delegated_review();
+        };
+        DelegatedReviewProjection {
+            outcome: DelegatedOutcome::Ready,
+            disclosed_subjects: vec![proposal.target.clone()],
+            disclosed_values: vec![proposal.value.clone()],
+            proposal: Some(proposal),
+        }
+    }
+
+    fn delegated_approve(&mut self, proposal_id: &str) -> DelegatedApprovalProjection {
+        let proposal_id = ProposalId::from(proposal_id.to_owned());
+        let snapshot = self.session.export_snapshot();
+        let result = (|| -> Result<(), PatchLifecycleError> {
+            self.lifecycle.preview(
+                snapshot.document_scope(),
+                snapshot.document(),
+                snapshot.revision(),
+                &proposal_id,
+                &self.principal,
+                self.clock.tick(),
+            )?;
+            let approval_id = ApprovalId::from(format!(
+                "designer-delegated-approval/{}/{}",
+                self.row_namespace,
+                proposal_id.as_str()
+            ));
+            let approval_now = self.clock.tick();
+            let approval_expiry = self
+                .clock
+                .current
+                .checked_add(DELEGATED_APPROVAL_VALIDITY_TICKS)
+                .map(TrustedInstant::new)
+                .ok_or(PatchLifecycleError::InvalidApprovalExpiry)?;
+            self.lifecycle.approve(
+                snapshot.document_scope(),
+                snapshot.document(),
+                snapshot.revision(),
+                ApprovalRequest::new(
+                    approval_id.clone(),
+                    proposal_id.clone(),
+                    self.principal.clone(),
+                    self.delegated_principal.clone(),
+                    approval_expiry,
+                ),
+                approval_now,
+            )?;
+            self.delegated_approvals
+                .insert(proposal_id.clone(), approval_id);
+            Ok(())
+        })();
+        DelegatedApprovalProjection {
+            outcome: if result.is_ok() {
+                DelegatedOutcome::Approved
+            } else {
+                DelegatedOutcome::Denied
+            },
+            proposal_id: proposal_id.as_str().to_owned(),
+        }
+    }
+
+    fn delegated_execute(&mut self, proposal_id: &str) -> DelegatedExecutionProjection {
+        let proposal_id = ProposalId::from(proposal_id.to_owned());
+        let approval_id = self.delegated_approvals.get(&proposal_id).cloned();
+        let snapshot = self.session.export_snapshot();
+        let execute_now = self.clock.tick();
+        let result = (|| -> Result<PublicationProjection, DesignerError> {
+            let (receipt, invalidation) = {
+                let mut publication = self.session.publication_authority(&mut self.clock);
+                let receipt = self.lifecycle.execute(
+                    &proposal_id,
+                    approval_id.as_ref(),
+                    &self.delegated_principal,
+                    &mut publication,
+                    execute_now,
+                )?;
+                let invalidation = publication
+                    .projection_invalidation_for(
+                        snapshot.document_scope(),
+                        &receipt.base_revision,
+                        &receipt.resulting_revision,
+                    )
+                    .ok_or(DesignerError::MissingInvalidation)?
+                    .clone();
+                (receipt, invalidation)
+            };
+            self.refresh_structure();
+            if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
+                self.formula_sources = sources;
+            }
+            Ok(PublicationProjection {
+                base_revision: receipt.base_revision.as_str().to_owned(),
+                resulting_revision: receipt.resulting_revision.as_str().to_owned(),
+                entities: invalidation
+                    .entities
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                fields: invalidation.fields.iter().map(field_target).collect(),
+                affected_calculations: invalidation
+                    .affected_calculations
+                    .iter()
+                    .map(field_target)
+                    .collect(),
+            })
+        })();
+        match result {
+            Ok(publication) => DelegatedExecutionProjection {
+                outcome: DelegatedOutcome::Published,
+                publication: Some(publication),
+            },
+            Err(_) => DelegatedExecutionProjection {
+                outcome: DelegatedOutcome::Denied,
+                publication: None,
+            },
+        }
     }
 
     /// Duplicate one semantic collection into a fresh schema/field/entity
@@ -3676,12 +3984,22 @@ fn formula_sources(document: &Document) -> Result<BTreeMap<FieldRef, String>, De
         .collect()
 }
 
+fn denied_delegated_review() -> DelegatedReviewProjection {
+    DelegatedReviewProjection {
+        outcome: DelegatedOutcome::Denied,
+        proposal: None,
+        disclosed_subjects: Vec::new(),
+        disclosed_values: Vec::new(),
+    }
+}
+
 fn designer_lifecycle(
     document_scope: &DocumentScopeId,
     document: &Document,
     principal: &PrincipalId,
 ) -> Result<PatchLifecycle, DesignerError> {
     let authority = PrincipalId::from("designer-host-authority");
+    let delegated_principal = PrincipalId::from(DESIGNER_DELEGATED_PRINCIPAL);
     let mut lifecycle = PatchLifecycle::new(
         AuthorizationDomainId::from("designer-local-domain"),
         document_scope.clone(),
@@ -3692,6 +4010,7 @@ fn designer_lifecycle(
     );
     lifecycle.register_principal(authority.clone(), PrincipalKind::Human)?;
     lifecycle.register_principal(principal.clone(), PrincipalKind::Human)?;
+    lifecycle.register_principal(delegated_principal.clone(), PrincipalKind::Delegated)?;
     let scope = ScopedSemanticSubject::new(
         document_scope.clone(),
         document.id.clone(),
@@ -3732,6 +4051,12 @@ fn designer_lifecycle(
             [
                 Ok(GrantRequirement::query(family, scope.clone())),
                 GrantRequirement::mutation(
+                    AuthorizationAction::Approve,
+                    family,
+                    class,
+                    scope.clone(),
+                ),
+                GrantRequirement::mutation(
                     AuthorizationAction::Propose,
                     family,
                     class,
@@ -3748,7 +4073,46 @@ fn designer_lifecycle(
         .collect::<Result<Vec<_>, _>>()?,
         None,
     ))?;
+    provision_delegated_scalar_grants(&mut lifecycle, delegated_principal, &scope)?;
     Ok(lifecycle)
+}
+
+fn provision_delegated_scalar_grants(
+    lifecycle: &mut PatchLifecycle,
+    delegated_principal: PrincipalId,
+    scope: &ScopedSemanticSubject,
+) -> Result<(), DesignerError> {
+    lifecycle.provision_grant(Grant::new(
+        GrantId::from(DESIGNER_DELEGATED_WRITE_GRANT),
+        PrincipalId::from("designer-host-authority"),
+        delegated_principal.clone(),
+        vec![
+            GrantRequirement::mutation(
+                AuthorizationAction::Propose,
+                OperationFamily::SetFieldValue,
+                MutationClass::Value,
+                scope.clone(),
+            )?,
+            GrantRequirement::mutation(
+                AuthorizationAction::Execute,
+                OperationFamily::SetFieldValue,
+                MutationClass::Value,
+                scope.clone(),
+            )?,
+        ],
+        None,
+    ))?;
+    lifecycle.provision_grant(Grant::new(
+        GrantId::from(DESIGNER_DELEGATED_QUERY_GRANT),
+        PrincipalId::from("designer-host-authority"),
+        delegated_principal,
+        vec![GrantRequirement::query(
+            OperationFamily::SetFieldValue,
+            scope.clone(),
+        )],
+        None,
+    ))?;
+    Ok(())
 }
 
 pub(crate) fn encode_reply(reply: &DesignerWireReply) -> Vec<u8> {
@@ -4209,8 +4573,8 @@ fn parse_scalar(
 #[cfg(test)]
 mod tests {
     use super::{
-        DesignerError, DesignerRequest, DesignerRuntime, EntityId, MAX_WIDTH_FINITE_JSON_NUMBER,
-        ProposalId,
+        DelegatedOutcome, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
+        EntityId, FieldTarget, MAX_WIDTH_FINITE_JSON_NUMBER, ProposalId, ScalarEditInput,
     };
 
     fn assert_duplicate_rejected_without_publication(runtime: &mut DesignerRuntime) {
@@ -4426,5 +4790,33 @@ mod tests {
                 .len(),
             24
         );
+    }
+
+    #[test]
+    fn delegated_approval_expiry_overflow_never_issues_a_usable_approval() {
+        let mut runtime =
+            DesignerRuntime::moonfall("00000000-0000-4000-8000-000000000000").unwrap();
+        let DesignerResponse::DelegatedProposal(proposal) = runtime
+            .handle(DesignerRequest::DelegatedPropose {
+                expected_revision: "resident/0".to_owned(),
+                target: FieldTarget {
+                    entity: "iron_sword".to_owned(),
+                    field: "damage".to_owned(),
+                },
+                input: ScalarEditInput::Number {
+                    input: "3".to_owned(),
+                },
+            })
+            .unwrap()
+        else {
+            panic!("expected delegated proposal");
+        };
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        runtime.clock.current = u64::MAX;
+        let approval = runtime.delegated_approve(&proposal.proposal_id);
+        assert_eq!(approval.outcome, DelegatedOutcome::Denied);
+        let execution = runtime.delegated_execute(&proposal.proposal_id);
+        assert_eq!(execution.outcome, DelegatedOutcome::Denied);
+        assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
     }
 }

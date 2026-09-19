@@ -8,6 +8,11 @@ import { WorkerDesignerClient } from "./runtime/worker-client.ts";
 import type {
   CanonicalProjectFile,
   CanonicalTreeExport,
+  DelegatedApprovalProjection,
+  DelegatedExecutionProjection,
+  DelegatedProposalProjection,
+  DelegatedReviewProjection,
+  FieldTarget,
   OccurrenceProjection,
   OpenedProjection,
   ProjectExport,
@@ -33,6 +38,20 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   verifyPortableRo(bytes: ArrayBuffer): Promise<void>;
   openPortableRo(bytes: ArrayBuffer): Promise<OpenedProjection>;
   observeOccurrence(): Promise<OccurrenceProjection>;
+  proposeDelegatedScalar(
+    expectedRevision: string,
+    target: FieldTarget,
+    input: string,
+  ): Promise<DelegatedProposalProjection>;
+  previewDelegatedProposal(
+    proposalId: string,
+  ): Promise<DelegatedReviewProjection>;
+  approveDelegatedProposal(
+    proposalId: string,
+  ): Promise<DelegatedApprovalProjection>;
+  executeDelegatedProposal(
+    proposalId: string,
+  ): Promise<DelegatedExecutionProjection>;
 }
 
 /**
@@ -112,6 +131,11 @@ export type {
   CanonicalProjectFile,
   CanonicalTreeExport,
   CalculationProjection,
+  DelegatedApprovalProjection,
+  DelegatedExecutionProjection,
+  DelegatedOutcome,
+  DelegatedProposalProjection,
+  DelegatedReviewProjection,
   CollectionSummary,
   DiagnosticProjection,
   FailureProjection,
