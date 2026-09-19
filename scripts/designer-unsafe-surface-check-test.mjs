@@ -71,6 +71,13 @@ assertRejected("local package cannot borrow trusted serde provenance", {
   "lib.rs": "#[derive(serde::Deserialize)] struct Value;",
   "evil-serde/Cargo.toml": "[package]\nname = \"serde\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
 });
+assertRejected("untrusted include macro cannot borrow the builtin alias", {
+  "lib.rs": "use evil::include as source; source!(\"payload.inc\");",
+  "payload.inc": "pub fn safe() {}",
+});
+assertRejected("qualified derive cannot borrow a safe terminal name", {
+  "lib.rs": "use evil::Debug; #[derive(Debug::Clone)] struct Value;",
+});
 
 assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
 assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });

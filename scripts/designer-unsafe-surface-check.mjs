@@ -124,8 +124,10 @@ function sourceFiles(root) {
     }
     const rootPackage = metadata.packages?.find((packageInfo) => packageInfo.id === metadata.resolve?.root) ?? metadata.packages?.[0];
     for (const dependency of rootPackage?.dependencies ?? []) {
+      const resolvedPackage = metadata.packages?.find((packageInfo) => packageInfo.name === dependency.name);
       if (["serde", "serde_json", "thiserror"].includes(dependency.name) && dependency.rename === null &&
-        dependency.source === "registry+https://github.com/rust-lang/crates.io-index") {
+        dependency.source === "registry+https://github.com/rust-lang/crates.io-index" &&
+        resolvedPackage?.source === "registry+https://github.com/rust-lang/crates.io-index") {
         TRUSTED_DEPENDENCY_ROOTS.add(dependency.name);
       }
     }
@@ -326,6 +328,19 @@ function scan(root) {
     }
     return false;
   }
+  function aliasUseRoot(tokens, index) {
+    for (let previous = index - 1; previous >= 0; previous -= 1) {
+      if (tokens[previous].value === ";") return "";
+      if (tokens[previous].value === "use") return normalizedIdentifier(tokens[previous + 1]?.value ?? "");
+    }
+    return "";
+  }
+  function trustedAliasOrigin(tokens, index, importedName) {
+    const root = aliasUseRoot(tokens, index);
+    if (importedName === "include") return root === "std";
+    if (UNSAFE_MACROS.has(importedName)) return root === "core" || root === "std";
+    return true;
+  }
   let aliasesChanged;
   do {
     aliasesChanged = false;
@@ -337,11 +352,11 @@ function scan(root) {
         if (sourceModuleDepths[index] > 0) fail(`${sourcePath}:${sourceTokens[index].line}:${sourceTokens[index].column}: aliases inside inline modules are not supported by the unsafe-surface scanner`);
         const importedName = normalizedIdentifier(sourceTokens[index].value);
         const aliasName = normalizedIdentifier(sourceTokens[index + 2].value);
-        if (globalIncludeNames.has(importedName) && !globalIncludeNames.has(aliasName)) {
+        if (trustedAliasOrigin(sourceTokens, index, importedName) && globalIncludeNames.has(importedName) && !globalIncludeNames.has(aliasName)) {
           globalIncludeNames.add(aliasName);
           aliasesChanged = true;
         }
-        if (globalUnsafeMacroNames.has(importedName) && !globalUnsafeMacroNames.has(aliasName)) {
+        if (trustedAliasOrigin(sourceTokens, index, importedName) && globalUnsafeMacroNames.has(importedName) && !globalUnsafeMacroNames.has(aliasName)) {
           globalUnsafeMacroNames.add(aliasName);
           aliasesChanged = true;
         }
@@ -358,8 +373,8 @@ function scan(root) {
       if (sourceModuleDepths[index] > 0) fail(`${sourcePath}:${sourceTokens[index].line}:${sourceTokens[index].column}: aliases inside inline modules are not supported by the unsafe-surface scanner`);
       const importedName = normalizedIdentifier(sourceTokens[index].value);
       const aliasName = normalizedIdentifier(sourceTokens[index + 2].value);
-      if (globalIncludeNames.has(importedName)) globalIncludeNames.add(aliasName);
-      if (globalUnsafeMacroNames.has(importedName)) globalUnsafeMacroNames.add(aliasName);
+      if (trustedAliasOrigin(sourceTokens, index, importedName) && globalIncludeNames.has(importedName)) globalIncludeNames.add(aliasName);
+      if (trustedAliasOrigin(sourceTokens, index, importedName) && globalUnsafeMacroNames.has(importedName)) globalUnsafeMacroNames.add(aliasName);
     }
     for (let index = 0; index < sourceTokens.length; index += 1) {
       if (!globalIncludeNames.has(normalizedIdentifier(sourceTokens[index].value)) || sourceTokens[index + 1]?.value !== "!") continue;
@@ -428,11 +443,11 @@ function scan(root) {
         if (tokenModuleDepths[index] > 0) fail(`${path}:${tokens[index].line}:${tokens[index].column}: aliases inside inline modules are not supported by the unsafe-surface scanner`);
         const importedName = normalizedIdentifier(tokens[index].value);
         const aliasName = normalizedIdentifier(tokens[index + 2].value);
-        if (includeNames.has(importedName) && !includeNames.has(aliasName)) {
+        if (trustedAliasOrigin(tokens, index, importedName) && includeNames.has(importedName) && !includeNames.has(aliasName)) {
           includeNames.add(aliasName);
           changed = true;
         }
-        if (unsafeMacroNames.has(importedName) && !unsafeMacroNames.has(aliasName)) {
+        if (trustedAliasOrigin(tokens, index, importedName) && unsafeMacroNames.has(importedName) && !unsafeMacroNames.has(aliasName)) {
           unsafeMacroNames.add(aliasName);
           changed = true;
         }
@@ -620,6 +635,11 @@ function scan(root) {
           ).map((candidate) => candidate.value));
           for (let nested = index + 3; nested < tokens.length && tokens[nested].value !== "]"; nested += 1) {
             const deriveName = normalizedIdentifier(tokens[nested].value);
+            if (tokens[nested].kind === "identifier" &&
+              (tokens[nested + 1]?.value === "::" || (tokens[nested + 1]?.value === ":" && tokens[nested + 2]?.value === ":")) &&
+              !TRUSTED_DEPENDENCY_ROOTS.has(deriveName)) {
+              fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: qualified derive ${tokens[nested].value} may expand outside the auditable source surface`);
+            }
             const qualifiedExternalDerive = (derivePackages.has("serde") && ["serde", "Deserialize", "Serialize"].includes(deriveName)) ||
               (derivePackages.has("thiserror") && ["thiserror", "Error"].includes(deriveName));
             if (tokens[nested].kind === "identifier" &&
