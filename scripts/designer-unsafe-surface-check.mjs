@@ -487,9 +487,7 @@ function scan(root) {
             useTokens[candidateIndex - 3]?.kind === "identifier" && ["{", ","].includes(useTokens[candidateIndex - 4]?.value))
         )
       );
-      const hasAuditableRuntimeGlob = useRoot === "tachiko_designer_runtime" &&
-        useTokens.some((candidate) => normalizedIdentifier(candidate.value) === "interop_adapter");
-      if (hasGlob && !hasAuditableInternalGlob && !hasAuditableRuntimeGlob) {
+      if (hasGlob && !hasAuditableInternalGlob) {
         fail(`${path}:${tokens[index].line}:${tokens[index].column}: glob import ${useRoot} cannot be audited by the unsafe-surface scanner`);
       }
       for (let nested = index + 1; nested < tokens.length && tokens[nested].value !== ";"; nested += 1) {
