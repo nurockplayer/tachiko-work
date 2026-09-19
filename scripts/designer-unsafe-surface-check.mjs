@@ -118,16 +118,18 @@ function sourceFiles(root) {
   if (existsSync(manifest)) {
     let metadata;
     try {
-      metadata = JSON.parse(execFileSync("cargo", ["metadata", "--manifest-path", manifest, "--no-deps", "--format-version", "1"], { encoding: "utf8" }));
+      metadata = JSON.parse(execFileSync("cargo", ["metadata", "--manifest-path", manifest, "--format-version", "1"], { encoding: "utf8" }));
     } catch (error) {
       fail(`cannot read Cargo target metadata: ${error.message}`);
     }
-    for (const dependency of metadata.packages?.[0]?.dependencies ?? []) {
-      if (["serde", "serde_json", "thiserror"].includes(dependency.name) && dependency.rename === null) {
+    const rootPackage = metadata.packages?.find((packageInfo) => packageInfo.id === metadata.resolve?.root) ?? metadata.packages?.[0];
+    for (const dependency of rootPackage?.dependencies ?? []) {
+      if (["serde", "serde_json", "thiserror"].includes(dependency.name) && dependency.rename === null &&
+        dependency.source === "registry+https://github.com/rust-lang/crates.io-index") {
         TRUSTED_DEPENDENCY_ROOTS.add(dependency.name);
       }
     }
-    for (const target of metadata.packages?.flatMap((packageInfo) => packageInfo.targets) ?? []) {
+    for (const target of rootPackage?.targets ?? []) {
       const targetPath = resolve(target.src_path);
       const relativeTarget = relative(resolve(root), targetPath);
       if (relativeTarget === ".." || relativeTarget.startsWith(`..${sep}`)) {

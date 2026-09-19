@@ -66,6 +66,11 @@ assertRejected("untrusted import cannot shadow a safe derive", { "lib.rs": "use 
 assertRejected("untrusted import cannot shadow a trusted macro root", { "lib.rs": "use evil as std; std::println!(\"unsafe\");" });
 assertRejected("untrusted glob import cannot hide macros", { "lib.rs": "use evil::*; println!(\"unsafe\");" });
 assertRejected("untrusted import cannot shadow a builtin attribute", { "lib.rs": "use evil::test; #[test] fn safe() {}" });
+assertRejected("local package cannot borrow trusted serde provenance", {
+  "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nserde = { path = \"evil-serde\" }\n",
+  "lib.rs": "#[derive(serde::Deserialize)] struct Value;",
+  "evil-serde/Cargo.toml": "[package]\nname = \"serde\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+});
 
 assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
 assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });
