@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -68,10 +68,30 @@ assertRejected("unsafe in an included non-Rust source", {
   "src/lib.rs": "include!(\"payload.inc\");",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
+assertRejected("nonliteral include path", {
+  "src/lib.rs": "include!(concat!(\"payload\", \".inc\"));",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
 assertAccepted("safe included non-Rust source", {
   "src/lib.rs": "include!(\"payload.inc\");",
   "src/payload.inc": "pub fn safe() {}",
 });
+
+function runSymlinkFixture() {
+  const root = mkdtempSync(join(tmpdir(), "tachiko-designer-unsafe-symlink-"));
+  try {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "unsafe.rs"), "pub unsafe fn bypassed() {}\n");
+    symlinkSync("../unsafe.rs", join(root, "src", "lib.rs"));
+    return spawnSync(process.execPath, [scanner, root], { encoding: "utf8" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const symlink = runSymlinkFixture();
+assert.notEqual(symlink.status, 0, "symlinked source unexpectedly passed");
+assert.match(symlink.stderr, /symbolic link/i, "symlinked source did not fail closed");
 assertAccepted("approved root wasm ABI attribute", {
   "src/wasm.rs": "#[unsafe /* ABI */ ( no_mangle )]\npub extern \"C\" fn tachiko_designer_request_run() {}",
   "src/lib.rs": "fn safe() {}",

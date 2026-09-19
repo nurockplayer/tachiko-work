@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 
 const APPROVED_EXPORTS = new Set([
@@ -64,6 +64,9 @@ function sourceFiles(root) {
     }
     for (const entry of entries) {
       const path = `${directory}${sep}${entry.name}`;
+      if (entry.isSymbolicLink()) {
+        fail(`symbolic links are not supported in the runtime source surface: ${path}`);
+      }
       if (entry.isDirectory() && entry.name !== "target") {
         visit(path);
       } else if (entry.isFile() && entry.name.endsWith(".rs")) {
@@ -76,7 +79,12 @@ function sourceFiles(root) {
     if (existsSync(path)) visit(path);
   }
   const buildScript = `${root}${sep}build.rs`;
-  if (existsSync(buildScript)) files.push(buildScript);
+  if (existsSync(buildScript)) {
+    if (lstatSync(buildScript).isSymbolicLink()) {
+      fail(`symbolic links are not supported in the runtime source surface: ${buildScript}`);
+    }
+    files.push(buildScript);
+  }
   return files.sort();
 }
 
@@ -227,7 +235,7 @@ function tokensFor(source, path) {
 }
 
 function approvedNoMangle(tokens, index, path, packageRoot) {
-  return relative(resolve(packageRoot), path) === "src/wasm.rs" &&
+  return relative(resolve(packageRoot), path).split(sep).join("/") === "src/wasm.rs" &&
     tokens[index - 2]?.value === "#" &&
     tokens[index - 1]?.value === "[" &&
     tokens[index + 1]?.value === "(" &&
@@ -263,7 +271,9 @@ function scan(root) {
       }
       if (token.value !== "include" || tokens[index + 1]?.value !== "!") continue;
       const includeStringIndex = tokens[index + 2]?.value === "(" ? index + 3 : index + 2;
-      if (tokens[includeStringIndex]?.kind !== "string") continue;
+      if (tokens[includeStringIndex]?.kind !== "string" || !tokens[includeStringIndex].value.startsWith('"')) {
+        fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
+      }
       const includeToken = tokens[includeStringIndex].value;
       if (!includeToken.startsWith('"') || !includeToken.endsWith('"')) {
         fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
