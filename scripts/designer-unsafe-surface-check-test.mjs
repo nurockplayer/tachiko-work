@@ -30,7 +30,7 @@ function runFixture(files) {
 function assertRejected(name, files) {
   const result = runFixture(files);
   assert.notEqual(result.status, 0, `${name} unexpectedly passed`);
-  assert.match(result.stderr, /unsafe is outside|unsafe macro|imported macro|attribute|derive|macro |cfg_attr|include! path|source path|macro_rules|symbolic links|cannot read/i,
+  assert.match(result.stderr, /unsafe is outside|unsafe macro|imported macro|attribute|derive|macro |cfg_attr|glob import|include! path|source path|macro_rules|symbolic links|cannot read/i,
     `${name} did not fail through the expected scanner diagnostic`);
 }
 
@@ -63,6 +63,9 @@ assertRejected("untrusted qualified attribute cannot borrow a safe namespace", {
 assertRejected("untrusted cfg_attr helper cannot borrow a safe namespace", { "lib.rs": "#[cfg_attr(all(), evil::generate)]\nfn safe() {}" });
 assertRejected("cfg_attr checks every conditional helper", { "lib.rs": "#[cfg_attr(all(), test, generate_unsafe)]\nfn safe() {}" });
 assertRejected("untrusted import cannot shadow a safe derive", { "lib.rs": "use evil::Clone; #[derive(Clone)] struct Value;" });
+assertRejected("untrusted import cannot shadow a trusted macro root", { "lib.rs": "use evil as std; std::println!(\"unsafe\");" });
+assertRejected("untrusted glob import cannot hide macros", { "lib.rs": "use evil::*; println!(\"unsafe\");" });
+assertRejected("untrusted import cannot shadow a builtin attribute", { "lib.rs": "use evil::test; #[test] fn safe() {}" });
 
 assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
 assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });

@@ -393,6 +393,11 @@ function scan(root) {
       let trustedPackage = null;
       const importedLeaves = [];
       const useRoot = normalizedIdentifier(tokens[index + 1]?.value ?? "");
+      const useEnd = tokens.findIndex((candidate, offset) => offset > index && candidate.value === ";");
+      if (tokens.slice(index, useEnd === -1 ? tokens.length : useEnd).some((candidate) => candidate.value === "*") &&
+        !["alloc", "core", "crate", "self", "serde", "serde_json", "std", "super", "tachiko_designer_runtime"].includes(useRoot)) {
+        fail(`${path}:${tokens[index].line}:${tokens[index].column}: glob import ${useRoot} cannot be audited by the unsafe-surface scanner`);
+      }
       for (let nested = index + 1; nested < tokens.length && tokens[nested].value !== ";"; nested += 1) {
         if (tokens[nested].kind === "identifier") {
           lastIdentifier = normalizedIdentifier(tokens[nested].value);
@@ -495,6 +500,7 @@ function scan(root) {
       else return true;
       while (rootIndex >= 2 && tokens[rootIndex - 1]?.value === ":" && tokens[rootIndex - 2]?.value === ":") rootIndex -= 2;
       const rootName = normalizedIdentifier(tokens[rootIndex]?.value ?? "");
+      if (shadowedNames.has(rootName)) return false;
       return ["alloc", "core", "std"].includes(rootName) || (rootName === "serde_json" && macroName === "json");
     }
     for (let index = 0; index < tokens.length; index += 1) {
@@ -506,6 +512,9 @@ function scan(root) {
         }
         if (!KNOWN_SAFE_ATTRIBUTES.has(attributeName)) {
           fail(`${path}:${token.line}:${token.column}: attribute ${attributeName} may expand outside the auditable source surface`);
+        }
+        if (shadowedNames.has(attributeName)) {
+          fail(`${path}:${token.line}:${token.column}: attribute ${attributeName} is shadowed by an unauditable import`);
         }
         if (attributeName === "cfg_attr") {
           let depth = 0;
