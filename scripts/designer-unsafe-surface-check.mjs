@@ -379,6 +379,11 @@ function scan(root) {
     const trustedImportedMacroNames = new Set();
     const trustedDerives = new Set();
     const shadowedNames = new Set();
+    for (let index = 0; index + 1 < tokens.length; index += 1) {
+      if (tokens[index].value === "mod" && tokens[index + 1]?.kind === "identifier") {
+        shadowedNames.add(normalizedIdentifier(tokens[index + 1].value));
+      }
+    }
     let changed;
     do {
       changed = false;
