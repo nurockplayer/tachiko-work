@@ -343,7 +343,7 @@ function scan(root) {
     return ["lib", "main", "mod", "build"].includes(stem) ? dirname(filePath) : join(dirname(filePath), stem);
   }
   function scanFile(path, logicalDirectory = moduleFileDirectory(path), inheritedScope = {}) {
-    const visitKey = `${path}\0${logicalDirectory}`;
+    const visitKey = `${path}\0${logicalDirectory}\0${[...(inheritedScope.includeNames ?? [])].sort().join(",")}\0${[...(inheritedScope.unsafeMacroNames ?? [])].sort().join(",")}`;
     if (visited.has(visitKey)) return;
     visited.add(visitKey);
     let source;
@@ -397,8 +397,9 @@ function scan(root) {
     }
     function hasPathAttributeBefore(moduleIndex) {
       for (let previous = moduleIndex - 1; previous >= 0 && previous >= moduleIndex - 20; previous -= 1) {
-        if (tokens[previous].value === ";" || tokens[previous].value === "}") break;
-        if (tokens[previous].value === "path") return true;
+        if ([";", "}", "{"].includes(tokens[previous].value)) break;
+        if (tokens[previous].value === "path" && tokens[previous - 2]?.value === "#" &&
+          tokens[previous - 1]?.value === "[" && tokens[previous + 1]?.value === "=") return true;
         if (tokens[previous].value === "[") break;
       }
       return false;

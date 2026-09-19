@@ -123,10 +123,20 @@ assertRejected("unsafe in a custom target child module", {
   "custom/tool.rs": "mod helper;",
   "custom/helper.rs": "pub unsafe fn bypassed() {}",
 });
+assertRejected("unsafe in an inline module directory with a child module", {
+  "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
+  "custom/tool.rs": "#[path = \"../generated/thread_files\"] mod thread { mod payload; }",
+  "generated/thread_files/payload.rs": "pub unsafe fn bypassed() {}",
+});
 assertRejected("unsafe in a build-script path module", {
   "build.rs": "#[path = \"helper.inc\"] mod helper;",
   "helper.inc": "pub unsafe fn bypassed() {}",
   "build/helper.inc": "pub fn safe_decoy() {}",
+});
+assertRejected("inactive cfg_attr path keeps the conventional module", {
+  "src/lib.rs": "#[cfg_attr(any(), path = \"unused.inc\")] mod foo;",
+  "src/unused.inc": "pub fn safe() {}",
+  "src/foo.rs": "pub unsafe fn bypassed() {}",
 });
 assertRejected("unsafe through an include alias", {
   "src/lib.rs": "use std::include as source; source!(\"payload.inc\");",
