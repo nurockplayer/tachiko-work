@@ -376,6 +376,7 @@ function scan(root) {
       fail(`${path}: macro_rules! source expansion is not supported by the unsafe-surface scanner`);
     }
     const inlineModules = [];
+    const inlineModuleDirectories = [];
     const braceModules = [];
     function scanReferencedSource(reference, token, baseDirectory = dirname(path), referencedLogicalDirectory = logicalDirectory, inheritScope = false, usePhysicalDirectory = false) {
       if (!reference.startsWith('"') || !reference.endsWith('"')) {
@@ -404,7 +405,7 @@ function scan(root) {
     }
     function scanOutOfLineModule(moduleIndex, moduleName) {
       if (hasPathAttributeBefore(moduleIndex)) return;
-      const moduleBaseDirectory = join(logicalDirectory, ...inlineModules);
+      const moduleBaseDirectory = inlineModuleDirectories.at(-1) ?? logicalDirectory;
       const candidates = [join(moduleBaseDirectory, `${moduleName}.rs`), join(moduleBaseDirectory, moduleName, "mod.rs")];
       const modulePath = candidates.find((candidate) => existsSync(candidate));
       if (!modulePath) fail(`${path}:${tokens[moduleIndex].line}:${tokens[moduleIndex].column}: cannot resolve module ${moduleName}`);
@@ -412,6 +413,24 @@ function scan(root) {
       for (const name of globalIncludeNames) includeNames.add(name);
       for (const name of globalUnsafeMacroNames) unsafeMacroNames.add(name);
       scanFile(modulePath, undefined, { includeNames, unsafeMacroNames });
+    }
+    function pathAttributeBaseDirectory() {
+      return inlineModuleDirectories.at(-1) ?? dirname(path);
+    }
+    function pathAttributeHasInlineBody(startIndex) {
+      for (let index = startIndex; index < tokens.length; index += 1) {
+        if (tokens[index].value === "{") return true;
+        if (tokens[index].value === ";") return false;
+      }
+      return false;
+    }
+    function pathAttributeDirectory(reference, baseDirectory) {
+      try {
+        const candidate = resolve(baseDirectory, JSON.parse(reference));
+        return existsSync(candidate) && statSync(candidate).isDirectory() ? candidate : null;
+      } catch {
+        return null;
+      }
     }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
@@ -432,10 +451,10 @@ function scan(root) {
       }
       if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
-        const moduleBaseDirectory = inlineModules.length
-          ? join(moduleFileDirectory(path), ...inlineModules)
-          : dirname(path);
-        scanReferencedSource(tokens[index + 2].value, token, moduleBaseDirectory, moduleBaseDirectory, false, true);
+        const moduleBaseDirectory = pathAttributeBaseDirectory();
+        if (!pathAttributeDirectory(tokens[index + 2].value, moduleBaseDirectory) || !pathAttributeHasInlineBody(index + 3)) {
+          scanReferencedSource(tokens[index + 2].value, token, moduleBaseDirectory, moduleBaseDirectory, false, true);
+        }
       }
       if (token.value === "cfg_attr" && tokens[index + 1]?.value === "(") {
         let depth = 1;
@@ -443,10 +462,10 @@ function scan(root) {
           if (tokens[nested].value === "(") depth += 1;
           if (tokens[nested].value === ")") depth -= 1;
           if (tokens[nested].value === "path" && tokens[nested + 1]?.value === "=" && tokens[nested + 2]?.kind === "string") {
-            const moduleBaseDirectory = inlineModules.length
-              ? join(moduleFileDirectory(path), ...inlineModules)
-              : dirname(path);
-            scanReferencedSource(tokens[nested + 2].value, tokens[nested], moduleBaseDirectory, moduleBaseDirectory, false, true);
+            const moduleBaseDirectory = pathAttributeBaseDirectory();
+            if (!pathAttributeDirectory(tokens[nested + 2].value, moduleBaseDirectory) || !pathAttributeHasInlineBody(nested + 3)) {
+              scanReferencedSource(tokens[nested + 2].value, tokens[nested], moduleBaseDirectory, moduleBaseDirectory, false, true);
+            }
           }
         }
       }
@@ -463,10 +482,27 @@ function scan(root) {
           }
         }
         braceModules.push(moduleName);
-        if (moduleName) inlineModules.push(moduleName);
+        if (moduleName) {
+          inlineModules.push(moduleName);
+          const parentInlineDirectory = inlineModuleDirectories.at(-1);
+          let moduleDirectory = parentInlineDirectory
+            ? join(parentInlineDirectory, moduleName)
+            : join(moduleFileDirectory(path), moduleName);
+          for (let previous = index - 1; previous >= 0 && previous >= index - 20; previous -= 1) {
+            if (tokens[previous].value === "path" && tokens[previous + 1]?.value === "=" && tokens[previous + 2]?.kind === "string") {
+              moduleDirectory = pathAttributeDirectory(tokens[previous + 2].value, pathAttributeBaseDirectory()) ?? moduleDirectory;
+              break;
+            }
+            if (tokens[previous].value === ";" || tokens[previous].value === "}") break;
+          }
+          inlineModuleDirectories.push(moduleDirectory);
+        }
       } else if (token.value === "}") {
         const moduleName = braceModules.pop();
-        if (moduleName) inlineModules.pop();
+        if (moduleName) {
+          inlineModules.pop();
+          inlineModuleDirectories.pop();
+        }
       }
     }
     return { includeNames, unsafeMacroNames };

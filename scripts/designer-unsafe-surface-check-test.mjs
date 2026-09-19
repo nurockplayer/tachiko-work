@@ -109,6 +109,11 @@ assertRejected("unsafe in a raw-identifier inline module path", {
   "src/outer/payload.inc": "pub unsafe fn bypassed() {}",
   "src/r#outer/payload.inc": "pub fn safe_decoy() {}",
 });
+assertRejected("unsafe in an inline module directory path", {
+  "src/lib.rs": "#[path = \"thread_files\"] mod thread { mod payload; }",
+  "src/thread_files/payload.rs": "pub unsafe fn bypassed() {}",
+  "src/payload.rs": "pub fn safe_decoy() {}",
+});
 assertRejected("unsafe in a custom Cargo target", {
   "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
   "custom/tool.rs": "pub unsafe fn bypassed() {}",
