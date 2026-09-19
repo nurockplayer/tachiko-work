@@ -56,6 +56,8 @@ for (const [name, source] of [
 assertRejected("unsafe assembly macro", { "lib.rs": "global_asm!(\"\");" });
 assertRejected("un-auditable procedural attribute", { "lib.rs": "#[generate_unsafe]\nfn safe() {}" });
 assertRejected("un-auditable external macro", { "lib.rs": "external_macro!();" });
+assertRejected("untrusted macro name cannot borrow a safe provenance", { "lib.rs": "use evil::json; json!({});" });
+assertRejected("untrusted derive name cannot borrow a safe provenance", { "lib.rs": "#[derive(evil::Error)] struct Value;" });
 
 assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
 assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });
