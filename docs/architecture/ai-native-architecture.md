@@ -93,6 +93,16 @@ principal, time, validation, Approval, or trust claims from the request and
 delegates those operations to the Issue #29 lifecycle. The seam remains
 provider-free and independently exercisable without an LLM.
 
+## Provider and deployment neutrality
+
+ADR-0007's provider neutrality includes deployment neutrality. The semantic client may be cloud-hosted, organization-hosted, self-hosted, local/on-device, or absent. These deployment choices do not create different semantic laws.
+
+The canonical semantic substrate, deterministic calculation and validation, and the open ownership path remain usable without a remote AI service. The existing provider-facing seam being independently exercisable without an LLM is therefore an architectural property, not merely a test convenience.
+
+A local or self-hosted model is a peer client of the same Semantic API and trusted authorization boundary, not a privileged execution path. Conversely, hosted models do not become semantic authority merely because they provide stronger reasoning or managed infrastructure.
+
+Provider-specific SDKs and protocols such as MCP, A2A, hosted APIs, or local-runtime bridges remain replaceable host/integration adapters unless separately Accepted. This direction does not claim that every provider or local runtime is already integrated and does not select model weights, inference engines, hardware acceleration, packaging, or a public transport protocol.
+
 ## Effect separation
 
 Semantic publication, durable persistence, and host/external effects remain

@@ -3,6 +3,8 @@
 ## Status
 Accepted
 
+Amendment decision issue: [#421](https://github.com/nurockplayer/tachiko-work/issues/421)
+
 ## Context
 
 AI systems should understand and manipulate the underlying meaning of work rather than automate clicks against traditional interfaces.
@@ -50,9 +52,17 @@ Semantic publication, durable persistence, and external publication or host side
 
 A semantic mutation capability does not implicitly grant filesystem, network, process, Git push, plugin, deployment, or other external-effect authority. Storage and host layers materialize or publish an already-authorized semantic result; they do not redefine semantic meaning or mint semantic authorization.
 
-### Provider neutrality and future autonomy
+### Provider and deployment neutrality
 
-Authorization, approval, semantic operations, validation, and canonical-state rules are provider-neutral.
+Authorization, approval, semantic operations, validation, and canonical-state rules are provider- and deployment-neutral.
+
+An AI client may be hosted by a model vendor, hosted by the user's organization, self-hosted, local/on-device, or absent entirely. Canonical semantic meaning, deterministic calculation and validation, the open ownership path, and equivalent non-AI first-party workflows MUST NOT require one AI provider, one model family, or a remote AI service.
+
+Changing AI provider or deployment location MUST NOT change semantic command meaning, authoritative gates, authorization, approval, or canonical-state rules. Local and self-hosted agents remain subject to the same trusted principal, scope, proposal, validation, approval, and Execute boundaries as hosted agents.
+
+Provider-specific SDKs, hosted APIs, MCP, A2A, local-runtime bridges, and similar integration protocols are replaceable boundary adapters unless a narrower Accepted decision explicitly gives one a durable role. They do not become canonical document semantics or a second semantic API merely because they are convenient integration surfaces.
+
+This decision does not require equal capability across models, bundle model weights, select a local inference runtime, promise particular hardware support, or stabilize a provider protocol.
 
 Future bounded autonomous mutation may be permitted through explicit, scoped delegation after capability, review, recovery, and safety policy matures. Such delegation does not make the agent a canonical source of truth or allow it to bypass deterministic semantic gates.
 
@@ -61,6 +71,8 @@ Future bounded autonomous mutation may be permitted through explicit, scoped del
 The AI API should expose semantic operations, document structure, formulas, impact analysis, and reviewable proposals through the shared Semantic API rather than a provider-specific mutation path.
 
 AI-generated content and operations remain untrusted inputs until admitted through the authoritative semantic and authorization boundaries.
+
+Hosted, organization-hosted, self-hosted, and local model clients can evolve independently of the canonical semantic substrate. A remote AI subscription or provider account is not a prerequisite for semantic ownership, deterministic correctness, or the non-AI operation of legitimately held Tachiko work.
 
 The current `requires_approval` behavior is an MVP safety posture, not a permanent public approval protocol.
 
