@@ -38,6 +38,7 @@ const KNOWN_SAFE_ATTRIBUTES = new Set([
 const KNOWN_SAFE_DERIVES = new Set(["Clone", "Copy", "Debug", "Default", "Eq", "Ord", "PartialEq", "PartialOrd"]);
 const NON_MACRO_BANG_PREFIXES = new Set(["as", "else", "if", "in", "let", "return", "while"]);
 const CARGO_TARGET_ROOTS = new Set();
+const TRUSTED_DEPENDENCY_ROOTS = new Set();
 
 function fail(message) {
   throw new Error(`designer-unsafe-surface-check: ${message}`);
@@ -61,6 +62,23 @@ function isIdentifierContinue(source, index) {
 
 function normalizedIdentifier(value) {
   return value.startsWith("r#") ? value.slice(2) : value;
+}
+
+function moduleDepths(tokens) {
+  const depths = [];
+  const braces = [];
+  let depth = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    depths[index] = depth;
+    if (tokens[index].value === "{") {
+      const isModule = tokens[index - 1]?.kind === "identifier" && tokens[index - 2]?.value === "mod";
+      braces.push(isModule);
+      if (isModule) depth += 1;
+    } else if (tokens[index].value === "}") {
+      if (braces.pop()) depth -= 1;
+    }
+  }
+  return depths;
 }
 
 function sourceFiles(root) {
@@ -103,6 +121,11 @@ function sourceFiles(root) {
       metadata = JSON.parse(execFileSync("cargo", ["metadata", "--manifest-path", manifest, "--no-deps", "--format-version", "1"], { encoding: "utf8" }));
     } catch (error) {
       fail(`cannot read Cargo target metadata: ${error.message}`);
+    }
+    for (const dependency of metadata.packages?.[0]?.dependencies ?? []) {
+      if (["serde", "serde_json", "thiserror"].includes(dependency.name) && dependency.rename === null) {
+        TRUSTED_DEPENDENCY_ROOTS.add(dependency.name);
+      }
     }
     for (const target of metadata.packages?.flatMap((packageInfo) => packageInfo.targets) ?? []) {
       const targetPath = resolve(target.src_path);
@@ -306,8 +329,10 @@ function scan(root) {
     aliasesChanged = false;
     for (const sourcePath of allSourceFiles) {
       const sourceTokens = tokensFor(readFileSync(sourcePath, "utf8"), sourcePath);
+      const sourceModuleDepths = moduleDepths(sourceTokens);
       for (let index = 0; index + 2 < sourceTokens.length; index += 1) {
         if (!isUseAlias(sourceTokens, index) || sourceTokens[index + 1]?.value !== "as" || sourceTokens[index + 2]?.kind !== "identifier") continue;
+        if (sourceModuleDepths[index] > 0) fail(`${sourcePath}:${sourceTokens[index].line}:${sourceTokens[index].column}: aliases inside inline modules are not supported by the unsafe-surface scanner`);
         const importedName = normalizedIdentifier(sourceTokens[index].value);
         const aliasName = normalizedIdentifier(sourceTokens[index + 2].value);
         if (globalIncludeNames.has(importedName) && !globalIncludeNames.has(aliasName)) {
@@ -325,8 +350,10 @@ function scan(root) {
     if (seen.has(sourcePath)) return;
     seen.add(sourcePath);
     const sourceTokens = tokensFor(readFileSync(sourcePath, "utf8"), sourcePath);
+    const sourceModuleDepths = moduleDepths(sourceTokens);
     for (let index = 0; index + 2 < sourceTokens.length; index += 1) {
       if (!isUseAlias(sourceTokens, index) || sourceTokens[index + 1]?.value !== "as" || sourceTokens[index + 2]?.kind !== "identifier") continue;
+      if (sourceModuleDepths[index] > 0) fail(`${sourcePath}:${sourceTokens[index].line}:${sourceTokens[index].column}: aliases inside inline modules are not supported by the unsafe-surface scanner`);
       const importedName = normalizedIdentifier(sourceTokens[index].value);
       const aliasName = normalizedIdentifier(sourceTokens[index + 2].value);
       if (globalIncludeNames.has(importedName)) globalIncludeNames.add(aliasName);
@@ -373,6 +400,7 @@ function scan(root) {
       fail(`cannot read ${path}: ${error.message}`);
     }
     const tokens = tokensFor(source, path);
+    const tokenModuleDepths = moduleDepths(tokens);
     const includeNames = new Set(["include", ...(inheritedScope.includeNames ?? [])]);
     const unsafeMacroNames = new Set([...UNSAFE_MACROS, ...(inheritedScope.unsafeMacroNames ?? [])]);
     const importedMacroNames = new Set();
@@ -395,6 +423,7 @@ function scan(root) {
       changed = false;
       for (let index = 0; index + 2 < tokens.length; index += 1) {
         if (!isUseAlias(tokens, index) || tokens[index + 1]?.value !== "as" || tokens[index + 2]?.kind !== "identifier") continue;
+        if (tokenModuleDepths[index] > 0) fail(`${path}:${tokens[index].line}:${tokens[index].column}: aliases inside inline modules are not supported by the unsafe-surface scanner`);
         const importedName = normalizedIdentifier(tokens[index].value);
         const aliasName = normalizedIdentifier(tokens[index + 2].value);
         if (includeNames.has(importedName) && !includeNames.has(aliasName)) {
@@ -434,7 +463,7 @@ function scan(root) {
           if ([",", "}", ";"].includes(tokens[nested + 1]?.value) || tokens[nested + 1]?.value === "as") {
             importedLeaves.push(lastIdentifier);
           }
-          if (useRoot === normalizedIdentifier(tokens[nested].value) && ["serde", "thiserror", "serde_json"].includes(useRoot)) {
+          if (useRoot === normalizedIdentifier(tokens[nested].value) && TRUSTED_DEPENDENCY_ROOTS.has(useRoot)) {
             trustedPackage = normalizedIdentifier(tokens[nested].value);
             if (["serde", "thiserror"].includes(trustedPackage)) trustedDerives.add(trustedPackage);
           }
@@ -528,7 +557,8 @@ function scan(root) {
       while (rootIndex >= 2 && tokens[rootIndex - 1]?.value === ":" && tokens[rootIndex - 2]?.value === ":") rootIndex -= 2;
       const rootName = normalizedIdentifier(tokens[rootIndex]?.value ?? "");
       if (shadowedNames.has(rootName)) return false;
-      return ["alloc", "core", "std"].includes(rootName) || (rootName === "serde_json" && macroName === "json");
+      return ["alloc", "core", "std"].includes(rootName) ||
+        (rootName === "serde_json" && macroName === "json" && TRUSTED_DEPENDENCY_ROOTS.has("serde_json"));
     }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
@@ -584,7 +614,7 @@ function scan(root) {
         }
         if (attributeName === "derive") {
           const derivePackages = new Set(tokens.slice(index + 3).filter((candidate) =>
-            candidate.value === "serde" || candidate.value === "thiserror"
+            TRUSTED_DEPENDENCY_ROOTS.has(candidate.value) && ["serde", "thiserror"].includes(candidate.value)
           ).map((candidate) => candidate.value));
           for (let nested = index + 3; nested < tokens.length && tokens[nested].value !== "]"; nested += 1) {
             const deriveName = normalizedIdentifier(tokens[nested].value);
