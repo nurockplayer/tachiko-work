@@ -30,7 +30,7 @@ function runFixture(files) {
 function assertRejected(name, files) {
   const result = runFixture(files);
   assert.notEqual(result.status, 0, `${name} unexpectedly passed`);
-  assert.match(result.stderr, /unsafe is outside|unsafe macro|include! path|source path|macro_rules|symbolic links|cannot read/i,
+  assert.match(result.stderr, /unsafe is outside|unsafe macro|imported macro|attribute|derive|macro |include! path|source path|macro_rules|symbolic links|cannot read/i,
     `${name} did not fail through the expected scanner diagnostic`);
 }
 
@@ -54,6 +54,8 @@ for (const [name, source] of [
   assertRejected(name, { "lib.rs": source });
 }
 assertRejected("unsafe assembly macro", { "lib.rs": "global_asm!(\"\");" });
+assertRejected("un-auditable procedural attribute", { "lib.rs": "#[generate_unsafe]\nfn safe() {}" });
+assertRejected("un-auditable external macro", { "lib.rs": "external_macro!();" });
 
 assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
 assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });
@@ -169,6 +171,10 @@ assertRejected("unsafe through an ordinary module include alias", {
   "src/lib.rs": "mod aliases; mod caller;",
   "src/aliases.rs": "pub use std::include as source;",
   "src/caller.rs": "use crate::aliases::source; source!(\"payload.inc\");",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe through an unresolved imported macro", {
+  "src/lib.rs": "use external::source; source!(\"payload.inc\");",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
 assertRejected("unsafe through an alias introduced by a later include", {

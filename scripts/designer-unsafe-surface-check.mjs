@@ -26,6 +26,18 @@ const APPROVED_EXPORTS = new Set([
   "tachiko_designer_project_len",
 ]);
 const UNSAFE_MACROS = new Set(["asm", "global_asm", "llvm_asm", "naked_asm"]);
+const KNOWN_SAFE_IMPORTED_MACROS = new Set(["json"]);
+const KNOWN_SAFE_MACROS = new Set([
+  "assert", "assert_eq", "assert_ne", "cfg", "compile_error", "concat", "debug_assert", "env", "format",
+  "include_bytes", "include_str", "matches", "option_env", "panic", "println", "thread_local", "todo",
+  "unimplemented", "unreachable", "vec", "write", "writeln", "json",
+]);
+const KNOWN_SAFE_ATTRIBUTES = new Set([
+  "allow", "cfg", "cfg_attr", "default", "derive", "doc", "error", "from", "ignore", "inline", "must_use", "no_mangle",
+  "non_exhaustive", "path", "repr", "serde", "should_panic", "source", "test", "unsafe",
+]);
+const KNOWN_SAFE_DERIVES = new Set(["Clone", "Copy", "Debug", "Default", "Deserialize", "Eq", "Error", "Ord", "PartialEq", "PartialOrd", "Serialize", "thiserror"]);
+const NON_MACRO_BANG_PREFIXES = new Set(["as", "else", "if", "in", "let", "return", "while"]);
 const CARGO_TARGET_ROOTS = new Set();
 
 function fail(message) {
@@ -355,6 +367,7 @@ function scan(root) {
     const tokens = tokensFor(source, path);
     const includeNames = new Set(["include", ...(inheritedScope.includeNames ?? [])]);
     const unsafeMacroNames = new Set([...UNSAFE_MACROS, ...(inheritedScope.unsafeMacroNames ?? [])]);
+    const importedMacroNames = new Set();
     let changed;
     do {
       changed = false;
@@ -372,6 +385,14 @@ function scan(root) {
         }
       }
     } while (changed);
+    for (let index = 0; index < tokens.length; index += 1) {
+      if (tokens[index].value !== "use") continue;
+      let lastIdentifier;
+      for (let nested = index + 1; nested < tokens.length && tokens[nested].value !== ";"; nested += 1) {
+        if (tokens[nested].kind === "identifier") lastIdentifier = normalizedIdentifier(tokens[nested].value);
+      }
+      if (lastIdentifier) importedMacroNames.add(lastIdentifier);
+    }
     if (tokens.some((token) => token.value === "macro_rules")) {
       fail(`${path}: macro_rules! source expansion is not supported by the unsafe-surface scanner`);
     }
@@ -435,11 +456,37 @@ function scan(root) {
     }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
+      if (token.value === "#" && tokens[index + 1]?.value === "[" && tokens[index + 2]?.kind === "identifier") {
+        const attributeName = normalizedIdentifier(tokens[index + 2].value);
+        if (!KNOWN_SAFE_ATTRIBUTES.has(attributeName)) {
+          fail(`${path}:${token.line}:${token.column}: attribute ${attributeName} may expand outside the auditable source surface`);
+        }
+        if (attributeName === "derive") {
+          for (let nested = index + 3; nested < tokens.length && tokens[nested].value !== "]"; nested += 1) {
+            if (tokens[nested].kind === "identifier" && !KNOWN_SAFE_DERIVES.has(normalizedIdentifier(tokens[nested].value))) {
+              fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: derive ${tokens[nested].value} may expand outside the auditable source surface`);
+            }
+          }
+        }
+      }
       if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
         fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
       }
       if (unsafeMacroNames.has(normalizedIdentifier(token.value)) && tokens[index + 1]?.value === "!") {
         fail(`${path}:${token.line}:${token.column}: unsafe macro ${token.value}! is outside the approved boundary`);
+      }
+      if (importedMacroNames.has(normalizedIdentifier(token.value)) &&
+        !includeNames.has(normalizedIdentifier(token.value)) &&
+        !unsafeMacroNames.has(normalizedIdentifier(token.value)) && tokens[index + 1]?.value === "!") {
+        if (KNOWN_SAFE_IMPORTED_MACROS.has(normalizedIdentifier(token.value))) continue;
+        fail(`${path}:${token.line}:${token.column}: imported macro ${token.value}! cannot be audited by the unsafe-surface scanner`);
+      }
+      if (token.kind === "identifier" && tokens[index + 1]?.value === "!" && ["(", "[", "{"].includes(tokens[index + 2]?.value) &&
+        !NON_MACRO_BANG_PREFIXES.has(normalizedIdentifier(token.value)) &&
+        !KNOWN_SAFE_MACROS.has(normalizedIdentifier(token.value)) &&
+        !includeNames.has(normalizedIdentifier(token.value)) && !unsafeMacroNames.has(normalizedIdentifier(token.value)) &&
+        !importedMacroNames.has(normalizedIdentifier(token.value))) {
+        fail(`${path}:${token.line}:${token.column}: macro ${token.value}! may expand outside the auditable source surface`);
       }
       if (includeNames.has(normalizedIdentifier(token.value)) && tokens[index + 1]?.value === "!") {
         const includeStringIndex = tokens[index + 2]?.value === "(" ? index + 3 : index + 2;
