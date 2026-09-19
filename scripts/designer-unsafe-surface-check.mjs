@@ -2,7 +2,7 @@
 
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 const APPROVED_EXPORTS = new Set([
   "tachiko_designer_request_reserve",
@@ -26,6 +26,7 @@ const APPROVED_EXPORTS = new Set([
   "tachiko_designer_project_len",
 ]);
 const UNSAFE_MACROS = new Set(["asm", "global_asm", "llvm_asm", "naked_asm"]);
+const CARGO_TARGET_ROOTS = new Set();
 
 function fail(message) {
   throw new Error(`designer-unsafe-surface-check: ${message}`);
@@ -45,6 +46,10 @@ function isIdentifierStart(source, index) {
 function isIdentifierContinue(source, index) {
   if (index >= source.length) return false;
   return /[\p{XID_Continue}_]/u.test(codePointAt(source, index).value);
+}
+
+function normalizedIdentifier(value) {
+  return value.startsWith("r#") ? value.slice(2) : value;
 }
 
 function sourceFiles(root) {
@@ -95,6 +100,7 @@ function sourceFiles(root) {
         fail(`Cargo target escapes the runtime package: ${target.src_path}`);
       }
       files.push(targetPath);
+      CARGO_TARGET_ROOTS.add(targetPath);
     }
   }
   const buildScript = `${root}${sep}build.rs`;
@@ -297,7 +303,7 @@ function scan(root) {
       if (tokens[index].value === "include" && tokens[index + 1]?.value === "as" && tokens[index + 2]?.kind === "identifier") {
         includeNames.add(tokens[index + 2].value);
       }
-      if (UNSAFE_MACROS.has(tokens[index].value) && tokens[index + 1]?.value === "as" && tokens[index + 2]?.kind === "identifier") {
+      if (UNSAFE_MACROS.has(normalizedIdentifier(tokens[index].value)) && tokens[index + 1]?.value === "as" && tokens[index + 2]?.kind === "identifier") {
         unsafeMacroNames.add(tokens[index + 2].value);
       }
     }
@@ -306,6 +312,12 @@ function scan(root) {
     }
     const inlineModules = [];
     const braceModules = [];
+    function moduleFileDirectory(filePath) {
+      if (CARGO_TARGET_ROOTS.has(filePath)) return dirname(filePath);
+      const fileName = basename(filePath);
+      const stem = fileName.replace(/\.[^.]+$/, "");
+      return ["lib", "main", "mod"].includes(stem) ? dirname(filePath) : join(dirname(filePath), stem);
+    }
     function scanReferencedSource(reference, token, baseDirectory = dirname(path)) {
       if (!reference.startsWith('"') || !reference.endsWith('"')) {
         fail(`${path}:${token.line}:${token.column}: source path must be a normal string literal`);
@@ -327,7 +339,7 @@ function scan(root) {
       if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
         fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
       }
-      if (unsafeMacroNames.has(token.value) && tokens[index + 1]?.value === "!") {
+      if (unsafeMacroNames.has(normalizedIdentifier(token.value)) && tokens[index + 1]?.value === "!") {
         fail(`${path}:${token.line}:${token.column}: unsafe macro ${token.value}! is outside the approved boundary`);
       }
       if (includeNames.has(token.value) && tokens[index + 1]?.value === "!") {
@@ -339,7 +351,7 @@ function scan(root) {
       }
       if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
-        scanReferencedSource(tokens[index + 2].value, token, join(dirname(path), ...inlineModules));
+        scanReferencedSource(tokens[index + 2].value, token, join(moduleFileDirectory(path), ...inlineModules));
       }
       if (token.value === "cfg_attr" && tokens[index + 1]?.value === "(") {
         let depth = 1;
@@ -347,7 +359,7 @@ function scan(root) {
           if (tokens[nested].value === "(") depth += 1;
           if (tokens[nested].value === ")") depth -= 1;
           if (tokens[nested].value === "path" && tokens[nested + 1]?.value === "=" && tokens[nested + 2]?.kind === "string") {
-            scanReferencedSource(tokens[nested + 2].value, tokens[nested], join(dirname(path), ...inlineModules));
+            scanReferencedSource(tokens[nested + 2].value, tokens[nested], join(moduleFileDirectory(path), ...inlineModules));
           }
         }
       }

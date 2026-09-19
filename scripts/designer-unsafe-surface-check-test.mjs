@@ -86,6 +86,12 @@ assertRejected("unsafe in an inline-module path module", {
   "src/outer/payload.inc": "pub unsafe fn bypassed() {}",
   "src/payload.inc": "pub fn safe_decoy() {}",
 });
+assertRejected("unsafe in an inline module from a nested module file", {
+  "src/lib.rs": "mod foo;",
+  "src/foo.rs": "mod bar { #[path = \"payload.inc\"] mod payload; }",
+  "src/foo/bar/payload.inc": "pub unsafe fn bypassed() {}",
+  "src/foo/payload.inc": "pub fn safe_decoy() {}",
+});
 assertRejected("unsafe in a custom Cargo target", {
   "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
   "custom/tool.rs": "pub unsafe fn bypassed() {}",
@@ -100,6 +106,9 @@ assertRejected("unsafe through a grouped include alias", {
 });
 assertRejected("unsafe through an assembly macro alias", {
   "src/lib.rs": "use core::arch::global_asm as generated; generated!(\"\");",
+});
+assertRejected("unsafe through a raw assembly macro identifier", {
+  "src/lib.rs": "core::arch::r#global_asm!(\"\");",
 });
 assertRejected("unsafe in a long cfg_attr path module", {
   "src/lib.rs": "#[cfg_attr(all(unix, target_pointer_width = \"64\", not(target_os = \"none\")), path = \"payload.inc\")] mod payload;",
