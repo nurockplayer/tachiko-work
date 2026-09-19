@@ -68,6 +68,7 @@ assertRejected("cfg_attr checks every conditional helper", { "lib.rs": "#[cfg_at
 assertRejected("untrusted import cannot shadow a safe derive", { "lib.rs": "use evil::Clone; #[derive(Clone)] struct Value;" });
 assertRejected("untrusted import cannot shadow a trusted macro root", { "lib.rs": "use evil as std; std::println!(\"unsafe\");" });
 assertRejected("untrusted glob import cannot hide macros", { "lib.rs": "use evil::*; println!(\"unsafe\");" });
+assertRejected("runtime glob import cannot hide macros", { "lib.rs": "use tachiko_designer_runtime::*; println!(\"unsafe\");" });
 assertRejected("untrusted import cannot shadow a builtin attribute", { "lib.rs": "use evil::test; #[test] fn safe() {}" });
 assertRejected("local package cannot borrow trusted serde provenance", {
   "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nserde = { path = \"evil-serde\" }\n",

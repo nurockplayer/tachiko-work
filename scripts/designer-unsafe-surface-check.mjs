@@ -136,7 +136,10 @@ function sourceFiles(root) {
       }
     }
     for (const dependency of rootPackage?.dependencies ?? []) {
-      if (!TRUSTED_DEPENDENCY_ROOTS.has(dependency.name)) CARGO_EXTERNAL_ROOTS.add(dependency.name);
+      if (!TRUSTED_DEPENDENCY_ROOTS.has(dependency.name)) {
+        CARGO_EXTERNAL_ROOTS.add(dependency.name);
+        if (dependency.rename) CARGO_EXTERNAL_ROOTS.add(dependency.rename);
+      }
     }
     for (const target of rootPackage?.targets ?? []) {
       const targetPath = resolve(target.src_path);
@@ -484,10 +487,9 @@ function scan(root) {
             useTokens[candidateIndex - 3]?.kind === "identifier" && ["{", ","].includes(useTokens[candidateIndex - 4]?.value))
         )
       );
-      if (hasGlob && useRoot === "tachiko_designer_runtime" && shadowedNames.has(useRoot)) {
-        fail(`${path}:${tokens[index].line}:${tokens[index].column}: glob import ${useRoot} is shadowed by an unauditable dependency`);
-      }
-      if (hasGlob && useRoot !== "tachiko_designer_runtime" && !hasAuditableInternalGlob) {
+      const hasAuditableRuntimeGlob = useRoot === "tachiko_designer_runtime" &&
+        useTokens.some((candidate) => normalizedIdentifier(candidate.value) === "interop_adapter");
+      if (hasGlob && !hasAuditableInternalGlob && !hasAuditableRuntimeGlob) {
         fail(`${path}:${tokens[index].line}:${tokens[index].column}: glob import ${useRoot} cannot be audited by the unsafe-surface scanner`);
       }
       for (let nested = index + 1; nested < tokens.length && tokens[nested].value !== ";"; nested += 1) {
