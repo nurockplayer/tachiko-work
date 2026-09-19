@@ -102,6 +102,16 @@ assertRejected("unsafe in a path module", {
   "src/lib.rs": "#[path = \"payload.inc\"] mod payload;",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
+assertRejected("unsafe in a raw-identifier path module", {
+  "src/lib.rs": "#[r#path = \"payload.inc\"] mod payload;",
+  "src/payload.rs": "pub fn safe_decoy() {}",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe in a raw-identifier cfg_attr path module", {
+  "src/lib.rs": "#[cfg_attr(all(), r#path = \"payload.inc\")] mod payload;",
+  "src/payload.rs": "pub fn safe_decoy() {}",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
 assertRejected("unsafe in a cfg_attr path module", {
   "src/lib.rs": "#[cfg_attr(all(), path = \"payload.inc\")] mod payload;",
   "src/payload.inc": "pub unsafe fn bypassed() {}",

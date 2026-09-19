@@ -118,7 +118,7 @@ function sourceFiles(root) {
   if (existsSync(manifest)) {
     let metadata;
     try {
-      metadata = JSON.parse(execFileSync("cargo", ["metadata", "--manifest-path", manifest, "--format-version", "1"], { encoding: "utf8" }));
+      metadata = JSON.parse(execFileSync("cargo", ["metadata", "--manifest-path", manifest, "--locked", "--format-version", "1"], { encoding: "utf8" }));
     } catch (error) {
       fail(`cannot read Cargo target metadata: ${error.message}`);
     }
@@ -532,7 +532,7 @@ function scan(root) {
     function hasPathAttributeBefore(moduleIndex) {
       for (let previous = moduleIndex - 1; previous >= 0 && previous >= moduleIndex - 20; previous -= 1) {
         if ([";", "}", "{"].includes(tokens[previous].value)) break;
-        if (tokens[previous].value === "path" && tokens[previous - 2]?.value === "#" &&
+        if (normalizedIdentifier(tokens[previous].value) === "path" && tokens[previous - 2]?.value === "#" &&
           tokens[previous - 1]?.value === "[" && tokens[previous + 1]?.value === "=") return true;
         if (tokens[previous].value === "[") break;
       }
@@ -661,6 +661,9 @@ function scan(root) {
         if (trustedImportedMacroNames.has(normalizedIdentifier(token.value))) continue;
         fail(`${path}:${token.line}:${token.column}: imported macro ${token.value}! cannot be audited by the unsafe-surface scanner`);
       }
+      if (token.value === "include" && tokens[index + 1]?.value === "!" && shadowedNames.has("include")) {
+        fail(`${path}:${token.line}:${token.column}: imported macro include! cannot borrow the builtin include provenance`);
+      }
       if (token.kind === "identifier" && tokens[index - 1]?.value === "::" && tokens[index + 1]?.value === "!" &&
         ["(", "[", "{"].includes(tokens[index + 2]?.value) && !trustedMacroInvocation(index)) {
         fail(`${path}:${token.line}:${token.column}: qualified macro ${token.value}! cannot be audited by the unsafe-surface scanner`);
@@ -681,7 +684,7 @@ function scan(root) {
         for (const name of childScope?.includeNames ?? []) includeNames.add(name);
         for (const name of childScope?.unsafeMacroNames ?? []) unsafeMacroNames.add(name);
       }
-      if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
+      if (normalizedIdentifier(token.value) === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
         const moduleBaseDirectory = pathAttributeBaseDirectory();
         if (!pathAttributeDirectory(tokens[index + 2].value, moduleBaseDirectory) || !pathAttributeHasInlineBody(index + 3)) {
@@ -693,7 +696,7 @@ function scan(root) {
         for (let nested = index + 2; nested < tokens.length && depth > 0; nested += 1) {
           if (tokens[nested].value === "(") depth += 1;
           if (tokens[nested].value === ")") depth -= 1;
-          if (tokens[nested].value === "path" && tokens[nested + 1]?.value === "=" && tokens[nested + 2]?.kind === "string") {
+          if (normalizedIdentifier(tokens[nested].value) === "path" && tokens[nested + 1]?.value === "=" && tokens[nested + 2]?.kind === "string") {
             const moduleBaseDirectory = pathAttributeBaseDirectory();
             if (!pathAttributeDirectory(tokens[nested + 2].value, moduleBaseDirectory) || !pathAttributeHasInlineBody(nested + 3)) {
               scanReferencedSource(tokens[nested + 2].value, tokens[nested], moduleBaseDirectory, moduleBaseDirectory, false, true);
@@ -721,7 +724,7 @@ function scan(root) {
             ? join(parentInlineDirectory, moduleName)
             : join(moduleFileDirectory(path, isCrateRoot), moduleName);
           for (let previous = index - 1; previous >= 0 && previous >= index - 20; previous -= 1) {
-            if (tokens[previous].value === "path" && tokens[previous + 1]?.value === "=" && tokens[previous + 2]?.kind === "string") {
+            if (normalizedIdentifier(tokens[previous].value) === "path" && tokens[previous + 1]?.value === "=" && tokens[previous + 2]?.kind === "string") {
               moduleDirectory = pathAttributeDirectory(tokens[previous + 2].value, pathAttributeBaseDirectory()) ?? moduleDirectory;
               break;
             }
