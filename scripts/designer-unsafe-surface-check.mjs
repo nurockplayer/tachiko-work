@@ -25,6 +25,7 @@ const APPROVED_EXPORTS = new Set([
   "tachiko_designer_project_ptr",
   "tachiko_designer_project_len",
 ]);
+const UNSAFE_MACROS = new Set(["asm", "global_asm", "llvm_asm", "naked_asm"]);
 
 function fail(message) {
   throw new Error(`designer-unsafe-surface-check: ${message}`);
@@ -316,6 +317,9 @@ function scan(root) {
       const token = tokens[index];
       if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
         fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
+      }
+      if (UNSAFE_MACROS.has(token.value) && tokens[index + 1]?.value === "!") {
+        fail(`${path}:${token.line}:${token.column}: unsafe macro ${token.value}! is outside the approved boundary`);
       }
       if (includeNames.has(token.value) && tokens[index + 1]?.value === "!") {
         const includeStringIndex = tokens[index + 2]?.value === "(" ? index + 3 : index + 2;

@@ -52,6 +52,7 @@ for (const [name, source] of [
 ]) {
   assertRejected(name, { "lib.rs": source });
 }
+assertRejected("unsafe assembly macro", { "lib.rs": "global_asm!(\"\");" });
 
 assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
 assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });
