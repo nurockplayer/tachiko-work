@@ -98,6 +98,11 @@ assertRejected("unsafe in a path-renamed module's nested path", {
   "src/payload.inc": "pub unsafe fn bypassed() {}",
   "src/foo/payload.inc": "pub fn safe_decoy() {}",
 });
+assertRejected("unsafe in a raw-identifier inline module path", {
+  "src/lib.rs": "mod r#outer { #[path = \"payload.inc\"] mod payload; }",
+  "src/outer/payload.inc": "pub unsafe fn bypassed() {}",
+  "src/r#outer/payload.inc": "pub fn safe_decoy() {}",
+});
 assertRejected("unsafe in a custom Cargo target", {
   "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
   "custom/tool.rs": "pub unsafe fn bypassed() {}",
@@ -132,6 +137,11 @@ assertRejected("unsafe through an ordinary module include alias", {
   "src/lib.rs": "mod aliases; mod caller;",
   "src/aliases.rs": "pub use std::include as source;",
   "src/caller.rs": "use crate::aliases::source; source!(\"payload.inc\");",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe through an alias introduced by a later include", {
+  "src/lib.rs": "source!(\"payload.inc\"); include!(\"aliases.inc\");",
+  "src/aliases.inc": "use std::include as source;",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
 assertRejected("unsafe through a raw assembly macro identifier", {

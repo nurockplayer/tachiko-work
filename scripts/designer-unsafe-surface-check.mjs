@@ -302,6 +302,40 @@ function scan(root) {
       }
     }
   } while (aliasesChanged);
+  function collectIncludedAliases(sourcePath, seen = new Set()) {
+    if (seen.has(sourcePath)) return;
+    seen.add(sourcePath);
+    const sourceTokens = tokensFor(readFileSync(sourcePath, "utf8"), sourcePath);
+    for (let index = 0; index + 2 < sourceTokens.length; index += 1) {
+      if (sourceTokens[index + 1]?.value !== "as" || sourceTokens[index + 2]?.kind !== "identifier") continue;
+      const importedName = normalizedIdentifier(sourceTokens[index].value);
+      const aliasName = normalizedIdentifier(sourceTokens[index + 2].value);
+      if (globalIncludeNames.has(importedName)) globalIncludeNames.add(aliasName);
+      if (globalUnsafeMacroNames.has(importedName)) globalUnsafeMacroNames.add(aliasName);
+    }
+    for (let index = 0; index < sourceTokens.length; index += 1) {
+      if (!globalIncludeNames.has(normalizedIdentifier(sourceTokens[index].value)) || sourceTokens[index + 1]?.value !== "!") continue;
+      const stringIndex = sourceTokens[index + 2]?.value === "(" ? index + 3 : index + 2;
+      if (sourceTokens[stringIndex]?.kind !== "string" || !sourceTokens[stringIndex].value.startsWith('"')) continue;
+      let includedPath;
+      try {
+        includedPath = resolve(dirname(sourcePath), JSON.parse(sourceTokens[stringIndex].value));
+      } catch {
+        continue;
+      }
+      const relativeIncludedPath = relative(resolvedRoot, includedPath);
+      if (relativeIncludedPath !== "" && relativeIncludedPath !== ".." && !relativeIncludedPath.startsWith(`..${sep}`)) {
+        collectIncludedAliases(includedPath, seen);
+      }
+    }
+  }
+  let includedAliasChanged;
+  do {
+    const includeCount = globalIncludeNames.size;
+    const unsafeMacroCount = globalUnsafeMacroNames.size;
+    for (const sourcePath of allSourceFiles) collectIncludedAliases(sourcePath, new Set());
+    includedAliasChanged = includeCount !== globalIncludeNames.size || unsafeMacroCount !== globalUnsafeMacroNames.size;
+  } while (includedAliasChanged);
   function moduleFileDirectory(filePath) {
     if (CARGO_TARGET_ROOTS.has(filePath)) return dirname(filePath);
     const fileName = basename(filePath);
@@ -398,7 +432,7 @@ function scan(root) {
         for (let previous = index - 1; previous >= 0 && previous >= index - 6; previous -= 1) {
           if (["{", "}", ";"].includes(tokens[previous].value)) break;
           if (tokens[previous].value === "mod" && tokens[previous + 1]?.kind === "identifier") {
-            moduleName = tokens[previous + 1].value;
+            moduleName = normalizedIdentifier(tokens[previous + 1].value);
             break;
           }
         }
