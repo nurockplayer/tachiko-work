@@ -1,7 +1,29 @@
 #!/usr/bin/env node
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
+
+const APPROVED_EXPORTS = new Set([
+  "tachiko_designer_request_reserve",
+  "tachiko_designer_request_run",
+  "tachiko_designer_response_ptr",
+  "tachiko_designer_response_len",
+  "tachiko_designer_project_reserve",
+  "tachiko_designer_project_open",
+  "tachiko_designer_project_open_local_document",
+  "tachiko_designer_portable_ro_open",
+  "tachiko_designer_portable_ro_verify",
+  "tachiko_designer_project_inspect",
+  "tachiko_designer_spreadsheet_run",
+  "tachiko_designer_project_export",
+  "tachiko_designer_canonical_tree_export",
+  "tachiko_designer_portable_ro_export",
+  "tachiko_designer_occurrence_observe",
+  "tachiko_designer_project_release",
+  "tachiko_designer_project_close",
+  "tachiko_designer_project_ptr",
+  "tachiko_designer_project_len",
+]);
 
 function fail(message) {
   throw new Error(`designer-unsafe-surface-check: ${message}`);
@@ -42,14 +64,19 @@ function sourceFiles(root) {
     }
     for (const entry of entries) {
       const path = `${directory}${sep}${entry.name}`;
-      if (entry.isDirectory()) {
+      if (entry.isDirectory() && entry.name !== "target") {
         visit(path);
       } else if (entry.isFile() && entry.name.endsWith(".rs")) {
         files.push(path);
       }
     }
   }
-  visit(root);
+  for (const directory of ["src", "tests", "examples", "fixtures", "benches"]) {
+    const path = `${root}${sep}${directory}`;
+    if (existsSync(path)) visit(path);
+  }
+  const buildScript = `${root}${sep}build.rs`;
+  if (existsSync(buildScript)) files.push(buildScript);
   return files.sort();
 }
 
@@ -120,6 +147,7 @@ function tokensFor(source, path) {
         const terminator = `"${hashes}`;
         const end = source.indexOf(terminator, cursor + 1);
         if (end === -1) unterminated("raw string", startLine, startColumn);
+        tokens.push({ kind: "string", value: source.slice(index, end + terminator.length), line: startLine, column: startColumn });
         advanceTo(end + terminator.length);
         continue;
       }
@@ -140,6 +168,7 @@ function tokensFor(source, path) {
         }
       }
       if (!closed) unterminated("string", startLine, startColumn);
+      tokens.push({ kind: "string", value: source.slice(index, cursor), line: startLine, column: startColumn });
       advanceTo(cursor);
       continue;
     }
@@ -170,7 +199,7 @@ function tokensFor(source, path) {
         while (isIdentifierContinue(source, lifetimeEnd)) {
           lifetimeEnd += codePointAt(source, lifetimeEnd).width;
         }
-        tokens.push({ value: source.slice(index, lifetimeEnd), line: startLine, column: startColumn });
+        tokens.push({ kind: "identifier", value: source.slice(index, lifetimeEnd), line: startLine, column: startColumn });
         advanceTo(lifetimeEnd);
         continue;
       }
@@ -179,32 +208,39 @@ function tokensFor(source, path) {
     if (source.startsWith("r#", index) && isIdentifierStart(source, index + 2)) {
       let cursor = index + 2;
       while (isIdentifierContinue(source, cursor)) cursor += codePointAt(source, cursor).width;
-      tokens.push({ value: source.slice(index, cursor), line: startLine, column: startColumn });
+      tokens.push({ kind: "identifier", value: source.slice(index, cursor), line: startLine, column: startColumn });
       advanceTo(cursor);
       continue;
     }
     if (isIdentifierStart(source, index)) {
       let cursor = index;
       while (isIdentifierContinue(source, cursor)) cursor += codePointAt(source, cursor).width;
-      tokens.push({ value: source.slice(index, cursor), line: startLine, column: startColumn });
+      tokens.push({ kind: "identifier", value: source.slice(index, cursor), line: startLine, column: startColumn });
       advanceTo(cursor);
       continue;
     }
 
-    tokens.push({ value: current, line: startLine, column: startColumn });
+    tokens.push({ kind: "punctuation", value: current, line: startLine, column: startColumn });
     advanceTo(index + 1);
   }
   return tokens;
 }
 
-function approvedNoMangle(tokens, index, path) {
-  return relative(resolve(process.argv[2]), path) === "wasm.rs" &&
+function approvedNoMangle(tokens, index, path, packageRoot) {
+  return relative(resolve(packageRoot), path) === "src/wasm.rs" &&
     tokens[index - 2]?.value === "#" &&
     tokens[index - 1]?.value === "[" &&
     tokens[index + 1]?.value === "(" &&
     tokens[index + 2]?.value === "no_mangle" &&
     tokens[index + 3]?.value === ")" &&
-    tokens[index + 4]?.value === "]";
+    tokens[index + 4]?.value === "]" &&
+    tokens[index + 5]?.value === "pub" &&
+    tokens[index + 6]?.value === "extern" &&
+    tokens[index + 7]?.kind === "string" &&
+    tokens[index + 7]?.value === '"C"' &&
+    tokens[index + 8]?.value === "fn" &&
+    tokens[index + 9]?.kind === "identifier" &&
+    APPROVED_EXPORTS.has(tokens[index + 9]?.value);
 }
 
 function scan(root) {
@@ -219,15 +255,15 @@ function scan(root) {
     const tokens = tokensFor(source, path);
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
-      if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path)) {
-        fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in root wasm.rs`);
+      if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
+        fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
       }
     }
   }
 }
 
 if (process.argv.length !== 3) {
-  console.error("usage: designer-unsafe-surface-check.mjs <runtime-source-root>");
+  console.error("usage: designer-unsafe-surface-check.mjs <runtime-package-root>");
   process.exit(2);
 }
 

@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 designer_dir="${repo_root}/apps/designer"
 runtime_manifest="${designer_dir}/runtime/Cargo.toml"
-runtime_src="${designer_dir}/runtime/src"
+runtime_root="${designer_dir}/runtime"
 
 command -v pnpm >/dev/null 2>&1 || {
   echo "designer-check: pnpm 11.25.0 is required" >&2
@@ -27,7 +27,7 @@ fi
 # The standalone runtime permits Rust 2024 `#[unsafe(no_mangle)]` only for the
 # private WASM C ABI. The lexical scanner rejects every other real `unsafe`
 # token, including multiline forms, while ignoring comments and literals.
-node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_src}"
+node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_root}"
 node "${repo_root}/scripts/designer-unsafe-surface-check-test.mjs"
 
 pnpm --dir "${designer_dir}" install --frozen-lockfile

@@ -7,12 +7,17 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const scanner = resolve(import.meta.dirname, "designer-unsafe-surface-check.mjs");
+const packageDirectories = new Set(["src", "tests", "examples", "fixtures", "benches", "target"]);
 
 function runFixture(files) {
   const root = mkdtempSync(join(tmpdir(), "tachiko-designer-unsafe-"));
   try {
     for (const [relativePath, source] of Object.entries(files)) {
-      const path = join(root, relativePath);
+      const [directory] = relativePath.split("/");
+      const packagePath = relativePath === "build.rs" || packageDirectories.has(directory)
+        ? relativePath
+        : join("src", relativePath);
+      const path = join(root, packagePath);
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, source);
     }
@@ -48,14 +53,23 @@ for (const [name, source] of [
   assertRejected(name, { "lib.rs": source });
 }
 
-assertRejected("no_mangle outside root wasm.rs", { "lib.rs": "#[unsafe(no_mangle)]\nfn f() {}" });
-assertRejected("no_mangle in nested wasm.rs", { "nested/wasm.rs": "#[unsafe(no_mangle)]\nfn f() {}" });
+assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
+assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });
+assertRejected("unsafe in build.rs", { "build.rs": "unsafe fn f() {}" });
+assertRejected("unsafe in fixtures", { "fixtures/unsafe.rs": "unsafe impl Trait for Type {}" });
+assertRejected("no_mangle outside root wasm.rs", { "lib.rs": "#[unsafe(no_mangle)]\npub extern \"C\" fn tachiko_designer_request_run() {}" });
+assertRejected("no_mangle in nested wasm.rs", { "src/nested/wasm.rs": "#[unsafe(no_mangle)]\npub extern \"C\" fn tachiko_designer_request_run() {}" });
+assertRejected("normal Rust ABI function", { "wasm.rs": "#[unsafe(no_mangle)]\npub fn tachiko_designer_request_run() {}" });
+assertRejected("static instead of function", { "wasm.rs": "#[unsafe(no_mangle)]\npub static tachiko_designer_request_run: u8 = 0;" });
+assertRejected("non-C ABI function", { "wasm.rs": "#[unsafe(no_mangle)]\npub extern \"Rust\" fn tachiko_designer_request_run() {}" });
+assertRejected("omitted ABI function", { "wasm.rs": "#[unsafe(no_mangle)]\npub extern fn tachiko_designer_request_run() {}" });
+assertRejected("unapproved export name", { "wasm.rs": "#[unsafe(no_mangle)]\npub extern \"C\" fn tachiko_designer_not_approved() {}" });
 assertAccepted("approved root wasm ABI attribute", {
-  "wasm.rs": "#[unsafe /* ABI */ ( no_mangle )]\npub extern \"C\" fn f() {}",
-  "lib.rs": "fn safe() {}",
+  "src/wasm.rs": "#[unsafe /* ABI */ ( no_mangle )]\npub extern \"C\" fn tachiko_designer_request_run() {}",
+  "src/lib.rs": "fn safe() {}",
 });
 assertAccepted("comments and literals are not unsafe syntax", {
-  "lib.rs": [
+  "src/lib.rs": [
     "// unsafe extern fn ignored() {}",
     "/* unsafe { ignored(); } */",
     "const TEXT: &str = \"unsafe fn ignored\";",
@@ -66,6 +80,10 @@ assertAccepted("comments and literals are not unsafe syntax", {
     "fn r#unsafe() {}",
     "fn with_lifetime<'unsafe>(value: &'unsafe str) -> &'unsafe str { value }",
   ].join("\n"),
+});
+assertAccepted("target is ignored", {
+  "target/generated.rs": "unsafe fn ignored() {}",
+  "src/lib.rs": "fn safe() {}",
 });
 
 const missing = spawnSync(process.execPath, [scanner, join(tmpdir(), "tachiko-missing-unsafe-root")], { encoding: "utf8" });
