@@ -408,7 +408,10 @@ function scan(root) {
       const candidates = [join(moduleBaseDirectory, `${moduleName}.rs`), join(moduleBaseDirectory, moduleName, "mod.rs")];
       const modulePath = candidates.find((candidate) => existsSync(candidate));
       if (!modulePath) fail(`${path}:${tokens[moduleIndex].line}:${tokens[moduleIndex].column}: cannot resolve module ${moduleName}`);
-      scanFile(modulePath);
+      collectIncludedAliases(modulePath);
+      for (const name of globalIncludeNames) includeNames.add(name);
+      for (const name of globalUnsafeMacroNames) unsafeMacroNames.add(name);
+      scanFile(modulePath, undefined, { includeNames, unsafeMacroNames });
     }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
@@ -429,7 +432,9 @@ function scan(root) {
       }
       if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
-        const moduleBaseDirectory = join(logicalDirectory, ...inlineModules);
+        const moduleBaseDirectory = inlineModules.length
+          ? join(moduleFileDirectory(path), ...inlineModules)
+          : dirname(path);
         scanReferencedSource(tokens[index + 2].value, token, moduleBaseDirectory, moduleBaseDirectory, false, true);
       }
       if (token.value === "cfg_attr" && tokens[index + 1]?.value === "(") {
@@ -438,7 +443,9 @@ function scan(root) {
           if (tokens[nested].value === "(") depth += 1;
           if (tokens[nested].value === ")") depth -= 1;
           if (tokens[nested].value === "path" && tokens[nested + 1]?.value === "=" && tokens[nested + 2]?.kind === "string") {
-            const moduleBaseDirectory = join(logicalDirectory, ...inlineModules);
+            const moduleBaseDirectory = inlineModules.length
+              ? join(moduleFileDirectory(path), ...inlineModules)
+              : dirname(path);
             scanReferencedSource(tokens[nested + 2].value, tokens[nested], moduleBaseDirectory, moduleBaseDirectory, false, true);
           }
         }

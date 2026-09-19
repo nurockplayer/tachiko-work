@@ -98,6 +98,12 @@ assertRejected("unsafe in a path-renamed module's nested path", {
   "src/payload.inc": "pub unsafe fn bypassed() {}",
   "src/foo/payload.inc": "pub fn safe_decoy() {}",
 });
+assertRejected("unsafe in a direct path inside a child module file", {
+  "src/lib.rs": "mod foo;",
+  "src/foo.rs": "#[path = \"payload.inc\"] mod payload;",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+  "src/foo/payload.inc": "pub fn safe_decoy() {}",
+});
 assertRejected("unsafe in a raw-identifier inline module path", {
   "src/lib.rs": "mod r#outer { #[path = \"payload.inc\"] mod payload; }",
   "src/outer/payload.inc": "pub unsafe fn bypassed() {}",
