@@ -369,6 +369,7 @@ function scan(root) {
     const importedMacroNames = new Set();
     const trustedImportedMacroNames = new Set();
     const trustedDerives = new Set();
+    const shadowedNames = new Set();
     let changed;
     do {
       changed = false;
@@ -390,10 +391,14 @@ function scan(root) {
       if (tokens[index].value !== "use") continue;
       let lastIdentifier;
       let trustedPackage = null;
+      const importedLeaves = [];
       const useRoot = normalizedIdentifier(tokens[index + 1]?.value ?? "");
       for (let nested = index + 1; nested < tokens.length && tokens[nested].value !== ";"; nested += 1) {
         if (tokens[nested].kind === "identifier") {
           lastIdentifier = normalizedIdentifier(tokens[nested].value);
+          if ([",", "}", ";"].includes(tokens[nested + 1]?.value) || tokens[nested + 1]?.value === "as") {
+            importedLeaves.push(lastIdentifier);
+          }
           if (useRoot === normalizedIdentifier(tokens[nested].value) && ["serde", "thiserror", "serde_json"].includes(useRoot)) {
             trustedPackage = normalizedIdentifier(tokens[nested].value);
             if (["serde", "thiserror"].includes(trustedPackage)) trustedDerives.add(trustedPackage);
@@ -407,7 +412,18 @@ function scan(root) {
           }
         }
       }
-      if (lastIdentifier) importedMacroNames.add(lastIdentifier);
+      for (const importedName of importedLeaves.length > 0 ? importedLeaves : (lastIdentifier ? [lastIdentifier] : [])) {
+        importedMacroNames.add(importedName);
+        if (trustedPackage === "serde_json" && importedName === "json") {
+          trustedImportedMacroNames.add(importedName);
+        } else if (trustedPackage === "serde" && ["Deserialize", "Serialize"].includes(importedName)) {
+          trustedDerives.add(importedName);
+        } else if (trustedPackage === "thiserror" && importedName === "Error") {
+          trustedDerives.add(importedName);
+        } else {
+          shadowedNames.add(importedName);
+        }
+      }
     }
     if (tokens.some((token) => token.value === "macro_rules")) {
       fail(`${path}: macro_rules! source expansion is not supported by the unsafe-surface scanner`);
@@ -492,13 +508,14 @@ function scan(root) {
           fail(`${path}:${token.line}:${token.column}: attribute ${attributeName} may expand outside the auditable source surface`);
         }
         if (attributeName === "cfg_attr") {
-          let depth = 1;
+          let depth = 0;
           let predicateDone = false;
           let helperChecked = false;
           for (let nested = index + 3; nested < tokens.length && tokens[nested].value !== "]"; nested += 1) {
             if (tokens[nested].value === "(") depth += 1;
             if (tokens[nested].value === ")") depth -= 1;
             if (depth === 1 && tokens[nested].value === ",") {
+              if (predicateDone) helperChecked = false;
               predicateDone = true;
               continue;
             }
@@ -521,8 +538,8 @@ function scan(root) {
             const deriveName = normalizedIdentifier(tokens[nested].value);
             const qualifiedExternalDerive = (derivePackages.has("serde") && ["serde", "Deserialize", "Serialize"].includes(deriveName)) ||
               (derivePackages.has("thiserror") && ["thiserror", "Error"].includes(deriveName));
-            if (tokens[nested].kind === "identifier" && !KNOWN_SAFE_DERIVES.has(deriveName) &&
-              !trustedDerives.has(deriveName) && !qualifiedExternalDerive) {
+            if (tokens[nested].kind === "identifier" &&
+              ((!KNOWN_SAFE_DERIVES.has(deriveName) && !trustedDerives.has(deriveName) && !qualifiedExternalDerive) || shadowedNames.has(deriveName))) {
               fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: derive ${tokens[nested].value} may expand outside the auditable source surface`);
             }
           }

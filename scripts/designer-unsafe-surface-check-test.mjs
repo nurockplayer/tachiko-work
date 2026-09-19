@@ -61,6 +61,8 @@ assertRejected("untrusted derive name cannot borrow a safe provenance", { "lib.r
 assertRejected("untrusted qualified macro cannot borrow a safe name", { "lib.rs": "evil::println!(\"unsafe\");" });
 assertRejected("untrusted qualified attribute cannot borrow a safe namespace", { "lib.rs": "#[serde::generate]\nfn safe() {}" });
 assertRejected("untrusted cfg_attr helper cannot borrow a safe namespace", { "lib.rs": "#[cfg_attr(all(), evil::generate)]\nfn safe() {}" });
+assertRejected("cfg_attr checks every conditional helper", { "lib.rs": "#[cfg_attr(all(), test, generate_unsafe)]\nfn safe() {}" });
+assertRejected("untrusted import cannot shadow a safe derive", { "lib.rs": "use evil::Clone; #[derive(Clone)] struct Value;" });
 
 assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
 assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });
