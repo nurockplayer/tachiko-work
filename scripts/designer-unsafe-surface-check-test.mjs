@@ -116,6 +116,13 @@ assertRejected("unsafe through an assembly macro alias", {
 assertRejected("unsafe through a raw assembly macro alias", {
   "src/lib.rs": "use core::arch::global_asm as r#generated; r#generated!(\"\");",
 });
+assertRejected("unsafe through a chained assembly macro alias", {
+  "src/lib.rs": "use core::arch::global_asm as generated; use self::generated as forwarded; forwarded!(\"\");",
+});
+assertRejected("unsafe through an included assembly macro alias", {
+  "src/lib.rs": "include!(\"aliases.inc\"); generated!(\"\");",
+  "src/aliases.inc": "use core::arch::global_asm as generated;",
+});
 assertRejected("unsafe through a raw assembly macro identifier", {
   "src/lib.rs": "core::arch::r#global_asm!(\"\");",
 });
