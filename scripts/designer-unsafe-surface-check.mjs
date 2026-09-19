@@ -284,12 +284,21 @@ function scan(root) {
     }
     const tokens = tokensFor(source, path);
     const includeNames = new Set(["include"]);
+    const unsafeMacroNames = new Set(UNSAFE_MACROS);
     for (let index = 0; index + 6 < tokens.length; index += 1) {
       if (tokens[index].value === "use" && tokens[index + 1]?.value === "std" &&
         tokens[index + 2]?.value === ":" && tokens[index + 3]?.value === ":" &&
         tokens[index + 4]?.value === "include" && tokens[index + 5]?.value === "as" &&
         tokens[index + 6]?.kind === "identifier") {
         includeNames.add(tokens[index + 6].value);
+      }
+    }
+    for (let index = 0; index + 2 < tokens.length; index += 1) {
+      if (tokens[index].value === "include" && tokens[index + 1]?.value === "as" && tokens[index + 2]?.kind === "identifier") {
+        includeNames.add(tokens[index + 2].value);
+      }
+      if (UNSAFE_MACROS.has(tokens[index].value) && tokens[index + 1]?.value === "as" && tokens[index + 2]?.kind === "identifier") {
+        unsafeMacroNames.add(tokens[index + 2].value);
       }
     }
     if (tokens.some((token) => token.value === "macro_rules")) {
@@ -318,7 +327,7 @@ function scan(root) {
       if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
         fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
       }
-      if (UNSAFE_MACROS.has(token.value) && tokens[index + 1]?.value === "!") {
+      if (unsafeMacroNames.has(token.value) && tokens[index + 1]?.value === "!") {
         fail(`${path}:${token.line}:${token.column}: unsafe macro ${token.value}! is outside the approved boundary`);
       }
       if (includeNames.has(token.value) && tokens[index + 1]?.value === "!") {
@@ -332,9 +341,15 @@ function scan(root) {
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
         scanReferencedSource(tokens[index + 2].value, token, join(dirname(path), ...inlineModules));
       }
-      if (token.value === "path" && tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string" &&
-        tokens.slice(Math.max(0, index - 12), index).some((candidate) => candidate.value === "cfg_attr")) {
-        scanReferencedSource(tokens[index + 2].value, token, join(dirname(path), ...inlineModules));
+      if (token.value === "cfg_attr" && tokens[index + 1]?.value === "(") {
+        let depth = 1;
+        for (let nested = index + 2; nested < tokens.length && depth > 0; nested += 1) {
+          if (tokens[nested].value === "(") depth += 1;
+          if (tokens[nested].value === ")") depth -= 1;
+          if (tokens[nested].value === "path" && tokens[nested + 1]?.value === "=" && tokens[nested + 2]?.kind === "string") {
+            scanReferencedSource(tokens[nested + 2].value, tokens[nested], join(dirname(path), ...inlineModules));
+          }
+        }
       }
       if (token.value === "{") {
         let moduleName;

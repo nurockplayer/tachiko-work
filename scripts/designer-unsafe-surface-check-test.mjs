@@ -94,6 +94,17 @@ assertRejected("unsafe through an include alias", {
   "src/lib.rs": "use std::include as source; source!(\"payload.inc\");",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
+assertRejected("unsafe through a grouped include alias", {
+  "src/lib.rs": "use std::{include as source, println}; source!(\"payload.inc\");",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe through an assembly macro alias", {
+  "src/lib.rs": "use core::arch::global_asm as generated; generated!(\"\");",
+});
+assertRejected("unsafe in a long cfg_attr path module", {
+  "src/lib.rs": "#[cfg_attr(all(unix, target_pointer_width = \"64\", not(target_os = \"none\")), path = \"payload.inc\")] mod payload;",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
 assertRejected("unsafe through a forwarded include macro", {
   "src/lib.rs": "macro_rules! invoke { ($m:ident, $p:literal) => { $m!($p); } }\ninvoke!(include, \"payload.inc\");",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
