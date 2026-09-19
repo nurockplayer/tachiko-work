@@ -7,14 +7,14 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const scanner = resolve(import.meta.dirname, "designer-unsafe-surface-check.mjs");
-const packageDirectories = new Set(["src", "tests", "examples", "fixtures", "benches", "target"]);
+const packageDirectories = new Set(["src", "tests", "examples", "fixtures", "benches", "target", "custom"]);
 
 function runFixture(files) {
   const root = mkdtempSync(join(tmpdir(), "tachiko-designer-unsafe-"));
   try {
     for (const [relativePath, source] of Object.entries(files)) {
       const [directory] = relativePath.split("/");
-      const packagePath = relativePath === "build.rs" || packageDirectories.has(directory)
+      const packagePath = relativePath === "build.rs" || relativePath === "Cargo.toml" || packageDirectories.has(directory)
         ? relativePath
         : join("src", relativePath);
       const path = join(root, packagePath);
@@ -74,6 +74,18 @@ assertRejected("nonliteral include path", {
 });
 assertRejected("unsafe in a path module", {
   "src/lib.rs": "#[path = \"payload.inc\"] mod payload;",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe in a cfg_attr path module", {
+  "src/lib.rs": "#[cfg_attr(all(), path = \"payload.inc\")] mod payload;",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe in a custom Cargo target", {
+  "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
+  "custom/tool.rs": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe through an include alias", {
+  "src/lib.rs": "use std::include as source; source!(\"payload.inc\");",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
 assertRejected("unsafe in a nested target module", {

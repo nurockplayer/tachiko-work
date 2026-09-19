@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, relative, resolve, sep } from "node:path";
 
 const APPROVED_EXPORTS = new Set([
@@ -77,6 +78,23 @@ function sourceFiles(root) {
   for (const directory of ["src", "tests", "examples", "fixtures", "benches"]) {
     const path = `${root}${sep}${directory}`;
     if (existsSync(path)) visit(path);
+  }
+  const manifest = `${root}${sep}Cargo.toml`;
+  if (existsSync(manifest)) {
+    let metadata;
+    try {
+      metadata = JSON.parse(execFileSync("cargo", ["metadata", "--manifest-path", manifest, "--no-deps", "--format-version", "1"], { encoding: "utf8" }));
+    } catch (error) {
+      fail(`cannot read Cargo target metadata: ${error.message}`);
+    }
+    for (const target of metadata.packages?.flatMap((packageInfo) => packageInfo.targets) ?? []) {
+      const targetPath = resolve(target.src_path);
+      const relativeTarget = relative(resolve(root), targetPath);
+      if (relativeTarget === ".." || relativeTarget.startsWith(`..${sep}`)) {
+        fail(`Cargo target escapes the runtime package: ${target.src_path}`);
+      }
+      files.push(targetPath);
+    }
   }
   const buildScript = `${root}${sep}build.rs`;
   if (existsSync(buildScript)) {
@@ -264,6 +282,15 @@ function scan(root) {
       fail(`cannot read ${path}: ${error.message}`);
     }
     const tokens = tokensFor(source, path);
+    const includeNames = new Set(["include"]);
+    for (let index = 0; index + 6 < tokens.length; index += 1) {
+      if (tokens[index].value === "use" && tokens[index + 1]?.value === "std" &&
+        tokens[index + 2]?.value === ":" && tokens[index + 3]?.value === ":" &&
+        tokens[index + 4]?.value === "include" && tokens[index + 5]?.value === "as" &&
+        tokens[index + 6]?.kind === "identifier") {
+        includeNames.add(tokens[index + 6].value);
+      }
+    }
     function scanReferencedSource(reference, token) {
       if (!reference.startsWith('"') || !reference.endsWith('"')) {
         fail(`${path}:${token.line}:${token.column}: source path must be a normal string literal`);
@@ -285,7 +312,7 @@ function scan(root) {
       if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
         fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
       }
-      if (token.value === "include" && tokens[index + 1]?.value === "!") {
+      if (includeNames.has(token.value) && tokens[index + 1]?.value === "!") {
         const includeStringIndex = tokens[index + 2]?.value === "(" ? index + 3 : index + 2;
         if (tokens[includeStringIndex]?.kind !== "string" || !tokens[includeStringIndex].value.startsWith('"')) {
           fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
@@ -294,6 +321,10 @@ function scan(root) {
       }
       if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
+        scanReferencedSource(tokens[index + 2].value, token);
+      }
+      if (token.value === "path" && tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string" &&
+        tokens.slice(Math.max(0, index - 12), index).some((candidate) => candidate.value === "cfg_attr")) {
         scanReferencedSource(tokens[index + 2].value, token);
       }
     }
