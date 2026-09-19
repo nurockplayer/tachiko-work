@@ -394,8 +394,10 @@ function scan(root) {
       const importedLeaves = [];
       const useRoot = normalizedIdentifier(tokens[index + 1]?.value ?? "");
       const useEnd = tokens.findIndex((candidate, offset) => offset > index && candidate.value === ";");
-      if (tokens.slice(index, useEnd === -1 ? tokens.length : useEnd).some((candidate) => candidate.value === "*") &&
-        !["alloc", "core", "crate", "self", "serde", "serde_json", "std", "super", "tachiko_designer_runtime"].includes(useRoot)) {
+      const useTokens = tokens.slice(index, useEnd === -1 ? tokens.length : useEnd);
+      const hasGlob = useTokens.some((candidate) => candidate.value === "*");
+      const hasBracedUse = useTokens.some((candidate) => candidate.value === "{");
+      if (hasGlob && useRoot !== "tachiko_designer_runtime" && !(useRoot === "super" && hasBracedUse)) {
         fail(`${path}:${tokens[index].line}:${tokens[index].column}: glob import ${useRoot} cannot be audited by the unsafe-surface scanner`);
       }
       for (let nested = index + 1; nested < tokens.length && tokens[nested].value !== ";"; nested += 1) {
@@ -530,7 +532,8 @@ function scan(root) {
             }
             if (predicateDone && !helperChecked && tokens[nested].kind === "identifier") {
               helperChecked = true;
-              if (!KNOWN_SAFE_ATTRIBUTES.has(normalizedIdentifier(tokens[nested].value))) {
+              if (!KNOWN_SAFE_ATTRIBUTES.has(normalizedIdentifier(tokens[nested].value)) ||
+                shadowedNames.has(normalizedIdentifier(tokens[nested].value))) {
                 fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: cfg_attr helper ${tokens[nested].value} may expand outside the auditable source surface`);
               }
             }

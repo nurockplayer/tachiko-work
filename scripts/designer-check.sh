@@ -36,6 +36,9 @@ pnpm --dir "${designer_dir}" peers check
 cargo fmt --manifest-path "${runtime_manifest}" --all -- --check
 cargo clippy --manifest-path "${runtime_manifest}" --all-targets --locked -- -D warnings
 cargo test --manifest-path "${runtime_manifest}" --all-targets --locked
+# Re-scan after Cargo has run build scripts so generated or rewritten sources
+# are checked at the same post-build state that subsequent validation observes.
+node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_root}"
 
 pnpm --dir "${designer_dir}" lint
 pnpm --dir "${designer_dir}" typecheck
