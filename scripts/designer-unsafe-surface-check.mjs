@@ -123,10 +123,13 @@ function sourceFiles(root) {
       fail(`cannot read Cargo target metadata: ${error.message}`);
     }
     const rootPackage = metadata.packages?.find((packageInfo) => packageInfo.id === metadata.resolve?.root) ?? metadata.packages?.[0];
+    const rootResolveNode = metadata.resolve?.nodes?.find((node) => node.id === metadata.resolve?.root);
     for (const dependency of rootPackage?.dependencies ?? []) {
-      const resolvedPackage = metadata.packages?.find((packageInfo) => packageInfo.name === dependency.name);
+      const resolvedDependency = rootResolveNode?.deps?.find((candidate) => candidate.name === dependency.name);
+      const resolvedPackage = metadata.packages?.find((packageInfo) => packageInfo.id === resolvedDependency?.pkg);
       if (["serde", "serde_json", "thiserror"].includes(dependency.name) && dependency.rename === null &&
         dependency.source === "registry+https://github.com/rust-lang/crates.io-index" &&
+        resolvedPackage?.name === dependency.name &&
         resolvedPackage?.source === "registry+https://github.com/rust-lang/crates.io-index") {
         TRUSTED_DEPENDENCY_ROOTS.add(dependency.name);
       }
@@ -485,7 +488,7 @@ function scan(root) {
           if ([",", "}", ";"].includes(tokens[nested + 1]?.value) || tokens[nested + 1]?.value === "as") {
             importedLeaves.push(lastIdentifier);
           }
-          if (useRoot === normalizedIdentifier(tokens[nested].value) && TRUSTED_DEPENDENCY_ROOTS.has(useRoot)) {
+          if (useRoot === normalizedIdentifier(tokens[nested].value) && TRUSTED_DEPENDENCY_ROOTS.has(useRoot) && !shadowedNames.has(useRoot)) {
             trustedPackage = normalizedIdentifier(tokens[nested].value);
             if (["serde", "thiserror"].includes(trustedPackage)) trustedDerives.add(trustedPackage);
           }
@@ -663,10 +666,13 @@ function scan(root) {
       if (importedMacroNames.has(normalizedIdentifier(token.value)) &&
         !includeNames.has(normalizedIdentifier(token.value)) &&
         !unsafeMacroNames.has(normalizedIdentifier(token.value)) && tokens[index + 1]?.value === "!") {
-        if (trustedImportedMacroNames.has(normalizedIdentifier(token.value))) continue;
+        const qualifiedImport = tokens[index - 1]?.value === "::" ||
+          (tokens[index - 1]?.value === ":" && tokens[index - 2]?.value === ":");
+        if (trustedImportedMacroNames.has(normalizedIdentifier(token.value)) &&
+          (!qualifiedImport || trustedMacroInvocation(index))) continue;
         fail(`${path}:${token.line}:${token.column}: imported macro ${token.value}! cannot be audited by the unsafe-surface scanner`);
       }
-      if (token.value === "include" && tokens[index + 1]?.value === "!" && shadowedNames.has("include")) {
+      if (normalizedIdentifier(token.value) === "include" && tokens[index + 1]?.value === "!" && shadowedNames.has("include")) {
         fail(`${path}:${token.line}:${token.column}: imported macro include! cannot borrow the builtin include provenance`);
       }
       if (token.kind === "identifier" && tokens[index - 1]?.value === "::" && tokens[index + 1]?.value === "!" &&

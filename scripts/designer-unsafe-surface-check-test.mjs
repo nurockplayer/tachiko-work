@@ -4,10 +4,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 const scanner = resolve(import.meta.dirname, "designer-unsafe-surface-check.mjs");
-const packageDirectories = new Set(["src", "tests", "examples", "fixtures", "benches", "target", "custom"]);
+const packageDirectories = new Set(["src", "tests", "examples", "fixtures", "benches", "target", "custom", "evil-serde"]);
 
 function runFixture(files) {
   const root = mkdtempSync(join(tmpdir(), "tachiko-designer-unsafe-"));
@@ -20,6 +20,9 @@ function runFixture(files) {
       const path = join(root, packagePath);
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, source);
+    }
+    if (files["Cargo.toml"]) {
+      execFileSync("cargo", ["generate-lockfile", "--manifest-path", join(root, "Cargo.toml")], { stdio: "ignore" });
     }
     return spawnSync(process.execPath, [scanner, root], { encoding: "utf8" });
   } finally {
@@ -70,6 +73,7 @@ assertRejected("local package cannot borrow trusted serde provenance", {
   "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nserde = { path = \"evil-serde\" }\n",
   "lib.rs": "#[derive(serde::Deserialize)] struct Value;",
   "evil-serde/Cargo.toml": "[package]\nname = \"serde\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+  "evil-serde/src/lib.rs": "",
 });
 assertRejected("untrusted include macro cannot borrow the builtin alias", {
   "lib.rs": "use evil::include as source; source!(\"payload.inc\");",
