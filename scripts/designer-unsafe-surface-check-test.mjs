@@ -58,6 +58,9 @@ assertRejected("un-auditable procedural attribute", { "lib.rs": "#[generate_unsa
 assertRejected("un-auditable external macro", { "lib.rs": "external_macro!();" });
 assertRejected("untrusted macro name cannot borrow a safe provenance", { "lib.rs": "use evil::json; json!({});" });
 assertRejected("untrusted derive name cannot borrow a safe provenance", { "lib.rs": "#[derive(evil::Error)] struct Value;" });
+assertRejected("untrusted qualified macro cannot borrow a safe name", { "lib.rs": "evil::println!(\"unsafe\");" });
+assertRejected("untrusted qualified attribute cannot borrow a safe namespace", { "lib.rs": "#[serde::generate]\nfn safe() {}" });
+assertRejected("untrusted cfg_attr helper cannot borrow a safe namespace", { "lib.rs": "#[cfg_attr(all(), evil::generate)]\nfn safe() {}" });
 
 assertRejected("unsafe in tests", { "tests/unsafe.rs": "fn f() { unsafe { call(); } }" });
 assertRejected("unsafe in examples", { "examples/unsafe.rs": "unsafe fn f() {}" });
