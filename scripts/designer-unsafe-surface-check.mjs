@@ -39,6 +39,7 @@ const KNOWN_SAFE_DERIVES = new Set(["Clone", "Copy", "Debug", "Default", "Eq", "
 const NON_MACRO_BANG_PREFIXES = new Set(["as", "else", "if", "in", "let", "return", "while"]);
 const CARGO_TARGET_ROOTS = new Set();
 const TRUSTED_DEPENDENCY_ROOTS = new Set();
+const CARGO_EXTERNAL_ROOTS = new Set();
 
 function fail(message) {
   throw new Error(`designer-unsafe-surface-check: ${message}`);
@@ -133,6 +134,9 @@ function sourceFiles(root) {
         resolvedPackage?.source === "registry+https://github.com/rust-lang/crates.io-index") {
         TRUSTED_DEPENDENCY_ROOTS.add(dependency.name);
       }
+    }
+    for (const dependency of rootPackage?.dependencies ?? []) {
+      if (!TRUSTED_DEPENDENCY_ROOTS.has(dependency.name)) CARGO_EXTERNAL_ROOTS.add(dependency.name);
     }
     for (const target of rootPackage?.targets ?? []) {
       const targetPath = resolve(target.src_path);
@@ -432,6 +436,7 @@ function scan(root) {
     const trustedImportedMacroNames = new Set();
     const trustedDerives = new Set();
     const shadowedNames = new Set();
+    for (const dependencyRoot of CARGO_EXTERNAL_ROOTS) shadowedNames.add(dependencyRoot);
     for (let index = 0; index + 1 < tokens.length; index += 1) {
       if (tokens[index].value === "mod" && tokens[index + 1]?.kind === "identifier") {
         shadowedNames.add(normalizedIdentifier(tokens[index + 1].value));
@@ -479,6 +484,9 @@ function scan(root) {
             useTokens[candidateIndex - 3]?.kind === "identifier" && ["{", ","].includes(useTokens[candidateIndex - 4]?.value))
         )
       );
+      if (hasGlob && useRoot === "tachiko_designer_runtime" && shadowedNames.has(useRoot)) {
+        fail(`${path}:${tokens[index].line}:${tokens[index].column}: glob import ${useRoot} is shadowed by an unauditable dependency`);
+      }
       if (hasGlob && useRoot !== "tachiko_designer_runtime" && !hasAuditableInternalGlob) {
         fail(`${path}:${tokens[index].line}:${tokens[index].column}: glob import ${useRoot} cannot be audited by the unsafe-surface scanner`);
       }
@@ -585,6 +593,15 @@ function scan(root) {
       return ["alloc", "core", "std"].includes(rootName) ||
         (rootName === "serde_json" && macroName === "json" && TRUSTED_DEPENDENCY_ROOTS.has("serde_json"));
     }
+    function trustedIncludeInvocation(index) {
+      const qualified = tokens[index - 1]?.value === "::" ||
+        (tokens[index - 1]?.value === ":" && tokens[index - 2]?.value === ":");
+      if (!qualified) return !shadowedNames.has("include");
+      let rootIndex = index - 1;
+      rootIndex -= tokens[rootIndex]?.value === "::" ? 1 : 2;
+      const rootName = normalizedIdentifier(tokens[rootIndex]?.value ?? "");
+      return rootName === "std" && !shadowedNames.has(rootName);
+    }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
       if (token.value === "#" && tokens[index + 1]?.value === "[" && tokens[index + 2]?.kind === "identifier") {
@@ -600,9 +617,18 @@ function scan(root) {
         }
         if (attributeName === "cfg_attr") {
           let depth = 0;
+          let squareDepth = 0;
           let predicateDone = false;
           let helperChecked = false;
-          for (let nested = index + 3; nested < tokens.length && tokens[nested].value !== "]"; nested += 1) {
+          for (let nested = index + 3; nested < tokens.length; nested += 1) {
+            if (tokens[nested].value === "[" && depth >= 1) squareDepth += 1;
+            if (tokens[nested].value === "]") {
+              if (squareDepth > 0) {
+                squareDepth -= 1;
+                continue;
+              }
+              break;
+            }
             if (tokens[nested].value === "(") depth += 1;
             if (tokens[nested].value === ")") depth -= 1;
             if (depth === 1 && tokens[nested].value === ",") {
@@ -674,6 +700,9 @@ function scan(root) {
       }
       if (normalizedIdentifier(token.value) === "include" && tokens[index + 1]?.value === "!" && shadowedNames.has("include")) {
         fail(`${path}:${token.line}:${token.column}: imported macro include! cannot borrow the builtin include provenance`);
+      }
+      if (normalizedIdentifier(token.value) === "include" && tokens[index + 1]?.value === "!" && !trustedIncludeInvocation(index)) {
+        fail(`${path}:${token.line}:${token.column}: qualified macro include! cannot be audited by the unsafe-surface scanner`);
       }
       if (token.kind === "identifier" && tokens[index - 1]?.value === "::" && tokens[index + 1]?.value === "!" &&
         ["(", "[", "{"].includes(tokens[index + 2]?.value) && !trustedMacroInvocation(index)) {

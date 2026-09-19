@@ -83,6 +83,10 @@ assertRejected("shadowed std cannot lend builtin include provenance", {
   "lib.rs": "use evil as std; use std::include as source; source!(\"safe.inc\");",
   "safe.inc": "pub fn safe() {}",
 });
+assertRejected("qualified include cannot borrow the builtin terminal name", {
+  "lib.rs": "evil::include!(\"safe.inc\");",
+  "safe.inc": "pub fn safe() {}",
+});
 assertRejected("qualified derive cannot borrow a safe terminal name", {
   "lib.rs": "use evil::Debug; #[derive(Debug::Clone)] struct Value;",
 });
@@ -124,6 +128,9 @@ assertRejected("unsafe in a raw-identifier cfg_attr attribute", {
   "src/lib.rs": "#[r#cfg_attr(all(), path = \"payload.inc\")] mod payload;",
   "src/payload.rs": "pub fn safe_decoy() {}",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("cfg_attr helper parsing tracks nested brackets", {
+  "src/lib.rs": "use evil::generate; #[cfg_attr(all(), doc = concat![\"safe\"], generate)] fn safe() {}",
 });
 assertRejected("unsafe in a cfg_attr path module", {
   "src/lib.rs": "#[cfg_attr(all(), path = \"payload.inc\")] mod payload;",
