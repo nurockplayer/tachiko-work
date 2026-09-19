@@ -279,9 +279,16 @@ function approvedNoMangle(tokens, index, path, packageRoot) {
 function scan(root) {
   const resolvedRoot = resolve(root);
   const visited = new Set();
-  function scanFile(path) {
-    if (visited.has(path)) return;
-    visited.add(path);
+  function moduleFileDirectory(filePath) {
+    if (CARGO_TARGET_ROOTS.has(filePath)) return dirname(filePath);
+    const fileName = basename(filePath);
+    const stem = fileName.replace(/\.[^.]+$/, "");
+    return ["lib", "main", "mod"].includes(stem) ? dirname(filePath) : join(dirname(filePath), stem);
+  }
+  function scanFile(path, logicalDirectory = moduleFileDirectory(path)) {
+    const visitKey = `${path}\0${logicalDirectory}`;
+    if (visited.has(visitKey)) return;
+    visited.add(visitKey);
     let source;
     try {
       source = readFileSync(path, "utf8");
@@ -296,15 +303,15 @@ function scan(root) {
         tokens[index + 2]?.value === ":" && tokens[index + 3]?.value === ":" &&
         tokens[index + 4]?.value === "include" && tokens[index + 5]?.value === "as" &&
         tokens[index + 6]?.kind === "identifier") {
-        includeNames.add(tokens[index + 6].value);
+        includeNames.add(normalizedIdentifier(tokens[index + 6].value));
       }
     }
     for (let index = 0; index + 2 < tokens.length; index += 1) {
       if (tokens[index].value === "include" && tokens[index + 1]?.value === "as" && tokens[index + 2]?.kind === "identifier") {
-        includeNames.add(tokens[index + 2].value);
+        includeNames.add(normalizedIdentifier(tokens[index + 2].value));
       }
       if (UNSAFE_MACROS.has(normalizedIdentifier(tokens[index].value)) && tokens[index + 1]?.value === "as" && tokens[index + 2]?.kind === "identifier") {
-        unsafeMacroNames.add(tokens[index + 2].value);
+        unsafeMacroNames.add(normalizedIdentifier(tokens[index + 2].value));
       }
     }
     if (tokens.some((token) => token.value === "macro_rules")) {
@@ -312,13 +319,13 @@ function scan(root) {
     }
     const inlineModules = [];
     const braceModules = [];
-    function moduleFileDirectory(filePath) {
-      if (CARGO_TARGET_ROOTS.has(filePath)) return dirname(filePath);
-      const fileName = basename(filePath);
-      const stem = fileName.replace(/\.[^.]+$/, "");
-      return ["lib", "main", "mod"].includes(stem) ? dirname(filePath) : join(dirname(filePath), stem);
+    function moduleNameAfter(startIndex) {
+      for (let index = startIndex; index < tokens.length && ![";", "{"].includes(tokens[index].value); index += 1) {
+        if (tokens[index].value === "mod" && tokens[index + 1]?.kind === "identifier") return tokens[index + 1].value;
+      }
+      return null;
     }
-    function scanReferencedSource(reference, token, baseDirectory = dirname(path)) {
+    function scanReferencedSource(reference, token, baseDirectory = dirname(path), referencedLogicalDirectory = logicalDirectory) {
       if (!reference.startsWith('"') || !reference.endsWith('"')) {
         fail(`${path}:${token.line}:${token.column}: source path must be a normal string literal`);
       }
@@ -332,7 +339,7 @@ function scan(root) {
       if (relativeReference === "" || relativeReference === ".." || relativeReference.startsWith(`..${sep}`)) {
         fail(`${path}:${token.line}:${token.column}: source path escapes the runtime package: ${reference}`);
       }
-      scanFile(referencedPath);
+      scanFile(referencedPath, referencedLogicalDirectory);
     }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
@@ -342,7 +349,7 @@ function scan(root) {
       if (unsafeMacroNames.has(normalizedIdentifier(token.value)) && tokens[index + 1]?.value === "!") {
         fail(`${path}:${token.line}:${token.column}: unsafe macro ${token.value}! is outside the approved boundary`);
       }
-      if (includeNames.has(token.value) && tokens[index + 1]?.value === "!") {
+      if (includeNames.has(normalizedIdentifier(token.value)) && tokens[index + 1]?.value === "!") {
         const includeStringIndex = tokens[index + 2]?.value === "(" ? index + 3 : index + 2;
         if (tokens[includeStringIndex]?.kind !== "string" || !tokens[includeStringIndex].value.startsWith('"')) {
           fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
@@ -351,7 +358,10 @@ function scan(root) {
       }
       if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
-        scanReferencedSource(tokens[index + 2].value, token, join(moduleFileDirectory(path), ...inlineModules));
+        const moduleBaseDirectory = join(logicalDirectory, ...inlineModules);
+        const moduleName = moduleNameAfter(index + 3);
+        const nestedLogicalDirectory = moduleName ? join(moduleBaseDirectory, moduleName) : moduleBaseDirectory;
+        scanReferencedSource(tokens[index + 2].value, token, moduleBaseDirectory, nestedLogicalDirectory);
       }
       if (token.value === "cfg_attr" && tokens[index + 1]?.value === "(") {
         let depth = 1;
@@ -359,7 +369,12 @@ function scan(root) {
           if (tokens[nested].value === "(") depth += 1;
           if (tokens[nested].value === ")") depth -= 1;
           if (tokens[nested].value === "path" && tokens[nested + 1]?.value === "=" && tokens[nested + 2]?.kind === "string") {
-            scanReferencedSource(tokens[nested + 2].value, tokens[nested], join(moduleFileDirectory(path), ...inlineModules));
+            const moduleName = moduleNameAfter(nested + 3);
+            const moduleBaseDirectory = join(logicalDirectory, ...inlineModules);
+            const nestedLogicalDirectory = moduleName
+              ? join(moduleBaseDirectory, moduleName)
+              : moduleBaseDirectory;
+            scanReferencedSource(tokens[nested + 2].value, tokens[nested], moduleBaseDirectory, nestedLogicalDirectory);
           }
         }
       }
