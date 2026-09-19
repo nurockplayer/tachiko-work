@@ -107,6 +107,16 @@ assertRejected("unsafe in a custom Cargo target", {
   "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
   "custom/tool.rs": "pub unsafe fn bypassed() {}",
 });
+assertRejected("unsafe in a custom target child module", {
+  "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
+  "custom/tool.rs": "mod helper;",
+  "custom/helper.rs": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe in a build-script path module", {
+  "build.rs": "#[path = \"helper.inc\"] mod helper;",
+  "helper.inc": "pub unsafe fn bypassed() {}",
+  "build/helper.inc": "pub fn safe_decoy() {}",
+});
 assertRejected("unsafe through an include alias", {
   "src/lib.rs": "use std::include as source; source!(\"payload.inc\");",
   "src/payload.inc": "pub unsafe fn bypassed() {}",

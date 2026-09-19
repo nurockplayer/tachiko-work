@@ -340,7 +340,7 @@ function scan(root) {
     if (CARGO_TARGET_ROOTS.has(filePath)) return dirname(filePath);
     const fileName = basename(filePath);
     const stem = fileName.replace(/\.[^.]+$/, "");
-    return ["lib", "main", "mod"].includes(stem) ? dirname(filePath) : join(dirname(filePath), stem);
+    return ["lib", "main", "mod", "build"].includes(stem) ? dirname(filePath) : join(dirname(filePath), stem);
   }
   function scanFile(path, logicalDirectory = moduleFileDirectory(path), inheritedScope = {}) {
     const visitKey = `${path}\0${logicalDirectory}`;
@@ -394,6 +394,22 @@ function scan(root) {
       const childLogicalDirectory = usePhysicalDirectory ? dirname(referencedPath) : referencedLogicalDirectory;
       return scanFile(referencedPath, childLogicalDirectory, inheritScope ? { includeNames, unsafeMacroNames } : {});
     }
+    function hasPathAttributeBefore(moduleIndex) {
+      for (let previous = moduleIndex - 1; previous >= 0 && previous >= moduleIndex - 20; previous -= 1) {
+        if (tokens[previous].value === ";" || tokens[previous].value === "}") break;
+        if (tokens[previous].value === "path") return true;
+        if (tokens[previous].value === "[") break;
+      }
+      return false;
+    }
+    function scanOutOfLineModule(moduleIndex, moduleName) {
+      if (hasPathAttributeBefore(moduleIndex)) return;
+      const moduleBaseDirectory = join(logicalDirectory, ...inlineModules);
+      const candidates = [join(moduleBaseDirectory, `${moduleName}.rs`), join(moduleBaseDirectory, moduleName, "mod.rs")];
+      const modulePath = candidates.find((candidate) => existsSync(candidate));
+      if (!modulePath) fail(`${path}:${tokens[moduleIndex].line}:${tokens[moduleIndex].column}: cannot resolve module ${moduleName}`);
+      scanFile(modulePath);
+    }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
       if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
@@ -426,6 +442,9 @@ function scan(root) {
             scanReferencedSource(tokens[nested + 2].value, tokens[nested], moduleBaseDirectory, moduleBaseDirectory, false, true);
           }
         }
+      }
+      if (token.value === "mod" && tokens[index + 1]?.kind === "identifier" && tokens[index + 2]?.value === ";") {
+        scanOutOfLineModule(index, normalizedIdentifier(tokens[index + 1].value));
       }
       if (token.value === "{") {
         let moduleName;
