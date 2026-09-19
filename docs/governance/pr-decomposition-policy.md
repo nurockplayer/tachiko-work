@@ -42,10 +42,11 @@ its likely PR is one coherent review unit. Decompose the work when independently
 valuable concerns can be separated without leaving `main` in a knowingly broken
 or misleading state.
 
-Prefer **vertical slices**: each child should establish a useful behavior or
-contract that can be tested and reviewed on its own. Do not split work merely by
-file, layer, helper, type, or other horizontal scaffolding when that would leave
-half-features on `main`.
+Prefer **vertical slices** — **tracer bullet** is the preferred leading word; see
+[`Agent Engineering Vocabulary`](../engineering/agent-engineering-vocabulary.md):
+each child should establish a useful behavior or contract that can be tested and
+reviewed on its own. Do not split work merely by file, layer, helper, type, or
+other horizontal scaffolding when that would leave half-features on `main`.
 
 The Steward should consider:
 
