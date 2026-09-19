@@ -2,7 +2,7 @@
 
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 const APPROVED_EXPORTS = new Set([
   "tachiko_designer_request_reserve",
@@ -291,13 +291,18 @@ function scan(root) {
         includeNames.add(tokens[index + 6].value);
       }
     }
-    function scanReferencedSource(reference, token) {
+    if (tokens.some((token) => token.value === "macro_rules")) {
+      fail(`${path}: macro_rules! source expansion is not supported by the unsafe-surface scanner`);
+    }
+    const inlineModules = [];
+    const braceModules = [];
+    function scanReferencedSource(reference, token, baseDirectory = dirname(path)) {
       if (!reference.startsWith('"') || !reference.endsWith('"')) {
         fail(`${path}:${token.line}:${token.column}: source path must be a normal string literal`);
       }
       let referencedPath;
       try {
-        referencedPath = resolve(dirname(path), JSON.parse(reference));
+        referencedPath = resolve(baseDirectory, JSON.parse(reference));
       } catch (error) {
         fail(`${path}:${token.line}:${token.column}: invalid source path: ${error.message}`);
       }
@@ -321,11 +326,26 @@ function scan(root) {
       }
       if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
-        scanReferencedSource(tokens[index + 2].value, token);
+        scanReferencedSource(tokens[index + 2].value, token, join(dirname(path), ...inlineModules));
       }
       if (token.value === "path" && tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string" &&
         tokens.slice(Math.max(0, index - 12), index).some((candidate) => candidate.value === "cfg_attr")) {
-        scanReferencedSource(tokens[index + 2].value, token);
+        scanReferencedSource(tokens[index + 2].value, token, join(dirname(path), ...inlineModules));
+      }
+      if (token.value === "{") {
+        let moduleName;
+        for (let previous = index - 1; previous >= 0 && previous >= index - 6; previous -= 1) {
+          if (["{", "}", ";"].includes(tokens[previous].value)) break;
+          if (tokens[previous].value === "mod" && tokens[previous + 1]?.kind === "identifier") {
+            moduleName = tokens[previous + 1].value;
+            break;
+          }
+        }
+        braceModules.push(moduleName);
+        if (moduleName) inlineModules.push(moduleName);
+      } else if (token.value === "}") {
+        const moduleName = braceModules.pop();
+        if (moduleName) inlineModules.pop();
       }
     }
   }

@@ -80,12 +80,21 @@ assertRejected("unsafe in a cfg_attr path module", {
   "src/lib.rs": "#[cfg_attr(all(), path = \"payload.inc\")] mod payload;",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
+assertRejected("unsafe in an inline-module path module", {
+  "src/lib.rs": "mod outer { #[path = \"payload.inc\"] mod payload; }",
+  "src/outer/payload.inc": "pub unsafe fn bypassed() {}",
+  "src/payload.inc": "pub fn safe_decoy() {}",
+});
 assertRejected("unsafe in a custom Cargo target", {
   "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
   "custom/tool.rs": "pub unsafe fn bypassed() {}",
 });
 assertRejected("unsafe through an include alias", {
   "src/lib.rs": "use std::include as source; source!(\"payload.inc\");",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe through a forwarded include macro", {
+  "src/lib.rs": "macro_rules! invoke { ($m:ident, $p:literal) => { $m!($p); } }\ninvoke!(include, \"payload.inc\");",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
 assertRejected("unsafe in a nested target module", {
