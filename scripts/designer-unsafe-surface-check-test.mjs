@@ -64,6 +64,14 @@ assertRejected("static instead of function", { "wasm.rs": "#[unsafe(no_mangle)]\
 assertRejected("non-C ABI function", { "wasm.rs": "#[unsafe(no_mangle)]\npub extern \"Rust\" fn tachiko_designer_request_run() {}" });
 assertRejected("omitted ABI function", { "wasm.rs": "#[unsafe(no_mangle)]\npub extern fn tachiko_designer_request_run() {}" });
 assertRejected("unapproved export name", { "wasm.rs": "#[unsafe(no_mangle)]\npub extern \"C\" fn tachiko_designer_not_approved() {}" });
+assertRejected("unsafe in an included non-Rust source", {
+  "src/lib.rs": "include!(\"payload.inc\");",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertAccepted("safe included non-Rust source", {
+  "src/lib.rs": "include!(\"payload.inc\");",
+  "src/payload.inc": "pub fn safe() {}",
+});
 assertAccepted("approved root wasm ABI attribute", {
   "src/wasm.rs": "#[unsafe /* ABI */ ( no_mangle )]\npub extern \"C\" fn tachiko_designer_request_run() {}",
   "src/lib.rs": "fn safe() {}",

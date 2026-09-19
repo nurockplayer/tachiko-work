@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 
 const APPROVED_EXPORTS = new Set([
   "tachiko_designer_request_reserve",
@@ -245,7 +245,10 @@ function approvedNoMangle(tokens, index, path, packageRoot) {
 
 function scan(root) {
   const resolvedRoot = resolve(root);
-  for (const path of sourceFiles(resolvedRoot)) {
+  const visited = new Set();
+  function scanFile(path) {
+    if (visited.has(path)) return;
+    visited.add(path);
     let source;
     try {
       source = readFileSync(path, "utf8");
@@ -258,8 +261,27 @@ function scan(root) {
       if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
         fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
       }
+      if (token.value !== "include" || tokens[index + 1]?.value !== "!") continue;
+      const includeStringIndex = tokens[index + 2]?.value === "(" ? index + 3 : index + 2;
+      if (tokens[includeStringIndex]?.kind !== "string") continue;
+      const includeToken = tokens[includeStringIndex].value;
+      if (!includeToken.startsWith('"') || !includeToken.endsWith('"')) {
+        fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
+      }
+      let includePath;
+      try {
+        includePath = resolve(dirname(path), JSON.parse(includeToken));
+      } catch (error) {
+        fail(`${path}:${token.line}:${token.column}: invalid include! path: ${error.message}`);
+      }
+      const relativeInclude = relative(resolvedRoot, includePath);
+      if (relativeInclude === "" || relativeInclude === ".." || relativeInclude.startsWith(`..${sep}`)) {
+        fail(`${path}:${token.line}:${token.column}: include! path escapes the runtime package: ${includeToken}`);
+      }
+      scanFile(includePath);
     }
   }
+  for (const path of sourceFiles(resolvedRoot)) scanFile(path);
 }
 
 if (process.argv.length !== 3) {
