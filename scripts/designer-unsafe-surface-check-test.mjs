@@ -144,6 +144,12 @@ assertRejected("unsafe through an alias introduced by a later include", {
   "src/aliases.inc": "use std::include as source;",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
+assertRejected("unsafe in a path module inside an included source", {
+  "src/lib.rs": "include!(\"nested/fragment.inc\");",
+  "src/nested/fragment.inc": "#[path = \"payload.inc\"] mod payload;",
+  "src/nested/payload.inc": "pub unsafe fn bypassed() {}",
+  "src/payload.inc": "pub fn safe_decoy() {}",
+});
 assertRejected("unsafe through a raw assembly macro identifier", {
   "src/lib.rs": "core::arch::r#global_asm!(\"\");",
 });

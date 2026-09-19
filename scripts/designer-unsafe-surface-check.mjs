@@ -407,7 +407,7 @@ function scan(root) {
         if (tokens[includeStringIndex]?.kind !== "string" || !tokens[includeStringIndex].value.startsWith('"')) {
           fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
         }
-        const childScope = scanReferencedSource(tokens[includeStringIndex].value, token, dirname(path), logicalDirectory, true);
+        const childScope = scanReferencedSource(tokens[includeStringIndex].value, token, dirname(path), logicalDirectory, true, true);
         for (const name of childScope?.includeNames ?? []) includeNames.add(name);
         for (const name of childScope?.unsafeMacroNames ?? []) unsafeMacroNames.add(name);
       }
