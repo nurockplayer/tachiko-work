@@ -30,7 +30,8 @@ function runFixture(files) {
 function assertRejected(name, files) {
   const result = runFixture(files);
   assert.notEqual(result.status, 0, `${name} unexpectedly passed`);
-  assert.match(result.stderr, /unsafe|unterminated|cannot/i, `${name} did not fail through the scanner`);
+  assert.match(result.stderr, /unsafe is outside|unsafe macro|include! path|source path|macro_rules|symbolic links|cannot read/i,
+    `${name} did not fail through the expected scanner diagnostic`);
 }
 
 function assertAccepted(name, files) {
