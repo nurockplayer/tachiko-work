@@ -72,6 +72,14 @@ assertRejected("nonliteral include path", {
   "src/lib.rs": "include!(concat!(\"payload\", \".inc\"));",
   "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
+assertRejected("unsafe in a path module", {
+  "src/lib.rs": "#[path = \"payload.inc\"] mod payload;",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+});
+assertRejected("unsafe in a nested target module", {
+  "src/lib.rs": "mod target;",
+  "src/target/mod.rs": "pub unsafe fn bypassed() {}",
+});
 assertAccepted("safe included non-Rust source", {
   "src/lib.rs": "include!(\"payload.inc\");",
   "src/payload.inc": "pub fn safe() {}",

@@ -67,7 +67,7 @@ function sourceFiles(root) {
       if (entry.isSymbolicLink()) {
         fail(`symbolic links are not supported in the runtime source surface: ${path}`);
       }
-      if (entry.isDirectory() && entry.name !== "target") {
+      if (entry.isDirectory()) {
         visit(path);
       } else if (entry.isFile() && entry.name.endsWith(".rs")) {
         files.push(path);
@@ -264,31 +264,38 @@ function scan(root) {
       fail(`cannot read ${path}: ${error.message}`);
     }
     const tokens = tokensFor(source, path);
+    function scanReferencedSource(reference, token) {
+      if (!reference.startsWith('"') || !reference.endsWith('"')) {
+        fail(`${path}:${token.line}:${token.column}: source path must be a normal string literal`);
+      }
+      let referencedPath;
+      try {
+        referencedPath = resolve(dirname(path), JSON.parse(reference));
+      } catch (error) {
+        fail(`${path}:${token.line}:${token.column}: invalid source path: ${error.message}`);
+      }
+      const relativeReference = relative(resolvedRoot, referencedPath);
+      if (relativeReference === "" || relativeReference === ".." || relativeReference.startsWith(`..${sep}`)) {
+        fail(`${path}:${token.line}:${token.column}: source path escapes the runtime package: ${reference}`);
+      }
+      scanFile(referencedPath);
+    }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
       if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
         fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
       }
-      if (token.value !== "include" || tokens[index + 1]?.value !== "!") continue;
-      const includeStringIndex = tokens[index + 2]?.value === "(" ? index + 3 : index + 2;
-      if (tokens[includeStringIndex]?.kind !== "string" || !tokens[includeStringIndex].value.startsWith('"')) {
-        fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
+      if (token.value === "include" && tokens[index + 1]?.value === "!") {
+        const includeStringIndex = tokens[index + 2]?.value === "(" ? index + 3 : index + 2;
+        if (tokens[includeStringIndex]?.kind !== "string" || !tokens[includeStringIndex].value.startsWith('"')) {
+          fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
+        }
+        scanReferencedSource(tokens[includeStringIndex].value, token);
       }
-      const includeToken = tokens[includeStringIndex].value;
-      if (!includeToken.startsWith('"') || !includeToken.endsWith('"')) {
-        fail(`${path}:${token.line}:${token.column}: include! path must be a normal string literal`);
+      if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
+        tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
+        scanReferencedSource(tokens[index + 2].value, token);
       }
-      let includePath;
-      try {
-        includePath = resolve(dirname(path), JSON.parse(includeToken));
-      } catch (error) {
-        fail(`${path}:${token.line}:${token.column}: invalid include! path: ${error.message}`);
-      }
-      const relativeInclude = relative(resolvedRoot, includePath);
-      if (relativeInclude === "" || relativeInclude === ".." || relativeInclude.startsWith(`..${sep}`)) {
-        fail(`${path}:${token.line}:${token.column}: include! path escapes the runtime package: ${includeToken}`);
-      }
-      scanFile(includePath);
     }
   }
   for (const path of sourceFiles(resolvedRoot)) scanFile(path);
