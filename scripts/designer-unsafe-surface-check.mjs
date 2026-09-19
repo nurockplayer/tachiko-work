@@ -279,6 +279,29 @@ function approvedNoMangle(tokens, index, path, packageRoot) {
 function scan(root) {
   const resolvedRoot = resolve(root);
   const visited = new Set();
+  const allSourceFiles = sourceFiles(resolvedRoot);
+  const globalIncludeNames = new Set(["include"]);
+  const globalUnsafeMacroNames = new Set(UNSAFE_MACROS);
+  let aliasesChanged;
+  do {
+    aliasesChanged = false;
+    for (const sourcePath of allSourceFiles) {
+      const sourceTokens = tokensFor(readFileSync(sourcePath, "utf8"), sourcePath);
+      for (let index = 0; index + 2 < sourceTokens.length; index += 1) {
+        if (sourceTokens[index + 1]?.value !== "as" || sourceTokens[index + 2]?.kind !== "identifier") continue;
+        const importedName = normalizedIdentifier(sourceTokens[index].value);
+        const aliasName = normalizedIdentifier(sourceTokens[index + 2].value);
+        if (globalIncludeNames.has(importedName) && !globalIncludeNames.has(aliasName)) {
+          globalIncludeNames.add(aliasName);
+          aliasesChanged = true;
+        }
+        if (globalUnsafeMacroNames.has(importedName) && !globalUnsafeMacroNames.has(aliasName)) {
+          globalUnsafeMacroNames.add(aliasName);
+          aliasesChanged = true;
+        }
+      }
+    }
+  } while (aliasesChanged);
   function moduleFileDirectory(filePath) {
     if (CARGO_TARGET_ROOTS.has(filePath)) return dirname(filePath);
     const fileName = basename(filePath);
@@ -320,13 +343,7 @@ function scan(root) {
     }
     const inlineModules = [];
     const braceModules = [];
-    function moduleNameAfter(startIndex) {
-      for (let index = startIndex; index < tokens.length && ![";", "{"].includes(tokens[index].value); index += 1) {
-        if (tokens[index].value === "mod" && tokens[index + 1]?.kind === "identifier") return tokens[index + 1].value;
-      }
-      return null;
-    }
-    function scanReferencedSource(reference, token, baseDirectory = dirname(path), referencedLogicalDirectory = logicalDirectory, inheritScope = false) {
+    function scanReferencedSource(reference, token, baseDirectory = dirname(path), referencedLogicalDirectory = logicalDirectory, inheritScope = false, usePhysicalDirectory = false) {
       if (!reference.startsWith('"') || !reference.endsWith('"')) {
         fail(`${path}:${token.line}:${token.column}: source path must be a normal string literal`);
       }
@@ -340,7 +357,8 @@ function scan(root) {
       if (relativeReference === "" || relativeReference === ".." || relativeReference.startsWith(`..${sep}`)) {
         fail(`${path}:${token.line}:${token.column}: source path escapes the runtime package: ${reference}`);
       }
-      return scanFile(referencedPath, referencedLogicalDirectory, inheritScope ? { includeNames, unsafeMacroNames } : {});
+      const childLogicalDirectory = usePhysicalDirectory ? dirname(referencedPath) : referencedLogicalDirectory;
+      return scanFile(referencedPath, childLogicalDirectory, inheritScope ? { includeNames, unsafeMacroNames } : {});
     }
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
@@ -362,9 +380,7 @@ function scan(root) {
       if (token.value === "path" && tokens[index - 2]?.value === "#" && tokens[index - 1]?.value === "[" &&
         tokens[index + 1]?.value === "=" && tokens[index + 2]?.kind === "string") {
         const moduleBaseDirectory = join(logicalDirectory, ...inlineModules);
-        const moduleName = moduleNameAfter(index + 3);
-        const nestedLogicalDirectory = moduleName ? join(moduleBaseDirectory, moduleName) : moduleBaseDirectory;
-        scanReferencedSource(tokens[index + 2].value, token, moduleBaseDirectory, nestedLogicalDirectory);
+        scanReferencedSource(tokens[index + 2].value, token, moduleBaseDirectory, moduleBaseDirectory, false, true);
       }
       if (token.value === "cfg_attr" && tokens[index + 1]?.value === "(") {
         let depth = 1;
@@ -372,12 +388,8 @@ function scan(root) {
           if (tokens[nested].value === "(") depth += 1;
           if (tokens[nested].value === ")") depth -= 1;
           if (tokens[nested].value === "path" && tokens[nested + 1]?.value === "=" && tokens[nested + 2]?.kind === "string") {
-            const moduleName = moduleNameAfter(nested + 3);
             const moduleBaseDirectory = join(logicalDirectory, ...inlineModules);
-            const nestedLogicalDirectory = moduleName
-              ? join(moduleBaseDirectory, moduleName)
-              : moduleBaseDirectory;
-            scanReferencedSource(tokens[nested + 2].value, tokens[nested], moduleBaseDirectory, nestedLogicalDirectory);
+            scanReferencedSource(tokens[nested + 2].value, tokens[nested], moduleBaseDirectory, moduleBaseDirectory, false, true);
           }
         }
       }
@@ -399,7 +411,9 @@ function scan(root) {
     }
     return { includeNames, unsafeMacroNames };
   }
-  for (const path of sourceFiles(resolvedRoot)) scanFile(path);
+  for (const path of allSourceFiles) {
+    scanFile(path, undefined, { includeNames: globalIncludeNames, unsafeMacroNames: globalUnsafeMacroNames });
+  }
 }
 
 if (process.argv.length !== 3) {

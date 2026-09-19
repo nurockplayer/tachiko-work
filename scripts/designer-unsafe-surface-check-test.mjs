@@ -95,8 +95,8 @@ assertRejected("unsafe in an inline module from a nested module file", {
 assertRejected("unsafe in a path-renamed module's nested path", {
   "src/lib.rs": "#[path = \"renamed.rs\"] mod foo;",
   "src/renamed.rs": "#[path = \"payload.inc\"] mod payload;",
-  "src/foo/payload.inc": "pub unsafe fn bypassed() {}",
-  "src/renamed/payload.inc": "pub fn safe_decoy() {}",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
+  "src/foo/payload.inc": "pub fn safe_decoy() {}",
 });
 assertRejected("unsafe in a custom Cargo target", {
   "Cargo.toml": "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"custom\"\npath = \"custom/tool.rs\"\n",
@@ -122,6 +122,17 @@ assertRejected("unsafe through a chained assembly macro alias", {
 assertRejected("unsafe through an included assembly macro alias", {
   "src/lib.rs": "include!(\"aliases.inc\"); generated!(\"\");",
   "src/aliases.inc": "use core::arch::global_asm as generated;",
+});
+assertRejected("unsafe through an ordinary module assembly macro alias", {
+  "src/lib.rs": "mod aliases; mod caller;",
+  "src/aliases.rs": "pub use core::arch::global_asm as hidden_asm;",
+  "src/caller.rs": "use crate::aliases::hidden_asm; hidden_asm!(\"\");",
+});
+assertRejected("unsafe through an ordinary module include alias", {
+  "src/lib.rs": "mod aliases; mod caller;",
+  "src/aliases.rs": "pub use std::include as source;",
+  "src/caller.rs": "use crate::aliases::source; source!(\"payload.inc\");",
+  "src/payload.inc": "pub unsafe fn bypassed() {}",
 });
 assertRejected("unsafe through a raw assembly macro identifier", {
   "src/lib.rs": "core::arch::r#global_asm!(\"\");",
