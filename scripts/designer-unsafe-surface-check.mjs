@@ -383,6 +383,12 @@ function scan(root) {
       if (tokens[index].value === "mod" && tokens[index + 1]?.kind === "identifier") {
         shadowedNames.add(normalizedIdentifier(tokens[index + 1].value));
       }
+      if (tokens[index].value === "extern" && tokens[index + 1]?.value === "crate") {
+        const aliasIndex = tokens[index + 3]?.value === "as" ? index + 4 : index + 2;
+        if (tokens[aliasIndex]?.kind === "identifier" && tokens[index + 3]?.value === "as") {
+          shadowedNames.add(normalizedIdentifier(tokens[aliasIndex].value));
+        }
+      }
     }
     let changed;
     do {
@@ -492,9 +498,6 @@ function scan(root) {
       const candidates = [join(moduleBaseDirectory, `${moduleName}.rs`), join(moduleBaseDirectory, moduleName, "mod.rs")];
       const modulePath = candidates.find((candidate) => existsSync(candidate));
       if (!modulePath) fail(`${path}:${tokens[moduleIndex].line}:${tokens[moduleIndex].column}: cannot resolve module ${moduleName}`);
-      collectIncludedAliases(modulePath);
-      for (const name of globalIncludeNames) includeNames.add(name);
-      for (const name of globalUnsafeMacroNames) unsafeMacroNames.add(name);
       scanFile(modulePath, undefined, { includeNames, unsafeMacroNames });
     }
     function pathAttributeBaseDirectory() {
@@ -557,6 +560,9 @@ function scan(root) {
               if (!KNOWN_SAFE_ATTRIBUTES.has(normalizedIdentifier(tokens[nested].value)) ||
                 shadowedNames.has(normalizedIdentifier(tokens[nested].value))) {
                 fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: cfg_attr helper ${tokens[nested].value} may expand outside the auditable source surface`);
+              }
+              if (tokens[nested].value === "cfg_attr") {
+                fail(`${path}:${tokens[nested].line}:${tokens[nested].column}: nested cfg_attr helpers are not supported by the unsafe-surface scanner`);
               }
               if (tokens[nested].value === "derive" && tokens[nested + 1]?.value === "(") {
                 let deriveDepth = 1;
@@ -685,7 +691,7 @@ function scan(root) {
     const fileName = basename(path);
     const fileStem = fileName.replace(/\.[^.]+$/, "");
     const isCrateRoot = CARGO_TARGET_ROOTS.has(path) || fileName === "build.rs" || ["lib", "main", "mod", "build"].includes(fileStem);
-    scanFile(path, undefined, { includeNames: globalIncludeNames, unsafeMacroNames: globalUnsafeMacroNames }, isCrateRoot);
+    scanFile(path, undefined, {}, isCrateRoot);
   }
 }
 
