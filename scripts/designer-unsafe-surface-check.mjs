@@ -337,6 +337,11 @@ function scan(root) {
   }
   function trustedAliasOrigin(tokens, index, importedName) {
     const root = aliasUseRoot(tokens, index);
+    const rootIsShadowed = tokens.some((token, tokenIndex) =>
+      (token.value === "mod" && normalizedIdentifier(tokens[tokenIndex + 1]?.value ?? "") === root) ||
+      (token.value === "as" && normalizedIdentifier(tokens[tokenIndex + 1]?.value ?? "") === root)
+    );
+    if (rootIsShadowed) return false;
     if (importedName === "include") return root === "std";
     if (UNSAFE_MACROS.has(importedName)) return root === "core" || root === "std";
     return true;
@@ -691,7 +696,7 @@ function scan(root) {
           scanReferencedSource(tokens[index + 2].value, token, moduleBaseDirectory, moduleBaseDirectory, false, true);
         }
       }
-      if (token.value === "cfg_attr" && tokens[index + 1]?.value === "(") {
+      if (normalizedIdentifier(token.value) === "cfg_attr" && tokens[index + 1]?.value === "(") {
         let depth = 1;
         for (let nested = index + 2; nested < tokens.length && depth > 0; nested += 1) {
           if (tokens[nested].value === "(") depth += 1;
