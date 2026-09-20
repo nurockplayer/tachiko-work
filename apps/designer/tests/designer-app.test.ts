@@ -1347,6 +1347,8 @@ describe("Designer application seam", () => {
       update,
     };
     const client = new FakeClient();
+    const confirm = vi.fn<Window["confirm"]>().mockReturnValue(true);
+    vi.stubGlobal("confirm", confirm);
     const app = mountDesigner(root, client, saveHost);
     await app.ready;
 
@@ -1395,6 +1397,7 @@ describe("Designer application seam", () => {
     expect(secondAttempt?.[4]).toBe(durablePresentation);
 
     app.destroy();
+    vi.unstubAllGlobals();
   });
 
   it("treats pending scalar drafts as unsaved across Save As, Open, and Close", async () => {
