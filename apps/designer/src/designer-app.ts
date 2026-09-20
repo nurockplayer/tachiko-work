@@ -13,20 +13,16 @@ import { defaultBudgetViews, addBudgetView, duplicateBudgetView, renameBudgetVie
 import { mountBudgetTools, hasBudgetToolsDraft, type BudgetToolsDraft } from "./budget-tools.ts";
 import { parseTrackerView, parseTsv, emptyTrackerView, cellKey, orderedRows, type NumberFormat, type TrackerView } from "./tracker-model.ts";
 import { createProjectionStore, type ProjectionStore } from "./projection-store.ts";
-import { createDurabilityState } from "./durability-state.ts";
+import { createProjectLifecycle, type ProjectLifecycle } from "./project-lifecycle.ts";
 import type {
   DesignerProjectHost,
   SavedProjectSummary,
 } from "./host/browser-project-host.ts";
-import { projectTransferFromFiles } from "./host/project-transfer.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
 } from "./runtime/client.ts";
-import {
-  readSingleLocalRoDocument,
-  type LocalDocumentHandle,
-} from "./host/local-document-ingress.ts";
+import type { LocalDocumentHandle } from "./host/local-document-ingress.ts";
 import type {
   BootstrapProjection,
   DiagnosticProjection,
@@ -58,7 +54,6 @@ export function mountDesigner(
   client: DesignerClient,
   host: DesignerProjectHost,
 ): MountedDesigner {
-  let activeProject: {name: string; bytes: ArrayBuffer; presentation?: string | undefined} | null = null;
   let savedView = JSON.stringify(emptyTrackerView());
   const tracker = new TrackerGrid({
     command: async (request) => {
@@ -69,7 +64,7 @@ export function mountDesigner(
         const publication = await client.trackerCommand(request);
         published = true;
         store.beginPublication(publication);
-        durability.observe(publication.resulting_revision);
+        lifecycle.durability.observe(publication.resulting_revision);
         let table: TableProjection;
         try {
           table = await client.queryTable(selectedCollection);
@@ -112,7 +107,6 @@ export function mountDesigner(
   let occurrenceClosed = false;
   // The bootstrap occurrence exists only to make ordinary Web startup usable.
   // A cold OS launch may replace it without presenting a discard dialog.
-  let coldBootstrapOccurrence = false;
   const pendingTextBuffers = new Map<string, string>();
   const pendingBooleanBuffers = new Map<string, boolean>();
   const pendingDateBuffers = new Map<string, string>();
@@ -154,7 +148,6 @@ export function mountDesigner(
     pendingFormulaBuffers.size > 0;
   let savedProjects: SavedProjectSummary[] = [];
   let selectedSavedProject = "";
-  const durability = createDurabilityState();
   let beforeUnloadGuarded = false;
 
   const warnBeforeDirtyUnload = (event: BeforeUnloadEvent): void => {
@@ -164,7 +157,7 @@ export function mountDesigner(
 
   const syncBeforeUnloadGuard = (): void => {
     const shouldGuard =
-      !destroyed && (durability.snapshot().dirty || hasPendingScalarDrafts());
+      !destroyed && (lifecycle.durability.snapshot().dirty || hasPendingScalarDrafts());
     if (shouldGuard && !beforeUnloadGuarded) {
       window.addEventListener("beforeunload", warnBeforeDirtyUnload);
       beforeUnloadGuarded = true;
@@ -175,11 +168,11 @@ export function mountDesigner(
   };
 
   const reflectUnsavedState = (): void => {
-    coldBootstrapOccurrence = false;
+    lifecycle.clearColdBootstrapOccurrence();
     syncBeforeUnloadGuard();
     const durabilityChip = root.querySelector<HTMLElement>('[data-testid="durability"]');
     if (durabilityChip !== null) {
-      const dirty = durability.snapshot().dirty || hasPendingScalarDrafts();
+      const dirty = lifecycle.durability.snapshot().dirty || hasPendingScalarDrafts();
       durabilityChip.dataset.dirty = String(dirty);
       const label = durabilityChip.querySelector("span");
       if (label !== null) label.textContent = dirty ? "Unsaved changes" : "Saved";
@@ -213,8 +206,8 @@ export function mountDesigner(
       selectedCollection,
       notice,
       busy,
-      durability.snapshot().dirty || hasPendingScalarDrafts(),
-      durability.snapshot().durable_revision,
+      lifecycle.durability.snapshot().dirty || hasPendingScalarDrafts(),
+      lifecycle.durability.snapshot().durable_revision,
       savedProjects,
       selectedSavedProject,
       tracker.view,
@@ -357,7 +350,7 @@ export function mountDesigner(
         parseTrackerView(JSON.stringify({...emptyTrackerView(), budgetViews: views}), candidate.opened.bootstrap.collections.map(c => c.id));
       });
       const interop = createInteropState(imported, source);
-      installOpenedOccurrence(imported.opened);
+      lifecycle.replaceOccurrence(imported.opened, false);
       tracker.view.interop = interop;
       tracker.view.budgetViews = defaultBudgetViews(imported.opened.bootstrap.collections.map(c => c.id));
       for (const view of tracker.view.budgetViews.views) view.name = interop.metadata.sheets.find(sheet => sheet.schema_id === view.collection)?.name.slice(0, 80) ?? "Imported sheet";
@@ -368,7 +361,6 @@ export function mountDesigner(
         const format = importedNumberFormat(style.number_format);
         if (format !== "number") tracker.view.formats[key] = format;
       });
-      durability.install(imported.opened.bootstrap.revision, false);
       await refreshBudgetTables(imported.opened.bootstrap.revision);
       notice = {tone: "success", title: "Spreadsheet imported", message: "Inspect, sort, filter and edit the imported tables. Save commits the data, original source and compatibility ledger in this browser.", diagnostics: []};
       return imported;
@@ -390,7 +382,7 @@ export function mountDesigner(
     busy = true; render(); let published = false;
     try {
       const publication = await client.commitCleanup(preview.revision, preview.preview_id);
-      published = true; tracker.recordSemantic(); store.beginPublication(publication); durability.observe(publication.resulting_revision);
+      published = true; tracker.recordSemantic(); store.beginPublication(publication); lifecycle.durability.observe(publication.resulting_revision);
       await refreshBudgetTables(publication.resulting_revision);
       const table = budgetTables.find(item => item.collection.key === selectedCollection);
       if (!table) throw new Error("Current imported table is unavailable.");
@@ -653,7 +645,7 @@ export function mountDesigner(
       tracker.recordSemantic();
       onPublished?.();
       const requested = store.beginPublication(publication);
-      durability.observe(publication.resulting_revision);
+      lifecycle.durability.observe(publication.resulting_revision);
       syncBeforeUnloadGuard();
       render();
       const refresh = await client.queryFields(
@@ -798,7 +790,7 @@ export function mountDesigner(
           published = true;
           tracker.recordSemantic();
           const requested = store.beginPublication(publishedResult.publication);
-          durability.observe(publishedResult.publication.resulting_revision);
+          lifecycle.durability.observe(publishedResult.publication.resulting_revision);
           store.finishRefresh(await client.queryFields(publishedResult.publication.resulting_revision, requested));
           groupedDefinitionId = publishedResult.result.definition_id;
           groupedResult = publishedResult.result;
@@ -916,7 +908,7 @@ export function mountDesigner(
     findReplace.close();
     const nextStore = createProjectionStore(table);
     reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
-    tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
+    tracker.reset(); savedView = JSON.stringify(tracker.view);
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
     pendingDateBuffers.clear();
@@ -940,7 +932,7 @@ export function mountDesigner(
     }
     selectedCollection = candidate.default_collection;
     occurrenceClosed = false;
-    durability.install(candidate.revision, durable);
+    lifecycle.durability.install(candidate.revision, durable);
     syncBeforeUnloadGuard();
   };
 
@@ -951,7 +943,7 @@ export function mountDesigner(
     const nextStore = createProjectionStore(opened.table);
     findReplace.close();
     reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
-    tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
+    tracker.reset(); savedView = JSON.stringify(tracker.view);
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
     pendingDateBuffers.clear();
@@ -975,9 +967,6 @@ export function mountDesigner(
     }
     selectedCollection = retainedCollection;
     occurrenceClosed = false;
-    coldBootstrapOccurrence = false;
-    durability.install(opened.bootstrap.revision, true);
-    syncBeforeUnloadGuard();
     if (retainedCollection !== opened.bootstrap.default_collection) {
       void client.queryTable(retainedCollection).then(table => {
         if (table.revision === opened.bootstrap.revision) {
@@ -1014,7 +1003,7 @@ export function mountDesigner(
   };
 
   const confirmDiscardDirtyOccurrence = (action: string): boolean =>
-    (!durability.snapshot().dirty && !hasPendingScalarDrafts()) ||
+    (!lifecycle.durability.snapshot().dirty && !hasPendingScalarDrafts()) ||
     window.confirm(
       `${action} will discard unsaved changes in the current project. Continue?`,
     );
@@ -1025,7 +1014,7 @@ export function mountDesigner(
    * the app, where a warm local launch is visibly cancellable on every host.
    */
   const confirmDiscardDirtyLocalDocument = (action: string): Promise<boolean> => {
-    if (!durability.snapshot().dirty && !hasPendingScalarDrafts()) return Promise.resolve(true);
+    if (!lifecycle.durability.snapshot().dirty && !hasPendingScalarDrafts()) return Promise.resolve(true);
 
     return new Promise((resolve) => {
       const dialog = document.createElement("dialog");
@@ -1066,192 +1055,11 @@ export function mountDesigner(
     });
   };
 
-  const openSavedProject = async (): Promise<void> => {
-    if (busy || selectedSavedProject === "") return;
-    if (!confirmDiscardDirtyOccurrence("Open")) return;
-    busy = true;
-    notice = null;
-    render();
-    try {
-      const snapshot = host.readSnapshot ? await host.readSnapshot(selectedSavedProject) : {bytes: await host.read(selectedSavedProject), presentation: undefined};
-      // Inspect the same immutable host snapshot before replacing the resident.
-      // Budget bindings require authoritative IDs; older clients fail closed
-      // for Budget sidecars while retaining legacy Tracker compatibility.
-      const candidate = await client.inspectProject?.(snapshot.bytes.slice(0));
-      const view = parseTrackerView(snapshot.presentation, candidate?.bootstrap.collections.map(collection => collection.id));
-      if (view.interop) {
-        if (!client.inspectImportedProject) throw new Error("Imported project validation is unavailable.");
-        await client.inspectImportedProject(snapshot.bytes.slice(0), view.interop.metadata);
-      }
-      const durableBytes = snapshot.bytes.slice(0);
-      await installProjectBytes(snapshot.bytes);
-      tracker.reset(view); savedView = JSON.stringify(view);
-      if (view.budgetViews && store) {
-        await refreshBudgetTables(store.snapshot().table.revision);
-        const active = view.budgetViews.views.find(v => v.id === view.budgetViews?.active);
-        const table = budgetTables.find(t => t.collection.id === active?.collection);
-        if (table) { store = createProjectionStore(table); selectedCollection = table.collection.key; }
-      }
-      activeProject = {name: selectedSavedProject, bytes: durableBytes, presentation: snapshot.presentation};
-      notice = {
-        tone: "success",
-        title: "Project opened",
-        message: `${selectedSavedProject} is current in a fresh Rust occurrence. ${projectRepresentation(durableBytes)}`,
-        diagnostics: [],
-      };
-    } catch (error) {
-      showProjectFailure("Project not opened", error);
-    } finally {
-      busy = false;
-      render();
-    }
-  };
-
-  const installProjectBytes = async (bytes: ArrayBuffer): Promise<void> => {
-    const opened = await client.openProject(bytes);
-    installOpenedOccurrence(opened);
-  };
-
-  const installLocalDocumentBytes = async (bytes: ArrayBuffer): Promise<void> => {
-    if (!client.openLocalDocument) throw new Error("Local document admission is unavailable.");
-    const opened = await client.openLocalDocument(bytes);
-    installOpenedOccurrence(opened);
-  };
-
-  const rejectBusyLocalDocument = (): void => {
-    showProjectFailure(
-      "Local file not opened",
-      new Error(
-        "Designer is busy with another operation. Try opening the local file again after it completes.",
-      ),
-    );
-    render();
-  };
-
-  const isBusy = (): boolean => busy;
-
-  const openLocalDocument = async (handles: readonly LocalDocumentHandle[]): Promise<void> => {
-    if (isBusy()) {
-      rejectBusyLocalDocument();
-      return;
-    }
-    try {
-      const document = await readSingleLocalRoDocument(handles);
-      await ready;
-      if (destroyed) return;
-      if (isBusy()) {
-        rejectBusyLocalDocument();
-        return;
-      }
-      if (!coldBootstrapOccurrence) {
-        const nativeDirtyConfirmation = handles.length === 1 && handles[0]?.requiresInAppDirtyConfirmation === true;
-        const confirmed = nativeDirtyConfirmation
-          ? await confirmDiscardDirtyLocalDocument(`Open '${document.name}'`)
-          : confirmDiscardDirtyOccurrence(`Open '${document.name}'`);
-        if (!confirmed) return;
-      }
-      busy = true;
-      notice = null;
-      render();
-      try {
-        await installLocalDocumentBytes(document.bytes);
-        notice = {
-          tone: "success",
-          title: "Local file opened",
-          message: `${document.name} is current in a fresh Rust occurrence.`,
-          diagnostics: [],
-        };
-      } catch (error) {
-        showProjectFailure("Local file not opened", error);
-      } finally {
-        busy = false;
-        render();
-      }
-    } catch (error) {
-      if (!destroyed) {
-        showProjectFailure("Local file not opened", error);
-        render();
-      }
-    }
-  };
-
-  const importProjectDirectory = async (input: HTMLInputElement): Promise<void> => {
-    if (busy) return;
-    if (!confirmDiscardDirtyOccurrence("Open")) {
-      input.value = "";
-      return;
-    }
-    const files = input.files;
-    if (files === null) return;
-    busy = true;
-    notice = null;
-    render();
-    try {
-      const bytes = await projectTransferFromFiles(files);
-      await installProjectBytes(bytes);
-      notice = {
-        tone: "success",
-        title: "Project opened",
-        message: "The selected canonical .roproj/v1 is current in a fresh Rust occurrence.",
-        diagnostics: [],
-      };
-    } catch (error) {
-      showProjectFailure("Project not opened", error);
-    } finally {
-      input.value = "";
-      busy = false;
-      render();
-    }
-  };
-
-  const saveAs = async (): Promise<void> => {
-    if (store === null || busy) return;
-    if (hasEditDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel pending cell, formula and chart edits before saving.")); render(); return; }
-    const requestedName = window.prompt(
-      "Save As a new browser project (existing destinations are never overwritten):",
-      `${bootstrap?.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "") || "project"}.roproj`,
-    );
-    if (requestedName === null) return;
-    busy = true;
-    notice = null;
-    render();
-    try {
-      const expectedRevision = store.snapshot().table.revision;
-      const project = await client.exportProject(expectedRevision);
-      const presentation = JSON.stringify(tracker.view);
-      await host.publish(requestedName, project.bytes, presentation);
-      activeProject = {name: requestedName.trim(), bytes: project.bytes.slice(0), presentation};
-      savedView = presentation;
-      durability.published(project.revision);
-      syncBeforeUnloadGuard();
-      let refreshWarning = "";
-      try {
-        await refreshSavedProjects(requestedName.trim());
-      } catch (error) {
-        refreshWarning = ` The project list could not refresh: ${
-          error instanceof Error ? error.message : String(error)
-        }`;
-      }
-      notice = {
-        tone: "success",
-        title: "Save As complete",
-        message: `${requestedName.trim()} durably committed revision ${
-          project.revision
-        }. ${projectRepresentation(project.bytes)}${refreshWarning}`,
-        diagnostics: [],
-      };
-    } catch (error) {
-      showProjectFailure("Project not saved", error);
-    } finally {
-      busy = false;
-      render();
-    }
-  };
 
   const newTracker = async (): Promise<void> => {
     if (busy || !client.newTracker || !confirmDiscardDirtyOccurrence("New Tracker")) return;
     busy = true; notice = null; render();
-    try { installOpenedOccurrence(await client.newTracker()); durability.install(store?.snapshot().table.revision ?? "", false); }
+    try { lifecycle.replaceOccurrence(await client.newTracker(), false); }
     catch (error) { showProjectFailure("Tracker not created", error); }
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
   };
@@ -1261,11 +1069,10 @@ export function mountDesigner(
     busy = true; notice = null; render();
     try {
       const opened = await client.newBudget();
-      installOpenedOccurrence(opened);
+      lifecycle.replaceOccurrence(opened, false);
       tracker.view.budgetViews = defaultBudgetViews(opened.bootstrap.collections.map(c => c.id));
       tracker.view.budgetViews.views.forEach(view => { view.name = humanize(opened.bootstrap.collections.find(c => c.id === view.collection)?.key ?? "Budget"); });
       await refreshBudgetTables(opened.bootstrap.revision);
-      durability.install(opened.bootstrap.revision, false);
     }
     catch (error) { showProjectFailure("Budget not created", error); }
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
@@ -1298,7 +1105,7 @@ export function mountDesigner(
       const publication = duplicated.publication;
       published = true;
       tracker.recordSemantic();
-      durability.observe(publication.resulting_revision);
+      lifecycle.durability.observe(publication.resulting_revision);
       const duplicatedTable = await client.queryTable(duplicated.collection.key);
       if (duplicatedTable.revision !== publication.resulting_revision) throw new Error("Duplicated collection refresh is not current.");
       bootstrap = {
@@ -1328,7 +1135,7 @@ export function mountDesigner(
 
   const newTable = (): void => {
     if (busy || !client.newTable) return;
-    if (!coldBootstrapOccurrence && (durability.snapshot().dirty || hasPendingScalarDrafts()) && !newTableConfirmed) {
+    if (!lifecycle.isColdBootstrapOccurrence() && (lifecycle.durability.snapshot().dirty || hasPendingScalarDrafts()) && !newTableConfirmed) {
       window.setTimeout(() => {
         if (window.confirm("New Table will discard unsaved changes in the current project. Continue?")) {
           newTableConfirmed = true;
@@ -1376,8 +1183,7 @@ export function mountDesigner(
       busy = true; notice = null; render();
       void client.newTable?.(name, columns).then(opened => {
         if (destroyed) return;
-        installOpenedOccurrence(opened);
-        durability.install(opened.bootstrap.revision, false);
+        lifecycle.replaceOccurrence(opened, false);
       }).catch((error: unknown) => {
         if (!destroyed) showProjectFailure("Table not created", error);
       }).finally(() => {
@@ -1386,58 +1192,6 @@ export function mountDesigner(
     });
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
-  };
-
-  const save = async (): Promise<void> => {
-    if (activeProject === null) { await saveAs(); return; }
-    if (!store || busy) return;
-    if (hasEditDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel pending cell, formula and chart edits before saving.")); render(); return; }
-    busy = true; notice = null; render();
-    try {
-      if (!host.update) throw new Error("This browser host does not support Save; use Save As.");
-      const project = await client.exportProject(store.snapshot().table.revision);
-      const presentation = JSON.stringify(tracker.view);
-      await host.update(activeProject.name, project.bytes, activeProject.bytes, presentation, activeProject.presentation);
-      activeProject = {...activeProject, bytes: project.bytes.slice(0), presentation};
-      savedView = presentation; durability.published(project.revision);
-      notice = {tone: "success", title: "Save complete", message: `${activeProject.name} saved in this browser. ${projectRepresentation(project.bytes)}`, diagnostics: []};
-    } catch (error) { showProjectFailure("Project not saved", error); }
-    finally { busy = false; syncBeforeUnloadGuard(); render(); }
-  };
-
-  const closeOccurrence = async (): Promise<void> => {
-    if (busy) return;
-    if (!confirmDiscardDirtyOccurrence("Close")) return;
-    busy = true;
-    notice = null;
-    render();
-    try {
-      await client.closeProject();
-      findReplace.close();
-      reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
-      pendingTextBuffers.clear();
-      pendingBooleanBuffers.clear();
-      pendingDateBuffers.clear();
-      pendingFormulaBuffers.clear();
-      pendingNumberBuffers.clear(); budgetToolsDraft = {}; budgetTables = [];
-      tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
-      bootstrap = null;
-      store = null;
-      occurrenceClosed = true;
-      durability.close();
-      syncBeforeUnloadGuard();
-      notice = {
-        tone: "success",
-        title: "Project closed",
-        message: "The Rust resident occurrence was destroyed. Durable projects are unchanged.",
-        diagnostics: [],
-      };
-    } catch (error) {
-      showProjectFailure("Project not closed", error);
-    } finally {
-      busy = false;
-      render();
-    }
   };
 
   const pasteGeneric = async (text: string): Promise<void> => {
@@ -1460,7 +1214,7 @@ export function mountDesigner(
       published = true;
       tracker.recordSemantic();
       store.beginPublication(publication);
-      durability.observe(publication.resulting_revision);
+      lifecycle.durability.observe(publication.resulting_revision);
       const refreshed = await client.queryTable(table.collection.key);
       if (refreshed.revision !== publication.resulting_revision) throw new Error("Table refresh is not current.");
       store = createProjectionStore(refreshed);
@@ -1560,7 +1314,7 @@ export function mountDesigner(
       else if (type === "date") void commitDate(target, input.value);
       else void commitText(target, input.value);
     });
-    root.querySelector("[data-save-project]")?.addEventListener("click", () => { void save(); });
+    root.querySelector("[data-save-project]")?.addEventListener("click", () => { void lifecycle.save(); });
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
       const draftControl = form.querySelector<HTMLTextAreaElement>("textarea");
       const draftBoolean = form.querySelector<HTMLInputElement>('input[type="checkbox"]');
@@ -1726,13 +1480,13 @@ export function mountDesigner(
         }
       });
     root.querySelector<HTMLButtonElement>("[data-open-project]")?.addEventListener("click", () => {
-      void openSavedProject();
+      void lifecycle.openSavedProject();
     });
     root.querySelector<HTMLButtonElement>("[data-save-as]")?.addEventListener("click", () => {
-      void saveAs();
+      void lifecycle.saveAs();
     });
     root.querySelector<HTMLButtonElement>("[data-close-project]")?.addEventListener("click", () => {
-      void closeOccurrence();
+      void lifecycle.close();
     });
     root
       .querySelector<HTMLSelectElement>("[data-saved-project-select]")
@@ -1745,7 +1499,7 @@ export function mountDesigner(
       ?.addEventListener("change", (event) => {
         const input = event.currentTarget;
         if (input instanceof HTMLInputElement && input.files !== null) {
-          void importProjectDirectory(input);
+          void lifecycle.importProjectDirectory(input);
         }
       });
   };
@@ -1799,12 +1553,68 @@ export function mountDesigner(
     });
   };
 
+  let openedProjectView: TrackerView | null = null;
+  const lifecycle: ProjectLifecycle = createProjectLifecycle(client, host, {
+    isBusy: () => busy,
+    setBusy: (next) => { busy = next; },
+    render,
+    clearNotice: () => { notice = null; },
+    showFailure: showProjectFailure,
+    showSuccess: (title, message) => {
+      notice = { tone: "success", title, message, diagnostics: [] };
+    },
+    hasPendingScalarDrafts,
+    hasEditDrafts,
+    confirmDiscard: confirmDiscardDirtyOccurrence,
+    confirmLocalDiscard: confirmDiscardDirtyLocalDocument,
+    isDestroyed: () => destroyed,
+    installOpenedOccurrence,
+    installClosedOccurrence: () => {
+      findReplace.close();
+      reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
+      pendingTextBuffers.clear(); pendingBooleanBuffers.clear(); pendingDateBuffers.clear();
+      pendingFormulaBuffers.clear(); pendingNumberBuffers.clear(); budgetToolsDraft = {}; budgetTables = [];
+      tracker.reset(); savedView = JSON.stringify(tracker.view);
+      bootstrap = null; store = null; occurrenceClosed = true;
+    },
+    selectedSavedProject: () => selectedSavedProject,
+    readOpenedPresentation: async (bytes, presentation) => {
+      // Inspect before runtime replacement; imported sidecars are validated by the runtime.
+      const candidate = await client.inspectProject?.(bytes.slice(0));
+      const view = parseTrackerView(presentation, candidate?.bootstrap.collections.map(collection => collection.id));
+      if (view.interop) {
+        if (!client.inspectImportedProject) throw new Error("Imported project validation is unavailable.");
+        await client.inspectImportedProject(bytes.slice(0), view.interop.metadata);
+      }
+      openedProjectView = view;
+    },
+    installOpenedPresentation: async () => {
+      const view = openedProjectView;
+      openedProjectView = null;
+      if (view === null) return;
+      tracker.reset(view); savedView = JSON.stringify(view);
+      if (view.budgetViews && store) {
+        await refreshBudgetTables(store.snapshot().table.revision);
+        const active = view.budgetViews.views.find(v => v.id === view.budgetViews?.active);
+        const table = budgetTables.find(t => t.collection.id === active?.collection);
+        if (table) { store = createProjectionStore(table); selectedCollection = table.collection.key; }
+      }
+    },
+    revision: () => store?.snapshot().table.revision ?? null,
+    presentation: () => JSON.stringify(tracker.view),
+    suggestedProjectName: () => `${bootstrap?.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "") || "project"}.roproj`,
+    savedPresentation: (presentation) => { savedView = presentation; },
+    refreshSavedProjects,
+    describeProject: projectRepresentation,
+    syncBeforeUnloadGuard,
+  });
+
   render();
   const ready = (async () => {
     try {
       const candidate = await client.bootstrap();
       await installOccurrence(candidate, false);
-      coldBootstrapOccurrence = true;
+      lifecycle.setColdBootstrapOccurrence();
       try {
         await refreshSavedProjects();
       } catch (error) {
@@ -1825,7 +1635,7 @@ export function mountDesigner(
 
   return {
     ready,
-    openLocalDocumentHandles: openLocalDocument,
+    openLocalDocumentHandles: (handles) => lifecycle.openLocalDocument(handles, ready),
     destroy: () => {
       reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
       destroyed = true; pendingExport = null; busy = false;
