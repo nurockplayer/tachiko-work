@@ -1320,12 +1320,10 @@ describe("Designer application seam", () => {
       formats: {},
     });
     const update = vi.fn(async (
-      _name: string,
-      _bytes: ArrayBuffer,
-      _expectedBytes: ArrayBuffer,
-      _presentation?: string,
-      _expectedPresentation?: string,
-    ): Promise<void> => {});
+      ...args: Parameters<NonNullable<DesignerProjectHost["update"]>>
+    ): Promise<void> => {
+      void args;
+    });
     update.mockRejectedValueOnce(new Error("Injected host update failure."));
 
     const saveHost: DesignerProjectHost = {
