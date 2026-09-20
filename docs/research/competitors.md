@@ -195,7 +195,7 @@ This positioning is only credible if the architecture preserves several guarante
 - Provider-specific protocols remain adapters rather than canonical semantics.
 - Open representations and independent implementation remain real escape paths.
 
-ADR-0007, ADR-0020, ADR-0026, ADR-0027, and the founder-accepted direction in Issue #15 provide the architectural and governance basis for these guarantees. Issue #421 makes deployment neutrality explicit in ADR-0007.
+Accepted ADR-0007, ADR-0020, ADR-0026, and ADR-0027 provide the architectural basis for these guarantees; their provider- and deployment-neutral boundaries are design authority, not market inference. The founder-accepted direction in Issue #15 is supporting governance evidence for an open adoption/interoperability posture, and Issue #202 remains the legal implementation gate before any policy-dependent change. Issue #421 makes deployment neutrality explicit in ADR-0007.
 
 ## Strategic opportunity
 
