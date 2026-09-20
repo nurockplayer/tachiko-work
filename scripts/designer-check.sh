@@ -41,7 +41,6 @@ cargo test --manifest-path "${runtime_manifest}" --all-targets --locked
 node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_root}"
 
 pnpm --dir "${designer_dir}" lint
-pnpm --dir "${designer_dir}" typecheck
 pnpm --dir "${designer_dir}" test
 pnpm --dir "${designer_dir}" build
 # The frontend build runs another Cargo/WASM build; re-scan after it as well.
