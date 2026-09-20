@@ -1304,6 +1304,102 @@ describe("Designer application seam", () => {
     vi.unstubAllGlobals();
   });
 
+  it("uses the opened durable snapshot as the Save CAS base and preserves it after a failed update", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+
+    const durableBytes = new Uint8Array([7, 8, 9, 10]).buffer;
+    const durablePresentation = JSON.stringify({
+      version: 1,
+      cells: {},
+      order: [],
+      widths: {},
+      rowHeight: 36,
+      header: true,
+      formats: {},
+    });
+    const update = vi.fn(async (
+      ...args: Parameters<NonNullable<DesignerProjectHost["update"]>>
+    ): Promise<void> => {
+      void args;
+    });
+    update.mockRejectedValueOnce(new Error("Injected host update failure."));
+
+    const saveHost: DesignerProjectHost = {
+      async list() {
+        return [{
+          name: "baseline.roproj",
+          byte_length: durableBytes.byteLength,
+          saved_at: "2026-09-20T00:00:00.000Z",
+        }];
+      },
+      async read() {
+        return durableBytes.slice(0);
+      },
+      async readSnapshot() {
+        return {
+          bytes: durableBytes.slice(0),
+          presentation: durablePresentation,
+        };
+      },
+      async publish() {},
+      update,
+    };
+    const client = new FakeClient();
+    const confirm = vi.fn<Window["confirm"]>().mockReturnValue(true);
+    vi.stubGlobal("confirm", confirm);
+    const app = mountDesigner(root, client, saveHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Saved");
+    });
+
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    if (damage === null || damage.form === null) throw new Error("damage form is required");
+    damage.value = "45";
+    damage.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Unsaved changes",
+      );
+    });
+
+    root.querySelector<HTMLButtonElement>("[data-save-project]")?.click();
+    await vi.waitFor(() => {
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "Injected host update failure",
+      );
+    });
+
+    const firstAttempt = update.mock.calls[0];
+    expect(firstAttempt?.[0]).toBe("baseline.roproj");
+    expect([...new Uint8Array(firstAttempt?.[2] ?? new ArrayBuffer(0))]).toEqual([7, 8, 9, 10]);
+    expect(firstAttempt?.[4]).toBe(durablePresentation);
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+
+    root.querySelector<HTMLButtonElement>("[data-save-project]")?.click();
+    await vi.waitFor(() => {
+      expect(update).toHaveBeenCalledTimes(2);
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Saved");
+    });
+
+    const secondAttempt = update.mock.calls[1];
+    expect(secondAttempt?.[0]).toBe("baseline.roproj");
+    expect([...new Uint8Array(secondAttempt?.[2] ?? new ArrayBuffer(0))]).toEqual([7, 8, 9, 10]);
+    expect(secondAttempt?.[4]).toBe(durablePresentation);
+
+    app.destroy();
+    vi.unstubAllGlobals();
+  });
+
   it("treats pending scalar drafts as unsaved across Save As, Open, and Close", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

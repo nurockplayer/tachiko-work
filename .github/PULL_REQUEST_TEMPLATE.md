@@ -19,6 +19,7 @@
 - Review route: <!-- Fast: independent non-author review; Standard: independent final-head review; Guarded: fresh independent deep review -->
 - Parallel ownership: <!-- primary write surface and any neighboring active lanes -->
 - Validation route: <!-- targeted iteration checks; exact-head applicable acceptance/unit/document/repository checks; broader Guarded/milestone/release gate when applicable -->
+- Rust ownership / async boundary: <!-- N/A, or identify ownership/lifetime boundary and justify any Arc/Mutex/clone/Box::pin/boxed future/async move/spawn_blocking/unsafe escape hatch. Pin/manual Future::poll/self-referential/unsafe blocks/functions/impls require Guarded review. -->
 
 ## Validation / evidence
 
@@ -45,4 +46,5 @@
 - [ ] Superseded or stale authority is linked rather than silently overwritten.
 - [ ] Acceptance changes are accounted for; no unapproved weakened or suppressed requirement remains.
 - [ ] Risk classification and review route match the owning Issue; Guarded work received fresh independent deep review.
+- [ ] Rust ownership/async/soundness mechanics are either not touched or explicitly justified per `AGENTS.md`; no compiler-silencing escape hatch is left unexplained.
 - [ ] Applicable acceptance/unit/document/repository gates and independent review cover the exact final head; a red seed or unchecked box is not merge readiness.

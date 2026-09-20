@@ -64,6 +64,11 @@ ChatGPT, Deep Research, Codex, and other agents should load context in this orde
 
 Agents must not silently promote an Open Question or Provisional implementation detail into a durable public invariant.
 
+For engineering planning, implementation, debugging, and review, agents may use
+the compact [Agent Engineering Vocabulary](engineering/agent-engineering-vocabulary.md)
+as stage-relevant leading words. Load only the terms that fit the task; the
+vocabulary does not override the authority order above or any SCD gate.
+
 ## Documentation maintenance rules
 
 - Preserve decision history. Superseded records stay available and point to their replacement when possible.

@@ -10,6 +10,13 @@ ADR or policy, or an applicable normative specification, the higher-authority
 source wins. See [`docs/README.md`](../README.md) for the repository knowledge
 hierarchy.
 
+## Agent engineering
+
+- [Agent Engineering Vocabulary](agent-engineering-vocabulary.md) — compact
+  provider-neutral leading words for decomposition, implementation, debugging,
+  and review. Use them as engineering cues only; repository authority and SCD
+  delivery gates still control.
+
 ## Frontend integration
 
 Start here when building a Tachiko UI outside the main repository:
