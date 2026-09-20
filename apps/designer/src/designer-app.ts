@@ -350,7 +350,7 @@ export function mountDesigner(
         parseTrackerView(JSON.stringify({...emptyTrackerView(), budgetViews: views}), candidate.opened.bootstrap.collections.map(c => c.id));
       });
       const interop = createInteropState(imported, source);
-      lifecycle.replaceOccurrence(imported.opened, false);
+      lifecycle.replaceOccurrence(imported.opened, true);
       tracker.view.interop = interop;
       tracker.view.budgetViews = defaultBudgetViews(imported.opened.bootstrap.collections.map(c => c.id));
       for (const view of tracker.view.budgetViews.views) view.name = interop.metadata.sheets.find(sheet => sheet.schema_id === view.collection)?.name.slice(0, 80) ?? "Imported sheet";
@@ -361,6 +361,7 @@ export function mountDesigner(
         const format = importedNumberFormat(style.number_format);
         if (format !== "number") tracker.view.formats[key] = format;
       });
+      lifecycle.durability.install(imported.opened.bootstrap.revision, false);
       await refreshBudgetTables(imported.opened.bootstrap.revision);
       notice = {tone: "success", title: "Spreadsheet imported", message: "Inspect, sort, filter and edit the imported tables. Save commits the data, original source and compatibility ledger in this browser.", diagnostics: []};
       return imported;
@@ -1069,10 +1070,11 @@ export function mountDesigner(
     busy = true; notice = null; render();
     try {
       const opened = await client.newBudget();
-      lifecycle.replaceOccurrence(opened, false);
+      lifecycle.replaceOccurrence(opened, true);
       tracker.view.budgetViews = defaultBudgetViews(opened.bootstrap.collections.map(c => c.id));
       tracker.view.budgetViews.views.forEach(view => { view.name = humanize(opened.bootstrap.collections.find(c => c.id === view.collection)?.key ?? "Budget"); });
       await refreshBudgetTables(opened.bootstrap.revision);
+      lifecycle.durability.install(opened.bootstrap.revision, false);
     }
     catch (error) { showProjectFailure("Budget not created", error); }
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
