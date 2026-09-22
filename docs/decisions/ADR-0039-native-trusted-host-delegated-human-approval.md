@@ -35,19 +35,22 @@ and Execute against different runtime instances. Matching document bytes,
 proposal identifiers, or snapshots would not prove proposal/base/occurrence
 continuity.
 
-The browser Worker composition remains valid for ordinary capabilities that do
-not require this trusted Human approval path. The problem is narrower: a
-delegated mutation that requires ADR-0026 Human approval needs one trusted host
-that owns the same retained occurrence through proposal, review, approval, and
-publication.
+Worker-owned composition remains available for occurrences outside this native
+profile. It is not an alternative owner for ordinary operations within a
+native-owned occurrence.
+
+The problem is narrower: a delegated mutation that requires ADR-0026 Human
+approval needs one trusted host that owns the same retained occurrence through
+proposal, review, approval, and publication.
 
 ## Decision
 
 ### 1. The desktop delegated occurrence has one native owner
 
-For the bounded desktop delegated-approval capability, the existing Tauri host
-owns one native instance of the existing Rust Designer runtime for the entire
-semantic occurrence.
+The desktop native composition MUST be selected before opening the occurrence.
+All semantic operations for that occurrence, whether ordinary Human or
+delegated, MUST use the same native-owned `DesignerRuntime` and resident
+session.
 
 That one native-owned instance retains the resident semantic session,
 `PatchLifecycle`, proposal occurrence, authorization state, trusted clock, and
@@ -55,10 +58,11 @@ publication authority needed by the delegated flow. The implementation MUST
 reuse the existing Rust semantic/runtime authority rather than create a second
 semantic model or duplicate lifecycle implementation.
 
-The same delegated occurrence MUST NOT also have an authoritative Worker-WASM
-runtime. State synchronization, snapshot copying, matching identifiers, or
-content equality between two runtime instances is not a substitute for one
-continuous authoritative occurrence.
+A Worker may carry requests and projections but MUST NOT retain a second
+authoritative semantic occurrence. This first profile provides no live ownership
+handoff between Worker and native runtimes. State synchronization, snapshot
+copying, matching identifiers, or content equality between two runtime instances
+is not a substitute for one continuous authoritative occurrence.
 
 This decision selects ownership, not a public Rust ABI, stable crate facade, or
 general desktop-host API.
@@ -89,6 +93,12 @@ Existing Human scalar-edit credentials, broad query paths, project-replacement
 imports, or unrelated privileged operations must not become alternate routes
 into the delegated occurrence merely because they already exist elsewhere in
 Designer.
+
+Shared runtime ownership does not merge Human and delegated authority. Ordinary
+Human operations retain their applicable trusted authorization requirements; the
+delegated request surface MUST NOT invoke them using Human credentials. Ordinary
+Human operations do not acquire a new delegated-approval requirement merely by
+sharing the runtime.
 
 ### 3. Human review and consent are trusted-host responsibilities
 
@@ -146,9 +156,14 @@ ADR-0026.
 This decision authorizes only the architecture profile for a desktop-hosted
 experimental delegated approval capability.
 
-The first concrete implementation, if separately made Ready, is limited to the
-already-approved directly stored scalar `SetFieldValue` / `Value` operation
-profile with independently scoped disclosure and write/approval authority.
+The scalar `SetFieldValue` / `Value` restriction bounds the delegated
+capability only. The first concrete implementation, if separately made Ready,
+must also route every supported ordinary semantic operation for the selected
+occurrence through its native owner. An unsupported operation MUST remain
+unavailable rather than fall back to a Worker-owned occurrence. The delegated
+profile remains limited to the already-approved directly stored scalar
+`SetFieldValue` / `Value` operation with independently scoped disclosure and
+write/approval authority.
 
 Semantic publication does not imply durable save, filesystem publication,
 network effects, provider effects, or any other external effect.
@@ -184,7 +199,10 @@ PR #413 remains implementation evidence for the rejected split-owner
 composition and must not be repaired or rebased into the new architecture lane.
 
 After this ADR is merged, the Project Steward may separately authorize one
-Guarded desktop tracer-bullet implementation from current `main` that proves:
+Guarded desktop tracer-bullet implementation from current `main`. That lane
+must route every supported ordinary semantic operation for the selected
+occurrence through its native owner while keeping the delegated capability
+bounded as above, and it must prove:
 
 1. one native-owned occurrence;
 2. one bounded scalar proposal;
