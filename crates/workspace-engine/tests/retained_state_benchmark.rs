@@ -186,6 +186,7 @@ fn synthetic_fields(
                 key: FieldKey::from("label"),
                 field_type: FieldType::Text,
                 required: true,
+                constraint: tachiko_semantic_core::FieldConstraint::None,
             },
         ),
     ])
@@ -197,6 +198,7 @@ fn number_field(id: &FieldId, key: &str) -> FieldDefinition {
         key: FieldKey::from(key),
         field_type: FieldType::Number,
         required: true,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
     }
 }
 

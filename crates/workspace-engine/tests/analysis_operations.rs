@@ -32,6 +32,7 @@ fn number_field(id: &str, required: bool) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type: FieldType::Number,
         required,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
     }
 }
 
@@ -41,6 +42,7 @@ fn text_field(id: &str, required: bool) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type: FieldType::Text,
         required,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
     }
 }
 
@@ -140,6 +142,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
                 schema: SchemaId::from("categories"),
             },
             required: false,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         },
     );
     document.entities.insert(
@@ -167,6 +170,7 @@ fn date_analysis_document() -> Document {
             key: FieldKey::from("published"),
             field_type: FieldType::Date,
             required: true,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         },
     );
     for (entity, value) in [

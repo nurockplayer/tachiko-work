@@ -27,6 +27,7 @@ fn human_tracker_key_does_not_claim_stock_profile_or_block_generic_scalar_edit()
                     key: FieldKey::from("description"),
                     field_type: FieldType::Text,
                     required: true,
+                    constraint: tachiko_semantic_core::FieldConstraint::None,
                 },
             )]),
         },

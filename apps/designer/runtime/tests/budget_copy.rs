@@ -32,6 +32,7 @@ fn fixture() -> DesignerRuntime {
                                 key: FieldKey::from(name),
                                 field_type: FieldType::Number,
                                 required: true,
+                                constraint: tachiko_semantic_core::FieldConstraint::None,
                             },
                         )
                     })
@@ -288,6 +289,7 @@ fn formula_capacity_fixture() -> DesignerRuntime {
                     key: FieldKey::from("n"),
                     field_type: FieldType::Number,
                     required: true,
+                    constraint: tachiko_semantic_core::FieldConstraint::None,
                 },
             )]),
         },

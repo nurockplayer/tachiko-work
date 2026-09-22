@@ -3954,6 +3954,7 @@ mod tests {
                             key: FieldKey::from("product_key"),
                             field_type: FieldType::Text,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                     (
@@ -3963,6 +3964,7 @@ mod tests {
                             key: FieldKey::from("quantity"),
                             field_type: FieldType::Number,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                 ]),
@@ -3981,6 +3983,7 @@ mod tests {
                             key: FieldKey::from("product_key"),
                             field_type: FieldType::Text,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                     (
@@ -3990,6 +3993,7 @@ mod tests {
                             key: FieldKey::from("category"),
                             field_type: FieldType::Text,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                     (
@@ -3999,6 +4003,7 @@ mod tests {
                             key: FieldKey::from("price"),
                             field_type: FieldType::Number,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                 ]),
@@ -4534,6 +4539,7 @@ mod tests {
                     key: FieldKey::from(field),
                     field_type: FieldType::Number,
                     required: true,
+                    constraint: tachiko_semantic_core::FieldConstraint::None,
                 },
             );
         }

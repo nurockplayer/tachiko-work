@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity, Document,
-    Expression, FieldRef, FieldType, Schema, SemanticSubject, Value,
+    Expression, FieldConstraint, FieldRef, FieldType, Number, Schema, SemanticSubject, Value,
 };
 
 const CORE_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.semantic-core");
@@ -23,6 +23,9 @@ impl DiagnosticCode {
     pub const MISSING_FORMULA_REFERENCE: Self = Self::new("core.missing_formula_reference");
     pub const FORMULA_REFERENCE_TYPE_MISMATCH: Self =
         Self::new("core.formula_reference_type_mismatch");
+    pub const FIELD_CONSTRAINT_DECLARATION: Self = Self::new("core.field_constraint_declaration");
+    pub const FIELD_VALUE_CONSTRAINT_MISMATCH: Self =
+        Self::new("core.field_value_constraint_mismatch");
 }
 
 /// Return whether a human-facing semantic key follows the authoring grammar.
@@ -78,6 +81,42 @@ pub fn validate_document(document: &Document) -> Vec<Diagnostic> {
 #[must_use]
 pub fn validate_document_core(document: &Document) -> Vec<Diagnostic> {
     validate_document_internal(document, false)
+}
+
+/// Validate Number formula values against durable constraints after a complete
+/// calculation has supplied their final values.
+#[must_use]
+pub fn validate_complete_formula_constraints(
+    document: &Document,
+    values: &BTreeMap<FieldRef, Number>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for (entity_id, entity) in &document.entities {
+        let Some(schema) = document.schemas.get(&entity.schema) else {
+            continue;
+        };
+        for (field_id, value) in &entity.fields {
+            let (Some(definition), Value::Formula(_)) = (schema.fields.get(field_id), value) else {
+                continue;
+            };
+            let field = FieldRef::new(entity_id.clone(), field_id.clone());
+            let (FieldConstraint::NumberInclusiveRange { min, max }, Some(value)) =
+                (&definition.constraint, values.get(&field))
+            else {
+                continue;
+            };
+            if value < min || value > max {
+                diagnostics.push(core_diagnostic(
+                    format!("entities.{entity_id}.fields.{field_id}"),
+                    DiagnosticCode::FIELD_VALUE_CONSTRAINT_MISMATCH,
+                    "calculated field value does not satisfy its declared constraint",
+                    vec![SemanticSubject::EntityField(field)],
+                ));
+            }
+        }
+    }
+    diagnostics.sort();
+    diagnostics
 }
 
 /// Run the accepted semantic validator with a research-only cancellation poll.
@@ -196,6 +235,7 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
                 field_subject.clone(),
                 diagnostics,
             );
+            validate_field_constraint(definition, &field_path, field_subject.clone(), diagnostics);
             if let FieldType::Reference { schema: target } = &definition.field_type {
                 if !document.schemas.contains_key(target) {
                     diagnostics.push(
@@ -291,6 +331,7 @@ fn validate_entities(
                 &field_ref,
                 value,
                 &definition.field_type,
+                &definition.constraint,
                 &field_path,
                 include_formula_references,
                 diagnostics,
@@ -427,11 +468,44 @@ fn validate_required_fields(
     }
 }
 
+fn validate_field_constraint(
+    definition: &crate::FieldDefinition,
+    field_path: &str,
+    subject: SemanticSubject,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let invalid = match (&definition.field_type, &definition.constraint) {
+        (_, FieldConstraint::None) => false,
+        (FieldType::Text, FieldConstraint::TextLiteralSet { values }) => {
+            let total_bytes = values.iter().map(String::len).sum::<usize>();
+            values.is_empty()
+                || values.len() > 256
+                || values.iter().any(|value| value.len() > 1024)
+                || total_bytes > 65_536
+                || values
+                    .windows(2)
+                    .any(|pair| pair[0].as_bytes() >= pair[1].as_bytes())
+        }
+        (FieldType::Number, FieldConstraint::NumberInclusiveRange { min, max }) => min > max,
+        _ => true,
+    };
+    if invalid {
+        diagnostics.push(core_diagnostic(
+            format!("{field_path}.constraint"),
+            DiagnosticCode::FIELD_CONSTRAINT_DECLARATION,
+            "field constraint is invalid for its declared field type",
+            vec![subject],
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn validate_value(
     document: &Document,
     field: &FieldRef,
     value: &Value,
     expected: &FieldType,
+    constraint: &FieldConstraint,
     path: &str,
     include_formula_references: bool,
     diagnostics: &mut Vec<Diagnostic>,
@@ -493,6 +567,34 @@ fn validate_value(
             ))
             .with_fact(DiagnosticFact::new("actual_kind", value_type_name(value))),
         ),
+    }
+
+    validate_stored_value_constraint(constraint, value, field, path, diagnostics);
+}
+
+fn validate_stored_value_constraint(
+    constraint: &FieldConstraint,
+    value: &Value,
+    field: &FieldRef,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let violates_constraint = match (constraint, value) {
+        (FieldConstraint::TextLiteralSet { values }, Value::Text(value)) => {
+            !values.iter().any(|allowed| allowed == value)
+        }
+        (FieldConstraint::NumberInclusiveRange { min, max }, Value::Number(value)) => {
+            value < min || value > max
+        }
+        _ => false,
+    };
+    if violates_constraint {
+        diagnostics.push(core_diagnostic(
+            path,
+            DiagnosticCode::FIELD_VALUE_CONSTRAINT_MISMATCH,
+            "stored field value does not satisfy its declared constraint",
+            vec![SemanticSubject::EntityField(field.clone())],
+        ));
     }
 }
 
@@ -624,7 +726,8 @@ mod issue_175_research {
     use super::{
         Diagnostic, DiagnosticCode, DiagnosticFact, Document, Expression, FieldRef, FieldType,
         Schema, SemanticSubject, Value, core_diagnostic, field_type_name, is_valid_identifier,
-        key_mismatch_diagnostic, validate_formula_reference, value_type_name,
+        key_mismatch_diagnostic, validate_field_constraint, validate_formula_reference,
+        validate_stored_value_constraint, value_type_name,
     };
 
     /// Run the accepted semantic validator with a research-only cancellation poll.
@@ -770,6 +873,12 @@ mod issue_175_research {
                     field_subject.clone(),
                     diagnostics,
                 );
+                validate_field_constraint(
+                    definition,
+                    &field_path,
+                    field_subject.clone(),
+                    diagnostics,
+                );
                 if let FieldType::Reference { schema: target } = &definition.field_type {
                     if !document.schemas.contains_key(target) {
                         diagnostics.push(
@@ -869,6 +978,7 @@ mod issue_175_research {
                     &field_ref,
                     value,
                     &definition.field_type,
+                    &definition.constraint,
                     &field_path,
                     include_formula_references,
                     diagnostics,
@@ -1034,6 +1144,7 @@ mod issue_175_research {
         field: &FieldRef,
         value: &Value,
         expected: &FieldType,
+        constraint: &crate::FieldConstraint,
         path: &str,
         include_formula_references: bool,
         diagnostics: &mut Vec<Diagnostic>,
@@ -1098,6 +1209,7 @@ mod issue_175_research {
                 .with_fact(DiagnosticFact::new("actual_kind", value_type_name(value))),
             ),
         }
+        validate_stored_value_constraint(constraint, value, field, path, diagnostics);
         Ok(())
     }
 
@@ -1162,6 +1274,7 @@ mod issue_175_research {
                                 key: "name".into(),
                                 field_type: FieldType::Text,
                                 required: true,
+                                constraint: crate::FieldConstraint::None,
                             },
                         ),
                         (
@@ -1171,6 +1284,7 @@ mod issue_175_research {
                                 key: "Invalid Amount Key".into(),
                                 field_type: FieldType::Number,
                                 required: true,
+                                constraint: crate::FieldConstraint::None,
                             },
                         ),
                         (
@@ -1180,6 +1294,7 @@ mod issue_175_research {
                                 key: "calc".into(),
                                 field_type: FieldType::Number,
                                 required: true,
+                                constraint: crate::FieldConstraint::None,
                             },
                         ),
                     ]),

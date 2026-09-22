@@ -25,6 +25,7 @@ fn balance_document() -> Document {
                     key: FieldKey::from("name"),
                     field_type: FieldType::Text,
                     required: true,
+                    constraint: tachiko_semantic_core::FieldConstraint::None,
                 },
             ),
         ]),
@@ -69,6 +70,7 @@ fn number_field(id: &str) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type: FieldType::Number,
         required: true,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
     }
 }
 
