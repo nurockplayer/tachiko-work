@@ -1,6 +1,6 @@
 # Frontend and Backend Boundary
 
-Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the provisional lifecycle/publication seam, #30 composes it through a provider-facing denial boundary, #93 supplies the current internal resident revision/session mechanics, #94 adds internal occurrence-and-revision-pinned selective projections and invalidation facts, and #95 retains rebuildable full-oracle-equivalent state across resident revisions. Concrete authentication, public transport/delivery, and external capability mechanics remain Deferred to later host/runtime work.
+Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. ADR-0039 selects one native-owned resident runtime for every semantic operation on an occurrence using the bounded desktop delegated-Human-approval profile, with Worker limited to request/projection transport for that occurrence. Issue #29 implements the provisional lifecycle/publication seam, #30 composes it through a provider-facing denial boundary, #93 supplies the current internal resident revision/session mechanics, #94 adds internal occurrence-and-revision-pinned selective projections and invalidation facts, and #95 retains rebuildable full-oracle-equivalent state across resident revisions. Concrete authentication, public transport/delivery, and external capability mechanics remain Deferred to later host/runtime work.
 
 ## Principle
 
@@ -14,7 +14,7 @@ For an open interactive document, authoritative in-memory semantic state belongs
 
 In this document, `Rust Runtime` means the shared Rust semantic/application runtime built around `workspace-engine` and the lower semantic engines, not the `semantic-core` crate alone.
 
-The Accepted crate ownership and dependency direction are recorded in [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md). The first-class client contract is defined by [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), the revision-pinned proposal contract by [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md), and both are specified by [`semantic-api.md`](../specs/semantic-api.md). Authorization and Approval meaning are defined by [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md) and [`semantic-authorization.md`](../specs/semantic-authorization.md). Runtime ownership and host separation are defined by [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
+The Accepted crate ownership and dependency direction are recorded in [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md). The first-class client contract is defined by [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), the revision-pinned proposal contract by [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md), and both are specified by [`semantic-api.md`](../specs/semantic-api.md). Authorization and Approval meaning are defined by [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md) and [`semantic-authorization.md`](../specs/semantic-authorization.md). Runtime ownership and host separation are defined by [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md); [ADR-0039](../decisions/ADR-0039-native-trusted-host-delegated-human-approval.md) selects the bounded native desktop trusted-host composition for occurrences using delegated Human approval.
 
 ```text
 React / Desktop / Web / future Mobile UI
@@ -193,5 +193,6 @@ This avoids both expensive whole-document client/runtime traffic as the default 
 - ADR-0022
 - ADR-0024
 - ADR-0026
+- ADR-0039
 - Issues #3, #26, #28, #29, #30, #44, #93, #94, #95, #123
 - PR #91
