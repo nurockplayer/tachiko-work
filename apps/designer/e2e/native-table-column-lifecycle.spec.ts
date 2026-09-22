@@ -49,6 +49,7 @@ async function addDialog(page: Page, name: string, type: string, value: string) 
   await dialog.getByLabel("Column name", { exact: true }).fill(name);
   await dialog.getByLabel("Column type", { exact: true }).selectOption({ label: type });
   await dialog.getByLabel("Value for existing rows", { exact: true }).fill(value);
+  await expect(dialog.getByLabel("Use this value for every existing row", { exact: true })).not.toBeChecked();
   await dialog.getByLabel("Use this value for every existing row", { exact: true }).check();
   return dialog;
 }
@@ -124,6 +125,7 @@ test("Inventory column lifecycle preserves identities through history and reopen
 for (const candidate of [
   { name: "item", type: "Text", value: "duplicate" },
   { name: "cost", type: "Number", value: "NaN" },
+  { name: "enabled", type: "Boolean", value: "yes" },
 ]) {
   test(`refused column ${candidate.name} preserves saved values, revision and history`, async ({ page }) => {
     await inventory(page);
@@ -133,10 +135,88 @@ for (const candidate of [
     const history = await page.getByRole("region", { name: "Session history", exact: true }).textContent();
     const dialog = await addDialog(page, candidate.name, candidate.type, candidate.value);
     await dialog.getByRole("button", { name: "Add column", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText(/duplicate|invalid|finite|rejected/i);
+    await expect(page.getByRole("alert")).toContainText(/duplicate|invalid|finite|rejected|true.*false/i);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel("Column name", { exact: true })).toHaveValue(candidate.name);
+    await expect(dialog.getByLabel("Value for existing rows", { exact: true })).toHaveValue(candidate.value);
     expect(await cells(page)).toEqual(before);
     await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
     await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
     await expect(page.getByRole("region", { name: "Session history", exact: true })).toHaveText(history ?? "");
   });
 }
+
+
+test("explicit blank Text initializer publishes once while concurrent controls are disabled", async ({ page }) => {
+  await inventory(page);
+  const before = await cells(page);
+  await page.getByRole("button", { name: "Add column", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add column", exact: true });
+  await dialog.getByLabel("Column name", { exact: true }).fill("notes");
+  const acknowledgement = dialog.getByLabel("Use this value for every existing row", { exact: true });
+  await expect(acknowledgement).not.toBeChecked();
+  await expect(dialog.getByLabel("Value for existing rows", { exact: true })).toHaveValue("");
+  await acknowledgement.check();
+  // Exercise the real form and Worker. Inspect the synchronous busy render
+  // before the actual async publication settles; no response is fabricated.
+  const guarded = await dialog.locator("form").evaluate(form => {
+    if (!(form instanceof HTMLFormElement)) throw new Error("expected actual form");
+    form.requestSubmit();
+    const selectors = ["[data-add-column]", "[data-rename-column]", "[data-remove-column]", "[data-save-project]", "[data-new-table]"];
+    const disabled = selectors.every(selector => {
+      const control = document.querySelector(selector);
+      return control instanceof HTMLButtonElement && control.disabled;
+    });
+    // A queued duplicate submission must not create a second mutation.
+    form.requestSubmit();
+    return disabled;
+  });
+  expect(guarded).toBe(true);
+  await expect(page.getByRole("columnheader", { name: "notes", exact: true })).toBeVisible();
+  const after = await cells(page);
+  expect(after.filter(cell => before.some(old => old.field === cell.field))).toEqual(before);
+  const added = after.filter(cell => !before.some(old => old.field === cell.field));
+  expect(added).toHaveLength(3);
+  expect(added.map(cell => cell.value)).toEqual(["", "", ""]);
+  await expect(page.getByRole("button", { name: "Add column", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect.poll(() => cells(page)).toEqual(before);
+});
+
+test("column dialogs support keyboard Escape, restored focus and narrow controls", async ({ page }) => {
+  await inventory(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const before = await cells(page);
+  const revision = await page.getByTestId("revision").textContent();
+  for (const action of ["Add column", "Rename column", "Remove column"]) {
+    const trigger = page.getByRole("button", { name: action, exact: true });
+    await trigger.scrollIntoViewIfNeeded();
+    await trigger.focus();
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("Enter");
+    const dialog = page.getByRole("dialog", { name: action, exact: true });
+    await expect(dialog).toBeVisible();
+    const initialFocus = action === "Add column"
+      ? dialog.getByLabel("Column name", { exact: true })
+      : action === "Rename column"
+        ? dialog.getByLabel("New column name", { exact: true })
+        : dialog.getByRole("button", { name: action, exact: true });
+    await expect(initialFocus).toBeFocused();
+    const fits = await dialog.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= innerWidth && bounds.width > 0;
+    });
+    expect(fits).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(`dialog[aria-label="${action}"]`)).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator(`dialog[aria-label="${action}"]`)).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  }
+  expect(await cells(page)).toEqual(before);
+  await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
+});
