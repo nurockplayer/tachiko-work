@@ -23,6 +23,9 @@ snapshot boundaries, and native/WASM semantic parity are Accepted under
 The M04 logical formula-reasoning Query, read-only scenario Query, typed
 formula-update Command, and bounded semantic analysis Query semantics are
 Accepted by ADR-0020's Issue #32 and Issue #33 amendments.
+ADR-0040 accepts the bounded native-table required-scalar field-evolution
+meaning; its command, DTO, authorization, diagnostics, and session-history
+shapes remain Provisional.
 Exact Rust APIs, complete operation catalogue, wire schemas, transports,
 proposal/revision encodings, session mechanics, and several result/projection
 shapes remain Provisional or Deferred as marked below.
@@ -341,6 +344,30 @@ The names, Rust payloads, and conservative disclosure profile remain
 Provisional. This implementation adds no generic CRUD wire contract, schema
 editor, cascading delete policy, persisted undo/history model, or spreadsheet
 compatibility contract.
+
+### Bounded field-evolution command family
+
+ADR-0040 admits two revision-pinned candidate command families: add one
+required `Text`, `Number`, `Boolean`, or `Date` field with a fresh stable
+identity and one explicit direct stored value of that exact scalar type for
+every existing entity; Formula and Reference values are not initializers; or
+remove one existing field of those same scalar types. The remove operation
+refuses a candidate with a surviving formula, reference, or
+other Accepted durable definition that depends on that field. They preserve
+every surviving semantic identity, publish atomically through the same
+Propose/Execute and gate laws, and never infer a default, null, coercion, or
+dependency repair.
+
+The operation names, Rust and transport DTO spellings, authorization footprint,
+diagnostic codes, and history representation remain Provisional. A Driver
+session that exposes either operation must make one accepted operation one
+Undo/Redo action. Under ADR-0033, Undo and Redo publish the authorized inverse
+or forward command against the exact current base through the ordinary gates;
+they do not rewind a snapshot or revision occurrence. The Accepted
+semantic-delta and semantic-merge contracts already represent schema-field
+creation and deletion as direct evidence and conflict subjects, distinct from
+the typed command. A consumer that does not support the applicable contract or
+encountered change kind must fail closed.
 
 ## M04 formula reasoning and scenario Queries
 
@@ -1877,13 +1904,17 @@ to semantic core by virtue of using the API.
 - [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
 - [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
+- [ADR-0021](../decisions/ADR-0021-progressive-semantic-strengthening.md)
 - [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md)
 - [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md)
 - [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
 - [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md)
+- [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
 - [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+- [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 - [ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+- [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-evolution.md)
 - [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
