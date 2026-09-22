@@ -2375,7 +2375,7 @@ impl PatchLifecycle {
                 .ok_or_else(|| WorkspaceError::MissingSchema {
                     schema: schema_id.clone(),
                 })?;
-        if base.schemas.get(schema_id).is_none() || schema.fields.contains_key(&field.id) {
+        if !base.schemas.contains_key(schema_id) || schema.fields.contains_key(&field.id) {
             return Err(WorkspaceError::GeneratedIdCollision {
                 kind: super::SemanticIdKind::Field,
                 id: field.id.to_string(),
@@ -2444,6 +2444,7 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // Admission verifies every removal invariant before mutation.
     fn plan_remove_schema_field(
         &self,
         candidate: &mut Document,
@@ -2499,6 +2500,14 @@ impl PatchLifecycle {
                     })
                     .cloned()
                     .unwrap_or_else(|| EntityId::from("field-values")),
+            });
+        }
+        if values
+            .values()
+            .any(|value| matches!(value, Value::Formula(_)))
+        {
+            return Err(WorkspaceError::TypeMismatch {
+                field: FieldRef::new(schema_id.to_string(), field.id.clone()),
             });
         }
         let schema_entities = entities.clone();
@@ -3090,6 +3099,7 @@ impl PatchLifecycle {
         });
     }
 
+    #[allow(clippy::too_many_lines)] // Closed semantic-change catalogue derives disclosures atomically.
     fn insert_change_disclosures(
         &self,
         before: &Document,

@@ -3868,6 +3868,7 @@ fn designer_lifecycle(
             (OperationFamily::SchemaFieldMutation, MutationClass::Structure),
             (OperationFamily::SchemaFieldMutation, MutationClass::Schema),
             (OperationFamily::SchemaFieldMutation, MutationClass::Destructive),
+            (OperationFamily::SchemaFieldMutation, MutationClass::Formula),
             (
                 OperationFamily::KeyedGroupedSumDefinition,
                 MutationClass::Structure,
@@ -4378,10 +4379,10 @@ mod tests {
     use tachiko_workspace_engine::{SemanticChange, compare_documents};
 
     use super::{
-        ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime, EntityId,
+        AuthorizationAction, ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime, DocumentScopeId, Grant, GrantId, GrantRequirement, EntityId,
         FieldDefinition, FieldId, FieldKey, FieldType, KeyedGroupedSumDefinitionInput,
-        MAX_WIDTH_FINITE_JSON_NUMBER, NewTableColumnInput, PatchLifecycleError, PrincipalId,
-        PrincipalKind, ProposalId, ScalarEditInput, SemanticCommand, Value,
+        MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass, NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId,
+        ProposalId, ScalarEditInput, ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
     };
 
     fn native_column_runtime(columns: &[(&str, &str)], values: &[&str]) -> DesignerRuntime {
@@ -4444,6 +4445,38 @@ mod tests {
                 },
             })
             .collect()
+    }
+
+    fn grant_schema_field_authority_except(runtime: &mut DesignerRuntime, missing: MutationClass) {
+        runtime.lifecycle.revoke_grant(&GrantId::from("designer-number-edit")).unwrap();
+        let authority = PrincipalId::from("designer-host-authority");
+        let scope = ScopedSemanticSubject::new(
+            DocumentScopeId::from("designer-local-document-scope"),
+            runtime.session.export_snapshot().document().id.clone(),
+            SemanticScope::Document,
+        );
+        for (index, class) in [
+            MutationClass::Structure,
+            MutationClass::Schema,
+            MutationClass::Destructive,
+            MutationClass::Formula,
+        ]
+        .into_iter()
+        .filter(|class| *class != missing)
+        .enumerate()
+        {
+            runtime.lifecycle.provision_grant(Grant::new(
+                GrantId::from(format!("native-column-authority-{index}")),
+                authority.clone(),
+                runtime.principal.clone(),
+                vec![
+                    GrantRequirement::query(OperationFamily::SchemaFieldMutation, scope.clone()),
+                    GrantRequirement::mutation(AuthorizationAction::Propose, OperationFamily::SchemaFieldMutation, class, scope.clone()).unwrap(),
+                    GrantRequirement::mutation(AuthorizationAction::Execute, OperationFamily::SchemaFieldMutation, class, scope.clone()).unwrap(),
+                ],
+                None,
+            )).unwrap();
+        }
     }
 
     #[test]
@@ -4517,7 +4550,7 @@ mod tests {
         let source = ids["source"].clone();
         let mut document = formula_base.session.export_snapshot().document().clone();
         document.entities.get_mut(&entity).unwrap().fields.insert(
-            derived,
+            derived.clone(),
             Value::Formula(super::Expression::Reference(super::FieldRef::new(
                 entity.clone(),
                 source.clone(),
@@ -4534,6 +4567,16 @@ mod tests {
         assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })));
         assert_eq!(formula_runtime.current_revision(), "resident/0");
         assert_eq!(formula_runtime.export_project("resident/0").unwrap().bytes, before);
+
+        let before = formula_runtime.export_project("resident/0").unwrap().bytes;
+        let undo_count = formula_runtime.undo.len();
+        let redo_count = formula_runtime.redo.len();
+        let error = formula_runtime.remove_column("resident/0", "orders", derived.as_str()).unwrap_err();
+        assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })));
+        assert_eq!(formula_runtime.current_revision(), "resident/0");
+        assert_eq!(formula_runtime.export_project("resident/0").unwrap().bytes, before);
+        assert_eq!(formula_runtime.undo.len(), undo_count);
+        assert_eq!(formula_runtime.redo.len(), redo_count);
 
         let mut definition_runtime = native_column_runtime(
             &[("Lookup", "text"), ("Quantity", "number"), ("Product_key", "text"), ("Category", "text"), ("Price", "number")],
@@ -4626,10 +4669,7 @@ mod tests {
         }
 
         let before = runtime.export_project("resident/1").unwrap().bytes;
-        let permitted = runtime.principal.clone();
-        let denied = PrincipalId::from("column-denied");
-        runtime.lifecycle.register_principal(denied.clone(), PrincipalKind::Human).unwrap();
-        runtime.principal = denied.clone();
+        grant_schema_field_authority_except(&mut runtime, MutationClass::Schema);
         let error = runtime
             .add_column(
                 "resident/1",
@@ -4642,26 +4682,27 @@ mod tests {
         assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })));
         assert_eq!(runtime.current_revision(), "resident/1");
         assert_eq!(runtime.export_project("resident/1").unwrap().bytes, before);
-        runtime.principal = permitted;
-        runtime
+
+        let mut removal_runtime = native_column_runtime(&[("Value", "number")], &["1"]);
+        removal_runtime
             .add_column(
                 "resident/1",
                 "orders",
                 "removable",
                 "text",
-                &text_initializers(&runtime, "x"),
+                &text_initializers(&removal_runtime, "x"),
             )
             .unwrap();
-        let removable = native_column_ids(&runtime)["removable"].clone();
-        let revision = runtime.current_revision().to_owned();
-        let before = runtime.export_project(&revision).unwrap().bytes;
-        runtime.principal = denied;
-        let error = runtime
+        let removable = native_column_ids(&removal_runtime)["removable"].clone();
+        let revision = removal_runtime.current_revision().to_owned();
+        let before = removal_runtime.export_project(&revision).unwrap().bytes;
+        grant_schema_field_authority_except(&mut removal_runtime, MutationClass::Destructive);
+        let error = removal_runtime
             .remove_column(&revision, "orders", removable.as_str())
             .unwrap_err();
         assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })));
-        assert_eq!(runtime.current_revision(), revision);
-        assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+        assert_eq!(removal_runtime.current_revision(), revision);
+        assert_eq!(removal_runtime.export_project(&revision).unwrap().bytes, before);
     }
 
     fn assert_duplicate_rejected_without_publication(runtime: &mut DesignerRuntime) {
