@@ -37,7 +37,7 @@ async function cells(page: Page) {
     entity: element.getAttribute("data-generic-entity"),
     field: element.getAttribute("data-generic-field"),
     value: element.getAttribute("data-generic-value"),
-  })).sort((a, b) => `${a.entity}/${a.field}`.localeCompare(`${b.entity}/${b.field}`)));
+  })).sort((a, b) => `${a.entity ?? ""}/${a.field ?? ""}`.localeCompare(`${b.entity ?? ""}/${b.field ?? ""}`)));
 }
 
 async function addDialog(page: Page, name: string, type: string, value: string) {
