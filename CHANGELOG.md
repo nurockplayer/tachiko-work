@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Native Designer tables can add a required Text, Number, Boolean, or Date
+  column with one explicit typed initializer for every current row, rename a
+  scalar column without changing its stable identity, and remove an unused
+  scalar column through the existing revision-pinned semantic lifecycle and
+  Undo/Redo history.
 - The browser Designer can duplicate an ordinary data collection into a new
   independently addressable collection with fresh semantic identities,
   remapped internal formulas, preserved external references, and one bounded

@@ -97,6 +97,24 @@ pub enum DesignerRequest {
         name: String,
         columns: Vec<NewTableColumnInput>,
     },
+    AddColumn {
+        expected_revision: String,
+        collection: String,
+        name: String,
+        field_type: String,
+        initializers: Vec<ColumnInitializer>,
+    },
+    RenameColumn {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        name: String,
+    },
+    RemoveColumn {
+        expected_revision: String,
+        collection: String,
+        field: String,
+    },
     DuplicateCollection {
         expected_revision: String,
         collection: String,
@@ -288,6 +306,14 @@ pub enum ScalarEditInput {
     Text { value: String },
     Boolean { value: bool },
     Date { value: String },
+}
+
+/// One explicit current-entity value required when adding a native scalar column.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnInitializer {
+    pub entity: String,
+    pub input: ScalarEditInput,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -818,6 +844,39 @@ impl DesignerRuntime {
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
+            DesignerRequest::AddColumn {
+                expected_revision,
+                collection,
+                name,
+                field_type,
+                initializers,
+            } => Ok(DesignerResponse::Published(self.add_column(
+                &expected_revision,
+                &collection,
+                &name,
+                &field_type,
+                &initializers,
+            )?)),
+            DesignerRequest::RenameColumn {
+                expected_revision,
+                collection,
+                field,
+                name,
+            } => Ok(DesignerResponse::Published(self.rename_column(
+                &expected_revision,
+                &collection,
+                &field,
+                &name,
+            )?)),
+            DesignerRequest::RemoveColumn {
+                expected_revision,
+                collection,
+                field,
+            } => Ok(DesignerResponse::Published(self.remove_column(
+                &expected_revision,
+                &collection,
+                &field,
+            )?)),
             DesignerRequest::DuplicateCollection {
                 expected_revision,
                 collection,
@@ -1323,6 +1382,190 @@ impl DesignerRuntime {
             }],
         )?;
         Ok(publication)
+    }
+
+    fn native_column_schema(
+        &self,
+        collection: &str,
+    ) -> Result<(SchemaId, Vec<EntityId>), DesignerError> {
+        let spec = self.collection_spec(collection)?;
+        if !spec.native_table_rows {
+            return Err(table_error(
+                "column lifecycle is available for native tables",
+            ));
+        }
+        Ok((
+            SchemaId::from(spec.summary.id.clone()),
+            spec.entities.clone(),
+        ))
+    }
+
+    fn add_column(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        name: &str,
+        field_type: &str,
+        initializers: &[ColumnInitializer],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema_id, entities) = self.native_column_schema(collection)?;
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot
+            .document()
+            .schemas
+            .get(&schema_id)
+            .ok_or_else(|| table_error("native table schema is unavailable"))?;
+        if schema.fields.len() >= MAX_TABLE_FIELDS {
+            return Err(table_error("column capacity is exhausted"));
+        }
+        let key = native_column_lifecycle_key(name)?;
+        if schema
+            .fields
+            .values()
+            .any(|field| field.key.as_str() == key)
+        {
+            return Err(table_error("duplicate column names are not allowed"));
+        }
+        if initializers.len() != entities.len() {
+            return Err(table_error(
+                "every existing row needs exactly one initializer",
+            ));
+        }
+        let kind = native_table_field_type(field_type)?;
+        let mut values = BTreeMap::new();
+        for initializer in initializers {
+            let entity = EntityId::from(initializer.entity.clone());
+            if !entities.contains(&entity) || values.contains_key(&entity) {
+                return Err(table_error(
+                    "initializers must name each current row exactly once",
+                ));
+            }
+            values.insert(entity, parse_column_initializer(&kind, &initializer.input)?);
+        }
+        if values.len() != entities.len() {
+            return Err(table_error(
+                "initializers must name each current row exactly once",
+            ));
+        }
+        let serial = self
+            .proposal_serial
+            .checked_add(1)
+            .ok_or_else(|| table_error("column identity allocation is exhausted"))?;
+        let id = FieldId::from(format!(
+            "native_table_field_{serial:04}_{}/column",
+            self.row_namespace
+        ));
+        let field = FieldDefinition {
+            id: id.clone(),
+            key: FieldKey::from(key),
+            field_type: kind,
+            required: true,
+        };
+        let forward = vec![SemanticCommand::AppendSchemaField {
+            schema: schema_id.clone(),
+            field: field.clone(),
+            values: values.clone(),
+        }];
+        let inverse = vec![SemanticCommand::RemoveSchemaField {
+            schema: schema_id,
+            field,
+            values,
+        }];
+        self.record_edit(expected, forward, inverse)
+    }
+
+    fn rename_column(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        name: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema_id, _) = self.native_column_schema(collection)?;
+        let field_id = FieldId::from(field.to_owned());
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot
+            .document()
+            .schemas
+            .get(&schema_id)
+            .ok_or_else(|| table_error("native table schema is unavailable"))?;
+        let old = schema
+            .fields
+            .get(&field_id)
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        if !matches!(
+            old.field_type,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        ) {
+            return Err(table_error("column is not a supported scalar"));
+        }
+        let key = FieldKey::from(native_column_lifecycle_key(name)?);
+        let forward = vec![SemanticCommand::RenameSchemaField {
+            schema: schema_id.clone(),
+            field: field_id.clone(),
+            key,
+        }];
+        let inverse = vec![SemanticCommand::RenameSchemaField {
+            schema: schema_id,
+            field: field_id,
+            key: old.key.clone(),
+        }];
+        self.record_edit(expected, forward, inverse)
+    }
+
+    fn remove_column(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema_id, entities) = self.native_column_schema(collection)?;
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot
+            .document()
+            .schemas
+            .get(&schema_id)
+            .ok_or_else(|| table_error("native table schema is unavailable"))?;
+        if schema.fields.len() <= 1 {
+            return Err(table_error("a native table needs at least one column"));
+        }
+        let field_id = FieldId::from(field.to_owned());
+        let definition = schema
+            .fields
+            .get(&field_id)
+            .cloned()
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        if !matches!(
+            definition.field_type,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        ) {
+            return Err(table_error("column is not a supported scalar"));
+        }
+        let mut values = BTreeMap::new();
+        for entity in entities {
+            let value = snapshot
+                .document()
+                .entities
+                .get(&entity)
+                .and_then(|record| record.fields.get(&field_id))
+                .cloned()
+                .ok_or_else(|| table_error("column values are unavailable"))?;
+            values.insert(entity, value);
+        }
+        let forward = vec![SemanticCommand::RemoveSchemaField {
+            schema: schema_id.clone(),
+            field: definition.clone(),
+            values: values.clone(),
+        }];
+        let inverse = vec![SemanticCommand::AppendSchemaField {
+            schema: schema_id,
+            field: definition,
+            values,
+        }];
+        self.record_edit(expected, forward, inverse)
     }
 
     /// Duplicate one semantic collection into a fresh schema/field/entity
@@ -1871,6 +2114,54 @@ impl DesignerRuntime {
                 }
                 SemanticCommand::RemoveEntity { entity } => {
                     candidate.entities.remove(entity);
+                }
+                SemanticCommand::AppendSchemaField {
+                    schema,
+                    field,
+                    values,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| table_error("native table schema is unavailable"))?
+                        .fields
+                        .insert(field.id.clone(), field.clone());
+                    for (entity, value) in values {
+                        candidate
+                            .entities
+                            .get_mut(entity)
+                            .ok_or_else(|| table_error("native row is unavailable"))?
+                            .fields
+                            .insert(field.id.clone(), value.clone());
+                    }
+                }
+                SemanticCommand::RemoveSchemaField {
+                    schema,
+                    field,
+                    values,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| table_error("native table schema is unavailable"))?
+                        .fields
+                        .remove(&field.id);
+                    for entity in values.keys() {
+                        candidate
+                            .entities
+                            .get_mut(entity)
+                            .ok_or_else(|| table_error("native row is unavailable"))?
+                            .fields
+                            .remove(&field.id);
+                    }
+                }
+                SemanticCommand::RenameSchemaField { schema, field, key } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .and_then(|schema| schema.fields.get_mut(field))
+                        .ok_or_else(|| table_error("column is unavailable"))?
+                        .key = key.clone();
                 }
                 SemanticCommand::UnsetField { field } => {
                     if let Some(entity) = candidate.entities.get_mut(&field.entity) {
@@ -3723,6 +4014,15 @@ fn designer_lifecycle(
             (OperationFamily::RemoveEntity, MutationClass::Destructive),
             (OperationFamily::RemoveEntity, MutationClass::Formula),
             (
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Structure,
+            ),
+            (OperationFamily::SchemaFieldMutation, MutationClass::Schema),
+            (
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Destructive,
+            ),
+            (
                 OperationFamily::KeyedGroupedSumDefinition,
                 MutationClass::Structure,
             ),
@@ -4153,6 +4453,10 @@ fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
     }
 }
 
+fn native_column_lifecycle_key(label: &str) -> Result<String, DesignerError> {
+    native_table_key(label, "column name")
+}
+
 fn duplicate_collection_key(label: &str) -> Result<String, DesignerError> {
     let normalized = label
         .trim()
@@ -4206,12 +4510,545 @@ fn parse_scalar(
         }),
     }
 }
+
+fn parse_column_initializer(
+    field_type: &FieldType,
+    input: &ScalarEditInput,
+) -> Result<Value, DesignerError> {
+    match (field_type, input) {
+        (FieldType::Number, ScalarEditInput::Number { input }) => input
+            .parse::<f64>()
+            .ok()
+            .and_then(|value| Number::new(value).ok())
+            .map(Value::Number)
+            .ok_or_else(|| DesignerError::InvalidNumberInput {
+                input: input.clone(),
+            }),
+        (FieldType::Text, ScalarEditInput::Text { value }) => Ok(Value::Text(value.clone())),
+        (FieldType::Boolean, ScalarEditInput::Boolean { value }) => Ok(Value::Boolean(*value)),
+        (FieldType::Date, ScalarEditInput::Date { value }) => Date::parse(value)
+            .map(Value::Date)
+            .map_err(|_| DesignerError::InvalidDateInput {
+                input: value.clone(),
+            }),
+        _ => Err(table_error("initializer type must match the column type")),
+    }
+}
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use tachiko_workspace_engine::{SemanticChange, compare_documents};
+
     use super::{
-        DesignerError, DesignerRequest, DesignerRuntime, EntityId, MAX_WIDTH_FINITE_JSON_NUMBER,
-        ProposalId,
+        AuthorizationAction, ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime,
+        DocumentScopeId, EntityId, FieldDefinition, FieldId, FieldKey, FieldType, Grant, GrantId,
+        GrantRequirement, KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER,
+        MutationClass, NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId,
+        ProposalId, ScalarEditInput, ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
     };
+
+    fn native_column_runtime(columns: &[(&str, &str)], values: &[&str]) -> DesignerRuntime {
+        let mut runtime = DesignerRuntime::new_table(
+            "00000000-0000-4000-8000-000000000000",
+            "Orders",
+            &columns
+                .iter()
+                .map(|(name, field_type)| NewTableColumnInput {
+                    name: (*name).to_owned(),
+                    field_type: (*field_type).to_owned(),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let start = runtime.collection_specs["orders"].columns[0].id.to_string();
+        runtime
+            .paste_cells(
+                "resident/0",
+                "orders",
+                None,
+                &start,
+                &[values.iter().map(|value| (*value).to_owned()).collect()],
+            )
+            .unwrap();
+        runtime
+    }
+
+    fn native_column_ids(runtime: &DesignerRuntime) -> BTreeMap<String, FieldId> {
+        runtime.collection_specs["orders"]
+            .columns
+            .iter()
+            .map(|column| (column.key.clone(), column.id.clone()))
+            .collect()
+    }
+
+    fn keyed_definition(
+        runtime: &DesignerRuntime,
+        quantity: &FieldId,
+    ) -> KeyedGroupedSumDefinitionInput {
+        let ids = native_column_ids(runtime);
+        let schema = runtime.collection_specs["orders"].summary.id.clone();
+        KeyedGroupedSumDefinitionInput {
+            id: "orders-summary".to_owned(),
+            orders_schema: schema.clone(),
+            order_lookup_key_field: ids["lookup"].to_string(),
+            order_quantity_field: quantity.to_string(),
+            products_schema: schema,
+            product_key_field: ids["product_key"].to_string(),
+            product_category_field: ids["category"].to_string(),
+            product_price_field: ids["price"].to_string(),
+        }
+    }
+
+    fn text_initializers(runtime: &DesignerRuntime, value: &str) -> Vec<ColumnInitializer> {
+        runtime.collection_specs["orders"]
+            .entities
+            .iter()
+            .map(|entity| ColumnInitializer {
+                entity: entity.to_string(),
+                input: ScalarEditInput::Text {
+                    value: value.to_owned(),
+                },
+            })
+            .collect()
+    }
+
+    fn grant_schema_field_authority_except(runtime: &mut DesignerRuntime, missing: MutationClass) {
+        runtime
+            .lifecycle
+            .revoke_grant(&GrantId::from("designer-number-edit"))
+            .unwrap();
+        let authority = PrincipalId::from("designer-host-authority");
+        let scope = ScopedSemanticSubject::new(
+            DocumentScopeId::from("designer-local-document-scope"),
+            runtime.session.export_snapshot().document().id.clone(),
+            SemanticScope::Document,
+        );
+        for (index, class) in [
+            MutationClass::Structure,
+            MutationClass::Schema,
+            MutationClass::Destructive,
+        ]
+        .into_iter()
+        .filter(|class| *class != missing)
+        .enumerate()
+        {
+            runtime
+                .lifecycle
+                .provision_grant(Grant::new(
+                    GrantId::from(format!("native-column-authority-{index}")),
+                    authority.clone(),
+                    runtime.principal.clone(),
+                    vec![
+                        GrantRequirement::query(
+                            OperationFamily::SchemaFieldMutation,
+                            scope.clone(),
+                        ),
+                        GrantRequirement::mutation(
+                            AuthorizationAction::Propose,
+                            OperationFamily::SchemaFieldMutation,
+                            class,
+                            scope.clone(),
+                        )
+                        .unwrap(),
+                        GrantRequirement::mutation(
+                            AuthorizationAction::Execute,
+                            OperationFamily::SchemaFieldMutation,
+                            class,
+                            scope.clone(),
+                        )
+                        .unwrap(),
+                    ],
+                    None,
+                ))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn native_column_lifecycle_emits_exact_schema_deltas_and_keeps_stable_bindings() {
+        let mut runtime = native_column_runtime(
+            &[("Lookup", "text"), ("Quantity", "number")],
+            &["P-100", "2"],
+        );
+        let before_add = runtime.session.export_snapshot().document().clone();
+        let row = runtime.collection_specs["orders"].entities[0].to_string();
+        let add = runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "Status",
+                "text",
+                &[ColumnInitializer {
+                    entity: row,
+                    input: ScalarEditInput::Text {
+                        value: "open".to_owned(),
+                    },
+                }],
+            )
+            .unwrap();
+        let added_id = native_column_ids(&runtime)["status"].clone();
+        let after_add = runtime.session.export_snapshot().document().clone();
+        let add_changes = compare_documents(&before_add, &after_add).unwrap();
+        assert!(add_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::SchemaFieldAdded { field, definition, .. }
+                if field == &added_id && definition.key.as_str() == "status"
+        )));
+        assert!(add_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::FieldAdded { field, value: Value::Text(value) }
+                if field.field == added_id && value == "open"
+        )));
+
+        let before_rename = after_add.clone();
+        runtime
+            .rename_column(
+                &add.resulting_revision,
+                "orders",
+                added_id.as_str(),
+                "Current_status",
+            )
+            .unwrap();
+        let after_rename = runtime.session.export_snapshot().document().clone();
+        let rename_changes = compare_documents(&before_rename, &after_rename).unwrap();
+        assert!(rename_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::FieldKeyChanged { field, before, after, .. }
+                if field == &added_id && before.as_str() == "status" && after.as_str() == "current_status"
+        )));
+
+        let revision = runtime.current_revision().to_owned();
+        runtime
+            .remove_column(&revision, "orders", added_id.as_str())
+            .unwrap();
+        let after_remove = runtime.session.export_snapshot().document().clone();
+        let remove_changes = compare_documents(&after_rename, &after_remove).unwrap();
+        assert!(remove_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::SchemaFieldRemoved { field, definition, .. }
+                if field == &added_id && definition.key.as_str() == "current_status"
+        )));
+        assert!(remove_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::FieldRemoved { field, value: Value::Text(value) }
+                if field.field == added_id && value == "open"
+        )));
+    }
+
+    #[test]
+    fn native_column_identity_counter_exhaustion_fails_closed_without_mutation() {
+        let mut last_available = native_column_runtime(&[("Item", "text")], &["widget"]);
+        last_available.proposal_serial = u64::MAX - 1;
+        let entity = last_available.collection_specs["orders"].entities[0].to_string();
+        last_available
+            .add_column(
+                "resident/1",
+                "orders",
+                "Last",
+                "text",
+                &[ColumnInitializer {
+                    entity,
+                    input: ScalarEditInput::Text {
+                        value: "available".to_owned(),
+                    },
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            native_column_ids(&last_available)["last"].as_str(),
+            "native_table_field_18446744073709551615_00000000-0000-4000-8000-000000000000/column"
+        );
+        assert_eq!(last_available.proposal_serial, u64::MAX);
+        let revision = last_available.current_revision().to_owned();
+        let before = last_available.export_project(&revision).unwrap().bytes;
+        let undo_count = last_available.undo.len();
+        let redo_count = last_available.redo.len();
+        let error = last_available
+            .add_column(
+                &revision,
+                "orders",
+                "Unavailable",
+                "text",
+                &[ColumnInitializer {
+                    entity: last_available.collection_specs["orders"].entities[0].to_string(),
+                    input: ScalarEditInput::Text {
+                        value: "unpublished".to_owned(),
+                    },
+                }],
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::InvalidTableOperation { ref message }
+                if message == "column identity allocation is exhausted"
+        ));
+        assert_eq!(last_available.current_revision(), revision);
+        assert_eq!(
+            last_available.export_project(&revision).unwrap().bytes,
+            before
+        );
+        assert_eq!(last_available.undo.len(), undo_count);
+        assert_eq!(last_available.redo.len(), redo_count);
+        assert_eq!(last_available.proposal_serial, u64::MAX);
+    }
+
+    #[test]
+    fn native_column_adds_allocate_distinct_stable_ids() {
+        let mut runtime = native_column_runtime(&[("Item", "text")], &["widget"]);
+        let entity = runtime.collection_specs["orders"].entities[0].to_string();
+        let first = runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "First",
+                "text",
+                &[ColumnInitializer {
+                    entity: entity.clone(),
+                    input: ScalarEditInput::Text {
+                        value: "one".to_owned(),
+                    },
+                }],
+            )
+            .unwrap();
+        runtime
+            .add_column(
+                &first.resulting_revision,
+                "orders",
+                "Second",
+                "text",
+                &[ColumnInitializer {
+                    entity,
+                    input: ScalarEditInput::Text {
+                        value: "two".to_owned(),
+                    },
+                }],
+            )
+            .unwrap();
+        let ids = native_column_ids(&runtime);
+        assert_ne!(ids["first"], ids["second"]);
+    }
+
+    fn assert_native_column_removal_is_rejected(
+        runtime: &mut DesignerRuntime,
+        expected_revision: &str,
+        field: &str,
+    ) {
+        let before = runtime.export_project(expected_revision).unwrap().bytes;
+        let undo_count = runtime.undo.len();
+        let redo_count = runtime.redo.len();
+        let error = runtime
+            .remove_column(expected_revision, "orders", field)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
+        ));
+        assert_eq!(runtime.current_revision(), expected_revision);
+        assert_eq!(
+            runtime.export_project(expected_revision).unwrap().bytes,
+            before
+        );
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert_eq!(runtime.redo.len(), redo_count);
+    }
+
+    #[test]
+    fn native_column_rejects_formula_and_saved_definition_dependents_before_publication() {
+        let formula_base =
+            native_column_runtime(&[("Source", "number"), ("Derived", "number")], &["1", "2"]);
+        let ids = native_column_ids(&formula_base);
+        let entity = formula_base.collection_specs["orders"].entities[0].clone();
+        let derived = ids["derived"].clone();
+        let source = ids["source"].clone();
+        let mut document = formula_base.session.export_snapshot().document().clone();
+        document.entities.get_mut(&entity).unwrap().fields.insert(
+            derived.clone(),
+            Value::Formula(super::Expression::Reference(super::FieldRef::new(
+                entity.clone(),
+                source.clone(),
+            ))),
+        );
+        let mut formula_runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        formula_runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .native_table_rows = true;
+        assert_native_column_removal_is_rejected(
+            &mut formula_runtime,
+            "resident/0",
+            source.as_str(),
+        );
+        assert_native_column_removal_is_rejected(
+            &mut formula_runtime,
+            "resident/0",
+            derived.as_str(),
+        );
+
+        let mut definition_runtime = native_column_runtime(
+            &[
+                ("Lookup", "text"),
+                ("Quantity", "number"),
+                ("Product_key", "text"),
+                ("Category", "text"),
+                ("Price", "number"),
+            ],
+            &["P-100", "2", "P-100", "hardware", "3"],
+        );
+        let ids = native_column_ids(&definition_runtime);
+        definition_runtime
+            .create_keyed_grouped_sum(
+                "resident/1",
+                keyed_definition(&definition_runtime, &ids["quantity"]),
+            )
+            .unwrap();
+        definition_runtime
+            .rename_column(
+                "resident/2",
+                "orders",
+                ids["quantity"].as_str(),
+                "quantity_renamed",
+            )
+            .unwrap();
+        let snapshot = definition_runtime.session.export_snapshot();
+        let definition = snapshot
+            .document()
+            .keyed_grouped_sum_definitions
+            .get(&super::KeyedGroupedSumDefinitionId::from("orders-summary"))
+            .unwrap();
+        assert_eq!(definition.orders.quantity_field, ids["quantity"]);
+        assert_native_column_removal_is_rejected(
+            &mut definition_runtime,
+            "resident/3",
+            ids["quantity"].as_str(),
+        );
+    }
+
+    #[test]
+    fn native_column_inverse_dependency_refusal_preserves_history_and_current_state() {
+        let mut runtime = native_column_runtime(
+            &[
+                ("Lookup", "text"),
+                ("Product_key", "text"),
+                ("Category", "text"),
+                ("Price", "number"),
+            ],
+            &["P-100", "P-100", "hardware", "3"],
+        );
+        let publication = runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "Quantity",
+                "number",
+                &[ColumnInitializer {
+                    entity: runtime.collection_specs["orders"].entities[0].to_string(),
+                    input: ScalarEditInput::Number {
+                        input: "2".to_owned(),
+                    },
+                }],
+            )
+            .unwrap();
+        let quantity = native_column_ids(&runtime)["quantity"].clone();
+        runtime
+            .create_keyed_grouped_sum(
+                &publication.resulting_revision,
+                keyed_definition(&runtime, &quantity),
+            )
+            .unwrap();
+        let revision = runtime.current_revision().to_owned();
+        let before = runtime.export_project(&revision).unwrap().bytes;
+        let undo_count = runtime.undo.len();
+        let error = runtime.history_edit(&revision, false).unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
+        ));
+        assert_eq!(runtime.current_revision(), revision);
+        assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert!(runtime.redo.is_empty());
+    }
+
+    #[test]
+    fn native_column_core_command_rejects_non_direct_initializers_and_denied_principals() {
+        let mut runtime = native_column_runtime(&[("Value", "number")], &["1"]);
+        let schema = runtime.collection_specs["orders"].summary.id.clone();
+        let entity = runtime.collection_specs["orders"].entities[0].clone();
+        for value in [
+            Value::Formula(super::Expression::Number(super::Number::new(2.0).unwrap())),
+            Value::Reference(entity.clone()),
+        ] {
+            let error = runtime
+                .publish_commands(
+                    "resident/1",
+                    vec![SemanticCommand::AppendSchemaField {
+                        schema: schema.clone().into(),
+                        field: FieldDefinition {
+                            id: FieldId::from(format!("bad-{}", runtime.proposal_serial)),
+                            key: FieldKey::from(format!("bad_{}", runtime.proposal_serial)),
+                            field_type: FieldType::Number,
+                            required: true,
+                        },
+                        values: BTreeMap::from([(entity.clone(), value)]),
+                    }],
+                )
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
+            ));
+            assert_eq!(runtime.current_revision(), "resident/1");
+        }
+
+        let before = runtime.export_project("resident/1").unwrap().bytes;
+        grant_schema_field_authority_except(&mut runtime, MutationClass::Schema);
+        let error = runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "Blocked",
+                "text",
+                &text_initializers(&runtime, "x"),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })
+        ));
+        assert_eq!(runtime.current_revision(), "resident/1");
+        assert_eq!(runtime.export_project("resident/1").unwrap().bytes, before);
+
+        let mut removal_runtime = native_column_runtime(&[("Value", "number")], &["1"]);
+        removal_runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "removable",
+                "text",
+                &text_initializers(&removal_runtime, "x"),
+            )
+            .unwrap();
+        let removable = native_column_ids(&removal_runtime)["removable"].clone();
+        let revision = removal_runtime.current_revision().to_owned();
+        let before = removal_runtime.export_project(&revision).unwrap().bytes;
+        grant_schema_field_authority_except(&mut removal_runtime, MutationClass::Destructive);
+        let error = removal_runtime
+            .remove_column(&revision, "orders", removable.as_str())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })
+        ));
+        assert_eq!(removal_runtime.current_revision(), revision);
+        assert_eq!(
+            removal_runtime.export_project(&revision).unwrap().bytes,
+            before
+        );
+    }
 
     fn assert_duplicate_rejected_without_publication(runtime: &mut DesignerRuntime) {
         let before = runtime.export_project("resident/0").unwrap();

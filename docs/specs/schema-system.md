@@ -8,8 +8,10 @@ The durable-schema-versus-runtime-policy boundary is Accepted under
 progressive semantic strengthening and mixed-strength content without weakening
 the current strongly typed Entity contract. ADR-0040 accepts only bounded
 native-table required-scalar field evolution; its command and DTO shapes remain
-Provisional. Richer future schema vocabulary remains Provisional or Deferred as
-marked.
+Provisional. ADR-0041 accepts exactly two durable field-constraint variants and
+their closed v3 declaration meaning; constraint runtime/API mechanics remain
+unimplemented. Richer future schema vocabulary remains Provisional or Deferred
+as marked.
 
 See the [validation specification](validation-engine.md) and the
 [canonical reconciliation register](../governance/canonical-reconciliation-register.md).
@@ -155,14 +157,15 @@ Provisional.
 ## Future schema vocabulary
 
 Earlier exploratory documentation used broad terms such as `constraints`,
-`allowed values`, `computed fields`, and `validation rules`. Those terms do not
-constitute an Accepted generic rule language.
+`allowed values`, `computed fields`, and `validation rules`. ADR-0041 accepts
+only the closed `text_literal_set` and `number_inclusive_range` facets for
+`.roproj/v3`; it does not create a generic rule language.
 
 The following remain future schema work until concrete product/domain evidence
 justifies them:
 
-- enum/allowed-value semantics;
-- numeric ranges;
+- generic enum/allowed-value semantics beyond `text_literal_set`;
+- generic numeric ranges beyond `number_inclusive_range`;
 - string patterns;
 - defaults;
 - nominal type hierarchies;
@@ -200,6 +203,7 @@ These benefits do not require freezing a universal constraint language, dynamic
 - ADR-0019
 - ADR-0020
 - ADR-0021
+- ADR-0041
 - `validation-engine.md`
 - `diagnostics-contract.md`
 - Issue #13

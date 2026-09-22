@@ -1,16 +1,25 @@
 # Semantic Diff Specification
 
-Decision state: The logical canonical Semantic Delta contract is Accepted under
-[ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md). Stable-ID
-continuity and bound-formula comparison follow
+Decision state: The logical canonical Semantic Delta v1 contract is Accepted
+under [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md). The
+constraint-aware Semantic Delta v2 profile is Accepted under
+[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md), as
+recorded by [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391).
+V1 remains frozen; v2 is docs-only logical authority and has no production
+constraint runtime implementation. Stable-ID continuity and bound-formula
+comparison follow
 [ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md) and
 [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md).
 The current `diff-engine` Rust surface and rendered output remain an implemented
 Provisional baseline rather than the protocol DTO.
 
-Authority: [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md)
+Authority: [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md) for
+v1 and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
+for the docs-only v2 extension.
 
-Decision issue: [#45](https://github.com/nurockplayer/tachiko-work/issues/45)
+Decision issues: [#45](https://github.com/nurockplayer/tachiko-work/issues/45)
+for v1 and [#391](https://github.com/nurockplayer/tachiko-work/issues/391) for
+the v2 extension.
 
 ## Problem
 
@@ -163,6 +172,42 @@ optimistic-concurrency predicates, JSON Patch `test` operations, or an
 `apply_if` language. Exact-base stale protection remains owned by
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md).
 
+## Canonical Semantic Delta v2 (constraint-aware profile)
+
+The logical contract identifier is exactly `tachiko.semantic-delta/v2`. This
+docs-only logical extension is Accepted under
+[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md), as
+recorded by [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391).
+The v2 profile retains the complete v1 contract: same-Document admission,
+stable typed subjects, direct-state-only evidence, parent suppression, continuity,
+non-overlap, unsupported-contract failure, and canonical tuple ordering. The
+frozen v1 contract is not amended or reinterpreted.
+
+V2 complete schema and field-definition payloads include the complete tagged
+`constraint` value, including `{"type":"none"}`. For a continuing schema
+field, constraint is an independent direct property after requiredness. The
+closed schema-field change ranks are:
+
+| Subject rank | Change rank | Change kind |
+| ---: | ---: | --- |
+| 2 | 0 | `schema_field_created` |
+| 2 | 1 | `schema_field_deleted` |
+| 2 | 2 | `schema_field_key_changed` |
+| 2 | 3 | `schema_field_type_changed` |
+| 2 | 4 | `schema_field_requiredness_changed` |
+| 2 | 5 | `schema_field_constraint_changed` |
+
+A constraint change emits exactly one atomic `schema_field_constraint_changed`
+fact with typed `before` and `after` tagged constraints. It is never omitted,
+collapsed into an empty delta, or represented as whole-field replacement. The
+constraint fact uses the stable `(SchemaId, FieldId)` target and the same direct
+fact/equality/order laws as v1. A consumer that does not support v2, the target,
+or the fact kind fails closed before producing evidence. V2 does not define a
+transport, SDK, patch/apply operation, or implementation DTO. Its bounded
+production implementation is queued under #450 and is not Ready; #448's shared
+constraint model, validation, frozen-writer, and diff/merge-refusal slice is a
+queued prerequisite pending authority and #442 integration.
+
 ## Human-readable projection
 
 Traditional diff:
@@ -220,8 +265,9 @@ iteration, stable rename continuity, and a distinction between stored change
 and formula impact. It does not yet implement the complete public logical DTO
 above, and this specification does not authorize that production change.
 
-Tracking issue: a separately Ready implementation issue is required for a
-concrete DTO or transport mapping. [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46)
+Tracking issue: concrete DTO or transport mapping remains future queued work;
+the v2 logical implementation is queued under [#450](https://github.com/nurockplayer/tachiko-work/issues/450)
+and is not Ready. [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46)
 may consume canonical delta as merge/conflict evidence without treating it as
 an apply language.
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
@@ -232,8 +278,7 @@ keeps delta as evidence rather than replay input while fixing bounded optional
 history and Git-association guarantees.
 [ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 fixes causality/selective-convergence boundaries without making delta causal or
-convergent mutation input; concrete implementations require separately Ready
-work.
+convergent mutation input; concrete implementations remain future queued work.
 
 ## Principle
 

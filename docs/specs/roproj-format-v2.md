@@ -3,7 +3,7 @@
 Decision state: Accepted target under [ADR-0037](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
 
 Implementation state: Implemented for the storage-owned v2 codec and the
-bounded Designer save/reopen journey. It does not authorize a public API or
+bounded Designer save/reopen journey delivered by #330/#331. It does not authorize a public API or
 SDK wire contract, a portable-package v2, or unrelated runtime/CLI behavior.
 
 Editable-directory namespace: `.roproj`; format version: `2`

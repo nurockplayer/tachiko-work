@@ -22,9 +22,9 @@ use tachiko_semantic_core::{KeyedGroupedSumDefinition, KeyedGroupedSumDefinition
 use thiserror::Error;
 
 use super::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldId, FieldRef, Number, SchemaId,
-    SemanticChange, ValidationReport, Value, WorkspaceError, field_value_candidate, finalize_edit,
-    unset_field_candidate,
+    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+    FieldRef, FieldType, Number, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
+    field_value_candidate, finalize_edit, unset_field_candidate,
 };
 
 macro_rules! opaque_text_id {
@@ -109,6 +109,8 @@ pub enum OperationFamily {
     AnalysisQuery,
     FieldCapabilityDiscovery,
     KeyedGroupedSumDefinition,
+    /// Bounded schema-field evolution using stable field identities.
+    SchemaFieldMutation,
 }
 
 /// Accepted MVP semantic mutation classes.
@@ -312,6 +314,24 @@ pub enum SemanticCommand {
     /// Remove one stable identity; the final batch must repair inbound references.
     RemoveEntity {
         entity: EntityId,
+    },
+    /// Add one required scalar field and its complete existing-entity values.
+    AppendSchemaField {
+        schema: SchemaId,
+        field: FieldDefinition,
+        values: BTreeMap<EntityId, Value>,
+    },
+    /// Remove one required scalar field and its existing stored values.
+    RemoveSchemaField {
+        schema: SchemaId,
+        field: FieldDefinition,
+        values: BTreeMap<EntityId, Value>,
+    },
+    /// Change only the human key of one stable scalar field.
+    RenameSchemaField {
+        schema: SchemaId,
+        field: FieldId,
+        key: FieldKey,
     },
     SetFieldValue {
         field: FieldRef,
@@ -2061,6 +2081,11 @@ impl PatchLifecycle {
                     | SemanticCommand::AppendEntity { .. } => OperationFamily::AppendEntity,
                     SemanticCommand::RemoveCollection { .. }
                     | SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
+                    SemanticCommand::AppendSchemaField { .. }
+                    | SemanticCommand::RemoveSchemaField { .. }
+                    | SemanticCommand::RenameSchemaField { .. } => {
+                        OperationFamily::SchemaFieldMutation
+                    }
                     SemanticCommand::SetFieldValue { .. } | SemanticCommand::UnsetField { .. } => {
                         OperationFamily::SetFieldValue
                     }
@@ -2314,6 +2339,292 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    fn schema_field_scope(&self, schema: &SchemaId, field: &FieldId) -> ScopedSemanticSubject {
+        ScopedSemanticSubject::new(
+            self.document_scope.clone(),
+            self.document.clone(),
+            SemanticScope::SchemaField {
+                schema: schema.clone(),
+                field: field.clone(),
+            },
+        )
+    }
+
+    fn plan_append_schema_field(
+        &self,
+        base: &Document,
+        candidate: &mut Document,
+        schema_id: &SchemaId,
+        field: &FieldDefinition,
+        values: &BTreeMap<EntityId, Value>,
+        writes: &mut BTreeSet<AssociatedWriteRequirement>,
+    ) -> Result<(), WorkspaceError> {
+        if !matches!(
+            field.field_type,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        ) || !field.required
+        {
+            return Err(WorkspaceError::TypeMismatch {
+                field: FieldRef::new("schema", field.id.clone()),
+            });
+        }
+        let schema =
+            candidate
+                .schemas
+                .get(schema_id)
+                .ok_or_else(|| WorkspaceError::MissingSchema {
+                    schema: schema_id.clone(),
+                })?;
+        if !base.schemas.contains_key(schema_id) || schema.fields.contains_key(&field.id) {
+            return Err(WorkspaceError::GeneratedIdCollision {
+                kind: super::SemanticIdKind::Field,
+                id: field.id.to_string(),
+            });
+        }
+        if schema
+            .fields
+            .values()
+            .any(|existing| existing.key == field.key)
+        {
+            return Err(WorkspaceError::FieldKeyAlreadyExists {
+                schema: schema.key.clone(),
+                field: field.key.clone(),
+            });
+        }
+        let entities = candidate
+            .entities
+            .values()
+            .filter(|entity| entity.schema == *schema_id)
+            .map(|entity| entity.id.clone())
+            .collect::<BTreeSet<_>>();
+        if values.keys().cloned().collect::<BTreeSet<_>>() != entities {
+            return Err(WorkspaceError::MissingEntityId {
+                entity: entities
+                    .iter()
+                    .find(|id| !values.contains_key(*id))
+                    .cloned()
+                    .unwrap_or_else(|| EntityId::from("field-values")),
+            });
+        }
+        for (entity, value) in values {
+            if !matches!(
+                (value, &field.field_type),
+                (Value::Text(_), FieldType::Text)
+                    | (Value::Number(_), FieldType::Number)
+                    | (Value::Boolean(_), FieldType::Boolean)
+                    | (Value::Date(_), FieldType::Date)
+            ) {
+                return Err(WorkspaceError::TypeMismatch {
+                    field: FieldRef::new(entity.clone(), field.id.clone()),
+                });
+            }
+        }
+        candidate
+            .schemas
+            .get_mut(schema_id)
+            .expect("checked schema")
+            .fields
+            .insert(field.id.clone(), field.clone());
+        for (entity, value) in values {
+            candidate
+                .entities
+                .get_mut(entity)
+                .expect("checked entity")
+                .fields
+                .insert(field.id.clone(), value.clone());
+        }
+        let scope = self.schema_field_scope(schema_id, &field.id);
+        for mutation_class in [MutationClass::Structure, MutationClass::Schema] {
+            writes.insert(AssociatedWriteRequirement {
+                family: OperationFamily::SchemaFieldMutation,
+                mutation_class,
+                scope: scope.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)] // Admission verifies every removal invariant before mutation.
+    fn plan_remove_schema_field(
+        &self,
+        candidate: &mut Document,
+        schema_id: &SchemaId,
+        field: &FieldDefinition,
+        values: &BTreeMap<EntityId, Value>,
+        writes: &mut BTreeSet<AssociatedWriteRequirement>,
+    ) -> Result<(), WorkspaceError> {
+        let schema =
+            candidate
+                .schemas
+                .get(schema_id)
+                .ok_or_else(|| WorkspaceError::MissingSchema {
+                    schema: schema_id.clone(),
+                })?;
+        if schema.fields.get(&field.id) != Some(field) {
+            return Err(WorkspaceError::MissingField {
+                field: FieldRef::new("schema", field.id.clone()),
+            });
+        }
+        if !matches!(
+            field.field_type,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        ) {
+            return Err(WorkspaceError::MissingField {
+                field: FieldRef::new("schema", field.id.clone()),
+            });
+        }
+        let entities = candidate
+            .entities
+            .values()
+            .filter(|entity| entity.schema == *schema_id)
+            .map(|entity| entity.id.clone())
+            .collect::<BTreeSet<_>>();
+        if values.keys().cloned().collect::<BTreeSet<_>>() != entities
+            || entities.iter().any(|id| {
+                candidate
+                    .entities
+                    .get(id)
+                    .and_then(|entity| entity.fields.get(&field.id))
+                    != values.get(id)
+            })
+        {
+            return Err(WorkspaceError::MissingEntityId {
+                entity: entities
+                    .iter()
+                    .find(|id| {
+                        values.get(*id)
+                            != candidate
+                                .entities
+                                .get(*id)
+                                .and_then(|entity| entity.fields.get(&field.id))
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| EntityId::from("field-values")),
+            });
+        }
+        if values
+            .values()
+            .any(|value| matches!(value, Value::Formula(_)))
+        {
+            return Err(WorkspaceError::TypeMismatch {
+                field: FieldRef::new(schema_id.to_string(), field.id.clone()),
+            });
+        }
+        let schema_entities = entities.clone();
+        let field_is_referenced_by_formula = candidate
+            .entities
+            .values()
+            .flat_map(|entity| entity.fields.values())
+            .any(|value| match value {
+                Value::Formula(expression) => {
+                    expression_references(expression).iter().any(|reference| {
+                        reference.field == field.id && schema_entities.contains(&reference.entity)
+                    })
+                }
+                _ => false,
+            });
+        let field_is_referenced_by_definition = candidate
+            .keyed_grouped_sum_definitions
+            .values()
+            .any(|definition| {
+                (definition.orders.schema == *schema_id
+                    && (definition.orders.lookup_key_field == field.id
+                        || definition.orders.quantity_field == field.id))
+                    || (definition.products.schema == *schema_id
+                        && (definition.products.key_field == field.id
+                            || definition.products.category_field == field.id
+                            || definition.products.price_field == field.id))
+            });
+        if field_is_referenced_by_formula || field_is_referenced_by_definition {
+            return Err(WorkspaceError::SchemaFieldReferenced {
+                field: FieldRef::new(schema_id.to_string(), field.id.clone()),
+            });
+        }
+        candidate
+            .schemas
+            .get_mut(schema_id)
+            .expect("checked schema")
+            .fields
+            .remove(&field.id);
+        for entity in &entities {
+            candidate
+                .entities
+                .get_mut(entity)
+                .expect("checked entity")
+                .fields
+                .remove(&field.id);
+        }
+        let scope = self.schema_field_scope(schema_id, &field.id);
+        for mutation_class in [
+            MutationClass::Structure,
+            MutationClass::Schema,
+            MutationClass::Destructive,
+        ] {
+            writes.insert(AssociatedWriteRequirement {
+                family: OperationFamily::SchemaFieldMutation,
+                mutation_class,
+                scope: scope.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn plan_rename_schema_field(
+        &self,
+        candidate: &mut Document,
+        schema_id: &SchemaId,
+        field_id: &FieldId,
+        key: &FieldKey,
+        writes: &mut BTreeSet<AssociatedWriteRequirement>,
+    ) -> Result<(), WorkspaceError> {
+        let schema =
+            candidate
+                .schemas
+                .get(schema_id)
+                .ok_or_else(|| WorkspaceError::MissingSchema {
+                    schema: schema_id.clone(),
+                })?;
+        if schema
+            .fields
+            .values()
+            .any(|field| field.id != *field_id && field.key == *key)
+        {
+            return Err(WorkspaceError::FieldKeyAlreadyExists {
+                schema: schema.key.clone(),
+                field: key.clone(),
+            });
+        }
+        let field = candidate
+            .schemas
+            .get_mut(schema_id)
+            .expect("checked schema")
+            .fields
+            .get_mut(field_id)
+            .ok_or_else(|| WorkspaceError::MissingField {
+                field: FieldRef::new("schema", field_id.clone()),
+            })?;
+        if !matches!(
+            field.field_type,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        ) {
+            return Err(WorkspaceError::MissingField {
+                field: FieldRef::new("schema", field_id.clone()),
+            });
+        }
+        if field.key == *key {
+            return Err(WorkspaceError::NoChange {
+                field: FieldRef::new("schema", field_id.clone()),
+            });
+        }
+        field.key = key.clone();
+        writes.insert(AssociatedWriteRequirement {
+            family: OperationFamily::SchemaFieldMutation,
+            mutation_class: MutationClass::Schema,
+            scope: self.schema_field_scope(schema_id, field_id),
+        });
+        Ok(())
+    }
+
     #[allow(clippy::too_many_lines)] // Keep the closed command catalogue together.
     fn plan_commands(
         &self,
@@ -2378,6 +2689,36 @@ impl PatchLifecycle {
                         });
                     }
                     candidate.entities.remove(entity);
+                }
+                SemanticCommand::AppendSchemaField {
+                    schema,
+                    field,
+                    values,
+                } => {
+                    self.plan_append_schema_field(
+                        document,
+                        &mut candidate,
+                        schema,
+                        field,
+                        values,
+                        &mut writes,
+                    )?;
+                }
+                SemanticCommand::RemoveSchemaField {
+                    schema,
+                    field,
+                    values,
+                } => {
+                    self.plan_remove_schema_field(
+                        &mut candidate,
+                        schema,
+                        field,
+                        values,
+                        &mut writes,
+                    )?;
+                }
+                SemanticCommand::RenameSchemaField { schema, field, key } => {
+                    self.plan_rename_schema_field(&mut candidate, schema, field, key, &mut writes)?;
                 }
                 SemanticCommand::SetFieldValue { field, value } => {
                     let entity = candidate.entities.get(&field.entity).ok_or_else(|| {
@@ -2660,6 +3001,12 @@ impl PatchLifecycle {
                 self.insert_document_disclosure(OperationFamily::RemoveEntity, disclosures);
                 Ok(())
             }
+            SemanticCommand::AppendSchemaField { .. }
+            | SemanticCommand::RemoveSchemaField { .. }
+            | SemanticCommand::RenameSchemaField { .. } => {
+                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
+                Ok(())
+            }
             SemanticCommand::SetFieldValue { field, value } => {
                 self.insert_field_disclosure(before, after, field, disclosures)?;
                 self.insert_value_disclosures(before, after, value, disclosures)
@@ -2752,6 +3099,7 @@ impl PatchLifecycle {
         });
     }
 
+    #[allow(clippy::too_many_lines)] // Closed semantic-change catalogue derives disclosures atomically.
     fn insert_change_disclosures(
         &self,
         before: &Document,
@@ -2767,14 +3115,26 @@ impl PatchLifecycle {
             | SemanticChange::SchemaFieldRemoved { .. }
             | SemanticChange::EntityAdded { .. }
             | SemanticChange::EntityRemoved { .. } => Ok(()),
+            SemanticChange::FieldKeyChanged { schema, field, .. }
+                if body.commands().iter().any(|command| matches!(command,
+                    SemanticCommand::RenameSchemaField { schema: command_schema, field: command_field, .. }
+                    if command_schema == schema && command_field == field
+                )) => {
+                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
+                Ok(())
+            }
             SemanticChange::FieldAdded { field, value } => {
+                let families = command_families_for_field(body, field);
+                if families == BTreeSet::from([OperationFamily::SchemaFieldMutation]) {
+                    self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
+                    return Ok(());
+                }
                 // A value-slot initialization is not a schema/identity mutation.
                 // Admit only the existing optional declaration and its exact
                 // SetFieldValue command; arbitrary added fields remain closed.
                 let definition = crate::field_definition(before, field)
                     .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
                 let existing = before.entities[&field.entity].fields.get(&field.field);
-                let families = command_families_for_field(body, field);
                 if existing.is_some()
                     || definition.required
                     || matches!(value, Value::Formula(_))
@@ -2787,6 +3147,10 @@ impl PatchLifecycle {
             }
             SemanticChange::FieldRemoved { field, value } => {
                 let mut families = command_families_for_field(body, field);
+                if families == BTreeSet::from([OperationFamily::SchemaFieldMutation]) {
+                    self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
+                    return Ok(());
+                }
                 if families.is_empty() {
                     families.insert(OperationFamily::SetFieldValue);
                 }
@@ -3254,6 +3618,20 @@ fn command_families_for_field(
             }
             SemanticCommand::UnsetField { field: target } if target == field => {
                 Some(OperationFamily::SetFieldValue)
+            }
+            SemanticCommand::AppendSchemaField {
+                field: definition,
+                values,
+                ..
+            } if definition.id == field.field && values.contains_key(&field.entity) => {
+                Some(OperationFamily::SchemaFieldMutation)
+            }
+            SemanticCommand::RemoveSchemaField {
+                field: definition,
+                values,
+                ..
+            } if definition.id == field.field && values.contains_key(&field.entity) => {
+                Some(OperationFamily::SchemaFieldMutation)
             }
             _ => None,
         })
