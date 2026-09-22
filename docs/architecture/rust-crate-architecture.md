@@ -9,7 +9,11 @@ stabilizing a Rust or wire DTO. ADR-0022 accepts the resident shared Rust
 semantic/application runtime and host-separation direction without stabilizing
 current session/transport mechanisms. ADR-0026 accepts the provider-neutral
 Principal/capability/scope/Grant/footprint/Approval/provenance laws without
-selecting crate placement or public Rust/wire types.
+selecting crate placement or public Rust/wire types. When its bounded desktop
+delegated-Human-approval profile is selected before opening an occurrence,
+ADR-0039 selects one native-owned runtime for every semantic operation in that
+entire occurrence; a Worker is limited to request/projection transport and
+cannot retain a second authority or receive an ownership handoff.
 
 Implementation state: ADR-0016 boundary implemented by Issue #72; authoritative
 validation/report composition implemented by Issue #89. Issue #29 implements
@@ -26,7 +30,9 @@ workflow, and CLI composition without changing the Accepted crate DAG.
 Architecture authority: ADR-0016 for crate ownership; ADR-0020 for the
 first-class Semantic API product boundary; ADR-0024 for SemanticPatch proposal
 meaning; ADR-0022 for runtime ownership, resident topology, native/WASM parity,
-and host separation; ADR-0026 for authorization and exact Approval meaning.
+and host separation; ADR-0026 for authorization and exact Approval meaning;
+and ADR-0039 for the bounded desktop delegated-approval occurrence's single
+native owner.
 
 ## Purpose
 
@@ -37,6 +43,9 @@ The first-class client contract is specified separately in
 [`semantic-api.md`](../specs/semantic-api.md), and the runtime/host topology is
 Accepted in
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
+For an occurrence using delegated Human approval, the bounded desktop
+[ADR-0039](../decisions/ADR-0039-native-trusted-host-delegated-human-approval.md)
+profile selects that native owner before the occurrence opens.
 
 The ADRs remain authority for dependency direction, forbidden edges,
 portability, semantic-client rules, runtime ownership, public-vs-internal
