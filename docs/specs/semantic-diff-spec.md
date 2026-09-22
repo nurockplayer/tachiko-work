@@ -193,6 +193,7 @@ fact/equality/order laws as v1. A consumer that does not support v2, the target,
 or the fact kind fails closed before producing evidence. V2 does not define a
 transport, SDK, patch/apply operation, or implementation DTO; those remain
 separately Ready work.
+
 ## Human-readable projection
 
 Traditional diff:

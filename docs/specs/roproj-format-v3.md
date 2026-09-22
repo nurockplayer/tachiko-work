@@ -110,7 +110,9 @@ Text accepts `none` or `text_literal_set`, Number accepts `none` or
 `number_inclusive_range`, and Boolean/Date/Reference accept only `none`.
 
 Unknown constraint tags or members, missing members, nulls, duplicate object
-members, or a mismatched constraint/type pair fail closed.
+members, or a mismatched constraint/type pair fail closed. An authoring writer
+may sort an admitted literal set into canonical unsigned UTF-8 order, while a
+decoder rejects duplicate or noncanonical input without repairing it.
 
 ## Entity values and formulas
 

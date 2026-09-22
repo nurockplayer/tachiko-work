@@ -42,8 +42,10 @@ A `text_literal_set` contains 1–256 distinct decoded Unicode strings. Every
 string is at most 1024 UTF-8 bytes and the sum of all decoded UTF-8 byte lengths
 is at most 65536 bytes, measured before JSON escaping. The empty string is
 allowed. Values are emitted and compared in unsigned UTF-8 lexicographic order.
-Duplicate values are rejected; a reader or writer must not sort, deduplicate,
-normalize, trim, case-fold, locale-fold, or otherwise repair malformed input.
+An authoring writer may sort an admitted set into that canonical order, but
+duplicate values are rejected before emission. A decoder rejects duplicate or
+noncanonical input and never sorts, deduplicates, normalizes, trims,
+case-folds, locale-folds, or otherwise repairs malformed input.
 
 A `number_inclusive_range` contains finite Accepted binary64 `min` and `max`,
 with normalized zero and `min <= max`. NaN and infinities are rejected. Numeric

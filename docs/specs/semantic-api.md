@@ -380,6 +380,7 @@ semantic-delta and semantic-merge contracts already represent schema-field
 creation and deletion as direct evidence and conflict subjects, distinct from
 the typed command. A consumer that does not support the applicable contract or
 encountered change kind must fail closed.
+
 ## M04 formula reasoning and scenario Queries
 
 ADR-0020 promotes the following logical M04 operations without freezing their

@@ -114,7 +114,11 @@ claim that an admissible candidate exists.
 Validates semantic facts that must be interpretable independently of a
 particular schema instance or client projection, including Accepted stable
 identity/coherence requirements and deterministic human-address ambiguity where
-applicable.
+applicable. For ADR-0041, this is also where each field declaration's closed
+constraint tag/shape, literal and numeric bounds, canonical member rules, and
+constraint/type pairing are checked. These declaration checks apply even to an
+empty schema with no entities; malformed constraint declarations never wait for
+an entity value to expose them.
 
 This stage must not invent new durable schema vocabulary or a universal identity
 requirement for future freeform fragments.
@@ -131,12 +135,14 @@ currently represented requirements such as:
 - required field presence;
 - unexpected fields where the current closed semantic model requires it; and
 - declared field type compatibility; and
-- the ADR-0041 constraint/type pairing and present-value constraint checks.
+- the ADR-0041 present-value constraint checks for direct stored scalar values.
 
-A Text value must be a member of its field's admitted literal set when one is
-present. A Number value must be finite and within an inclusive range when one is
-present. Boolean, Date, and Reference fields admit only `none`. An absent
-optional value remains absent and is not replaced by a null or default.
+A present direct stored Text value must be a member of its field's admitted
+literal set when one is present. A present direct stored Number value must be
+finite and within an inclusive range when one is present. Boolean, Date, and
+Reference fields admit only `none`. An absent optional value remains absent and
+is not replaced by a null or default. Formula-valued Number results are checked
+under Stage 5 only after successful complete calculation.
 
 Before final validation, an ADR-0040 field-evolution candidate performs its
 operation-specific preconditions: an addition supplies a direct stored

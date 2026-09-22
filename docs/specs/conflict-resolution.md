@@ -380,6 +380,7 @@ conflict kind fails closed. A conflict-free merged candidate still runs complete
 validation and formula finalization; an invalid candidate is a validation or
 calculation failure, never an invented conflict. V2 remains a logical contract
 only and does not stabilize a wire, SDK, or Rust DTO.
+
 ## Human-readable projection
 
 A client may render a conflict using current keys or localized prose, for
