@@ -2,13 +2,15 @@
 use std::collections::BTreeMap;
 
 use tachiko_diff_engine::{
-    CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact as Fact,
+    CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact as Fact, DeltaInputSide,
     EntityDefinitionPayload, FieldDefinitionPayload, SchemaDefinitionPayload, canonical_delta,
     diff,
 };
+use tachiko_formula_engine::calculate;
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, Expression, FieldConstraint, FieldDefinition, FieldId,
-    FieldRef, FieldType, Number, Schema, SchemaId, Value,
+    FieldRef, FieldType, Number, Schema, SchemaId, Value, validate_complete_formula_constraints,
+    validate_document_core,
 };
 
 fn number(value: f64) -> Number {
@@ -359,6 +361,54 @@ fn constraint_only_change_is_one_atomic_fact_and_equal_state_is_empty() {
     );
 }
 
+#[test]
+fn independently_constructed_equal_text_sets_are_empty_and_changes_are_atomic() {
+    let mut before = document();
+    let mut after = document();
+    let before_set = FieldConstraint::TextLiteralSet {
+        values: vec!["".into(), "old".into(), "é".into()],
+    };
+    before
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("label")
+        .unwrap()
+        .constraint = before_set.clone();
+    after
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("label")
+        .unwrap()
+        .constraint = FieldConstraint::TextLiteralSet {
+        values: ["", "old", "é"].into_iter().map(str::to_owned).collect(),
+    };
+    assert!(facts(&before, &after).is_empty());
+    let after_set = FieldConstraint::TextLiteralSet {
+        values: vec!["old".into(), "Ω".into()],
+    };
+    after
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("label")
+        .unwrap()
+        .constraint = after_set.clone();
+    assert_eq!(
+        facts(&before, &after),
+        vec![Fact::SchemaFieldConstraintChanged {
+            schema: "schema".into(),
+            field: "label".into(),
+            before: before_set,
+            after: after_set,
+        }]
+    );
+}
+
 fn formula_document() -> Document {
     let mut document = document();
     let mut total = field("total", FieldType::Number);
@@ -473,14 +523,31 @@ fn declaration_direct_value_and_complete_formula_admission_apply_to_both_sides()
         .fields
         .insert("amount".into(), Value::Number(number(6.0)));
     for invalid in [declaration, direct_value, calculated_value] {
-        assert!(matches!(
-            canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &valid, &invalid),
-            Err(CanonicalDeltaError::InvalidInput { .. })
-        ));
-        assert!(matches!(
-            canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &invalid, &valid),
-            Err(CanonicalDeltaError::InvalidInput { .. })
-        ));
+        let mut expected = validate_document_core(&invalid);
+        if expected.is_empty() {
+            let complete = calculate(&invalid).unwrap();
+            expected = validate_complete_formula_constraints(&invalid, complete.values());
+        }
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|diagnostic| diagnostic.stable_observation())
+            .collect();
+        assert!(!expected.is_empty());
+        for (before, after, expected_side) in [
+            (&valid, &invalid, DeltaInputSide::After),
+            (&invalid, &valid, DeltaInputSide::Before),
+        ] {
+            let error = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, before, after).unwrap_err();
+            let CanonicalDeltaError::InvalidInput { side, diagnostics } = error else {
+                panic!("wrong refusal: {error:?}");
+            };
+            assert_eq!(side, expected_side);
+            let observed: Vec<_> = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.stable_observation())
+                .collect();
+            assert_eq!(observed, expected);
+        }
     }
 }
 
