@@ -81,7 +81,9 @@ Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#28](https://github.com/nurockplayer/tachiko-work/issues/28),
 [#32](https://github.com/nurockplayer/tachiko-work/issues/32),
 [#33](https://github.com/nurockplayer/tachiko-work/issues/33),
-[#48](https://github.com/nurockplayer/tachiko-work/issues/48)
+[#48](https://github.com/nurockplayer/tachiko-work/issues/48),
+[#391](https://github.com/nurockplayer/tachiko-work/issues/391) for the
+docs-only durable-constraint extension
 
 ## Purpose
 
@@ -1935,7 +1937,7 @@ to semantic core by virtue of using the API.
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
 - Issues #10, #17, #27, #28, #29, #32, #33, #48, #49, #50, #93, #94,
-  #95, #104
+  #95, #104, and #391
 ## Bounded optional-slot initialization
 
 **Decision state: Provisional implementation profile (#259).** The existing

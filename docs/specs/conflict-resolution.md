@@ -13,7 +13,9 @@ Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
 and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
 for the docs-only v2 extension
 
-Decision issue: [#46](https://github.com/nurockplayer/tachiko-work/issues/46)
+Decision issues: [#46](https://github.com/nurockplayer/tachiko-work/issues/46) for
+v1 and [#391](https://github.com/nurockplayer/tachiko-work/issues/391) for the
+docs-only v2 extension.
 
 Issue #223 makes the current `merge-engine` Rust conflict shape implementation
 evidence for this logical contract: same-Document admission and typed

@@ -203,8 +203,10 @@ collapsed into an empty delta, or represented as whole-field replacement. The
 constraint fact uses the stable `(SchemaId, FieldId)` target and the same direct
 fact/equality/order laws as v1. A consumer that does not support v2, the target,
 or the fact kind fails closed before producing evidence. V2 does not define a
-transport, SDK, patch/apply operation, or implementation DTO; those remain
-separately Ready work.
+transport, SDK, patch/apply operation, or implementation DTO. Its bounded
+production implementation is queued under #450 and is not Ready; #448's shared
+constraint model, validation, frozen-writer, and diff/merge-refusal slice is a
+queued prerequisite pending authority and #442 integration.
 
 ## Human-readable projection
 
@@ -263,8 +265,9 @@ iteration, stable rename continuity, and a distinction between stored change
 and formula impact. It does not yet implement the complete public logical DTO
 above, and this specification does not authorize that production change.
 
-Tracking issue: a separately Ready implementation issue is required for a
-concrete DTO or transport mapping. [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46)
+Tracking issue: concrete DTO or transport mapping remains future queued work;
+the v2 logical implementation is queued under [#450](https://github.com/nurockplayer/tachiko-work/issues/450)
+and is not Ready. [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46)
 may consume canonical delta as merge/conflict evidence without treating it as
 an apply language.
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
@@ -275,8 +278,7 @@ keeps delta as evidence rather than replay input while fixing bounded optional
 history and Git-association guarantees.
 [ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 fixes causality/selective-convergence boundaries without making delta causal or
-convergent mutation input; concrete implementations require separately Ready
-work.
+convergent mutation input; concrete implementations remain future queued work.
 
 ## Principle
 

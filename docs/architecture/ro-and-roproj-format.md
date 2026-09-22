@@ -38,16 +38,21 @@ admits only the Accepted bounded family and writes a distinct absent canonical
 output. These operations preserve their source and do not require Git.
 
 The bounded `.roproj/v2` storage codec and Designer save/reopen journey are
-implemented by #330/#331 under ADR-0037. The Accepted `.roproj/v3`
-constraint-preserving format/layout and explicit v2→v3 migration boundary are
-defined by ADR-0041 but remain unimplemented; they do not change frozen v1/v2
-or portable-package/v1 contracts.
+implemented by #330/#331 under ADR-0037. The Accepted
+[`.roproj/v3` format](../specs/roproj-format-v3.md) and
+[layout](../specs/roproj-layout-v3.md), plus the explicit v2→v3 migration
+boundary, are defined by
+[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md) but
+remain unimplemented; they do not change frozen v1/v2 or portable-package/v1
+contracts.
 
 This is a transitional implementation state, not a reversal of ADR-0003.
 ADR-0023 fixes the `.roproj/v1` durable representation contract. ADR-0037
-fixes the bounded `.roproj/v2` definition-persistence contract. ADR-0041
-defines the Accepted but unimplemented `.roproj/v3` constraint-preserving
-extension. ADR-0025
+fixes the bounded `.roproj/v2` definition-persistence contract.
+[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md) defines
+the Accepted but unimplemented `.roproj/v3` constraint-preserving extension in
+[`roproj-format-v3.md`](../specs/roproj-format-v3.md) and
+[`roproj-layout-v3.md`](../specs/roproj-layout-v3.md). ADR-0025
 fixes the deterministic portable-package v1 envelope and integrity root over
 that exact tree. Issue #3 implements the packaged `.ro` pure codec, bounded
 native pack/unpack and comparison workflows, fail-closed content framing, and
@@ -84,7 +89,10 @@ The bounded v2 definition-persistence contract is separately specified by
 [`roproj-format-v2.md`](../specs/roproj-format-v2.md) and
 [`roproj-layout-v2.md`](../specs/roproj-layout-v2.md), and implemented by
 #330/#331. V3 is an Accepted but unimplemented constraint-preserving target
-under ADR-0041; portable-package/v1 remains the exact v1 artifact.
+under [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md),
+with [`roproj-format-v3.md`](../specs/roproj-format-v3.md) and
+[`roproj-layout-v3.md`](../specs/roproj-layout-v3.md) as the normative links;
+portable-package/v1 remains the exact v1 artifact.
 
 ## Portable representation
 
