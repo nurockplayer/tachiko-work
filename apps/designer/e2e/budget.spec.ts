@@ -134,6 +134,7 @@ test("Budget formula apply and copy expose bounded session Undo/Redo controls", 
 
   const varianceBefore = await cell(page, "rent.variance").locator("output").textContent();
   await copy(page, item("Rent", "Planned"), [item("Rent", "Variance")], [], false, true);
+  await expect(cell(page, "rent.variance").locator("output")).toHaveText("-10");
   const varianceAfter = await cell(page, "rent.variance").locator("output").textContent();
   expect(varianceAfter).not.toBe(varianceBefore);
   await history.getByRole("button", { name: "Undo", exact: true }).click();

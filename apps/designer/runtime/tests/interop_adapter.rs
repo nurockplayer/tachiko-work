@@ -1,5 +1,9 @@
 use std::io::{Cursor, Read, Write};
-use tachiko_designer_runtime::interop_adapter::*;
+use tachiko_designer_runtime::interop_adapter::{
+    FidelityCategory, ImportOptions, MAX_COLUMNS, MAX_DATA_ROWS, MAX_EXPANDED_BYTES, MAX_FORMULAS,
+    MAX_SHEETS, MAX_SOURCE_BYTES, MAX_ZIP_ENTRIES, SourceValue, SourceWorkbook, export_csv,
+    export_xlsx, import_csv, import_xlsx,
+};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 fn simple() -> SourceWorkbook {
     import_csv(b"Name,Amount\nAda,12\n", &ImportOptions::default()).unwrap()

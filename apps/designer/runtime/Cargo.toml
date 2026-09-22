@@ -20,8 +20,11 @@ zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
 [workspace]
 
 [lints.rust]
-# The browser-only module uses four private C ABI symbol exports. It contains
-# no unsafe blocks and does not expose Rust memory layouts as product meaning.
+# This crate-level exception exists only because the browser bridge uses Rust
+# 2024 `#[unsafe(no_mangle)]` on its private C ABI exports. It is not permission
+# to add unsafe blocks, unsafe functions, unsafe impls, or unrelated unsafe
+# attributes; expanding that surface requires explicit Issue scope and Guarded
+# review under the repository Rust ownership/unsafe policy in AGENTS.md.
 unsafe_code = "allow"
 
 [lints.clippy]
