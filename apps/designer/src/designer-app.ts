@@ -33,6 +33,7 @@ import type {
   PublicationProjection,
   KeyedGroupedSumProjection,
   NewTableColumnInput,
+  ScalarEditInput,
   TableProjection,
 } from "./runtime/protocol.ts";
 
@@ -1196,6 +1197,83 @@ export function mountDesigner(
     else dialog.setAttribute("open", "");
   };
 
+  const publishNativeColumn = async (request: Parameters<NonNullable<DesignerClient["trackerCommand"]>>[0]): Promise<void> => {
+    if (!store || !client.trackerCommand || busy) return;
+    const table = store.snapshot().table;
+    busy = true; notice = null; render();
+    let published = false;
+    try {
+      const publication = await client.trackerCommand(request);
+      published = true;
+      tracker.recordSemantic();
+      store.beginPublication(publication);
+      lifecycle.durability.observe(publication.resulting_revision);
+      const refreshed = await client.queryTable(table.collection.key);
+      if (refreshed.revision !== publication.resulting_revision) throw new Error("Table refresh is not current.");
+      store = createProjectionStore(refreshed);
+      if (bootstrap) bootstrap = {...bootstrap, revision: refreshed.revision, collections: bootstrap.collections.map(collection => collection.id === refreshed.collection.id ? refreshed.collection : collection)};
+      notice = {tone: "success", title: "Publication complete", message: "Column lifecycle change published.", diagnostics: []};
+    } catch (error) { showFailure(error, published); }
+    finally { busy = false; syncBeforeUnloadGuard(); render(); }
+  };
+
+  const openAddColumn = (): void => {
+    const table = store?.snapshot().table;
+    if (!table || !client.trackerCommand || busy || table.native_table_profile !== true) return;
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("aria-label", "Add column");
+    dialog.innerHTML = `<form method="dialog" data-add-column-form>
+      <h2>Add column</h2>
+      <label>Column name<input aria-label="Column name" required maxlength="4096"></label>
+      <label>Column type<select aria-label="Column type"><option>Text</option><option>Number</option><option>Boolean</option><option>Date</option></select></label>
+      <label>Value for existing rows<input aria-label="Value for existing rows" required></label>
+      <label><input type="checkbox" aria-label="Use this value for every existing row" checked>Use this value for every existing row</label>
+      <button type="submit">Add column</button><button type="button" data-cancel-add-column>Cancel</button>
+    </form>`;
+    root.append(dialog);
+    const close = (): void => { dialog.close(); dialog.remove(); root.querySelector<HTMLElement>("[data-add-column]")?.focus(); };
+    dialog.querySelector("[data-cancel-add-column]")?.addEventListener("click", close);
+    dialog.querySelector<HTMLFormElement>("[data-add-column-form]")?.addEventListener("submit", event => {
+      event.preventDefault();
+      const name = dialog.querySelector<HTMLInputElement>("[aria-label='Column name']")?.value ?? "";
+      const type = (dialog.querySelector<HTMLSelectElement>("[aria-label='Column type']")?.value ?? "Text").toLowerCase();
+      const value = dialog.querySelector<HTMLInputElement>("[aria-label='Value for existing rows']")?.value ?? "";
+      const fixed = dialog.querySelector<HTMLInputElement>("[aria-label='Use this value for every existing row']")?.checked === true;
+      if (!fixed) { showProjectFailure("Column not added", new Error("A value for every existing row is required.")); return; }
+      const input: ScalarEditInput = type === "number" ? {kind: "number", input: value} : type === "boolean" ? {kind: "boolean", value: value === "true"} : type === "date" ? {kind: "date", value} : {kind: "text", value};
+      close();
+      void publishNativeColumn({type: "add_column", expected_revision: table.revision, collection: table.collection.id, name, field_type: type, initializers: table.rows.map(row => ({entity: row.id, input}))});
+    });
+    if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+    dialog.querySelector<HTMLElement>("[aria-label='Column name']")?.focus();
+  };
+
+  const openChangeColumn = (action: "rename" | "remove"): void => {
+    const table = store?.snapshot().table;
+    if (!table || !client.trackerCommand || busy || table.native_table_profile !== true) return;
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("aria-label", action === "rename" ? "Rename column" : "Remove column");
+    const nameControl = action === "rename" ? `<label>Column name<input aria-label="Column name" required maxlength="4096"></label>` : `<p>Removing this column deletes its stored values.</p>`;
+    dialog.innerHTML = `<form method="dialog" data-change-column-form><h2>${action === "rename" ? "Rename column" : "Remove column"}</h2>
+      <label>Column to change<select aria-label="Column to change">${table.columns.map(column => `<option value="${escapeHtml(column.id)}">${escapeHtml(column.key)}</option>`).join("")}</select></label>${nameControl}
+      <button type="submit">${action === "rename" ? "Rename" : "Remove"}</button><button type="button" data-cancel-change-column>Cancel</button></form>`;
+    root.append(dialog);
+    const close = (): void => { dialog.close(); dialog.remove(); root.querySelector<HTMLElement>(action === "rename" ? "[data-rename-column]" : "[data-remove-column]")?.focus(); };
+    dialog.querySelector("[data-cancel-change-column]")?.addEventListener("click", close);
+    dialog.querySelector<HTMLFormElement>("[data-change-column-form]")?.addEventListener("submit", event => {
+      event.preventDefault();
+      const field = dialog.querySelector<HTMLSelectElement>("[aria-label='Column to change']")?.value ?? "";
+      const name = dialog.querySelector<HTMLInputElement>("[aria-label='Column name']")?.value ?? "";
+      close();
+      const request = action === "rename"
+        ? {type: "rename_column" as const, expected_revision: table.revision, collection: table.collection.id, field, name}
+        : {type: "remove_column" as const, expected_revision: table.revision, collection: table.collection.id, field};
+      void publishNativeColumn(request);
+    });
+    if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+    dialog.querySelector<HTMLElement>("[aria-label='Column to change']")?.focus();
+  };
+
   const pasteGeneric = async (text: string): Promise<void> => {
     if (!store || busy || !client.trackerCommand || store.snapshot().table.native_table_profile !== true) return;
     const table = store.snapshot().table;
@@ -1266,6 +1344,9 @@ export function mountDesigner(
     root.querySelector("[data-new-tracker]")?.addEventListener("click", () => { void newTracker(); });
     root.querySelector("[data-new-budget]")?.addEventListener("click", () => { void newBudget(); });
     root.querySelector("[data-new-table]")?.addEventListener("click", () => { newTable(); });
+    root.querySelector("[data-add-column]")?.addEventListener("click", () => { openAddColumn(); });
+    root.querySelector("[data-rename-column]")?.addEventListener("click", () => { openChangeColumn("rename"); });
+    root.querySelector("[data-remove-column]")?.addEventListener("click", () => { openChangeColumn("remove"); });
     root.querySelector("[data-duplicate-data]")?.addEventListener("click", () => { void duplicateData(); });
     root.querySelector("[data-open-find-replace]")?.addEventListener("click", () => {
       const snapshot = store?.snapshot();
@@ -1766,7 +1847,7 @@ function designerMarkup(
               <p class="eyebrow">Bounded semantic projection</p>
               <h2 id="table-title">${escapeHtml(humanize(table.collection.key))}</h2>
             </div>
-            <div><span>${String(table.rows.length)} ${table.rows.length === 1 ? "entity" : "entities"}</span>${isTracker ? "" : `<button type="button" data-duplicate-data ${busy || currentness !== "current" ? "disabled" : ""}>Duplicate data</button>`}</div>
+            <div><span>${String(table.rows.length)} ${table.rows.length === 1 ? "entity" : "entities"}</span>${isTracker ? "" : `<button type="button" data-duplicate-data ${busy || currentness !== "current" ? "disabled" : ""}>Duplicate data</button>`}${isNativeTable ? `<button type="button" data-add-column ${busy || currentness !== "current" ? "disabled" : ""}>Add column</button><button type="button" data-rename-column ${busy || currentness !== "current" ? "disabled" : ""}>Rename column</button><button type="button" data-remove-column ${busy || currentness !== "current" ? "disabled" : ""}>Remove column</button>` : ""}</div>
           </div>
 
           <ol class="calculation-thread" aria-label="Edit publication path">

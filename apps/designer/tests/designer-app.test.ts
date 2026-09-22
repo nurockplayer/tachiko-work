@@ -1172,6 +1172,29 @@ describe("Designer application seam", () => {
     app.destroy();
   });
 
+  it("offers labelled native-column lifecycle controls without exposing them on other profiles", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new FakeClient();
+    const nativeTable = { ...structuredClone(table), native_table_profile: true };
+    vi.spyOn(client, "queryTable").mockResolvedValue(nativeTable);
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const add = root.querySelector<HTMLButtonElement>("[data-add-column]");
+    expect(add?.textContent).toContain("Add column");
+    expect(root.querySelector("[data-rename-column]")).not.toBeNull();
+    expect(root.querySelector("[data-remove-column]")).not.toBeNull();
+    add?.click();
+    const dialog = root.querySelector<HTMLDialogElement>("[aria-label='Add column']");
+    expect(dialog?.querySelector("[aria-label='Column name']")).not.toBeNull();
+    expect(dialog?.querySelector("[aria-label='Column type']")).not.toBeNull();
+    expect(dialog?.querySelector("[aria-label='Value for existing rows']")).not.toBeNull();
+    expect(dialog?.querySelector("[aria-label='Use this value for every existing row']")).not.toBeNull();
+    app.destroy();
+  });
+
   it("keeps generic selection exclusive to native tables and seeds Boolean values canonically", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

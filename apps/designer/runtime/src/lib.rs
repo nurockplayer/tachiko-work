@@ -97,6 +97,24 @@ pub enum DesignerRequest {
         name: String,
         columns: Vec<NewTableColumnInput>,
     },
+    AddColumn {
+        expected_revision: String,
+        collection: String,
+        name: String,
+        field_type: String,
+        initializers: Vec<ColumnInitializer>,
+    },
+    RenameColumn {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        name: String,
+    },
+    RemoveColumn {
+        expected_revision: String,
+        collection: String,
+        field: String,
+    },
     DuplicateCollection {
         expected_revision: String,
         collection: String,
@@ -288,6 +306,14 @@ pub enum ScalarEditInput {
     Text { value: String },
     Boolean { value: bool },
     Date { value: String },
+}
+
+/// One explicit current-entity value required when adding a native scalar column.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnInitializer {
+    pub entity: String,
+    pub input: ScalarEditInput,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -818,6 +844,15 @@ impl DesignerRuntime {
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
+            DesignerRequest::AddColumn { expected_revision, collection, name, field_type, initializers } => Ok(DesignerResponse::Published(
+                self.add_column(&expected_revision, &collection, &name, &field_type, &initializers)?,
+            )),
+            DesignerRequest::RenameColumn { expected_revision, collection, field, name } => Ok(DesignerResponse::Published(
+                self.rename_column(&expected_revision, &collection, &field, &name)?,
+            )),
+            DesignerRequest::RemoveColumn { expected_revision, collection, field } => Ok(DesignerResponse::Published(
+                self.remove_column(&expected_revision, &collection, &field)?,
+            )),
             DesignerRequest::DuplicateCollection {
                 expected_revision,
                 collection,
@@ -1323,6 +1358,94 @@ impl DesignerRuntime {
             }],
         )?;
         Ok(publication)
+    }
+
+    fn native_column_schema(
+        &self,
+        collection: &str,
+    ) -> Result<(SchemaId, Vec<EntityId>), DesignerError> {
+        let spec = self.collection_spec(collection)?;
+        if !spec.native_table_rows {
+            return Err(table_error("column lifecycle is available for native tables"));
+        }
+        Ok((SchemaId::from(spec.summary.id.clone()), spec.entities.clone()))
+    }
+
+    fn add_column(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        name: &str,
+        field_type: &str,
+        initializers: &[ColumnInitializer],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema_id, entities) = self.native_column_schema(collection)?;
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot.document().schemas.get(&schema_id).ok_or_else(|| table_error("native table schema is unavailable"))?;
+        if schema.fields.len() >= MAX_TABLE_FIELDS { return Err(table_error("column capacity is exhausted")); }
+        let key = native_column_lifecycle_key(name)?;
+        if schema.fields.values().any(|field| field.key.as_str() == key) { return Err(table_error("duplicate column names are not allowed")); }
+        if initializers.len() != entities.len() { return Err(table_error("every existing row needs exactly one initializer")); }
+        let kind = native_table_field_type(field_type)?;
+        let mut values = BTreeMap::new();
+        for initializer in initializers {
+            let entity = EntityId::from(initializer.entity.clone());
+            if !entities.contains(&entity) || values.contains_key(&entity) { return Err(table_error("initializers must name each current row exactly once")); }
+            values.insert(entity, parse_column_initializer(&kind, &initializer.input)?);
+        }
+        if values.len() != entities.len() { return Err(table_error("initializers must name each current row exactly once")); }
+        let mut ids = NewTableIds::with_serial(&format!("{}/column", self.row_namespace), self.proposal_serial as usize);
+        let id = FieldId::from(ids.generate(SemanticIdKind::Field));
+        let field = FieldDefinition { id: id.clone(), key: FieldKey::from(key), field_type: kind, required: true };
+        let forward = vec![SemanticCommand::AppendSchemaField { schema: schema_id.clone(), field: field.clone(), values: values.clone() }];
+        let inverse = vec![SemanticCommand::RemoveSchemaField { schema: schema_id, field, values }];
+        self.record_edit(expected, forward, inverse)
+    }
+
+    fn rename_column(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        name: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema_id, _) = self.native_column_schema(collection)?;
+        let field_id = FieldId::from(field.to_owned());
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot.document().schemas.get(&schema_id).ok_or_else(|| table_error("native table schema is unavailable"))?;
+        let old = schema.fields.get(&field_id).ok_or_else(|| table_error("column is unavailable"))?;
+        if !matches!(old.field_type, FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date) { return Err(table_error("column is not a supported scalar")); }
+        let key = FieldKey::from(native_column_lifecycle_key(name)?);
+        let forward = vec![SemanticCommand::RenameSchemaField { schema: schema_id.clone(), field: field_id.clone(), key }];
+        let inverse = vec![SemanticCommand::RenameSchemaField { schema: schema_id, field: field_id, key: old.key.clone() }];
+        self.record_edit(expected, forward, inverse)
+    }
+
+    fn remove_column(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema_id, entities) = self.native_column_schema(collection)?;
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot.document().schemas.get(&schema_id).ok_or_else(|| table_error("native table schema is unavailable"))?;
+        if schema.fields.len() <= 1 { return Err(table_error("a native table needs at least one column")); }
+        let field_id = FieldId::from(field.to_owned());
+        let definition = schema.fields.get(&field_id).cloned().ok_or_else(|| table_error("column is unavailable"))?;
+        if !matches!(definition.field_type, FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date) { return Err(table_error("column is not a supported scalar")); }
+        let mut values = BTreeMap::new();
+        for entity in entities {
+            let value = snapshot.document().entities.get(&entity).and_then(|record| record.fields.get(&field_id)).cloned()
+                .ok_or_else(|| table_error("column values are unavailable"))?;
+            values.insert(entity, value);
+        }
+        let forward = vec![SemanticCommand::RemoveSchemaField { schema: schema_id.clone(), field: definition.clone(), values: values.clone() }];
+        let inverse = vec![SemanticCommand::AppendSchemaField { schema: schema_id, field: definition, values }];
+        self.record_edit(expected, forward, inverse)
     }
 
     /// Duplicate one semantic collection into a fresh schema/field/entity
@@ -1871,6 +1994,26 @@ impl DesignerRuntime {
                 }
                 SemanticCommand::RemoveEntity { entity } => {
                     candidate.entities.remove(entity);
+                }
+                SemanticCommand::AppendSchemaField { schema, field, values } => {
+                    candidate.schemas.get_mut(schema).ok_or_else(|| table_error("native table schema is unavailable"))?
+                        .fields.insert(field.id.clone(), field.clone());
+                    for (entity, value) in values {
+                        candidate.entities.get_mut(entity).ok_or_else(|| table_error("native row is unavailable"))?
+                            .fields.insert(field.id.clone(), value.clone());
+                    }
+                }
+                SemanticCommand::RemoveSchemaField { schema, field, values } => {
+                    candidate.schemas.get_mut(schema).ok_or_else(|| table_error("native table schema is unavailable"))?
+                        .fields.remove(&field.id);
+                    for entity in values.keys() {
+                        candidate.entities.get_mut(entity).ok_or_else(|| table_error("native row is unavailable"))?
+                            .fields.remove(&field.id);
+                    }
+                }
+                SemanticCommand::RenameSchemaField { schema, field, key } => {
+                    candidate.schemas.get_mut(schema).and_then(|schema| schema.fields.get_mut(field))
+                        .ok_or_else(|| table_error("column is unavailable"))?.key = key.clone();
                 }
                 SemanticCommand::UnsetField { field } => {
                     if let Some(entity) = candidate.entities.get_mut(&field.entity) {
@@ -3722,6 +3865,9 @@ fn designer_lifecycle(
             (OperationFamily::RemoveEntity, MutationClass::Schema),
             (OperationFamily::RemoveEntity, MutationClass::Destructive),
             (OperationFamily::RemoveEntity, MutationClass::Formula),
+            (OperationFamily::SchemaFieldMutation, MutationClass::Structure),
+            (OperationFamily::SchemaFieldMutation, MutationClass::Schema),
+            (OperationFamily::SchemaFieldMutation, MutationClass::Destructive),
             (
                 OperationFamily::KeyedGroupedSumDefinition,
                 MutationClass::Structure,
@@ -4153,6 +4299,14 @@ fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
     }
 }
 
+fn native_column_lifecycle_key(label: &str) -> Result<String, DesignerError> {
+    let key = label.trim();
+    if key.is_empty() || key.len() > MAX_PROFILE_STRING_BYTES {
+        return Err(table_error("column names must be nonempty bounded text"));
+    }
+    Ok(key.to_owned())
+}
+
 fn duplicate_collection_key(label: &str) -> Result<String, DesignerError> {
     let normalized = label
         .trim()
@@ -4204,6 +4358,21 @@ fn parse_scalar(
         _ => Err(DesignerError::UnsupportedScalarEdit {
             field: field.clone(),
         }),
+    }
+}
+
+fn parse_column_initializer(
+    field_type: &FieldType,
+    input: &ScalarEditInput,
+) -> Result<Value, DesignerError> {
+    match (field_type, input) {
+        (FieldType::Number, ScalarEditInput::Number { input }) => input.parse::<f64>().ok().and_then(|value| Number::new(value).ok()).map(Value::Number)
+            .ok_or_else(|| DesignerError::InvalidNumberInput { input: input.clone() }),
+        (FieldType::Text, ScalarEditInput::Text { value }) => Ok(Value::Text(value.clone())),
+        (FieldType::Boolean, ScalarEditInput::Boolean { value }) => Ok(Value::Boolean(*value)),
+        (FieldType::Date, ScalarEditInput::Date { value }) => Date::parse(value).map(Value::Date)
+            .map_err(|_| DesignerError::InvalidDateInput { input: value.clone() }),
+        _ => Err(table_error("initializer type must match the column type")),
     }
 }
 #[cfg(test)]
