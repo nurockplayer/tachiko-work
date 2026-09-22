@@ -18,6 +18,10 @@ import type {
   OccurrenceProjection,
   PublicationProjection,
   DuplicateCollectionProjection,
+  DelegatedApprovalProjection,
+  DelegatedExecutionProjection,
+  DelegatedProposalProjection,
+  DelegatedReviewProjection,
   KeyedGroupedSumDefinitionInput,
   KeyedGroupedSumProjection,
   KeyedGroupedSumPublishedProjection,
@@ -364,6 +368,68 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async proposeDelegatedScalar(
+    expectedRevision: string,
+    target: FieldTarget,
+    input: string,
+  ): Promise<DelegatedProposalProjection> {
+    return expectResponse(
+      "delegated_proposal",
+      await this.#command({
+        type: "delegated_propose",
+        expected_revision: expectedRevision,
+        target,
+        input: { kind: "number", input },
+      }),
+    );
+  }
+
+  async previewDelegatedProposal(proposalId: string): Promise<DelegatedReviewProjection> {
+    return expectResponse(
+      "delegated_review",
+      await this.#command({ type: "delegated_preview", proposal_id: proposalId }),
+    );
+  }
+
+  async approveDelegatedProposal(proposalId: string): Promise<DelegatedApprovalProjection> {
+    return expectResponse(
+      "delegated_approval",
+      await this.#command({ type: "delegated_approve", proposal_id: proposalId }),
+    );
+  }
+
+  async executeDelegatedProposal(proposalId: string): Promise<DelegatedExecutionProjection> {
+    return expectResponse(
+      "delegated_execution",
+      await this.#command({ type: "delegated_execute", proposal_id: proposalId }),
+    );
+  }
+
+  /** Test-only controls for the fixed delegated-bridge acceptance. */
+  async testRevokeDelegatedAuthority(): Promise<DelegatedExecutionProjection> {
+    return expectResponse("delegated_execution", await this.#command({ type: "delegated_revoke_authority" }));
+  }
+
+  async testRevokeDelegatedQuery(): Promise<DelegatedReviewProjection> {
+    return expectResponse("delegated_review", await this.#command({ type: "delegated_revoke_query" }));
+  }
+
+  async testExecuteDelegatedAltered(
+    proposalId: string,
+    target: FieldTarget,
+    input: string,
+  ): Promise<DelegatedExecutionProjection> {
+    return expectResponse(
+      "delegated_execution",
+      await this.#command({
+        type: "delegated_execute_altered",
+        proposal_id: proposalId,
+        target,
+        input: { kind: "number", input },
+      }),
+    );
+  }
+
   async copyFormula(expectedRevision: string, request: FormulaCopy): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command({ ...request, type: "copy_formula", expected_revision: expectedRevision }));
   }
@@ -446,6 +512,22 @@ function expectResponse(
   type: "published",
   response: DesignerResponse,
 ): PublicationProjection;
+function expectResponse(
+  type: "delegated_proposal",
+  response: DesignerResponse,
+): DelegatedProposalProjection;
+function expectResponse(
+  type: "delegated_review",
+  response: DesignerResponse,
+): DelegatedReviewProjection;
+function expectResponse(
+  type: "delegated_approval",
+  response: DesignerResponse,
+): DelegatedApprovalProjection;
+function expectResponse(
+  type: "delegated_execution",
+  response: DesignerResponse,
+): DelegatedExecutionProjection;
 function expectResponse(
   type: "duplicated",
   response: DesignerResponse,
