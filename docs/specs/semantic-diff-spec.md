@@ -1,16 +1,25 @@
 # Semantic Diff Specification
 
-Decision state: The logical canonical Semantic Delta contract is Accepted under
-[ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md). Stable-ID
-continuity and bound-formula comparison follow
+Decision state: The logical canonical Semantic Delta v1 contract is Accepted
+under [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md). The
+constraint-aware Semantic Delta v2 profile is Accepted under
+[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md), as
+recorded by [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391).
+V1 remains frozen; v2 is docs-only logical authority and has no production
+constraint runtime implementation. Stable-ID continuity and bound-formula
+comparison follow
 [ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md) and
 [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md).
 The current `diff-engine` Rust surface and rendered output remain an implemented
 Provisional baseline rather than the protocol DTO.
 
-Authority: [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md)
+Authority: [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md) for
+v1 and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
+for the docs-only v2 extension.
 
-Decision issue: [#45](https://github.com/nurockplayer/tachiko-work/issues/45)
+Decision issues: [#45](https://github.com/nurockplayer/tachiko-work/issues/45)
+for v1 and [#391](https://github.com/nurockplayer/tachiko-work/issues/391) for
+the v2 extension.
 
 ## Problem
 
@@ -165,9 +174,12 @@ optimistic-concurrency predicates, JSON Patch `test` operations, or an
 
 ## Canonical Semantic Delta v2 (constraint-aware profile)
 
-The logical contract identifier is exactly `tachiko.semantic-delta/v2`. V2
-retains the complete v1 contract: same-Document admission, stable typed
-subjects, direct-state-only evidence, parent suppression, continuity,
+The logical contract identifier is exactly `tachiko.semantic-delta/v2`. This
+docs-only logical extension is Accepted under
+[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md), as
+recorded by [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391).
+The v2 profile retains the complete v1 contract: same-Document admission,
+stable typed subjects, direct-state-only evidence, parent suppression, continuity,
 non-overlap, unsupported-contract failure, and canonical tuple ordering. The
 frozen v1 contract is not amended or reinterpreted.
 
