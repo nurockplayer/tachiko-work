@@ -15,7 +15,9 @@ validation stages. [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-e
 adds only bounded required-scalar field addition and dependency-safe field
 removal; its operation-specific dependency precondition runs before unchanged
 staged final validation, and it does not add durable constraint vocabulary or a
-validation stage. ADR-0022 fixes runtime ownership and native/WASM semantic
+validation stage. ADR-0041 accepts declaration/value/formula-result constraint
+gates within these existing stages without selecting a production constraint
+runtime. ADR-0022 fixes runtime ownership and native/WASM semantic
 parity without changing validation meaning. Exact Rust APIs, incremental
 mechanisms, and concrete runtime/transport delivery remain Provisional or
 Deferred.
@@ -114,7 +116,11 @@ claim that an admissible candidate exists.
 Validates semantic facts that must be interpretable independently of a
 particular schema instance or client projection, including Accepted stable
 identity/coherence requirements and deterministic human-address ambiguity where
-applicable.
+applicable. For ADR-0041, this is also where each field declaration's closed
+constraint tag/shape, literal and numeric bounds, canonical member rules, and
+constraint/type pairing are checked. These declaration checks apply even to an
+empty schema with no entities; malformed constraint declarations never wait for
+an entity value to expose them.
 
 This stage must not invent new durable schema vocabulary or a universal identity
 requirement for future freeform fragments.
@@ -130,7 +136,15 @@ currently represented requirements such as:
 - referenced schema existence;
 - required field presence;
 - unexpected fields where the current closed semantic model requires it; and
-- declared field type compatibility.
+- declared field type compatibility; and
+- the ADR-0041 present-value constraint checks for direct stored scalar values.
+
+A present direct stored Text value must be a member of its field's admitted
+literal set when one is present. A present direct stored Number value must be
+finite and within an inclusive range when one is present. Boolean, Date, and
+Reference fields admit only `none`. An absent optional value remains absent and
+is not replaced by a null or default. Formula-valued Number results are checked
+under Stage 5 only after successful complete calculation.
 
 Before final validation, an ADR-0040 field-evolution candidate performs its
 operation-specific preconditions: an addition supplies a direct stored
@@ -195,7 +209,10 @@ failed dependency
 
 The accepted full-recompute oracle, node-keyed failures, direct failed
 dependency sets, and no-partial-`CalculationState` publication remain formula
-authority. `calculate_complete()` exposes that authority; the fail-first
+authority. For a Number formula field, an inclusive range check consumes only
+the final result of a successful complete calculation. A failed or unavailable
+calculation suppresses the dependent range check and does not invent a value or
+change diagnostic precedence. `calculate_complete()` exposes that authority; the fail-first
 `CalculationError` family remains only a compatibility projection and is not a
 new validation or Semantic API failure contract.
 
