@@ -198,3 +198,109 @@ fn direct_constraints_preserve_unicode_absence_inclusive_bounds_and_sorted_subje
     );
     assert!(constraint_diagnostics(&absent).is_empty());
 }
+
+#[test]
+fn text_literal_set_declaration_boundaries_reject_oversize_aggregate_and_noncanonical_values() {
+    let valid_maximum = (0..256).map(|index| format!("v{index:03}")).collect();
+    let valid_aggregate = (0..64)
+        .map(|index| format!("{index:03}{}", "a".repeat(1021)))
+        .collect();
+
+    let cases = [
+        ("accepts the maximum literal count", valid_maximum, false),
+        (
+            "rejects a UTF-8 literal over the byte limit",
+            vec!["é".repeat(513)],
+            true,
+        ),
+        ("accepts the aggregate byte limit", valid_aggregate, false),
+        (
+            "rejects an aggregate over the byte limit",
+            (0..65)
+                .map(|index| format!("{index:03}{}", "a".repeat(1021)))
+                .collect(),
+            true,
+        ),
+        (
+            "rejects duplicate literals",
+            vec!["same".into(), "same".into()],
+            true,
+        ),
+        (
+            "rejects bytewise descending literals",
+            vec!["é".into(), "z".into()],
+            true,
+        ),
+    ];
+
+    for (case, values, rejects) in cases {
+        let document = constrained_document(
+            FieldType::Text,
+            FieldConstraint::TextLiteralSet { values },
+            BTreeMap::new(),
+        );
+        let diagnostics = constraint_diagnostics(&document);
+        assert_eq!(!diagnostics.is_empty(), rejects, "{case}: {diagnostics:#?}");
+        if rejects {
+            assert_eq!(
+                diagnostics[0].code,
+                DiagnosticCode::FIELD_CONSTRAINT_DECLARATION
+            );
+        }
+    }
+}
+
+#[test]
+fn declaration_rejects_wrong_type_pairings_and_accepts_normalized_degenerate_ranges() {
+    let text_constraint = FieldConstraint::TextLiteralSet {
+        values: vec!["allowed".into()],
+    };
+    let range_constraint = FieldConstraint::NumberInclusiveRange {
+        min: number(-1.0),
+        max: number(1.0),
+    };
+    let invalid_pairs = [
+        (FieldType::Text, range_constraint.clone()),
+        (FieldType::Number, text_constraint.clone()),
+        (FieldType::Boolean, text_constraint.clone()),
+        (FieldType::Date, range_constraint.clone()),
+        (
+            FieldType::Reference {
+                schema: "target".into(),
+            },
+            text_constraint,
+        ),
+    ];
+
+    for (field_type, constraint) in invalid_pairs {
+        let diagnostics = constraint_diagnostics(&constrained_document(
+            field_type,
+            constraint,
+            BTreeMap::new(),
+        ));
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].code,
+            DiagnosticCode::FIELD_CONSTRAINT_DECLARATION
+        );
+    }
+
+    for (min, max) in [(number(7.0), number(7.0)), (number(-0.0), number(0.0))] {
+        let document = constrained_document(
+            FieldType::Number,
+            FieldConstraint::NumberInclusiveRange { min, max },
+            BTreeMap::new(),
+        );
+        assert!(constraint_diagnostics(&document).is_empty());
+    }
+
+    let reversed = constrained_document(
+        FieldType::Number,
+        FieldConstraint::NumberInclusiveRange {
+            min: number(1.0),
+            max: number(-1.0),
+        },
+        BTreeMap::new(),
+    );
+    assert_eq!(constraint_diagnostics(&reversed).len(), 1);
+}
