@@ -1312,9 +1312,10 @@ export function mountDesigner(
     const controls = table.columns.map(column => {
       const value = draft[column.id] ?? "";
       const type = column.field_type.toLowerCase();
+      const required = type === "text" ? "" : " required";
       const control = type === "boolean"
-        ? `<select data-row-value aria-label="${escapeHtml(column.key)}" required><option value="">Choose a value</option><option value="true" ${value === "true" ? "selected" : ""}>true</option><option value="false" ${value === "false" ? "selected" : ""}>false</option></select>`
-        : `<input data-row-value type="${type === "date" ? type : "text"}"${type === "number" ? ' inputmode="decimal"' : ""} aria-label="${escapeHtml(column.key)}" required value="${escapeHtml(value)}">`;
+        ? `<select data-row-value aria-label="${escapeHtml(column.key)}"${required}><option value="">Choose a value</option><option value="true" ${value === "true" ? "selected" : ""}>true</option><option value="false" ${value === "false" ? "selected" : ""}>false</option></select>`
+        : `<input data-row-value type="${type === "date" ? type : "text"}"${type === "number" ? ' inputmode="decimal"' : ""} aria-label="${escapeHtml(column.key)}"${required} value="${escapeHtml(value)}">`;
       return `<label>${escapeHtml(column.key)}${control}</label>`;
     }).join("");
     dialog.innerHTML = `<form method="dialog" data-add-row-form><h2>Add row</h2>${controls}
@@ -1354,7 +1355,7 @@ export function mountDesigner(
     if (entities.length === 0) return;
     const dialog = document.createElement("dialog");
     dialog.setAttribute("aria-label", "Remove selected rows");
-    dialog.innerHTML = `<form method="dialog" data-remove-rows-form><h2>Remove selected rows</h2><p>Remove ${String(entities.length)} rows?</p>
+    dialog.innerHTML = `<form method="dialog" data-remove-rows-form><h2>Remove selected rows</h2><p>Remove ${String(entities.length)} rows? Their stored values will be deleted.</p>
       <button type="submit">Remove rows</button><button type="button" data-cancel-remove-rows>Cancel</button></form>`;
     root.append(dialog);
     const close = (): void => { dialog.close(); dialog.remove(); root.querySelector<HTMLElement>("[data-remove-selected-rows]")?.focus(); };
@@ -1363,8 +1364,8 @@ export function mountDesigner(
     dialog.querySelector<HTMLFormElement>("[data-remove-rows-form]")?.addEventListener("submit", event => {
       event.preventDefault();
       void (async () => {
-        await publishNativeColumn({type: "remove_table_rows", expected_revision: table.revision, collection: table.collection.id, entities});
-        selectedNativeRows.clear();
+        const accepted = await publishNativeColumn({type: "remove_table_rows", expected_revision: table.revision, collection: table.collection.id, entities});
+        if (accepted === true) selectedNativeRows.clear();
       })();
     });
     if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");

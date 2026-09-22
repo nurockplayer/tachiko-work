@@ -4703,10 +4703,10 @@ mod tests {
     use super::{
         AuthorizationAction, ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime,
         DocumentScopeId, EntityId, FieldDefinition, FieldId, FieldKey, FieldType, Grant, GrantId,
-        GrantRequirement, KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER,
-        MutationClass, NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId,
-        ProposalId, RowInitializer, ScalarEditInput, ScopedSemanticSubject, SemanticCommand,
-        SemanticScope, Value,
+        GrantRequirement, HistoryAction, KeyedGroupedSumDefinitionInput,
+        MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass, NewTableColumnInput, OperationFamily,
+        PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput,
+        ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
     };
 
     fn native_column_runtime(columns: &[(&str, &str)], values: &[&str]) -> DesignerRuntime {
@@ -5260,6 +5260,32 @@ mod tests {
         assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
         assert!(runtime.undo.is_empty());
         assert!(runtime.redo.is_empty());
+    }
+
+    #[test]
+    fn native_row_failed_inverse_preserves_history_and_current_state() {
+        let mut runtime = native_column_runtime(&[("Item", "text")], &["widget"]);
+        let expected = runtime.current_revision().to_owned();
+        let initializers = row_initializers(&runtime);
+        runtime
+            .insert_row(&expected, "orders", &initializers)
+            .unwrap();
+        let revision = runtime.current_revision().to_owned();
+        let before = runtime.export_project(&revision).unwrap().bytes;
+        let undo_count = runtime.undo.len();
+        let redo_count = runtime.redo.len();
+
+        runtime.undo.last_mut().unwrap().inverse =
+            HistoryAction::Commands(vec![SemanticCommand::RemoveEntity {
+                entity: EntityId::from("missing-row"),
+            }]);
+        let error = runtime.history_edit(&revision, false).unwrap_err();
+
+        assert!(matches!(error, DesignerError::Lifecycle(_)));
+        assert_eq!(runtime.current_revision(), revision);
+        assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert_eq!(runtime.redo.len(), redo_count);
     }
 
     #[test]
