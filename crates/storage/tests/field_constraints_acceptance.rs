@@ -59,7 +59,7 @@ fn every_frozen_writer_refuses_a_valid_non_none_facet_before_output() {
         document(
             FieldType::Text,
             FieldConstraint::TextLiteralSet {
-                values: vec!["".to_owned()],
+                values: vec![String::new()],
             },
             None,
         ),
