@@ -49,7 +49,7 @@ use tachiko_workspace_engine::{
     runtime_export, set_scalar, validate, validation_report,
 };
 
-const CASE_COUNT: u32 = 57;
+const CASE_COUNT: u32 = 59;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -2775,6 +2775,79 @@ fn no_change_record() -> Record {
     }
 }
 
+fn constraint_text_literal_record() -> Record {
+    let mut document = Document::empty("constraint-text", "Portable text constraint");
+    document.schemas.insert(
+        "schema".into(),
+        Schema {
+            id: "schema".into(),
+            key: "items".into(),
+            fields: BTreeMap::from([(
+                "text".into(),
+                FieldDefinition {
+                    id: "text".into(),
+                    key: "text".into(),
+                    field_type: FieldType::Text,
+                    required: true,
+                    constraint: FieldConstraint::TextLiteralSet {
+                        values: vec!["é".into()],
+                    },
+                },
+            )]),
+        },
+    );
+    document.entities.insert(
+        "entity".into(),
+        Entity {
+            id: "entity".into(),
+            key: "item".into(),
+            schema: "schema".into(),
+            fields: BTreeMap::from([("text".into(), Value::Text("e\u{301}".into()))]),
+        },
+    );
+    let report = validation_report(&document);
+    let mismatches = report
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == DiagnosticCode::FIELD_VALUE_CONSTRAINT_MISMATCH
+                && diagnostic.path == "entities.entity.fields.text"
+        })
+        .count();
+    if mismatches != 1 || report.diagnostics().len() != 1 {
+        return Record::failure(UNEXPECTED, (57_u64 << 32) | mismatches as u64);
+    }
+    Record::failure(VALIDATION_REPORT, mismatches as u64)
+}
+
+fn constraint_number_formula_record() -> Record {
+    let mut document = formula_document(number(1.0), numeric(11.0));
+    document
+        .schemas
+        .get_mut("schema-stable")
+        .unwrap()
+        .fields
+        .get_mut("output-stable")
+        .unwrap()
+        .constraint = FieldConstraint::NumberInclusiveRange {
+        min: number(0.0),
+        max: number(10.0),
+    };
+    let report = validation_report(&document);
+    let mismatches = report
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == DiagnosticCode::FIELD_VALUE_CONSTRAINT_MISMATCH
+                && diagnostic.path == "entities.entity-stable.fields.output-stable"
+        })
+        .count();
+    if mismatches != 1 || report.diagnostics().len() != 1 {
+        return Record::failure(UNEXPECTED, (58_u64 << 32) | mismatches as u64);
+    }
+    Record::failure(VALIDATION_REPORT, mismatches as u64)
+}
+
 fn case_record(index: u32) -> Record {
     match index {
         0 => Record::value(number(-0.0), 0),
@@ -2921,6 +2994,8 @@ fn case_record(index: u32) -> Record {
         54 => resident_session_record(),
         55 => date_record(),
         56 => no_change_record(),
+        57 => constraint_text_literal_record(),
+        58 => constraint_number_formula_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }
