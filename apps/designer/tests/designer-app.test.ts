@@ -380,6 +380,20 @@ class RejectingClient extends FakeClient {
   }
 }
 
+class RejectingNativeColumnClient extends FakeClient {
+  readonly nativeColumnRequests: TrackerCommand[] = [];
+
+  async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
+    this.nativeColumnRequests.push(structuredClone(request));
+    throw new DesignerRuntimeError({
+      code: "validation_failed",
+      message: "Authoritative schema admission rejected this change.",
+      current_revision: "resident/0",
+      diagnostics: [],
+    });
+  }
+}
+
 class StartupFailingClient extends FakeClient {
   override async bootstrap(): Promise<BootstrapProjection> {
     throw new Error("Designer runtime could not be loaded (404).");
@@ -1169,6 +1183,82 @@ describe("Designer application seam", () => {
       "Boolean values must be exactly true or false",
     );
     expect(client.booleanEditRequests).toHaveLength(0);
+    app.destroy();
+  });
+
+  it("offers labelled native-column lifecycle controls without exposing them on other profiles", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new FakeClient();
+    const nativeTable = { ...structuredClone(table), native_table_profile: true };
+    vi.spyOn(client, "queryTable").mockResolvedValue(nativeTable);
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const add = root.querySelector<HTMLButtonElement>("[data-add-column]");
+    expect(add?.textContent).toContain("Add column");
+    expect(root.querySelector("[data-rename-column]")).not.toBeNull();
+    expect(root.querySelector("[data-remove-column]")).not.toBeNull();
+    add?.click();
+    const dialog = root.querySelector<HTMLDialogElement>("[aria-label='Add column']");
+    expect(dialog?.querySelector("[aria-label='Column name']")).not.toBeNull();
+    expect(dialog?.querySelector("[aria-label='Column type']")).not.toBeNull();
+    expect(dialog?.querySelector("[aria-label='Value for existing rows']")).not.toBeNull();
+    expect(dialog?.querySelector("[aria-label='Use this value for every existing row']")).not.toBeNull();
+    app.destroy();
+  });
+
+  it("retries a rejected non-first native-column removal with its original stable field", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new RejectingNativeColumnClient();
+    const nativeTable = { ...structuredClone(table), native_table_profile: true };
+    nativeTable.columns = nativeTable.columns.filter(
+      (column) => column.id === "attack_interval" || column.id === "damage",
+    );
+    nativeTable.rows = nativeTable.rows.map((row) => ({
+      ...row,
+      fields: row.fields.filter(
+        (field) =>
+          field.target.field === "attack_interval" || field.target.field === "damage",
+      ),
+    }));
+    vi.spyOn(client, "queryTable").mockResolvedValue(nativeTable);
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const column = root.querySelector<HTMLSelectElement>("[data-column-to-change]");
+    if (column === null) throw new Error("native-column selection is required");
+    column.value = "damage";
+    root.querySelector<HTMLButtonElement>("[data-remove-column]")?.click();
+
+    const submit = (): void => {
+      const form = root.querySelector<HTMLFormElement>("[data-change-column-form]");
+      if (form === null) throw new Error("remove-column dialog is required");
+      form.requestSubmit();
+    };
+    submit();
+    await vi.waitFor(() => {
+      expect(client.nativeColumnRequests).toHaveLength(1);
+    });
+    expect(client.nativeColumnRequests[0]).toEqual({
+      type: "remove_column",
+      expected_revision: "resident/0",
+      collection: "weapons",
+      field: "damage",
+    });
+    await vi.waitFor(() => {
+      expect(root.querySelector("[data-change-column-form]")).not.toBeNull();
+    });
+
+    submit();
+    await vi.waitFor(() => {
+      expect(client.nativeColumnRequests).toHaveLength(2);
+    });
+    expect(client.nativeColumnRequests[1]).toEqual(client.nativeColumnRequests[0]);
+    expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain("resident/0");
     app.destroy();
   });
 
