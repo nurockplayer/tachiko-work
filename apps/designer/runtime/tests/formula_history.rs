@@ -31,7 +31,7 @@ fn fixture() -> DesignerRuntime {
                         key: FieldKey::from("n"),
                         field_type: FieldType::Number,
                         required: true,
-                        constraint: tachiko_semantic_core::FieldConstraint::None,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 ),
                 (
@@ -41,7 +41,7 @@ fn fixture() -> DesignerRuntime {
                         key: FieldKey::from("source"),
                         field_type: FieldType::Number,
                         required: true,
-                        constraint: tachiko_semantic_core::FieldConstraint::None,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 ),
                 (
@@ -51,7 +51,7 @@ fn fixture() -> DesignerRuntime {
                         key: FieldKey::from("dependent"),
                         field_type: FieldType::Number,
                         required: true,
-                        constraint: tachiko_semantic_core::FieldConstraint::None,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 ),
                 (
@@ -61,7 +61,7 @@ fn fixture() -> DesignerRuntime {
                         key: FieldKey::from("label"),
                         field_type: FieldType::Text,
                         required: true,
-                        constraint: tachiko_semantic_core::FieldConstraint::None,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 ),
             ]),

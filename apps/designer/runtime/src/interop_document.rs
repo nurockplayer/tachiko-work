@@ -930,7 +930,7 @@ fn build_import_sheet(
                 key: FieldKey::from(format!("column_{}", column + 1)),
                 field_type: kind.field_type(),
                 required: false,
-                constraint: tachiko_semantic_core::FieldConstraint::None,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
             },
         );
         sheet.columns.push(InteropColumnMetadata {

@@ -31,7 +31,7 @@ fn mixed_document() -> Document {
                     key: FieldKey::from("text"),
                     field_type: FieldType::Text,
                     required: true,
-                    constraint: tachiko_semantic_core::FieldConstraint::None,
+                    constraint: tachiko_workspace_engine::FieldConstraint::None,
                 },
             )]),
         },

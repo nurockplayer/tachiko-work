@@ -5,7 +5,7 @@ use std::{
     fmt,
 };
 
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::Error as _};
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 #[cfg(feature = "issue-175-research")]
@@ -288,11 +288,62 @@ pub struct DocumentInspection {
     pub entities: Vec<EntityInspection>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SchemaInspection {
     pub id: SchemaId,
     pub key: SchemaKey,
     pub fields: Vec<FieldDefinition>,
+}
+
+/// Frozen inspection-wire projection for one schema field.
+///
+/// The in-process inspection keeps complete semantic field definitions. The
+/// established JSON inspection transport predates durable constraints, so it
+/// can only serialize an all-`None` document without silently losing meaning.
+#[derive(Serialize)]
+struct LegacyInspectionField<'a> {
+    id: &'a FieldId,
+    key: &'a FieldKey,
+    field_type: &'a FieldType,
+    required: bool,
+}
+
+#[derive(Serialize)]
+struct LegacySchemaInspection<'a> {
+    id: &'a SchemaId,
+    key: &'a SchemaKey,
+    fields: Vec<LegacyInspectionField<'a>>,
+}
+
+impl Serialize for SchemaInspection {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let fields = self
+            .fields
+            .iter()
+            .map(|field| {
+                if field.constraint != FieldConstraint::None {
+                    return Err(S::Error::custom(
+                        "the frozen schema inspection transport cannot represent field constraints",
+                    ));
+                }
+                Ok(LegacyInspectionField {
+                    id: &field.id,
+                    key: &field.key,
+                    field_type: &field.field_type,
+                    required: field.required,
+                })
+            })
+            .collect::<Result<Vec<_>, S::Error>>()?;
+        LegacySchemaInspection {
+            id: &self.id,
+            key: &self.key,
+            fields,
+        }
+        .serialize(serializer)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

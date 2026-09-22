@@ -13,8 +13,8 @@ use tachiko_formula_engine::{
 };
 use tachiko_semantic_core::{
     Date, DiagnosticCode, DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey,
-    Expression, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number,
-    Schema, SchemaId, SchemaKey, SemanticSubject, Value,
+    Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, Number, Schema, SchemaId, SchemaKey, SemanticSubject, Value,
 };
 use tachiko_storage::{
     FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, ROPROJ_V1_PATHS,
@@ -130,6 +130,7 @@ fn field(id: &str) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type: FieldType::Number,
         required: true,
+        constraint: FieldConstraint::None,
     }
 }
 
@@ -219,6 +220,7 @@ fn date_document(value: Date) -> Document {
                         key: FieldKey::from("value"),
                         field_type: FieldType::Date,
                         required: true,
+                        constraint: FieldConstraint::None,
                     },
                 )]),
             },
@@ -576,6 +578,7 @@ fn complete_oracle_record() -> Record {
             key: FieldKey::from("text-target"),
             field_type: FieldType::Text,
             required: true,
+            constraint: FieldConstraint::None,
         },
     );
     let values = BTreeMap::from([
@@ -987,6 +990,7 @@ fn oracle_document() -> Document {
             key: "text".into(),
             field_type: FieldType::Text,
             required: true,
+            constraint: FieldConstraint::None,
         },
     );
 
@@ -1106,6 +1110,7 @@ fn validation_accumulation_record() -> Record {
                 schema: "missing-target-schema".into(),
             },
             required: false,
+            constraint: FieldConstraint::None,
         },
     );
     document
@@ -1485,6 +1490,7 @@ fn analysis_text_field(id: &str, required: bool) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type: FieldType::Text,
         required,
+        constraint: FieldConstraint::None,
     }
 }
 
@@ -1494,6 +1500,7 @@ fn analysis_number_field(id: &str, required: bool) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type: FieldType::Number,
         required,
+        constraint: FieldConstraint::None,
     }
 }
 
