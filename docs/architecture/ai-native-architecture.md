@@ -2,8 +2,9 @@
 
 Decision state: Accepted direction under
 [ADR-0007](../decisions/ADR-0007-ai-semantic-interaction-model.md),
-[ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), and
-[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md).
+[ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
+[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md), and
+[ADR-0039](../decisions/ADR-0039-native-trusted-host-delegated-human-approval.md) for the bounded desktop native trusted-host delegated-approval composition.
 Reviewable semantic proposals use the immutable revision-pinned SemanticPatch
 contract Accepted by
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md).

@@ -12,12 +12,16 @@ inference advisory rather than authoritative. ADR-0026 establishes
 domain-scoped Human/Delegated principals, independent capabilities, stable-ID
 semantic scopes, trusted `AuthorizationFootprint` derivation, exact finite
 Human Approval, expiry/replay/revocation, minimum provenance, and
-external-effect separation. ADR-0020's Issue #32 amendment accepts the logical
+external-effect separation. ADR-0039 selects the bounded desktop native
+trusted-host composition when that delegated Human-approval profile is used,
+without changing AI privilege or the Semantic API operation vocabulary.
+ADR-0020's Issue #32 amendment accepts the logical
 formula-reasoning Query, read-only scenario Query, and typed formula-update
 Command shared by AI and every other first-party client. Exact identifiers,
 DTOs, storage,
-projection/redaction, lifecycle implementation, runtime placement, wire
-formats, and promotion DTOs remain Provisional or Deferred as owned elsewhere.
+projection/redaction, lifecycle implementation, runtime placement outside the
+bounded ADR-0039 desktop native trusted-host profile, wire formats, and
+promotion DTOs remain Provisional or Deferred as owned elsewhere.
 
 Implementation state: the provider-free `tachiko-ai-api` crate implements a
 v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`,
@@ -53,6 +57,7 @@ AI must not simulate mouse/keyboard usage as the primary architecture and must n
 [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md),
 [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md),
+[ADR-0039](../decisions/ADR-0039-native-trusted-host-delegated-human-approval.md),
 [`semantic-authorization.md`](semantic-authorization.md), and
 [`semantic-api.md`](semantic-api.md) own the shared semantic behavior:
 

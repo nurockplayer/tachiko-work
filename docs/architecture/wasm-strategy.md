@@ -1,6 +1,9 @@
 # WASM Strategy
 
-Decision state: Accepted runtime direction under ADR-0022; concrete browser/Worker/session/transport mechanics remain Deferred.
+Decision state: Accepted runtime direction under ADR-0022. When selected before
+opening an occurrence, ADR-0039 fixes one native-owned runtime for that entire
+occurrence in its bounded desktop delegated-Human-approval profile;
+browser/Worker/session/transport mechanics outside that profile remain Deferred.
 
 Executable evidence: PR #91.
 
@@ -33,7 +36,12 @@ Ordinary edits/queries should cross the host/runtime boundary as Semantic API in
 
 Where capabilities overlap, native and WASM must preserve equivalent Stable semantic observations for the same relevant semantic base/context and deterministic configuration, including Semantic API operation meaning, operation gates, ADR-0019 diagnostics, ADR-0018 formula facts, and ADR-0020 atomicity.
 
-The concrete transport bytes, memory layout, request batching, Worker placement, and host error wrappers may differ.
+Outside ADR-0039's bounded desktop delegated-Human-approval profile, concrete
+transport bytes, memory layout, request batching, Worker placement, and host
+error wrappers may differ. Within that profile, selected before the occurrence
+opens, every semantic operation uses its one native-owned runtime; a Worker may
+carry requests and projections but cannot retain a second authoritative
+occurrence or receive an ownership handoff.
 
 PR #91 is executable evidence that this topology is viable and that the shared production semantic/application path can produce matching native/WASM observations. Its JSON DTOs and raw WASM ABI are deliberately non-authoritative.
 
