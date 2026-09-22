@@ -19,8 +19,9 @@ ADR-0020's Issue #32 amendment accepts the logical
 formula-reasoning Query, read-only scenario Query, and typed formula-update
 Command shared by AI and every other first-party client. Exact identifiers,
 DTOs, storage,
-projection/redaction, lifecycle implementation, runtime placement, wire
-formats, and promotion DTOs remain Provisional or Deferred as owned elsewhere.
+projection/redaction, lifecycle implementation, runtime placement outside the
+bounded ADR-0039 desktop native trusted-host profile, wire formats, and
+promotion DTOs remain Provisional or Deferred as owned elsewhere.
 
 Implementation state: the provider-free `tachiko-ai-api` crate implements a
 v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`,
