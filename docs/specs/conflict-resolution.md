@@ -1,13 +1,17 @@
 # Conflict Resolution Specification
 
-Decision state: Normative Accepted logical conflict contract under
+Decision state: Normative Accepted logical conflict v1 contract under
 [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md), preserving
 ADR-0011's merge laws except for the explicit ADR-0031 amendment that makes
 `DocumentId` same-Document admission/continuity identity rather than a mergeable
 facet, and preserving the direct-state evidence boundary accepted by
 [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md).
+ADR-0041 accepts the constraint-aware logical v2 facet extension; v1 remains
+frozen and v2 is docs-only authority without a production constraint runtime.
 
 Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
+and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
+for the docs-only v2 extension
 
 Decision issue: [#46](https://github.com/nurockplayer/tachiko-work/issues/46)
 

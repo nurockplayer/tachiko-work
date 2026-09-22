@@ -2,7 +2,7 @@
 
 Decision state: Mixed — Accepted invariants under ADR-0017 and Accepted
 `.roproj` namespace format-1 DTO, dispatch, and canonicalization rules under
-ADR-0023; the format-2 definition-persistence target under ADR-0037; the distinct portable-package v1 namespace and dispatch boundary are
+ADR-0023; the format-2 definition-persistence contract under ADR-0037; the distinct portable-package v1 namespace and dispatch boundary are
 Accepted under ADR-0025; direct-JSON Milestone 02 representation mechanics are
 Provisional where marked.
 
@@ -11,7 +11,10 @@ deterministic `legacy-direct-ro/v1` → `direct-ro/v2` migration, canonical
 identity-aware `direct-ro/v2`, and the
 normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
 contract is implemented by production `tachiko-storage` plus explicit CLI host
-operations. `.roproj/v2` is Accepted authority only and remains unimplemented.
+operations. The bounded `.roproj/v2` storage and Designer save/reopen journey
+is implemented by the production codec and PR #331; broader package-v2 and
+unbounded product/API work remain outside this contract. `.roproj/v3` is
+Accepted authority only and remains unimplemented.
 The separately Accepted portable-package v1 codec, content-framed
 reader, bounded host workflow, and CLI pack/unpack/compare operations are
 implemented by #3.

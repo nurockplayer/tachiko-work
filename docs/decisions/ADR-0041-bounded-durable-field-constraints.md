@@ -205,6 +205,6 @@ PR; hosted and committed release gates still apply before integration.
 - [ADR-0023](ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
 - [ADR-0030](ADR-0030-canonical-semantic-delta.md)
 - [ADR-0031](ADR-0031-semantic-merge-conflict-protocol.md)
-- [ADR-0033](ADR-0033-history-undo-redo-and-revert.md)
+- [ADR-0033](ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 - [ADR-0037](ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
 - [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391)

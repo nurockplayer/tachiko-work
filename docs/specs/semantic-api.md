@@ -26,6 +26,9 @@ Accepted by ADR-0020's Issue #32 and Issue #33 amendments.
 ADR-0040 accepts the bounded native-table required-scalar field-evolution
 meaning; its command, DTO, authorization, diagnostics, and session-history
 shapes remain Provisional.
+ADR-0041 accepts the bounded durable field-constraint meaning and the related
+v3/delta-v2/conflict-v2 logical authority; it adds no production constraint
+runtime or Semantic API DTO.
 Exact Rust APIs, complete operation catalogue, wire schemas, transports,
 proposal/revision encodings, session mechanics, and several result/projection
 shapes remain Provisional or Deferred as marked below.
@@ -1927,6 +1930,7 @@ to semantic core by virtue of using the API.
 - [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 - [ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 - [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-evolution.md)
+- [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
 - [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)

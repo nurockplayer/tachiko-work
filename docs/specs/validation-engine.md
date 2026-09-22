@@ -15,7 +15,9 @@ validation stages. [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-e
 adds only bounded required-scalar field addition and dependency-safe field
 removal; its operation-specific dependency precondition runs before unchanged
 staged final validation, and it does not add durable constraint vocabulary or a
-validation stage. ADR-0022 fixes runtime ownership and native/WASM semantic
+validation stage. ADR-0041 accepts declaration/value/formula-result constraint
+gates within these existing stages without selecting a production constraint
+runtime. ADR-0022 fixes runtime ownership and native/WASM semantic
 parity without changing validation meaning. Exact Rust APIs, incremental
 mechanisms, and concrete runtime/transport delivery remain Provisional or
 Deferred.
