@@ -26,6 +26,9 @@ Accepted by ADR-0020's Issue #32 and Issue #33 amendments.
 ADR-0040 accepts the bounded native-table required-scalar field-evolution
 meaning; its command, DTO, authorization, diagnostics, and session-history
 shapes remain Provisional.
+ADR-0041 accepts the bounded durable field-constraint meaning and the related
+v3/delta-v2/conflict-v2 logical authority; it adds no production constraint
+runtime or Semantic API DTO.
 Exact Rust APIs, complete operation catalogue, wire schemas, transports,
 proposal/revision encodings, session mechanics, and several result/projection
 shapes remain Provisional or Deferred as marked below.
@@ -78,7 +81,9 @@ Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#28](https://github.com/nurockplayer/tachiko-work/issues/28),
 [#32](https://github.com/nurockplayer/tachiko-work/issues/32),
 [#33](https://github.com/nurockplayer/tachiko-work/issues/33),
-[#48](https://github.com/nurockplayer/tachiko-work/issues/48)
+[#48](https://github.com/nurockplayer/tachiko-work/issues/48),
+[#391](https://github.com/nurockplayer/tachiko-work/issues/391) for the
+docs-only durable-constraint extension
 
 ## Purpose
 
@@ -344,6 +349,18 @@ The names, Rust payloads, and conservative disclosure profile remain
 Provisional. This implementation adds no generic CRUD wire contract, schema
 editor, cascading delete policy, persisted undo/history model, or spreadsheet
 compatibility contract.
+
+## Constraint-aware field mutation boundary
+
+ADR-0041 adds no second Semantic API operation vocabulary. A constraint edit is
+an ordinary current-base Propose/Execute semantic change against a stable
+`SchemaId` + `FieldId`, with affected-value evidence, atomic publication, live
+authority rechecks, and the existing revision/history laws. The shared
+application authority must apply the same constraint/type, value, and complete
+formula-result gates to native, WASM, paste, edit, calculation, and merge
+finalization. UI capability or validation projections are advisory and never
+authoritative. Exact public DTO, transport, SDK, and operation names remain
+Provisional/Deferred; this docs decision does not claim implementation.
 
 ### Bounded field-evolution command family
 
@@ -1778,7 +1795,7 @@ Date to the same finite SetFieldValue projection with mutation-rule parity.
 | Analysis exact-context reproducibility and structured lineage | Accepted under ADR-0020 / #33 |
 | Analysis grouped/count/min/max complete-or-denied disclosure | Accepted under ADR-0020 / #33 and ADR-0026 |
 | Analysis result persistence / `AnalysisId` / analytics datastore | Deferred |
-| Saved live `KeyedGroupedSumDefinition` | Accepted under ADR-0036; distinct from Analysis Query and not yet implemented |
+| Saved live `KeyedGroupedSumDefinition` | Accepted under ADR-0036; distinct from Analysis Query; bounded `.roproj/v2` storage and Designer save/reopen journey are implemented by #330/#331, while the broader API/runtime/product definition remains separately owned |
 | Sum/Mean, ranking/top-k, statistics, general predicate ASTs, joins, UDFs | Deferred |
 | Exact operation names, family identifiers, request limits, predicate catalogue, normalization encoding, and result DTOs | Provisional |
 | Production formula-reasoning/scenario/formula-update implementation | Provisional provider-neutral workspace/CLI slice implemented by #144; public wire/SDK remains undefined |
@@ -1915,11 +1932,12 @@ to semantic core by virtue of using the API.
 - [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 - [ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 - [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-evolution.md)
+- [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
 - [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
 - Issues #10, #17, #27, #28, #29, #32, #33, #48, #49, #50, #93, #94,
-  #95, #104
+  #95, #104, and #391
 ## Bounded optional-slot initialization
 
 **Decision state: Provisional implementation profile (#259).** The existing

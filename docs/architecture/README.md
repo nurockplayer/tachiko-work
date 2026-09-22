@@ -47,7 +47,7 @@ Deferred.
 
 ### Storage, formats, and Git
 
-- [`ro-and-roproj-format.md`](ro-and-roproj-format.md) — architecture-level `.roproj` / `.ro` representation direction, the implemented Issue #123 `.roproj/v1` codec/native host workflow, and the Accepted portable-package v1 envelope plus its #3 production implementation.
+- [`ro-and-roproj-format.md`](ro-and-roproj-format.md) — architecture-level `.roproj` / `.ro` representation direction, the implemented Issue #123 `.roproj/v1` codec/native host workflow, bounded `.roproj/v2` storage/Designer save-reopen implemented by #330/#331, the Accepted but unimplemented `.roproj/v3` target under ADR-0041, and the Accepted portable-package v1 envelope plus its #3 production implementation.
 - [`git-native-workflow.md`](git-native-workflow.md) — how Git participates in authoring, review, and history without becoming the user interface.
 
 For implementable format contracts, continue to [`../specs/README.md`](../specs/README.md); architecture prose must not silently override the normative/provisional specification state.
@@ -90,7 +90,7 @@ Use these broad cues together with the reconciliation register:
 | Semantic-first platform direction | Accepted |
 | First-class Headless Semantic API boundary | Accepted under ADR-0020; exact Rust API and transports remain Provisional/Deferred |
 | Progressive semantic strengthening | Accepted under ADR-0021; concrete freeform object/runtime/UI mechanics Deferred |
-| `.roproj` source / `.ro` portable-artifact relationship | Accepted under ADR-0003; exact `.roproj/v1` tree/DTO contract Accepted under ADR-0023 and production pure codec/native explicit host workflow implemented by #123; exact portable-package v1 contract Accepted under ADR-0025 with production codec/native host/CLI workflow implemented by #3; optional provider-neutral Git/CI composition implemented by #44 |
+| `.roproj` source / `.ro` portable-artifact relationship | Accepted under ADR-0003; frozen `.roproj/v1` tree/DTO contract Accepted under ADR-0023 and production pure codec/native explicit host workflow implemented by #123; bounded `.roproj/v2` storage/Designer save-reopen journey implemented by #330/#331; `.roproj/v3` is Accepted under ADR-0041 but unimplemented; exact portable-package v1 contract Accepted under ADR-0025 with production codec/native host/CLI workflow implemented by #3; optional provider-neutral Git/CI composition implemented by #44 |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
 | Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
 | AI as delegated semantic client | Accepted under amended ADR-0007; scoped authorization and exact Human Approval Accepted under ADR-0026; #29 provider-neutral lifecycle, #30 provider-facing hostile boundary, and #93 resident publication composition implemented, while public transport/authentication remain Deferred |

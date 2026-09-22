@@ -1,15 +1,21 @@
 # Conflict Resolution Specification
 
-Decision state: Normative Accepted logical conflict contract under
+Decision state: Normative Accepted logical conflict v1 contract under
 [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md), preserving
 ADR-0011's merge laws except for the explicit ADR-0031 amendment that makes
 `DocumentId` same-Document admission/continuity identity rather than a mergeable
 facet, and preserving the direct-state evidence boundary accepted by
 [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md).
+ADR-0041 accepts the constraint-aware logical v2 facet extension; v1 remains
+frozen and v2 is docs-only authority without a production constraint runtime.
 
 Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
+and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
+for the docs-only v2 extension
 
-Decision issue: [#46](https://github.com/nurockplayer/tachiko-work/issues/46)
+Decision issues: [#46](https://github.com/nurockplayer/tachiko-work/issues/46) for
+v1 and [#391](https://github.com/nurockplayer/tachiko-work/issues/391) for the
+docs-only v2 extension.
 
 Issue #223 makes the current `merge-engine` Rust conflict shape implementation
 evidence for this logical contract: same-Document admission and typed
@@ -350,6 +356,36 @@ semantic merge result and project ordinary files, text markers, comments, or UX
 for humans. Git refs, SHAs, branches, repositories, paths, and textual conflict
 markers MUST NOT enter semantic conflict identity or override semantic merge
 results.
+
+## Semantic Conflict v2 (constraint-aware profile)
+
+The logical contract identifier is exactly `tachiko.semantic-conflict/v2`. V2
+retains every v1 law: finalized same-Document admission, structural conflict
+kinds, typed stable targets, explicit absence, parent-child suppression,
+composite identity, canonical ordering, and separation from post-merge
+validation/calculation. V1 remains frozen and is not reinterpreted.
+
+The schema-field facet table is extended only by one facet after v1's
+`requiredness` rank:
+
+| Subject rank | Subject | Facet | Facet rank |
+| ---: | --- | --- | ---: |
+| 2 | Schema field | `subject` | 0 |
+| 2 | Schema field | `key` | 1 |
+| 2 | Schema field | `field_type` | 2 |
+| 2 | Schema field | `requiredness` | 3 |
+| 2 | Schema field | `constraint` | 4 |
+
+Complete schema subject facts include every complete field definition with its
+tagged `constraint`; complete schema-field subject facts include the tagged
+`constraint`, including `none`. Concurrent unequal edits to one continuing `(SchemaId, FieldId)`
+constraint produce one `constraint` facet conflict with the existing v1
+conflict-kind and canonical fact laws. They do not become per-variant conflicts
+or whole-field replacement. Unsupported contract, target/facet combination, or
+conflict kind fails closed. A conflict-free merged candidate still runs complete
+validation and formula finalization; an invalid candidate is a validation or
+calculation failure, never an invented conflict. V2 remains a logical contract
+only and does not stabilize a wire, SDK, or Rust DTO.
 
 ## Human-readable projection
 
