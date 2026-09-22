@@ -1,0 +1,45 @@
+name: GitLab Backup
+
+on:
+  push:
+  delete:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 18 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure GitLab SSH
+        env:
+          GITLAB_DEPLOY_KEY: ${{ secrets.GITLAB_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$GITLAB_DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H gitlab.com >> ~/.ssh/known_hosts
+
+      - name: Mirror branches and tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init --bare mirror.git
+
+          git --git-dir=mirror.git remote add github \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git --git-dir=mirror.git fetch --prune github \
+            '+refs/heads/*:refs/heads/*' \
+            '+refs/tags/*:refs/tags/*'
+
+          git --git-dir=mirror.git remote add gitlab \
+            "git@gitlab.com:nurockplayer/tachiko-work.git"
+
+          git --git-dir=mirror.git push --prune gitlab \
+            '+refs/heads/*:refs/heads/*' \
+            '+refs/tags/*:refs/tags/*'
