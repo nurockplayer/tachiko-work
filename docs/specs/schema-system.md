@@ -137,6 +137,16 @@ reinterpret persisted values at read time.
 Storage-format migration remains a separate ADR-0017 concern. This
 specification does not define a general schema-migration engine.
 
+ADR-0040 admits a narrow native-table exception: an exact-revision candidate
+may add one required `Text`, `Number`, `Boolean`, or `Date` field with a fresh
+stable `FieldId` only when it explicitly initializes every existing entity with
+a valid value; or it may remove one field and its values only when no surviving
+formula, reference, or other Accepted durable definition depends on that field
+identity. Surviving identities remain unchanged and field presentation order
+does not establish semantic identity. These operations add no implicit default,
+null, coercion, dependency repair, storage-version change, or general
+migration contract. Exact command and DTO spellings remain Provisional.
+
 ## Future schema vocabulary
 
 Earlier exploratory documentation used broad terms such as `constraints`,

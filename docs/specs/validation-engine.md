@@ -11,7 +11,10 @@ Semantic API result contract without changing these validation stages.
 [ADR-0021](../decisions/ADR-0021-progressive-semantic-strengthening.md)
 accepts mixed-strength semantic content and makes validation applicability follow
 the semantic facts actually declared by a subject; it does not add or reorder
-validation stages. ADR-0022 fixes runtime ownership and native/WASM semantic
+validation stages. [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-evolution.md)
+adds only bounded required-scalar field addition and dependency-safe field
+removal; it does not add durable constraint vocabulary or a validation stage.
+ADR-0022 fixes runtime ownership and native/WASM semantic
 parity without changing validation meaning. Exact Rust APIs, incremental
 mechanisms, and concrete runtime/transport delivery remain Provisional or
 Deferred.
@@ -127,6 +130,12 @@ currently represented requirements such as:
 - required field presence;
 - unexpected fields where the current closed semantic model requires it; and
 - declared field type compatibility.
+
+For an ADR-0040 field-evolution candidate, this stage also validates the final
+candidate: a required scalar addition has one explicit valid value in every
+existing entity, and a removal leaves no surviving formula, reference, or other
+Accepted durable definition dependent on the removed `FieldId`. A failed check
+rejects the entire candidate; it does not publish a partial schema or values.
 
 If the schema prerequisite is unavailable, dependent field checks are
 suppressed rather than guessed.

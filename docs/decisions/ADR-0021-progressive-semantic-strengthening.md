@@ -116,6 +116,11 @@ A schema evolution that changes existing semantic claims MUST be explicit, deter
 
 The exact schema-migration operation family remains Deferred. This decision does not merge semantic schema evolution with storage-format migration under ADR-0017.
 
+ADR-0040 narrowly admits required scalar-field addition with explicit values
+for every existing entity, and dependency-safe removal of an unreferenced
+field. All other schema-evolution families remain Deferred; this does not
+create a general migration engine or a storage-format migration.
+
 ### 10. Import and progressive strengthening share principles, not necessarily one engine
 
 Legacy import and freeform promotion both benefit from the same high-level discipline:

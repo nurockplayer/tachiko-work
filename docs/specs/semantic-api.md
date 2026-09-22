@@ -342,6 +342,24 @@ Provisional. This implementation adds no generic CRUD wire contract, schema
 editor, cascading delete policy, persisted undo/history model, or spreadsheet
 compatibility contract.
 
+### Bounded field-evolution command family
+
+ADR-0040 admits two revision-pinned candidate command families: add one
+required `Text`, `Number`, `Boolean`, or `Date` field with a fresh stable
+identity and one explicit valid value for every existing entity; and remove one
+field with its values only after refusing a candidate with a surviving formula,
+reference, or other Accepted durable definition that depends on that field.
+They preserve every surviving semantic identity, publish atomically through the
+same Propose/Execute and gate laws, and never infer a default, null, coercion,
+or dependency repair.
+
+The operation names, Rust and transport DTO spellings, authorization footprint,
+diagnostic codes, and history representation remain Provisional. A Driver
+session that exposes either operation must make one accepted operation one
+Undo/Redo action. Existing semantic-delta and semantic-merge contracts cannot
+represent these field changes; a request requiring either must fail closed as
+unsupported until separate authority extends that contract.
+
 ## M04 formula reasoning and scenario Queries
 
 ADR-0020 promotes the following logical M04 operations without freezing their
@@ -1877,6 +1895,7 @@ to semantic core by virtue of using the API.
 - [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
 - [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
+- [ADR-0021](../decisions/ADR-0021-progressive-semantic-strengthening.md)
 - [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md)
 - [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md)
@@ -1884,6 +1903,7 @@ to semantic core by virtue of using the API.
 - [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md)
 - [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
 - [ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+- [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-evolution.md)
 - [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
