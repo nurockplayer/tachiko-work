@@ -94,6 +94,7 @@ export function mountDesigner(
   let bootstrap: BootstrapProjection | null = null;
   let store: ProjectionStore | null = null;
   let selectedCollection = "";
+  const selectedNativeRows = new Set<string>();
   let notice: Notice | null = null;
   let startupFailure: string | null = null;
   let busy = false;
@@ -197,6 +198,12 @@ export function mountDesigner(
       return;
     }
     const snapshot = store.snapshot();
+    if (snapshot.table.native_table_profile === true) {
+      const currentRows = new Set(snapshot.table.rows.map(row => row.id));
+      for (const entity of selectedNativeRows) if (!currentRows.has(entity)) selectedNativeRows.delete(entity);
+    } else {
+      selectedNativeRows.clear();
+    }
     const displayTable = importedDisplayTable(snapshot.table);
     tracker.setTable(snapshot.table);
     const isTracker = snapshot.table.tracker_profile === true;
@@ -212,6 +219,7 @@ export function mountDesigner(
       savedProjects,
       selectedSavedProject,
       tracker.view,
+      selectedNativeRows,
       pendingExport !== null,
       isTracker ? "" : tracker.historyMarkup(busy || snapshot.currentness !== "current", client.trackerCommand !== undefined),
       !isTracker && snapshot.currentness === "refresh_failed" ? '<button data-session-refresh>Retry refresh</button>' : "",
@@ -740,6 +748,7 @@ export function mountDesigner(
       }
       store = createProjectionStore(table);
       selectedCollection = collection;
+      selectedNativeRows.clear();
       if (tracker.view.budgetViews) {
         await refreshBudgetTables(expectedRevision);
         const matching = tracker.view.budgetViews.views.find(v => v.collection === table.collection.id);
@@ -1212,7 +1221,8 @@ export function mountDesigner(
       if (refreshed.revision !== publication.resulting_revision) throw new Error("Table refresh is not current.");
       store = createProjectionStore(refreshed);
       if (bootstrap) bootstrap = {...bootstrap, revision: refreshed.revision, collections: bootstrap.collections.map(collection => collection.id === refreshed.collection.id ? refreshed.collection : collection)};
-      notice = {tone: "success", title: "Publication complete", message: "Column lifecycle change published.", diagnostics: []};
+      const message = request.type === "insert_row" ? "Row inserted." : request.type === "remove_table_rows" ? "Selected rows removed." : "Column lifecycle change published.";
+      notice = {tone: "success", title: "Publication complete", message, diagnostics: []};
       return true;
     } catch (error) { showFailure(error, published); }
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
@@ -1292,6 +1302,75 @@ export function mountDesigner(
     dialog.querySelector<HTMLElement>(action === "rename" ? "[aria-label='New column name']" : "button[type='submit']")?.focus();
   };
 
+  type NativeRowDraft = Record<string, string>;
+
+  const openAddRow = (draft: NativeRowDraft = {}): void => {
+    const table = store?.snapshot().table;
+    if (!table || !client.trackerCommand || busy || table.native_table_profile !== true) return;
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("aria-label", "Add row");
+    const controls = table.columns.map(column => {
+      const value = draft[column.id] ?? "";
+      const type = column.field_type.toLowerCase();
+      const control = type === "boolean"
+        ? `<select data-row-value aria-label="${escapeHtml(column.key)}" required><option value="">Choose a value</option><option value="true" ${value === "true" ? "selected" : ""}>true</option><option value="false" ${value === "false" ? "selected" : ""}>false</option></select>`
+        : `<input data-row-value type="${type === "number" || type === "date" ? type : "text"}" aria-label="${escapeHtml(column.key)}" required value="${escapeHtml(value)}">`;
+      return `<label>${escapeHtml(column.key)}${control}</label>`;
+    }).join("");
+    dialog.innerHTML = `<form method="dialog" data-add-row-form><h2>Add row</h2>${controls}
+      <label><input type="checkbox" aria-label="Use these values for the new row" required>Use these values for the new row</label>
+      <button type="submit">Add row</button><button type="button" data-cancel-add-row>Cancel</button></form>`;
+    root.append(dialog);
+    const close = (): void => { dialog.close(); dialog.remove(); root.querySelector<HTMLElement>("[data-add-row]")?.focus(); };
+    dialog.querySelector("[data-cancel-add-row]")?.addEventListener("click", close);
+    dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+    dialog.querySelector<HTMLFormElement>("[data-add-row-form]")?.addEventListener("submit", event => {
+      event.preventDefault();
+      void (async () => {
+        const initializers = table.columns.map(column => {
+          const type = column.field_type.toLowerCase();
+          const control = [...dialog.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-row-value]")][table.columns.indexOf(column)];
+          const value = control?.value ?? "";
+          const input: ScalarEditInput = type === "number" ? {kind: "number", input: value} : type === "boolean" ? {kind: "boolean", value: value === "true"} : type === "date" ? {kind: "date", value} : {kind: "text", value};
+          return {field: column.id, input};
+        });
+        const nextDraft: NativeRowDraft = {};
+        for (const column of table.columns) {
+          const control = [...dialog.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-row-value]")][table.columns.indexOf(column)];
+          nextDraft[column.id] = control?.value ?? "";
+        }
+        const accepted = await publishNativeColumn({type: "insert_row", expected_revision: table.revision, collection: table.collection.id, initializers});
+        if (accepted === false) openAddRow(nextDraft);
+      })();
+    });
+    if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+    dialog.querySelector<HTMLElement>("[aria-label]")?.focus();
+  };
+
+  const openRemoveSelectedRows = (): void => {
+    const table = store?.snapshot().table;
+    if (!table || !client.trackerCommand || busy || table.native_table_profile !== true || selectedNativeRows.size === 0) return;
+    const entities = table.rows.filter(row => selectedNativeRows.has(row.id)).map(row => row.id);
+    if (entities.length === 0) return;
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("aria-label", "Remove selected rows");
+    dialog.innerHTML = `<form method="dialog" data-remove-rows-form><h2>Remove selected rows</h2><p>Remove ${String(entities.length)} rows?</p>
+      <button type="submit">Remove rows</button><button type="button" data-cancel-remove-rows>Cancel</button></form>`;
+    root.append(dialog);
+    const close = (): void => { dialog.close(); dialog.remove(); root.querySelector<HTMLElement>("[data-remove-selected-rows]")?.focus(); };
+    dialog.querySelector("[data-cancel-remove-rows]")?.addEventListener("click", close);
+    dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+    dialog.querySelector<HTMLFormElement>("[data-remove-rows-form]")?.addEventListener("submit", event => {
+      event.preventDefault();
+      void (async () => {
+        await publishNativeColumn({type: "remove_table_rows", expected_revision: table.revision, collection: table.collection.id, entities});
+        selectedNativeRows.clear();
+      })();
+    });
+    if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+    dialog.querySelector<HTMLElement>("button[type='submit']")?.focus();
+  };
+
   const pasteGeneric = async (text: string): Promise<void> => {
     if (!store || busy || !client.trackerCommand || store.snapshot().table.native_table_profile !== true) return;
     const table = store.snapshot().table;
@@ -1363,8 +1442,18 @@ export function mountDesigner(
     root.querySelector("[data-new-budget]")?.addEventListener("click", () => { void newBudget(); });
     root.querySelector("[data-new-table]")?.addEventListener("click", () => { newTable(); });
     root.querySelector("[data-add-column]")?.addEventListener("click", () => { openAddColumn(); });
+    root.querySelector("[data-add-row]")?.addEventListener("click", () => { openAddRow(); });
+    root.querySelector("[data-remove-selected-rows]")?.addEventListener("click", () => { openRemoveSelectedRows(); });
     root.querySelector("[data-rename-column]")?.addEventListener("click", () => { openChangeColumn("rename"); });
     root.querySelector("[data-remove-column]")?.addEventListener("click", () => { openChangeColumn("remove"); });
+    root.querySelectorAll<HTMLInputElement>("[data-row-selection]").forEach(control => {
+      control.addEventListener("change", () => {
+        const entity = decodeOpaqueAttribute(control.dataset.entity);
+        if (!entity) return;
+        if (control.checked) selectedNativeRows.add(entity); else selectedNativeRows.delete(entity);
+        render();
+      });
+    });
     root.querySelector("[data-duplicate-data]")?.addEventListener("click", () => { void duplicateData(); });
     root.querySelector("[data-open-find-replace]")?.addEventListener("click", () => {
       const snapshot = store?.snapshot();
@@ -1784,6 +1873,7 @@ function designerMarkup(
   savedProjects: SavedProjectSummary[],
   selectedSavedProject: string,
   view: TrackerView,
+  selectedNativeRows: ReadonlySet<string>,
   exportReviewPending: boolean,
   historyControls: string,
   refreshControl: string,
@@ -1865,7 +1955,7 @@ function designerMarkup(
               <p class="eyebrow">Bounded semantic projection</p>
               <h2 id="table-title">${escapeHtml(humanize(table.collection.key))}</h2>
             </div>
-            <div><span>${String(table.rows.length)} ${table.rows.length === 1 ? "entity" : "entities"}</span>${isTracker ? "" : `<button type="button" data-duplicate-data ${busy || currentness !== "current" ? "disabled" : ""}>Duplicate data</button>`}${isNativeTable ? `<button type="button" data-add-column ${busy || currentness !== "current" ? "disabled" : ""}>Add column</button><label>Column to change<select aria-label="Column to change" data-column-to-change ${busy || currentness !== "current" ? "disabled" : ""}>${table.columns.map(column => `<option value="${escapeHtml(column.id)}">${escapeHtml(column.key)}</option>`).join("")}</select></label><button type="button" data-rename-column ${busy || currentness !== "current" ? "disabled" : ""}>Rename column</button><button type="button" data-remove-column ${busy || currentness !== "current" ? "disabled" : ""}>Remove column</button>` : ""}</div>
+            <div><span>${String(table.rows.length)} ${table.rows.length === 1 ? "entity" : "entities"}</span>${isTracker ? "" : `<button type="button" data-duplicate-data ${busy || currentness !== "current" ? "disabled" : ""}>Duplicate data</button>`}${isNativeTable ? `<button type="button" data-add-row ${busy || currentness !== "current" ? "disabled" : ""}>Add row</button><button type="button" data-remove-selected-rows ${busy || currentness !== "current" || selectedNativeRows.size === 0 ? "disabled" : ""}>Remove selected rows</button><button type="button" data-add-column ${busy || currentness !== "current" ? "disabled" : ""}>Add column</button><label>Column to change<select aria-label="Column to change" data-column-to-change ${busy || currentness !== "current" ? "disabled" : ""}>${table.columns.map(column => `<option value="${escapeHtml(column.id)}">${escapeHtml(column.key)}</option>`).join("")}</select></label><button type="button" data-rename-column ${busy || currentness !== "current" ? "disabled" : ""}>Rename column</button><button type="button" data-remove-column ${busy || currentness !== "current" ? "disabled" : ""}>Remove column</button>` : ""}</div>
           </div>
 
           <ol class="calculation-thread" aria-label="Edit publication path">
@@ -1882,6 +1972,7 @@ function designerMarkup(
             <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isNativeTable ? "data-native-table-grid" : ""}>
               <thead>
                 <tr>
+                  ${isNativeTable ? '<th scope="col">Select rows</th>' : ""}
                   ${showRowHeader ? '<th scope="col">Entity</th>' : ""}
                   ${table.columns
                     .map(
@@ -1891,9 +1982,9 @@ function designerMarkup(
                 </tr>
               </thead>
               <tbody>
-                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (showRowHeader ? 1 : 0))}">Paste rows here, or choose Append row.</td></tr>` : ""}
+                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (showRowHeader ? 1 : 0) + (isNativeTable ? 1 : 0))}">Paste rows here, or choose Add row.</td></tr>` : ""}
                 ${table.rows
-                  .map((row) => rowMarkup(row, table, showRowHeader, isNativeTable, (busy && !exportReviewPending) || currentness !== "current", view))
+                  .map((row, index) => rowMarkup(row, table, showRowHeader, isNativeTable, (busy && !exportReviewPending) || currentness !== "current", view, selectedNativeRows.has(row.id), index))
                   .join("")}
               </tbody>
             </table>
@@ -2002,10 +2093,13 @@ function rowMarkup(
   nativeTable: boolean,
   busy: boolean,
   view: TrackerView,
+  selected: boolean,
+  index: number,
 ): string {
   const fields = new Map(row.fields.map((field) => [field.target.field, field]));
   return `
     <tr>
+      ${nativeTable ? `<td><input type="checkbox" data-row-selection data-entity="${encodeOpaqueAttribute(row.id)}" aria-label="Select row ${String(index + 1)}" ${selected ? "checked" : ""} ${busy ? "disabled" : ""}></td>` : ""}
       ${showRowHeader ? `<th scope="row">
         <strong>${escapeHtml(humanize(row.key))}</strong>
         <code>${escapeHtml(row.id)}</code>

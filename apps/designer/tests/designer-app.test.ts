@@ -1743,4 +1743,39 @@ describe("Designer application seam", () => {
     app.destroy();
     vi.unstubAllGlobals();
   });
+
+  it("exposes native row authoring and stable selection controls", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new FakeClient();
+    const nativeTable = { ...structuredClone(table), native_table_profile: true };
+    vi.spyOn(client, "queryTable").mockResolvedValue(nativeTable);
+    (client as DesignerClient).trackerCommand = vi.fn().mockResolvedValue({
+      base_revision: "resident/0",
+      resulting_revision: "resident/1",
+      entities: [],
+      fields: [],
+      affected_calculations: [],
+    });
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    expect(root.querySelector<HTMLButtonElement>("[data-add-row]")?.textContent).toBe("Add row");
+    root.querySelector<HTMLButtonElement>("[data-add-row]")?.click();
+    const dialog = root.querySelector<HTMLDialogElement>('[aria-label="Add row"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.querySelector('[aria-label="Use these values for the new row"]')).not.toBeNull();
+    expect(dialog?.querySelector('[aria-label="enabled"]')).not.toBeNull();
+    dialog?.querySelector<HTMLElement>("[data-cancel-add-row]")?.click();
+
+    const selection = root.querySelector<HTMLInputElement>("[data-row-selection]");
+    if (selection === null) throw new Error("native row selection is required");
+    selection.click();
+    const remove = root.querySelector<HTMLButtonElement>("[data-remove-selected-rows]");
+    expect(remove?.disabled).toBe(false);
+    remove?.click();
+    expect(root.querySelector('[aria-label="Remove selected rows"]')?.textContent).toContain("Remove 1 rows?");
+    app.destroy();
+  });
 });
