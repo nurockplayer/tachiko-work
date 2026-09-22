@@ -154,6 +154,7 @@ fn chain_document(cycle: bool) -> Document {
                         key: FieldKey::from("value"),
                         field_type: FieldType::Number,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )]),
             },

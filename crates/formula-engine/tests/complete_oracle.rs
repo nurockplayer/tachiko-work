@@ -16,6 +16,7 @@ fn field(id: &str, field_type: FieldType, value: Value) -> (FieldDefinition, Val
             key: FieldKey::from(id),
             field_type,
             required: true,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         },
         value,
     )
@@ -518,6 +519,7 @@ fn number_field(id: &str) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type: FieldType::Number,
         required: true,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
     }
 }
 

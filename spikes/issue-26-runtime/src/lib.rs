@@ -7,10 +7,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use tachiko_workspace_engine::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticChange,
-    SemanticDiff, Value, WorkspaceError, WorkspaceMergeOutcome, calculate_fields, merge_documents,
-    overview, set_scalar, validate,
+    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldConstraint,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey,
+    SemanticChange, SemanticDiff, Value, WorkspaceError, WorkspaceMergeOutcome, calculate_fields,
+    merge_documents, overview, set_scalar, validate,
 };
 use thiserror::Error;
 
@@ -505,6 +505,7 @@ pub fn synthetic_document(entity_count: usize) -> Result<Document, SpikeError> {
     let document = Document {
         id: DocumentId::from("synthetic-document-id"),
         title: format!("Issue 26 synthetic {entity_count}"),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
         schemas,
         entities,
     };
@@ -526,6 +527,7 @@ fn synthetic_fields(
                 key: FieldKey::from("base"),
                 field_type: FieldType::Number,
                 required: true,
+                constraint: FieldConstraint::None,
             },
         ),
         (
@@ -535,6 +537,7 @@ fn synthetic_fields(
                 key: FieldKey::from("multiplier"),
                 field_type: FieldType::Number,
                 required: true,
+                constraint: FieldConstraint::None,
             },
         ),
         (
@@ -544,6 +547,7 @@ fn synthetic_fields(
                 key: FieldKey::from("computed"),
                 field_type: FieldType::Number,
                 required: true,
+                constraint: FieldConstraint::None,
             },
         ),
         (
@@ -553,6 +557,7 @@ fn synthetic_fields(
                 key: FieldKey::from("label"),
                 field_type: FieldType::Text,
                 required: true,
+                constraint: FieldConstraint::None,
             },
         ),
     ])

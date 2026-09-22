@@ -85,6 +85,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type,
         required: true,
+        constraint: tachiko_workspace_engine::FieldConstraint::None,
     }
 }
 

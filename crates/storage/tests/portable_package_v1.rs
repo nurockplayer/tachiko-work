@@ -450,6 +450,7 @@ fn reference_document() -> Document {
                                 schema: target_schema.clone(),
                             },
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     )]),
                 },

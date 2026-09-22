@@ -5,8 +5,9 @@ under [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md). The
 constraint-aware Semantic Delta v2 profile is Accepted under
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md), as
 recorded by [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391).
-V1 remains frozen; v2 is docs-only logical authority and has no production
-constraint runtime implementation. Stable-ID continuity and bound-formula
+V1 remains frozen; v2 is docs-only logical authority and has no production v2
+constraint fact implementation. #448 implements the shared constraint model
+and validation plus fail-closed frozen-boundary refusal. Stable-ID continuity and bound-formula
 comparison follow
 [ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md) and
 [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md).
@@ -204,9 +205,9 @@ constraint fact uses the stable `(SchemaId, FieldId)` target and the same direct
 fact/equality/order laws as v1. A consumer that does not support v2, the target,
 or the fact kind fails closed before producing evidence. V2 does not define a
 transport, SDK, patch/apply operation, or implementation DTO. Its bounded
-production implementation is queued under #450 and is not Ready; #448's shared
-constraint model, validation, frozen-writer, and diff/merge-refusal slice is a
-queued prerequisite pending authority and #442 integration.
+production implementation is queued under #450 and is not Ready. #448 already
+implements the shared model/validation and frozen-writer/diff/merge refusal;
+it does not implement a v2 fact.
 
 ## Human-readable projection
 

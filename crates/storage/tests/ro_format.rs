@@ -25,6 +25,7 @@ fn document_with_order(reverse: bool) -> Document {
                 key: FieldKey::from("damage"),
                 field_type: FieldType::Number,
                 required: true,
+                constraint: tachiko_semantic_core::FieldConstraint::None,
             },
         ),
         (
@@ -34,6 +35,7 @@ fn document_with_order(reverse: bool) -> Document {
                 key: FieldKey::from("name"),
                 field_type: FieldType::Text,
                 required: true,
+                constraint: tachiko_semantic_core::FieldConstraint::None,
             },
         ),
     ];
@@ -237,6 +239,7 @@ fn invalid_v2_relationship_cannot_be_serialized() {
                             schema: SchemaId::from("missing"),
                         },
                         required: false,
+                        constraint: tachiko_semantic_core::FieldConstraint::None,
                     },
                 )]),
             },

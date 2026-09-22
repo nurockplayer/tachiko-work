@@ -41,6 +41,7 @@ fn define(document: &mut Document, field: &str, field_type: FieldType, required:
             key: FieldKey::from(field),
             field_type,
             required,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         },
     );
 }
@@ -248,6 +249,7 @@ fn swapped_schema_field_ids_preserve_both_directional_mismatches() {
                 key: "field-a".into(),
                 field_type: FieldType::Number,
                 required: false,
+                constraint: tachiko_semantic_core::FieldConstraint::None,
             },
         ),
         (
@@ -257,6 +259,7 @@ fn swapped_schema_field_ids_preserve_both_directional_mismatches() {
                 key: "field-b".into(),
                 field_type: FieldType::Number,
                 required: false,
+                constraint: tachiko_semantic_core::FieldConstraint::None,
             },
         ),
     ]);

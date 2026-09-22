@@ -5,7 +5,7 @@ use std::{
     fmt,
 };
 
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::Error as _};
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 #[cfg(feature = "issue-175-research")]
@@ -27,12 +27,13 @@ pub use tachiko_merge_engine::{
 use tachiko_merge_engine::{MergeOutcome, UnmaterializedStoredFact, merge};
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, KeyedGroupedSumDefinitionError, is_valid_identifier,
-    validate_document_core, validate_keyed_grouped_sum_definitions,
+    validate_complete_formula_constraints, validate_document_core,
+    validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
     Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
-    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticSubject,
     StableDiagnosticObservation, Value,
@@ -86,6 +87,13 @@ impl ValidationReport {
         diagnostics.sort();
         diagnostics.dedup_by(|left, right| left.stable_observation() == right.stable_observation());
         Self { diagnostics }
+    }
+
+    fn extend(&mut self, diagnostics: Vec<Diagnostic>) {
+        self.diagnostics.extend(diagnostics);
+        self.diagnostics.sort();
+        self.diagnostics
+            .dedup_by(|left, right| left.stable_observation() == right.stable_observation());
     }
 
     #[must_use]
@@ -280,11 +288,62 @@ pub struct DocumentInspection {
     pub entities: Vec<EntityInspection>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SchemaInspection {
     pub id: SchemaId,
     pub key: SchemaKey,
     pub fields: Vec<FieldDefinition>,
+}
+
+/// Frozen inspection-wire projection for one schema field.
+///
+/// The in-process inspection keeps complete semantic field definitions. The
+/// established JSON inspection transport predates durable constraints, so it
+/// can only serialize an all-`None` document without silently losing meaning.
+#[derive(Serialize)]
+struct LegacyInspectionField<'a> {
+    id: &'a FieldId,
+    key: &'a FieldKey,
+    field_type: &'a FieldType,
+    required: bool,
+}
+
+#[derive(Serialize)]
+struct LegacySchemaInspection<'a> {
+    id: &'a SchemaId,
+    key: &'a SchemaKey,
+    fields: Vec<LegacyInspectionField<'a>>,
+}
+
+impl Serialize for SchemaInspection {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let fields = self
+            .fields
+            .iter()
+            .map(|field| {
+                if field.constraint != FieldConstraint::None {
+                    return Err(S::Error::custom(
+                        "the frozen schema inspection transport cannot represent field constraints",
+                    ));
+                }
+                Ok(LegacyInspectionField {
+                    id: &field.id,
+                    key: &field.key,
+                    field_type: &field.field_type,
+                    required: field.required,
+                })
+            })
+            .collect::<Result<Vec<_>, S::Error>>()?;
+        LegacySchemaInspection {
+            id: &self.id,
+            key: &self.key,
+            fields,
+        }
+        .serialize(serializer)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -478,6 +537,8 @@ pub enum WorkspaceError {
     Diff(#[from] DiffError),
     #[error("semantic-conflict/v1 does not support keyed grouped-sum definition changes")]
     UnsupportedKeyedGroupedSumDefinitionMerge,
+    #[error("semantic-conflict/v1 does not support durable field constraint changes")]
+    UnsupportedFieldConstraintMerge,
     #[error("keyed grouped-sum definitions are invalid: {0}")]
     InvalidKeyedGroupedSumDefinition(#[from] KeyedGroupedSumDefinitionError),
     #[error("keyed grouped-sum definition '{definition}' is unavailable")]
@@ -899,6 +960,9 @@ pub fn merge_documents(
         MergeOutcome::Conflicted(conflicts) => Ok(WorkspaceMergeOutcome::Conflicted(conflicts)),
         MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange => {
             Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
+        }
+        MergeOutcome::UnsupportedFieldConstraintChange => {
+            Err(WorkspaceError::UnsupportedFieldConstraintMerge)
         }
     }
 }
@@ -1760,17 +1824,28 @@ pub(crate) fn validation_report_for_calculation(
         CalculationOutcome::Complete(_) => None,
         CalculationOutcome::Failed(failures) => Some(failures.failures()),
     };
-    validation_report_for_failures(document, failures)
+    let mut report = validation_report_for_failures(document, failures);
+    if let CalculationOutcome::Complete(calculation) = calculation {
+        report.extend(validate_complete_formula_constraints(
+            document,
+            calculation.values(),
+        ));
+    }
+    report
 }
 
 pub(crate) fn validation_report_for_retained_calculation(
     document: &Document,
     calculation: &RetainedCalculationState,
 ) -> ValidationReport {
-    validation_report_for_failures(
+    let mut report = validation_report_for_failures(
         document,
         calculation.is_failed().then_some(calculation.failures()),
-    )
+    );
+    if let Some(values) = calculation.complete_values() {
+        report.extend(validate_complete_formula_constraints(document, values));
+    }
+    report
 }
 
 fn validation_report_for_failures(
@@ -2518,6 +2593,7 @@ fn game_balance_schemas(
                     key: FieldKey::from(field_key),
                     field_type,
                     required: true,
+                    constraint: tachiko_semantic_core::FieldConstraint::None,
                 },
             );
         }

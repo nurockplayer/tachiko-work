@@ -64,6 +64,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type,
         required,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
     }
 }
 

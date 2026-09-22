@@ -1497,6 +1497,7 @@ impl DesignerRuntime {
             key: FieldKey::from(key),
             field_type: kind,
             required: true,
+            constraint: tachiko_workspace_engine::FieldConstraint::None,
         };
         let forward = vec![SemanticCommand::AppendSchemaField {
             schema: schema_id.clone(),
@@ -2325,6 +2326,7 @@ impl DesignerRuntime {
                         key: FieldKey::from(key),
                         field_type,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )
             })
@@ -2377,6 +2379,7 @@ impl DesignerRuntime {
                     key: FieldKey::from(key),
                     field_type,
                     required: true,
+                    constraint: tachiko_workspace_engine::FieldConstraint::None,
                 },
             );
         }
@@ -3152,6 +3155,7 @@ fn budget_schema<const COUNT: usize>(
                         key: FieldKey::from(key),
                         field_type,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )
             })
@@ -4264,6 +4268,7 @@ fn add_moonfall_boolean_fixture(document: &mut Document) -> Result<(), DesignerE
             key: FieldKey::from("enabled"),
             field_type: FieldType::Boolean,
             required: true,
+            constraint: tachiko_workspace_engine::FieldConstraint::None,
         },
     );
     let iron_sword = document
@@ -5176,6 +5181,7 @@ mod tests {
                             key: FieldKey::from(format!("bad_{}", runtime.proposal_serial)),
                             field_type: FieldType::Number,
                             required: true,
+                            constraint: tachiko_workspace_engine::FieldConstraint::None,
                         },
                         values: BTreeMap::from([(entity.clone(), value)]),
                     }],
