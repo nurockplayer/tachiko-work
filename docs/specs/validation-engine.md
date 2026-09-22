@@ -13,8 +13,9 @@ accepts mixed-strength semantic content and makes validation applicability follo
 the semantic facts actually declared by a subject; it does not add or reorder
 validation stages. [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-evolution.md)
 adds only bounded required-scalar field addition and dependency-safe field
-removal; it does not add durable constraint vocabulary or a validation stage.
-ADR-0022 fixes runtime ownership and native/WASM semantic
+removal; its operation-specific dependency precondition runs before unchanged
+staged final validation, and it does not add durable constraint vocabulary or a
+validation stage. ADR-0022 fixes runtime ownership and native/WASM semantic
 parity without changing validation meaning. Exact Rust APIs, incremental
 mechanisms, and concrete runtime/transport delivery remain Provisional or
 Deferred.
@@ -131,11 +132,15 @@ currently represented requirements such as:
 - unexpected fields where the current closed semantic model requires it; and
 - declared field type compatibility.
 
-For an ADR-0040 field-evolution candidate, this stage also validates the final
-candidate: a required scalar addition has one explicit valid value in every
-existing entity, and a removal leaves no surviving formula, reference, or other
-Accepted durable definition dependent on the removed `FieldId`. A failed check
-rejects the entire candidate; it does not publish a partial schema or values.
+Before final validation, an ADR-0040 field-evolution candidate performs its
+operation-specific preconditions: an addition supplies a direct stored
+`Text`, `Number`, `Boolean`, or `Date` value of the exact new field type for
+every existing entity, never a Formula or Reference initializer; a removal
+finds no surviving formula, reference, or other Accepted durable definition
+dependent on the removed `FieldId`. A failed precondition rejects the entire
+candidate without publication. The unchanged staged final validation then
+checks the resulting candidate, including Stage 2 schema-instance conformance
+and the applicable Stage 3 relationship and Stage 4 formula rules.
 
 If the schema prerequisite is unavailable, dependent field checks are
 suppressed rather than guessed.

@@ -6,8 +6,10 @@ The durable-schema-versus-runtime-policy boundary is Accepted under
 [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md).
 [ADR-0021](../decisions/ADR-0021-progressive-semantic-strengthening.md) accepts
 progressive semantic strengthening and mixed-strength content without weakening
-the current strongly typed Entity contract. Richer future schema vocabulary
-remains Provisional or Deferred as marked.
+the current strongly typed Entity contract. ADR-0040 accepts only bounded
+native-table required-scalar field evolution; its command and DTO shapes remain
+Provisional. Richer future schema vocabulary remains Provisional or Deferred as
+marked.
 
 See the [validation specification](validation-engine.md) and the
 [canonical reconciliation register](../governance/canonical-reconciliation-register.md).
@@ -140,12 +142,14 @@ specification does not define a general schema-migration engine.
 ADR-0040 admits a narrow native-table exception: an exact-revision candidate
 may add one required `Text`, `Number`, `Boolean`, or `Date` field with a fresh
 stable `FieldId` only when it explicitly initializes every existing entity with
-a valid value; or it may remove one field and its values only when no surviving
-formula, reference, or other Accepted durable definition depends on that field
-identity. Surviving identities remain unchanged and field presentation order
-does not establish semantic identity. These operations add no implicit default,
-null, coercion, dependency repair, storage-version change, or general
-migration contract. Exact command and DTO spellings remain Provisional.
+a direct stored value of that exact scalar type; Formula and Reference values
+are not initializers. It may remove one field and its values only when no
+surviving formula, reference, or other Accepted durable definition depends on
+that field identity. Surviving identities remain unchanged and field
+presentation order does not establish semantic identity. These operations add
+no implicit default, null, coercion, dependency repair, storage-version change,
+or general migration contract. Exact command and DTO spellings remain
+Provisional.
 
 ## Future schema vocabulary
 

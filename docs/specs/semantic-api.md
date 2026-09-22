@@ -23,6 +23,9 @@ snapshot boundaries, and native/WASM semantic parity are Accepted under
 The M04 logical formula-reasoning Query, read-only scenario Query, typed
 formula-update Command, and bounded semantic analysis Query semantics are
 Accepted by ADR-0020's Issue #32 and Issue #33 amendments.
+ADR-0040 accepts the bounded native-table required-scalar field-evolution
+meaning; its command, DTO, authorization, diagnostics, and session-history
+shapes remain Provisional.
 Exact Rust APIs, complete operation catalogue, wire schemas, transports,
 proposal/revision encodings, session mechanics, and several result/projection
 shapes remain Provisional or Deferred as marked below.
@@ -346,19 +349,24 @@ compatibility contract.
 
 ADR-0040 admits two revision-pinned candidate command families: add one
 required `Text`, `Number`, `Boolean`, or `Date` field with a fresh stable
-identity and one explicit valid value for every existing entity; and remove one
-field with its values only after refusing a candidate with a surviving formula,
-reference, or other Accepted durable definition that depends on that field.
-They preserve every surviving semantic identity, publish atomically through the
-same Propose/Execute and gate laws, and never infer a default, null, coercion,
-or dependency repair.
+identity and one explicit direct stored value of that exact scalar type for
+every existing entity; Formula and Reference values are not initializers. The
+remove operation refuses a candidate with a surviving formula, reference, or
+other Accepted durable definition that depends on that field. They preserve
+every surviving semantic identity, publish atomically through the same
+Propose/Execute and gate laws, and never infer a default, null, coercion, or
+dependency repair.
 
 The operation names, Rust and transport DTO spellings, authorization footprint,
 diagnostic codes, and history representation remain Provisional. A Driver
 session that exposes either operation must make one accepted operation one
-Undo/Redo action. Existing semantic-delta and semantic-merge contracts cannot
-represent these field changes; a request requiring either must fail closed as
-unsupported until separate authority extends that contract.
+Undo/Redo action. Under ADR-0033, Undo and Redo publish the authorized inverse
+or forward command against the exact current base through the ordinary gates;
+they do not rewind a snapshot or revision occurrence. The Accepted
+semantic-delta and semantic-merge contracts already represent schema-field
+creation and deletion as direct evidence and conflict subjects, distinct from
+the typed command. A consumer that does not support the applicable contract or
+encountered change kind must fail closed.
 
 ## M04 formula reasoning and scenario Queries
 
