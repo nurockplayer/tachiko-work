@@ -3,8 +3,10 @@
 Decision state: Mixed. The semantic authorization threats and laws summarized
 from [ADR-0007](../decisions/ADR-0007-ai-semantic-interaction-model.md),
 [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md),
-and the team-policy logical boundary in
-[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+the team-policy logical boundary in
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
+and the bounded desktop native trusted-host delegated-approval composition in
+[ADR-0039](../decisions/ADR-0039-native-trusted-host-delegated-human-approval.md)
 are Accepted. The current `ai-api` context labels, host-context trait,
 denial-code spelling, and adapter shapes implemented by #30 are Provisional.
 Supply-chain controls, concrete authentication/transport integrity, durable
