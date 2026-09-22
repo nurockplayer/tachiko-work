@@ -5,12 +5,12 @@ use tachiko_designer_runtime::{
     DesignerResponse, DesignerRuntime, DesignerWireReply, TableProjection, process_wire_request,
 };
 
-fn request(runtime: &mut Option<DesignerRuntime>, input: Value) -> DesignerWireReply {
+fn request(runtime: &mut Option<DesignerRuntime>, input: &Value) -> DesignerWireReply {
     serde_json::from_slice(&process_wire_request(runtime, input.to_string().as_bytes()))
         .expect("private runtime reply is JSON")
 }
 
-fn publish(runtime: &mut Option<DesignerRuntime>, input: Value) {
+fn publish(runtime: &mut Option<DesignerRuntime>, input: &Value) {
     let reply = request(runtime, input);
     assert!(
         matches!(
@@ -26,7 +26,7 @@ fn publish(runtime: &mut Option<DesignerRuntime>, input: Value) {
 fn table(runtime: &mut Option<DesignerRuntime>, collection: &str) -> TableProjection {
     let reply = request(
         runtime,
-        json!({"type":"query_table", "collection":collection}),
+        &json!({"type":"query_table", "collection":collection}),
     );
     let DesignerWireReply::Ok {
         response: DesignerResponse::Table(table),
@@ -44,7 +44,7 @@ fn fixture(column_count: usize, populated: bool) -> (Option<DesignerRuntime>, Ta
         .collect();
     let reply = request(
         &mut runtime,
-        json!({
+        &json!({
             "type":"new_table", "occurrence_id":"00000000-0000-4000-8000-000000000442",
             "name":"Inventory", "columns":columns,
         }),
@@ -65,7 +65,7 @@ fn fixture(column_count: usize, populated: bool) -> (Option<DesignerRuntime>, Ta
             .collect();
         publish(
             &mut runtime,
-            json!({
+            &json!({
                 "type":"paste_cells", "expected_revision":opened.table.revision,
                 "collection":opened.table.collection.id, "start_entity":null,
                 "start_field":opened.table.columns[0].id, "rows":rows,
@@ -90,24 +90,27 @@ fn content(table: &TableProjection) -> Value {
     json!({"collection":table.collection,"columns":table.columns,"rows":table.rows})
 }
 
-fn exported(runtime: &Option<DesignerRuntime>, revision: &str) -> Vec<u8> {
+fn exported(runtime: Option<&DesignerRuntime>, revision: &str) -> Vec<u8> {
     runtime
-        .as_ref()
         .expect("open fixture")
         .export_project(revision)
         .expect("current canonical export")
         .bytes
 }
 
-fn refuse_unchanged(runtime: &mut Option<DesignerRuntime>, before: &TableProjection, input: Value) {
-    let bytes = exported(runtime, &before.revision);
+fn refuse_unchanged(
+    runtime: &mut Option<DesignerRuntime>,
+    before: &TableProjection,
+    input: &Value,
+) {
+    let bytes = exported(runtime.as_ref(), &before.revision);
     let reply = request(runtime, input);
     assert!(
         matches!(reply, DesignerWireReply::Error { .. }),
         "must refuse: {reply:?}"
     );
     assert_eq!(table(runtime, &before.collection.id), *before);
-    assert_eq!(exported(runtime, &before.revision), bytes);
+    assert_eq!(exported(runtime.as_ref(), &before.revision), bytes);
 }
 
 #[test]
@@ -141,7 +144,7 @@ fn each_direct_scalar_addition_preserves_originals_and_uses_forward_history() {
         ),
     ] {
         let (mut runtime, before) = fixture(2, true);
-        publish(&mut runtime, add(&before, kind, &input));
+        publish(&mut runtime, &add(&before, kind, &input));
         let after = table(&mut runtime, &before.collection.id);
         assert_ne!(after.revision, before.revision);
         assert_eq!(after.columns.len(), before.columns.len() + 1);
@@ -175,7 +178,7 @@ fn each_direct_scalar_addition_preserves_originals_and_uses_forward_history() {
         }
         publish(
             &mut runtime,
-            json!({"type":"undo","expected_revision":after.revision}),
+            &json!({"type":"undo","expected_revision":after.revision}),
         );
         let undone = table(&mut runtime, &before.collection.id);
         assert_eq!(content(&undone), content(&before));
@@ -183,7 +186,7 @@ fn each_direct_scalar_addition_preserves_originals_and_uses_forward_history() {
         assert_ne!(undone.revision, after.revision);
         publish(
             &mut runtime,
-            json!({"type":"redo","expected_revision":undone.revision}),
+            &json!({"type":"redo","expected_revision":undone.revision}),
         );
         let redone = table(&mut runtime, &before.collection.id);
         assert_eq!(content(&redone), content(&after));
@@ -232,13 +235,13 @@ fn malformed_incomplete_stale_and_duplicate_additions_leave_no_history_entry() {
         cases.push(add(&before, kind, &input));
     }
     for input in cases {
-        refuse_unchanged(&mut runtime, &before, input);
+        refuse_unchanged(&mut runtime, &before, &input);
     }
     // The preceding real edit was paste. No rejected column attempt may cover
     // it with a fake history entry or consume its undo slot.
     publish(
         &mut runtime,
-        json!({"type":"undo","expected_revision":before.revision}),
+        &json!({"type":"undo","expected_revision":before.revision}),
     );
     let undone = table(&mut runtime, &before.collection.id);
     assert!(undone.rows.is_empty());
@@ -253,7 +256,7 @@ fn rename_and_remove_preserve_stable_identity_and_forward_history() {
         refuse_unchanged(
             &mut runtime,
             &before,
-            json!({
+            &json!({
                 "type":"rename_column", "expected_revision":before.revision,
                 "collection":before.collection.id, "field":field, "name":name,
             }),
@@ -261,7 +264,7 @@ fn rename_and_remove_preserve_stable_identity_and_forward_history() {
     }
     publish(
         &mut runtime,
-        json!({
+        &json!({
             "type":"rename_column", "expected_revision":before.revision,
             "collection":before.collection.id, "field":field, "name":"改名",
         }),
@@ -272,14 +275,14 @@ fn rename_and_remove_preserve_stable_identity_and_forward_history() {
     assert_eq!(renamed.columns[1].key, "改名");
     publish(
         &mut runtime,
-        json!({"type":"undo","expected_revision":renamed.revision}),
+        &json!({"type":"undo","expected_revision":renamed.revision}),
     );
     let undone = table(&mut runtime, &before.collection.id);
     assert_eq!(content(&undone), content(&before));
     assert_ne!(undone.revision, before.revision);
     publish(
         &mut runtime,
-        json!({"type":"redo","expected_revision":undone.revision}),
+        &json!({"type":"redo","expected_revision":undone.revision}),
     );
     let restored = table(&mut runtime, &before.collection.id);
     assert_eq!(content(&restored), content(&renamed));
@@ -288,14 +291,14 @@ fn rename_and_remove_preserve_stable_identity_and_forward_history() {
     refuse_unchanged(
         &mut runtime,
         &restored,
-        json!({
+        &json!({
             "type":"remove_column", "expected_revision":before.revision,
             "collection":before.collection.id, "field":field,
         }),
     );
     publish(
         &mut runtime,
-        json!({
+        &json!({
             "type":"remove_column", "expected_revision":restored.revision,
             "collection":restored.collection.id, "field":field,
         }),
@@ -308,14 +311,14 @@ fn rename_and_remove_preserve_stable_identity_and_forward_history() {
     }
     publish(
         &mut runtime,
-        json!({"type":"undo","expected_revision":removed.revision}),
+        &json!({"type":"undo","expected_revision":removed.revision}),
     );
     let recovered = table(&mut runtime, &before.collection.id);
     assert_eq!(content(&recovered), content(&renamed));
     assert_ne!(recovered.revision, restored.revision);
     publish(
         &mut runtime,
-        json!({"type":"redo","expected_revision":recovered.revision}),
+        &json!({"type":"redo","expected_revision":recovered.revision}),
     );
     let redone = table(&mut runtime, &before.collection.id);
     assert_eq!(content(&redone), content(&removed));
@@ -328,18 +331,18 @@ fn profile_limits_refuse_empty_table_and_capacity_overflow_atomically() {
     refuse_unchanged(
         &mut runtime,
         &full,
-        add(&full, "text", &json!({"kind":"text","value":"explicit"})),
+        &add(&full, "text", &json!({"kind":"text","value":"explicit"})),
     );
     refuse_unchanged(
         &mut runtime,
         &full,
-        json!({"type":"undo","expected_revision":full.revision}),
+        &json!({"type":"undo","expected_revision":full.revision}),
     );
     let (mut runtime, one) = fixture(1, true);
     refuse_unchanged(
         &mut runtime,
         &one,
-        json!({
+        &json!({
             "type":"remove_column", "expected_revision":one.revision,
             "collection":one.collection.id, "field":one.columns[0].id,
         }),
