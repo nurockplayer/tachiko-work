@@ -1314,7 +1314,7 @@ export function mountDesigner(
       const type = column.field_type.toLowerCase();
       const control = type === "boolean"
         ? `<select data-row-value aria-label="${escapeHtml(column.key)}" required><option value="">Choose a value</option><option value="true" ${value === "true" ? "selected" : ""}>true</option><option value="false" ${value === "false" ? "selected" : ""}>false</option></select>`
-        : `<input data-row-value type="${type === "number" || type === "date" ? type : "text"}" aria-label="${escapeHtml(column.key)}" required value="${escapeHtml(value)}">`;
+        : `<input data-row-value type="${type === "date" ? type : "text"}"${type === "number" ? ' inputmode="decimal"' : ""} aria-label="${escapeHtml(column.key)}" required value="${escapeHtml(value)}">`;
       return `<label>${escapeHtml(column.key)}${control}</label>`;
     }).join("");
     dialog.innerHTML = `<form method="dialog" data-add-row-form><h2>Add row</h2>${controls}
