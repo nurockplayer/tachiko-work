@@ -1972,7 +1972,7 @@ function designerMarkup(
             <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isNativeTable ? "data-native-table-grid" : ""}>
               <thead>
                 <tr>
-                  ${isNativeTable ? '<th scope="col">Select rows</th>' : ""}
+                  ${isNativeTable ? '<th scope="col" aria-hidden="true">Select rows</th>' : ""}
                   ${showRowHeader ? '<th scope="col">Entity</th>' : ""}
                   ${table.columns
                     .map(
@@ -1982,7 +1982,7 @@ function designerMarkup(
                 </tr>
               </thead>
               <tbody>
-                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (showRowHeader ? 1 : 0) + (isNativeTable ? 1 : 0))}">Paste rows here, or choose Add row.</td></tr>` : ""}
+                ${table.rows.length === 0 ? `<tr><td role="gridcell" tabindex="0" colspan="${String(table.columns.length + (showRowHeader ? 1 : 0) + (isNativeTable ? 1 : 0))}">Paste rows here, or choose Append row.</td></tr>` : ""}
                 ${table.rows
                   .map((row, index) => rowMarkup(row, table, showRowHeader, isNativeTable, (busy && !exportReviewPending) || currentness !== "current", view, selectedNativeRows.has(row.id), index))
                   .join("")}
