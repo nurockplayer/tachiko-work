@@ -309,11 +309,10 @@ fn selector_and_document_identity_are_admission_boundaries() {
         "",
     ] {
         let error = merge_documents_v2(selector, &base, &wrong, &base).unwrap_err();
-        assert!(!matches!(
-            error,
-            WorkspaceError::DifferentMergeDocument { .. }
-        ));
-        assert!(error.to_string().contains("unsupported"), "{error}");
+        let WorkspaceError::UnsupportedSemanticConflictContract { contract } = error else {
+            panic!("wrong selector refusal: {error:?}");
+        };
+        assert_eq!(contract, selector);
     }
     assert!(matches!(
         merge_documents_v2(SEMANTIC_CONFLICT_V2, &base, &wrong, &base),
