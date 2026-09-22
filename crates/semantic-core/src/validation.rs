@@ -1252,8 +1252,8 @@ mod issue_175_research {
         use std::collections::BTreeMap;
 
         use crate::{
-            Diagnostic, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
-            FieldType, Number, Schema, SchemaId, Value,
+            Diagnostic, DiagnosticCode, Entity, EntityId, Expression, FieldConstraint,
+            FieldDefinition, FieldId, FieldRef, FieldType, Number, Schema, SchemaId, Value,
         };
 
         use super::{Document, validate_document_cancellable, validate_expression};
@@ -1331,6 +1331,72 @@ mod issue_175_research {
             let document = Document::empty("document", "Document");
 
             assert_eq!(validate_document_cancellable(&document, || true), None);
+        }
+
+        #[test]
+        fn constrained_declarations_and_stored_values_match_or_cancel_without_formula_oracles() {
+            let valid = constrained_text_document(
+                FieldConstraint::TextLiteralSet {
+                    values: vec!["allowed".to_owned()],
+                },
+                "allowed",
+            );
+            assert_eq!(
+                validate_document_cancellable(&valid, || false),
+                Some(super::super::validate_document(&valid)),
+            );
+
+            let invalid = constrained_text_document(
+                FieldConstraint::TextLiteralSet { values: Vec::new() },
+                "disallowed",
+            );
+            let completed = validate_document_cancellable(&invalid, || false)
+                .expect("uncancelled validation completes");
+            assert_eq!(completed, super::super::validate_document(&invalid));
+            assert!(
+                completed
+                    .iter()
+                    .any(|diagnostic| diagnostic.code
+                        == DiagnosticCode::FIELD_CONSTRAINT_DECLARATION)
+            );
+            assert!(completed.iter().any(|diagnostic| {
+                diagnostic.code == DiagnosticCode::FIELD_VALUE_CONSTRAINT_MISMATCH
+            }));
+            assert_eq!(validate_document_cancellable(&invalid, || true), None);
+        }
+
+        fn constrained_text_document(constraint: FieldConstraint, value: &str) -> Document {
+            let mut document = Document::empty("document", "Document");
+            document.schemas.insert(
+                SchemaId::from("schema"),
+                Schema {
+                    id: SchemaId::from("schema"),
+                    key: "items".into(),
+                    fields: BTreeMap::from([(
+                        FieldId::from("name"),
+                        FieldDefinition {
+                            id: FieldId::from("name"),
+                            key: "name".into(),
+                            field_type: FieldType::Text,
+                            required: true,
+                            constraint,
+                        },
+                    )]),
+                },
+            );
+            document.entities.insert(
+                EntityId::from("entity"),
+                Entity {
+                    id: EntityId::from("entity"),
+                    key: "item".into(),
+                    schema: SchemaId::from("schema"),
+                    fields: BTreeMap::from([(
+                        FieldId::from("name"),
+                        Value::Text(value.to_owned()),
+                    )]),
+                },
+            );
+            document
         }
 
         #[test]
