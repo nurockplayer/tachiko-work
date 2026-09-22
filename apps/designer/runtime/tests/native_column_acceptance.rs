@@ -270,7 +270,15 @@ fn rename_and_remove_preserve_stable_identity_and_forward_history() {
         }),
     );
     let renamed = table(&mut runtime, &before.collection.id);
-    assert_eq!(renamed.rows, before.rows);
+    let mut expected_rows = before.rows.clone();
+    for row in &mut expected_rows {
+        for projection in &mut row.fields {
+            if projection.target.field == *field {
+                projection.address = format!("{}.renamed", row.key);
+            }
+        }
+    }
+    assert_eq!(renamed.rows, expected_rows);
     assert_eq!(renamed.columns[1].id, *field);
     assert_eq!(renamed.columns[1].key, "renamed");
     publish(
