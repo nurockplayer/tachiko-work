@@ -4759,22 +4759,19 @@ mod tests {
             native_column_ids(&last_available)["last"].as_str(),
             "native_table_field_18446744073709551615_00000000-0000-4000-8000-000000000000/column"
         );
-
-        let mut exhausted = native_column_runtime(&[("Item", "text")], &["widget"]);
-        exhausted.proposal_serial = u64::MAX;
-        let before = exhausted.export_project("resident/1").unwrap().bytes;
-        let undo_count = exhausted.undo.len();
-        let redo_count = exhausted.redo.len();
-        let counter = exhausted.proposal_serial;
-        let entity = exhausted.collection_specs["orders"].entities[0].to_string();
-        let error = exhausted
+        assert_eq!(last_available.proposal_serial, u64::MAX);
+        let revision = last_available.current_revision().to_owned();
+        let before = last_available.export_project(&revision).unwrap().bytes;
+        let undo_count = last_available.undo.len();
+        let redo_count = last_available.redo.len();
+        let error = last_available
             .add_column(
-                "resident/1",
+                &revision,
                 "orders",
                 "Unavailable",
                 "text",
                 &[ColumnInitializer {
-                    entity,
+                    entity: last_available.collection_specs["orders"].entities[0].to_string(),
                     input: ScalarEditInput::Text {
                         value: "unpublished".to_owned(),
                     },
@@ -4786,14 +4783,50 @@ mod tests {
             DesignerError::InvalidTableOperation { ref message }
                 if message == "column identity allocation is exhausted"
         ));
-        assert_eq!(exhausted.current_revision(), "resident/1");
+        assert_eq!(last_available.current_revision(), revision);
         assert_eq!(
-            exhausted.export_project("resident/1").unwrap().bytes,
+            last_available.export_project(&revision).unwrap().bytes,
             before
         );
-        assert_eq!(exhausted.undo.len(), undo_count);
-        assert_eq!(exhausted.redo.len(), redo_count);
-        assert_eq!(exhausted.proposal_serial, counter);
+        assert_eq!(last_available.undo.len(), undo_count);
+        assert_eq!(last_available.redo.len(), redo_count);
+        assert_eq!(last_available.proposal_serial, u64::MAX);
+    }
+
+    #[test]
+    fn native_column_adds_allocate_distinct_stable_ids() {
+        let mut runtime = native_column_runtime(&[("Item", "text")], &["widget"]);
+        let entity = runtime.collection_specs["orders"].entities[0].to_string();
+        let first = runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "First",
+                "text",
+                &[ColumnInitializer {
+                    entity: entity.clone(),
+                    input: ScalarEditInput::Text {
+                        value: "one".to_owned(),
+                    },
+                }],
+            )
+            .unwrap();
+        runtime
+            .add_column(
+                &first.resulting_revision,
+                "orders",
+                "Second",
+                "text",
+                &[ColumnInitializer {
+                    entity,
+                    input: ScalarEditInput::Text {
+                        value: "two".to_owned(),
+                    },
+                }],
+            )
+            .unwrap();
+        let ids = native_column_ids(&runtime);
+        assert_ne!(ids["first"], ids["second"]);
     }
 
     fn assert_native_column_removal_is_rejected(
