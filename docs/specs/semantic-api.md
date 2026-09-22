@@ -1793,7 +1793,7 @@ Date to the same finite SetFieldValue projection with mutation-rule parity.
 | Analysis exact-context reproducibility and structured lineage | Accepted under ADR-0020 / #33 |
 | Analysis grouped/count/min/max complete-or-denied disclosure | Accepted under ADR-0020 / #33 and ADR-0026 |
 | Analysis result persistence / `AnalysisId` / analytics datastore | Deferred |
-| Saved live `KeyedGroupedSumDefinition` | Accepted under ADR-0036; distinct from Analysis Query and not yet implemented |
+| Saved live `KeyedGroupedSumDefinition` | Accepted under ADR-0036; distinct from Analysis Query; bounded `.roproj/v2` storage and Designer save/reopen journey are implemented by #330/#331, while the broader API/runtime/product definition remains separately owned |
 | Sum/Mean, ranking/top-k, statistics, general predicate ASTs, joins, UDFs | Deferred |
 | Exact operation names, family identifiers, request limits, predicate catalogue, normalization encoding, and result DTOs | Provisional |
 | Production formula-reasoning/scenario/formula-update implementation | Provisional provider-neutral workspace/CLI slice implemented by #144; public wire/SDK remains undefined |
