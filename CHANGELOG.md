@@ -11,6 +11,7 @@ All notable changes to Tachiko Work are documented in this file.
   reject invalid declarations, direct values, and successful formula results;
   frozen storage, diff, merge, and legacy inspection boundaries refuse this
   newer meaning rather than omitting it.
+- Native tables can remove selected rows while preserving stable row identities and failed-operation selections.
 - Native Designer tables can add a required Text, Number, Boolean, or Date
   column with one explicit typed initializer for every current row, rename a
   scalar column without changing its stable identity, and remove an unused
