@@ -383,7 +383,7 @@ class RejectingClient extends FakeClient {
 class RejectingNativeColumnClient extends FakeClient {
   readonly nativeColumnRequests: TrackerCommand[] = [];
 
-  override async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
+  async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
     this.nativeColumnRequests.push(structuredClone(request));
     throw new DesignerRuntimeError({
       code: "validation_failed",

@@ -1236,24 +1236,26 @@ export function mountDesigner(
     const close = (): void => { dialog.close(); dialog.remove(); root.querySelector<HTMLElement>("[data-add-column]")?.focus(); };
     dialog.querySelector("[data-cancel-add-column]")?.addEventListener("click", close);
     dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
-    dialog.querySelector<HTMLFormElement>("[data-add-column-form]")?.addEventListener("submit", async event => {
+    dialog.querySelector<HTMLFormElement>("[data-add-column-form]")?.addEventListener("submit", event => {
       event.preventDefault();
-      const name = dialog.querySelector<HTMLInputElement>("[aria-label='Column name']")?.value ?? "";
-      const type = (dialog.querySelector<HTMLSelectElement>("[aria-label='Column type']")?.value ?? "Text").toLowerCase();
-      const value = dialog.querySelector<HTMLInputElement>("[aria-label='Value for existing rows']")?.value ?? "";
-      const fixed = dialog.querySelector<HTMLInputElement>("[aria-label='Use this value for every existing row']")?.checked === true;
-      if (!fixed) return;
-      if (type === "boolean" && value !== "true" && value !== "false") {
-        const error = document.createElement("p");
-        error.setAttribute("role", "alert");
-        error.textContent = "Boolean values must be true or false.";
-        dialog.querySelector("[role='alert']")?.remove();
-        dialog.querySelector("form")?.prepend(error);
-        return;
-      }
-      const input: ScalarEditInput = type === "number" ? {kind: "number", input: value} : type === "boolean" ? {kind: "boolean", value: value === "true"} : type === "date" ? {kind: "date", value} : {kind: "text", value};
-      const accepted = await publishNativeColumn({type: "add_column", expected_revision: table.revision, collection: table.collection.id, name, field_type: type, initializers: table.rows.map(row => ({entity: row.id, input}))});
-      if (accepted === false) openAddColumn({name, type, value, fixed});
+      void (async () => {
+        const name = dialog.querySelector<HTMLInputElement>("[aria-label='Column name']")?.value ?? "";
+        const type = (dialog.querySelector<HTMLSelectElement>("[aria-label='Column type']")?.value ?? "Text").toLowerCase();
+        const value = dialog.querySelector<HTMLInputElement>("[aria-label='Value for existing rows']")?.value ?? "";
+        const fixed = dialog.querySelector<HTMLInputElement>("[aria-label='Use this value for every existing row']")?.checked === true;
+        if (!fixed) return;
+        if (type === "boolean" && value !== "true" && value !== "false") {
+          const error = document.createElement("p");
+          error.setAttribute("role", "alert");
+          error.textContent = "Boolean values must be true or false.";
+          dialog.querySelector("[role='alert']")?.remove();
+          dialog.querySelector("form")?.prepend(error);
+          return;
+        }
+        const input: ScalarEditInput = type === "number" ? {kind: "number", input: value} : type === "boolean" ? {kind: "boolean", value: value === "true"} : type === "date" ? {kind: "date", value} : {kind: "text", value};
+        const accepted = await publishNativeColumn({type: "add_column", expected_revision: table.revision, collection: table.collection.id, name, field_type: type, initializers: table.rows.map(row => ({entity: row.id, input}))});
+        if (accepted === false) openAddColumn({name, type, value, fixed});
+      })();
     });
     if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
     dialog.querySelector<HTMLElement>("[aria-label='Column name']")?.focus();
@@ -1275,14 +1277,16 @@ export function mountDesigner(
     const close = (): void => { dialog.close(); dialog.remove(); root.querySelector<HTMLElement>(action === "rename" ? "[data-rename-column]" : "[data-remove-column]")?.focus(); };
     dialog.querySelector("[data-cancel-change-column]")?.addEventListener("click", close);
     dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
-    dialog.querySelector<HTMLFormElement>("[data-change-column-form]")?.addEventListener("submit", async event => {
+    dialog.querySelector<HTMLFormElement>("[data-change-column-form]")?.addEventListener("submit", event => {
       event.preventDefault();
-      const name = dialog.querySelector<HTMLInputElement>("[aria-label='New column name']")?.value ?? "";
-      const request = action === "rename"
-        ? {type: "rename_column" as const, expected_revision: table.revision, collection: table.collection.id, field, name}
-        : {type: "remove_column" as const, expected_revision: table.revision, collection: table.collection.id, field};
-      const accepted = await publishNativeColumn(request);
-      if (accepted === false) openChangeColumn(action, name, field);
+      void (async () => {
+        const name = dialog.querySelector<HTMLInputElement>("[aria-label='New column name']")?.value ?? "";
+        const request = action === "rename"
+          ? {type: "rename_column" as const, expected_revision: table.revision, collection: table.collection.id, field, name}
+          : {type: "remove_column" as const, expected_revision: table.revision, collection: table.collection.id, field};
+        const accepted = await publishNativeColumn(request);
+        if (accepted === false) openChangeColumn(action, name, field);
+      })();
     });
     if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
     dialog.querySelector<HTMLElement>(action === "rename" ? "[aria-label='New column name']" : "button[type='submit']")?.focus();
