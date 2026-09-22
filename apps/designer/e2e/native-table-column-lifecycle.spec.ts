@@ -28,7 +28,7 @@ async function inventory(page: Page): Promise<void> {
   await page.keyboard.press(`${shortcut}+V`);
   await expect(page.getByRole("gridcell", { name: "0012", exact: true })).toBeVisible();
   await expect(page.getByRole("gridcell", { name: "ノート", exact: true })).toBeVisible();
-  await expect(page.getByRole("columnheader")).toHaveText(["item", "quantity", "active", "received"]);
+  await expect(page.getByRole("columnheader").filter({ hasNot: page.getByRole("checkbox") }).filter({ hasNotText: /^Select rows$/ })).toHaveText(["item", "quantity", "active", "received"]);
   await expect(page.locator("[data-generic-cell]")).toHaveCount(12);
 }
 
@@ -245,7 +245,7 @@ test("rejected rename retains the selected non-first FieldId through retry", asy
   await expect(page.getByRole("region", { name: "Session history", exact: true })).toHaveText(history ?? "");
   await dialog.getByLabel("New column name", { exact: true }).fill("stock");
   await dialog.getByRole("button", { name: "Rename column", exact: true }).click();
-  await expect(page.getByRole("columnheader")).toHaveText(["item", "stock", "active", "received"]);
+  await expect(page.getByRole("columnheader").filter({ hasNot: page.getByRole("checkbox") }).filter({ hasNotText: /^Select rows$/ })).toHaveText(["item", "stock", "active", "received"]);
   expect(await cells(page)).toEqual(before);
   await target.selectOption({ label: "stock" });
   await expect(target).toHaveValue(quantityId);
