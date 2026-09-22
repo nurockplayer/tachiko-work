@@ -110,6 +110,17 @@ The platform must prevent at least:
   live Grant coverage, or independently issuing a Grant without explicitly
   authorized Human provisioning;
 - Delegated self-approval satisfying the Human approval requirement;
+- a desktop occurrence using the ADR-0039 native profile while retaining a
+  second authoritative Worker semantic occurrence, allowing ordinary and
+  delegated operations to advance different bases;
+- renderer, Worker, provider, or delegated-request content supplying the
+  authoritative Human review evidence, approval decision, approval token, or
+  equivalent credential;
+- the delegated request surface reaching ordinary Human privileged semantic
+  routes or exercising them with Human credentials;
+- review-time races where base advancement, revocation, expiry, policy change,
+  close/reopen, or lost occurrence continuity happens after evidence is shown
+  but before approval or publication and is not revalidated;
 - a Delegated principal self-granting, expanding its authority, changing
   effective policy, or transitively delegating administration authority;
 - raw semantic-core, storage, `.roproj`, filesystem, or host mutation bypassing
@@ -120,7 +131,8 @@ The platform must prevent at least:
 ## Required Security Laws
 
 The normative authorization contract is ADR-0026, ADR-0034's Accepted logical
-team-policy boundary, and
+team-policy boundary, ADR-0039's bounded desktop native trusted-host
+composition, and
 [`semantic-authorization.md`](../specs/semantic-authorization.md). This
 threat-oriented summary maps risks to that authority and does not create an
 independent authorization contract.
@@ -152,6 +164,30 @@ independent authorization contract.
   is denied or safely reduced.
 - A patch originated by a Delegated principal or executed using Delegated
   authority requires exact Approval from one authorized Human principal.
+- When the ADR-0039 desktop native profile is selected, it is selected before
+  opening the occurrence and every supported ordinary Human and delegated
+  semantic operation for that occurrence uses the same native-owned
+  `DesignerRuntime` and resident session. A Worker may carry requests and
+  projections but cannot retain a second authoritative semantic occurrence or
+  receive a live ownership handoff in this profile.
+- Shared native runtime ownership does not merge Human and Delegated authority.
+  Ordinary Human operations retain their applicable trusted authorization
+  requirements; delegated requests cannot invoke privileged Human routes using
+  Human credentials and ordinary Human operations do not gain a delegated-
+  approval requirement merely by sharing the runtime.
+- Trusted Human review evidence and consent for the ADR-0039 profile are derived
+  and recorded by the native host against the same retained
+  proposal/base/occurrence. Renderer, Worker, provider, or delegated-request
+  content may request review but cannot supply authoritative review evidence,
+  approval state, or a bearer approval credential.
+- The host does not hold the semantic runtime exclusively while awaiting Human
+  review. When the decision returns it revalidates the retained review context,
+  and Execute/publication recheck the live lifecycle again. Base advancement,
+  revocation, expiry, policy change, close/reopen, or lost occurrence continuity
+  therefore fail closed.
+- If an ordinary semantic operation is unsupported by the native profile, it
+  remains unavailable for that occurrence rather than falling back to a
+  Worker-owned semantic occurrence.
 - Approval binds one proposal occurrence, complete ADR-0024
   `ExactChangeBinding`, originator, exact executor, complete associated
   operation-family/mutation-class/scope write requirements, and the effective
