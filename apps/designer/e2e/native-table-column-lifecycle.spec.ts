@@ -220,3 +220,34 @@ test("column dialogs support keyboard Escape, restored focus and narrow controls
   expect(await cells(page)).toEqual(before);
   await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
 });
+
+test("rejected rename retains the selected non-first FieldId through retry", async ({ page }) => {
+  await inventory(page);
+  await saveAs(page, "before-rename-refusal.roproj");
+  const before = await cells(page);
+  const revision = await page.getByTestId("revision").textContent();
+  const history = await page.getByRole("region", { name: "Session history", exact: true }).textContent();
+  const target = page.getByLabel("Column to change", { exact: true });
+  await target.selectOption({ label: "quantity" });
+  const quantityId = await target.inputValue();
+  const quantityCells = before.filter(cell => cell.field === quantityId);
+  expect(quantityCells).toHaveLength(3);
+  await page.getByRole("button", { name: "Rename column", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Rename column", exact: true });
+  await dialog.getByLabel("New column name", { exact: true }).fill("item");
+  await dialog.getByRole("button", { name: "Rename column", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(/duplicate|invalid|rejected/i);
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("New column name", { exact: true })).toHaveValue("item");
+  expect(await cells(page)).toEqual(before);
+  await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
+  await expect(page.getByRole("region", { name: "Session history", exact: true })).toHaveText(history ?? "");
+  await dialog.getByLabel("New column name", { exact: true }).fill("stock");
+  await dialog.getByRole("button", { name: "Rename column", exact: true }).click();
+  await expect(page.getByRole("columnheader")).toHaveText(["item", "stock", "active", "received"]);
+  expect(await cells(page)).toEqual(before);
+  await target.selectOption({ label: "stock" });
+  await expect(target).toHaveValue(quantityId);
+  expect((await cells(page)).filter(cell => cell.field === quantityId)).toEqual(quantityCells);
+});
