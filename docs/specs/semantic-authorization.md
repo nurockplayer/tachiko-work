@@ -3,10 +3,11 @@
 Decision state: Accepted under
 [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md),
 with receipt/retained-transition separation reconciled by
-[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
-and reusable team-policy, administration, recovery, and audit boundaries
-constrained by
-[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md).
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
+reusable team-policy, administration, recovery, and audit boundaries constrained by
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
+and the bounded desktop native trusted-host composition for delegated Human approval selected by
+[ADR-0039](../decisions/ADR-0039-native-trusted-host-delegated-human-approval.md).
 
 Implementation state: partially implemented by the provisional
 `workspace-engine::patch_lifecycle` module under Issue #29. It provides one
@@ -38,10 +39,10 @@ Related authority:
 [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md),
 [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md),
-[ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md), and
+[ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md),
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
-and
-[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md).
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md), and
+[ADR-0039](../decisions/ADR-0039-native-trusted-host-delegated-human-approval.md).
 
 ## Purpose
 
