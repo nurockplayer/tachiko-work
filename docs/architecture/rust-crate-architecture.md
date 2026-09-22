@@ -436,8 +436,12 @@ semantic base/context and deterministic configuration, they must preserve
 equivalent Stable semantic meaning, including applicable Semantic API operation
 outcomes, gate decisions, diagnostic/formula facts, and semantic atomicity.
 
-Transport bytes, memory layout, request batching, Worker placement, and host
-error wrappers may differ when they preserve the contract.
+Outside ADR-0039's bounded desktop delegated-Human-approval profile, transport
+bytes, memory layout, request batching, Worker placement, and host error
+wrappers may differ when they preserve the contract. Within that profile,
+selected before the occurrence opens, the native runtime owns the entire
+occurrence: a Worker may carry requests and projections but cannot retain a
+second authoritative occurrence or receive an ownership handoff.
 
 A runtime/transport may host, retain, cache, serialize, batch-deliver, or project
 the Semantic API. It may not redefine it.
