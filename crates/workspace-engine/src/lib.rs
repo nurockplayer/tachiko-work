@@ -420,6 +420,8 @@ pub enum WorkspaceError {
     },
     #[error("field '{field}' does not exist")]
     MissingField { field: FieldRef },
+    #[error("schema field '{field}' is still referenced by a formula or saved definition")]
+    SchemaFieldReferenced { field: FieldRef },
     #[error("schema stable id '{schema}' does not exist")]
     MissingSchema { schema: SchemaId },
     #[error("field '{field}' is a formula; edit its inputs instead")]
