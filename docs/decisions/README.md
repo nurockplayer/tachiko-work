@@ -16,7 +16,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0004](ADR-0004-mvp-boundary.md) | Developer MVP boundary | Accepted, historical milestone boundary | Defines the completed Developer MVP scope |
 | [ADR-0005](ADR-0005-game-development-first-wedge.md) | Game-development first commercial wedge | Accepted | Current first-wedge authority |
 | [ADR-0006](ADR-0006-mvp-interface-strategy.md) | CLI-first MVP interface | Accepted | GUI remains a later projection |
-| [ADR-0007](ADR-0007-ai-semantic-interaction-model.md) | AI semantic interaction model | Accepted | AI is a delegated semantic client with no intrinsic authority; MVP AI-originated canonical mutation remains approval-gated |
+| [ADR-0007](ADR-0007-ai-semantic-interaction-model.md) | AI semantic interaction model | Accepted | AI is a delegated semantic client with no intrinsic authority; provider neutrality includes cloud/self-hosted/local/no-LLM deployment neutrality; canonical correctness and ownership do not depend on a remote AI service; MVP AI-originated canonical mutation remains approval-gated |
 | [ADR-0008](ADR-0008-developer-mvp-completion-and-next-phase.md) | Developer MVP completion / next phase | Superseded | ADR-0009 is the surviving authority |
 | [ADR-0009](ADR-0009-developer-mvp-validation-and-next-phase.md) | Developer MVP validation / next phase | Accepted, historical milestone boundary | Confirms Developer MVP as the completed validation point |
 | [ADR-0010](ADR-0010-first-usable-product-workflow.md) | First usable product workflow | Accepted | Current CLI-first usable workflow |
