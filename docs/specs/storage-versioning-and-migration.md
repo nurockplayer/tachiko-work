@@ -320,10 +320,11 @@ preserves IDs, keys, types, requiredness, values, formulas, definitions, and
 meaning, validates and canonicalizes the complete candidate, then publishes to
 a distinct absent destination. It is deterministic and no-clobber. Ordinary
 read/save does not upgrade; malformed or unsupported sources fail before body
-reinterpretation. Existing private direct-ro/v2 Date projects enter v3 only
-through explicit user-selected conversion/export from an admitted semantic
-snapshot. Portable-package/v1 remains its exact v1 payload and package-v2 is
-outside this decision. No current implementation is claimed.
+reinterpretation. Existing Date projects held in the private `TWDPROJ2` host
+envelope (whose payload is direct-ro/v2) enter v3 only through explicit
+user-selected conversion/export from an admitted semantic snapshot.
+Portable-package/v1 remains its exact v1 payload and package-v2 is outside this
+decision. No current implementation is claimed.
 ## Direct-JSON error precedence and machine meaning
 
 Storage-domain failures should preserve at least the following machine-distinguishable meanings:

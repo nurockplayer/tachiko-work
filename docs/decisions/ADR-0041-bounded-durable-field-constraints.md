@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-09-22
 - **Decision issue:** [#391](https://github.com/nurockplayer/tachiko-work/issues/391)
-- **Amends:** ADR-0015, ADR-0018, ADR-0019, ADR-0020, ADR-0023, ADR-0030, ADR-0031, ADR-0037
+- **Amends:** ADR-0015, ADR-0018, ADR-0019, ADR-0020, ADR-0021, ADR-0023, ADR-0030, ADR-0031, ADR-0033, ADR-0037
 - **Implementation state:** Decision and representation authority only. No production
   codec, runtime, API, UI, native/WASM, or package implementation is authorized by
   this ADR.
@@ -67,14 +67,22 @@ Constraint edits are semantic commands through the current-base
 Propose/Execute boundary. Review evidence includes the affected stable field and
 its affected values. Publication is atomic. An invalidation or failed edit
 leaves semantic state, revision occurrence, and retained history unchanged.
-Undo/Redo follows ADR-0033's laws and replays complete snapshots/evidence rather
-than making constraint edits a second mutation vocabulary.
+Undo and Redo follow ADR-0033's forward-only law: each action is a newly
+authorized inverse or forward `Command | AtomicBatch` evaluated against the
+exact current base through ordinary admission, authorization, validation, and
+publication. An accepted prior-equivalent state is a distinct new revision
+occurrence and retained transition when history is enabled; history is never
+erased, rewound, or retargeted. A stale, invalid, or otherwise failed history
+action publishes no semantic state, creates no revision or transition, and
+preserves the current state plus the undo/redo stacks. Constraint edits do not
+create a second mutation vocabulary.
 
 The shared semantic/application authority enforces constraints at final
 publication for every first-party path: native, WASM, paste, edit, formula
-calculation, and merge finalization. UI controls are projections and are never
-an enforcement point. Exact Rust/API/transport/SDK shapes remain separately
-owned and unimplemented by this decision.
+calculation, and merge finalization. UI controls and validation may assist with
+previews and user feedback, but UI is a projection and never the sole or
+authoritative enforcement point. Exact Rust/API/transport/SDK shapes remain
+separately owned and unimplemented by this decision.
 
 ## `.roproj/v3` representation
 
@@ -118,14 +126,17 @@ write a v3 field. A v1 portable package remains the eighteen-path v1 payload;
 package-v2 is not selected here. Unsupported older representations and package
 payloads fail with a truthful unsupported-representation/version outcome.
 
-The existing `direct-ro/v2` private Designer representation already admits Date,
-but that private DTO is not `.roproj/v3`. A private project containing Date may
-enter v3 only through an explicit user-selected conversion/export from an
-admitted semantic snapshot. Ordinary private read/save never silently changes
-format. A new project may explicitly select v3. No conversion drops Date,
-strips constraints, or claims portable-package fidelity where the target cannot
-represent it. Implementation status of these conversions is unimplemented and
-must be reported as such until separately delivered.
+The existing `direct-ro/v2` representation namespace already admits Date. It is
+distinct from the app-private `TWDPROJ2` host envelope, whose payload is
+direct-ro/v2 with browser-only metadata. `TWDPROJ2` is not the direct-ro/v2 DTO,
+`.roproj/v3`, `.roproj/v2`, or a portable package. A private project containing
+Date in that envelope may enter v3 only through an explicit user-selected
+conversion/export from an admitted semantic snapshot. Ordinary private
+read/save never silently changes format. A new project may explicitly select
+v3. No conversion drops Date, strips constraints, or claims portable-package
+fidelity where the target cannot represent it. Implementation status of these
+conversions is unimplemented and must be reported as such until separately
+delivered.
 
 ## Delta v2 and conflict v2
 
@@ -188,8 +199,10 @@ PR; hosted and committed release gates still apply before integration.
 - [ADR-0018](ADR-0018-bound-formulas-and-deterministic-binary64.md)
 - [ADR-0019](ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0020](ADR-0020-first-class-headless-semantic-api.md)
+- [ADR-0021](ADR-0021-progressive-semantic-strengthening.md)
 - [ADR-0023](ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
 - [ADR-0030](ADR-0030-canonical-semantic-delta.md)
 - [ADR-0031](ADR-0031-semantic-merge-conflict-protocol.md)
+- [ADR-0033](ADR-0033-history-undo-redo-and-revert.md)
 - [ADR-0037](ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
 - [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391)

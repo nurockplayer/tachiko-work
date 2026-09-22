@@ -11,7 +11,11 @@ Semantic API result contract without changing these validation stages.
 [ADR-0021](../decisions/ADR-0021-progressive-semantic-strengthening.md)
 accepts mixed-strength semantic content and makes validation applicability follow
 the semantic facts actually declared by a subject; it does not add or reorder
-validation stages. ADR-0022 fixes runtime ownership and native/WASM semantic
+validation stages. [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-evolution.md)
+adds only bounded required-scalar field addition and dependency-safe field
+removal; its operation-specific dependency precondition runs before unchanged
+staged final validation, and it does not add durable constraint vocabulary or a
+validation stage. ADR-0022 fixes runtime ownership and native/WASM semantic
 parity without changing validation meaning. Exact Rust APIs, incremental
 mechanisms, and concrete runtime/transport delivery remain Provisional or
 Deferred.
@@ -133,6 +137,16 @@ A Text value must be a member of its field's admitted literal set when one is
 present. A Number value must be finite and within an inclusive range when one is
 present. Boolean, Date, and Reference fields admit only `none`. An absent
 optional value remains absent and is not replaced by a null or default.
+
+Before final validation, an ADR-0040 field-evolution candidate performs its
+operation-specific preconditions: an addition supplies a direct stored
+`Text`, `Number`, `Boolean`, or `Date` value of the exact new field type for
+every existing entity, never a Formula or Reference initializer; a removal
+finds no surviving formula, reference, or other Accepted durable definition
+dependent on the removed `FieldId`. A failed precondition rejects the entire
+candidate without publication. The unchanged staged final validation then
+checks the resulting candidate, including Stage 2 schema-instance conformance
+and the applicable Stage 3 relationship and Stage 4 formula rules.
 
 If the schema prerequisite is unavailable, dependent field checks are
 suppressed rather than guessed.

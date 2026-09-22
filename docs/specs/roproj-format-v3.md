@@ -164,10 +164,10 @@ must decode, admit, convert, validate, canonicalize, and prepare the complete
 candidate before publication. V1 uses the existing explicit v1→v2 edge first.
 Older formats, v1 portable packages, and package-v2 requests that cannot
 represent this tree fail with a truthful unsupported representation/version
-outcome. Existing private direct-ro/v2 Date projects enter v3 only through an
-explicit user-selected conversion/export; ordinary private read/save does not
-silently change format. These conversion paths are target behavior, not current
-implementation claims.
+outcome. Existing Date projects held in the private `TWDPROJ2` host envelope
+(whose payload is direct-ro/v2) enter v3 only through an explicit user-selected
+conversion/export; ordinary private read/save does not silently change format.
+These conversion paths are target behavior, not current implementation claims.
 
 ## Explicitly outside v3
 
