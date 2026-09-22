@@ -191,6 +191,71 @@ fn field_member_order_and_constraint_bytes_are_fixed() {
 }
 
 #[test]
+fn none_and_number_range_tags_have_fixed_version_owned_bytes() {
+    for (field, expected) in [
+        (
+            "date",
+            r#"[
+  {
+    "id": "schema",
+    "key": "items",
+    "fields": [
+      {
+        "id": "date",
+        "key": "date",
+        "field_type": {
+          "type": "date"
+        },
+        "required": false,
+        "constraint": {
+          "type": "none"
+        }
+      }
+    ]
+  }
+]
+"#,
+        ),
+        (
+            "number",
+            r#"[
+  {
+    "id": "schema",
+    "key": "items",
+    "fields": [
+      {
+        "id": "number",
+        "key": "number",
+        "field_type": {
+          "type": "number"
+        },
+        "required": false,
+        "constraint": {
+          "type": "number_inclusive_range",
+          "min": 0,
+          "max": 10
+        }
+      }
+    ]
+  }
+]
+"#,
+        ),
+    ] {
+        let mut document = fixture();
+        document.entities.clear();
+        document
+            .schemas
+            .get_mut(&"schema".into())
+            .unwrap()
+            .fields
+            .retain(|id, _| id.as_str() == field);
+        let tree = encode_roproj_v3(&document).unwrap();
+        assert_eq!(tree.file("schemas.json").unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
 fn all_constraint_tags_date_formulas_and_stable_ids_roundtrip_without_reinterpretation() {
     let original = fixture();
     assert!(tachiko_semantic_core::validate_document(&original).is_empty());
@@ -210,6 +275,16 @@ fn all_constraint_tags_date_formulas_and_stable_ids_roundtrip_without_reinterpre
 fn closed_constraints_dates_and_canonical_bytes_are_rejected_without_repair() {
     let tree = encode_roproj_v3(&fixture()).unwrap();
     for (path, old, new) in [
+        (
+            "schemas.json",
+            "        \"required\": false,\n        \"constraint\": {\n          \"type\": \"none\"\n        }",
+            "        \"required\": false",
+        ),
+        (
+            "schemas.json",
+            "        \"constraint\": {\n          \"type\": \"none\"\n        }",
+            "        \"constraint\": null",
+        ),
         (
             "schemas.json",
             "\"constraint\": {",
@@ -264,6 +339,12 @@ fn closed_constraints_dates_and_canonical_bytes_are_rejected_without_repair() {
     let mut extra = files(&tree);
     extra.push(("views.json".into(), b"{}\n".to_vec()));
     assert!(CanonicalRoProjectV3::try_from_files(extra).is_err());
+    let mut reordered = files(&tree);
+    reordered.swap(0, 1);
+    assert!(CanonicalRoProjectV3::try_from_files(reordered).is_err());
+    let mut reversed = files(&tree);
+    reversed.reverse();
+    assert!(CanonicalRoProjectV3::try_from_files(reversed).is_err());
     assert!(
         CanonicalRoProjectV3::try_from_files(replace(
             &tree,
