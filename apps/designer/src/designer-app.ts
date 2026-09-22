@@ -1197,8 +1197,8 @@ export function mountDesigner(
     else dialog.setAttribute("open", "");
   };
 
-  const publishNativeColumn = async (request: Parameters<NonNullable<DesignerClient["trackerCommand"]>>[0]): Promise<boolean> => {
-    if (!store || !client.trackerCommand || busy) return false;
+  const publishNativeColumn = async (request: Parameters<NonNullable<DesignerClient["trackerCommand"]>>[0]): Promise<boolean | null> => {
+    if (!store || !client.trackerCommand || busy) return null;
     const table = store.snapshot().table;
     busy = true; notice = null; render();
     let published = false;
@@ -1253,7 +1253,7 @@ export function mountDesigner(
       }
       const input: ScalarEditInput = type === "number" ? {kind: "number", input: value} : type === "boolean" ? {kind: "boolean", value: value === "true"} : type === "date" ? {kind: "date", value} : {kind: "text", value};
       const accepted = await publishNativeColumn({type: "add_column", expected_revision: table.revision, collection: table.collection.id, name, field_type: type, initializers: table.rows.map(row => ({entity: row.id, input}))});
-      if (!accepted) openAddColumn({name, type, value, fixed});
+      if (accepted === false) openAddColumn({name, type, value, fixed});
     });
     if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
     dialog.querySelector<HTMLElement>("[aria-label='Column name']")?.focus();
@@ -1282,7 +1282,7 @@ export function mountDesigner(
         ? {type: "rename_column" as const, expected_revision: table.revision, collection: table.collection.id, field, name}
         : {type: "remove_column" as const, expected_revision: table.revision, collection: table.collection.id, field};
       const accepted = await publishNativeColumn(request);
-      if (!accepted) openChangeColumn(action, name);
+      if (accepted === false) openChangeColumn(action, name);
     });
     if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
     dialog.querySelector<HTMLElement>(action === "rename" ? "[aria-label='New column name']" : "button[type='submit']")?.focus();
