@@ -1259,10 +1259,10 @@ export function mountDesigner(
     dialog.querySelector<HTMLElement>("[aria-label='Column name']")?.focus();
   };
 
-  const openChangeColumn = (action: "rename" | "remove", draftName = ""): void => {
+  const openChangeColumn = (action: "rename" | "remove", draftName = "", retryField?: string): void => {
     const table = store?.snapshot().table;
     if (!table || !client.trackerCommand || busy || table.native_table_profile !== true) return;
-    const field = root.querySelector<HTMLSelectElement>("[data-column-to-change]")?.value ?? "";
+    const field = retryField ?? root.querySelector<HTMLSelectElement>("[data-column-to-change]")?.value ?? "";
     if (!table.columns.some(column => column.id === field)) return;
     const dialog = document.createElement("dialog");
     dialog.setAttribute("aria-label", action === "rename" ? "Rename column" : "Remove column");
@@ -1282,7 +1282,7 @@ export function mountDesigner(
         ? {type: "rename_column" as const, expected_revision: table.revision, collection: table.collection.id, field, name}
         : {type: "remove_column" as const, expected_revision: table.revision, collection: table.collection.id, field};
       const accepted = await publishNativeColumn(request);
-      if (accepted === false) openChangeColumn(action, name);
+      if (accepted === false) openChangeColumn(action, name, field);
     });
     if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
     dialog.querySelector<HTMLElement>(action === "rename" ? "[aria-label='New column name']" : "button[type='submit']")?.focus();
