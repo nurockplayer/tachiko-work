@@ -3,8 +3,9 @@
 Decision state: Mixed — Accepted invariants under ADR-0017 and Accepted
 `.roproj` namespace format-1 DTO, dispatch, and canonicalization rules under
 ADR-0023; the format-2 definition-persistence contract under ADR-0037; the distinct portable-package v1 namespace and dispatch boundary are
-Accepted under ADR-0025; direct-JSON Milestone 02 representation mechanics are
-Provisional where marked.
+Accepted under ADR-0025; the bounded format-3 constraint-preserving contract
+and explicit v2→v3 migration boundary are Accepted under ADR-0041;
+direct-JSON Milestone 02 representation mechanics are Provisional where marked.
 
 Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
 deterministic `legacy-direct-ro/v1` → `direct-ro/v2` migration, canonical
@@ -20,9 +21,8 @@ reader, bounded host workflow, and CLI pack/unpack/compare operations are
 implemented by #3.
 
 Authority: ADR-0017; ADR-0023 for `.roproj` format version 1; ADR-0037 for
-format version 2;
-ADR-0025 for
-`tachiko.portable-package/v1`
+format version 2; ADR-0041 for format version 3 and its explicit v2→v3
+migration boundary; ADR-0025 for `tachiko.portable-package/v1`
 
 Implementation parent: #74
 
@@ -35,16 +35,20 @@ Conformance and identity integration: #40, #70
 Define how Tachiko Work selects persisted representation versions, separates versioned storage DTOs from semantic-core, handles unsupported or malformed versions, and performs explicit migration without silently changing durable state.
 
 This specification records the Accepted `.roproj` editable-directory
-representation namespace and its format versions 1 and 2, manifest-first
+representation namespace and its format versions 1, 2, and 3, manifest-first
 dispatch, canonical-tree, and bounded-canonicalizer contract in
 [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
 [roproj-layout-v1.md](roproj-layout-v1.md), and
 [roproj-format.md](roproj-format.md), plus the v2 target in
 [ADR-0037](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md),
 [roproj-layout-v2.md](roproj-layout-v2.md), and
-[roproj-format-v2.md](roproj-format-v2.md). It does not
-define the production `.roproj` reader/writer codec, `.roproj` resource/error
-profile or precedence, normal-open versus explicit-canonicalize/import policy,
+[roproj-format-v2.md](roproj-format-v2.md), and the v3 constraint-preserving
+extension in [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md),
+[roproj-layout-v3.md](roproj-layout-v3.md), and
+[roproj-format-v3.md](roproj-format-v3.md). The v1 codec and bounded v2 codec
+are implemented; v3 remains docs-only and unimplemented. This specification
+does not define the `.roproj` resource/error profile or precedence, normal-open
+versus explicit-canonicalize/import policy,
 Git integration (#44), semantic delta (#45), three-way merge (#46), numeric
 semantics beyond ADR-0018 (#24), the cross-client diagnostic envelope
 (decision issue #23 / ADR-0019), or host-specific filesystem/browser
@@ -61,11 +65,11 @@ Version numbers are local to a known representation profile/context.
 The following are distinct namespaces:
 
 - legacy/current direct `.ro` JSON representation;
-- `.roproj` editable directory materialization (`format_version` 1 and 2);
+- `.roproj` editable directory materialization (`format_version` 1, 2, and 3);
 - `tachiko.portable-package/v1` portable container profile.
 
 The same integer in distinct representation namespaces does not imply the
-same wire schema. In particular, `.roproj/v1` and `.roproj/v2` are distinct
+same wire schema. In particular, `.roproj/v1`, `.roproj/v2`, and `.roproj/v3` are distinct
 versioned contracts in one editable-directory namespace and are distinct from
 `legacy-direct-ro/v1`, `direct-ro/v2`, and
 `tachiko.portable-package/v1`.
@@ -74,8 +78,9 @@ The shipped v0.1 direct `.ro` JSON is frozen as the
 `legacy-direct-ro/v1` compatibility profile. Its implemented incompatible
 successor is `direct-ro/v2` within the same direct-JSON namespace. This does not
 assign `.roproj` version `2`; ADR-0037 separately accepts `.roproj/v2` for
-the one keyed grouped-sum definition DTO, and neither version aliases a
-direct-JSON DTO.
+the one keyed grouped-sum definition DTO. ADR-0041 separately accepts
+`.roproj/v3` for the bounded constraint-preserving DTO/layout and explicit
+conversion boundary; neither `.roproj` version aliases a direct-JSON DTO.
 
 ## Version envelope
 
