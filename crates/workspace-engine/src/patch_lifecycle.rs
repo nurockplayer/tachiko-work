@@ -2364,10 +2364,8 @@ impl PatchLifecycle {
             FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
         ) || !field.required
         {
-            return Err(WorkspaceError::InvalidDocument {
-                role: super::ValidationRole::Candidate,
-                summary: "native field evolution requires a required scalar field".to_owned(),
-                report: super::validation_report(candidate),
+            return Err(WorkspaceError::TypeMismatch {
+                field: FieldRef::new("schema", field.id.clone()),
             });
         }
         let schema =
@@ -2407,6 +2405,19 @@ impl PatchLifecycle {
                     .cloned()
                     .unwrap_or_else(|| EntityId::from("field-values")),
             });
+        }
+        for (entity, value) in values {
+            if !matches!(
+                (value, &field.field_type),
+                (Value::Text(_), FieldType::Text)
+                    | (Value::Number(_), FieldType::Number)
+                    | (Value::Boolean(_), FieldType::Boolean)
+                    | (Value::Date(_), FieldType::Date)
+            ) {
+                return Err(WorkspaceError::TypeMismatch {
+                    field: FieldRef::new(entity.clone(), field.id.clone()),
+                });
+            }
         }
         candidate
             .schemas
@@ -2488,6 +2499,36 @@ impl PatchLifecycle {
                     })
                     .cloned()
                     .unwrap_or_else(|| EntityId::from("field-values")),
+            });
+        }
+        let schema_entities = entities.clone();
+        let field_is_referenced_by_formula = candidate
+            .entities
+            .values()
+            .flat_map(|entity| entity.fields.values())
+            .any(|value| match value {
+                Value::Formula(expression) => {
+                    expression_references(expression).iter().any(|reference| {
+                        reference.field == field.id && schema_entities.contains(&reference.entity)
+                    })
+                }
+                _ => false,
+            });
+        let field_is_referenced_by_definition = candidate
+            .keyed_grouped_sum_definitions
+            .values()
+            .any(|definition| {
+                (definition.orders.schema == *schema_id
+                    && (definition.orders.lookup_key_field == field.id
+                        || definition.orders.quantity_field == field.id))
+                    || (definition.products.schema == *schema_id
+                        && (definition.products.key_field == field.id
+                            || definition.products.category_field == field.id
+                            || definition.products.price_field == field.id))
+            });
+        if field_is_referenced_by_formula || field_is_referenced_by_definition {
+            return Err(WorkspaceError::SchemaFieldReferenced {
+                field: FieldRef::new(schema_id.to_string(), field.id.clone()),
             });
         }
         candidate

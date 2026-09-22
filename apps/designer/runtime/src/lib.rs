@@ -4300,11 +4300,7 @@ fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
 }
 
 fn native_column_lifecycle_key(label: &str) -> Result<String, DesignerError> {
-    let key = label.trim();
-    if key.is_empty() || key.len() > MAX_PROFILE_STRING_BYTES {
-        return Err(table_error("column names must be nonempty bounded text"));
-    }
-    Ok(key.to_owned())
+    native_table_key(label, "column name")
 }
 
 fn duplicate_collection_key(label: &str) -> Result<String, DesignerError> {
@@ -4377,10 +4373,296 @@ fn parse_column_initializer(
 }
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use tachiko_workspace_engine::{SemanticChange, compare_documents};
+
     use super::{
-        DesignerError, DesignerRequest, DesignerRuntime, EntityId, MAX_WIDTH_FINITE_JSON_NUMBER,
-        ProposalId,
+        ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime, EntityId,
+        FieldDefinition, FieldId, FieldKey, FieldType, KeyedGroupedSumDefinitionInput,
+        MAX_WIDTH_FINITE_JSON_NUMBER, NewTableColumnInput, PatchLifecycleError, PrincipalId,
+        PrincipalKind, ProposalId, ScalarEditInput, SemanticCommand, Value,
     };
+
+    fn native_column_runtime(columns: &[(&str, &str)], values: &[&str]) -> DesignerRuntime {
+        let mut runtime = DesignerRuntime::new_table(
+            "00000000-0000-4000-8000-000000000000",
+            "Orders",
+            &columns
+                .iter()
+                .map(|(name, field_type)| NewTableColumnInput {
+                    name: (*name).to_owned(),
+                    field_type: (*field_type).to_owned(),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let start = runtime.collection_specs["orders"].columns[0].id.to_string();
+        runtime
+            .paste_cells(
+                "resident/0",
+                "orders",
+                None,
+                &start,
+                &[values.iter().map(|value| (*value).to_owned()).collect()],
+            )
+            .unwrap();
+        runtime
+    }
+
+    fn native_column_ids(runtime: &DesignerRuntime) -> BTreeMap<String, FieldId> {
+        runtime.collection_specs["orders"]
+            .columns
+            .iter()
+            .map(|column| (column.key.clone(), column.id.clone()))
+            .collect()
+    }
+
+    fn keyed_definition(runtime: &DesignerRuntime, quantity: &FieldId) -> KeyedGroupedSumDefinitionInput {
+        let ids = native_column_ids(runtime);
+        let schema = runtime.collection_specs["orders"].summary.id.clone();
+        KeyedGroupedSumDefinitionInput {
+            id: "orders-summary".to_owned(),
+            orders_schema: schema.clone(),
+            order_lookup_key_field: ids["lookup"].to_string(),
+            order_quantity_field: quantity.to_string(),
+            products_schema: schema,
+            product_key_field: ids["product_key"].to_string(),
+            product_category_field: ids["category"].to_string(),
+            product_price_field: ids["price"].to_string(),
+        }
+    }
+
+    fn text_initializers(runtime: &DesignerRuntime, value: &str) -> Vec<ColumnInitializer> {
+        runtime.collection_specs["orders"]
+            .entities
+            .iter()
+            .map(|entity| ColumnInitializer {
+                entity: entity.to_string(),
+                input: ScalarEditInput::Text {
+                    value: value.to_owned(),
+                },
+            })
+            .collect()
+    }
+
+    #[test]
+    fn native_column_lifecycle_emits_exact_schema_deltas_and_keeps_stable_bindings() {
+        let mut runtime = native_column_runtime(&[("Lookup", "text"), ("Quantity", "number")], &["P-100", "2"]);
+        let before_add = runtime.session.export_snapshot().document().clone();
+        let row = runtime.collection_specs["orders"].entities[0].to_string();
+        let add = runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "Status",
+                "text",
+                &[ColumnInitializer {
+                    entity: row,
+                    input: ScalarEditInput::Text { value: "open".to_owned() },
+                }],
+            )
+            .unwrap();
+        let added_id = native_column_ids(&runtime)["status"].clone();
+        let after_add = runtime.session.export_snapshot().document().clone();
+        let add_changes = compare_documents(&before_add, &after_add).unwrap();
+        assert!(add_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::SchemaFieldAdded { field, definition, .. }
+                if field == &added_id && definition.key.as_str() == "status"
+        )));
+        assert!(add_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::FieldAdded { field, value: Value::Text(value) }
+                if field.field == added_id && value == "open"
+        )));
+
+        let before_rename = after_add.clone();
+        runtime
+            .rename_column(&add.resulting_revision, "orders", added_id.as_str(), "Current_status")
+            .unwrap();
+        let after_rename = runtime.session.export_snapshot().document().clone();
+        let rename_changes = compare_documents(&before_rename, &after_rename).unwrap();
+        assert!(rename_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::FieldKeyChanged { field, before, after, .. }
+                if field == &added_id && before.as_str() == "status" && after.as_str() == "current_status"
+        )));
+
+        let revision = runtime.current_revision().to_owned();
+        runtime.remove_column(&revision, "orders", added_id.as_str()).unwrap();
+        let after_remove = runtime.session.export_snapshot().document().clone();
+        let remove_changes = compare_documents(&after_rename, &after_remove).unwrap();
+        assert!(remove_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::SchemaFieldRemoved { field, definition, .. }
+                if field == &added_id && definition.key.as_str() == "current_status"
+        )));
+        assert!(remove_changes.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::FieldRemoved { field, value: Value::Text(value) }
+                if field.field == added_id && value == "open"
+        )));
+    }
+
+    #[test]
+    fn native_column_rejects_formula_and_saved_definition_dependents_before_publication() {
+        let formula_base = native_column_runtime(
+            &[("Source", "number"), ("Derived", "number")],
+            &["1", "2"],
+        );
+        let ids = native_column_ids(&formula_base);
+        let entity = formula_base.collection_specs["orders"].entities[0].clone();
+        let derived = ids["derived"].clone();
+        let source = ids["source"].clone();
+        let mut document = formula_base.session.export_snapshot().document().clone();
+        document.entities.get_mut(&entity).unwrap().fields.insert(
+            derived,
+            Value::Formula(super::Expression::Reference(super::FieldRef::new(
+                entity.clone(),
+                source.clone(),
+            ))),
+        );
+        let mut formula_runtime = DesignerRuntime::from_document(
+            document,
+            "00000000-0000-4000-8000-000000000000",
+        )
+        .unwrap();
+        formula_runtime.collection_specs.get_mut("orders").unwrap().native_table_rows = true;
+        let before = formula_runtime.export_project("resident/0").unwrap().bytes;
+        let error = formula_runtime.remove_column("resident/0", "orders", source.as_str()).unwrap_err();
+        assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })));
+        assert_eq!(formula_runtime.current_revision(), "resident/0");
+        assert_eq!(formula_runtime.export_project("resident/0").unwrap().bytes, before);
+
+        let mut definition_runtime = native_column_runtime(
+            &[("Lookup", "text"), ("Quantity", "number"), ("Product_key", "text"), ("Category", "text"), ("Price", "number")],
+            &["P-100", "2", "P-100", "hardware", "3"],
+        );
+        let ids = native_column_ids(&definition_runtime);
+        definition_runtime
+            .create_keyed_grouped_sum(
+                "resident/1",
+                keyed_definition(&definition_runtime, &ids["quantity"]),
+            )
+            .unwrap();
+        definition_runtime
+            .rename_column(
+                "resident/2",
+                "orders",
+                ids["quantity"].as_str(),
+                "quantity_renamed",
+            )
+            .unwrap();
+        let snapshot = definition_runtime.session.export_snapshot();
+        let definition = snapshot
+            .document()
+            .keyed_grouped_sum_definitions
+            .get(&super::KeyedGroupedSumDefinitionId::from("orders-summary"))
+            .unwrap();
+        assert_eq!(definition.orders.quantity_field, ids["quantity"]);
+        let before = definition_runtime.export_project("resident/3").unwrap().bytes;
+        let error = definition_runtime
+            .remove_column("resident/3", "orders", ids["quantity"].as_str())
+            .unwrap_err();
+        assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })));
+        assert_eq!(definition_runtime.current_revision(), "resident/3");
+        assert_eq!(definition_runtime.export_project("resident/3").unwrap().bytes, before);
+    }
+
+    #[test]
+    fn native_column_inverse_dependency_refusal_preserves_history_and_current_state() {
+        let mut runtime = native_column_runtime(
+            &[("Lookup", "text"), ("Product_key", "text"), ("Category", "text"), ("Price", "number")],
+            &["P-100", "P-100", "hardware", "3"],
+        );
+        let publication = runtime
+            .add_column("resident/1", "orders", "Quantity", "number", &[ColumnInitializer {
+                entity: runtime.collection_specs["orders"].entities[0].to_string(),
+                input: ScalarEditInput::Number { input: "2".to_owned() },
+            }])
+            .unwrap();
+        let quantity = native_column_ids(&runtime)["quantity"].clone();
+        runtime
+            .create_keyed_grouped_sum(&publication.resulting_revision, keyed_definition(&runtime, &quantity))
+            .unwrap();
+        let revision = runtime.current_revision().to_owned();
+        let before = runtime.export_project(&revision).unwrap().bytes;
+        let undo_count = runtime.undo.len();
+        let error = runtime.history_edit(&revision, false).unwrap_err();
+        assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })));
+        assert_eq!(runtime.current_revision(), revision);
+        assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert!(runtime.redo.is_empty());
+    }
+
+    #[test]
+    fn native_column_core_command_rejects_non_direct_initializers_and_denied_principals() {
+        let mut runtime = native_column_runtime(&[("Value", "number")], &["1"]);
+        let schema = runtime.collection_specs["orders"].summary.id.clone();
+        let entity = runtime.collection_specs["orders"].entities[0].clone();
+        for value in [
+            Value::Formula(super::Expression::Number(super::Number::new(2.0).unwrap())),
+            Value::Reference(entity.clone()),
+        ] {
+            let error = runtime
+                .publish_commands(
+                    "resident/1",
+                    vec![SemanticCommand::AppendSchemaField {
+                        schema: schema.clone().into(),
+                        field: FieldDefinition {
+                            id: FieldId::from(format!("bad-{}", runtime.proposal_serial)),
+                            key: FieldKey::from(format!("bad_{}", runtime.proposal_serial)),
+                            field_type: FieldType::Number,
+                            required: true,
+                        },
+                        values: BTreeMap::from([(entity.clone(), value)]),
+                    }],
+                )
+                .unwrap_err();
+            assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })));
+            assert_eq!(runtime.current_revision(), "resident/1");
+        }
+
+        let before = runtime.export_project("resident/1").unwrap().bytes;
+        let permitted = runtime.principal.clone();
+        let denied = PrincipalId::from("column-denied");
+        runtime.lifecycle.register_principal(denied.clone(), PrincipalKind::Human).unwrap();
+        runtime.principal = denied.clone();
+        let error = runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "Blocked",
+                "text",
+                &text_initializers(&runtime, "x"),
+            )
+            .unwrap_err();
+        assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })));
+        assert_eq!(runtime.current_revision(), "resident/1");
+        assert_eq!(runtime.export_project("resident/1").unwrap().bytes, before);
+        runtime.principal = permitted;
+        runtime
+            .add_column(
+                "resident/1",
+                "orders",
+                "removable",
+                "text",
+                &text_initializers(&runtime, "x"),
+            )
+            .unwrap();
+        let removable = native_column_ids(&runtime)["removable"].clone();
+        let revision = runtime.current_revision().to_owned();
+        let before = runtime.export_project(&revision).unwrap().bytes;
+        runtime.principal = denied;
+        let error = runtime
+            .remove_column(&revision, "orders", removable.as_str())
+            .unwrap_err();
+        assert!(matches!(error, DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })));
+        assert_eq!(runtime.current_revision(), revision);
+        assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+    }
 
     fn assert_duplicate_rejected_without_publication(runtime: &mut DesignerRuntime) {
         let before = runtime.export_project("resident/0").unwrap();
