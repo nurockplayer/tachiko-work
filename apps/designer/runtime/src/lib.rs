@@ -1448,10 +1448,14 @@ impl DesignerRuntime {
                 "initializers must name each current row exactly once",
             ));
         }
-        let serial = usize::try_from(self.proposal_serial)
-            .map_err(|_| tracker_error("column identity counter exceeds this platform"))?;
-        let mut ids = NewTableIds::with_serial(&format!("{}/column", self.row_namespace), serial);
-        let id = FieldId::from(ids.generate(SemanticIdKind::Field));
+        let serial = self
+            .proposal_serial
+            .checked_add(1)
+            .ok_or_else(|| table_error("column identity allocation is exhausted"))?;
+        let id = FieldId::from(format!(
+            "native_table_field_{serial:04}_{}/column",
+            self.row_namespace
+        ));
         let field = FieldDefinition {
             id: id.clone(),
             key: FieldKey::from(key),
@@ -4730,6 +4734,66 @@ mod tests {
             SemanticChange::FieldRemoved { field, value: Value::Text(value) }
                 if field.field == added_id && value == "open"
         )));
+    }
+
+    #[test]
+    fn native_column_identity_counter_exhaustion_fails_closed_without_mutation() {
+        let mut last_available = native_column_runtime(&[("Item", "text")], &["widget"]);
+        last_available.proposal_serial = u64::MAX - 1;
+        let entity = last_available.collection_specs["orders"].entities[0].to_string();
+        last_available
+            .add_column(
+                "resident/1",
+                "orders",
+                "Last",
+                "text",
+                &[ColumnInitializer {
+                    entity,
+                    input: ScalarEditInput::Text {
+                        value: "available".to_owned(),
+                    },
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            native_column_ids(&last_available)["last"].as_str(),
+            "native_table_field_18446744073709551615_00000000-0000-4000-8000-000000000000/column"
+        );
+
+        let mut exhausted = native_column_runtime(&[("Item", "text")], &["widget"]);
+        exhausted.proposal_serial = u64::MAX;
+        let before = exhausted.export_project("resident/1").unwrap().bytes;
+        let undo_count = exhausted.undo.len();
+        let redo_count = exhausted.redo.len();
+        let counter = exhausted.proposal_serial;
+        let entity = exhausted.collection_specs["orders"].entities[0].to_string();
+        let error = exhausted
+            .add_column(
+                "resident/1",
+                "orders",
+                "Unavailable",
+                "text",
+                &[ColumnInitializer {
+                    entity,
+                    input: ScalarEditInput::Text {
+                        value: "unpublished".to_owned(),
+                    },
+                }],
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::InvalidTableOperation { ref message }
+                if message == "column identity allocation is exhausted"
+        ));
+        assert_eq!(exhausted.current_revision(), "resident/1");
+        assert_eq!(
+            exhausted.export_project("resident/1").unwrap().bytes,
+            before
+        );
+        assert_eq!(exhausted.undo.len(), undo_count);
+        assert_eq!(exhausted.redo.len(), redo_count);
+        assert_eq!(exhausted.proposal_serial, counter);
     }
 
     fn assert_native_column_removal_is_rejected(
