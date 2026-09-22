@@ -228,6 +228,7 @@ export default defineConfig({
   testDir: ${js(testDir)},
   testIgnore: /experimental-client\\.spec\\.ts$/,
   fullyParallel: false,
+  workers: 2,
   retries: 0,
   reporter: [["line"], ["json", { outputFile: ${js(`${verificationDir}/report.json`)} }]],
   outputDir: ${js(`${verificationDir}/test-results`)},
