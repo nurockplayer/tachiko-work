@@ -350,8 +350,9 @@ compatibility contract.
 ADR-0040 admits two revision-pinned candidate command families: add one
 required `Text`, `Number`, `Boolean`, or `Date` field with a fresh stable
 identity and one explicit direct stored value of that exact scalar type for
-every existing entity; Formula and Reference values are not initializers. The
-remove operation refuses a candidate with a surviving formula, reference, or
+every existing entity; Formula and Reference values are not initializers; or
+remove one existing field of those same scalar types. The remove operation
+refuses a candidate with a surviving formula, reference, or
 other Accepted durable definition that depends on that field. They preserve
 every surviving semantic identity, publish atomically through the same
 Propose/Execute and gate laws, and never infer a default, null, coercion, or

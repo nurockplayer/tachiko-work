@@ -36,9 +36,10 @@ atomic candidate transition:
    is required. The candidate supplies one explicit direct stored value of that
    exact scalar type for the field in every entity already in the schema. A
    Formula or Reference value is not an initializer.
-2. **Remove unreferenced field** removes one existing `FieldId` and its stored
-   values. It is permitted only when no surviving formula, reference, or other
-   Accepted durable semantic definition depends on that `FieldId`.
+2. **Remove unreferenced scalar field** removes one existing `Text`, `Number`,
+   `Boolean`, or `Date` `FieldId` and its stored values. It is permitted only
+   when no surviving formula, reference, or other Accepted durable semantic
+   definition depends on that `FieldId`.
 
 Surviving schema, field, entity, relationship, and formula identities remain
 unchanged. Presentation order is a projection and is never semantic identity.
