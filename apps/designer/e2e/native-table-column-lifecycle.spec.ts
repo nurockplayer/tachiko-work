@@ -230,7 +230,7 @@ test("rejected rename retains the selected non-first FieldId through retry", asy
   const target = page.getByLabel("Column to change", { exact: true });
   await target.selectOption({ label: "quantity" });
   const quantityId = await target.inputValue();
-  const quantityCells = before.filter(cell => cell.field === quantityId);
+  const quantityCells = before.filter(cell => cell.field === JSON.stringify(quantityId));
   expect(quantityCells).toHaveLength(3);
   await page.getByRole("button", { name: "Rename column", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Rename column", exact: true });
@@ -249,5 +249,5 @@ test("rejected rename retains the selected non-first FieldId through retry", asy
   expect(await cells(page)).toEqual(before);
   await target.selectOption({ label: "stock" });
   await expect(target).toHaveValue(quantityId);
-  expect((await cells(page)).filter(cell => cell.field === quantityId)).toEqual(quantityCells);
+  expect((await cells(page)).filter(cell => cell.field === JSON.stringify(quantityId))).toEqual(quantityCells);
 });
