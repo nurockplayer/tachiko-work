@@ -1448,10 +1448,9 @@ impl DesignerRuntime {
                 "initializers must name each current row exactly once",
             ));
         }
-        let mut ids = NewTableIds::with_serial(
-            &format!("{}/column", self.row_namespace),
-            self.proposal_serial as usize,
-        );
+        let serial = usize::try_from(self.proposal_serial)
+            .map_err(|_| tracker_error("column identity counter exceeds this platform"))?;
+        let mut ids = NewTableIds::with_serial(&format!("{}/column", self.row_namespace), serial);
         let id = FieldId::from(ids.generate(SemanticIdKind::Field));
         let field = FieldDefinition {
             id: id.clone(),
@@ -4733,6 +4732,30 @@ mod tests {
         )));
     }
 
+    fn assert_native_column_removal_is_rejected(
+        runtime: &mut DesignerRuntime,
+        expected_revision: &str,
+        field: &str,
+    ) {
+        let before = runtime.export_project(expected_revision).unwrap().bytes;
+        let undo_count = runtime.undo.len();
+        let redo_count = runtime.redo.len();
+        let error = runtime
+            .remove_column(expected_revision, "orders", field)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
+        ));
+        assert_eq!(runtime.current_revision(), expected_revision);
+        assert_eq!(
+            runtime.export_project(expected_revision).unwrap().bytes,
+            before
+        );
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert_eq!(runtime.redo.len(), redo_count);
+    }
+
     #[test]
     fn native_column_rejects_formula_and_saved_definition_dependents_before_publication() {
         let formula_base =
@@ -4757,37 +4780,16 @@ mod tests {
             .get_mut("orders")
             .unwrap()
             .native_table_rows = true;
-        let before = formula_runtime.export_project("resident/0").unwrap().bytes;
-        let error = formula_runtime
-            .remove_column("resident/0", "orders", source.as_str())
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
-        ));
-        assert_eq!(formula_runtime.current_revision(), "resident/0");
-        assert_eq!(
-            formula_runtime.export_project("resident/0").unwrap().bytes,
-            before
+        assert_native_column_removal_is_rejected(
+            &mut formula_runtime,
+            "resident/0",
+            source.as_str(),
         );
-
-        let before = formula_runtime.export_project("resident/0").unwrap().bytes;
-        let undo_count = formula_runtime.undo.len();
-        let redo_count = formula_runtime.redo.len();
-        let error = formula_runtime
-            .remove_column("resident/0", "orders", derived.as_str())
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
-        ));
-        assert_eq!(formula_runtime.current_revision(), "resident/0");
-        assert_eq!(
-            formula_runtime.export_project("resident/0").unwrap().bytes,
-            before
+        assert_native_column_removal_is_rejected(
+            &mut formula_runtime,
+            "resident/0",
+            derived.as_str(),
         );
-        assert_eq!(formula_runtime.undo.len(), undo_count);
-        assert_eq!(formula_runtime.redo.len(), redo_count);
 
         let mut definition_runtime = native_column_runtime(
             &[
@@ -4821,24 +4823,10 @@ mod tests {
             .get(&super::KeyedGroupedSumDefinitionId::from("orders-summary"))
             .unwrap();
         assert_eq!(definition.orders.quantity_field, ids["quantity"]);
-        let before = definition_runtime
-            .export_project("resident/3")
-            .unwrap()
-            .bytes;
-        let error = definition_runtime
-            .remove_column("resident/3", "orders", ids["quantity"].as_str())
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
-        ));
-        assert_eq!(definition_runtime.current_revision(), "resident/3");
-        assert_eq!(
-            definition_runtime
-                .export_project("resident/3")
-                .unwrap()
-                .bytes,
-            before
+        assert_native_column_removal_is_rejected(
+            &mut definition_runtime,
+            "resident/3",
+            ids["quantity"].as_str(),
         );
     }
 
