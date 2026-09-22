@@ -89,6 +89,7 @@ test("Inventory row lifecycle preserves surviving identities through history and
   await page.getByRole("button", { name: "Remove selected rows", exact: true }).click();
   const remove = page.getByRole("dialog", { name: "Remove selected rows", exact: true });
   await expect(remove).toContainText(/2 rows/);
+  await expect(remove).toContainText(/delet|lost|loss/i);
   await remove.getByRole("button", { name: "Remove rows", exact: true }).click();
   await expect.poll(() => cells(page)).toEqual(kept);
   const removedRevision = await page.getByTestId("revision").textContent();
@@ -125,4 +126,23 @@ test("invalid row preserves saved state, history and the user's draft", async ({
   await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
   await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
   await expect(page.getByRole("region", { name: "Session history", exact: true })).toHaveText(history ?? "");
+});
+
+
+test("an explicitly acknowledged blank Text value is a complete native row", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await inventory(page);
+  const before = await cells(page);
+  const ids = new Set(before.map(cell => cell.entity));
+  const dialog = await addRowDialog(page);
+  await dialog.getByLabel("item", { exact: true }).fill("");
+  await dialog.getByLabel("active", { exact: true }).selectOption("false");
+  await dialog.getByRole("button", { name: "Add row", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-generic-cell]")).toHaveCount(16);
+  const after = await cells(page);
+  expect(after.filter(cell => ids.has(cell.entity))).toEqual(before);
+  expect(after.filter(cell => !ids.has(cell.entity)).map(cell => cell.value).sort()).toEqual(
+    ["", "5", "false", "2026-09-22"].sort(),
+  );
 });
