@@ -342,6 +342,17 @@ Provisional. This implementation adds no generic CRUD wire contract, schema
 editor, cascading delete policy, persisted undo/history model, or spreadsheet
 compatibility contract.
 
+## Constraint-aware field mutation boundary
+
+ADR-0041 adds no second Semantic API operation vocabulary. A constraint edit is
+an ordinary current-base Propose/Execute semantic change against a stable
+`SchemaId` + `FieldId`, with affected-value evidence, atomic publication, live
+authority rechecks, and the existing revision/history laws. The shared
+application authority must apply the same constraint/type, value, and complete
+formula-result gates to native, WASM, paste, edit, calculation, and merge
+finalization. UI capability or validation projections are advisory and never
+authoritative. Exact public DTO, transport, SDK, and operation names remain
+Provisional/Deferred; this docs decision does not claim implementation.
 ## M04 formula reasoning and scenario Queries
 
 ADR-0020 promotes the following logical M04 operations without freezing their

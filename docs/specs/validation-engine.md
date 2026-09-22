@@ -126,7 +126,13 @@ currently represented requirements such as:
 - referenced schema existence;
 - required field presence;
 - unexpected fields where the current closed semantic model requires it; and
-- declared field type compatibility.
+- declared field type compatibility; and
+- the ADR-0041 constraint/type pairing and present-value constraint checks.
+
+A Text value must be a member of its field's admitted literal set when one is
+present. A Number value must be finite and within an inclusive range when one is
+present. Boolean, Date, and Reference fields admit only `none`. An absent
+optional value remains absent and is not replaced by a null or default.
 
 If the schema prerequisite is unavailable, dependent field checks are
 suppressed rather than guessed.
@@ -181,7 +187,10 @@ failed dependency
 
 The accepted full-recompute oracle, node-keyed failures, direct failed
 dependency sets, and no-partial-`CalculationState` publication remain formula
-authority. `calculate_complete()` exposes that authority; the fail-first
+authority. For a Number formula field, an inclusive range check consumes only
+the final result of a successful complete calculation. A failed or unavailable
+calculation suppresses the dependent range check and does not invent a value or
+change diagnostic precedence. `calculate_complete()` exposes that authority; the fail-first
 `CalculationError` family remains only a compatibility projection and is not a
 new validation or Semantic API failure contract.
 

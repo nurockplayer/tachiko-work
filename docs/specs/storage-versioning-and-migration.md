@@ -305,6 +305,25 @@ representation/version outcome for v2 pack input, and must not omit
 `definitions.json`, down-convert, or claim preservation. Package v2 remains
 separately Deferred.
 
+## `.roproj/v3` bounded constraint pipeline
+
+ADR-0041 accepts `.roproj/v3` as the next closed editable representation. It
+keeps the exact nineteen-file v2 tree and keyed-grouped-sum definitions, adds
+one required non-null constraint facet to every FieldDefinition, and admits the
+existing direct-ro/v2 Date scalar with no new Date semantics. The complete DTO
+and layout authority are [`roproj-format-v3.md`](roproj-format-v3.md) and
+[`roproj-layout-v3.md`](roproj-layout-v3.md). V1 and v2 remain frozen.
+
+The only supported migration edges are explicit v1→v2→v3 and v2→v3. A v2→v3
+migration decodes and admits the complete source, adds `none` to every field,
+preserves IDs, keys, types, requiredness, values, formulas, definitions, and
+meaning, validates and canonicalizes the complete candidate, then publishes to
+a distinct absent destination. It is deterministic and no-clobber. Ordinary
+read/save does not upgrade; malformed or unsupported sources fail before body
+reinterpretation. Existing private direct-ro/v2 Date projects enter v3 only
+through explicit user-selected conversion/export from an admitted semantic
+snapshot. Portable-package/v1 remains its exact v1 payload and package-v2 is
+outside this decision. No current implementation is claimed.
 ## Direct-JSON error precedence and machine meaning
 
 Storage-domain failures should preserve at least the following machine-distinguishable meanings:

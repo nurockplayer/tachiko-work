@@ -163,6 +163,36 @@ optimistic-concurrency predicates, JSON Patch `test` operations, or an
 `apply_if` language. Exact-base stale protection remains owned by
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md).
 
+## Canonical Semantic Delta v2 (constraint-aware profile)
+
+The logical contract identifier is exactly `tachiko.semantic-delta/v2`. V2
+retains the complete v1 contract: same-Document admission, stable typed
+subjects, direct-state-only evidence, parent suppression, continuity,
+non-overlap, unsupported-contract failure, and canonical tuple ordering. The
+frozen v1 contract is not amended or reinterpreted.
+
+V2 complete schema and field-definition payloads include the complete tagged
+`constraint` value, including `{"type":"none"}`. For a continuing schema
+field, constraint is an independent direct property after requiredness. The
+closed schema-field change ranks are:
+
+| Subject rank | Change rank | Change kind |
+| ---: | ---: | --- |
+| 2 | 0 | `schema_field_created` |
+| 2 | 1 | `schema_field_deleted` |
+| 2 | 2 | `schema_field_key_changed` |
+| 2 | 3 | `schema_field_type_changed` |
+| 2 | 4 | `schema_field_requiredness_changed` |
+| 2 | 5 | `schema_field_constraint_changed` |
+
+A constraint change emits exactly one atomic `schema_field_constraint_changed`
+fact with typed `before` and `after` tagged constraints. It is never omitted,
+collapsed into an empty delta, or represented as whole-field replacement. The
+constraint fact uses the stable `(SchemaId, FieldId)` target and the same direct
+fact/equality/order laws as v1. A consumer that does not support v2, the target,
+or the fact kind fails closed before producing evidence. V2 does not define a
+transport, SDK, patch/apply operation, or implementation DTO; those remain
+separately Ready work.
 ## Human-readable projection
 
 Traditional diff:

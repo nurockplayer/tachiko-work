@@ -20,6 +20,8 @@ The format documents have different roles. Do not treat similarly named files as
 | [`roproj-layout-v1.md`](roproj-layout-v1.md) | Exact `.roproj/v1` canonical tree, sharding, path, and canonicalization contract | Accepted under ADR-0023; native materialize/validate/explicit canonicalize workflow implemented by #123 |
 | [`roproj-format-v2.md`](roproj-format-v2.md) | Complete version-owned `.roproj/v2` DTO and keyed grouped-sum definition wire contract | Accepted under ADR-0037; implementation remains separately Ready work |
 | [`roproj-layout-v2.md`](roproj-layout-v2.md) | Exact `.roproj/v2` nineteen-file canonical tree and canonicalization contract | Accepted under ADR-0037; implementation remains separately Ready work |
+| [`roproj-format-v3.md`](roproj-format-v3.md) | Complete `.roproj/v3` DTO with two bounded field constraints and existing Date preservation | Accepted target under ADR-0041; docs-only authority, implementation unimplemented |
+| [`roproj-layout-v3.md`](roproj-layout-v3.md) | Exact `.roproj/v3` nineteen-file tree and v2 placement/canonicalization rules | Accepted under ADR-0041; docs-only authority, implementation unimplemented |
 | [`portable-package-v1.md`](portable-package-v1.md) | Exact portable-package v1 ZIP32 bytes, payload integrity root, pack/unpack laws, conflict behavior, and conformance outcomes | Accepted under ADR-0025; production codec/native host/CLI workflow implemented by #3 |
 | [`runtime-export-v1.md`](runtime-export-v1.md) | Historical evaluated runtime JSON export contract | Frozen historical contract |
 | [`runtime-export-v2.md`](runtime-export-v2.md) | Current stable-identity/normalized-Number evaluated runtime JSON export | Provisional implemented contract |

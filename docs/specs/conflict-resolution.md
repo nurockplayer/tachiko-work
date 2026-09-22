@@ -351,6 +351,35 @@ for humans. Git refs, SHAs, branches, repositories, paths, and textual conflict
 markers MUST NOT enter semantic conflict identity or override semantic merge
 results.
 
+## Semantic Conflict v2 (constraint-aware profile)
+
+The logical contract identifier is exactly `tachiko.semantic-conflict/v2`. V2
+retains every v1 law: finalized same-Document admission, structural conflict
+kinds, typed stable targets, explicit absence, parent-child suppression,
+composite identity, canonical ordering, and separation from post-merge
+validation/calculation. V1 remains frozen and is not reinterpreted.
+
+The schema-field facet table is extended only by one facet after v1's
+`requiredness` rank:
+
+| Subject rank | Subject | Facet | Facet rank |
+| ---: | --- | --- | ---: |
+| 2 | Schema field | `subject` | 0 |
+| 2 | Schema field | `key` | 1 |
+| 2 | Schema field | `field_type` | 2 |
+| 2 | Schema field | `requiredness` | 3 |
+| 2 | Schema field | `constraint` | 4 |
+
+Complete schema subject facts include every complete field definition with its
+tagged `constraint`; complete schema-field subject facts include the tagged
+`constraint`, including `none`. Concurrent unequal edits to one continuing `(SchemaId, FieldId)`
+constraint produce one `constraint` facet conflict with the existing v1
+conflict-kind and canonical fact laws. They do not become per-variant conflicts
+or whole-field replacement. Unsupported contract, target/facet combination, or
+conflict kind fails closed. A conflict-free merged candidate still runs complete
+validation and formula finalization; an invalid candidate is a validation or
+calculation failure, never an invented conflict. V2 remains a logical contract
+only and does not stabilize a wire, SDK, or Rust DTO.
 ## Human-readable projection
 
 A client may render a conflict using current keys or localized prose, for

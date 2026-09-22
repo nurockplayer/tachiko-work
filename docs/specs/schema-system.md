@@ -140,14 +140,15 @@ specification does not define a general schema-migration engine.
 ## Future schema vocabulary
 
 Earlier exploratory documentation used broad terms such as `constraints`,
-`allowed values`, `computed fields`, and `validation rules`. Those terms do not
-constitute an Accepted generic rule language.
+`allowed values`, `computed fields`, and `validation rules`. ADR-0041 accepts
+only the closed `text_literal_set` and `number_inclusive_range` facets for
+`.roproj/v3`; it does not create a generic rule language.
 
 The following remain future schema work until concrete product/domain evidence
 justifies them:
 
-- enum/allowed-value semantics;
-- numeric ranges;
+- generic enum/allowed-value semantics beyond `text_literal_set`;
+- generic numeric ranges beyond `number_inclusive_range`;
 - string patterns;
 - defaults;
 - nominal type hierarchies;
