@@ -266,13 +266,13 @@ fn rename_and_remove_preserve_stable_identity_and_forward_history() {
         &mut runtime,
         &json!({
             "type":"rename_column", "expected_revision":before.revision,
-            "collection":before.collection.id, "field":field, "name":"改名",
+            "collection":before.collection.id, "field":field, "name":"renamed",
         }),
     );
     let renamed = table(&mut runtime, &before.collection.id);
     assert_eq!(renamed.rows, before.rows);
     assert_eq!(renamed.columns[1].id, *field);
-    assert_eq!(renamed.columns[1].key, "改名");
+    assert_eq!(renamed.columns[1].key, "renamed");
     publish(
         &mut runtime,
         &json!({"type":"undo","expected_revision":renamed.revision}),
