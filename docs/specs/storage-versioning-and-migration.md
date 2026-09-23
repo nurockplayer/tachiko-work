@@ -45,9 +45,9 @@ dispatch, canonical-tree, and bounded-canonicalizer contract in
 [roproj-format-v2.md](roproj-format-v2.md), and the v3 constraint-preserving
 extension in [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md),
 [roproj-layout-v3.md](roproj-layout-v3.md), and
-[roproj-format-v3.md](roproj-format-v3.md). The v1 codec and bounded v2 codec
-are implemented; v3 remains docs-only and unimplemented. This specification
-does not define the `.roproj` resource/error profile or precedence, normal-open
+[roproj-format-v3.md](roproj-format-v3.md). The v1 codec, bounded v2 codec,
+and #449's v3 storage codec/native canonical migration are implemented.
+This specification does not define the `.roproj` resource/error profile or precedence, normal-open
 versus explicit-canonicalize/import policy,
 Git integration (#44), semantic delta (#45), three-way merge (#46), numeric
 semantics beyond ADR-0018 (#24), the cross-client diagnostic envelope
@@ -332,7 +332,9 @@ reinterpretation. Existing Date projects held in the private `TWDPROJ2` host
 envelope (whose payload is direct-ro/v2) enter v3 only through explicit
 user-selected conversion/export from an admitted semantic snapshot.
 Portable-package/v1 remains its exact v1 payload and package-v2 is outside this
-decision. No current implementation is claimed.
+decision. The storage codec and native canonical migration are implemented by
+#449; application calculation admission, Designer selection/save, and
+private-project conversion remain separately owned by #452.
 ## Direct-JSON error precedence and machine meaning
 
 Storage-domain failures should preserve at least the following machine-distinguishable meanings:

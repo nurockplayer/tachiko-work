@@ -124,7 +124,7 @@ fn canonical_v3_has_exact_nineteen_files_and_normative_empty_bytes() {
     assert_eq!(
         tree.files()
             .iter()
-            .map(|file| file.path())
+            .map(tachiko_storage::CanonicalRoProjectFileV3::path)
             .collect::<Vec<_>>(),
         expected
     );
@@ -148,6 +148,8 @@ fn canonical_v3_has_exact_nineteen_files_and_normative_empty_bytes() {
 }
 
 #[test]
+// The fixed wire oracle deliberately distinguishes decomposed and composed Unicode.
+#[allow(clippy::unicode_not_nfc)]
 fn field_member_order_and_constraint_bytes_are_fixed() {
     let mut document = fixture();
     document.entities.clear();
@@ -246,7 +248,7 @@ fn none_and_number_range_tags_have_fixed_version_owned_bytes() {
         document.entities.clear();
         document
             .schemas
-            .get_mut(&"schema".into())
+            .get_mut("schema")
             .unwrap()
             .fields
             .retain(|id, _| id.as_str() == field);
@@ -456,7 +458,7 @@ fn writer_checks_shared_semantics_and_preserves_date_extremes() {
     let mut candidate = fixture();
     candidate
         .entities
-        .get_mut(&"entity-a".into())
+        .get_mut("entity-a")
         .unwrap()
         .fields
         .insert("number".into(), Value::Number(number(11.0)));
@@ -466,17 +468,17 @@ fn writer_checks_shared_semantics_and_preserves_date_extremes() {
     ));
     candidate
         .entities
-        .get_mut(&"entity-a".into())
+        .get_mut("entity-a")
         .unwrap()
         .fields
-        .remove(&"number".into());
+        .remove("number");
     for date in [
         Date::new(1, 1, 1).unwrap(),
         Date::new(9999, 12, 31).unwrap(),
     ] {
         candidate
             .entities
-            .get_mut(&"entity-a".into())
+            .get_mut("entity-a")
             .unwrap()
             .fields
             .insert("date".into(), Value::Date(date));

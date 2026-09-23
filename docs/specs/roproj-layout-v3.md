@@ -2,7 +2,10 @@
 
 Decision state: Accepted under [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md).
 
-Implementation state: Unimplemented docs-only authority.
+Implementation state: The strict exact-tree constructor, native manifest-first
+reader, atomic no-clobber publisher, and explicit canonical v1/v2 conversion
+are implemented by #449. Designer selection/save and portable-package support
+remain outside this implementation slice.
 
 ## Canonical tree
 
