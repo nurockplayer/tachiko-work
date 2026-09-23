@@ -15,6 +15,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> (FieldId, FieldDefi
             key,
             field_type,
             required,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         },
     )
 }

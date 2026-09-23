@@ -30,6 +30,7 @@ fn document() -> Document {
                             key: FieldKey::from("damage"),
                             field_type: FieldType::Number,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                     (
@@ -39,6 +40,7 @@ fn document() -> Document {
                             key: FieldKey::from("dps"),
                             field_type: FieldType::Number,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                 ]),

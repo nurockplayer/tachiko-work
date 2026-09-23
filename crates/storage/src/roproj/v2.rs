@@ -364,6 +364,7 @@ impl DefinitionV2 {
 /// Returns [`FormatError::InvalidDocument`] when semantic validation fails or
 /// [`FormatError::Json`] when canonical JSON string encoding fails.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV2, FormatError> {
+    super::super::reject_field_constraints(document)?;
     super::super::check_document(document)?;
     validate_semantic_expression_limits(document)?;
     validate_keyed_grouped_sum_definitions(document).map_err(|error| {
@@ -830,6 +831,7 @@ impl FieldDefinitionV2 {
             key: FieldKey::from(self.key),
             field_type: self.field_type.into_semantic()?,
             required: self.required,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         })
     }
 }
@@ -1673,6 +1675,7 @@ mod tests {
                         key: FieldKey::from("name"),
                         field_type: FieldType::Text,
                         required: false,
+                        constraint: tachiko_semantic_core::FieldConstraint::None,
                     },
                 )]),
             },

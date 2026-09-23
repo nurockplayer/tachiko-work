@@ -7,7 +7,9 @@ ADR-0011's merge laws except for the explicit ADR-0031 amendment that makes
 facet, and preserving the direct-state evidence boundary accepted by
 [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md).
 ADR-0041 accepts the constraint-aware logical v2 facet extension; v1 remains
-frozen and v2 is docs-only authority without a production constraint runtime.
+frozen and v2 is docs-only authority without a production v2 conflict facet.
+#448 implements the core constraint model and frozen v1 refusal boundary, not
+the v2 conflict implementation.
 
 Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
 and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)

@@ -25,6 +25,7 @@ fn number_document(number: Number) -> Document {
                         key: FieldKey::from("number"),
                         field_type: FieldType::Number,
                         required: true,
+                        constraint: tachiko_semantic_core::FieldConstraint::None,
                     },
                 )]),
             },

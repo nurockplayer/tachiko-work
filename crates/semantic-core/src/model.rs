@@ -383,6 +383,91 @@ pub struct FieldDefinition {
     pub key: FieldKey,
     pub field_type: FieldType,
     pub required: bool,
+    pub constraint: FieldConstraint,
+}
+
+/// Closed durable constraint declaration owned by a schema field.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FieldConstraint {
+    None,
+    TextLiteralSet { values: Vec<String> },
+    NumberInclusiveRange { min: Number, max: Number },
+}
+
+impl<'de> Deserialize<'de> for FieldConstraint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            None(NoneConstraint),
+            TextLiteralSet(TextLiteralSetConstraint),
+            NumberInclusiveRange(NumberInclusiveRangeConstraint),
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum NoneTag {
+            None,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum TextLiteralSetTag {
+            TextLiteralSet,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum NumberInclusiveRangeTag {
+            NumberInclusiveRange,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct NoneConstraint {
+            #[serde(rename = "type")]
+            _tag: NoneTag,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct TextLiteralSetConstraint {
+            #[serde(rename = "type")]
+            _tag: TextLiteralSetTag,
+            values: Vec<String>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct NumberInclusiveRangeConstraint {
+            #[serde(rename = "type")]
+            _tag: NumberInclusiveRangeTag,
+            min: Number,
+            max: Number,
+        }
+
+        match Wire::deserialize(deserializer)? {
+            Wire::None(_) => Ok(Self::None),
+            Wire::TextLiteralSet(constraint) => Ok(Self::TextLiteralSet {
+                values: constraint.values,
+            }),
+            Wire::NumberInclusiveRange(constraint) => Ok(Self::NumberInclusiveRange {
+                min: constraint.min,
+                max: constraint.max,
+            }),
+        }
+    }
+}
+
+impl FieldConstraint {
+    #[must_use]
+    pub const fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

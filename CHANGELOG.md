@@ -6,6 +6,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The semantic core now recognizes the bounded durable Text literal-set and
+  inclusive Number-range constraints. Existing core and resident validation
+  reject invalid declarations, direct values, and successful formula results;
+  frozen storage, diff, merge, and legacy inspection boundaries refuse this
+  newer meaning rather than omitting it.
+- Native tables can remove selected rows while preserving stable row identities and failed-operation selections.
+- Native Designer tables can add a required Text, Number, Boolean, or Date
+  column with one explicit typed initializer for every current row, rename a
+  scalar column without changing its stable identity, and remove an unused
+  scalar column through the existing revision-pinned semantic lifecycle and
+  Undo/Redo history.
 - The browser Designer can duplicate an ordinary data collection into a new
   independently addressable collection with fresh semantic identities,
   remapped internal formulas, preserved external references, and one bounded

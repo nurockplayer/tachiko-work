@@ -158,6 +158,7 @@ fn balance_document(damage: f64) -> Document {
                             key: FieldKey::from("name"),
                             field_type: FieldType::Text,
                             required: true,
+                            constraint: tachiko_workspace_engine::FieldConstraint::None,
                         },
                     ),
                 ]),
@@ -196,6 +197,7 @@ fn number_field(id: &str) -> FieldDefinition {
         key: FieldKey::from(id),
         field_type: FieldType::Number,
         required: true,
+        constraint: tachiko_workspace_engine::FieldConstraint::None,
     }
 }
 
@@ -2065,6 +2067,7 @@ fn merge_schema_definition_only_change_prints_the_semantic_impact() {
             key: FieldKey::from("weight"),
             field_type: FieldType::Number,
             required: false,
+            constraint: tachiko_workspace_engine::FieldConstraint::None,
         },
     );
     save(&base_path, &base).unwrap();
