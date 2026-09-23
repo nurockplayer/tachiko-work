@@ -116,6 +116,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Changed
 
+- The legacy first-party Designer application, its Tauri/PWA hosts, and its
+  product-only release route have been retired. The experimental browser-client
+  producer and its standalone Rust/WASM runtime remain available for technical
+  consumer qualification; this repository no longer ships a first-party UI.
 - Semantic merge now admits only fully validated, completely calculated states
   of one continuing `DocumentId`; emits deterministic
   `tachiko.semantic-conflict/v1` evidence with typed stable targets, direct

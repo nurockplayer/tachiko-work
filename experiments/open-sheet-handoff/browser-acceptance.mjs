@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import test from "node:test";
 
-const require = createRequire(new URL("../../apps/designer/package.json", import.meta.url));
+const require = createRequire(new URL("../../packages/browser-client/package.json", import.meta.url));
 const { chromium, expect } = require("@playwright/test");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const targetValues = { "e-jan": [800, 400], "e-feb": [800, 400], "e-mar": [1000, 500] };

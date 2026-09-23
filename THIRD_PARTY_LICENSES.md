@@ -3,7 +3,7 @@
 # Third-Party Licenses
 
 This file inventories the locked, all-target normal dependency closure of the
-`tachiko` CLI and first-party Web Designer runtime. Package metadata comes from
+`tachiko` CLI and experimental browser-client runtime. Package metadata comes from
 Cargo's dependency graphs and lockfiles; license and notice text comes
 byte-for-byte from `cargo vendor`.
 Regenerate it with `bash scripts/generate-third-party-licenses.sh`.

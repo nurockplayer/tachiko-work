@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proposed repository replacement: scripts/experimental-designer-client-source-boundary-test.sh
+# Verify private-source and scan-failure rejection in the exported-client smoke.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$BASH_SOURCE")/.." && pwd)"

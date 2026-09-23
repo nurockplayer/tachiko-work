@@ -703,7 +703,7 @@ impl DesignerError {
     }
 }
 
-/// One Rust-authoritative occurrence composed for the first-party Web Designer.
+/// One Rust-authoritative occurrence composed for the experimental browser client.
 pub struct DesignerRuntime {
     title: String,
     document_scope: DocumentScopeId,

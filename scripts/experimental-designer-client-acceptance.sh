@@ -16,7 +16,7 @@ assert.equal(data.seedCommit,"0bb56541d3820b1197da79aa2ce36c1051093d85");
 for(const [file,digest] of Object.entries(data.files)) assert.equal(createHash("sha256").update(await readFile(path.join(root,file))).digest("hex"),digest,"seed byte drift: "+file);
 console.log(JSON.stringify({case:"preserved-sheet-seed",status:"PASS",files:Object.keys(data.files).length}));
 NODE
-playwright_module="$(pnpm --dir "$repo_root/apps/designer" exec node --input-type=module --eval '
+playwright_module="$(pnpm --dir "$repo_root/packages/browser-client" exec node --input-type=module --eval '
   const moduleUrl = import.meta.resolve("@playwright/test");
   const {chromium} = await import(moduleUrl);
   if (typeof chromium?.launch !== "function") {
@@ -24,6 +24,6 @@ playwright_module="$(pnpm --dir "$repo_root/apps/designer" exec node --input-typ
   }
   console.log(moduleUrl);
 ')" || { echo "BLOCKED: installed @playwright/test with a Chromium launcher is required." >&2; exit 78; }
-WORK_CLIENT_KIT="$kit_path" WORK_CORE_COMMIT="$source_sha" pnpm --dir "$repo_root/apps/designer" exec node "$seed_root/tests/kit.mjs"
-WORK_CLIENT_KIT="$kit_path" WORK_PLAYWRIGHT_MODULE="$playwright_module" WORK_STORAGE_DRIVER="$driver" pnpm --dir "$repo_root/apps/designer" exec node "$seed_root/tests/storage.mjs"
-WORK_CLIENT_KIT="$kit_path" WORK_PLAYWRIGHT_MODULE="$playwright_module" pnpm --dir "$repo_root/apps/designer" exec node "$launcher" "$seed_root/scripts/serve-canary.mjs" "$seed_root/tests/browser.mjs"
+WORK_CLIENT_KIT="$kit_path" WORK_CORE_COMMIT="$source_sha" pnpm --dir "$repo_root/packages/browser-client" exec node "$seed_root/tests/kit.mjs"
+WORK_CLIENT_KIT="$kit_path" WORK_PLAYWRIGHT_MODULE="$playwright_module" WORK_STORAGE_DRIVER="$driver" pnpm --dir "$repo_root/packages/browser-client" exec node "$seed_root/tests/storage.mjs"
+WORK_CLIENT_KIT="$kit_path" WORK_PLAYWRIGHT_MODULE="$playwright_module" pnpm --dir "$repo_root/packages/browser-client" exec node "$launcher" "$seed_root/scripts/serve-canary.mjs" "$seed_root/tests/browser.mjs"

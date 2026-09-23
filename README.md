@@ -19,7 +19,7 @@ what depends on it, validate the result, and review the change before it becomes
 the next accepted state.
 
 > **Public pre-alpha.** There is no tagged binary release yet. The complete proof
-> is still CLI-first, with an early browser Designer slice. The visuals in this
+> is still CLI-first. The visuals in this
 > README are approved product-direction artwork, not screenshots or evidence of
 > a fully shipped Astra/spreadsheet experience.
 
@@ -80,8 +80,8 @@ On current `main`, Tachiko already has an end-to-end game-balance proof with:
 - local workflows that do not require Git, GitHub, or an AI provider;
 - provider-free semantic inspection and bounded analysis queries;
 - approval-gated AI-facing proposals instead of raw AI file mutation;
-- an early browser Designer slice running over the same Rust-authoritative
-  runtime as the CLI.
+- an independently qualified experimental browser-client producer, without a
+  first-party browser application.
 
 ## What is not shipped yet
 
@@ -145,7 +145,7 @@ For the durable checked-in example and expected results, start with
 ## Where to go next
 
 - **See the real example:** [`examples/game-balance/`](examples/game-balance/README.md)
-- **Run the browser Designer slice:** [`apps/designer/`](apps/designer/README.md)
+- **Qualify the experimental browser client:** [`packages/browser-client/`](packages/browser-client/README.md)
 - **Understand the architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - **See the roadmap:** [`docs/product/product-roadmap.md`](docs/product/product-roadmap.md)
 - **Read specifications and decisions:** [`docs/README.md`](docs/README.md)

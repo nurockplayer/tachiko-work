@@ -161,7 +161,8 @@ bash scripts/experimental-designer-client-smoke.sh
 ```
 
 This check requires ripgrep (`rg`), which is also a prerequisite of the full
-Designer gate; install it with the operating system's package manager.
+browser-client qualification; install it with the operating system's package
+manager.
 
 That throwaway consumer compares two complete exports under the same toolchain,
 imports no `apps/designer` source, opens Product Gap, queries its typed table,

@@ -136,12 +136,12 @@ After that entry point exists, the repeatable delivery sequence is:
 ```sh
 cargo build -p tachiko-cli --locked
 export TACHIKO_BIN="$(pwd)/target/debug/tachiko"
-pnpm --dir apps/designer install --frozen-lockfile
-pnpm --dir apps/designer exec playwright install chromium
+pnpm --dir packages/browser-client install --frozen-lockfile
+pnpm --dir packages/browser-client exec playwright install chromium
 # Choose a new absent absolute directory under an existing scratch parent.
 node experiments/open-sheet-handoff/prepare-demo.mjs --output /tmp/issue341-demo
 # Run this static loopback host in a separate terminal; stop it after testing.
-pnpm --dir apps/designer exec vite /tmp/issue341-demo \
+pnpm --dir packages/browser-client exec vite /tmp/issue341-demo \
   --host 127.0.0.1 --port 4179 --strictPort
 ```
 
