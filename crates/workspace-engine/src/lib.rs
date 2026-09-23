@@ -566,7 +566,7 @@ pub enum WorkspaceError {
         source: KeyedGroupedSumDefinitionError,
     },
     #[error("canonical semantic delta failed during merge finalization: {0}")]
-    CanonicalDelta(#[from] tachiko_diff_engine::CanonicalDeltaError),
+    CanonicalDelta(#[source] Box<tachiko_diff_engine::CanonicalDeltaError>),
     #[error("keyed grouped-sum definitions are invalid: {0}")]
     InvalidKeyedGroupedSumDefinition(#[from] KeyedGroupedSumDefinitionError),
     #[error("keyed grouped-sum definition '{definition}' is unavailable")]
@@ -1048,7 +1048,8 @@ pub fn merge_documents_v2(
                 return Err(invalid_document(report, ValidationRole::MergeCandidate));
             }
             preflight_formula_projections(&document)?;
-            let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &document)?;
+            let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &document)
+                .map_err(|source| WorkspaceError::CanonicalDelta(Box::new(source)))?;
             Ok(WorkspaceMergeOutcomeV2::Merged(Box::new(MergePreviewV2 {
                 document,
                 delta,
