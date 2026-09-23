@@ -273,7 +273,7 @@ fn valid_set_clear_and_inverse_publish_one_complete_fact_each() {
         )
         .unwrap();
     assert!(receipt.verified);
-    assert_eq!(receipt.delta, preview.delta);
+    assert_eq!(receipt.delta().unwrap(), &preview.delta);
     assert_eq!(host.revision, rev("r2"));
     assert_eq!(host.document.entities, original.entities);
     assert_eq!(
@@ -406,7 +406,7 @@ fn text_literal_payload_survives_review_and_publication_exactly() {
             TrustedInstant::new(10),
         )
         .unwrap();
-    assert_eq!(receipt.delta, preview.delta);
+    assert_eq!(receipt.delta().unwrap(), &preview.delta);
     assert_eq!(
         host.document.schemas["schema"].fields["field"].constraint,
         literal_set
