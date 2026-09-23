@@ -34,7 +34,12 @@ pub use roproj::{
     CanonicalRoProjectV1, CanonicalRoProjectV2, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
     ROPROJ_V2_FORMAT_VERSION, ROPROJ_V2_PATHS, canonicalize_roproj, decode_roproj_v1,
     decode_roproj_v2, encode_roproj_v1, encode_roproj_v2, load_roproj, materialize_roproj,
-    migrate_roproj_v1_to_v2, publish_canonicalized_roproj, publish_roproj, read_canonical_roproj,
+    migrate_roproj_to_v3, migrate_roproj_v1_to_v2, publish_canonicalized_roproj, publish_roproj,
+    publish_roproj_v3, read_canonical_roproj, read_canonical_roproj_v3,
+};
+pub use roproj::{
+    CanonicalRoProjectFileV3, CanonicalRoProjectV3, ROPROJ_V3_FORMAT_VERSION, ROPROJ_V3_PATHS,
+    decode_roproj_v3, encode_roproj_v3, migrate_roproj_v1_to_v3, migrate_roproj_v2_to_v3,
 };
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;

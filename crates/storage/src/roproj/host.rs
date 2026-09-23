@@ -14,6 +14,11 @@ use super::v1::{
     CanonicalRoProjectV1, ROPROJ_V1_PATHS, canonicalize_unordered, decode, dispatch_manifest,
     encode,
 };
+use super::v2::{CanonicalRoProjectV2, ROPROJ_V2_PATHS, decode as decode_v2};
+use super::v3::{
+    CanonicalRoProjectV3, ROPROJ_V3_PATHS, manifest_version, migrate_v1 as migrate_v1_to_v3,
+    migrate_v2 as migrate_v2_to_v3,
+};
 use crate::FormatError;
 
 static NEXT_STAGING_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -29,6 +34,170 @@ static NEXT_STAGING_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 /// dispatch errors, or the canonical codec's DTO and semantic failures.
 pub fn read_canonical_roproj(path: impl AsRef<Path>) -> Result<CanonicalRoProjectV1, FormatError> {
     read_canonical_roproj_inner(path.as_ref(), None)
+}
+
+/// Read an exact canonical `.roproj/v3` directory after manifest-first dispatch.
+///
+/// # Errors
+///
+/// Returns a host I/O, layout, manifest-dispatch, JSON, representation, or
+/// semantic validation error when the source is not an exact admitted v3 tree.
+pub fn read_canonical_roproj_v3(
+    path: impl AsRef<Path>,
+) -> Result<CanonicalRoProjectV3, FormatError> {
+    let root = path.as_ref();
+    require_directory(root, "canonical .roproj/v3 root")?;
+    require_exact_root_entries_with_definitions(root)?;
+    let manifest = read_file(&root.join("manifest.json"))?;
+    let version = manifest_version(&manifest)?;
+    if version != super::v3::ROPROJ_V3_FORMAT_VERSION {
+        return Err(FormatError::UnsupportedRoProjectVersion {
+            found: version,
+            supported: super::v3::ROPROJ_V3_FORMAT_VERSION,
+        });
+    }
+    let entities = root.join("entities");
+    require_exact_entity_entries(&entities)?;
+    let mut files = Vec::with_capacity(ROPROJ_V3_PATHS.len());
+    for relative in ROPROJ_V3_PATHS {
+        files.push((
+            relative.to_owned(),
+            if relative == "manifest.json" {
+                manifest.clone()
+            } else {
+                read_file(&root.join(relative))?
+            },
+        ));
+    }
+    CanonicalRoProjectV3::try_from_files(files)
+}
+
+/// Publish an exact canonical `.roproj/v3` tree through exclusive sibling staging.
+///
+/// # Errors
+///
+/// Returns validation or representation errors before publication, refuses
+/// every existing destination, and reports host failures without leaving a
+/// partial published tree.
+pub fn publish_roproj_v3(
+    path: impl AsRef<Path>,
+    tree: &CanonicalRoProjectV3,
+) -> Result<(), FormatError> {
+    let path = path.as_ref();
+    let validated = CanonicalRoProjectV3::try_from_files(
+        tree.files()
+            .iter()
+            .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
+            .collect(),
+    )?;
+    match fs::symlink_metadata(path) {
+        Ok(_) => {
+            return Err(FormatError::AlreadyExists {
+                path: path.to_owned(),
+            });
+        }
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(FormatError::Write {
+                path: path.to_owned(),
+                source,
+            });
+        }
+    }
+    let staging = create_staging_directory(path)?;
+    if let Err(error) = write_staging_tree_v3(&staging, &validated) {
+        remove_staging_directory(&staging)?;
+        return Err(error);
+    }
+    finish_staged_publication(&staging, path)
+}
+
+/// Explicitly migrate a canonical v1 or v2 directory to a fresh v3 destination.
+///
+/// # Errors
+///
+/// Returns source admission or conversion failures, rejects v3/unknown source
+/// versions and overlapping paths, refuses an existing destination, or reports
+/// host I/O failures. The source is never modified.
+pub fn migrate_roproj_to_v3(
+    source: impl AsRef<Path>,
+    destination: impl AsRef<Path>,
+) -> Result<(), FormatError> {
+    let source = source.as_ref();
+    let destination = destination.as_ref();
+    ensure_destination_outside_source(source, destination)?;
+    require_directory(source, "canonical .roproj source")?;
+    let manifest = read_file(&source.join("manifest.json"))?;
+    let version = manifest_version(&manifest)?;
+    let candidate = match version {
+        1 => {
+            let tree = read_canonical_roproj(source)?;
+            migrate_v1_to_v3(&tree)?
+        }
+        2 => {
+            let tree = read_canonical_roproj_v2(source, &manifest)?;
+            migrate_v2_to_v3(&tree)?
+        }
+        found => {
+            return Err(FormatError::UnsupportedRoProjectVersion {
+                found,
+                supported: 2,
+            });
+        }
+    };
+    publish_roproj_v3(destination, &candidate)
+}
+
+fn read_canonical_roproj_v2(
+    root: &Path,
+    manifest: &[u8],
+) -> Result<CanonicalRoProjectV2, FormatError> {
+    require_exact_root_entries_with_definitions(root)?;
+    let version = manifest_version(manifest)?;
+    if version != 2 {
+        return Err(FormatError::UnsupportedRoProjectVersion {
+            found: version,
+            supported: 2,
+        });
+    }
+    let entities = root.join("entities");
+    require_exact_entity_entries(&entities)?;
+    let mut files = Vec::with_capacity(ROPROJ_V2_PATHS.len());
+    for relative in ROPROJ_V2_PATHS {
+        files.push((
+            relative.to_owned(),
+            if relative == "manifest.json" {
+                manifest.to_vec()
+            } else {
+                read_file(&root.join(relative))?
+            },
+        ));
+    }
+    let tree = CanonicalRoProjectV2::try_from_files(files.clone())?;
+    if tree
+        .files()
+        .iter()
+        .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
+        .collect::<Vec<_>>()
+        != files
+    {
+        return invalid_layout(root, "source bytes are not exact canonical .roproj/v2");
+    }
+    decode_v2(&tree)?;
+    Ok(tree)
+}
+
+fn write_staging_tree_v3(staging: &Path, tree: &CanonicalRoProjectV3) -> Result<(), FormatError> {
+    let entities = staging.join("entities");
+    fs::create_dir(&entities).map_err(|source| FormatError::Write {
+        path: entities,
+        source,
+    })?;
+    for file in tree.files() {
+        let path = staging.join(file.path());
+        fs::write(&path, file.bytes()).map_err(|source| FormatError::Write { path, source })?;
+    }
+    Ok(())
 }
 
 pub(crate) fn read_canonical_roproj_bounded(
@@ -334,9 +503,18 @@ fn remove_staging_directory(staging: &Path) -> Result<(), FormatError> {
 }
 
 pub(super) fn require_exact_root_entries(root: &Path) -> Result<(), FormatError> {
+    require_exact_root_entries_inner(root, false)
+}
+
+fn require_exact_root_entries_with_definitions(root: &Path) -> Result<(), FormatError> {
+    require_exact_root_entries_inner(root, true)
+}
+
+fn require_exact_root_entries_inner(root: &Path, definitions: bool) -> Result<(), FormatError> {
     let mut found_manifest = false;
     let mut found_schemas = false;
     let mut found_entities = false;
+    let mut found_definitions = false;
     for entry in read_directory(root)? {
         let name = entry.file_name();
         if name == "manifest.json" {
@@ -345,6 +523,8 @@ pub(super) fn require_exact_root_entries(root: &Path) -> Result<(), FormatError>
             found_schemas = true;
         } else if name == "entities" {
             found_entities = true;
+        } else if definitions && name == "definitions.json" {
+            found_definitions = true;
         } else {
             return invalid_layout(
                 &entry.path(),
@@ -370,8 +550,17 @@ pub(super) fn require_exact_root_entries(root: &Path) -> Result<(), FormatError>
             "required ordinary directory is missing",
         );
     }
+    if definitions && !found_definitions {
+        return invalid_layout(
+            &root.join("definitions.json"),
+            "required regular file is missing",
+        );
+    }
     require_regular_file(&root.join("manifest.json"), "manifest.json")?;
     require_regular_file(&root.join("schemas.json"), "schemas.json")?;
+    if definitions {
+        require_regular_file(&root.join("definitions.json"), "definitions.json")?;
+    }
     require_directory(&root.join("entities"), "entities directory")
 }
 
