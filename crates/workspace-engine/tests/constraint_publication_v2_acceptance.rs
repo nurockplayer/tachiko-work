@@ -568,6 +568,110 @@ fn duplicate_stale_and_missing_query_or_schema_authority_refuse_without_publicat
 }
 
 #[test]
+fn collection_lifecycle_cannot_overlap_constraint_write_in_atomic_batch() {
+    let mut lifecycle = setup(true, true, true);
+    let mut requirements = Vec::new();
+    for (family, classes) in [
+        (
+            OperationFamily::AppendEntity,
+            &[MutationClass::Structure, MutationClass::Schema][..],
+        ),
+        (
+            OperationFamily::RemoveEntity,
+            &[
+                MutationClass::Structure,
+                MutationClass::Schema,
+                MutationClass::Destructive,
+            ][..],
+        ),
+    ] {
+        requirements.push(GrantRequirement::query(
+            family,
+            subject(SemanticScope::Document),
+        ));
+        for class in classes {
+            requirements.push(
+                GrantRequirement::mutation(
+                    AuthorizationAction::Propose,
+                    family,
+                    *class,
+                    subject(SemanticScope::Document),
+                )
+                .unwrap(),
+            );
+        }
+    }
+    lifecycle
+        .provision_grant(Grant::new(
+            GrantId::from("collection-grant"),
+            PrincipalId::from("authority"),
+            PrincipalId::from("editor"),
+            requirements,
+            None,
+        ))
+        .unwrap();
+
+    let existing = document(7.0);
+    let schema = existing.schemas.get("schema").unwrap().clone();
+    let entity = existing.entities.get("entity").unwrap().clone();
+    let mut empty = existing.clone();
+    empty.schemas.clear();
+    empty.entities.clear();
+    let append = || SemanticCommand::AppendCollection {
+        schema: schema.clone(),
+        entities: vec![entity.clone()],
+    };
+    let remove = || SemanticCommand::RemoveCollection {
+        schema: "schema".into(),
+        entities: vec!["entity".into()],
+    };
+
+    for (base, id, commands) in [
+        (
+            &empty,
+            "append-then-constraint",
+            vec![append(), constraint(range(0.0, 10.0))],
+        ),
+        (
+            &empty,
+            "constraint-then-append",
+            vec![constraint(range(0.0, 10.0)), append()],
+        ),
+        (
+            &existing,
+            "constraint-then-remove",
+            vec![constraint(range(0.0, 10.0)), remove()],
+        ),
+        (
+            &existing,
+            "remove-then-constraint",
+            vec![remove(), constraint(range(0.0, 10.0))],
+        ),
+    ] {
+        let result = propose(
+            &mut lifecycle,
+            base,
+            "r1",
+            id,
+            SemanticPatchBody::atomic_batch(commands).unwrap(),
+        );
+        assert!(
+            matches!(
+                &result,
+                Err(PatchLifecycleError::DuplicateFieldConstraintWrite { schema, field })
+                    if schema.as_str() == "schema" && field.as_str() == "field"
+            ),
+            "{id} returned {result:?}"
+        );
+    }
+    assert_eq!(
+        existing.schemas["schema"].fields["field"].constraint,
+        FieldConstraint::None
+    );
+    assert!(empty.schemas.is_empty() && empty.entities.is_empty());
+}
+
+#[test]
 fn constraint_review_shows_every_affected_value_before_review_credit() {
     let mut original = document(7.0);
     original.entities.insert(
