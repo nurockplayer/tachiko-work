@@ -745,3 +745,146 @@ fn constraint_review_requires_query_for_stored_formula_dependencies() {
         .unwrap();
     assert_eq!(preview.constraint_reviews.len(), 1);
 }
+
+#[test]
+fn constraint_review_requires_query_for_transitive_formula_dependencies() {
+    let mut original = document(7.0);
+    original.schemas.get_mut("schema").unwrap().fields.insert(
+        "middle".into(),
+        FieldDefinition {
+            id: "middle".into(),
+            key: "middle".into(),
+            field_type: FieldType::Number,
+            required: false,
+            constraint: FieldConstraint::None,
+        },
+    );
+    original.schemas.get_mut("schema").unwrap().fields.insert(
+        "secret".into(),
+        FieldDefinition {
+            id: "secret".into(),
+            key: "secret".into(),
+            field_type: FieldType::Number,
+            required: false,
+            constraint: FieldConstraint::None,
+        },
+    );
+    original
+        .entities
+        .get_mut("entity")
+        .unwrap()
+        .fields
+        .insert("secret".into(), Value::Number(Number::new(41.0).unwrap()));
+    original.entities.insert(
+        "intermediate".into(),
+        Entity {
+            id: "intermediate".into(),
+            key: "intermediate_item".into(),
+            schema: "schema".into(),
+            fields: BTreeMap::from([
+                ("field".into(), Value::Number(Number::new(7.0).unwrap())),
+                (
+                    "middle".into(),
+                    Value::Formula(Expression::Reference(FieldRef::new("entity", "secret"))),
+                ),
+            ]),
+        },
+    );
+    original.entities.insert(
+        "formula".into(),
+        Entity {
+            id: "formula".into(),
+            key: "formula_item".into(),
+            schema: "schema".into(),
+            fields: BTreeMap::from([(
+                "field".into(),
+                Value::Formula(Expression::Reference(FieldRef::new(
+                    "intermediate",
+                    "middle",
+                ))),
+            )]),
+        },
+    );
+
+    let mut lifecycle = setup(true, false, true);
+    lifecycle
+        .provision_grant(Grant::new(
+            "target-and-intermediate-query".into(),
+            "authority".into(),
+            "editor".into(),
+            vec![
+                GrantRequirement::query(
+                    OperationFamily::SchemaFieldMutation,
+                    subject(SemanticScope::SchemaField {
+                        schema: "schema".into(),
+                        field: "field".into(),
+                    }),
+                ),
+                GrantRequirement::query(
+                    OperationFamily::SchemaFieldMutation,
+                    subject(SemanticScope::EntityField {
+                        entity: "intermediate".into(),
+                        schema: "schema".into(),
+                        field: "middle".into(),
+                    }),
+                ),
+            ],
+            None,
+        ))
+        .unwrap();
+    let id = propose(
+        &mut lifecycle,
+        &original,
+        "r1",
+        "transitive-review",
+        SemanticPatchBody::command(constraint(range(0.0, 50.0))),
+    )
+    .unwrap();
+    assert!(matches!(
+        lifecycle.preview_v2(
+            &scope(),
+            &original,
+            &rev("r1"),
+            &id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        ),
+        Err(PatchLifecycleError::DisclosureDenied)
+    ));
+
+    lifecycle
+        .provision_grant(Grant::new(
+            "terminal-dependency-query".into(),
+            "authority".into(),
+            "editor".into(),
+            vec![GrantRequirement::query(
+                OperationFamily::SchemaFieldMutation,
+                subject(SemanticScope::EntityField {
+                    entity: "entity".into(),
+                    schema: "schema".into(),
+                    field: "secret".into(),
+                }),
+            )],
+            None,
+        ))
+        .unwrap();
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &original,
+            &rev("r1"),
+            &id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert_eq!(
+        preview.constraint_reviews[0]
+            .before
+            .iter()
+            .find(|value| value.field == FieldRef::new("formula", "field"))
+            .unwrap()
+            .calculated_number,
+        Some(Number::new(41.0).unwrap()),
+    );
+}
