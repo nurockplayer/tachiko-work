@@ -3240,7 +3240,10 @@ impl PatchLifecycle {
                 associated_write_requirements,
             );
         }
-        if contains_constraint_command(body) {
+        if contains_constraint_command(body)
+            || document_has_field_constraints(base)
+            || document_has_field_constraints(&candidate)
+        {
             return Err(PatchLifecycleError::CommandRejected {
                 source: Box::new(WorkspaceError::Diff(
                     super::DiffError::UnsupportedFieldConstraintChange,
@@ -4189,6 +4192,15 @@ fn contains_constraint_command(body: &SemanticPatchBody) -> bool {
     body.commands()
         .iter()
         .any(|command| matches!(command, SemanticCommand::SetFieldConstraint { .. }))
+}
+
+fn document_has_field_constraints(document: &Document) -> bool {
+    document.schemas.values().any(|schema| {
+        schema
+            .fields
+            .values()
+            .any(|field| field.constraint != FieldConstraint::None)
+    })
 }
 
 fn constraint_review_evidence(
