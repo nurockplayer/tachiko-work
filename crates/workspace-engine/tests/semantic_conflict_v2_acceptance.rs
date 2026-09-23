@@ -2,13 +2,14 @@
 use std::collections::BTreeMap;
 
 use tachiko_diff_engine::CanonicalDirectFact;
+use tachiko_semantic_core::{KeyedGroupedSumBindingRole, KeyedGroupedSumDefinitionError};
 use tachiko_workspace_engine::{
     ConflictFacetV2 as Facet, ConflictFactV2 as Fact, ConflictKind, ConflictTarget, Document,
-    Entity, Expression, FieldConstraint, FieldDefinition, FieldType, MergeConflictV2,
-    MergePreviewV2, MergeValueV2 as MergeValue, Number, SEMANTIC_CONFLICT_V2, Schema,
-    SchemaFieldSubjectV2, SchemaSubjectV2, ValidationRole, Value, WorkspaceError,
-    WorkspaceMergeOutcome, WorkspaceMergeOutcomeV2, merge_documents, merge_documents_v2,
-    validation_report,
+    Entity, Expression, FieldConstraint, FieldDefinition, FieldType, KeyedGroupedSumDefinition,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MergeConflictV2, MergePreviewV2,
+    MergeValueV2 as MergeValue, Number, SEMANTIC_CONFLICT_V2, Schema, SchemaFieldSubjectV2,
+    SchemaSubjectV2, ValidationRole, Value, WorkspaceError, WorkspaceMergeOutcome,
+    WorkspaceMergeOutcomeV2, merge_documents, merge_documents_v2, validation_report,
 };
 
 fn number(value: f64) -> Number {
@@ -51,6 +52,62 @@ fn document() -> Document {
         },
     );
     document
+}
+
+fn document_with_keyed_definition() -> Document {
+    let mut document = document();
+    document.schemas.get_mut("schema").unwrap().fields.insert(
+        "label".into(),
+        FieldDefinition {
+            id: "label".into(),
+            key: "label".into(),
+            field_type: FieldType::Text,
+            required: false,
+            constraint: FieldConstraint::None,
+        },
+    );
+    document
+        .entities
+        .get_mut("entity")
+        .unwrap()
+        .fields
+        .insert("label".into(), Value::Text("sku".into()));
+    document.keyed_grouped_sum_definitions.insert(
+        "summary".into(),
+        KeyedGroupedSumDefinition {
+            id: "summary".into(),
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: "schema".into(),
+                lookup_key_field: "label".into(),
+                quantity_field: "amount".into(),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: "schema".into(),
+                key_field: "label".into(),
+                category_field: "label".into(),
+                price_field: "amount".into(),
+            },
+        },
+    );
+    document
+}
+
+fn invalidate_keyed_binding_without_core_error(document: &mut Document) {
+    document
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("label")
+        .unwrap()
+        .field_type = FieldType::Number;
+    document
+        .entities
+        .get_mut("entity")
+        .unwrap()
+        .fields
+        .insert("label".into(), Value::Number(number(3.0)));
+    assert!(validation_report(document).is_valid());
 }
 
 fn set_constraint(document: &mut Document, constraint: FieldConstraint) {
@@ -222,6 +279,38 @@ fn schema_delete_modify_conflict_carries_constraint_and_suppresses_descendants()
 }
 
 #[test]
+fn field_delete_vs_constraint_edit_uses_complete_subject_and_suppresses_constraint_facet() {
+    let base = document();
+    let mut left = base.clone();
+    left.schemas.get_mut("schema").unwrap().fields.clear();
+    left.entities.get_mut("entity").unwrap().fields.clear();
+    let mut right = base.clone();
+    set_constraint(&mut right, range(10.0));
+
+    let conflicts = conflicted(&base, &left, &right);
+    assert_eq!(conflicts.len(), 1);
+    let conflict = &conflicts[0];
+    assert_eq!(
+        conflict.target(),
+        &ConflictTarget::SchemaField {
+            schema: "schema".into(),
+            field: "amount".into(),
+        }
+    );
+    assert_eq!(conflict.facet(), Facet::Subject);
+    assert_eq!(conflict.kind(), ConflictKind::DeleteModify);
+    assert_eq!(
+        conflict.base(),
+        &Fact::Present(MergeValue::SchemaFieldSubject(field_subject(&base)))
+    );
+    assert_eq!(conflict.left(), &Fact::Absent);
+    assert_eq!(
+        conflict.right(),
+        &Fact::Present(MergeValue::SchemaFieldSubject(field_subject(&right)))
+    );
+}
+
+#[test]
 fn conflict_order_is_target_then_facet_with_constraint_after_existing_field_facets() {
     let base = document();
     let mut left = base.clone();
@@ -339,6 +428,68 @@ fn invalid_inputs_preserve_each_role_and_complete_shared_diagnostics() {
         assert_eq!(role, expected_role);
         assert_eq!(report.stable_observations(), expected);
     }
+}
+
+#[test]
+fn unchanged_invalid_keyed_definition_refuses_before_preview_or_delta() {
+    let mut base = document_with_keyed_definition();
+    base.keyed_grouped_sum_definitions
+        .get_mut(&"summary".into())
+        .unwrap()
+        .orders
+        .schema = "missing".into();
+    let mut right = base.clone();
+    right.title = "Right".into();
+    assert!(validation_report(&base).is_valid());
+    assert!(matches!(
+        merge_documents_v2(SEMANTIC_CONFLICT_V2, &base, &base, &right),
+        Err(WorkspaceError::InvalidMergeKeyedGroupedSumDefinitions {
+            role: ValidationRole::MergeBase,
+            source: KeyedGroupedSumDefinitionError::MissingSchema {
+                role: "orders",
+                schema,
+            },
+        }) if schema == "missing".into()
+    ));
+}
+
+#[test]
+fn unchanged_keyed_definition_checks_each_input_binding_with_its_role() {
+    let valid = document_with_keyed_definition();
+    let mut invalid = valid.clone();
+    invalidate_keyed_binding_without_core_error(&mut invalid);
+    for (base, left, right, expected_role) in [
+        (&invalid, &valid, &valid, ValidationRole::MergeBase),
+        (&valid, &invalid, &valid, ValidationRole::MergeOurs),
+        (&valid, &valid, &invalid, ValidationRole::MergeTheirs),
+    ] {
+        assert!(matches!(
+            merge_documents_v2(SEMANTIC_CONFLICT_V2, base, left, right),
+            Err(WorkspaceError::InvalidMergeKeyedGroupedSumDefinitions {
+                role,
+                source: KeyedGroupedSumDefinitionError::WrongFieldType {
+                    role: KeyedGroupedSumBindingRole::OrdersLookupKey,
+                    schema,
+                    field,
+                    expected: FieldType::Text,
+                    actual: FieldType::Number,
+                },
+            }) if role == expected_role && schema == "schema".into() && field == "label".into()
+        ));
+    }
+}
+
+#[test]
+fn changed_keyed_definition_map_refuses_before_input_admission() {
+    let base = document_with_keyed_definition();
+    let mut left = base.clone();
+    left.keyed_grouped_sum_definitions.clear();
+    set_constraint(&mut left, range(1.0));
+    assert!(!validation_report(&left).is_valid());
+    assert!(matches!(
+        merge_documents_v2(SEMANTIC_CONFLICT_V2, &base, &left, &base),
+        Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
+    ));
 }
 
 #[test]

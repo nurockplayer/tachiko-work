@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Rust workspace callers can explicitly select the in-process
+  `tachiko.semantic-conflict/v2` merge preview. It adds atomic field-constraint
+  conflict facts and validates unchanged keyed grouped-sum bindings for each
+  input role; the existing v1 merge stays frozen. Application opt-in and public
+  transport remain separate follow-up work.
 - Rust callers can explicitly select the in-process `tachiko.semantic-delta/v2`
   comparison for admitted documents. It emits deterministic, complete direct
   facts for field constraints and the inherited semantic changes; the existing
