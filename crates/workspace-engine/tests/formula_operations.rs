@@ -853,6 +853,31 @@ fn repeated_batch_targets_retain_every_command_family_for_impact_disclosure() {
             dps_scope.clone(),
         )],
     );
+    assert!(matches!(
+        lifecycle.preview(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &principal("agent"),
+            NOW,
+        ),
+        Err(PatchLifecycleError::DisclosureDenied)
+    ));
+
+    let interval_scope = field_scope("iron_sword", "weapons", "attack_interval");
+    grant(
+        &mut lifecycle,
+        "impact-operand-query",
+        "agent",
+        [
+            OperationFamily::FormulaUpdate,
+            OperationFamily::SetFieldValue,
+        ]
+        .into_iter()
+        .map(|family| query_requirement(family, interval_scope.clone()))
+        .collect(),
+    );
     let preview = lifecycle
         .preview(
             &document_scope_id(),
@@ -874,6 +899,15 @@ fn repeated_batch_targets_retain_every_command_family_for_impact_disclosure() {
                 .contains(&DisclosureRequirement {
                     family,
                     scope: dps_scope.clone(),
+                })
+        );
+        assert!(
+            preview
+                .authorization_footprint
+                .disclosure_requirements
+                .contains(&DisclosureRequirement {
+                    family,
+                    scope: interval_scope.clone(),
                 })
         );
     }

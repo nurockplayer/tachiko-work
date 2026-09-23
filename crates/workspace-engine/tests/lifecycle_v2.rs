@@ -627,6 +627,111 @@ fn keyed_definition_document() -> Document {
 }
 
 #[test]
+fn formula_impact_query_covers_unchanged_calculation_operands() {
+    let mut document = game_balance_document("game", "Game");
+    document
+        .schemas
+        .get_mut("weapons")
+        .unwrap()
+        .fields
+        .get_mut("damage")
+        .unwrap()
+        .constraint = FieldConstraint::NumberInclusiveRange {
+        min: Number::new(0.0).unwrap(),
+        max: Number::new(50.0).unwrap(),
+    };
+
+    let mut lifecycle = lifecycle(true);
+    let family = OperationFamily::SetFieldValue;
+    let value_scope = SemanticScope::Document;
+    grant(
+        &mut lifecycle,
+        "narrow-impact-query",
+        "editor",
+        vec![
+            GrantRequirement::query(
+                family,
+                subject(SemanticScope::EntityField {
+                    entity: "iron_sword".into(),
+                    schema: "weapons".into(),
+                    field: "damage".into(),
+                }),
+            ),
+            GrantRequirement::query(
+                family,
+                subject(SemanticScope::EntityField {
+                    entity: "iron_sword".into(),
+                    schema: "weapons".into(),
+                    field: "dps".into(),
+                }),
+            ),
+            write(
+                AuthorizationAction::Propose,
+                family,
+                MutationClass::Value,
+                value_scope.clone(),
+            ),
+            write(
+                AuthorizationAction::Execute,
+                family,
+                MutationClass::Value,
+                value_scope,
+            ),
+        ],
+    );
+    let proposal_id = propose_body(
+        &mut lifecycle,
+        &document,
+        "formula-impact-dependency-review",
+        SemanticPatchBody::command(SemanticCommand::set_field_value(
+            FieldRef::new("iron_sword", "damage"),
+            Value::Number(Number::new(45.0).unwrap()),
+        )),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        lifecycle.preview_v2(
+            &scope(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        ),
+        Err(PatchLifecycleError::DisclosureDenied)
+    ));
+    grant(
+        &mut lifecycle,
+        "unchanged-operand-query",
+        "editor",
+        vec![GrantRequirement::query(
+            family,
+            subject(SemanticScope::EntityField {
+                entity: "iron_sword".into(),
+                schema: "weapons".into(),
+                field: "attack_interval".into(),
+            }),
+        )],
+    );
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert_eq!(preview.formula_impacts.len(), 1);
+    assert_eq!(
+        preview.formula_impacts[0].field,
+        FieldRef::new("iron_sword", "dps")
+    );
+}
+
+#[test]
 fn frozen_v1_rejects_constraint_inside_keyed_definition_batch() {
     let document = keyed_definition_document();
     let mut lifecycle = lifecycle(false);

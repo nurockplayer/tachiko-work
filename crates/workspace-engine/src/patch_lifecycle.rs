@@ -3704,6 +3704,20 @@ impl PatchLifecycle {
                             disclosures,
                         )?;
                     }
+                    for document in [before, after] {
+                        if let Some(Value::Formula(expression)) = document
+                            .entities
+                            .get(&field.entity)
+                            .and_then(|entity| entity.fields.get(&field.field))
+                        {
+                            self.insert_calculation_dependency_disclosures(
+                                family,
+                                document,
+                                expression_references(expression),
+                                disclosures,
+                            )?;
+                        }
+                    }
                 }
                 Ok(())
             }
