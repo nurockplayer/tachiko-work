@@ -153,7 +153,7 @@ fn field_member_order_and_constraint_bytes_are_fixed() {
     document.entities.clear();
     document
         .schemas
-        .get_mut(&"schema".into())
+        .get_mut("schema")
         .unwrap()
         .fields
         .retain(|id, _| id.as_str() == "text");
@@ -380,19 +380,19 @@ fn legacy_fixture() -> Document {
     let mut document = fixture();
     document
         .schemas
-        .get_mut(&"schema".into())
+        .get_mut("schema")
         .unwrap()
         .fields
-        .remove(&"date".into());
+        .remove("date");
     document
         .entities
-        .get_mut(&"entity-a".into())
+        .get_mut("entity-a")
         .unwrap()
         .fields
-        .remove(&"date".into());
+        .remove("date");
     for field in document
         .schemas
-        .get_mut(&"schema".into())
+        .get_mut("schema")
         .unwrap()
         .fields
         .values_mut()
