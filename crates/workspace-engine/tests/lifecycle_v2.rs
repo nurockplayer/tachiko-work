@@ -627,6 +627,59 @@ fn keyed_definition_document() -> Document {
 }
 
 #[test]
+fn frozen_v1_rejects_constraint_inside_keyed_definition_batch() {
+    let document = keyed_definition_document();
+    let mut lifecycle = lifecycle(false);
+    grant(
+        &mut lifecycle,
+        "mixed-batch-editor",
+        "editor",
+        vec![
+            query(OperationFamily::SchemaFieldMutation),
+            query(OperationFamily::KeyedGroupedSumDefinition),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                SemanticScope::Schema("orders".into()),
+            ),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::KeyedGroupedSumDefinition,
+                MutationClass::Structure,
+                SemanticScope::Document,
+            ),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::KeyedGroupedSumDefinition,
+                MutationClass::Destructive,
+                SemanticScope::Document,
+            ),
+        ],
+    );
+    let result = propose_body(
+        &mut lifecycle,
+        &document,
+        "frozen-v1-mixed-batch",
+        SemanticPatchBody::atomic_batch(vec![
+            SemanticCommand::SetFieldConstraint {
+                schema: "orders".into(),
+                field: "quantity".into(),
+                constraint: FieldConstraint::NumberInclusiveRange {
+                    min: Number::new(0.0).unwrap(),
+                    max: Number::new(10.0).unwrap(),
+                },
+            },
+            SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                definition: "summary".into(),
+            },
+        ])
+        .unwrap(),
+    );
+    assert!(result.is_err(), "frozen v1 must not issue a constraint batch");
+}
+
+#[test]
 fn v2_keyed_definition_change_refuses_with_canonical_delta_error() {
     let document = keyed_definition_document();
     let mut lifecycle = lifecycle(true);
