@@ -676,7 +676,10 @@ fn frozen_v1_rejects_constraint_inside_keyed_definition_batch() {
         ])
         .unwrap(),
     );
-    assert!(result.is_err(), "frozen v1 must not issue a constraint batch");
+    assert!(
+        result.is_err(),
+        "frozen v1 must not issue a constraint batch"
+    );
 }
 
 #[test]

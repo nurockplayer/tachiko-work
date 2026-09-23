@@ -653,21 +653,16 @@ fn constraint_review_shows_every_affected_value_before_review_credit() {
 #[test]
 fn constraint_review_requires_query_for_stored_formula_dependencies() {
     let mut original = document(7.0);
-    original
-        .schemas
-        .get_mut("schema")
-        .unwrap()
-        .fields
-        .insert(
-            "secret".into(),
-            FieldDefinition {
-                id: "secret".into(),
-                key: "secret".into(),
-                field_type: FieldType::Number,
-                required: false,
-                constraint: FieldConstraint::None,
-            },
-        );
+    original.schemas.get_mut("schema").unwrap().fields.insert(
+        "secret".into(),
+        FieldDefinition {
+            id: "secret".into(),
+            key: "secret".into(),
+            field_type: FieldType::Number,
+            required: false,
+            constraint: FieldConstraint::None,
+        },
+    );
     original
         .entities
         .get_mut("entity")

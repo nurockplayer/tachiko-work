@@ -1430,18 +1430,6 @@ impl PatchLifecycle {
                 return Err(error);
             }
         };
-        if patch.exact_change.evidence_profile() == EvidenceProfile::V2
-            && contains_constraint_command(patch.exact_change.body())
-            && self
-                .authorize_query(
-                    &record.originator,
-                    &evaluated.footprint.disclosure_requirements,
-                    now,
-                )
-                .is_err()
-        {
-            return Err(PatchLifecycleError::DisclosureDenied);
-        }
         record.footprint = Some(evaluated.footprint);
         self.proposals.insert(patch.id.clone(), record);
         Ok(patch)
@@ -3252,6 +3240,13 @@ impl PatchLifecycle {
                 associated_write_requirements,
             );
         }
+        if contains_constraint_command(body) {
+            return Err(PatchLifecycleError::CommandRejected {
+                source: Box::new(WorkspaceError::Diff(
+                    super::DiffError::UnsupportedFieldConstraintChange,
+                )),
+            });
+        }
         // The v1 semantic diff deliberately refuses to represent saved
         // grouped-summary definition changes. That refusal is not a
         // publication veto: validate the candidate and preserve the normal
@@ -3476,6 +3471,23 @@ impl PatchLifecycle {
                     family: OperationFamily::SchemaFieldMutation,
                     scope: self.schema_field_scope(schema, field),
                 });
+                for document in [before, after] {
+                    for entity in document
+                        .entities
+                        .values()
+                        .filter(|entity| entity.schema == *schema)
+                    {
+                        if let Some(value) = entity.fields.get(field) {
+                            self.insert_value_disclosures_for(
+                                OperationFamily::SchemaFieldMutation,
+                                before,
+                                after,
+                                value,
+                                disclosures,
+                            )?;
+                        }
+                    }
+                }
                 Ok(())
             }
             SemanticCommand::SetFieldValue { field, value } => {
