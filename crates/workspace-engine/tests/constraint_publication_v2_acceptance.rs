@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use tachiko_diff_engine::CanonicalDirectFact;
 use tachiko_workspace_engine::{
-    Document, Entity, FieldConstraint, FieldDefinition, FieldRef, FieldType, Number, Schema, Value,
+    Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldRef, FieldType, Number,
+    Schema, Value,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
@@ -554,4 +555,87 @@ fn duplicate_stale_and_missing_query_or_schema_authority_refuse_without_publicat
     assert_eq!(host.document, original);
     assert_eq!(host.revision, rev("r1"));
     assert_eq!(host.publications, 0);
+}
+
+#[test]
+fn constraint_review_shows_every_affected_value_before_review_credit() {
+    let mut original = document(7.0);
+    original.entities.insert(
+        "second".into(),
+        Entity {
+            id: "second".into(),
+            key: "second item".into(),
+            schema: "schema".into(),
+            fields: BTreeMap::from([("field".into(), Value::Number(Number::new(9.0).unwrap()))]),
+        },
+    );
+    let formula = Value::Formula(Expression::Reference(FieldRef::new("entity", "field")));
+    original.entities.insert(
+        "formula".into(),
+        Entity {
+            id: "formula".into(),
+            key: "formula item".into(),
+            schema: "schema".into(),
+            fields: BTreeMap::from([("field".into(), formula.clone())]),
+        },
+    );
+
+    let mut lifecycle = setup(true, true, true);
+    let id = propose(
+        &mut lifecycle,
+        &original,
+        "r1",
+        "review-values",
+        SemanticPatchBody::command(constraint(range(0.0, 10.0))),
+    )
+    .unwrap();
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &original,
+            &rev("r1"),
+            &id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    fact(&preview.delta);
+    assert_eq!(preview.constraint_reviews.len(), 1);
+    let review = &preview.constraint_reviews[0];
+    assert_eq!(review.schema.as_str(), "schema");
+    assert_eq!(review.field.as_str(), "field");
+    assert_eq!(review.before, review.after);
+    let observed: BTreeMap<_, _> = review
+        .before
+        .iter()
+        .map(|entry| {
+            (
+                entry.field.clone(),
+                (entry.stored.clone(), entry.calculated_number),
+            )
+        })
+        .collect();
+    assert_eq!(
+        observed,
+        BTreeMap::from([
+            (
+                FieldRef::new("entity", "field"),
+                (
+                    Value::Number(Number::new(7.0).unwrap()),
+                    Some(Number::new(7.0).unwrap()),
+                ),
+            ),
+            (
+                FieldRef::new("formula", "field"),
+                (formula, Some(Number::new(7.0).unwrap())),
+            ),
+            (
+                FieldRef::new("second", "field"),
+                (
+                    Value::Number(Number::new(9.0).unwrap()),
+                    Some(Number::new(9.0).unwrap()),
+                ),
+            ),
+        ])
+    );
 }
