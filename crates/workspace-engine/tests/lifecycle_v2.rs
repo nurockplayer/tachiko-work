@@ -683,6 +683,55 @@ fn frozen_v1_rejects_constraint_inside_keyed_definition_batch() {
 }
 
 #[test]
+fn frozen_v1_rejects_keyed_definition_edit_on_constrained_document() {
+    let mut document = keyed_definition_document();
+    document
+        .schemas
+        .get_mut("orders")
+        .unwrap()
+        .fields
+        .get_mut("quantity")
+        .unwrap()
+        .constraint = FieldConstraint::NumberInclusiveRange {
+        min: Number::new(0.0).unwrap(),
+        max: Number::new(10.0).unwrap(),
+    };
+    let mut lifecycle = lifecycle(false);
+    grant(
+        &mut lifecycle,
+        "keyed-editor",
+        "editor",
+        vec![
+            query(OperationFamily::KeyedGroupedSumDefinition),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::KeyedGroupedSumDefinition,
+                MutationClass::Structure,
+                SemanticScope::Document,
+            ),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::KeyedGroupedSumDefinition,
+                MutationClass::Destructive,
+                SemanticScope::Document,
+            ),
+        ],
+    );
+    let result = propose_body(
+        &mut lifecycle,
+        &document,
+        "frozen-v1-constrained-keyed",
+        SemanticPatchBody::command(SemanticCommand::RemoveKeyedGroupedSumDefinition {
+            definition: "summary".into(),
+        }),
+    );
+    assert!(
+        result.is_err(),
+        "frozen v1 must refuse a constrained base even without a constraint command"
+    );
+}
+
+#[test]
 fn v2_keyed_definition_change_refuses_with_canonical_delta_error() {
     let document = keyed_definition_document();
     let mut lifecycle = lifecycle(true);
