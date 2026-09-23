@@ -6,6 +6,16 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Rust storage callers can now encode and strictly read canonical `.roproj/v3`
+  trees with bounded field constraints and Date values, and explicitly migrate
+  admitted v1/v2 directories to a distinct no-clobber v3 destination. Ordinary
+  Designer save/open and portable packages do not select v3 yet.
+- The semantic core now recognizes the bounded durable Text literal-set and
+  inclusive Number-range constraints. Existing core and resident validation
+  reject invalid declarations, direct values, and successful formula results;
+  frozen storage, diff, merge, and legacy inspection boundaries refuse this
+  newer meaning rather than omitting it.
+- Native tables can remove selected rows while preserving stable row identities and failed-operation selections.
 - Native Designer tables can add a required Text, Number, Boolean, or Date
   column with one explicit typed initializer for every current row, rename a
   scalar column without changing its stable identity, and remove an unused

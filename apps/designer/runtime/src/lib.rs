@@ -139,6 +139,16 @@ pub enum DesignerRequest {
         expected_revision: String,
         entities: Vec<String>,
     },
+    InsertRow {
+        expected_revision: String,
+        collection: String,
+        initializers: Vec<RowInitializer>,
+    },
+    RemoveTableRows {
+        expected_revision: String,
+        collection: String,
+        entities: Vec<String>,
+    },
     Undo {
         expected_revision: String,
     },
@@ -313,6 +323,14 @@ pub enum ScalarEditInput {
 #[serde(deny_unknown_fields)]
 pub struct ColumnInitializer {
     pub entity: String,
+    pub input: ScalarEditInput,
+}
+
+/// One explicit value required when inserting a native scalar table row.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RowInitializer {
+    pub field: String,
     pub input: ScalarEditInput,
 }
 
@@ -917,6 +935,24 @@ impl DesignerRuntime {
             } => Ok(DesignerResponse::Published(
                 self.remove_rows(&expected_revision, &entities)?,
             )),
+            DesignerRequest::InsertRow {
+                expected_revision,
+                collection,
+                initializers,
+            } => Ok(DesignerResponse::Published(self.insert_row(
+                &expected_revision,
+                &collection,
+                &initializers,
+            )?)),
+            DesignerRequest::RemoveTableRows {
+                expected_revision,
+                collection,
+                entities,
+            } => Ok(DesignerResponse::Published(self.remove_table_rows(
+                &expected_revision,
+                &collection,
+                &entities,
+            )?)),
             DesignerRequest::Undo { expected_revision } => Ok(DesignerResponse::Published(
                 self.history_edit(&expected_revision, false)?,
             )),
@@ -1461,6 +1497,7 @@ impl DesignerRuntime {
             key: FieldKey::from(key),
             field_type: kind,
             required: true,
+            constraint: tachiko_workspace_engine::FieldConstraint::None,
         };
         let forward = vec![SemanticCommand::AppendSchemaField {
             schema: schema_id.clone(),
@@ -2289,6 +2326,7 @@ impl DesignerRuntime {
                         key: FieldKey::from(key),
                         field_type,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )
             })
@@ -2341,6 +2379,7 @@ impl DesignerRuntime {
                     key: FieldKey::from(key),
                     field_type,
                     required: true,
+                    constraint: tachiko_workspace_engine::FieldConstraint::None,
                 },
             );
         }
@@ -2648,6 +2687,130 @@ impl DesignerRuntime {
                 entity: entity.clone(),
             });
         }
+        self.record_edit(expected, forward, inverse)
+    }
+
+    fn insert_row(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        initializers: &[RowInitializer],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let spec = self.collection_spec(collection)?.clone();
+        if !is_native_table_spec(&spec) {
+            return Err(table_error(
+                "row insertion is available for native scalar tables",
+            ));
+        }
+        if spec.entities.len() >= MAX_TABLE_ROWS {
+            return Err(table_error("row capacity is exhausted"));
+        }
+        if initializers.len() != spec.columns.len() {
+            return Err(table_error(
+                "every declared column needs exactly one initializer",
+            ));
+        }
+        if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
+            return Err(tracker_error("row identity allocation is exhausted"));
+        }
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot
+            .document()
+            .schemas
+            .get(&SchemaId::from(spec.summary.id.clone()))
+            .ok_or_else(|| table_error("native table schema is unavailable"))?;
+        if !has_scalar_row_authoring_shape(snapshot.document(), schema, &spec.entities) {
+            return Err(table_error(
+                "native table schema is not a scalar row profile",
+            ));
+        }
+        let columns = spec
+            .columns
+            .iter()
+            .map(|column| (column.id.clone(), column))
+            .collect::<BTreeMap<_, _>>();
+        let mut values = BTreeMap::new();
+        for initializer in initializers {
+            let column = columns
+                .get(&FieldId::from(initializer.field.clone()))
+                .ok_or_else(|| {
+                    table_error("initializers must name each declared column exactly once")
+                })?;
+            if values.contains_key(&column.id) {
+                return Err(table_error(
+                    "initializers must name each declared column exactly once",
+                ));
+            }
+            values.insert(
+                column.id.clone(),
+                parse_column_initializer(&column.field_type, &initializer.input)?,
+            );
+        }
+        if values.len() != spec.columns.len() {
+            return Err(table_error(
+                "initializers must name each declared column exactly once",
+            ));
+        }
+        let mut allocated = BTreeSet::new();
+        let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
+        let mut entity =
+            native_table_row(snapshot.document(), &spec, &mut row_ids, &mut allocated)?;
+        for (field, value) in values {
+            entity.fields.insert(field, value);
+        }
+        let entity_id = entity.id.clone();
+        let publication = self.record_edit(
+            expected,
+            vec![SemanticCommand::AppendEntity { entity }],
+            vec![SemanticCommand::RemoveEntity { entity: entity_id }],
+        )?;
+        self.row_serial = row_ids.serial();
+        Ok(publication)
+    }
+
+    fn remove_table_rows(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        entities: &[String],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let spec = self.collection_spec(collection)?.clone();
+        if !is_native_table_spec(&spec) {
+            return Err(table_error(
+                "row removal is available for native scalar tables",
+            ));
+        }
+        if entities.is_empty() || entities.len() > MAX_TABLE_ROWS {
+            return Err(table_error("the row selection is empty or too large"));
+        }
+        let snapshot = self.session.export_snapshot();
+        let mut seen = BTreeSet::new();
+        let mut forward = Vec::new();
+        let mut inverse = Vec::new();
+        for id in entities {
+            if !seen.insert(id) {
+                return Err(table_error("duplicate row targets are unsupported"));
+            }
+            let entity_id = EntityId::from(id.clone());
+            if !spec.entities.contains(&entity_id) {
+                return Err(table_error("row is unavailable in the selected collection"));
+            }
+            let entity = snapshot
+                .document()
+                .entities
+                .get(&entity_id)
+                .filter(|entity| entity.schema.as_str() == spec.summary.id)
+                .ok_or_else(|| table_error("row is unavailable"))?;
+            forward.push(SemanticCommand::RemoveEntity {
+                entity: entity.id.clone(),
+            });
+            inverse.push(SemanticCommand::AppendEntity {
+                entity: entity.clone(),
+            });
+        }
+        inverse.reverse();
         self.record_edit(expected, forward, inverse)
     }
 
@@ -2992,6 +3155,7 @@ fn budget_schema<const COUNT: usize>(
                         key: FieldKey::from(key),
                         field_type,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )
             })
@@ -4104,6 +4268,7 @@ fn add_moonfall_boolean_fixture(document: &mut Document) -> Result<(), DesignerE
             key: FieldKey::from("enabled"),
             field_type: FieldType::Boolean,
             required: true,
+            constraint: tachiko_workspace_engine::FieldConstraint::None,
         },
     );
     let iron_sword = document
@@ -4543,9 +4708,10 @@ mod tests {
     use super::{
         AuthorizationAction, ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime,
         DocumentScopeId, EntityId, FieldDefinition, FieldId, FieldKey, FieldType, Grant, GrantId,
-        GrantRequirement, KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER,
-        MutationClass, NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId,
-        ProposalId, ScalarEditInput, ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
+        GrantRequirement, HistoryAction, KeyedGroupedSumDefinitionInput,
+        MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass, NewTableColumnInput, OperationFamily,
+        PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput,
+        ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
     };
 
     fn native_column_runtime(columns: &[(&str, &str)], values: &[&str]) -> DesignerRuntime {
@@ -4608,6 +4774,29 @@ mod tests {
                 entity: entity.to_string(),
                 input: ScalarEditInput::Text {
                     value: value.to_owned(),
+                },
+            })
+            .collect()
+    }
+
+    fn row_initializers(runtime: &DesignerRuntime) -> Vec<RowInitializer> {
+        runtime.collection_specs["orders"]
+            .columns
+            .iter()
+            .map(|column| RowInitializer {
+                field: column.id.to_string(),
+                input: match &column.field_type {
+                    FieldType::Text => ScalarEditInput::Text {
+                        value: "new".to_owned(),
+                    },
+                    FieldType::Number => ScalarEditInput::Number {
+                        input: "4".to_owned(),
+                    },
+                    FieldType::Boolean => ScalarEditInput::Boolean { value: true },
+                    FieldType::Date => ScalarEditInput::Date {
+                        value: "2024-02-29".to_owned(),
+                    },
+                    FieldType::Reference { .. } => unreachable!("native rows are scalar-only"),
                 },
             })
             .collect()
@@ -4992,6 +5181,7 @@ mod tests {
                             key: FieldKey::from(format!("bad_{}", runtime.proposal_serial)),
                             field_type: FieldType::Number,
                             required: true,
+                            constraint: tachiko_workspace_engine::FieldConstraint::None,
                         },
                         values: BTreeMap::from([(entity.clone(), value)]),
                     }],
@@ -5046,6 +5236,149 @@ mod tests {
         assert_eq!(removal_runtime.current_revision(), revision);
         assert_eq!(
             removal_runtime.export_project(&revision).unwrap().bytes,
+            before
+        );
+    }
+
+    #[test]
+    fn native_row_identity_counter_exhaustion_fails_closed_without_mutation() {
+        let mut runtime = DesignerRuntime::new_table(
+            "00000000-0000-4000-8000-000000000000",
+            "Orders",
+            &[NewTableColumnInput {
+                name: "Item".to_owned(),
+                field_type: "text".to_owned(),
+            }],
+        )
+        .unwrap();
+        runtime.row_serial = usize::MAX - super::MAX_TOTAL_ENTITIES - super::MAX_TABLE_ROWS + 1;
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let initializers = row_initializers(&runtime);
+        let error = runtime
+            .insert_row("resident/0", "orders", &initializers)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::InvalidTrackerOperation { ref message }
+                if message == "row identity allocation is exhausted"
+        ));
+        assert_eq!(runtime.current_revision(), "resident/0");
+        assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+        assert!(runtime.undo.is_empty());
+        assert!(runtime.redo.is_empty());
+    }
+
+    #[test]
+    fn native_row_failed_inverse_preserves_history_and_current_state() {
+        let mut runtime = native_column_runtime(&[("Item", "text")], &["widget"]);
+        let expected = runtime.current_revision().to_owned();
+        let initializers = row_initializers(&runtime);
+        runtime
+            .insert_row(&expected, "orders", &initializers)
+            .unwrap();
+        let revision = runtime.current_revision().to_owned();
+        let before = runtime.export_project(&revision).unwrap().bytes;
+        let undo_count = runtime.undo.len();
+        let redo_count = runtime.redo.len();
+
+        runtime.undo.last_mut().unwrap().inverse =
+            HistoryAction::Commands(vec![SemanticCommand::RemoveEntity {
+                entity: EntityId::from("missing-row"),
+            }]);
+        let error = runtime.history_edit(&revision, false).unwrap_err();
+
+        assert!(matches!(error, DesignerError::Lifecycle(_)));
+        assert_eq!(runtime.current_revision(), revision);
+        assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert_eq!(runtime.redo.len(), redo_count);
+    }
+
+    #[test]
+    fn native_row_removal_rejects_referenced_targets_atomically() {
+        let mut base =
+            native_column_runtime(&[("Source", "number"), ("Derived", "number")], &["1", "2"]);
+        let ids = native_column_ids(&base);
+        let start = base.collection_specs["orders"].columns[0].id.clone();
+        base.paste_cells(
+            "resident/1",
+            "orders",
+            None,
+            start.as_str(),
+            &[vec!["3".to_owned(), "4".to_owned()]],
+        )
+        .unwrap();
+        let entity = base.collection_specs["orders"].entities[0].clone();
+        let referencing = base.collection_specs["orders"].entities[1].clone();
+        let mut document = base.session.export_snapshot().document().clone();
+        document
+            .entities
+            .get_mut(&referencing)
+            .unwrap()
+            .fields
+            .insert(
+                ids["derived"].clone(),
+                Value::Formula(super::Expression::Reference(super::FieldRef::new(
+                    entity.clone(),
+                    ids["source"].clone(),
+                ))),
+            );
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .native_table_rows = true;
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let error = runtime
+            .remove_table_rows("resident/0", "orders", &[entity.to_string()])
+            .unwrap_err();
+        assert!(matches!(error, DesignerError::Lifecycle(_)));
+        assert_eq!(runtime.current_revision(), "resident/0");
+        assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+        assert!(runtime.undo.is_empty());
+        assert!(runtime.redo.is_empty());
+    }
+
+    #[test]
+    fn native_row_commands_require_append_and_remove_authority() {
+        let mut insert_runtime = native_column_runtime(&[("Value", "number")], &["1"]);
+        let before = insert_runtime.export_project("resident/1").unwrap().bytes;
+        insert_runtime
+            .lifecycle
+            .revoke_grant(&GrantId::from("designer-number-edit"))
+            .unwrap();
+        let initializers = row_initializers(&insert_runtime);
+        let error = insert_runtime
+            .insert_row("resident/1", "orders", &initializers)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })
+        ));
+        assert_eq!(
+            insert_runtime.export_project("resident/1").unwrap().bytes,
+            before
+        );
+
+        let mut remove_runtime = native_column_runtime(&[("Value", "number")], &["1"]);
+        let entity = remove_runtime.collection_specs["orders"].entities[0].to_string();
+        let before = remove_runtime.export_project("resident/1").unwrap().bytes;
+        remove_runtime
+            .lifecycle
+            .revoke_grant(&GrantId::from("designer-number-edit"))
+            .unwrap();
+        let error = remove_runtime
+            .remove_table_rows("resident/1", "orders", &[entity])
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })
+        ));
+        assert_eq!(
+            remove_runtime.export_project("resident/1").unwrap().bytes,
             before
         );
     }

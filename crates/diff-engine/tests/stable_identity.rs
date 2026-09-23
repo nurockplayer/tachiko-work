@@ -25,6 +25,7 @@ fn document() -> Document {
                         key: FieldKey::from("damage"),
                         field_type: FieldType::Number,
                         required: true,
+                        constraint: tachiko_semantic_core::FieldConstraint::None,
                     },
                 )]),
             },

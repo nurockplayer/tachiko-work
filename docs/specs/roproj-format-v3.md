@@ -2,9 +2,11 @@
 
 Decision state: Accepted target under [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md).
 
-Implementation state: Unimplemented docs-only authority. This specification does
-not claim a production codec, migration, validation path, API, UI, native/WASM
-path, or portable-package support.
+Implementation state: The storage codec, exact canonical-tree admission,
+semantic-core validation, and explicit v1/v2 conversion are implemented by #449.
+Native read, publish, and migration are implemented for canonical directories.
+Formula calculation admission, Designer selection/save, WASM integration, and
+portable-package support are not implemented by this storage slice.
 
 Editable-directory namespace: `.roproj`; format version: `3`
 
@@ -153,12 +155,14 @@ and SHA-256 first-hex-nibble entity placement are in
 ## Decode, migration, and semantic admission
 
 A v3 reader dispatches from the manifest, rejects unsupported/unknown structure,
-decodes the complete tree, checks constraint pairing and parameter limits,
-checks Date syntax/range, validates all IDs/relationships/values/formulas, then
-runs the applicable complete semantic validation and calculation gates. It never
-sorts or repairs malformed input. A writer emits v3 only from an admitted
-semantic state and writes a complete canonical candidate atomically to an absent
-destination.
+decodes the exact ordered nineteen-file tree, checks constraint pairing and
+parameter limits, checks Date syntax/range, and runs the shared semantic-core
+declaration, relationship, direct-value, and formula-structure oracle. It never
+sorts or repairs malformed input. Complete formula evaluation and calculated
+result-range enforcement remain at the workspace/application admission gate;
+the storage codec does not claim that gate. A writer emits v3 only from a
+storage-validated semantic state and the native host writes a complete canonical
+candidate atomically to an absent destination.
 
 Explicit v2→v3 migration preserves stable IDs, keys, types, requiredness, values,
 formulas, definitions, and document meaning, adding `none` to every field. It
@@ -169,7 +173,7 @@ represent this tree fail with a truthful unsupported representation/version
 outcome. Existing Date projects held in the private `TWDPROJ2` host envelope
 (whose payload is direct-ro/v2) enter v3 only through an explicit user-selected
 conversion/export; ordinary private read/save does not silently change format.
-These conversion paths are target behavior, not current implementation claims.
+The private-project conversion path remains separately owned application work.
 
 ## Explicitly outside v3
 

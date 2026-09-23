@@ -33,8 +33,10 @@ The bounded `.roproj/v2` storage codec and Designer save/reopen journey are
 implemented by #330/#331 under ADR-0037. ADR-0041 accepts the
 constraint-preserving [`.roproj/v3` format](roproj-format-v3.md) and
 [layout](roproj-layout-v3.md), plus the explicit v2→v3 migration boundary;
-v3 remains docs-only and unimplemented. These extensions preserve frozen v1
-and portable-package/v1 boundaries. See
+#449 implements the storage-owned v3 codec and explicit native canonical
+migration. Designer selection/save and complete application admission remain
+separate. These extensions preserve frozen v1 and portable-package/v1
+boundaries. See
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md) for the
 Accepted authority.
 
@@ -65,7 +67,8 @@ explicit bounded canonicalize operations. Issue #3 implements package
 pack/unpack and comparison over that exact tree.
 
 The bounded v2 definition-persistence contract is implemented by #330/#331
-under ADR-0037. The v3 target is Accepted but unimplemented under
+under ADR-0037. The v3 storage codec/native canonical migration are implemented
+by #449 under
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md), with
 [`roproj-format-v3.md`](roproj-format-v3.md) and
 [`roproj-layout-v3.md`](roproj-layout-v3.md) defining its DTO and tree.
@@ -105,7 +108,7 @@ layout through explicit migration without changing semantic identity.
 The bounded v2 definition-persistence contract is in
 [`roproj-format-v2.md`](roproj-format-v2.md) and
 [`roproj-layout-v2.md`](roproj-layout-v2.md), and is implemented by #330/#331.
-V3 is the Accepted but unimplemented constraint-preserving target under
+V3 is the Accepted constraint-preserving storage target implemented by #449 under
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md),
 defined by [`roproj-format-v3.md`](roproj-format-v3.md) and
 [`roproj-layout-v3.md`](roproj-layout-v3.md); portable-package/v1 remains a

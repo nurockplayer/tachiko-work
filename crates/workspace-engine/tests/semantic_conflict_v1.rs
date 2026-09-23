@@ -30,6 +30,7 @@ fn definition(id: &str, field_type: FieldType, required: bool) -> FieldDefinitio
         key: FieldKey::from(human_key(id)),
         field_type,
         required,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
     }
 }
 

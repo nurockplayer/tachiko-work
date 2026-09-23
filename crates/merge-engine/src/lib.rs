@@ -17,6 +17,7 @@ pub enum MergeOutcome {
     Merged(MergeCandidate),
     Conflicted(Vec<MergeConflict>),
     UnsupportedKeyedGroupedSumDefinitionChange,
+    UnsupportedFieldConstraintChange,
 }
 
 /// Conflict-free structural result awaiting workspace finalization.
@@ -485,6 +486,9 @@ impl From<&Entity> for EntitySubject {
 /// semantic validation and operation-specific gates to inputs and candidates.
 #[must_use]
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
+    if has_field_constraints(base) || has_field_constraints(ours) || has_field_constraints(theirs) {
+        return MergeOutcome::UnsupportedFieldConstraintChange;
+    }
     if base.keyed_grouped_sum_definitions != ours.keyed_grouped_sum_definitions
         || base.keyed_grouped_sum_definitions != theirs.keyed_grouped_sum_definitions
     {
@@ -549,6 +553,14 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
         },
         unmaterialized_fields,
     })
+}
+
+fn has_field_constraints(document: &Document) -> bool {
+    document
+        .schemas
+        .values()
+        .flat_map(|schema| schema.fields.values())
+        .any(|field| !field.constraint.is_none())
 }
 
 fn merge_schemas(
@@ -744,6 +756,7 @@ fn merge_field_definition(
         key: key?,
         field_type: field_type?,
         required: required?,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
     })
 }
 

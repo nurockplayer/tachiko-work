@@ -468,6 +468,7 @@ name = "tachiko-workspace-engine"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "tachiko-diff-engine",
  "tachiko-formula-engine",
  "tachiko-merge-engine",

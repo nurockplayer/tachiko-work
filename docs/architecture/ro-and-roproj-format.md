@@ -42,15 +42,17 @@ implemented by #330/#331 under ADR-0037. The Accepted
 [`.roproj/v3` format](../specs/roproj-format-v3.md) and
 [layout](../specs/roproj-layout-v3.md), plus the explicit v2→v3 migration
 boundary, are defined by
-[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md) but
-remain unimplemented; they do not change frozen v1/v2 or portable-package/v1
-contracts.
+[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md) and
+are implemented in storage and the native canonical host by #449. Designer
+selection/save and application admission remain separate; frozen v1/v2 and
+portable-package/v1 contracts do not change.
 
 This is a transitional implementation state, not a reversal of ADR-0003.
 ADR-0023 fixes the `.roproj/v1` durable representation contract. ADR-0037
 fixes the bounded `.roproj/v2` definition-persistence contract.
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md) defines
-the Accepted but unimplemented `.roproj/v3` constraint-preserving extension in
+the Accepted `.roproj/v3` constraint-preserving extension, implemented for
+storage codec and native canonical migration by #449, in
 [`roproj-format-v3.md`](../specs/roproj-format-v3.md) and
 [`roproj-layout-v3.md`](../specs/roproj-layout-v3.md). ADR-0025
 fixes the deterministic portable-package v1 envelope and integrity root over
@@ -88,8 +90,9 @@ layout and DTO contracts live in
 The bounded v2 definition-persistence contract is separately specified by
 [`roproj-format-v2.md`](../specs/roproj-format-v2.md) and
 [`roproj-layout-v2.md`](../specs/roproj-layout-v2.md), and implemented by
-#330/#331. V3 is an Accepted but unimplemented constraint-preserving target
-under [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md),
+#330/#331. V3 is an Accepted constraint-preserving storage target
+implemented by #449 for codec and native canonical migration under
+[ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md),
 with [`roproj-format-v3.md`](../specs/roproj-format-v3.md) and
 [`roproj-layout-v3.md`](../specs/roproj-layout-v3.md) as the normative links;
 portable-package/v1 remains the exact v1 artifact.
@@ -121,13 +124,14 @@ automatically overwritten, synchronized, or merged.
   ordinary writer, frozen `.roproj/v1` as the implemented canonical editable
   path, bounded `.roproj/v2` storage/Designer persistence as implemented by
   #330/#331, and portable-package/v1 as the implemented derived single-file
-  artifact; `.roproj/v3` remains Accepted but unimplemented under ADR-0041.
+  artifact; #449 implements `.roproj/v3` storage codec and native canonical
+  migration under ADR-0041, while Designer selection/save remains separate.
 - Architecture documents must document `.roproj` as the Accepted canonical editable target under ADR-0003.
 - `.roproj/v1` documents must follow ADR-0023's Accepted physical and wire contract without treating paths, shard names, or line numbers as semantic identity.
 - Portable package v1 implementations must consume ADR-0025's exact envelope and integrity contract without introducing another semantic schema.
 - `.roproj/v2` bounded definition persistence is implemented by #330/#331;
-  `.roproj/v3` remains an Accepted but unimplemented constraint-preserving
-  target under ADR-0041.
+  `.roproj/v3` storage codec and native canonical migration are implemented
+  by #449 under ADR-0041; application/Designer selection remains separate.
 - `.ro` packaging sophistication must not block semantic-core or user-workflow validation.
 - The system provides explicit deterministic direct `.ro` → `.roproj/v1`
   materialization plus exact `.roproj/v1` → packaged `.ro` pack and verified

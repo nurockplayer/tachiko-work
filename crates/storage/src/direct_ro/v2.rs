@@ -259,6 +259,7 @@ impl FieldDefinitionV2 {
             key: FieldKey::from(self.key),
             field_type: self.field_type.into_semantic(),
             required: self.required,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         }
     }
 }

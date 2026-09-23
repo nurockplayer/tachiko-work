@@ -34,7 +34,12 @@ pub use roproj::{
     CanonicalRoProjectV1, CanonicalRoProjectV2, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
     ROPROJ_V2_FORMAT_VERSION, ROPROJ_V2_PATHS, canonicalize_roproj, decode_roproj_v1,
     decode_roproj_v2, encode_roproj_v1, encode_roproj_v2, load_roproj, materialize_roproj,
-    migrate_roproj_v1_to_v2, publish_canonicalized_roproj, publish_roproj, read_canonical_roproj,
+    migrate_roproj_to_v3, migrate_roproj_v1_to_v2, publish_canonicalized_roproj, publish_roproj,
+    publish_roproj_v3, read_canonical_roproj, read_canonical_roproj_v3,
+};
+pub use roproj::{
+    CanonicalRoProjectFileV3, CanonicalRoProjectV3, ROPROJ_V3_FORMAT_VERSION, ROPROJ_V3_PATHS,
+    decode_roproj_v3, encode_roproj_v3, migrate_roproj_v1_to_v3, migrate_roproj_v2_to_v3,
 };
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;
@@ -112,6 +117,8 @@ pub enum FormatError {
     MigrationFailed { message: String },
     #[error("semantic document is invalid: {diagnostics:?}")]
     InvalidDocument { diagnostics: Vec<Diagnostic> },
+    #[error("this frozen representation does not support durable field constraints")]
+    UnsupportedFieldConstraint,
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
     #[error(
@@ -144,6 +151,7 @@ pub enum FormatError {
 /// profile, or a representation error if conversion or canonical encoding
 /// fails.
 pub fn to_canonical_string(document: &Document) -> Result<String, FormatError> {
+    reject_field_constraints(document)?;
     check_document(document)?;
     let dto = DocumentV2::from_semantic(document).map_err(map_v2_encode_error)?;
     let encoded = direct_ro::v2::encode(&dto).map_err(map_v2_encode_error)?;
@@ -486,6 +494,18 @@ fn check_document(document: &Document) -> Result<(), FormatError> {
     } else {
         Err(FormatError::InvalidDocument { diagnostics })
     }
+}
+
+pub(crate) fn reject_field_constraints(document: &Document) -> Result<(), FormatError> {
+    if document
+        .schemas
+        .values()
+        .flat_map(|schema| schema.fields.values())
+        .any(|field| !field.constraint.is_none())
+    {
+        return Err(FormatError::UnsupportedFieldConstraint);
+    }
+    Ok(())
 }
 
 fn map_frontend_error(error: FrontendError) -> FormatError {

@@ -1071,6 +1071,7 @@ fn bounded_document() -> Document {
                                 key: FieldKey::from("amount"),
                                 field_type: FieldType::Number,
                                 required: true,
+                                constraint: tachiko_semantic_core::FieldConstraint::None,
                             },
                         ),
                         (
@@ -1080,6 +1081,7 @@ fn bounded_document() -> Document {
                                 key: FieldKey::from("label"),
                                 field_type: FieldType::Text,
                                 required: false,
+                                constraint: tachiko_semantic_core::FieldConstraint::None,
                             },
                         ),
                     ]),
@@ -1144,6 +1146,7 @@ fn numeric_bridge_document() -> Document {
                             key: FieldKey::from("round"),
                             field_type: FieldType::Number,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                     (
@@ -1153,6 +1156,7 @@ fn numeric_bridge_document() -> Document {
                             key: FieldKey::from("subnormal"),
                             field_type: FieldType::Number,
                             required: true,
+                            constraint: tachiko_semantic_core::FieldConstraint::None,
                         },
                     ),
                 ]),
