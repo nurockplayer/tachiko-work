@@ -4212,12 +4212,15 @@ fn formula_impacts(changes: &[SemanticChange]) -> Vec<FormulaImpactEvidence> {
 fn duplicate_constraint_write(body: &SemanticPatchBody) -> Option<(SchemaId, FieldId)> {
     let mut constraint_targets = BTreeSet::new();
     let mut field_lifecycle_targets = BTreeSet::new();
+    let mut collection_lifecycle_targets = BTreeSet::new();
     for command in body.commands() {
         match command {
             SemanticCommand::SetFieldConstraint { schema, field, .. } => {
                 let target = (schema.clone(), field.clone());
                 if !constraint_targets.insert(target.clone())
                     || field_lifecycle_targets.contains(&target)
+                    || collection_lifecycle_targets.contains(&(schema.clone(), None))
+                    || collection_lifecycle_targets.contains(&(schema.clone(), Some(field.clone())))
                 {
                     return Some(target);
                 }
@@ -4229,6 +4232,28 @@ fn duplicate_constraint_write(body: &SemanticPatchBody) -> Option<(SchemaId, Fie
                     return Some(target);
                 }
                 field_lifecycle_targets.insert(target);
+            }
+            SemanticCommand::AppendCollection { schema, .. } => {
+                for field in schema
+                    .fields
+                    .values()
+                    .map(|definition| definition.id.clone())
+                {
+                    let target = (schema.id.clone(), field);
+                    if constraint_targets.contains(&target) {
+                        return Some(target);
+                    }
+                    collection_lifecycle_targets.insert((target.0.clone(), Some(target.1.clone())));
+                }
+            }
+            SemanticCommand::RemoveCollection { schema, .. } => {
+                if let Some(target) = constraint_targets
+                    .iter()
+                    .find(|(constraint_schema, _)| constraint_schema == schema)
+                {
+                    return Some(target.clone());
+                }
+                collection_lifecycle_targets.insert((schema.clone(), None));
             }
             _ => {}
         }
@@ -4590,6 +4615,33 @@ mod tests {
         }
     }
 
+    fn collection_command(schema_id: &str, append: bool) -> SemanticCommand {
+        if append {
+            SemanticCommand::AppendCollection {
+                schema: Schema {
+                    id: SchemaId::from(schema_id),
+                    key: SchemaKey::from(schema_id),
+                    fields: BTreeMap::from([(
+                        FieldId::from("field"),
+                        FieldDefinition {
+                            id: FieldId::from("field"),
+                            key: FieldKey::from("field"),
+                            field_type: FieldType::Number,
+                            required: true,
+                            constraint: FieldConstraint::None,
+                        },
+                    )]),
+                },
+                entities: Vec::new(),
+            }
+        } else {
+            SemanticCommand::RemoveCollection {
+                schema: SchemaId::from(schema_id),
+                entities: Vec::new(),
+            }
+        }
+    }
+
     #[test]
     fn constraint_write_rejects_duplicate_and_field_lifecycle_targets() {
         let constraint = || SemanticCommand::SetFieldConstraint {
@@ -4602,6 +4654,10 @@ mod tests {
             vec![constraint(), constraint()],
             vec![constraint(), schema_field_command("field", true)],
             vec![schema_field_command("field", false), constraint()],
+            vec![collection_command("schema", true), constraint()],
+            vec![constraint(), collection_command("schema", true)],
+            vec![collection_command("schema", false), constraint()],
+            vec![constraint(), collection_command("schema", false)],
         ] {
             let body = SemanticPatchBody::atomic_batch(commands).unwrap();
             assert_eq!(
@@ -4616,6 +4672,16 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(duplicate_constraint_write(&unrelated), None);
+
+        let unrelated_collection =
+            SemanticPatchBody::atomic_batch(vec![constraint(), collection_command("other", true)])
+                .unwrap();
+        assert_eq!(duplicate_constraint_write(&unrelated_collection), None);
+
+        let unrelated_removal =
+            SemanticPatchBody::atomic_batch(vec![constraint(), collection_command("other", false)])
+                .unwrap();
+        assert_eq!(duplicate_constraint_write(&unrelated_removal), None);
     }
 
     #[test]
