@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mountReportPanel, type ReportPanelState } from "../src/report-panel.ts";
 import type { ReportChart } from "../src/report-model.ts";
 import { cellKey, type NumberFormat } from "../src/tracker-model.ts";
-import type { FieldProjection, TableProjection } from "../src/runtime/protocol.ts";
+import type { FieldProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 const renderReportChart = vi.hoisted(() => vi.fn());
 vi.mock("../src/report-renderer.ts", () => ({

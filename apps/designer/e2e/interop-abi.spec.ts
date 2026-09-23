@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import type { DesignerResponse, DesignerWireReply } from "../src/runtime/protocol.ts";
-import type { SpreadsheetOperation } from "../src/runtime/interop-protocol.ts";
+import type { DesignerResponse, DesignerWireReply } from "@tachiko-work/browser-client/runtime/protocol";
+import type { SpreadsheetOperation } from "@tachiko-work/browser-client/runtime/interop-protocol";
 
 type DesignerAbi = WebAssembly.Exports & {
   memory: WebAssembly.Memory;

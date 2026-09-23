@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import type { DesignerWireReply } from "../src/runtime/protocol.ts";
+import type { DesignerWireReply } from "@tachiko-work/browser-client/runtime/protocol";
 
 const shortcut = process.platform === "darwin" ? "Meta" : "Control";
 const inventoryRows = "0012\t3\ttrue\t2024-02-29\nノート\t0\tfalse\t2026-09-13\n紙\t-2\ttrue\t2026-01-01";

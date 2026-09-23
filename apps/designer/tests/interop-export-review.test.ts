@@ -3,9 +3,9 @@ import { mountDesigner } from "../src/designer-app.ts";
 import { createInteropState } from "../src/interop-state.ts";
 import { defaultBudgetViews } from "../src/budget-views.ts";
 import { emptyTrackerView } from "../src/tracker-model.ts";
-import type { DesignerClient } from "../src/runtime/client.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
 import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
-import type { ImportedProjection, SourceWorkbook, SpreadsheetExport } from "../src/runtime/interop-protocol.ts";
+import type { ImportedProjection, SourceWorkbook, SpreadsheetExport } from "@tachiko-work/browser-client/runtime/interop-protocol";
 
 const imported: ImportedProjection = {
   opened: {

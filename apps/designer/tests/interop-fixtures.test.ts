@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, it } from "vitest";
-import inventory from "./fixtures/interop/hostile/inventory.json";
+import inventory from "../../../packages/browser-client/tests/fixtures/interop/hostile/inventory.json";
 
-const root = resolve(process.cwd(), "tests/fixtures/interop/hostile");
+const root = resolve(process.cwd(), "../../packages/browser-client/tests/fixtures/interop/hostile");
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
 it("pins the hostile estate to its original reference workbook and exact archive bytes", () => {

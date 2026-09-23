@@ -4,7 +4,7 @@ import type {
   InteropMetadata,
   SourceStyle,
   SpreadsheetFormat,
-} from "./runtime/interop-protocol.ts";
+} from "@tachiko-work/browser-client/runtime/interop-protocol";
 import {
   emptyGenericTableView,
   validateGenericTableView,

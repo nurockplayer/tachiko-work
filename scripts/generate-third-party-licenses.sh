@@ -44,7 +44,7 @@ if ! cargo +stable vendor --locked --versioned-dirs "${vendor_dir}" >/dev/null 2
 fi
 designer_vendor_log="${work_dir}/designer-cargo-vendor.log"
 if ! cargo +stable vendor \
-  --manifest-path apps/designer/runtime/Cargo.toml \
+  --manifest-path packages/browser-client/runtime/Cargo.toml \
   --locked \
   --versioned-dirs \
   "${designer_vendor_dir}" >/dev/null 2>"${designer_vendor_log}"; then
@@ -61,7 +61,7 @@ fi
     --prefix none \
     --format '{p}|{l}|{r}'
   cargo +stable tree \
-    --manifest-path apps/designer/runtime/Cargo.toml \
+    --manifest-path packages/browser-client/runtime/Cargo.toml \
     -p tachiko-designer-runtime \
     --edges normal \
     --target all \
@@ -141,7 +141,7 @@ awk '
   END {
     emit_package()
   }
-' Cargo.lock apps/designer/runtime/Cargo.lock | LC_ALL=C sort -u >"${lock_inventory}"
+' Cargo.lock packages/browser-client/runtime/Cargo.lock | LC_ALL=C sort -u >"${lock_inventory}"
 
 awk -F '|' '
   NR == FNR {

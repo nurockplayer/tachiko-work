@@ -1,5 +1,5 @@
 import { parseInteropState, type InteropState } from "./interop-state.ts";
-import type { FieldProjection, TableProjection } from "./runtime/protocol.ts";
+import type { FieldProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 import { parseBudgetViews, type BudgetViews } from "./budget-views.ts";
 import { parseReportCharts, type ReportChart } from "./report-model.ts";
 export type CellStyle = {

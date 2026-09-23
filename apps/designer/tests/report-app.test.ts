@@ -10,7 +10,7 @@ vi.mock("../src/report-renderer.ts", () => ({
 import { mountDesigner } from "../src/designer-app.ts";
 import { emptyTrackerView } from "../src/tracker-model.ts";
 import type { ReportChart } from "../src/report-model.ts";
-import type { DesignerClient } from "../src/runtime/client.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
 import type {
   BootstrapProjection,
   FieldBatchProjection,
@@ -18,7 +18,7 @@ import type {
   PublicationProjection,
   ProjectExport,
   TableProjection,
-} from "../src/runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
 import type { DesignerProjectHost, SavedProjectSummary } from "../src/host/browser-project-host.ts";
 
 const alpha = "alpha";

@@ -1,6 +1,6 @@
 import { projectReportChart, type ReportChart } from "./report-model.ts";
 import { renderReportChart } from "./report-renderer.ts";
-import type { TableProjection } from "./runtime/protocol.ts";
+import type { TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 import type { NumberFormat } from "./tracker-model.ts";
 
 export type ReportExportState = {

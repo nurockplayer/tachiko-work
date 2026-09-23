@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
-const operations = (await readFile(new URL("./fixtures/operations-tracker.tsv", import.meta.url), "utf8")).trimEnd();
+const operations = (await readFile(new URL("../../../packages/browser-client/e2e/fixtures/operations-tracker.tsv", import.meta.url), "utf8")).trimEnd();
 const shortcut = process.platform === "darwin" ? "Meta" : "Control";
 const cell = (page: Page, row: number, column: number) => page.locator(`[role=gridcell][data-row="${String(row)}"][data-col="${String(column)}"]`);
 const rows = (page: Page) => page.locator("[aria-label='Tracker cells'] tbody tr");

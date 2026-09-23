@@ -1,7 +1,7 @@
 import { parseReportCharts, projectReportChart, type ReadyReportChart, type ReportChart, type ReportChartProjection } from "./report-model.ts";
 import { formatReportNumber, renderReportChart } from "./report-renderer.ts";
 import type { NumberFormat } from "./tracker-model.ts";
-import type { TableProjection } from "./runtime/protocol.ts";
+import type { TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 type ChartPresentationProvenance =
   | { kind: "create"; charts: ReportChart[] }

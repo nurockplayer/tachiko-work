@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FindReplacePanel, findLiteralTextMatches } from "../src/find-replace-panel.ts";
-import type { CleanupPreview } from "../src/runtime/interop-protocol.ts";
-import type { FieldProjection, TableProjection } from "../src/runtime/protocol.ts";
+import type { CleanupPreview } from "@tachiko-work/browser-client/runtime/interop-protocol";
+import type { FieldProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 const field = (entity: string, name: string, value: string, formula: { source: string } | null = null): FieldProjection => ({
   target: { entity, field: name }, address: `${entity}.${name}`, stored: { kind: "text", value }, formula, calculated: null, diagnostics: [], editable_scalar: "text",

@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { mountDesigner, type MountedDesigner } from "../src/designer-app.ts";
-import type { DesignerClient } from "../src/runtime/client.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
 import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
-import type { NativeTrackerExportPresentation, SpreadsheetFormat } from "../src/runtime/interop-protocol.ts";
-import type { TableProjection } from "../src/runtime/protocol.ts";
+import type { NativeTrackerExportPresentation, SpreadsheetFormat } from "@tachiko-work/browser-client/runtime/interop-protocol";
+import type { TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 let mounted: MountedDesigner | undefined;
 afterEach(() => { mounted?.destroy(); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 function fixture(): TableProjection {

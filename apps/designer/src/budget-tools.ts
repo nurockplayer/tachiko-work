@@ -1,4 +1,4 @@
-import { fieldTargetKey, type FieldProjection, type FieldTarget, type FormulaCopy, type TableProjection } from "./runtime/protocol.ts";
+import { fieldTargetKey, type FieldProjection, type FieldTarget, type FormulaCopy, type TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 export type BudgetToolsDraft = {
   target?: FieldTarget;

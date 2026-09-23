@@ -1,9 +1,9 @@
 import { createDurabilityState, type DurabilityState } from "./durability-state.ts";
 import type { DesignerProjectHost } from "./host/browser-project-host.ts";
-import { projectTransferFromFiles } from "./host/project-transfer.ts";
+import { projectTransferFromFiles } from "@tachiko-work/browser-client/host/project-transfer";
 import { readSingleLocalRoDocument, type LocalDocumentHandle } from "./host/local-document-ingress.ts";
-import type { DesignerClient } from "./runtime/client.ts";
-import type { OpenedProjection } from "./runtime/protocol.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
+import type { OpenedProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 type ActiveProject = {
   name: string;

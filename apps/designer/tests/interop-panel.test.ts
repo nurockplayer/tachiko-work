@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { mountCleanupPanel, SpreadsheetImportPanel } from "../src/interop-panel.ts";
-import type { CleanupOperation, CleanupPreview, SourceWorkbook } from "../src/runtime/interop-protocol.ts";
-import type { DesignerClient } from "../src/runtime/client.ts";
-import type { FieldProjection, StoredValueProjection, TableProjection } from "../src/runtime/protocol.ts";
+import type { CleanupOperation, CleanupPreview, SourceWorkbook } from "@tachiko-work/browser-client/runtime/interop-protocol";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
+import type { FieldProjection, StoredValueProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 const target = (entity: string) => ({ entity, field: "stable-column" });
 function field(entity: string, stored: StoredValueProjection): FieldProjection {

@@ -1,5 +1,5 @@
 import { cellKey, type NumberFormat } from "./tracker-model.ts";
-import type { FieldProjection, TableProjection } from "./runtime/protocol.ts";
+import type { FieldProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 const MAX_CHARTS = 8;
 const MAX_ROWS = 16;

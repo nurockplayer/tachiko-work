@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createInteropState, parseInteropState, type InteropState } from "../src/interop-state.ts";
-import type { ImportedProjection, SourceStyle } from "../src/runtime/interop-protocol.ts";
+import type { ImportedProjection, SourceStyle } from "@tachiko-work/browser-client/runtime/interop-protocol";
 
 const style = (): SourceStyle => ({ number_format: null, bold: false, fill: null, wrap: false, border: false, alignment: null });
 function fixture(): InteropState {

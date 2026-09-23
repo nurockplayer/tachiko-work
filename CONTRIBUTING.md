@@ -41,7 +41,7 @@ rustup target add --toolchain stable wasm32-unknown-unknown
 rustup toolchain install 1.85.0 --profile minimal
 rustup target add --toolchain 1.85.0 wasm32-unknown-unknown
 rustup run 1.85.0 cargo check --workspace --all-targets --locked
-rustup run 1.85.0 cargo check --manifest-path apps/designer/runtime/Cargo.toml --target wasm32-unknown-unknown --all-targets --locked
+rustup run 1.85.0 cargo check --manifest-path packages/browser-client/runtime/Cargo.toml --target wasm32-unknown-unknown --all-targets --locked
 ```
 
 Use the checked-in `Cargo.lock`. The project does not require a global install;
@@ -49,8 +49,9 @@ run the CLI with `cargo run -p tachiko-cli -- <command>` while developing.
 
 The first-party Web Designer additionally requires pnpm 11.25.0, Chromium, and
 ripgrep (`rg`) for its browser journey and exported-client boundary checks.
-Install ripgrep with the operating system's package manager. Keep its app-local
-lockfile and use pnpm exclusively:
+Install ripgrep with the operating system's package manager. Keep the
+browser-client package lockfile and Designer workspace lockfile; use pnpm
+exclusively:
 
 ```sh
 pnpm --dir apps/designer install --frozen-lockfile

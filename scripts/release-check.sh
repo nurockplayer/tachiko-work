@@ -68,7 +68,7 @@ if [[ "${msrv_description}" != rustc\ 1.85.0\ * ]]; then
   exit 1
 fi
 rustup run 1.85.0 cargo check --workspace --all-targets --locked
-rustup run 1.85.0 cargo check --manifest-path apps/designer/runtime/Cargo.toml \
+rustup run 1.85.0 cargo check --manifest-path packages/browser-client/runtime/Cargo.toml \
   --target wasm32-unknown-unknown --all-targets --locked
 
 echo "==> audited third-party license notices"

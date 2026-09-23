@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { DesignerRuntimeError } from "../src/runtime/client.ts";
-import { WorkerDesignerClient } from "../src/runtime/worker-client.ts";
+import { DesignerRuntimeError } from "@tachiko-work/browser-client/runtime/client";
+import { WorkerDesignerClient } from "@tachiko-work/browser-client/runtime/worker-client";
 import type {
   NativeBudgetExportPresentation,
   SpreadsheetExport,
-} from "../src/runtime/interop-protocol.ts";
+} from "@tachiko-work/browser-client/runtime/interop-protocol";
 import type {
   FailureProjection,
   WorkerReply,
   WorkerRequest,
-} from "../src/runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
 
 const presentation: NativeBudgetExportPresentation = {
   version: 1,

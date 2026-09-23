@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseReportCharts, projectReportChart, type ReportChart } from "../src/report-model.ts";
 import { cellKey, type NumberFormat } from "../src/tracker-model.ts";
-import type { FieldProjection, StoredValueProjection, TableProjection } from "../src/runtime/protocol.ts";
+import type { FieldProjection, StoredValueProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 const chartId = "00000000-0000-4000-8000-000000000260";
 
