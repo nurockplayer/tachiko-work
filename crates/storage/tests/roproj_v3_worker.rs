@@ -8,7 +8,7 @@ use std::{
 use tachiko_semantic_core::{
     Date, Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldType,
     KeyedGroupedSumDefinition, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    Number, Schema, Value,
+    Number, Schema, Value, validate_document,
 };
 use tachiko_storage::{
     CanonicalRoProjectV3, FormatError, decode_roproj_v3, encode_roproj_v1, encode_roproj_v2,
@@ -140,9 +140,9 @@ fn write_tree(root: &std::path::Path, files: &[(String, Vec<u8>)]) {
 }
 
 #[test]
-fn semantic_oracle_date_extremes_formulas_definitions_and_writer_sorting() {
-    let mut document = fixture();
-    if let FieldConstraint::TextLiteralSet { values } = &mut document
+fn writer_rejects_invalid_constraint_declaration_and_roundtrips_valid_meaning() {
+    let mut unsorted = fixture();
+    if let FieldConstraint::TextLiteralSet { values } = &mut unsorted
         .schemas
         .get_mut("schema")
         .unwrap()
@@ -153,6 +153,19 @@ fn semantic_oracle_date_extremes_formulas_definitions_and_writer_sorting() {
     {
         values.reverse();
     }
+    let diagnostics = validate_document(&unsorted);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code.as_str() == "core.field_constraint_declaration" })
+    );
+    assert!(matches!(
+        encode_roproj_v3(&unsorted),
+        Err(FormatError::InvalidDocument { diagnostics })
+            if diagnostics.iter().any(|diagnostic| diagnostic.code.as_str() == "core.field_constraint_declaration")
+    ));
+
+    let mut document = fixture();
     document.entities.get_mut("entity").unwrap().fields.insert(
         "date".into(),
         Value::Date(Date::new(9_999, 12, 31).unwrap()),

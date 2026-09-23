@@ -415,24 +415,14 @@ impl DefinitionV3 {
 /// Returns [`FormatError::InvalidDocument`] when semantic validation fails or
 /// [`FormatError::Json`] when canonical JSON string encoding fails.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV3, FormatError> {
-    let mut canonical = document.clone();
-    for field in canonical
-        .schemas
-        .values_mut()
-        .flat_map(|schema| schema.fields.values_mut())
-    {
-        if let FieldConstraint::TextLiteralSet { values } = &mut field.constraint {
-            values.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
-        }
-    }
-    check_v3_document(&canonical)?;
-    validate_semantic_expression_limits(&canonical)?;
-    validate_keyed_grouped_sum_definitions(&canonical).map_err(|error| {
+    check_v3_document(document)?;
+    validate_semantic_expression_limits(document)?;
+    validate_keyed_grouped_sum_definitions(document).map_err(|error| {
         FormatError::InvalidRoProjectRepresentation {
             message: format!("invalid keyed grouped-sum definition: {error}"),
         }
     })?;
-    encode_validated(&canonical)
+    encode_validated(document)
 }
 
 fn encode_validated(document: &Document) -> Result<CanonicalRoProjectV3, FormatError> {
