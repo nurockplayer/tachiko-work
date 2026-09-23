@@ -4,7 +4,7 @@ import { mountDesigner } from "./designer-app.ts";
 import { BrowserProjectHost } from "./host/browser-project-host.ts";
 import { registerTauriLocalDocumentLaunch } from "./host/tauri-local-document-launch.ts";
 import { registerPwaFileLaunch } from "./pwa-file-launch.ts";
-import { WorkerDesignerClient } from "./runtime/worker-client.ts";
+import { WorkerDesignerClient } from "@tachiko-work/browser-client/runtime/worker-client";
 
 const root = document.querySelector<HTMLElement>("#app");
 if (root === null) {

@@ -3,8 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 designer_dir="${repo_root}/apps/designer"
-runtime_manifest="${designer_dir}/runtime/Cargo.toml"
-runtime_root="${designer_dir}/runtime"
+runtime_manifest="${repo_root}/packages/browser-client/runtime/Cargo.toml"
+runtime_root="${repo_root}/packages/browser-client/runtime"
 
 command -v pnpm >/dev/null 2>&1 || {
   echo "designer-check: pnpm 11.25.0 is required" >&2
@@ -42,6 +42,7 @@ node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_root}"
 
 pnpm --dir "${designer_dir}" lint
 pnpm --dir "${designer_dir}" test
+pnpm --dir "${designer_dir}" test:browser-client
 pnpm --dir "${designer_dir}" build
 # The frontend build runs another Cargo/WASM build; re-scan after it as well.
 node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_root}"

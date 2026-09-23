@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { fileURLToPath } from "node:url";
-const fixture = (name: string): string => fileURLToPath(new URL(`../tests/fixtures/interop/${name}`, import.meta.url));
+const fixture = (name: string): string => fileURLToPath(new URL(`../../../packages/browser-client/tests/fixtures/interop/${name}`, import.meta.url));
 async function inspect(page: Page, name: string): Promise<void> {
   await page.goto("/");
   await page.getByText("Import CSV / XLSX", {exact: true}).click();

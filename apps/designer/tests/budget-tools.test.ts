@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { hasBudgetToolsDraft, mountBudgetTools, type BudgetToolsDraft } from "../src/budget-tools.ts";
-import type { TableProjection } from "../src/runtime/protocol.ts";
+import type { TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 function table(id: string): TableProjection {
   return {

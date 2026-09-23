@@ -9,7 +9,7 @@ import {
   parseTrackerView,
   parseTsv,
 } from "../src/tracker-model.ts";
-import type { FieldProjection, StoredValueProjection, TableProjection } from "../src/runtime/protocol.ts";
+import type { FieldProjection, StoredValueProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 it("requires authoritative collection IDs for spreadsheet state even without Budget views", () => {
   const view = emptyTrackerView();

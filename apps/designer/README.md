@@ -97,7 +97,7 @@ Number), and **done** (Boolean). The Boolean dropdown projects the Rust type
 constraint; this slice does not introduce custom enum or schema-rule authoring.
 The checked-in [operations tracker](../../dogfood/operations-tracker.roproj/)
 contains 40 practical operational tasks and is generated through this same
-runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
+runtime from the [clipboard fixture](../../packages/browser-client/e2e/fixtures/operations-tracker.tsv).
 
 - Click/Shift-click selects cells/ranges. Arrow keys, Tab, Home/End and
   Page Up/Down navigate; Enter focuses the cell editor. Apply to selection is
@@ -263,7 +263,7 @@ the underlying collection. View names and order cannot retarget bound formulas.
 
 ## Imported spreadsheets and cleanup
 
-The private `designer-spreadsheet/v1` [profile](interop-profile.json) is the
+The private `designer-spreadsheet/v1` [profile](../../packages/browser-client/interop-profile.json) is the
 bounded CSV/XLSX path. Choose **Import CSV / XLSX**, inspect the source cells and
 compatibility ledger, explicitly select column types, and accept the import.
 CSV begins as Text; leading zeros and ambiguous dates remain Text unless the
@@ -329,7 +329,7 @@ Both download paths require review and acknowledgement of the structured loss
 ledger. Unsupported original parts stay only in the retained source and are
 never executed or silently advertised as editable/exported equivalents.
 
-Fixtures under `tests/fixtures/interop` include synthetic ordinary data actually
+Fixtures under `../../packages/browser-client/tests/fixtures/interop` include synthetic ordinary data actually
 opened/saved by LibreOffice and synthetic hostile inventories. These establish
 a bounded test profile, not compatibility with every Excel feature or a
 Microsoft Excel certification. The source provenance note distinguishes real

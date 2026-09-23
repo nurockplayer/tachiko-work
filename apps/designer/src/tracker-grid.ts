@@ -1,5 +1,5 @@
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
-import type { TableProjection, TrackerCommand } from "./runtime/protocol.ts";
+import type { TableProjection, TrackerCommand } from "@tachiko-work/browser-client/runtime/protocol";
 import { cellKey, compareFields, displayField, emptyTrackerView, encodeTsv, orderedRows, parseTsv, type CellStyle, type TrackerView } from "./tracker-model.ts";
 type Options = {
     command(request: TrackerCommand): Promise<void>;

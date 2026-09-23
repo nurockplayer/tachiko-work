@@ -90,7 +90,7 @@ prefer restructuring ownership over adding indirection.
   unsafe blocks/functions/impls, or comparable soundness-sensitive mechanics
   require the repository's **Guarded** delivery route and fresh independent
   deep review.
-- The app-local `apps/designer/runtime` crate permits Rust `unsafe_code` only
+- The producer-local `packages/browser-client/runtime` crate permits Rust `unsafe_code` only
   because its browser ABI uses Rust 2024 `#[unsafe(no_mangle)]` export
   attributes. That exception is not permission to add unsafe blocks, unsafe
   functions, unsafe impls, or unrelated unsafe attributes. Expanding the unsafe

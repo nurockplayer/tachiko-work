@@ -27,7 +27,7 @@ The injected `launchQueue`/file handles are deterministic browser-boundary accep
 From repository root:
 
 ```sh
-cargo test --manifest-path apps/designer/runtime/Cargo.toml --test local_ro_launch_preflight --locked
+cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --test local_ro_launch_preflight --locked
 cd apps/designer
 pnpm install --frozen-lockfile
 pnpm run typecheck

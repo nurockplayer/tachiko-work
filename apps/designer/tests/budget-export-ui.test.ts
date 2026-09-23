@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mountDesigner } from "../src/designer-app.ts";
-import type { DesignerClient } from "../src/runtime/client.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
 import type {
   NativeBudgetExportPresentation,
   SpreadsheetExport,
   SpreadsheetFormat,
-} from "../src/runtime/interop-protocol.ts";
+} from "@tachiko-work/browser-client/runtime/interop-protocol";
 import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
 import type {
   BootstrapProjection,
@@ -16,7 +16,7 @@ import type {
   ProjectExport,
   PublicationProjection,
   TableProjection,
-} from "../src/runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
 
 let destroy: (() => void) | undefined;
 

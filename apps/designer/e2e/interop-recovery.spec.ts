@@ -51,7 +51,7 @@ for (const corruption of ["unknown field", "invalid base64"] as const) {
     await page.goto("/");
     await page.getByText("Import CSV / XLSX", { exact: true }).click();
     await page.getByLabel("Spreadsheet file", { exact: true }).setInputFiles(
-      fileURLToPath(new URL("../tests/fixtures/interop/messy-utf8.csv", import.meta.url)),
+      fileURLToPath(new URL("../../../packages/browser-client/tests/fixtures/interop/messy-utf8.csv", import.meta.url)),
     );
     await expect(page.getByRole("button", { name: "Accept types and import", exact: true })).toBeVisible();
     page.once("dialog", dialog => dialog.accept());

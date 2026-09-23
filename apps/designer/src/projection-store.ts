@@ -4,8 +4,8 @@ import type {
   FieldTarget,
   PublicationProjection,
   TableProjection,
-} from "./runtime/protocol.ts";
-import { fieldTargetKey } from "./runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
+import { fieldTargetKey } from "@tachiko-work/browser-client/runtime/protocol";
 
 export type ProjectionCurrentness =
   | "current"

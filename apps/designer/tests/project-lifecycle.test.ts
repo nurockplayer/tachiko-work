@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createProjectLifecycle } from "../src/project-lifecycle.ts";
 import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
-import type { DesignerClient } from "../src/runtime/client.ts";
-import type { OpenedProjection } from "../src/runtime/protocol.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
+import type { OpenedProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 const opened: OpenedProjection = {
   bootstrap: {

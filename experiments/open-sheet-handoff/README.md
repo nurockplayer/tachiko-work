@@ -67,7 +67,7 @@ must not add a second graph evaluator to detect them.
 ```sh
 pnpm --dir experiments/open-sheet-export install --frozen-lockfile
 cargo test -p tachiko-cli --test open_sheet_handoff_acceptance --locked
-cargo test --manifest-path apps/designer/runtime/Cargo.toml \
+cargo test --manifest-path packages/browser-client/runtime/Cargo.toml \
   --test open_sheet_handoff_preflight --locked
 ```
 

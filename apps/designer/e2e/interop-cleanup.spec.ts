@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-const fixture = fileURLToPath(new URL("../tests/fixtures/interop/messy-utf8.csv", import.meta.url));
+const fixture = fileURLToPath(new URL("../../../packages/browser-client/tests/fixtures/interop/messy-utf8.csv", import.meta.url));
 const sheet = "Imported table";
 const rows = (page: Page): Locator => page.locator(".table-scroll tbody tr");
 const cell = (page: Page, row: number, column: number): Locator => rows(page).nth(row).locator("td").nth(column);

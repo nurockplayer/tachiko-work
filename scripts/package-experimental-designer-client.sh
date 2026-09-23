@@ -18,7 +18,7 @@ scratch="$3"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_root="$(cd "${script_dir}/.." && pwd)"
-designer_dir="${source_root}/apps/designer"
+producer_dir="${source_root}/packages/browser-client"
 
 if [[ "${output_arg}" == /* ]]; then
   output_dir="${output_arg}"
@@ -49,11 +49,12 @@ fi
   fail "output must be absent: ${output_dir}"
 
 for required in \
-  "${designer_dir}/package.json" \
-  "${designer_dir}/pnpm-lock.yaml" \
-  "${designer_dir}/tsconfig.experimental-client.json" \
-  "${designer_dir}/experimental-client-kit/README.md" \
-  "${designer_dir}/experimental-client-kit/package.json" \
+  "${producer_dir}/package.json" \
+  "${producer_dir}/pnpm-lock.yaml" \
+  "${producer_dir}/tsconfig.build.json" \
+  "${producer_dir}/kit/README.md" \
+  "${producer_dir}/kit/package.json" \
+  "${producer_dir}/runtime/Cargo.lock" \
   "${source_root}/LICENSE-APACHE" \
   "${source_root}/LICENSE-MIT" \
   "${source_root}/THIRD_PARTY_LICENSES.md" \
@@ -80,7 +81,7 @@ clean_env+=(
 )
 mkdir "${scratch}/cargo-home" "${scratch}/config-home"
 
-pnpm_version="$(cd "${designer_dir}" && "${clean_env[@]}" pnpm --version)"
+pnpm_version="$(cd "${producer_dir}" && "${clean_env[@]}" pnpm --version)"
 [[ "${pnpm_version}" == "11.25.0" ]] || fail "pnpm 11.25.0 is required (found ${pnpm_version})"
 
 stage_parent="$(mktemp -d "${output_parent}/.tachiko-experimental-client-stage.XXXXXX")"
@@ -89,16 +90,15 @@ trap cleanup_stage EXIT
 kit_dir="${stage_parent}/kit"
 mkdir "${kit_dir}"
 
-(cd "${designer_dir}" && "${clean_env[@]}" pnpm install --frozen-lockfile --engine-strict)
-env "${clean_env[@]:1}" bash "${source_root}/scripts/designer-runtime-build.sh"
-(cd "${designer_dir}" && "${clean_env[@]}" pnpm exec tsc \
-  --project tsconfig.experimental-client.json \
+(cd "${producer_dir}" && "${clean_env[@]}" pnpm install --frozen-lockfile --engine-strict)
+env "${clean_env[@]:1}" bash "${producer_dir}/scripts/build-runtime.sh" "${kit_dir}"
+(cd "${producer_dir}" && "${clean_env[@]}" pnpm exec tsc \
+  --project tsconfig.build.json \
   --outDir "${kit_dir}" \
   --pretty false)
 
-cp "${designer_dir}/public/designer_runtime.wasm" "${kit_dir}/designer_runtime.wasm"
-cp "${designer_dir}/experimental-client-kit/README.md" "${kit_dir}/README.md"
-cp "${designer_dir}/experimental-client-kit/package.json" "${kit_dir}/package.json"
+cp "${producer_dir}/kit/README.md" "${kit_dir}/README.md"
+cp "${producer_dir}/kit/package.json" "${kit_dir}/package.json"
 mkdir "${kit_dir}/notices"
 for notice in LICENSE-APACHE LICENSE-MIT THIRD_PARTY_LICENSES.md; do
   cp "${source_root}/${notice}" "${kit_dir}/notices/${notice}"

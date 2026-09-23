@@ -1,0 +1,35 @@
+{
+  "name": "@tachiko-work/browser-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    "./experimental-client": "./src/experimental-client.ts",
+    "./experimental-client.worker": "./src/experimental-client.worker.ts",
+    "./host/project-transfer": "./src/host/project-transfer.ts",
+    "./runtime/client": "./src/runtime/client.ts",
+    "./runtime/interop-protocol": "./src/runtime/interop-protocol.ts",
+    "./runtime/protocol": "./src/runtime/protocol.ts",
+    "./runtime/wasm-bridge": "./src/runtime/wasm-bridge.ts",
+    "./runtime/worker-client": "./src/runtime/worker-client.ts",
+    "./runtime/worker-runtime": "./src/runtime/worker-runtime.ts"
+  },
+  "scripts": {
+    "build": "pnpm run build:typescript && pnpm run build:wasm",
+    "build:typescript": "tsc --project tsconfig.build.json --outDir dist --pretty false",
+    "build:wasm": "bash scripts/build-runtime.sh .build",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "tsc --project tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.0",
+    "happy-dom": "20.12.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}

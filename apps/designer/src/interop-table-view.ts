@@ -1,4 +1,4 @@
-import type { FieldProjection, TableProjection } from "./runtime/protocol.ts";
+import type { FieldProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 import { compareFields } from "./tracker-model.ts";
 
 /** Private presentation state; field references are stable IDs, never column positions. */

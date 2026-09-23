@@ -5,7 +5,7 @@ import type {
   FieldBatchProjection,
   PublicationProjection,
   TableProjection,
-} from "../src/runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
 
 const table: TableProjection = {
   revision: "resident/0",

@@ -16,12 +16,12 @@ vi.mock("../src/report-renderer.ts", () => ({
 import { mountDesigner, type MountedDesigner } from "../src/designer-app.ts";
 import type { DesignerProjectHost, SavedProjectSummary } from "../src/host/browser-project-host.ts";
 import type { ReportChart } from "../src/report-model.ts";
-import type { DesignerClient } from "../src/runtime/client.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
 import { TrackerGrid } from "../src/tracker-grid.ts";
 import type {
   BootstrapProjection, FieldBatchProjection, OpenedProjection,
   ProjectExport, PublicationProjection, TableProjection,
-} from "../src/runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
 
 const collection = "items";
 const bootstrap: BootstrapProjection = {

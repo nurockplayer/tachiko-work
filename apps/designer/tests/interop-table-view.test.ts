@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable, validateGenericTableView } from "../src/interop-table-view.ts";
-import type { FieldProjection, StoredValueProjection, TableProjection } from "../src/runtime/protocol.ts";
+import type { FieldProjection, StoredValueProjection, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 function field(id: string, stored: StoredValueProjection | null): FieldProjection {
   return { target: { entity: id, field: "stable-value" }, address: `[${id}.value]`, stored, formula: null, calculated: null, diagnostics: [], editable_scalar: null };

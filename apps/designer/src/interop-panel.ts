@@ -1,6 +1,6 @@
-import type { DesignerClient } from "./runtime/client.ts";
-import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportFieldType, ImportOptions, ImportSelection, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
-import type { TableProjection } from "./runtime/protocol.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
+import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportFieldType, ImportOptions, ImportSelection, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat } from "@tachiko-work/browser-client/runtime/interop-protocol";
+import type { TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 const TYPES: ImportFieldType[] = ["text", "number", "boolean", "date"];
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ""): HTMLElementTagNameMap[K] {

@@ -4,7 +4,7 @@ import { mountDesigner } from "../src/designer-app.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
-} from "../src/runtime/client.ts";
+} from "@tachiko-work/browser-client/runtime/client";
 import type {
   BootstrapProjection,
   FieldBatchProjection,
@@ -15,7 +15,7 @@ import type {
   ProjectExport,
   TrackerCommand,
   TableProjection,
-} from "../src/runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
 import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
 
 const bootstrap: BootstrapProjection = {

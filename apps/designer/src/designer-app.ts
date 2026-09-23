@@ -6,7 +6,7 @@ import { downloadCurrentReport } from "./report-export.ts";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
 import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
 import { FindReplacePanel } from "./find-replace-panel.ts";
-import type { CleanupPreview, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceStyle, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
+import type { CleanupPreview, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceStyle, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "@tachiko-work/browser-client/runtime/interop-protocol";
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
 import { defaultBudgetViews, addBudgetView, duplicateBudgetView, renameBudgetView, reorderBudgetViews, deleteBudgetView } from "./budget-views.ts";
@@ -21,7 +21,7 @@ import type {
 import {
   DesignerRuntimeError,
   type DesignerClient,
-} from "./runtime/client.ts";
+} from "@tachiko-work/browser-client/runtime/client";
 import type { LocalDocumentHandle } from "./host/local-document-ingress.ts";
 import type {
   BootstrapProjection,
@@ -35,7 +35,7 @@ import type {
   NewTableColumnInput,
   ScalarEditInput,
   TableProjection,
-} from "./runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
 
 type Notice = {
   tone: "error" | "success";

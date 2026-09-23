@@ -30,9 +30,10 @@ fail() { echo "immutable-source test: $*" >&2; exit 1; }
 fixture="${test_root}/fixture"
 fake_bin="${test_root}/bin"
 mkdir -p "${fixture}/scripts" \
-  "${fixture}/apps/designer/src" \
-  "${fixture}/apps/designer/public" \
-  "${fixture}/apps/designer/experimental-client-kit" \
+  "${fixture}/packages/browser-client/src" \
+  "${fixture}/packages/browser-client/scripts" \
+  "${fixture}/packages/browser-client/runtime" \
+  "${fixture}/packages/browser-client/kit" \
   "${fake_bin}"
 cp "${exporter_source}" "${fixture}/scripts/export-experimental-designer-client.sh"
 chmod +x "${fixture}/scripts/export-experimental-designer-client.sh"
@@ -51,12 +52,12 @@ chmod +x "${fixture}/scripts/designer-rc-source.sh" "${fixture}/scripts/package-
 # The real exporter must invoke this only from its pinned private snapshot. If
 # it instead compiles the live checkout, the test's same-path edits would leak
 # into experimental-client.js and fail the committed-byte assertion below.
-cat >"${fixture}/scripts/designer-runtime-build.sh" <<'EOF_BUILD'
+cat >"${fixture}/packages/browser-client/scripts/build-runtime.sh" <<'EOF_BUILD'
 #!/usr/bin/env bash
 set -euo pipefail
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-mkdir -p "${repo_root}/apps/designer/public"
-printf 'committed wasm\n' >"${repo_root}/apps/designer/public/designer_runtime.wasm"
+[[ "$#" -eq 1 ]] || exit 64
+mkdir -p "$1"
+printf 'committed wasm\n' >"$1/designer_runtime.wasm"
 if [[ -f "${TMPDIR}/race-output" ]]; then
   race_output="$(cat "${TMPDIR}/race-output")"
   mkdir "${race_output}"
@@ -64,7 +65,7 @@ if [[ -f "${TMPDIR}/race-output" ]]; then
   rm -- "${TMPDIR}/race-output"
 fi
 EOF_BUILD
-chmod +x "${fixture}/scripts/designer-runtime-build.sh"
+chmod +x "${fixture}/packages/browser-client/scripts/build-runtime.sh"
 
 cat >"${fake_bin}/pnpm" <<'EOF_PNPM'
 #!/usr/bin/env bash
@@ -123,16 +124,17 @@ esac
 EOF_PNPM
 chmod +x "${fake_bin}/pnpm"
 
-cat >"${fixture}/apps/designer/src/experimental-client.ts" <<'EOF_CLIENT'
+cat >"${fixture}/packages/browser-client/src/experimental-client.ts" <<'EOF_CLIENT'
 // COMMITTED_CLIENT_SOURCE
 export const sourceIdentity = 'committed';
 EOF_CLIENT
-printf "// COMMITTED_WORKER_SOURCE\n" >"${fixture}/apps/designer/src/experimental-client.worker.ts"
-printf '{"name":"fixture-designer","private":true}\n' >"${fixture}/apps/designer/package.json"
-printf 'fixture tsconfig\n' >"${fixture}/apps/designer/tsconfig.experimental-client.json"
-printf 'lockfileVersion: 9\n' >"${fixture}/apps/designer/pnpm-lock.yaml"
-printf '# fixture README\n' >"${fixture}/apps/designer/experimental-client-kit/README.md"
-printf '{"private":true}\n' >"${fixture}/apps/designer/experimental-client-kit/package.json"
+printf "// COMMITTED_WORKER_SOURCE\n" >"${fixture}/packages/browser-client/src/experimental-client.worker.ts"
+printf '{"name":"fixture-designer","private":true}\n' >"${fixture}/packages/browser-client/package.json"
+printf 'fixture tsconfig\n' >"${fixture}/packages/browser-client/tsconfig.build.json"
+printf 'lockfileVersion: 9\n' >"${fixture}/packages/browser-client/pnpm-lock.yaml"
+printf '# fake cargo lock\n' >"${fixture}/packages/browser-client/runtime/Cargo.lock"
+printf '# fixture README\n' >"${fixture}/packages/browser-client/kit/README.md"
+printf '{"private":true}\n' >"${fixture}/packages/browser-client/kit/package.json"
 printf 'Apache-2.0 fixture notice\n' >"${fixture}/LICENSE-APACHE"
 printf 'MIT fixture notice\n' >"${fixture}/LICENSE-MIT"
 printf 'third party fixture notice\n' >"${fixture}/THIRD_PARTY_LICENSES.md"
@@ -267,7 +269,7 @@ materialized_path_count="$(wc -l <"${controlled_tmp}/designer-paths" | tr -d ' '
   fail "expected two materialized designer paths, got ${materialized_path_count}"
 first_materialized_designer_path="$(sed -n '1p' "${controlled_tmp}/designer-paths")"
 second_materialized_designer_path="$(sed -n '2p' "${controlled_tmp}/designer-paths")"
-expected_designer_path="${owned_slot}/source/apps/designer"
+expected_designer_path="${owned_slot}/source/packages/browser-client"
 [[ "${first_materialized_designer_path}" == "${expected_designer_path}" && "${second_materialized_designer_path}" == "${expected_designer_path}" ]] ||
   fail 'same-SHA exports did not use one stable physical source path'
 
@@ -276,39 +278,39 @@ expected_designer_path="${owned_slot}/source/apps/designer"
 # already captured committed bytes and source SHA; inspecting only pre-existing
 # dirty input would miss this time-of-check/time-of-use pressure.
 printf "// SYMLINK_CLIENT_SOURCE\n" >"${controlled_tmp}/live-replacement.ts"
-printf '%s\n' "${fixture}/apps/designer/src/experimental-client.ts" >"${controlled_tmp}/mutate-live-source"
+printf '%s\n' "${fixture}/packages/browser-client/src/experimental-client.ts" >"${controlled_tmp}/mutate-live-source"
 inflight_output="${test_root}/inflight-mutation-kit"
 run_export "${inflight_output}"
-[[ -L "${fixture}/apps/designer/src/experimental-client.ts" ]] || fail 'fixture did not perform the in-flight same-path symlink replacement'
+[[ -L "${fixture}/packages/browser-client/src/experimental-client.ts" ]] || fail 'fixture did not perform the in-flight same-path symlink replacement'
 assert_manifest_and_exact_inventory "${inflight_output}"
-rm -- "${fixture}/apps/designer/src/experimental-client.ts"
-git -C "${fixture}" restore apps/designer/src/experimental-client.ts
+rm -- "${fixture}/packages/browser-client/src/experimental-client.ts"
+git -C "${fixture}" restore packages/browser-client/src/experimental-client.ts
 
 # Each live-tree mutation must be rejected before it can create an output kit.
-printf "// DIRTY_CLIENT_SOURCE\n" >"${fixture}/apps/designer/src/experimental-client.ts"
+printf "// DIRTY_CLIENT_SOURCE\n" >"${fixture}/packages/browser-client/src/experimental-client.ts"
 if run_export "${test_root}/dirty-kit"; then fail 'unstaged same-path source edit was accepted'; fi
 assert_no_output "${test_root}/dirty-kit"
-git -C "${fixture}" restore apps/designer/src/experimental-client.ts
+git -C "${fixture}" restore packages/browser-client/src/experimental-client.ts
 
-printf "// STAGED_CLIENT_SOURCE\n" >"${fixture}/apps/designer/src/experimental-client.ts"
-git -C "${fixture}" add apps/designer/src/experimental-client.ts
+printf "// STAGED_CLIENT_SOURCE\n" >"${fixture}/packages/browser-client/src/experimental-client.ts"
+git -C "${fixture}" add packages/browser-client/src/experimental-client.ts
 if run_export "${test_root}/staged-kit"; then fail 'staged same-path source edit was accepted'; fi
 assert_no_output "${test_root}/staged-kit"
-git -C "${fixture}" restore --staged apps/designer/src/experimental-client.ts
-git -C "${fixture}" restore apps/designer/src/experimental-client.ts
+git -C "${fixture}" restore --staged packages/browser-client/src/experimental-client.ts
+git -C "${fixture}" restore packages/browser-client/src/experimental-client.ts
 
-printf "// UNTRACKED_CLIENT_SOURCE\n" >"${fixture}/apps/designer/src/untracked-local.ts"
+printf "// UNTRACKED_CLIENT_SOURCE\n" >"${fixture}/packages/browser-client/src/untracked-local.ts"
 if run_export "${test_root}/untracked-kit"; then fail 'untracked source data was accepted'; fi
 assert_no_output "${test_root}/untracked-kit"
-rm -- "${fixture}/apps/designer/src/untracked-local.ts"
+rm -- "${fixture}/packages/browser-client/src/untracked-local.ts"
 
 printf "// SYMLINK_CLIENT_SOURCE\n" >"${test_root}/symlink-source.ts"
-rm -- "${fixture}/apps/designer/src/experimental-client.ts"
-ln -s "${test_root}/symlink-source.ts" "${fixture}/apps/designer/src/experimental-client.ts"
+rm -- "${fixture}/packages/browser-client/src/experimental-client.ts"
+ln -s "${test_root}/symlink-source.ts" "${fixture}/packages/browser-client/src/experimental-client.ts"
 if run_export "${test_root}/symlink-kit"; then fail 'live symlink replacement was accepted'; fi
 assert_no_output "${test_root}/symlink-kit"
-rm -- "${fixture}/apps/designer/src/experimental-client.ts"
-git -C "${fixture}" restore apps/designer/src/experimental-client.ts
+rm -- "${fixture}/packages/browser-client/src/experimental-client.ts"
+git -C "${fixture}" restore packages/browser-client/src/experimental-client.ts
 
 # Publication is absent-only: an empty directory is still an existing target,
 # and failure may not overwrite a sentinel in a nonempty target.

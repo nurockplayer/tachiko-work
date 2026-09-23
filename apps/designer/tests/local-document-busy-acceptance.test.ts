@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { mountDesigner } from "../src/designer-app.ts";
 import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
-import type { DesignerClient } from "../src/runtime/client.ts";
+import type { DesignerClient } from "@tachiko-work/browser-client/runtime/client";
 import type {
   BootstrapProjection,
   FieldBatchProjection,
@@ -11,7 +11,7 @@ import type {
   ProjectExport,
   PublicationProjection,
   TableProjection,
-} from "../src/runtime/protocol.ts";
+} from "@tachiko-work/browser-client/runtime/protocol";
 
 const bootstrap: BootstrapProjection = {
   title: "Moonfall Balance",

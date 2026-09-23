@@ -1,5 +1,5 @@
-import type { CleanupOperation, CleanupPreview } from "./runtime/interop-protocol.ts";
-import type { FieldProjection, FieldTarget, TableProjection } from "./runtime/protocol.ts";
+import type { CleanupOperation, CleanupPreview } from "@tachiko-work/browser-client/runtime/interop-protocol";
+import type { FieldProjection, FieldTarget, TableProjection } from "@tachiko-work/browser-client/runtime/protocol";
 
 type Match = { target: FieldTarget; column: string; row: string; value: string };
 
