@@ -2213,8 +2213,7 @@ impl DesignerRuntime {
                         );
                     }
                 }
-                SemanticCommand::FormulaUpdate(_)
-                | SemanticCommand::SetFieldConstraint { .. } => {
+                SemanticCommand::FormulaUpdate(_) | SemanticCommand::SetFieldConstraint { .. } => {
                     return Err(tracker_error("unsupported history command"));
                 }
                 SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
