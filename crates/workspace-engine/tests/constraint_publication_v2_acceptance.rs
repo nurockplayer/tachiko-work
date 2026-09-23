@@ -889,3 +889,129 @@ fn constraint_review_requires_query_for_transitive_formula_dependencies() {
         Some(Number::new(41.0).unwrap()),
     );
 }
+
+#[test]
+#[allow(clippy::too_many_lines)] // Narrow impact disclosure denial followed by authorized review.
+fn formula_impact_requires_query_for_unchanged_calculation_operand() {
+    let mut original = document(7.0);
+    original
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("field")
+        .unwrap()
+        .constraint = range(0.0, 50.0);
+    for field in ["interval", "result"] {
+        original.schemas.get_mut("schema").unwrap().fields.insert(
+            field.into(),
+            FieldDefinition {
+                id: field.into(),
+                key: field.into(),
+                field_type: FieldType::Number,
+                required: false,
+                constraint: FieldConstraint::None,
+            },
+        );
+    }
+    let fields = &mut original.entities.get_mut("entity").unwrap().fields;
+    fields.insert("interval".into(), Value::Number(Number::new(2.0).unwrap()));
+    fields.insert(
+        "result".into(),
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Reference(FieldRef::new("entity", "field"))),
+            right: Box::new(Expression::Reference(FieldRef::new("entity", "interval"))),
+        }),
+    );
+
+    let mut lifecycle = setup(true, false, false);
+    lifecycle
+        .provision_grant(Grant::new(
+            "narrow-impact-review".into(),
+            "authority".into(),
+            "editor".into(),
+            vec![
+                GrantRequirement::query(
+                    OperationFamily::SetFieldValue,
+                    subject(SemanticScope::EntityField {
+                        entity: "entity".into(),
+                        schema: "schema".into(),
+                        field: "field".into(),
+                    }),
+                ),
+                GrantRequirement::query(
+                    OperationFamily::SetFieldValue,
+                    subject(SemanticScope::EntityField {
+                        entity: "entity".into(),
+                        schema: "schema".into(),
+                        field: "result".into(),
+                    }),
+                ),
+                GrantRequirement::mutation(
+                    AuthorizationAction::Propose,
+                    OperationFamily::SetFieldValue,
+                    MutationClass::Value,
+                    subject(SemanticScope::Document),
+                )
+                .unwrap(),
+            ],
+            None,
+        ))
+        .unwrap();
+    let id = propose(
+        &mut lifecycle,
+        &original,
+        "r1",
+        "narrow-formula-impact",
+        SemanticPatchBody::command(SemanticCommand::set_field_value(
+            FieldRef::new("entity", "field"),
+            Value::Number(Number::new(9.0).unwrap()),
+        )),
+    )
+    .unwrap();
+    assert!(matches!(
+        lifecycle.preview_v2(
+            &scope(),
+            &original,
+            &rev("r1"),
+            &id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        ),
+        Err(PatchLifecycleError::DisclosureDenied)
+    ));
+
+    lifecycle
+        .provision_grant(Grant::new(
+            "unchanged-operand-query".into(),
+            "authority".into(),
+            "editor".into(),
+            vec![GrantRequirement::query(
+                OperationFamily::SetFieldValue,
+                subject(SemanticScope::EntityField {
+                    entity: "entity".into(),
+                    schema: "schema".into(),
+                    field: "interval".into(),
+                }),
+            )],
+            None,
+        ))
+        .unwrap();
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &original,
+            &rev("r1"),
+            &id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert_eq!(preview.formula_impacts.len(), 1);
+    assert_eq!(
+        preview.formula_impacts[0].field,
+        FieldRef::new("entity", "result")
+    );
+    assert_eq!(preview.formula_impacts[0].before, Number::new(3.5).unwrap());
+    assert_eq!(preview.formula_impacts[0].after, Number::new(4.5).unwrap());
+}
