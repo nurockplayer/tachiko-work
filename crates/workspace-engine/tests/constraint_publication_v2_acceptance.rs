@@ -564,7 +564,7 @@ fn constraint_review_shows_every_affected_value_before_review_credit() {
         "second".into(),
         Entity {
             id: "second".into(),
-            key: "second item".into(),
+            key: "second_item".into(),
             schema: "schema".into(),
             fields: BTreeMap::from([("field".into(), Value::Number(Number::new(9.0).unwrap()))]),
         },
@@ -574,7 +574,7 @@ fn constraint_review_shows_every_affected_value_before_review_credit() {
         "formula".into(),
         Entity {
             id: "formula".into(),
-            key: "formula item".into(),
+            key: "formula_item".into(),
             schema: "schema".into(),
             fields: BTreeMap::from([("field".into(), formula.clone())]),
         },
