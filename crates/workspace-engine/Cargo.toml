@@ -23,5 +23,8 @@ tachiko-merge-engine = { version = "0.1.0", path = "../merge-engine" }
 tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
 thiserror.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

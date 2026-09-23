@@ -36,6 +36,7 @@ fn fixture(dependent: bool) -> DesignerRuntime {
                         key: FieldKey::from(name),
                         field_type,
                         required: name != "missing" && name != "converted",
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )
             })

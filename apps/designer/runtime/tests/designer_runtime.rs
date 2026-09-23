@@ -60,6 +60,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                         key: FieldKey::from("label"),
                         field_type: FieldType::Text,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )]),
             },
@@ -77,6 +78,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                             key: FieldKey::from("title"),
                             field_type: FieldType::Text,
                             required: true,
+                            constraint: tachiko_workspace_engine::FieldConstraint::None,
                         },
                     ),
                     (
@@ -86,6 +88,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                             key: FieldKey::from("confirmed"),
                             field_type: FieldType::Boolean,
                             required: true,
+                            constraint: tachiko_workspace_engine::FieldConstraint::None,
                         },
                     ),
                 ]),
@@ -103,6 +106,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                         key: FieldKey::from("title"),
                         field_type: FieldType::Text,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )]),
             },
@@ -198,6 +202,7 @@ fn date_document() -> Document {
                         key: FieldKey::from("published"),
                         field_type: FieldType::Date,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )]),
             },
@@ -345,6 +350,7 @@ fn admission_rejects_any_collection_that_cannot_be_rendered() {
                 key: FieldKey::from(key.as_str()),
                 field_type: FieldType::Number,
                 required: false,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
             },
         );
     }
@@ -446,6 +452,7 @@ fn admission_bounds_aggregate_profile_strings_before_projection_construction() {
                 key: FieldKey::from(format!("aggregate_profile_{index}")),
                 field_type: FieldType::Number,
                 required: false,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
             },
         );
     }
@@ -524,6 +531,7 @@ fn admission_bounds_aggregate_collection_text_before_validation_and_projection()
                     key: FieldKey::from(format!("aggregate_text_{index}")),
                     field_type: FieldType::Text,
                     required: false,
+                    constraint: tachiko_workspace_engine::FieldConstraint::None,
                 },
             );
         document
@@ -577,6 +585,7 @@ fn admission_bounds_the_complete_cross_collection_post_edit_refresh() {
                 key: source_key,
                 field_type: FieldType::Number,
                 required: false,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
             },
         );
         let entity = document
@@ -600,6 +609,7 @@ fn admission_bounds_the_complete_cross_collection_post_edit_refresh() {
                     )),
                     field_type: FieldType::Number,
                     required: false,
+                    constraint: tachiko_workspace_engine::FieldConstraint::None,
                 },
             );
             entity.fields.insert(
@@ -831,6 +841,7 @@ fn admission_rejects_an_unbounded_worst_case_publication_projection() {
                 key: FieldKey::from(key.as_str()),
                 field_type: FieldType::Number,
                 required: false,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
             },
         );
     }

@@ -55,6 +55,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
                 key: FieldKey::from(key),
                 field_type,
                 required: all_fields_required,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
             },
         )
     })

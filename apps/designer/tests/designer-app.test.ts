@@ -394,6 +394,24 @@ class RejectingNativeColumnClient extends FakeClient {
   }
 }
 
+class RejectingNativeRowClient extends FakeClient {
+  readonly nativeRowRequests: TrackerCommand[] = [];
+
+  override async queryTable(): Promise<TableProjection> {
+    return {...structuredClone(table), native_table_profile: true};
+  }
+
+  async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
+    this.nativeRowRequests.push(structuredClone(request));
+    throw new DesignerRuntimeError({
+      code: "validation_failed",
+      message: "Authoritative row validation rejected this change.",
+      current_revision: "resident/0",
+      diagnostics: [],
+    });
+  }
+}
+
 class StartupFailingClient extends FakeClient {
   override async bootstrap(): Promise<BootstrapProjection> {
     throw new Error("Designer runtime could not be loaded (404).");
@@ -1742,5 +1760,95 @@ describe("Designer application seam", () => {
     );
     app.destroy();
     vi.unstubAllGlobals();
+  });
+
+  it("exposes native row authoring and stable selection controls", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new FakeClient();
+    const nativeTable = { ...structuredClone(table), native_table_profile: true };
+    vi.spyOn(client, "queryTable").mockResolvedValue(nativeTable);
+    (client as DesignerClient).trackerCommand = vi.fn().mockResolvedValue({
+      base_revision: "resident/0",
+      resulting_revision: "resident/1",
+      entities: [],
+      fields: [],
+      affected_calculations: [],
+    });
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    expect(root.querySelector<HTMLButtonElement>("[data-add-row]")?.textContent).toBe("Add row");
+    root.querySelector<HTMLButtonElement>("[data-add-row]")?.click();
+    const dialog = root.querySelector<HTMLDialogElement>('[aria-label="Add row"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.querySelector('[aria-label="Use these values for the new row"]')).not.toBeNull();
+    expect(dialog?.querySelector('[aria-label="enabled"]')).not.toBeNull();
+    dialog?.querySelector<HTMLElement>("[data-cancel-add-row]")?.click();
+
+    const selection = root.querySelector<HTMLInputElement>("[data-row-selection]");
+    if (selection === null) throw new Error("native row selection is required");
+    selection.click();
+    const remove = root.querySelector<HTMLButtonElement>("[data-remove-selected-rows]");
+    expect(remove?.disabled).toBe(false);
+    remove?.click();
+    expect(root.querySelector('[aria-label="Remove selected rows"]')?.textContent).toMatch(/Remove 1 rows\?.*stored values.*deleted/i);
+    app.destroy();
+  });
+
+  it("requires acknowledgement while preserving blank Text and Boolean drafts after row refusal", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new RejectingNativeRowClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-add-row]")?.click();
+    const dialog = root.querySelector<HTMLDialogElement>('[aria-label="Add row"]');
+    if (dialog === null) throw new Error("add-row dialog is required");
+    for (const label of ["attack_interval", "damage", "dps"]) {
+      const control = dialog.querySelector<HTMLInputElement>(`[aria-label="${label}"]`);
+      if (control === null) throw new Error(`${label} control is required`);
+      control.value = "1";
+    }
+    dialog.querySelector<HTMLSelectElement>('[aria-label="enabled"]')?.setAttribute("value", "false");
+    const enabled = dialog.querySelector<HTMLSelectElement>('[aria-label="enabled"]');
+    if (enabled === null) throw new Error("Boolean control is required");
+    enabled.value = "false";
+    dialog.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+    expect(client.nativeRowRequests).toHaveLength(0);
+    expect(root.querySelector('[aria-label="Add row"]')).not.toBeNull();
+
+    dialog.querySelector<HTMLInputElement>('[aria-label="Use these values for the new row"]')?.click();
+    dialog.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+    await expect.poll(() => client.nativeRowRequests.length).toBe(1);
+    const request = client.nativeRowRequests[0];
+    expect(request?.type).toBe("insert_row");
+    if (request?.type !== "insert_row") throw new Error("insert request is required");
+    expect(request.initializers.find(initializer => initializer.field === "name")?.input).toEqual({kind: "text", value: ""});
+    expect(request.initializers.find(initializer => initializer.field === "enabled")?.input).toEqual({kind: "boolean", value: false});
+    expect(root.querySelector('[aria-label="Add row"]')).not.toBeNull();
+    app.destroy();
+  });
+
+  it("retains selected rows for a failed removal retry", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new RejectingNativeRowClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    root.querySelector<HTMLInputElement>("[data-row-selection]")?.click();
+    root.querySelector<HTMLButtonElement>("[data-remove-selected-rows]")?.click();
+    const dialog = root.querySelector<HTMLDialogElement>('[aria-label="Remove selected rows"]');
+    expect(dialog?.textContent).toMatch(/1 rows\?.*stored values.*deleted/i);
+    dialog?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+    await expect.poll(() => client.nativeRowRequests.length).toBe(1);
+    await expect.poll(() => root.querySelector<HTMLButtonElement>("[data-remove-selected-rows]")?.disabled).toBe(false);
+    expect(root.querySelector('[role="alert"]')?.textContent).toMatch(/rejected|validation/i);
+    app.destroy();
   });
 });

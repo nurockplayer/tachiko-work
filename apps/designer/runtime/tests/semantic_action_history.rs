@@ -35,6 +35,7 @@ fn fixture() -> DesignerRuntime {
                         key: FieldKey::from(name),
                         field_type,
                         required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
                     },
                 )
             })

@@ -159,7 +159,7 @@ jobs:
             git -C "${metadata_work}" checkout --quiet -B dr-metadata refs/remotes/origin/dr-metadata
           else
             git -C "${metadata_work}" checkout --quiet --orphan dr-metadata
-            git -C "${metadata_work}" rm -r --quiet --ignore-unmatch .
+            git -C "${metadata_work}" rm -rf --quiet --ignore-unmatch .
           fi
 
           mkdir -p "${metadata_work}/snapshots"

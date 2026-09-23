@@ -73,6 +73,7 @@ fn lifecycle_document() -> tachiko_semantic_core::Document {
             key: FieldKey::from("all_ops"),
             field_type: FieldType::Number,
             required: true,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         },
     );
     weapons.fields.insert(
@@ -84,6 +85,7 @@ fn lifecycle_document() -> tachiko_semantic_core::Document {
                 schema: "weapons".into(),
             },
             required: true,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         },
     );
     let sword = document.entities.get_mut("iron_sword").unwrap();
@@ -246,6 +248,7 @@ fn remove_reports_one_sorted_path_per_dependent_field_across_all_expression_shap
             key: FieldKey::from("all_ops"),
             field_type: FieldType::Number,
             required: true,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
         },
     );
     document.entities.get_mut("shop").unwrap().fields.insert(

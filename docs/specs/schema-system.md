@@ -9,9 +9,10 @@ progressive semantic strengthening and mixed-strength content without weakening
 the current strongly typed Entity contract. ADR-0040 accepts only bounded
 native-table required-scalar field evolution; its command and DTO shapes remain
 Provisional. ADR-0041 accepts exactly two durable field-constraint variants and
-their closed v3 declaration meaning; constraint runtime/API mechanics remain
-unimplemented. Richer future schema vocabulary remains Provisional or Deferred
-as marked.
+their closed v3 declaration meaning. #448 implements the closed core model and
+core/resident validation; constraint command/API/wire mechanics, UI, and v3
+storage remain unimplemented. Richer future schema vocabulary remains
+Provisional or Deferred as marked.
 
 See the [validation specification](validation-engine.md) and the
 [canonical reconciliation register](../governance/canonical-reconciliation-register.md).

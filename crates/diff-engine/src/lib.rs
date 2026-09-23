@@ -9,6 +9,14 @@ use tachiko_semantic_core::{
 };
 use thiserror::Error;
 
+mod canonical_delta;
+
+pub use canonical_delta::{
+    CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact, CanonicalSemanticDelta,
+    DeltaInputSide, EntityDefinitionPayload, FieldDefinitionPayload, SchemaDefinitionPayload,
+    canonical_delta,
+};
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SemanticChange {
     DocumentIdChanged {
@@ -226,6 +234,8 @@ impl EntityDescriptor {
 pub enum DiffError {
     #[error("tachiko.semantic-delta/v1 does not support keyed grouped-sum definition changes")]
     UnsupportedKeyedGroupedSumDefinitionChange,
+    #[error("tachiko.semantic-delta/v1 does not support durable field constraint changes")]
+    UnsupportedFieldConstraintChange,
     #[error("could not calculate the original document: {0}")]
     BeforeCalculation(#[source] CalculationError),
     #[error("could not calculate the changed document: {0}")]
@@ -238,6 +248,9 @@ pub enum DiffError {
 ///
 /// Returns [`DiffError`] when either document cannot be calculated.
 pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {
+    if has_field_constraints(before) || has_field_constraints(after) {
+        return Err(DiffError::UnsupportedFieldConstraintChange);
+    }
     if before.keyed_grouped_sum_definitions != after.keyed_grouped_sum_definitions {
         return Err(DiffError::UnsupportedKeyedGroupedSumDefinitionChange);
     }
@@ -323,6 +336,14 @@ pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffErr
         before: before.clone(),
         after: after.clone(),
     })
+}
+
+fn has_field_constraints(document: &Document) -> bool {
+    document
+        .schemas
+        .values()
+        .flat_map(|schema| schema.fields.values())
+        .any(|field| !field.constraint.is_none())
 }
 
 fn compare_document(before: &Document, after: &Document, changes: &mut Vec<SemanticChange>) {

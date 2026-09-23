@@ -184,11 +184,17 @@ formula syntax change, or package-v2 is outside this decision.
 ## Consequences and implementation boundary
 
 The accepted semantic and storage authority is complete enough for independent
-codec, validator, delta, and conflict implementations. It does not claim that
-those implementations exist. #318 and #368 remain later implementation work;
-this ADR supplies their bounded authority and acceptance target. The production
-codec, migration, shared validation paths, UI, native/WASM parity, and public
-API remain unimplemented unless a later implementation issue records evidence.
+codec, validator, delta, and conflict implementations. #448 implements the
+closed core field model, the existing declaration/direct-value/complete-success
+formula validation gates, native/WASM constraint-validation conformance for both
+non-`None` variants, and fail-closed frozen v1 writer, diff, and merge
+boundaries. #318 and #368 remain later implementation work; this ADR supplies
+their bounded authority and acceptance target. The `.roproj/v3` storage codec,
+explicit v1/v2 migration, and native canonical read/publish are implemented by
+#449. #450 implements the v2 direct delta facts through an explicitly selected
+in-process Rust engine. Conflict v2 facts, application and Designer save
+selection, UI, public wire/SDK, and package work remain separately owned and
+unimplemented.
 
 Documentation acceptance for this docs-only decision is consistency/link/diff
 validation, exact cross-document agreement, and independent Sol exact-head

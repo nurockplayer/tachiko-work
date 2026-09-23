@@ -137,6 +137,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
                 key: FieldKey::from("duplicate-field"),
                 field_type: FieldType::Number,
                 required: false,
+                constraint: tachiko_semantic_core::FieldConstraint::None,
             },
         ),
         (
@@ -146,6 +147,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
                 key: FieldKey::from("duplicate-field"),
                 field_type: FieldType::Number,
                 required: false,
+                constraint: tachiko_semantic_core::FieldConstraint::None,
             },
         ),
     ]);
