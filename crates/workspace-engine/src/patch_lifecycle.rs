@@ -3488,6 +3488,14 @@ impl PatchLifecycle {
                                 value,
                                 disclosures,
                             )?;
+                            if let Value::Formula(expression) = value {
+                                self.insert_calculation_dependency_disclosures(
+                                    OperationFamily::SchemaFieldMutation,
+                                    document,
+                                    expression_references(expression),
+                                    disclosures,
+                                )?;
+                            }
                         }
                     }
                 }
@@ -3772,6 +3780,32 @@ impl PatchLifecycle {
                 }
             }
             Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => {}
+        }
+        Ok(())
+    }
+
+    fn insert_calculation_dependency_disclosures(
+        &self,
+        family: OperationFamily,
+        document: &Document,
+        roots: impl IntoIterator<Item = FieldRef>,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) -> Result<(), PatchLifecycleError> {
+        let mut pending = roots.into_iter().collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        while let Some(field) = pending.pop() {
+            if !visited.insert(field.clone()) {
+                continue;
+            }
+            self.insert_field_disclosure_for(family, document, document, &field, disclosures)?;
+            let value = document
+                .entities
+                .get(&field.entity)
+                .and_then(|entity| entity.fields.get(&field.field))
+                .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+            if let Value::Formula(expression) = value {
+                pending.extend(expression_references(expression));
+            }
         }
         Ok(())
     }

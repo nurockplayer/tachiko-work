@@ -747,6 +747,7 @@ fn constraint_review_requires_query_for_stored_formula_dependencies() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One narrow grant denial and authorized formula-result journey.
 fn constraint_review_requires_query_for_transitive_formula_dependencies() {
     let mut original = document(7.0);
     original.schemas.get_mut("schema").unwrap().fields.insert(

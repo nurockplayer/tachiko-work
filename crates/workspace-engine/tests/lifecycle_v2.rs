@@ -1155,6 +1155,150 @@ fn constraint_review_tracks_candidate_values_formula_results_and_stable_order() 
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Covers exact, transitive Query, and successful formula disclosure.
+fn constraint_review_requires_transitive_formula_dependency_query() {
+    let mut document = game_balance_document("game", "Game");
+    let mut fields = document.schemas["weapons"].fields.clone();
+    for field in ["middle", "secret"] {
+        fields.insert(
+            field.into(),
+            FieldDefinition {
+                id: field.into(),
+                key: field.into(),
+                field_type: FieldType::Number,
+                required: false,
+                constraint: FieldConstraint::None,
+            },
+        );
+    }
+    document.schemas.get_mut("weapons").unwrap().fields = fields;
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert("secret".into(), Value::Number(Number::new(41.0).unwrap()));
+
+    let mut intermediate = document.entities["iron_sword"].clone();
+    intermediate.id = "intermediate".into();
+    intermediate.key = "intermediate_item".into();
+    intermediate.fields.insert(
+        "middle".into(),
+        Value::Formula(Expression::Reference(FieldRef::new("iron_sword", "secret"))),
+    );
+    document
+        .entities
+        .insert(intermediate.id.clone(), intermediate);
+
+    let mut formula = document.entities["iron_sword"].clone();
+    formula.id = "formula_review".into();
+    formula.key = "formula_review_item".into();
+    formula.fields.insert(
+        "damage".into(),
+        Value::Formula(Expression::Reference(FieldRef::new(
+            "intermediate",
+            "middle",
+        ))),
+    );
+    document.entities.insert(formula.id.clone(), formula);
+
+    let mut lifecycle = lifecycle(true);
+    let target = SemanticScope::SchemaField {
+        schema: "weapons".into(),
+        field: "damage".into(),
+    };
+    grant(
+        &mut lifecycle,
+        "target-and-intermediate-query",
+        "editor",
+        vec![
+            GrantRequirement::query(
+                OperationFamily::SchemaFieldMutation,
+                subject(target.clone()),
+            ),
+            GrantRequirement::query(
+                OperationFamily::SchemaFieldMutation,
+                subject(SemanticScope::EntityField {
+                    entity: "intermediate".into(),
+                    schema: "weapons".into(),
+                    field: "middle".into(),
+                }),
+            ),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                target.clone(),
+            ),
+            write(
+                AuthorizationAction::Execute,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                target,
+            ),
+        ],
+    );
+    let proposal_id = propose_body(
+        &mut lifecycle,
+        &document,
+        "transitive-constraint-review",
+        SemanticPatchBody::command(SemanticCommand::SetFieldConstraint {
+            schema: "weapons".into(),
+            field: "damage".into(),
+            constraint: FieldConstraint::NumberInclusiveRange {
+                min: Number::new(0.0).unwrap(),
+                max: Number::new(50.0).unwrap(),
+            },
+        }),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        lifecycle.preview_v2(
+            &scope(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        ),
+        Err(PatchLifecycleError::DisclosureDenied)
+    ));
+    grant(
+        &mut lifecycle,
+        "terminal-dependency-query",
+        "editor",
+        vec![GrantRequirement::query(
+            OperationFamily::SchemaFieldMutation,
+            subject(SemanticScope::EntityField {
+                entity: "iron_sword".into(),
+                schema: "weapons".into(),
+                field: "secret".into(),
+            }),
+        )],
+    );
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert_eq!(
+        preview.constraint_reviews[0]
+            .before
+            .iter()
+            .find(|value| value.field == FieldRef::new("formula_review", "damage"))
+            .unwrap()
+            .calculated_number,
+        Some(Number::new(41.0).unwrap()),
+    );
+}
+
+#[test]
 fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
     let mut document = Document::empty("game", "Text constraints");
     document.schemas.insert(
