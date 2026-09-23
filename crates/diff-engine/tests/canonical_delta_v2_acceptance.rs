@@ -366,7 +366,7 @@ fn independently_constructed_equal_text_sets_are_empty_and_changes_are_atomic() 
     let mut before = document();
     let mut after = document();
     let before_set = FieldConstraint::TextLiteralSet {
-        values: vec!["".into(), "old".into(), "é".into()],
+        values: vec![String::new(), "old".into(), "é".into()],
     };
     before
         .schemas
@@ -530,7 +530,7 @@ fn declaration_direct_value_and_complete_formula_admission_apply_to_both_sides()
         }
         let expected: Vec<_> = expected
             .iter()
-            .map(|diagnostic| diagnostic.stable_observation())
+            .map(tachiko_semantic_core::Diagnostic::stable_observation)
             .collect();
         assert!(!expected.is_empty());
         for (before, after, expected_side) in [
@@ -544,7 +544,7 @@ fn declaration_direct_value_and_complete_formula_admission_apply_to_both_sides()
             assert_eq!(side, expected_side);
             let observed: Vec<_> = diagnostics
                 .iter()
-                .map(|diagnostic| diagnostic.stable_observation())
+                .map(tachiko_semantic_core::Diagnostic::stable_observation)
                 .collect();
             assert_eq!(observed, expected);
         }
@@ -585,7 +585,7 @@ fn independent_field_type_requiredness_key_and_constraint_changes_share_one_targ
         .get_mut("label")
         .unwrap();
     definition.constraint = FieldConstraint::TextLiteralSet {
-        values: vec!["".into(), "old".into()],
+        values: vec![String::new(), "old".into()],
     };
     let mut after = before.clone();
     let definition = after
@@ -626,7 +626,7 @@ fn independent_field_type_requiredness_key_and_constraint_changes_share_one_targ
                 schema,
                 field,
                 before: FieldConstraint::TextLiteralSet {
-                    values: vec!["".into(), "old".into()]
+                    values: vec![String::new(), "old".into()]
                 },
                 after: range(-1.0, 1.0)
             },

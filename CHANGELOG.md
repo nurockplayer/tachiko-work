@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Rust callers can explicitly select the in-process `tachiko.semantic-delta/v2`
+  comparison for admitted documents. It emits deterministic, complete direct
+  facts for field constraints and the inherited semantic changes; the existing
+  Provisional diff remains fail-closed for constrained meaning. Application
+  opt-in and public transport are separate follow-up work.
 - Rust storage callers can now encode and strictly read canonical `.roproj/v3`
   trees with bounded field constraints and Date values, and explicitly migrate
   admitted v1/v2 directories to a distinct no-clobber v3 destination. Ordinary
