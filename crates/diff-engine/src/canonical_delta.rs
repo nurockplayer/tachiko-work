@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use tachiko_formula_engine::{CalculationError, calculate};
 use tachiko_semantic_core::{
     Diagnostic, Document, DocumentId, EntityId, FieldConstraint, FieldDefinition, FieldId,
-    FieldKey, FieldType, SchemaId, SchemaKey, Value, validate_complete_formula_constraints,
-    validate_document_core,
+    FieldKey, FieldType, KeyedGroupedSumDefinitionError, SchemaId, SchemaKey, Value,
+    validate_complete_formula_constraints, validate_document_core,
+    validate_keyed_grouped_sum_definitions,
 };
 use thiserror::Error;
 
@@ -34,6 +35,12 @@ pub enum CanonicalDeltaError {
     InvalidInput {
         side: DeltaInputSide,
         diagnostics: Vec<Diagnostic>,
+    },
+    #[error("{side:?} keyed grouped-sum definitions are invalid: {source}")]
+    InvalidKeyedGroupedSumDefinitions {
+        side: DeltaInputSide,
+        #[source]
+        source: KeyedGroupedSumDefinitionError,
     },
     #[error("could not calculate the before document: {0}")]
     BeforeCalculation(#[source] CalculationError),
@@ -274,6 +281,18 @@ pub fn canonical_delta(
     if before.keyed_grouped_sum_definitions != after.keyed_grouped_sum_definitions {
         return Err(CanonicalDeltaError::UnsupportedKeyedGroupedSumDefinitionChange);
     }
+    validate_keyed_grouped_sum_definitions(before).map_err(|source| {
+        CanonicalDeltaError::InvalidKeyedGroupedSumDefinitions {
+            side: DeltaInputSide::Before,
+            source,
+        }
+    })?;
+    validate_keyed_grouped_sum_definitions(after).map_err(|source| {
+        CanonicalDeltaError::InvalidKeyedGroupedSumDefinitions {
+            side: DeltaInputSide::After,
+            source,
+        }
+    })?;
     let mut facts = Vec::new();
     compare_direct_state(before, after, &mut facts);
     facts.sort_by(|left, right| left.ordering_key().cmp(&right.ordering_key()));

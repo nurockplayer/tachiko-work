@@ -9,8 +9,10 @@ use tachiko_diff_engine::{
 use tachiko_formula_engine::calculate;
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, Expression, FieldConstraint, FieldDefinition, FieldId,
-    FieldRef, FieldType, Number, Schema, SchemaId, Value, validate_complete_formula_constraints,
-    validate_document_core,
+    FieldRef, FieldType, KeyedGroupedSumBindingRole, KeyedGroupedSumDefinition,
+    KeyedGroupedSumDefinitionError, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    Number, Schema, SchemaId, Value, validate_complete_formula_constraints, validate_document_core,
+    validate_keyed_grouped_sum_definitions,
 };
 
 fn number(value: f64) -> Number {
@@ -93,11 +95,96 @@ fn document() -> Document {
     }
 }
 
+fn valid_keyed_definition() -> KeyedGroupedSumDefinition {
+    KeyedGroupedSumDefinition {
+        id: "summary".into(),
+        orders: KeyedGroupedSumOrdersBinding {
+            schema: "schema".into(),
+            lookup_key_field: "label".into(),
+            quantity_field: "amount".into(),
+        },
+        products: KeyedGroupedSumProductsBinding {
+            schema: "schema".into(),
+            key_field: "label".into(),
+            category_field: "label".into(),
+            price_field: "amount".into(),
+        },
+    }
+}
+
 fn facts(before: &Document, after: &Document) -> Vec<Fact> {
     let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, before, after).unwrap();
     assert_eq!(delta.contract(), "tachiko.semantic-delta/v2");
     assert_eq!(delta.document_id(), &before.id);
     delta.facts().to_vec()
+}
+
+#[test]
+fn equal_intrinsically_invalid_keyed_definitions_refuse_before_emitting_title_fact() {
+    let mut before = document();
+    let mut invalid = valid_keyed_definition();
+    invalid.orders.schema = "missing".into();
+    before
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), invalid);
+    let mut after = before.clone();
+    after.title = "After".into();
+    assert!(matches!(
+        canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after),
+        Err(CanonicalDeltaError::InvalidKeyedGroupedSumDefinitions {
+            side: DeltaInputSide::Before,
+            source: KeyedGroupedSumDefinitionError::MissingSchema {
+                role: "orders",
+                schema,
+            },
+        }) if schema == SchemaId::from("missing")
+    ));
+}
+
+#[test]
+fn unchanged_keyed_definition_binding_is_checked_against_both_schema_snapshots() {
+    let mut before = document();
+    before
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), valid_keyed_definition());
+    assert!(validate_keyed_grouped_sum_definitions(&before).is_ok());
+
+    let mut valid_title_change = before.clone();
+    valid_title_change.title = "After".into();
+    assert_eq!(
+        facts(&before, &valid_title_change),
+        vec![Fact::DocumentTitleChanged {
+            document: before.id.clone(),
+            before: "Before".into(),
+            after: "After".into(),
+        }]
+    );
+
+    let mut after = before.clone();
+    after
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .remove("amount");
+    after
+        .entities
+        .get_mut("entity")
+        .unwrap()
+        .fields
+        .remove("amount");
+    assert!(validate_document_core(&after).is_empty());
+    assert!(matches!(
+        canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after),
+        Err(CanonicalDeltaError::InvalidKeyedGroupedSumDefinitions {
+            side: DeltaInputSide::After,
+            source: KeyedGroupedSumDefinitionError::MissingField {
+                role: KeyedGroupedSumBindingRole::OrdersQuantity,
+                schema,
+                field,
+            },
+        }) if schema == SchemaId::from("schema") && field == FieldId::from("amount")
+    ));
 }
 
 #[test]
