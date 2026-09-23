@@ -5,14 +5,15 @@ under [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md). The
 constraint-aware Semantic Delta v2 profile is Accepted under
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md), as
 recorded by [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391).
-V1 remains frozen; v2 is docs-only logical authority and has no production v2
-constraint fact implementation. #448 implements the shared constraint model
-and validation plus fail-closed frozen-boundary refusal. Stable-ID continuity and bound-formula
-comparison follow
+V1 remains frozen. The in-process Rust diff engine implements the v2 direct-fact
+profile under #450. It does not define a public DTO, serialization or transport
+mapping, or application opt-in. #448 implements the shared constraint model
+and validation plus fail-closed frozen-boundary refusal for the Provisional
+baseline. Stable-ID continuity and bound-formula comparison follow
 [ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md) and
 [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md).
-The current `diff-engine` Rust surface and rendered output remain an implemented
-Provisional baseline rather than the protocol DTO.
+The current `diff-engine::diff()` Rust surface and rendered output remain an
+implemented Provisional baseline rather than the protocol DTO.
 
 Authority: [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md) for
 v1 and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
@@ -176,7 +177,7 @@ optimistic-concurrency predicates, JSON Patch `test` operations, or an
 ## Canonical Semantic Delta v2 (constraint-aware profile)
 
 The logical contract identifier is exactly `tachiko.semantic-delta/v2`. This
-docs-only logical extension is Accepted under
+logical extension is Accepted under
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md), as
 recorded by [Issue #391](https://github.com/nurockplayer/tachiko-work/issues/391).
 The v2 profile retains the complete v1 contract: same-Document admission,
@@ -204,10 +205,11 @@ collapsed into an empty delta, or represented as whole-field replacement. The
 constraint fact uses the stable `(SchemaId, FieldId)` target and the same direct
 fact/equality/order laws as v1. A consumer that does not support v2, the target,
 or the fact kind fails closed before producing evidence. V2 does not define a
-transport, SDK, patch/apply operation, or implementation DTO. Its bounded
-production implementation is queued under #450 and is not Ready. #448 already
-implements the shared model/validation and frozen-writer/diff/merge refusal;
-it does not implement a v2 fact.
+transport, SDK, patch/apply operation, or public implementation DTO. #450
+implements an in-process Rust evidence type selected explicitly by the v2
+contract string; it adds no public wire or application opt-in. The frozen
+Provisional `diff()` surface retains #448's fail-closed constraint refusal.
+Application comparison/publication opt-in remains scoped to #454.
 
 ## Human-readable projection
 
@@ -261,14 +263,15 @@ not semantic targets or canonical delta equality.
 
 ## Implementation status and follow-up
 
-The current `diff-engine` demonstrates typed state comparison, deterministic ID
-iteration, stable rename continuity, and a distinction between stored change
-and formula impact. It does not yet implement the complete public logical DTO
-above, and this specification does not authorize that production change.
+The current Provisional `diff-engine::diff()` demonstrates typed state
+comparison, deterministic ID iteration, stable rename continuity, and a
+distinction between stored change and formula impact. The separately selected
+`canonical_delta` in-process API implements the v2 logical facts; neither Rust
+surface is a public wire DTO or transport contract.
 
-Tracking issue: concrete DTO or transport mapping remains future queued work;
-the v2 logical implementation is queued under [#450](https://github.com/nurockplayer/tachiko-work/issues/450)
-and is not Ready. [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46)
+Tracking issue: concrete public DTO or transport mapping remains future queued
+work. Application opt-in is scoped to [#454](https://github.com/nurockplayer/tachiko-work/issues/454).
+[Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46)
 may consume canonical delta as merge/conflict evidence without treating it as
 an apply language.
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
