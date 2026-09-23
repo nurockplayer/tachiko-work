@@ -614,11 +614,29 @@ pub struct PatchPreview {
     pub risk: PatchRisk,
 }
 
+/// Stored value and effective numeric calculation for one constrained field instance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstraintAffectedValue {
+    pub field: FieldRef,
+    pub stored: Value,
+    pub calculated_number: Option<Number>,
+}
+
+/// Complete before/after instance evidence for one changed field constraint.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstraintReviewEvidence {
+    pub schema: SchemaId,
+    pub field: FieldId,
+    pub before: Vec<ConstraintAffectedValue>,
+    pub after: Vec<ConstraintAffectedValue>,
+}
+
 /// Disclosure-authorized v2 review evidence with a complete canonical delta.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PatchPreviewV2 {
     pub proposal: SemanticPatch,
     pub delta: CanonicalSemanticDelta,
+    pub constraint_reviews: Vec<ConstraintReviewEvidence>,
     pub formula_impacts: Vec<FormulaImpactEvidence>,
     pub validation_report: ValidationReport,
     pub authorization_footprint: AuthorizationFootprint,
@@ -1520,6 +1538,15 @@ impl PatchLifecycle {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);
             return Err(PatchLifecycleError::ApprovalBindingMismatch);
         }
+        let constraint_reviews = if matches!(&evaluated.evidence, PatchEvidence::V2(_)) {
+            constraint_review_evidence(
+                document,
+                &evaluated.document,
+                record.patch.exact_change.body(),
+            )?
+        } else {
+            Vec::new()
+        };
 
         let proposal = record.patch;
         let risk = PatchRisk {
@@ -1549,6 +1576,7 @@ impl PatchLifecycle {
             PatchEvidence::V2(delta) => Ok(ProfiledPreview::V2(PatchPreviewV2 {
                 proposal,
                 delta,
+                constraint_reviews,
                 formula_impacts: evaluated.formula_impacts,
                 validation_report: evaluated.validation_report,
                 authorization_footprint: evaluated.footprint,
@@ -4149,6 +4177,78 @@ fn contains_constraint_command(body: &SemanticPatchBody) -> bool {
     body.commands()
         .iter()
         .any(|command| matches!(command, SemanticCommand::SetFieldConstraint { .. }))
+}
+
+fn constraint_review_evidence(
+    before: &Document,
+    after: &Document,
+    body: &SemanticPatchBody,
+) -> Result<Vec<ConstraintReviewEvidence>, PatchLifecycleError> {
+    let targets = body
+        .commands()
+        .iter()
+        .filter_map(|command| match command {
+            SemanticCommand::SetFieldConstraint { schema, field, .. } => {
+                Some((schema.clone(), field.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let before_calculations = calculation_values(before)?;
+    let after_calculations = calculation_values(after)?;
+    let mut reviews = targets
+        .into_iter()
+        .map(|(schema, field)| {
+            Ok(ConstraintReviewEvidence {
+                schema: schema.clone(),
+                field: field.clone(),
+                before: constraint_affected_values(before, &schema, &field, &before_calculations),
+                after: constraint_affected_values(after, &schema, &field, &after_calculations),
+            })
+        })
+        .collect::<Result<Vec<_>, PatchLifecycleError>>()?;
+    reviews.sort_by(|left, right| (&left.schema, &left.field).cmp(&(&right.schema, &right.field)));
+    Ok(reviews)
+}
+
+fn calculation_values(
+    document: &Document,
+) -> Result<BTreeMap<FieldRef, Number>, PatchLifecycleError> {
+    super::calculate_fields(document)
+        .map(|calculated| {
+            calculated
+                .into_iter()
+                .map(|value| (value.field, value.value))
+                .collect()
+        })
+        .map_err(|source| PatchLifecycleError::CommandRejected {
+            source: Box::new(source),
+        })
+}
+
+fn constraint_affected_values(
+    document: &Document,
+    schema: &SchemaId,
+    field: &FieldId,
+    calculations: &BTreeMap<FieldRef, Number>,
+) -> Vec<ConstraintAffectedValue> {
+    document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == *schema)
+        .filter_map(|entity| {
+            let stored = entity.fields.get(field)?.clone();
+            let field = FieldRef::new(entity.id.clone(), field.clone());
+            Some(ConstraintAffectedValue {
+                calculated_number: calculations.get(&field).copied(),
+                field,
+                stored,
+            })
+        })
+        .collect()
 }
 
 fn without_constraints(document: &Document) -> Document {

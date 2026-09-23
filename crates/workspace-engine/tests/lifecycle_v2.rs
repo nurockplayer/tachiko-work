@@ -3,16 +3,17 @@ mod common;
 use common::game_balance_document;
 use tachiko_diff_engine::{CanonicalDeltaError, CanonicalDirectFact};
 use tachiko_workspace_engine::{
-    Document, Expression, FieldConstraint, FieldDefinition, FieldRef, FieldType,
+    Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldRef, FieldType,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, Number, Schema, Value, WorkspaceError,
     patch_lifecycle::{
-        AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion,
-        DisclosureRequirement, DocumentScopeId, Grant, GrantId, GrantRequirement, MutationClass,
-        OperationFamily, PatchLifecycle, PatchLifecycleError, PolicyMeaningId, PrincipalId,
-        PrincipalKind, ProposalId, ProposalRequest, ScopedSemanticSubject, SemanticApiContract,
-        SemanticCommand, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
-        SemanticRevision, SemanticScope, TrustedInstant, V2ReceiptEvidence,
+        ApprovalId, ApprovalRequest, AuthorizationAction, AuthorizationDomainId,
+        AuthorizationPolicyVersion, DisclosureRequirement, DocumentScopeId, Grant, GrantId,
+        GrantRequirement, MutationClass, OperationFamily, PatchLifecycle, PatchLifecycleError,
+        PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId, ProposalRequest,
+        ScopedSemanticSubject, SemanticApiContract, SemanticCommand, SemanticPatchBody,
+        SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
+        TrustedInstant, V2ReceiptEvidence,
     },
 };
 
@@ -45,6 +46,8 @@ fn lifecycle(v2: bool) -> PatchLifecycle {
     for (principal, kind) in [
         ("editor", PrincipalKind::Human),
         ("runner", PrincipalKind::Human),
+        ("reviewer", PrincipalKind::Human),
+        ("agent", PrincipalKind::Delegated),
         ("authority", PrincipalKind::Human),
     ] {
         lifecycle
@@ -894,4 +897,392 @@ fn v2_entity_and_schema_commands_publish_complete_facts_on_constrained_base() {
             .as_str(),
         "power"
     );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One atomic candidate demonstrates stable complete per-instance evidence.
+fn constraint_review_tracks_candidate_values_formula_results_and_stable_order() {
+    let mut document = game_balance_document("game", "Game");
+    document.entities.insert(
+        "a_item".into(),
+        Entity {
+            id: "a_item".into(),
+            key: "a_item".into(),
+            schema: "weapons".into(),
+            fields: {
+                let mut fields = document.entities["iron_sword"].fields.clone();
+                fields.insert("damage".into(), Value::Number(Number::new(5.0).unwrap()));
+                fields
+            },
+        },
+    );
+    let mut formula_entity = document.entities["iron_sword"].clone();
+    formula_entity.id = "formula_damage".into();
+    formula_entity.key = "formula_damage".into();
+    formula_entity.fields.insert(
+        "damage".into(),
+        Value::Formula(Expression::Reference(FieldRef::new("iron_sword", "damage"))),
+    );
+    document
+        .entities
+        .insert(formula_entity.id.clone(), formula_entity);
+    document.entities.insert(
+        "z_item".into(),
+        Entity {
+            id: "z_item".into(),
+            key: "z_item".into(),
+            schema: "weapons".into(),
+            fields: {
+                let mut fields = document.entities["iron_sword"].fields.clone();
+                fields.insert("damage".into(), Value::Number(Number::new(45.0).unwrap()));
+                fields
+            },
+        },
+    );
+    let mut lifecycle = lifecycle(true);
+    let damage_scope = SemanticScope::SchemaField {
+        schema: "weapons".into(),
+        field: "damage".into(),
+    };
+    grant(
+        &mut lifecycle,
+        "review-editor",
+        "editor",
+        vec![
+            query(OperationFamily::SetFieldValue),
+            query(OperationFamily::SchemaFieldMutation),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::SetFieldValue,
+                MutationClass::Value,
+                SemanticScope::Document,
+            ),
+            write(
+                AuthorizationAction::Execute,
+                OperationFamily::SetFieldValue,
+                MutationClass::Value,
+                SemanticScope::Document,
+            ),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                damage_scope.clone(),
+            ),
+            write(
+                AuthorizationAction::Execute,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                damage_scope,
+            ),
+        ],
+    );
+    let body = SemanticPatchBody::atomic_batch(vec![
+        SemanticCommand::set_field_value(
+            FieldRef::new("iron_sword", "damage"),
+            Value::Number(Number::new(40.0).unwrap()),
+        ),
+        SemanticCommand::SetFieldConstraint {
+            schema: "weapons".into(),
+            field: "damage".into(),
+            constraint: FieldConstraint::NumberInclusiveRange {
+                min: Number::new(0.0).unwrap(),
+                max: Number::new(50.0).unwrap(),
+            },
+        },
+    ])
+    .unwrap();
+    let proposal_id = propose_body(&mut lifecycle, &document, "candidate-review", body).unwrap();
+
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+
+    assert_eq!(preview.constraint_reviews.len(), 1);
+    let review = &preview.constraint_reviews[0];
+    let ordered = ["a_item", "formula_damage", "iron_sword", "z_item"];
+    assert_eq!(
+        review
+            .before
+            .iter()
+            .map(|value| value.field.entity.as_str())
+            .collect::<Vec<_>>(),
+        ordered
+    );
+    assert_eq!(
+        review
+            .after
+            .iter()
+            .map(|value| value.field.entity.as_str())
+            .collect::<Vec<_>>(),
+        ordered
+    );
+    let before_formula = &review.before[1];
+    let after_formula = &review.after[1];
+    assert_eq!(
+        before_formula.stored,
+        Value::Formula(Expression::Reference(FieldRef::new("iron_sword", "damage")))
+    );
+    assert_eq!(
+        before_formula.calculated_number,
+        Some(Number::new(36.0).unwrap())
+    );
+    assert_eq!(after_formula.stored, before_formula.stored);
+    assert_eq!(
+        after_formula.calculated_number,
+        Some(Number::new(40.0).unwrap())
+    );
+    assert_eq!(
+        review.before[2].stored,
+        Value::Number(Number::new(36.0).unwrap())
+    );
+    assert_eq!(
+        review.after[2].stored,
+        Value::Number(Number::new(40.0).unwrap())
+    );
+}
+
+#[test]
+fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
+    let mut document = Document::empty("game", "Text constraints");
+    document.schemas.insert(
+        "items".into(),
+        Schema {
+            id: "items".into(),
+            key: "items".into(),
+            fields: [(
+                "label".into(),
+                FieldDefinition {
+                    id: "label".into(),
+                    key: "label".into(),
+                    field_type: FieldType::Text,
+                    required: true,
+                    constraint: FieldConstraint::None,
+                },
+            )]
+            .into(),
+        },
+    );
+    for (id, label) in [("z_item", "beta"), ("a_item", "alpha")] {
+        document.entities.insert(
+            id.into(),
+            Entity {
+                id: id.into(),
+                key: id.into(),
+                schema: "items".into(),
+                fields: [("label".into(), Value::Text(label.into()))].into(),
+            },
+        );
+    }
+    let mut lifecycle = lifecycle(true);
+    let label_scope = SemanticScope::SchemaField {
+        schema: "items".into(),
+        field: "label".into(),
+    };
+    grant(
+        &mut lifecycle,
+        "text-review-editor",
+        "editor",
+        vec![
+            query(OperationFamily::SchemaFieldMutation),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                label_scope.clone(),
+            ),
+            write(
+                AuthorizationAction::Execute,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                label_scope,
+            ),
+        ],
+    );
+    let proposal_id = propose_body(
+        &mut lifecycle,
+        &document,
+        "text-review",
+        SemanticPatchBody::command(SemanticCommand::SetFieldConstraint {
+            schema: "items".into(),
+            field: "label".into(),
+            constraint: FieldConstraint::TextLiteralSet {
+                values: vec!["alpha".into(), "beta".into()],
+            },
+        }),
+    )
+    .unwrap();
+
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+
+    let review = &preview.constraint_reviews[0];
+    assert_eq!(
+        review
+            .before
+            .iter()
+            .map(|value| value.field.entity.as_str())
+            .collect::<Vec<_>>(),
+        ["a_item", "z_item"]
+    );
+    assert!(
+        review
+            .before
+            .iter()
+            .chain(&review.after)
+            .all(|value| value.calculated_number.is_none())
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // Exercises disclosure, review credit, and approval in one lifecycle.
+fn constraint_review_requires_disclosure_before_review_credit() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle(true);
+    let damage_scope = SemanticScope::SchemaField {
+        schema: "weapons".into(),
+        field: "damage".into(),
+    };
+    grant(
+        &mut lifecycle,
+        "delegated-proposer",
+        "agent",
+        vec![
+            query(OperationFamily::SchemaFieldMutation),
+            write(
+                AuthorizationAction::Propose,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                damage_scope.clone(),
+            ),
+        ],
+    );
+    grant(
+        &mut lifecycle,
+        "reviewer-disclosure-and-approval",
+        "reviewer",
+        vec![
+            query(OperationFamily::SchemaFieldMutation),
+            write(
+                AuthorizationAction::Approve,
+                OperationFamily::SchemaFieldMutation,
+                MutationClass::Schema,
+                damage_scope,
+            ),
+        ],
+    );
+    grant(
+        &mut lifecycle,
+        "editor-execution",
+        "editor",
+        vec![write(
+            AuthorizationAction::Execute,
+            OperationFamily::SchemaFieldMutation,
+            MutationClass::Schema,
+            SemanticScope::SchemaField {
+                schema: "weapons".into(),
+                field: "damage".into(),
+            },
+        )],
+    );
+
+    let proposal_id = ProposalId::from("delegated-constraint");
+    lifecycle
+        .propose(
+            &scope(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                proposal_id.clone(),
+                revision("r1"),
+                SemanticPatchBody::command(SemanticCommand::SetFieldConstraint {
+                    schema: "weapons".into(),
+                    field: "damage".into(),
+                    constraint: FieldConstraint::NumberInclusiveRange {
+                        min: Number::new(0.0).unwrap(),
+                        max: Number::new(50.0).unwrap(),
+                    },
+                }),
+                "agent".into(),
+            ),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+
+    let approval = |id: &str| {
+        ApprovalRequest::new(
+            ApprovalId::from(id),
+            proposal_id.clone(),
+            "reviewer".into(),
+            "editor".into(),
+            TrustedInstant::new(20),
+        )
+    };
+    assert!(matches!(
+        lifecycle.approve(
+            &scope(),
+            &document,
+            &revision("r1"),
+            approval("before-review"),
+            TrustedInstant::new(10),
+        ),
+        Err(PatchLifecycleError::ReviewRequired)
+    ));
+    assert!(matches!(
+        lifecycle.preview_v2(
+            &scope(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &"runner".into(),
+            TrustedInstant::new(10),
+        ),
+        Err(PatchLifecycleError::DisclosureDenied)
+    ));
+    assert!(matches!(
+        lifecycle.approve(
+            &scope(),
+            &document,
+            &revision("r1"),
+            approval("after-refused-preview"),
+            TrustedInstant::new(10),
+        ),
+        Err(PatchLifecycleError::ReviewRequired)
+    ));
+
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &"reviewer".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert_eq!(preview.constraint_reviews.len(), 1);
+    lifecycle
+        .approve(
+            &scope(),
+            &document,
+            &revision("r1"),
+            approval("after-review"),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
 }
