@@ -7,17 +7,19 @@ ADR-0011's merge laws except for the explicit ADR-0031 amendment that makes
 facet, and preserving the direct-state evidence boundary accepted by
 [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md).
 ADR-0041 accepts the constraint-aware logical v2 facet extension; v1 remains
-frozen and v2 is docs-only authority without a production v2 conflict facet.
-#448 implements the core constraint model and frozen v1 refusal boundary, not
-the v2 conflict implementation.
+frozen. Issue #451 implements an explicitly selected, in-process Rust v2 merge
+preview over the accepted logical contract. The preview is not a public DTO,
+wire format, SDK, application opt-in, or durable merge route; application
+adoption remains separately owned by Issue #454.
 
 Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
 and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
-for the docs-only v2 extension
+for the v2 constraint facet extension
 
 Decision issues: [#46](https://github.com/nurockplayer/tachiko-work/issues/46) for
 v1 and [#391](https://github.com/nurockplayer/tachiko-work/issues/391) for the
-docs-only v2 extension.
+logical v2 extension; [#451](https://github.com/nurockplayer/tachiko-work/issues/451)
+implements the selected in-process Rust merge preview.
 
 Issue #223 makes the current `merge-engine` Rust conflict shape implementation
 evidence for this logical contract: same-Document admission and typed
@@ -361,7 +363,8 @@ results.
 
 ## Semantic Conflict v2 (constraint-aware profile)
 
-The logical contract identifier is exactly `tachiko.semantic-conflict/v2`. V2
+The logical contract identifier is exactly `tachiko.semantic-conflict/v2`. The
+Rust workspace boundary exposes it only through an explicit selector. V2
 retains every v1 law: finalized same-Document admission, structural conflict
 kinds, typed stable targets, explicit absence, parent-child suppression,
 composite identity, canonical ordering, and separation from post-merge
@@ -419,7 +422,15 @@ workspace finalization evidence rather than another conflict kind.
 The concrete Rust DTO and CLI rendering remain implementation-level. This
 realization does not select or stabilize a serialization codec, WASM/public
 transport, network/SDK shape, hash/UUID identity, storage format, resolver UI,
-or Git merge driver.
+or Git merge driver. It does not opt the application into v2; that adoption is
+separately owned by Issue #454.
+
+Issue [#451](https://github.com/nurockplayer/tachiko-work/issues/451) implements
+the in-process workspace preview. The workspace boundary admits the exact v2
+selector and same-Document inputs, validates keyed grouped-sum bindings by
+input role, delegates structural reconciliation to merge-engine, and performs
+candidate validation, formula/projection preflight, and canonical v2 delta
+finalization. Changed keyed-definition maps remain a whole-request refusal.
 
 Issue [#47](https://github.com/nurockplayer/tachiko-work/issues/47) retains
 cross-version migration work.

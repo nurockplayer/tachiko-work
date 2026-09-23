@@ -6,8 +6,8 @@ use std::{
 };
 
 use serde::{Serialize, Serializer, ser::Error as _};
-use tachiko_diff_engine::diff;
-pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
+use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, canonical_delta, diff};
+pub use tachiko_diff_engine::{CanonicalSemanticDelta, DiffError, SemanticChange, SemanticDiff};
 #[cfg(feature = "issue-175-research")]
 pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
 use tachiko_formula_engine::{
@@ -20,11 +20,15 @@ pub use tachiko_formula_engine::{
     ExpressionComplexityError, ReferenceFailure,
 };
 pub use tachiko_merge_engine::{
-    ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, EntitySubject, MergeConflict,
-    MergeValue, SEMANTIC_CONFLICT_V1, SchemaFieldSubject, SchemaSubject, SemanticConflictContract,
-    UnsupportedConflictContract, UnsupportedConflictKind, UnsupportedTargetFacet,
+    ConflictFacet, ConflictFacetV2, ConflictFact, ConflictFactV2, ConflictKind, ConflictTarget,
+    EntitySubject, MergeConflict, MergeConflictV2, MergeValue, MergeValueV2, SEMANTIC_CONFLICT_V1,
+    SEMANTIC_CONFLICT_V2, SchemaFieldSubject, SchemaFieldSubjectV2, SchemaSubject, SchemaSubjectV2,
+    SemanticConflictContract, UnsupportedConflictContract, UnsupportedConflictKind,
+    UnsupportedTargetFacet, UnsupportedTargetFacetV2,
 };
-use tachiko_merge_engine::{MergeOutcome, UnmaterializedStoredFact, merge};
+use tachiko_merge_engine::{
+    MergeOutcome, MergeOutcomeV2, UnmaterializedStoredFact, merge, merge_v2,
+};
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, KeyedGroupedSumDefinitionError, is_valid_identifier,
     validate_complete_formula_constraints, validate_document_core,
@@ -409,6 +413,20 @@ pub enum WorkspaceMergeOutcome {
     Conflicted(Vec<MergeConflict>),
 }
 
+/// The application-level outcome of an explicitly selected conflict-v2 preview.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceMergeOutcomeV2 {
+    Merged(Box<MergePreviewV2>),
+    Conflicted(Vec<MergeConflictV2>),
+}
+
+/// Finalized conflict-free candidate and canonical base-to-candidate evidence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergePreviewV2 {
+    pub document: Document,
+    pub delta: CanonicalSemanticDelta,
+}
+
 /// Current portable runtime export projection.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RuntimeExport {
@@ -539,6 +557,16 @@ pub enum WorkspaceError {
     UnsupportedKeyedGroupedSumDefinitionMerge,
     #[error("semantic-conflict/v1 does not support durable field constraint changes")]
     UnsupportedFieldConstraintMerge,
+    #[error("unsupported semantic conflict contract '{contract}'")]
+    UnsupportedSemanticConflictContract { contract: String },
+    #[error("{role} keyed grouped-sum definitions are invalid: {source}")]
+    InvalidMergeKeyedGroupedSumDefinitions {
+        role: ValidationRole,
+        #[source]
+        source: KeyedGroupedSumDefinitionError,
+    },
+    #[error("canonical semantic delta failed during merge finalization: {0}")]
+    CanonicalDelta(#[source] Box<tachiko_diff_engine::CanonicalDeltaError>),
     #[error("keyed grouped-sum definitions are invalid: {0}")]
     InvalidKeyedGroupedSumDefinition(#[from] KeyedGroupedSumDefinitionError),
     #[error("keyed grouped-sum definition '{definition}' is unavailable")]
@@ -965,6 +993,81 @@ pub fn merge_documents(
             Err(WorkspaceError::UnsupportedFieldConstraintMerge)
         }
     }
+}
+
+/// Merge three admitted snapshots through the explicitly selected conflict-v2 profile.
+///
+/// # Errors
+///
+/// Returns a typed selector, identity, input-admission, candidate-finalization,
+/// or canonical-delta failure. Structural conflicts are returned as evidence.
+pub fn merge_documents_v2(
+    contract: &str,
+    base: &Document,
+    left: &Document,
+    right: &Document,
+) -> Result<WorkspaceMergeOutcomeV2, WorkspaceError> {
+    if contract != SEMANTIC_CONFLICT_V2 {
+        return Err(WorkspaceError::UnsupportedSemanticConflictContract {
+            contract: contract.to_owned(),
+        });
+    }
+    if base.id != left.id || base.id != right.id {
+        return Err(WorkspaceError::DifferentMergeDocument {
+            base: base.id.clone(),
+            left: left.id.clone(),
+            right: right.id.clone(),
+        });
+    }
+    if base.keyed_grouped_sum_definitions != left.keyed_grouped_sum_definitions
+        || base.keyed_grouped_sum_definitions != right.keyed_grouped_sum_definitions
+    {
+        return Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge);
+    }
+
+    require_merge_keyed_definitions(base, ValidationRole::MergeBase)?;
+    require_validated_calculation_for(base, ValidationRole::MergeBase)?;
+    require_merge_keyed_definitions(left, ValidationRole::MergeOurs)?;
+    require_validated_calculation_for(left, ValidationRole::MergeOurs)?;
+    require_merge_keyed_definitions(right, ValidationRole::MergeTheirs)?;
+    require_validated_calculation_for(right, ValidationRole::MergeTheirs)?;
+
+    match merge_v2(base, left, right) {
+        MergeOutcomeV2::Merged(candidate) => {
+            let (document, unmaterialized_fields) = candidate.into_parts();
+            require_merge_keyed_definitions(&document, ValidationRole::MergeCandidate)?;
+            let (report, _calculation) = semantic_validation(&document);
+            let mut diagnostics = report.into_diagnostics();
+            diagnostics.extend(
+                unmaterialized_fields
+                    .iter()
+                    .map(unmaterialized_qualified_field_diagnostic),
+            );
+            let report = ValidationReport::new(diagnostics);
+            if !report.is_valid() {
+                return Err(invalid_document(report, ValidationRole::MergeCandidate));
+            }
+            preflight_formula_projections(&document)?;
+            let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &document)
+                .map_err(|source| WorkspaceError::CanonicalDelta(Box::new(source)))?;
+            Ok(WorkspaceMergeOutcomeV2::Merged(Box::new(MergePreviewV2 {
+                document,
+                delta,
+            })))
+        }
+        MergeOutcomeV2::Conflicted(conflicts) => Ok(WorkspaceMergeOutcomeV2::Conflicted(conflicts)),
+        MergeOutcomeV2::UnsupportedKeyedGroupedSumDefinitionChange => {
+            Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
+        }
+    }
+}
+
+fn require_merge_keyed_definitions(
+    document: &Document,
+    role: ValidationRole,
+) -> Result<(), WorkspaceError> {
+    validate_keyed_grouped_sum_definitions(document)
+        .map_err(|source| WorkspaceError::InvalidMergeKeyedGroupedSumDefinitions { role, source })
 }
 
 /// Build the current deterministic runtime projection after shared validation
@@ -2837,3 +2940,6 @@ fn format_number(number: Number) -> String {
         number.to_string()
     }
 }
+
+#[cfg(test)]
+mod merge_v2_tests;

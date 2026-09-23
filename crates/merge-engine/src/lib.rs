@@ -1,5 +1,13 @@
 //! Semantic three-way merge for Tachiko Work documents.
 
+mod conflict_v2;
+
+pub use conflict_v2::{
+    ConflictFacetV2, ConflictFactV2, MergeConflictV2, MergeOutcomeV2, MergeValueV2,
+    SEMANTIC_CONFLICT_V2, SchemaFieldSubjectV2, SchemaSubjectV2, UnsupportedTargetFacetV2,
+    merge_v2,
+};
+
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
