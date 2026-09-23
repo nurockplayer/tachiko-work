@@ -191,8 +191,10 @@ non-`None` variants, and fail-closed frozen v1 writer, diff, and merge
 boundaries. #318 and #368 remain later implementation work; this ADR supplies
 their bounded authority and acceptance target. The `.roproj/v3` storage codec,
 explicit v1/v2 migration, and native canonical read/publish are implemented by
-#449. Delta/conflict v2 facts, application and Designer save selection, UI,
-public API, and package work remain separately owned and unimplemented.
+#449. #450 implements the v2 direct delta facts through an explicitly selected
+in-process Rust engine. Conflict v2 facts, application and Designer save
+selection, UI, public wire/SDK, and package work remain separately owned and
+unimplemented.
 
 Documentation acceptance for this docs-only decision is consistency/link/diff
 validation, exact cross-document agreement, and independent Sol exact-head
