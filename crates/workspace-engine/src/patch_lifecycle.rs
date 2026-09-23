@@ -18,7 +18,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
-use tachiko_semantic_core::{KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId};
+use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta};
+use tachiko_semantic_core::{
+    FieldConstraint, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+};
 use thiserror::Error;
 
 use super::{
@@ -333,6 +336,12 @@ pub enum SemanticCommand {
         field: FieldId,
         key: FieldKey,
     },
+    /// Replace the complete durable constraint facet of one stable field.
+    SetFieldConstraint {
+        schema: SchemaId,
+        field: FieldId,
+        constraint: FieldConstraint,
+    },
     SetFieldValue {
         field: FieldRef,
         value: Value,
@@ -481,6 +490,7 @@ pub struct ExactChangeBinding {
     semantic_api_contract: SemanticApiContract,
     base_revision: SemanticRevision,
     body: SemanticPatchBody,
+    evidence_profile: EvidenceProfile,
 }
 
 impl ExactChangeBinding {
@@ -498,6 +508,18 @@ impl ExactChangeBinding {
     pub fn body(&self) -> &SemanticPatchBody {
         &self.body
     }
+
+    #[must_use]
+    fn evidence_profile(&self) -> EvidenceProfile {
+        self.evidence_profile
+    }
+}
+
+/// Construction-bound, closed evidence profile for one lifecycle occurrence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EvidenceProfile {
+    V1,
+    V2,
 }
 
 /// Immutable revision-pinned proposal occurrence.
@@ -586,6 +608,17 @@ pub struct FormulaImpactEvidence {
 pub struct PatchPreview {
     pub proposal: SemanticPatch,
     pub semantic_changes: Vec<SemanticChange>,
+    pub formula_impacts: Vec<FormulaImpactEvidence>,
+    pub validation_report: ValidationReport,
+    pub authorization_footprint: AuthorizationFootprint,
+    pub risk: PatchRisk,
+}
+
+/// Disclosure-authorized v2 review evidence with a complete canonical delta.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PatchPreviewV2 {
+    pub proposal: SemanticPatch,
+    pub delta: CanonicalSemanticDelta,
     pub formula_impacts: Vec<FormulaImpactEvidence>,
     pub validation_report: ValidationReport,
     pub authorization_footprint: AuthorizationFootprint,
@@ -724,6 +757,54 @@ pub struct ExecutionReceipt {
     pub validation_report: Option<ValidationReport>,
 }
 
+/// Explicitly disclosed or redacted v2 evidence in an execution response.
+#[derive(Clone, Debug, PartialEq)]
+pub enum V2ReceiptEvidence {
+    Disclosed(CanonicalSemanticDelta),
+    Redacted,
+}
+
+/// Verified v2 execution receipt; direct facts are accessible only with Query.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExecutionReceiptV2 {
+    pub proposal_id: ProposalId,
+    pub originator: PrincipalId,
+    pub executor: PrincipalId,
+    pub approval: Option<ApprovalExecutionEvidence>,
+    pub propose_grants: BTreeSet<GrantId>,
+    pub approve_grants: BTreeSet<GrantId>,
+    pub execute_grants: BTreeSet<GrantId>,
+    pub authorization_footprint: Option<AuthorizationFootprint>,
+    pub policy_version: AuthorizationPolicyVersion,
+    pub base_revision: SemanticRevision,
+    pub resulting_revision: SemanticRevision,
+    pub verified: bool,
+    evidence: V2ReceiptEvidence,
+    pub formula_impacts: Vec<FormulaImpactEvidence>,
+    pub validation_report: Option<ValidationReport>,
+}
+
+impl ExecutionReceiptV2 {
+    /// Return the explicit full or redacted evidence selected for this receipt.
+    #[must_use]
+    pub fn evidence(&self) -> &V2ReceiptEvidence {
+        &self.evidence
+    }
+
+    /// Return the complete base-to-result delta when the receipt is disclosable.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DisclosureDenied` for a receipt reduced for an executor without
+    /// current Query authority.
+    pub fn delta(&self) -> Result<&CanonicalSemanticDelta, PatchLifecycleError> {
+        match &self.evidence {
+            V2ReceiptEvidence::Disclosed(delta) => Ok(delta),
+            V2ReceiptEvidence::Redacted => Err(PatchLifecycleError::DisclosureDenied),
+        }
+    }
+}
+
 /// Host/runtime seam that owns concrete revision and state-install mechanics.
 ///
 /// An error from `publish_if_current` must prove that the candidate was not
@@ -797,6 +878,10 @@ pub enum PatchLifecycleError {
     NoChange,
     #[error("the AtomicBatch must contain at least one command")]
     EmptyAtomicBatch,
+    #[error("proposal evidence profile does not match this review or execution entry point")]
+    EvidenceProfileMismatch,
+    #[error("a batch writes the same schema-field constraint facet more than once")]
+    DuplicateFieldConstraintWrite { schema: SchemaId, field: FieldId },
     #[error("Query requirements cannot carry a mutation class")]
     InvalidGrantRequirement,
     #[error("the configured document occurrence does not match the supplied document")]
@@ -905,10 +990,27 @@ struct StoredApproval {
 #[derive(Clone, Debug)]
 struct EvaluatedPatch {
     document: Document,
-    semantic_changes: Vec<SemanticChange>,
+    evidence: PatchEvidence,
     formula_impacts: Vec<FormulaImpactEvidence>,
     validation_report: ValidationReport,
     footprint: AuthorizationFootprint,
+}
+
+enum ProfiledPreview {
+    V1(PatchPreview),
+    V2(PatchPreviewV2),
+}
+
+enum ProfiledReceipt {
+    V1(ExecutionReceipt),
+    V2(ExecutionReceiptV2),
+}
+
+/// Exhaustive profile-owned review evidence; v2 never travels through a v1 list.
+#[derive(Clone, Debug, PartialEq)]
+enum PatchEvidence {
+    V1(Vec<SemanticChange>),
+    V2(CanonicalSemanticDelta),
 }
 
 struct PublicationAuthorization {
@@ -942,11 +1044,13 @@ pub struct PatchLifecycle {
     document_scope: DocumentScopeId,
     document: DocumentId,
     semantic_api_contract: SemanticApiContract,
+    evidence_profile: EvidenceProfile,
     principals: BTreeMap<PrincipalId, PrincipalRecord>,
     grants: BTreeMap<GrantId, StoredGrant>,
     proposals: BTreeMap<ProposalId, ProposalRecord>,
     approvals: BTreeMap<ApprovalId, StoredApproval>,
     execution_receipts: Vec<ExecutionReceipt>,
+    execution_receipts_v2: Vec<ExecutionReceiptV2>,
     policy_meanings: BTreeMap<AuthorizationPolicyVersion, PolicyMeaningId>,
     effective_policy: AuthorizationPolicyVersion,
     policy_selection: u64,
@@ -962,16 +1066,59 @@ impl PatchLifecycle {
         effective_policy: AuthorizationPolicyVersion,
         policy_meaning: PolicyMeaningId,
     ) -> Self {
+        Self::new_with_profile(
+            authorization_domain,
+            document_scope,
+            document,
+            semantic_api_contract,
+            effective_policy,
+            policy_meaning,
+            EvidenceProfile::V1,
+        )
+    }
+
+    /// Construct a lifecycle occurrence explicitly bound to canonical v2 evidence.
+    #[must_use]
+    pub fn new_v2(
+        authorization_domain: AuthorizationDomainId,
+        document_scope: DocumentScopeId,
+        document: DocumentId,
+        semantic_api_contract: SemanticApiContract,
+        effective_policy: AuthorizationPolicyVersion,
+        policy_meaning: PolicyMeaningId,
+    ) -> Self {
+        Self::new_with_profile(
+            authorization_domain,
+            document_scope,
+            document,
+            semantic_api_contract,
+            effective_policy,
+            policy_meaning,
+            EvidenceProfile::V2,
+        )
+    }
+
+    fn new_with_profile(
+        authorization_domain: AuthorizationDomainId,
+        document_scope: DocumentScopeId,
+        document: DocumentId,
+        semantic_api_contract: SemanticApiContract,
+        effective_policy: AuthorizationPolicyVersion,
+        policy_meaning: PolicyMeaningId,
+        evidence_profile: EvidenceProfile,
+    ) -> Self {
         Self {
             authorization_domain,
             document_scope,
             document,
             semantic_api_contract,
+            evidence_profile,
             principals: BTreeMap::new(),
             grants: BTreeMap::new(),
             proposals: BTreeMap::new(),
             approvals: BTreeMap::new(),
             execution_receipts: Vec::new(),
+            execution_receipts_v2: Vec::new(),
             policy_meanings: BTreeMap::from([(effective_policy.clone(), policy_meaning)]),
             effective_policy,
             policy_selection: 0,
@@ -1145,6 +1292,7 @@ impl PatchLifecycle {
     ///
     /// Returns stale, command, validation, identity, principal, or Propose
     /// authorization failure without semantic publication.
+    #[allow(clippy::too_many_lines)] // Proposal checks stay ordered at one admission boundary.
     pub fn propose(
         &mut self,
         document_scope: &DocumentScopeId,
@@ -1165,6 +1313,7 @@ impl PatchLifecycle {
                 semantic_api_contract: self.semantic_api_contract.clone(),
                 base_revision: request.base_revision,
                 body: request.body,
+                evidence_profile: self.evidence_profile,
             },
         };
         let mut record = ProposalRecord {
@@ -1188,6 +1337,16 @@ impl PatchLifecycle {
             } else {
                 Err(PatchLifecycleError::AuthorizationDenied)
             };
+        }
+
+        if let Some((schema, field)) = duplicate_constraint_write(patch.exact_change.body()) {
+            if self
+                .authorize_query(&record.originator, &conservative_disclosure, now)
+                .is_err()
+            {
+                return Err(PatchLifecycleError::DisclosureDenied);
+            }
+            return Err(PatchLifecycleError::DuplicateFieldConstraintWrite { schema, field });
         }
 
         let (candidate, writes) = match self.plan_commands(document, patch.exact_change.body()) {
@@ -1253,6 +1412,18 @@ impl PatchLifecycle {
                 return Err(error);
             }
         };
+        if patch.exact_change.evidence_profile() == EvidenceProfile::V2
+            && contains_constraint_command(patch.exact_change.body())
+            && self
+                .authorize_query(
+                    &record.originator,
+                    &evaluated.footprint.disclosure_requirements,
+                    now,
+                )
+                .is_err()
+        {
+            return Err(PatchLifecycleError::DisclosureDenied);
+        }
         record.footprint = Some(evaluated.footprint);
         self.proposals.insert(patch.id.clone(), record);
         Ok(patch)
@@ -1276,8 +1447,65 @@ impl PatchLifecycle {
         viewer: &PrincipalId,
         now: TrustedInstant,
     ) -> Result<PatchPreview, PatchLifecycleError> {
+        match self.preview_profile(
+            document_scope,
+            document,
+            current_revision,
+            proposal_id,
+            viewer,
+            now,
+            EvidenceProfile::V1,
+        )? {
+            ProfiledPreview::V1(preview) => Ok(preview),
+            ProfiledPreview::V2(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+        }
+    }
+
+    /// Return a disclosure-authorized v2 preview with complete canonical facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns a profile mismatch, stale or non-previewable proposal, or a
+    /// disclosure/validation failure without publishing semantic state.
+    pub fn preview_v2(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        document: &Document,
+        current_revision: &SemanticRevision,
+        proposal_id: &ProposalId,
+        viewer: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<PatchPreviewV2, PatchLifecycleError> {
+        match self.preview_profile(
+            document_scope,
+            document,
+            current_revision,
+            proposal_id,
+            viewer,
+            now,
+            EvidenceProfile::V2,
+        )? {
+            ProfiledPreview::V2(preview) => Ok(preview),
+            ProfiledPreview::V1(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)] // Mirrors the public profile-specific preview context.
+    fn preview_profile(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        document: &Document,
+        current_revision: &SemanticRevision,
+        proposal_id: &ProposalId,
+        viewer: &PrincipalId,
+        now: TrustedInstant,
+        expected_profile: EvidenceProfile,
+    ) -> Result<ProfiledPreview, PatchLifecycleError> {
         self.require_document(document_scope, document)?;
         let record = self.select_disclosable_proposal(proposal_id, viewer, now)?;
+        if record.patch.exact_change.evidence_profile() != expected_profile {
+            return Err(PatchLifecycleError::EvidenceProfileMismatch);
+        }
         let stored_footprint = record
             .footprint
             .clone()
@@ -1309,14 +1537,24 @@ impl PatchLifecycle {
         ] {
             push_once(&mut proposal_record.history, state);
         }
-        Ok(PatchPreview {
-            proposal,
-            semantic_changes: evaluated.semantic_changes,
-            formula_impacts: evaluated.formula_impacts,
-            validation_report: evaluated.validation_report,
-            authorization_footprint: evaluated.footprint,
-            risk,
-        })
+        match evaluated.evidence {
+            PatchEvidence::V1(semantic_changes) => Ok(ProfiledPreview::V1(PatchPreview {
+                proposal,
+                semantic_changes,
+                formula_impacts: evaluated.formula_impacts,
+                validation_report: evaluated.validation_report,
+                authorization_footprint: evaluated.footprint,
+                risk,
+            })),
+            PatchEvidence::V2(delta) => Ok(ProfiledPreview::V2(PatchPreviewV2 {
+                proposal,
+                delta,
+                formula_impacts: evaluated.formula_impacts,
+                validation_report: evaluated.validation_report,
+                authorization_footprint: evaluated.footprint,
+                risk,
+            })),
+        }
     }
 
     /// Issue one exact finite Human Approval after authorized review.
@@ -1435,6 +1673,56 @@ impl PatchLifecycle {
         publication: &mut impl SemanticPublicationAuthority,
         now: TrustedInstant,
     ) -> Result<ExecutionReceipt, PatchLifecycleError> {
+        match self.execute_profile(
+            proposal_id,
+            approval_id,
+            executor,
+            publication,
+            now,
+            EvidenceProfile::V1,
+        )? {
+            ProfiledReceipt::V1(receipt) => Ok(receipt),
+            ProfiledReceipt::V2(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+        }
+    }
+
+    /// Execute a current v2 proposal through the same guarded publication path.
+    ///
+    /// # Errors
+    ///
+    /// Returns authorization, stale, approval, validation, publication, or
+    /// profile errors without accepting an unverified publication.
+    pub fn execute_v2(
+        &mut self,
+        proposal_id: &ProposalId,
+        approval_id: Option<&ApprovalId>,
+        executor: &PrincipalId,
+        publication: &mut impl SemanticPublicationAuthority,
+        now: TrustedInstant,
+    ) -> Result<ExecutionReceiptV2, PatchLifecycleError> {
+        match self.execute_profile(
+            proposal_id,
+            approval_id,
+            executor,
+            publication,
+            now,
+            EvidenceProfile::V2,
+        )? {
+            ProfiledReceipt::V2(receipt) => Ok(receipt),
+            ProfiledReceipt::V1(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+        }
+    }
+
+    #[allow(clippy::too_many_lines)] // Preserve the common checked publication boundary.
+    fn execute_profile(
+        &mut self,
+        proposal_id: &ProposalId,
+        approval_id: Option<&ApprovalId>,
+        executor: &PrincipalId,
+        publication: &mut impl SemanticPublicationAuthority,
+        now: TrustedInstant,
+        expected_profile: EvidenceProfile,
+    ) -> Result<ProfiledReceipt, PatchLifecycleError> {
         let (current_document_scope, document, current_revision) = publication.current_snapshot();
         if self
             .require_document(&current_document_scope, &document)
@@ -1447,6 +1735,13 @@ impl PatchLifecycle {
         let can_disclose = self
             .authorize_query(executor, &footprint.disclosure_requirements, now)
             .is_ok();
+        if proposal.patch.exact_change.evidence_profile() != expected_profile {
+            return Err(if can_disclose {
+                PatchLifecycleError::EvidenceProfileMismatch
+            } else {
+                PatchLifecycleError::AuthorizationDenied
+            });
+        }
         Self::require_nonterminal_proposal(&proposal, can_disclose)?;
 
         if proposal.patch.exact_change.base_revision != current_revision {
@@ -1492,24 +1787,50 @@ impl PatchLifecycle {
             },
         )?;
         let can_disclose = published.authorization.can_disclose;
-        let mut receipt = ExecutionReceipt {
-            proposal_id: proposal_id.clone(),
-            originator: proposal.originator.clone(),
-            executor: executor.clone(),
-            approval: published.approval,
-            propose_grants: proposal.propose_grants.clone(),
-            approve_grants: published.authorization.approve_grants,
-            execute_grants: published.authorization.execute_grants,
-            authorization_footprint: Some(footprint),
-            policy_version: self.effective_policy.clone(),
-            base_revision: current_revision.clone(),
-            resulting_revision: published.revision.clone(),
-            verified: false,
-            semantic_changes: evaluated.semantic_changes,
-            formula_impacts: evaluated.formula_impacts,
-            validation_report: Some(evaluated.validation_report),
+        let mut receipt = match evaluated.evidence {
+            PatchEvidence::V1(semantic_changes) => {
+                let receipt = ExecutionReceipt {
+                    proposal_id: proposal_id.clone(),
+                    originator: proposal.originator.clone(),
+                    executor: executor.clone(),
+                    approval: published.approval,
+                    propose_grants: proposal.propose_grants.clone(),
+                    approve_grants: published.authorization.approve_grants,
+                    execute_grants: published.authorization.execute_grants,
+                    authorization_footprint: Some(footprint),
+                    policy_version: self.effective_policy.clone(),
+                    base_revision: current_revision.clone(),
+                    resulting_revision: published.revision.clone(),
+                    verified: false,
+                    semantic_changes,
+                    formula_impacts: evaluated.formula_impacts,
+                    validation_report: Some(evaluated.validation_report),
+                };
+                self.execution_receipts.push(receipt.clone());
+                ProfiledReceipt::V1(receipt)
+            }
+            PatchEvidence::V2(delta) => {
+                let receipt = ExecutionReceiptV2 {
+                    proposal_id: proposal_id.clone(),
+                    originator: proposal.originator.clone(),
+                    executor: executor.clone(),
+                    approval: published.approval,
+                    propose_grants: proposal.propose_grants.clone(),
+                    approve_grants: published.authorization.approve_grants,
+                    execute_grants: published.authorization.execute_grants,
+                    authorization_footprint: Some(footprint),
+                    policy_version: self.effective_policy.clone(),
+                    base_revision: current_revision.clone(),
+                    resulting_revision: published.revision.clone(),
+                    verified: false,
+                    evidence: V2ReceiptEvidence::Disclosed(delta),
+                    formula_impacts: evaluated.formula_impacts,
+                    validation_report: Some(evaluated.validation_report),
+                };
+                self.execution_receipts_v2.push(receipt.clone());
+                ProfiledReceipt::V2(receipt)
+            }
         };
-        self.execution_receipts.push(receipt.clone());
         let verification_report = match self.verify_publication(
             proposal_id,
             &current_revision,
@@ -1522,17 +1843,34 @@ impl PatchLifecycle {
             Err(error) if can_disclose => return Err(error),
             Err(_) => return Err(PatchLifecycleError::AuthorizationDenied),
         };
-        receipt.validation_report = Some(verification_report);
-        receipt.verified = true;
         self.append_state(proposal_id, PatchLifecycleState::Verified);
-        if let Some(stored) = self.execution_receipts.last_mut() {
-            *stored = receipt.clone();
-        }
-        if !can_disclose {
-            receipt.authorization_footprint = None;
-            receipt.semantic_changes.clear();
-            receipt.formula_impacts.clear();
-            receipt.validation_report = None;
+        match &mut receipt {
+            ProfiledReceipt::V1(receipt) => {
+                receipt.validation_report = Some(verification_report);
+                receipt.verified = true;
+                if let Some(stored) = self.execution_receipts.last_mut() {
+                    *stored = receipt.clone();
+                }
+                if !can_disclose {
+                    receipt.authorization_footprint = None;
+                    receipt.semantic_changes.clear();
+                    receipt.formula_impacts.clear();
+                    receipt.validation_report = None;
+                }
+            }
+            ProfiledReceipt::V2(receipt) => {
+                receipt.validation_report = Some(verification_report);
+                receipt.verified = true;
+                if let Some(stored) = self.execution_receipts_v2.last_mut() {
+                    *stored = receipt.clone();
+                }
+                if !can_disclose {
+                    receipt.authorization_footprint = None;
+                    receipt.formula_impacts.clear();
+                    receipt.validation_report = None;
+                    receipt.evidence = V2ReceiptEvidence::Redacted;
+                }
+            }
         }
         Ok(receipt)
     }
@@ -1988,6 +2326,12 @@ impl PatchLifecycle {
         &self.execution_receipts
     }
 
+    /// Read the complete trusted v2 receipt registry, including direct deltas.
+    #[must_use]
+    pub fn execution_receipts_v2(&self) -> &[ExecutionReceiptV2] {
+        &self.execution_receipts_v2
+    }
+
     /// Read the current trusted Approval registry state.
     ///
     /// # Errors
@@ -2083,7 +2427,8 @@ impl PatchLifecycle {
                     | SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
                     SemanticCommand::AppendSchemaField { .. }
                     | SemanticCommand::RemoveSchemaField { .. }
-                    | SemanticCommand::RenameSchemaField { .. } => {
+                    | SemanticCommand::RenameSchemaField { .. }
+                    | SemanticCommand::SetFieldConstraint { .. } => {
                         OperationFamily::SchemaFieldMutation
                     }
                     SemanticCommand::SetFieldValue { .. } | SemanticCommand::UnsetField { .. } => {
@@ -2720,6 +3065,29 @@ impl PatchLifecycle {
                 SemanticCommand::RenameSchemaField { schema, field, key } => {
                     self.plan_rename_schema_field(&mut candidate, schema, field, key, &mut writes)?;
                 }
+                SemanticCommand::SetFieldConstraint {
+                    schema,
+                    field,
+                    constraint,
+                } => {
+                    let schema_record = candidate.schemas.get_mut(schema).ok_or_else(|| {
+                        WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        }
+                    })?;
+                    let definition = schema_record.fields.get_mut(field).ok_or_else(|| {
+                        WorkspaceError::MissingSchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        }
+                    })?;
+                    definition.constraint = constraint.clone();
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_field_scope(schema, field),
+                    });
+                }
                 SemanticCommand::SetFieldValue { field, value } => {
                     let entity = candidate.entities.get(&field.entity).ok_or_else(|| {
                         WorkspaceError::MissingEntityId {
@@ -2848,6 +3216,14 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        if self.evidence_profile == EvidenceProfile::V2 {
+            return self.finalize_evaluation_v2(
+                base,
+                candidate,
+                body,
+                associated_write_requirements,
+            );
+        }
         // The v1 semantic diff deliberately refuses to represent saved
         // grouped-summary definition changes. That refusal is not a
         // publication veto: validate the candidate and preserve the normal
@@ -2870,7 +3246,7 @@ impl PatchLifecycle {
             return Ok(EvaluatedPatch {
                 validation_report: super::validation_report(&candidate),
                 document: candidate,
-                semantic_changes: Vec::new(),
+                evidence: PatchEvidence::V1(Vec::new()),
                 formula_impacts: Vec::new(),
                 footprint: AuthorizationFootprint {
                     disclosure_requirements,
@@ -2896,7 +3272,66 @@ impl PatchLifecycle {
             self.derive_disclosures(base, &edit.document, body, &semantic_changes)?;
         Ok(EvaluatedPatch {
             document: edit.document,
-            semantic_changes,
+            evidence: PatchEvidence::V1(semantic_changes),
+            formula_impacts,
+            validation_report,
+            footprint: AuthorizationFootprint {
+                disclosure_requirements,
+                associated_write_requirements,
+            },
+        })
+    }
+
+    fn finalize_evaluation_v2(
+        &self,
+        base: &Document,
+        candidate: Document,
+        body: &SemanticPatchBody,
+        associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
+    ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        for document in [base, &candidate] {
+            match super::validate(document) {
+                Ok(()) => super::preflight_formula_projections(document).map_err(|source| {
+                    PatchLifecycleError::CommandRejected {
+                        source: Box::new(source),
+                    }
+                })?,
+                Err(WorkspaceError::InvalidDocument { report, .. }) => {
+                    return Err(PatchLifecycleError::ValidationFailed { report });
+                }
+                Err(source) => {
+                    return Err(PatchLifecycleError::CommandRejected {
+                        source: Box::new(source),
+                    });
+                }
+            }
+        }
+
+        let delta =
+            canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &candidate).map_err(|source| {
+                PatchLifecycleError::CommandRejected {
+                    source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
+                }
+            })?;
+
+        // Formula impact remains derived evidence. Run the frozen formula/diff
+        // projection over constraint-free snapshots; constraints do not change
+        // formula values, and both real snapshots have already passed complete
+        // validation above. Direct v2 evidence is always produced separately.
+        let formula_projection =
+            super::diff(&without_constraints(base), &without_constraints(&candidate)).map_err(
+                |source| PatchLifecycleError::CommandRejected {
+                    source: Box::new(source.into()),
+                },
+            )?;
+        let formula_changes = formula_projection.changes().to_vec();
+        let formula_impacts = formula_impacts(&formula_changes);
+        let disclosure_requirements =
+            self.derive_disclosures(base, &candidate, body, &formula_changes)?;
+        let validation_report = super::validation_report(&candidate);
+        Ok(EvaluatedPatch {
+            document: candidate,
+            evidence: PatchEvidence::V2(delta),
             formula_impacts,
             validation_report,
             footprint: AuthorizationFootprint {
@@ -2985,6 +3420,7 @@ impl PatchLifecycle {
         Ok(disclosures)
     }
 
+    #[allow(clippy::too_many_lines)] // Closed command catalogue derives disclosures atomically.
     fn insert_command_disclosures(
         &self,
         before: &Document,
@@ -3005,6 +3441,13 @@ impl PatchLifecycle {
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. } => {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
+                Ok(())
+            }
+            SemanticCommand::SetFieldConstraint { schema, field, .. } => {
+                disclosures.insert(DisclosureRequirement {
+                    family: OperationFamily::SchemaFieldMutation,
+                    scope: self.schema_field_scope(schema, field),
+                });
                 Ok(())
             }
             SemanticCommand::SetFieldValue { field, value } => {
@@ -3675,6 +4118,49 @@ fn formula_impacts(changes: &[SemanticChange]) -> Vec<FormulaImpactEvidence> {
         .collect()
 }
 
+fn duplicate_constraint_write(body: &SemanticPatchBody) -> Option<(SchemaId, FieldId)> {
+    let mut constraint_targets = BTreeSet::new();
+    let mut field_lifecycle_targets = BTreeSet::new();
+    for command in body.commands() {
+        match command {
+            SemanticCommand::SetFieldConstraint { schema, field, .. } => {
+                let target = (schema.clone(), field.clone());
+                if !constraint_targets.insert(target.clone())
+                    || field_lifecycle_targets.contains(&target)
+                {
+                    return Some(target);
+                }
+            }
+            SemanticCommand::AppendSchemaField { schema, field, .. }
+            | SemanticCommand::RemoveSchemaField { schema, field, .. } => {
+                let target = (schema.clone(), field.id.clone());
+                if constraint_targets.contains(&target) {
+                    return Some(target);
+                }
+                field_lifecycle_targets.insert(target);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn contains_constraint_command(body: &SemanticPatchBody) -> bool {
+    body.commands()
+        .iter()
+        .any(|command| matches!(command, SemanticCommand::SetFieldConstraint { .. }))
+}
+
+fn without_constraints(document: &Document) -> Document {
+    let mut document = document.clone();
+    for schema in document.schemas.values_mut() {
+        for field in schema.fields.values_mut() {
+            field.constraint = FieldConstraint::None;
+        }
+    }
+    document
+}
+
 // Fail closed when a stable binding cannot be resolved to a current schema
 // field; no partial footprint is derived from an unresolvable definition.
 fn validate_keyed_grouped_sum_bindings(
@@ -3908,6 +4394,57 @@ mod tests {
     };
 
     use super::*;
+
+    fn schema_field_command(field: &str, append: bool) -> SemanticCommand {
+        let definition = FieldDefinition {
+            id: FieldId::from(field),
+            key: FieldKey::from(field),
+            field_type: FieldType::Number,
+            required: true,
+            constraint: FieldConstraint::None,
+        };
+        if append {
+            SemanticCommand::AppendSchemaField {
+                schema: SchemaId::from("schema"),
+                field: definition,
+                values: BTreeMap::new(),
+            }
+        } else {
+            SemanticCommand::RemoveSchemaField {
+                schema: SchemaId::from("schema"),
+                field: definition,
+                values: BTreeMap::new(),
+            }
+        }
+    }
+
+    #[test]
+    fn constraint_write_rejects_duplicate_and_field_lifecycle_targets() {
+        let constraint = || SemanticCommand::SetFieldConstraint {
+            schema: SchemaId::from("schema"),
+            field: FieldId::from("field"),
+            constraint: FieldConstraint::None,
+        };
+
+        for commands in [
+            vec![constraint(), constraint()],
+            vec![constraint(), schema_field_command("field", true)],
+            vec![schema_field_command("field", false), constraint()],
+        ] {
+            let body = SemanticPatchBody::atomic_batch(commands).unwrap();
+            assert_eq!(
+                duplicate_constraint_write(&body),
+                Some((SchemaId::from("schema"), FieldId::from("field")))
+            );
+        }
+
+        let unrelated = SemanticPatchBody::atomic_batch(vec![
+            constraint(),
+            schema_field_command("other", true),
+        ])
+        .unwrap();
+        assert_eq!(duplicate_constraint_write(&unrelated), None);
+    }
 
     #[test]
     fn missing_entity_has_a_distinct_scope_derivation_failure() {

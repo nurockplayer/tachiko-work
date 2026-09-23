@@ -236,6 +236,7 @@ fn fact(delta: &tachiko_workspace_engine::CanonicalSemanticDelta) {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One current-base set, inverse, and redo journey.
 fn valid_set_clear_and_inverse_publish_one_complete_fact_each() {
     let original = document(7.0);
     let mut host = Host::new(original.clone());
@@ -305,7 +306,7 @@ fn valid_set_clear_and_inverse_publish_one_complete_fact_each() {
         .unwrap();
     let clear_fact: &CanonicalDirectFact = &clear_preview.delta.facts()[0];
     assert!(
-        matches!(clear_fact, CanonicalDirectFact::SchemaFieldConstraintChanged { before, after, .. } if before == range(0.0, 10.0) && after == FieldConstraint::None)
+        matches!(clear_fact, CanonicalDirectFact::SchemaFieldConstraintChanged { before, after, .. } if before == &range(0.0, 10.0) && after == &FieldConstraint::None)
     );
     lifecycle
         .execute_v2(
@@ -395,7 +396,7 @@ fn text_literal_payload_survives_review_and_publication_exactly() {
         )
         .unwrap();
     assert!(
-        matches!(&preview.delta.facts()[0], CanonicalDirectFact::SchemaFieldConstraintChanged { before, after, .. } if before == FieldConstraint::None && after == literal_set)
+        matches!(&preview.delta.facts()[0], CanonicalDirectFact::SchemaFieldConstraintChanged { before, after, .. } if before == &FieldConstraint::None && after == &literal_set)
     );
     let receipt = lifecycle
         .execute_v2(
@@ -483,7 +484,7 @@ fn v1_stays_closed_and_v2_evaluates_ordinary_commands_on_constrained_base() {
         .unwrap();
     let facts: &[CanonicalDirectFact] = preview.delta.facts();
     assert!(
-        matches!(facts, [CanonicalDirectFact::EntityFieldValueChanged { before, after, .. }] if before == Value::Number(Number::new(7.0).unwrap()) && after == Value::Number(Number::new(8.0).unwrap()))
+        matches!(facts, [CanonicalDirectFact::EntityFieldValueChanged { before, after, .. }] if before == &Value::Number(Number::new(7.0).unwrap()) && after == &Value::Number(Number::new(8.0).unwrap()))
     );
     assert!(matches!(
         v2.preview(
