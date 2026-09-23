@@ -49,8 +49,8 @@ cargo test --workspace --all-targets --locked
 echo "==> executed native/WASM portable semantic conformance"
 bash scripts/portable-conformance-check.sh
 
-echo "==> first-party Web Designer vertical slice"
-bash scripts/designer-check.sh
+echo "==> experimental browser-client producer and consumer qualification"
+bash scripts/browser-client-check.sh
 
 echo "==> strict operational-evidence foundation"
 bash scripts/operational-evidence-check.sh

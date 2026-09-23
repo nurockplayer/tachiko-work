@@ -85,9 +85,9 @@ trap cleanup EXIT
 # Read the source materializer from the captured commit, rather than from the
 # live checkout. A same-path replacement after preflight therefore cannot
 # influence archival validation or any later build/copy operation.
-source_helper="${scratch}/designer-rc-source.sh"
+source_helper="${scratch}/repository-source.sh"
 "${git_env[@]}" git -C "${repo_root}" --no-replace-objects \
-  -c core.attributesFile=/dev/null show "${source_commit}:scripts/designer-rc-source.sh" >"${source_helper}" ||
+  -c core.attributesFile=/dev/null show "${source_commit}:scripts/repository-source.sh" >"${source_helper}" ||
   fail "could not load captured source materializer"
 [[ -s "${source_helper}" && ! -L "${source_helper}" ]] ||
   fail "captured source materializer is not a regular file"
@@ -95,9 +95,9 @@ source_helper="${scratch}/designer-rc-source.sh"
 source "${source_helper}"
 
 source_root="${scratch}/source"
-tachiko_rc_materialize_source "${repo_root}" "${source_commit}" "${source_root}" ||
+tachiko_source_materialize_source "${repo_root}" "${source_commit}" "${source_root}" ||
   fail "could not materialize exact Git source"
-tachiko_rc_check_ancestor_cargo_config "${source_root}" ||
+tachiko_source_check_ancestor_cargo_config "${source_root}" ||
   fail "source scratch parent is not safe for Cargo"
 
 # The captured script performs every source-derived build/copy operation, so

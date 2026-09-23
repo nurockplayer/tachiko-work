@@ -47,16 +47,15 @@ rustup run 1.85.0 cargo check --manifest-path packages/browser-client/runtime/Ca
 Use the checked-in `Cargo.lock`. The project does not require a global install;
 run the CLI with `cargo run -p tachiko-cli -- <command>` while developing.
 
-The first-party Web Designer additionally requires pnpm 11.25.0, Chromium, and
-ripgrep (`rg`) for its browser journey and exported-client boundary checks.
-Install ripgrep with the operating system's package manager. Keep the
-browser-client package lockfile and Designer workspace lockfile; use pnpm
-exclusively:
+The experimental browser-client qualification uses pnpm 11.25.0, Chromium, and
+ripgrep (`rg`) for its external-consumer browser journey and exported-kit
+boundary checks. Install ripgrep with the operating system's package manager.
+Use the producer package's checked-in lockfile and pnpm exclusively:
 
 ```sh
-pnpm --dir apps/designer install --frozen-lockfile
-pnpm --dir apps/designer exec playwright install chromium
-bash scripts/designer-check.sh
+pnpm --dir packages/browser-client install --frozen-lockfile
+pnpm --dir packages/browser-client exec playwright install chromium
+bash scripts/browser-client-check.sh
 ```
 
 The repository-local operational-evidence library uses the same pinned pnpm
@@ -132,8 +131,9 @@ proven terminal worktree.
 The clean commit is required because Cargo source packaging rejects dirty
 package inputs. The full gate selects stable for bare and nested Rust commands,
 regardless of an inherited `RUSTUP_TOOLCHAIN`, and separately checks exact Rust
-1.85 compatibility. It also checks the app-local Designer Rust/WASM adapter,
-pnpm-only lint/typecheck/tests/build, and the Chromium journey. It checks documentation, deterministic audited
+1.85 compatibility. It also checks the standalone browser-client Rust/WASM
+runtime, pnpm-only lint/typecheck/tests/build, and the external-consumer
+Chromium journey. It checks documentation, deterministic audited
 dependency notices, Cargo packages, executable product journeys, and a native
 release archive. It also executes the same production-semantic conformance
 records natively and under `wasm32-unknown-unknown`. Do not claim a change is

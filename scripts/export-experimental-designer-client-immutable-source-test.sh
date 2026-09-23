@@ -41,13 +41,13 @@ chmod +x "${fixture}/scripts/export-experimental-designer-client.sh"
 # expensive pnpm/Rust build path is replaced below. These helpers are part of
 # the proposed #359 exporter implementation and must stay in sync with it.
 for helper in \
-  scripts/designer-rc-source.sh \
+  scripts/repository-source.sh \
   scripts/package-experimental-designer-client.sh \
   scripts/experimental-designer-client-publish.c; do
   [[ -f "${producer_root}/${helper}" ]] || fail "exporter helper is missing: ${producer_root}/${helper}"
   cp "${producer_root}/${helper}" "${fixture}/${helper}"
 done
-chmod +x "${fixture}/scripts/designer-rc-source.sh" "${fixture}/scripts/package-experimental-designer-client.sh"
+chmod +x "${fixture}/scripts/repository-source.sh" "${fixture}/scripts/package-experimental-designer-client.sh"
 
 # The real exporter must invoke this only from its pinned private snapshot. If
 # it instead compiles the live checkout, the test's same-path edits would leak

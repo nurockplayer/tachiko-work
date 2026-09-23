@@ -13,8 +13,8 @@ Build a useful graphical client over Tachiko's existing runtime.
 
 Use React, Svelte, Vue, Solid, vanilla TypeScript, or another browser stack. A
 spreadsheet-like editor, focused domain tool, or another presentation is welcome.
-Do not copy the first-party Designer by default. Different interpretations are
-useful pilot evidence.
+The legacy first-party Designer has been retired. Different client
+interpretations remain useful pilot evidence.
 
 ```text
 Tachiko semantic runtime

@@ -95,8 +95,8 @@ jobs:
       - name: Exercise the optional Git-native Game Dev Alpha journey
         run: bash scripts/git-ci-smoke.sh
 
-  designer:
-    name: Web Designer runtime and browser journey
+  browser-client:
+    name: Browser client runtime and external consumer journey
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -120,19 +120,19 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: apps/designer/pnpm-lock.yaml
+          cache-dependency-path: packages/browser-client/pnpm-lock.yaml
 
-      - name: Install Designer dependencies
-        run: pnpm --dir apps/designer install --frozen-lockfile
+      - name: Install browser client qualification dependencies
+        run: pnpm --dir packages/browser-client install --frozen-lockfile
 
       - name: Install ripgrep for source-boundary checks
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ripgrep
 
       - name: Install Chromium
-        run: pnpm --dir apps/designer exec playwright install --with-deps chromium
+        run: pnpm --dir packages/browser-client exec playwright install --with-deps chromium
 
-      - name: Validate Designer runtime, application, and browser journey
-        run: bash scripts/designer-check.sh
+      - name: Validate browser client runtime and external consumer journey
+        run: bash scripts/browser-client-check.sh
 
   operational-evidence:
     name: Strict operational evidence
@@ -178,5 +178,5 @@ jobs:
       - name: Check all targets with Rust 1.85.0
         run: cargo check --workspace --all-targets --locked
 
-      - name: Check Designer runtime with Rust 1.85.0
+      - name: Check browser client runtime with Rust 1.85.0
         run: cargo check --manifest-path packages/browser-client/runtime/Cargo.toml --target wasm32-unknown-unknown --all-targets --locked

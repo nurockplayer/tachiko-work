@@ -83,7 +83,7 @@ fi
 # diff -qr proves two exports match. This independently verifies that one
 # export names every artifact byte and notice, while excluding only the
 # manifest from its own digest list.
-pnpm --dir "${repo_root}/apps/designer" exec node --input-type=module --eval '
+pnpm --dir "${repo_root}/packages/browser-client" exec node --input-type=module --eval '
   import assert from "node:assert/strict";
   import {createHash} from "node:crypto";
   import {lstat,readFile,readdir} from "node:fs/promises";
@@ -124,16 +124,16 @@ require_no_matches "consumer imports private Designer source" \
   rg -n 'apps/designer|src/runtime|src/host' "${consumer_dir}/src"
 require_no_matches "emitted JavaScript retains source-only imports" \
   rg -n '\.ts"' "${vendor_dir}" -g '*.js'
-pnpm --dir "${repo_root}/apps/designer" exec node \
+pnpm --dir "${repo_root}/packages/browser-client" exec node \
   --eval 'const manifest = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (manifest.private !== true || manifest.packageManager !== "pnpm@11.25.0") process.exit(1);' \
   "${vendor_dir}/package.json"
 
-pnpm --dir "${repo_root}/apps/designer" exec tsc \
+pnpm --dir "${repo_root}/packages/browser-client" exec tsc \
   --project "${consumer_dir}/tsconfig.json" \
   --noEmit \
   --pretty false
-pnpm --dir "${repo_root}/apps/designer" exec playwright test \
-  --config playwright.experimental-client.config.ts
+pnpm --dir "${repo_root}/packages/browser-client" exec playwright test \
+  --config playwright.config.ts
 
 # This consumes the just-built primary vendor kit without rebuilding it. It
 # proves the preserved C1 and runtime-canary contracts against the same source

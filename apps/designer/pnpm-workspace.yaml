@@ -1,6 +1,0 @@
-packages:
-  - "."
-  - "../../packages/browser-client"
-
-minimumReleaseAgeExclude:
-  - happy-dom@20.12.0

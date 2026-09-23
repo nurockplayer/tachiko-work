@@ -1,53 +1,53 @@
 #!/usr/bin/env bash
 
 # Materialise a commit without allowing checkout state, Git replacement
-# objects, or attribute files to change the source consumed by the RC tools.
+# objects, or attribute files to change the source consumed by the source capture tools.
 
-tachiko_rc_source_env() {
-  TACHIKO_RC_SOURCE_ENV=(env -i "PATH=${PATH}")
-  if [[ "${HOME+x}" == x ]]; then TACHIKO_RC_SOURCE_ENV+=("HOME=${HOME}"); fi
-  if [[ "${TMPDIR+x}" == x ]]; then TACHIKO_RC_SOURCE_ENV+=("TMPDIR=${TMPDIR}"); fi
-  TACHIKO_RC_SOURCE_ENV+=(
+tachiko_source_env() {
+  TACHIKO_SOURCE_ENV=(env -i "PATH=${PATH}")
+  if [[ "${HOME+x}" == x ]]; then TACHIKO_SOURCE_ENV+=("HOME=${HOME}"); fi
+  if [[ "${TMPDIR+x}" == x ]]; then TACHIKO_SOURCE_ENV+=("TMPDIR=${TMPDIR}"); fi
+  TACHIKO_SOURCE_ENV+=(
     "GIT_CONFIG_NOSYSTEM=1"
     "GIT_CONFIG_GLOBAL=/dev/null"
     "GIT_CONFIG_SYSTEM=/dev/null"
   )
 }
 
-tachiko_rc_git() {
+tachiko_source_git() {
   local repo_root="$1"
   shift
-  tachiko_rc_source_env
-  "${TACHIKO_RC_SOURCE_ENV[@]}" git -C "${repo_root}" --no-replace-objects -c core.attributesFile=/dev/null "$@"
+  tachiko_source_env
+  "${TACHIKO_SOURCE_ENV[@]}" git -C "${repo_root}" --no-replace-objects -c core.attributesFile=/dev/null "$@"
 }
 
-tachiko_rc_node() {
-  tachiko_rc_source_env
-  "${TACHIKO_RC_SOURCE_ENV[@]}" node "$@"
+tachiko_source_node() {
+  tachiko_source_env
+  "${TACHIKO_SOURCE_ENV[@]}" node "$@"
 }
 
-tachiko_rc_resolve_commit() {
+tachiko_source_resolve_commit() {
   local repo_root="$1"
   local requested="$2"
-  tachiko_rc_git "${repo_root}" rev-parse --verify "${requested}^{commit}"
+  tachiko_source_git "${repo_root}" rev-parse --verify "${requested}^{commit}"
 }
 
-tachiko_rc_materialize_source() {
+tachiko_source_materialize_source() {
   local repo_root="$1"
   local commit="$2"
   local destination="$3"
   local archive_path="${destination}.tar"
   local tree_path="${destination}.tree"
-  tachiko_rc_source_env
+  tachiko_source_env
 
   [[ ! -e "${destination}" ]] || { echo "source destination already exists: ${destination}" >&2; return 1; }
   mkdir "${destination}" || return 1
-  "${TACHIKO_RC_SOURCE_ENV[@]}" git -C "${repo_root}" --no-replace-objects -c core.attributesFile=/dev/null archive --format=tar --output="${archive_path}" "${commit}" || return 1
-  "${TACHIKO_RC_SOURCE_ENV[@]}" git -C "${repo_root}" --no-replace-objects -c core.attributesFile=/dev/null ls-tree -rz --full-tree -r "${commit}" >"${tree_path}" || return 1
+  "${TACHIKO_SOURCE_ENV[@]}" git -C "${repo_root}" --no-replace-objects -c core.attributesFile=/dev/null archive --format=tar --output="${archive_path}" "${commit}" || return 1
+  "${TACHIKO_SOURCE_ENV[@]}" git -C "${repo_root}" --no-replace-objects -c core.attributesFile=/dev/null ls-tree -rz --full-tree -r "${commit}" >"${tree_path}" || return 1
   tar -xf "${archive_path}" -C "${destination}" || return 1
 
   local validation_status=0
-  tachiko_rc_node - "${repo_root}" "${destination}" "${tree_path}" <<'NODE' || validation_status=$?
+  tachiko_source_node - "${repo_root}" "${destination}" "${tree_path}" <<'NODE' || validation_status=$?
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -110,7 +110,7 @@ NODE
   rm -f -- "${archive_path}" "${tree_path}" || return 1
 }
 
-tachiko_rc_check_ancestor_cargo_config() {
+tachiko_source_check_ancestor_cargo_config() {
   local source_root="$1"
   local ancestor
   ancestor="$(cd "${source_root}/.." && pwd -P)" || return 1
