@@ -1,193 +1,120 @@
-# Tachiko Work Architecture
+# Tachiko Work: engineering map
 
-> This is an explanatory and navigation document. It does **not** independently
-> establish normative product or architecture contracts. When it conflicts with
-> higher-authority material, the existing authority hierarchy wins: the Product
-> Constitution, Accepted ADRs and governance policies, and normative
-> specifications take precedence. Start with the
-> [Knowledge Authority policy](docs/governance/knowledge-authority.md) and its
-> [canonical reconciliation register](docs/governance/canonical-reconciliation-register.md)
-> when the maturity or authority of a statement matters.
+A compact orientation, not a new architecture decision or dispatch queue.
+Follow the linked authority before changing a contract; start with
+[AGENTS](AGENTS.md) and [CONTRIBUTING](CONTRIBUTING.md) before editing.
 
-## The system in one minute
+## 1. What you are looking at
 
-Tachiko Work is a semantic workspace for structured data and computation. Its
-core meaning is expressed through typed schemas, entities, references, formulas,
-validation, and semantic changes. Files, cells, paths, and UI state are
-representations or projections; they are not automatically the source of that
-meaning.
+**Tachiko Work** is the platform/repository. **Tachikore** names its composed Rust
+semantic/application engine and resident runtime, not a ninth crate or released
+SDK. **[Tachiko Sheet](https://github.com/nurockplayer/tachiko-sheet)** owns the
+first-party spreadsheet UX. The legacy Work Designer product UI is retired;
+[the browser-client package](packages/browser-client/README.md) remains an
+experimental producer and qualification boundary.
 
-The shared semantic/application engine and resident runtime described below are
-collectively named **Tachikore**. Tachiko Work remains the platform/product and
-repository; Tachikore names the engine beneath semantic clients. It is not a
-ninth Rust crate and it is not another semantic authority: `semantic-core`
-remains the lowest semantic-model layer while `workspace-engine` remains the
-application/runtime boundary under
-[ADR-0016](docs/decisions/ADR-0016-milestone-02-rust-crate-layering.md). The
-naming decision is recorded in
-[ADR-0038](docs/decisions/ADR-0038-tachikore-semantic-application-engine-name.md).
+The [Constitution](docs/vision/product-constitution.md) and
+[design principles](docs/vision/design-principles.md) seek portable, user-owned
+work with shared meaning across tools. Game balance is the first proving ground;
+Office interoperability is a boundary requirement, not the core's ontology.
+Progressive strengthening is an accepted direction, not permission to invent a
+universal schema, database, or application platform.
 
-The high-level flow is:
+## 2. The mental model
 
-```text
-Human / AI / CLI / graphical clients
-                │
-                ▼
-        transport-neutral Semantic API
-                │
-                ▼
-   trusted application and authorization boundary
-                │
-                ▼
- resident shared Rust semantic/application runtime
-                │              (Tachikore)
-                ▼
- semantic model · formulas · validation · diff/merge
-                │
-                ▼
- current semantic state · complete snapshots · projections
-                │
-       explicit snapshot/materialization boundary
-                │
-                ▼
- host and composition concerns: filesystem, browser persistence,
- Git, process, credentials, network, and other external effects
-                │
-                ▼
- canonical .roproj/v1 · bounded .roproj/v2 · portable .ro · optional Git/CI workflows
-```
+A **Document** contains schemas, fields, entities, typed values, references, and
+bound formulas. Opaque stable IDs identify meaning; human keys, display names,
+paths, and cell positions do not. Formulas bind references to those IDs, not
+screen coordinates. Calculated values, indexes, and projections are derived.
 
-The [Semantic API](docs/specs/semantic-api.md) is the shared semantic boundary
-for first-party clients. The resident runtime owns interactive semantic state;
-frontends own presentation and workflow state. Native and Web/WASM hosts may
-use different transport or host mechanisms, but overlapping capabilities must
-preserve the same semantic meaning. The [frontend/backend boundary](docs/architecture/frontend-backend-boundary.md)
-defines these ownership rules in detail.
+Each interactive document occurrence has one authoritative shared Rust runtime
+owner. Clients request queries or changes and render projections; they do not run a
+second authoritative evaluator. Native and WASM must agree on accepted portable
+semantics. Current state and complete snapshots are authoritative; optional
+history and Git do not redefine them.
 
-Tachiko is spreadsheet-first for the current human workflow, but not
-spreadsheet-shaped at its semantic core. The
-[PostgreSQL-like engine / spreadsheet-first explanation](docs/architecture/postgresql-like-engine-spreadsheet-interface.md)
-is an explanatory founder framing, not a new authority. Likewise, the
-[product-surface overview](docs/architecture/README.md) illustrates independent
-frontends sharing semantic authority; its Project, CRM, Inventory, and Finance
-surfaces are not claims that those products are implemented. A shared frontend
-toolkit remains optional, not a platform requirement.
+## 3. Find the owning code
 
-## Core invariants
+These are the eight workspace crates; names link to their source entry points.
+The [crate architecture](docs/architecture/rust-crate-architecture.md) gives the
+full dependency DAG and forbidden edges.
 
-These are short pointers to established authority, not a replacement for the
-underlying contracts:
-
-- **Meaning outranks representation.** A file format, cell coordinate, path,
-  label, or renderer must not silently become semantic identity. See the
-  [Product Constitution](docs/vision/product-constitution.md),
-  [ADR-0001](docs/decisions/ADR-0001-semantic-platform-not-office-clone.md),
-  and [ADR-0015](docs/decisions/ADR-0015-stable-semantic-identity.md).
-- **One semantic authority, many clients.** CLI, AI, graphical clients, and
-  integrations use the Semantic API where they perform semantic work. A
-  frontend must not create a second authoritative document model or duplicate
-  Rust formula, validation, mutation, diff, or merge policy. See
-  [ADR-0020](docs/decisions/ADR-0020-first-class-headless-semantic-api.md) and
-  [ADR-0022](docs/decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
-- **Views are projections over shared meaning.** Spreadsheet, document,
-  dashboard, and future product views can differ in architecture, visual
-  language, and interaction model without owning separate semantic truth. See
-  [Design Principles](docs/vision/design-principles.md) and the
-  [frontend/backend boundary](docs/architecture/frontend-backend-boundary.md).
-- **Equivalent clients preserve semantic behavior.** Native and Web/WASM are
-  execution targets for the same Rust-owned semantic behavior where their
-  capabilities overlap; a host or transport cannot bypass semantic gates. See
-  [WASM strategy](docs/architecture/wasm-strategy.md).
-- **Storage and host effects stay outside semantic authority.** Frozen
-  `.roproj/v1`, bounded implemented `.roproj/v2` storage/Designer persistence,
-  the Accepted but unimplemented `.roproj/v3` constraint-preserving target,
-  portable `.ro`, Git, browser persistence, credentials, and network/process
-  effects are explicit boundaries. Semantic publication does not implicitly
-  authorize a filesystem or external effect. See
-  [.ro and .roproj architecture](docs/architecture/ro-and-roproj-format.md)
-  and [Git-native workflow](docs/architecture/git-native-workflow.md).
-- **Keep the stable core small.** Generalize from real pressure and keep
-  replaceable mechanisms behind boundaries. The current product is not a
-  completed spreadsheet UI, Office/OOXML implementation, realtime collaboration
-  system, or cloud service. The amended [ADR-0027](docs/decisions/ADR-0027-open-format-and-interoperability-policy.md)
-  makes established spreadsheet workflows, especially Excel, a first-class
-  interoperability target without making Excel/OOXML semantic authority.
-  Historical Tachiko implementation choices do not receive permanent
-  compatibility protection merely because they already exist; when they
-  obstruct an Accepted interoperability requirement, prefer an explicit
-  migration or supersession path while protecting user data and durable
-  external contracts.
-
-## Major subsystem map
-
-| Area | Boundary and current reading | Read next |
-| --- | --- | --- |
-| Semantic model and core | Typed meaning, stable identity, references, and progressive strengthening belong to the semantic foundation. | [Semantic core rationale](docs/architecture/semantic-core-rationale.md), [document model](docs/architecture/document-model.md), [semantic data model](docs/specs/semantic-data-model.md), [ADR-0021](docs/decisions/ADR-0021-progressive-semantic-strengthening.md) |
-| Semantic API and resident runtime | `workspace-engine` and the lower Rust engines provide the shared application authority collectively named Tachikore. The transport-neutral API and resident topology are Accepted; current Rust source, session, and transport shapes remain replaceable where stated. | [Rust crate architecture](docs/architecture/rust-crate-architecture.md), [Semantic API specification](docs/specs/semantic-api.md), [ADR-0020](docs/decisions/ADR-0020-first-class-headless-semantic-api.md), [ADR-0022](docs/decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md), [ADR-0038](docs/decisions/ADR-0038-tachikore-semantic-application-engine-name.md) |
-| Formulas and validation | Formula meaning, finite deterministic calculation, staged validation, diagnostics, and operation gates are semantic/runtime responsibilities rather than frontend conventions. | [Formula engine specification](docs/specs/formula-engine-spec.md), [validation engine](docs/specs/validation-engine.md), [diagnostics contract](docs/specs/diagnostics-contract.md), [ADR-0018](docs/decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md), [ADR-0019](docs/decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md) |
-| Persistence and formats | Frozen `.roproj/v1` remains the canonical editable representation; bounded `.roproj/v2` storage/Designer save-reopen is implemented by #330/#331, while `.roproj/v3` is an Accepted but unimplemented constraint-preserving target under ADR-0041. The implemented `direct-ro/v2` path is the current direct JSON writer, while portable-package/v1 is a derived single-file `.ro` artifact; legacy direct `.ro` v1 input is an explicit migration path. Storage codecs and host publication do not redefine semantic meaning. | [.ro and .roproj architecture](docs/architecture/ro-and-roproj-format.md), [`.roproj/v1` specification](docs/specs/roproj-format.md), [portable package specification](docs/specs/portable-package-v1.md), [ADR-0003](docs/decisions/ADR-0003-ro-and-roproj-representation.md), [ADR-0023](docs/decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md), [ADR-0025](docs/decisions/ADR-0025-portable-package-v1.md), [ADR-0037](docs/decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md), [ADR-0041](docs/decisions/ADR-0041-bounded-durable-field-constraints.md) |
-| Git-native workflow | Git is an optional storage and collaboration protocol for reviewable semantic work, not the semantic model or the end-user UI. Semantic delta and conflict evidence remain distinct from raw text merging. | [Git-native workflow](docs/architecture/git-native-workflow.md), [semantic delta](docs/specs/semantic-diff-spec.md), [conflict resolution](docs/specs/conflict-resolution.md), [ADR-0030](docs/decisions/ADR-0030-canonical-semantic-delta.md), [ADR-0031](docs/decisions/ADR-0031-semantic-merge-conflict-protocol.md) |
-| Designer, frontend, and host | Web, desktop, and future mobile surfaces are projections and host compositions over the Semantic API. The current Designer slice is implementation evidence, not a second semantic authority or a general frontend contract. | [Frontend/backend boundary](docs/architecture/frontend-backend-boundary.md), [WASM strategy](docs/architecture/wasm-strategy.md), [architecture index](docs/architecture/README.md), [ADR-0022](docs/decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md) |
-| AI | AI is a delegated semantic client. It queries and proposes typed operations through the same semantic boundary; approval, authorization, validation, and external effects remain separate gates. | [AI-native architecture](docs/architecture/ai-native-architecture.md), [AI agent API](docs/specs/ai-agent-api.md), [semantic authorization](docs/specs/semantic-authorization.md), [ADR-0007](docs/decisions/ADR-0007-ai-semantic-interaction-model.md), [ADR-0024](docs/decisions/ADR-0024-revision-pinned-semantic-patch.md), [ADR-0026](docs/decisions/ADR-0026-scoped-semantic-authorization-and-approval.md) |
-| Collaboration and team workspace | Semantic merge, current-state/history boundaries, team-policy recovery, and causality boundaries are Accepted in their named ADRs. Realtime transport, clocks, collaboration DTOs, and broad runtime mechanics remain Deferred. | [Distributed collaboration](docs/architecture/distributed-collaboration.md), [collaboration model](docs/specs/collaboration-model.md), [ADR-0029](docs/decisions/ADR-0029-current-state-authority-and-optional-history.md), [ADR-0034](docs/decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md), [ADR-0035](docs/decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md) |
-| Presentation and rendering | Rendering is a future projection hypothesis. Renderer-specific layout, typography, animation, and host capabilities must not be promoted into the semantic core without further authority. | [Rendering system direction](docs/architecture/rendering-system.md) (Hypothesis; #67) |
-
-## Stability and maturity cues
-
-Decision state and implementation state are separate. A behavior can be
-implemented but still Provisional, and an Accepted direction can remain
-unimplemented. Use the [Knowledge Authority policy](docs/governance/knowledge-authority.md)
-and [reconciliation register](docs/governance/canonical-reconciliation-register.md)
-to classify a boundary before relying on it.
-
-| State | How to read it |
+| Source | Owns |
 | --- | --- |
-| Principle | A durable product constraint; it guides lower-level decisions without necessarily selecting an implementation. |
-| Accepted | An adopted decision or policy; it remains authoritative until explicitly amended or superseded. |
-| Provisional | A useful, reversible current choice; do not infer a permanent public contract from it. |
-| Hypothesis | A promising direction that still needs research, evidence, or validation; it may guide investigation but must not silently become an implementation invariant. |
-| Open Question | A known unresolved decision that requires focused decision work; implementation convenience must not answer it when the choice would create a durable contract. |
-| Deferred | Work or mechanics intentionally left for later; its existence does not authorize implementation or promote it to current architecture. |
-| Superseded | Historical context retained for traceability; follow the linked replacement or current authority. |
+| [semantic-core](crates/semantic-core/src/lib.rs) | IDs, document/schema/value model, references, bound expressions, intrinsic validation |
+| [formula-engine](crates/formula-engine/src/lib.rs) | Parsing/binding, deterministic calculation, dependencies and retained derived state |
+| [diff-engine](crates/diff-engine/src/lib.rs) | Semantic comparison, direct-state delta and derived impact |
+| [merge-engine](crates/merge-engine/src/lib.rs) | Three-way reconciliation and typed conflicts; candidates still require final validation |
+| [workspace-engine](crates/workspace-engine/src/lib.rs) | Shared Semantic API application behavior, validation/calculation composition and operation gates |
+| [storage](crates/storage/src/lib.rs) | Version-owned codecs, explicit migrations and native file publication; a sibling of workspace-engine |
+| [ai-api](crates/ai-api/src/lib.rs) | Provider-neutral semantic queries and hostile-client security composition over workspace-engine |
+| [cli](crates/cli/src/main.rs) | Host composition: load, invoke shared operations, present results, explicitly write outputs |
 
-The detailed [architecture index](docs/architecture/README.md) also separates
-Accepted architecture from implementation evidence. In particular, the
-collaboration documents preserve Accepted semantic boundaries while marking
-concrete realtime mechanics Deferred, and the rendering document remains a
-Hypothesis. Do not flatten those distinctions into a single stable architecture
-picture.
+Within workspace-engine, start with [resident_session](crates/workspace-engine/src/resident_session.rs)
+for occurrence/revision ownership, [patch_lifecycle](crates/workspace-engine/src/patch_lifecycle.rs)
+for proposal/authorization/publication, and [analysis_operations](crates/workspace-engine/src/analysis_operations.rs)
+for bounded queries. Saved keyed grouped sums have their own
+[keyed_grouped_sum_operations](crates/workspace-engine/src/keyed_grouped_sum_operations.rs),
+not a general formula-language extension.
 
-## Change-routing guide
+The separate [browser runtime adapter](packages/browser-client/runtime/src/lib.rs)
+composes storage and the same workspace engine. Its `Designer` symbols, Worker
+DTOs and WASM ABI are implementation/compatibility details, not a restored UI or
+stable public SDK. Import/export mappings stay in its adapter boundary.
 
-When planning a change, use the smallest relevant route before exploring the
-rest of the repository:
+## 4. Follow a change across the boundaries
 
-| If you are changing... | Read this next |
+A host admits versioned input through storage and supplies trusted context. The
+shared application evaluates a proposed `Command` or ordered `AtomicBatch`
+against its exact semantic base. Validation and authorization are separate gates;
+delegated publication also needs the exact required Human Approval. Successful
+publication installs semantic state atomically; stale, invalid or unauthorized
+attempts do not become canonical state. Proposing is not publishing.
+
+The host then handles explicit persistence and external effects. **Semantic
+publication is not a filesystem/cloud transaction.** Keep paths, credentials,
+network access and persistence outside workspace-engine. CLI new-output commands
+refuse overwrites; do not generalize that into a durability guarantee for every
+host. In ADR-0039's selected desktop approval profile, native owns the entire
+occurrence, including ordinary Human operations—not just delegated calls.
+
+Canonical detail: [Semantic API](docs/specs/semantic-api.md),
+[authorization](docs/specs/semantic-authorization.md),
+[runtime/host topology](docs/decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md),
+[desktop ownership](docs/decisions/ADR-0039-native-trusted-host-delegated-human-approval.md).
+
+## 5. Do not collapse the format names
+
+| Representation | Meaning and implementation boundary |
 | --- | --- |
-| A schema, entity, reference, or semantic identity rule | [Semantic data model](docs/specs/semantic-data-model.md), [ADR-0015](docs/decisions/ADR-0015-stable-semantic-identity.md), and the [semantic core rationale](docs/architecture/semantic-core-rationale.md) |
-| A formula, calculation, validation, or diagnostic | [Formula engine](docs/specs/formula-engine-spec.md), [validation engine](docs/specs/validation-engine.md), [diagnostics contract](docs/specs/diagnostics-contract.md), and ADR-0018/ADR-0019 |
-| A client, UI, runtime, WASM, or host boundary | [Semantic API](docs/specs/semantic-api.md), [frontend/backend boundary](docs/architecture/frontend-backend-boundary.md), and ADR-0020/ADR-0022 |
-| `.ro`, `.roproj`, migration, or persistence | [.ro/.roproj architecture](docs/architecture/ro-and-roproj-format.md), [storage versioning](docs/specs/storage-versioning-and-migration.md), and ADR-0003/ADR-0017/ADR-0023/ADR-0025 |
-| Git review, semantic delta, merge, history, or checkpoints | [Git-native workflow](docs/architecture/git-native-workflow.md), [conflict resolution](docs/specs/conflict-resolution.md), and ADR-0029/ADR-0030/ADR-0031/ADR-0033 |
-| AI proposals, approval, authorization, or external effects | [AI-native architecture](docs/architecture/ai-native-architecture.md), [semantic authorization](docs/specs/semantic-authorization.md), and ADR-0007/ADR-0024/ADR-0026 |
-| Excel, Office, or another legacy format boundary | [ADR-0027](docs/decisions/ADR-0027-open-format-and-interoperability-policy.md), [migration framework](docs/specs/migration-framework.md), and the relevant implementation Issue; compatibility mappings remain separately scoped |
-| Team collaboration, recovery, causality, or convergence | [Distributed collaboration](docs/architecture/distributed-collaboration.md), [collaboration model](docs/specs/collaboration-model.md), and ADR-0034/ADR-0035 |
-| Rendering, presentation, or a new visual projection | [Rendering system direction](docs/architecture/rendering-system.md), then check its Hypothesis/Open Question status before introducing a contract |
-| Architecture documentation or a possible authority conflict | [Knowledge Authority](docs/governance/knowledge-authority.md), the [reconciliation register](docs/governance/canonical-reconciliation-register.md), and the [architecture index](docs/architecture/README.md) |
+| Direct `.ro` JSON | Legacy v1 compatibility input; current v2 writer. Not the portable ZIP container. |
+| `.roproj` tree | Versioned editable source. v1 is frozen; v2 adds the bounded saved grouped-sum definition; v3 adds two closed durable field constraints. Storage v3 codecs/migration exist; that alone does not qualify client save/reopen. |
+| Portable `.ro` package v1 | Derived deterministic ZIP32 envelope over exactly `.roproj/v1`. Not a universal latest-version container or live incremental database. |
 
-## How the documentation fits together
+Use the [format guide](docs/architecture/ro-and-roproj-format.md) and
+[versioned specifications](docs/specs/README.md), not file extensions alone.
+`TWDPROJ2` in the adapter is an app-host envelope, not `.roproj/v2`.
+The inspected browser adapter uses v1/v2 codecs; native v3 selection/conversion
+and consumer qualification remain with
+[#452](https://github.com/nurockplayer/tachiko-work/issues/452).
 
-```text
-README.md                 → what Tachiko Work is / how to start
-ARCHITECTURE.md           → top-level system mental model and navigation
-docs/architecture/*       → subsystem architecture explanations
-docs/decisions/*          → why durable decisions were made
-docs/specs/*              → precise implementable contracts
-docs/governance/*         → authority and delivery rules
-```
+## 6. Authority, evidence and next action
 
-The [knowledge-base front door](docs/README.md) gives the complete reading
-order, authority hierarchy, ADR index, specification map, and governance entry
-points. This document is a fast route into that material; it does not replace
-the front door, the [architecture index](docs/architecture/README.md), or any
-canonical ADR or specification.
+[Knowledge authority](docs/governance/knowledge-authority.md) orders principles,
+Accepted decisions/policies, applicable normative specifications, explanatory
+docs, implementation evidence, and open proposals/research. **Implemented is not
+automatically Accepted; Accepted is not automatically shipped.** Internal Rust
+`pub` items and serialized DTOs are not automatically stable external contracts.
+
+Use [docs by task](docs/README.md) to load only the relevant canonical detail.
+[The dated orientation audit](docs/engineering/repository-orientation-audit.md)
+records stale annotations and unresolved boundaries. Read the live
+[#374 handoff](https://github.com/nurockplayer/tachiko-work/issues/374) and owning
+Issue/PR before choosing work or a producer pin. A roadmap horizon or closed
+implementation issue is not readiness for another client.
+
+For evidence, start with [the fixture journey](examples/game-balance/README.md),
+[executable smoke](scripts/first-user-smoke.sh), and
+[CI](.github/workflows/ci.yml). Contribution guidance owns exact setup, docs,
+Rust/MSRV, native/WASM, browser-consumer and release checks. This map grants no
+exception to scope, independent review or merge gates.
