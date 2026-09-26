@@ -39,6 +39,30 @@ a currently supported Work application. Read the [Designer scope](https://github
 [interop profile](../../packages/browser-client/interop-profile.json) and
 [report profile](https://github.com/nurockplayer/tachiko-work/blob/61baaffd99702a97d4e46a751e5286a239fbbb44/apps/designer/report-profile.json) with this matrix.
 
+## Computation and formula-bearing growth qualification
+
+**2026-09-26 qualification note; Work `main` baseline:**
+`97fcff83044ac53bb70952bbf6164d9662c52a4d`. This records the bounded
+[final #481 Steward disposition](https://github.com/nurockplayer/tachiko-work/issues/481#issuecomment-5843393477)
+and [#256 product reconciliation](https://github.com/nurockplayer/tachiko-work/issues/256#issuecomment-5843350523);
+it preserves this record's historical artifact identities and test results.
+
+At that baseline, the inspected producer admits at most 32 formulas in its
+profile and allows row insertion only for native scalar tables ([producer
+profile and authoring gates](https://github.com/nurockplayer/tachiko-work/blob/97fcff83044ac53bb70952bbf6164d9662c52a4d/packages/browser-client/runtime/src/lib.rs)).
+These are current host/profile boundaries, not new semantic limits. A finite
+imported range can use per-cell formulas where supported; successful finite
+import does not establish automatic propagation to future rows or expanding
+totals.
+
+The bounded [Sheet #46 Web Preview](https://github.com/nurockplayer/tachiko-sheet/issues/46)
+does not claim full Driver certification; its separate representative-workbook
+and first-value evidence remains with the existing Sheet owners. Full Driver/J2
+plus bundle 11 certification still requires an explicit supported design for
+adding or removing budget rows and keeping declared formula and total expansion
+truthful, or an explicit revision of that profile. This requirement remains
+unwaived; this note grants no Preview, Driver, or launch PASS.
+
 ## All 15 capability bundles
 
 “Partial” compares the implemented UI against the entire #256 bundle. An

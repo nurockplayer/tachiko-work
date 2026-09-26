@@ -113,6 +113,31 @@ Negative:
 
 - Conditional and lookup expressions justified by game-balance use cases.
 - Formula clearing or conversion to a stored input.
-- Schema-level computed-field declarations and defaults.
+- Schema-level computed-field declarations.
+- Scalar defaults.
 - Interactive completion, syntax highlighting, or a graphical formula editor.
 - Importing formulas from spreadsheet languages.
+
+## 2026-09-26 computation-model disposition
+
+The [final #481 Steward disposition](https://github.com/nurockplayer/tachiko-work/issues/481#issuecomment-5843393477)
+retains the bounded per-cell formula contract in
+[ADR-0018](ADR-0018-bound-formulas-and-deterministic-binary64.md), with no
+new computation semantics or compatibility change. Computed-field declarations
+and scalar defaults remain separately deferred. H1, H2, and H3 remain
+unselected; this note chooses no future representation.
+
+Compatibility concerns the meaning owned by the declared version; representation
+concerns how that meaning is encoded. A future representation need not natively
+express every historical computation, and ordinary opening must not reinterpret
+data or durably upgrade it. Explicit semantic strengthening remains governed by
+[ADR-0021](ADR-0021-progressive-semantic-strengthening.md), and representation
+migration by the [storage versioning and migration authority](../specs/storage-versioning-and-migration.md).
+
+Reconsider only the requirement triggered by an affected task: formula-bearing
+table evolution and its propagation promise; finite import versus promised
+future behavior; a new durable computation/composition boundary; typed-reference
+traversal; or a commitment that freezes assumptions about these behaviors.
+Record the task, promised behavior, fixture or refusal, owning consumer, and
+relevant authority before that work becomes Ready or its public claim is
+approved. A formula's presence alone does not require a particular future model.
