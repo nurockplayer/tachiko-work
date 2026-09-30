@@ -87,16 +87,23 @@ Canonical detail: [Semantic API](docs/specs/semantic-api.md),
 
 | Representation | Meaning and implementation boundary |
 | --- | --- |
-| Direct `.ro` JSON | Legacy v1 compatibility input; current v2 writer. Not the portable ZIP container. |
-| `.roproj` tree | Versioned editable source. v1 is frozen; v2 adds the bounded saved grouped-sum definition; v3 adds two closed durable field constraints. Storage v3 codecs/migration exist; that alone does not qualify client save/reopen. |
+| Direct `.ro` JSON | Legacy v1 compatibility input; current v2 writer, which supports Date but cannot encode saved keyed grouped-sum definitions. Not the portable ZIP container. |
+| `.roproj/v2` and `.roproj/v3` trees | V2 persists bounded definitions but has no Date. V3 retains those definitions, adds Date and two closed durable field constraints. Storage v3 codecs/migration exist; that alone does not qualify client save/reopen. |
 | Portable `.ro` package v1 | Derived deterministic ZIP32 envelope over exactly `.roproj/v1`. Not a universal latest-version container or live incremental database. |
 
 Use the [format guide](docs/architecture/ro-and-roproj-format.md) and
 [versioned specifications](docs/specs/README.md), not file extensions alone.
 `TWDPROJ2` in the adapter is an app-host envelope, not `.roproj/v2`.
-The inspected browser adapter uses v1/v2 codecs; native v3 selection/conversion
-and consumer qualification remain with
-[#452](https://github.com/nurockplayer/tachiko-work/issues/452).
+Under [ADR-0041](docs/decisions/ADR-0041-bounded-durable-field-constraints.md),
+a legacy Date project reaches v3 only by explicit user-selected
+conversion/export from an admitted semantic snapshot; ordinary private
+read/save does not silently upgrade it. The inspected browser adapter uses
+v1/v2 codecs. Keep the gaps distinct: [#452](https://github.com/nurockplayer/tachiko-work/issues/452)
+is the held future native v3 selection/conversion/save outcome, while the
+[#374 Date + saved-definition Web intake](https://github.com/nurockplayer/tachiko-work/issues/374#issuecomment-5907398033)
+records the mixed-profile export-closure gap where direct-ro/v2 cannot encode
+the saved definition. Neither the intake nor storage codec delivery qualifies
+a client save/reopen path.
 
 ## 6. Authority, evidence and next action
 
