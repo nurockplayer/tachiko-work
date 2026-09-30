@@ -1,80 +1,65 @@
-# Tachiko Work Knowledge Base
+# Tachiko Work documentation
 
-This directory is the canonical knowledge base for Tachiko Work.
+## Start with the question, not the archive
 
-Use this page as the front door. Do not infer authority from file age, directory name, implementation status, or confident wording alone.
+[What is Tachiko Work?](../README.md) →
+[Three-minute engineering map](../ARCHITECTURE.md) → the relevant detail below.
+The map explains the whole system; this page routes deeper questions. Neither
+replaces task-relevant authority or the instructions in
+[AGENTS](../AGENTS.md) and [CONTRIBUTING](../CONTRIBUTING.md).
 
-## Start here
+| Your question | Canonical starting point |
+| --- | --- |
+| Why does this exist, and what must it not become? | [Product Constitution](vision/product-constitution.md), [design principles](vision/design-principles.md), [mission](vision/mission.md) |
+| Which statement wins, and is it accepted or only proposed? | [Knowledge authority](governance/knowledge-authority.md), [decision traceability](governance/decision-traceability.md), [reconciliation register](governance/canonical-reconciliation-register.md), [ADR index](decisions/README.md) |
+| Where does a change belong in the code? | [Engineering map](../ARCHITECTURE.md), [crate ownership/DAG](architecture/rust-crate-architecture.md), [clean architecture guidance](engineering/clean-architecture-and-code.md) |
+| What are data, identity, formulas and validation? | [Document model](architecture/document-model.md), [semantic data model](specs/semantic-data-model.md), [formula specification](specs/formula-engine-spec.md), [validation](specs/validation-engine.md), [diagnostics](specs/diagnostics-contract.md) |
+| What may a client query, propose or execute? | [Semantic API](specs/semantic-api.md), [authorization](specs/semantic-authorization.md), [AI adapter contract](specs/ai-agent-api.md) |
+| How do runtime ownership, clients and hosts fit together? | [Frontend/backend boundary](architecture/frontend-backend-boundary.md), [WASM strategy](architecture/wasm-strategy.md), [experimental producer](../packages/browser-client/README.md) |
+| Which bytes are compatible, and how do I migrate them? | [Format guide](architecture/ro-and-roproj-format.md), [storage versioning](specs/storage-versioning-and-migration.md), [version-specific spec index](specs/README.md) |
+| How do comparison, merge, history and collaboration differ? | [Semantic diff](specs/semantic-diff-spec.md), [collaboration boundaries](architecture/distributed-collaboration.md), [Git workflow](architecture/git-native-workflow.md) |
+| What works, what should I run, and what may I work on next? | [Runnable example](../examples/game-balance/README.md), [contribution/validation guide](../CONTRIBUTING.md), [delivery governance](governance/project-governance.md), [live campaign handoff](https://github.com/nurockplayer/tachiko-work/issues/374) |
+| Where is the product going? | [Product roadmap](product/product-roadmap.md), then its live owning Issues; stage names are not release claims |
 
-Read these first when you need to understand or change the project:
+## Read status as well as content
 
-1. [`vision/product-constitution.md`](vision/product-constitution.md) — highest-level product constraints.
-2. [`vision/design-principles.md`](vision/design-principles.md) and [`vision/mission.md`](vision/mission.md) — durable product principles and mission.
-3. [`governance/knowledge-authority.md`](governance/knowledge-authority.md) — how Principle, Accepted, Provisional, Hypothesis, Open Question, and Superseded states work.
-4. [`governance/decision-traceability.md`](governance/decision-traceability.md) — how research, decisions, specs, implementation, PRs, and evidence cross-link without changing their authority.
-5. [`governance/project-governance.md`](governance/project-governance.md) — decision governance and the canonical repository delivery workflow.
-6. [`governance/canonical-reconciliation-register.md`](governance/canonical-reconciliation-register.md) — current authority and supersession map across ADRs, architecture, specifications, and Issues.
-7. [`decisions/README.md`](decisions/README.md) — ADR index and current decision status.
-8. [`architecture/README.md`](architecture/README.md) — architecture map by subsystem and maturity.
-9. [`specs/README.md`](specs/README.md) — specification map and which contract to read for each topic.
+The [knowledge-authority policy](governance/knowledge-authority.md) owns the full
+precedence and AI-loading rules. In particular, an Accepted semantic law does
+not stabilize every current Rust/serde shape; implementation evidence does not
+turn a proposal into an accepted contract. A historical Designer journey does
+not make this repository the current spreadsheet UI owner.
 
-The current repository planning horizon is `07 · Migration & Enterprise Beta`. GitHub Issues own unresolved decisions and implementation work; their existence does not by itself make a direction Accepted.
+The [source-pinned orientation audit](engineering/repository-orientation-audit.md)
+records corrections and remaining drift found while rebuilding these entry
+points. Use the register as an authority map, not a live implementation queue;
+check linked source and current Issue/PR handoffs for delivery and qualification.
+If accepted authorities genuinely conflict, surface the conflict through the
+existing decision process rather than silently choosing a new contract.
 
-## Authority in one minute
+## Browse the library
 
-When two artifacts appear to disagree, use the full policy in [`governance/knowledge-authority.md`](governance/knowledge-authority.md). The practical reading order is:
+| Area | What belongs here |
+| --- | --- |
+| [Vision](vision/) | Foundational purpose and principles |
+| [Decisions](decisions/README.md) | Accepted, superseded and other explicitly classified ADRs |
+| [Specifications](specs/README.md) | Detailed contracts with their declared decision/implementation states |
+| [Architecture](architecture/README.md) | Explanatory subsystem designs and routes to contract authority |
+| [Product](product/) | User outcomes, adoption and planning horizons |
+| [Governance](governance/) | Authority, delivery, contribution and release policies |
+| [Engineering](engineering/) | Code-quality, implementation and agent-workflow guidance |
+| [Security](security/) | Threat and trust-boundary documentation |
+| [Research](research/) and [business](business/) | Evidence, hypotheses and business analysis—not automatic product commitments |
+| [Discussions](discussions/) and [superpowers](superpowers/) | Historical reasoning and scoped plans; verify their status before reuse |
 
-1. Product Constitution and foundational Principles.
-2. Accepted ADRs and accepted governance policies.
-3. Normative specifications, respecting their explicit decision state.
-4. Architecture and product documents.
-5. Shipped implementation, tests, and README as implementation evidence.
-6. Decision Issues and implementation Issues.
-7. Research and discussion history.
+## Keep the entry points small
 
-Implementation state and decision state are separate. An implemented behavior may still be Provisional; an Accepted direction may still be unimplemented.
+README owns the human introduction; root ARCHITECTURE owns the engineering
+orientation; this index owns task navigation. Keep detailed contracts in their
+existing authoritative documents and operational state in live handoffs. Link
+rather than reproduce them. Preserve decision history and explicit supersession.
 
-## Find information by intent
-
-| If you need to know... | Go to | Role |
-| --- | --- | --- |
-| Why Tachiko Work exists | [`vision/`](vision/) | Constitution, mission, durable principles |
-| What has been explicitly decided | [`decisions/`](decisions/) | ADRs and decision history |
-| How the system is structured | [`architecture/`](architecture/) | Current and target architecture |
-| What an implementable contract says | [`specs/`](specs/) | Format, API, formula, collaboration, migration, and runtime contracts |
-| What the product should do | [`product/`](product/) | Product strategy, wedge, user stories, and roadmap material |
-| How decisions, releases, licensing, and contribution work | [`governance/`](governance/) | Authority, traceability, governance, release, licensing |
-| Engineering practices and implementation guidance | [`engineering/`](engineering/) | Engineering workflow and technical guidance |
-| Security model and security work | [`security/`](security/) | Security policy and design material |
-| Market, competitor, standards, and technical evidence | [`research/`](research/) | Evidence and hypotheses, not automatic authority |
-| Business and commercialization analysis | [`business/`](business/) | Business research and strategy |
-| Why past discussions happened | [`discussions/`](discussions/) | Historical context only unless promoted elsewhere |
-| Experimental workflows or helper material | [`superpowers/`](superpowers/) | Supporting project workflows; check authority before relying on them |
-
-## AI-agent loading rule
-
-ChatGPT, Deep Research, Codex, and other agents should load context in this order:
-
-1. Product Constitution and Design Principles.
-2. Knowledge Authority policy.
-3. Relevant Accepted ADRs and policies.
-4. Relevant specifications and architecture documents, including their decision state.
-5. Target Issue and Decision Logs.
-6. Current implementation and tests when shipped behavior matters.
-
-Agents must not silently promote an Open Question or Provisional implementation detail into a durable public invariant.
-
-For engineering planning, implementation, debugging, and review, agents may use
-the compact [Agent Engineering Vocabulary](engineering/agent-engineering-vocabulary.md)
-as stage-relevant leading words. Load only the terms that fit the task; the
-vocabulary does not override the authority order above or any SCD gate.
-
-## Documentation maintenance rules
-
-- Preserve decision history. Superseded records stay available and point to their replacement when possible.
-- Preserve one-hop traceability for material decisions according to [`governance/decision-traceability.md`](governance/decision-traceability.md).
-- Prefer indexes and explicit authority notes over duplicating the same contract in multiple documents.
-- A file under `specs/` is not automatically Accepted.
-- A README describes current behavior but does not silently supersede an Accepted ADR.
-- When a document becomes a compatibility or navigation stub, say so explicitly rather than leaving stale normative wording in place.
-- If a real contradiction cannot be resolved from existing authority, open focused decision work instead of improvising a winner in prose.
+When changing a subsystem, refresh its affected source/status links here or in
+the engineering map as needed. Check the relevant authority and follow
+[the documentation consistency gate](../scripts/docs-consistency-check.sh);
+that gate checks indexed Markdown files/paths, not every anchor or the truth of
+prose, so those still need review.
