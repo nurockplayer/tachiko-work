@@ -6,9 +6,28 @@ use tachiko_semantic_core::{
     Number, Schema, Value,
 };
 use tachiko_storage::{
-    CanonicalRoProjectV3, FormatError, decode_roproj_v3, encode_roproj_v1, encode_roproj_v2,
-    encode_roproj_v3, migrate_roproj_v1_to_v2, migrate_roproj_v1_to_v3, migrate_roproj_v2_to_v3,
+    CanonicalRoProjectV3, FormatError, decode_roproj_v2, decode_roproj_v3, encode_roproj_v1,
+    encode_roproj_v2, encode_roproj_v3, migrate_roproj_v1_to_v2, migrate_roproj_v1_to_v3,
+    migrate_roproj_v2_to_v3,
 };
+
+const NONEMPTY_DEFINITION_GOLDEN: &[u8] = br#"[
+  {
+    "id": "definition-orders-by-category",
+    "orders": {
+      "schema": "orders-schema",
+      "lookup_key_field": "orders-key",
+      "quantity_field": "orders-quantity"
+    },
+    "products": {
+      "schema": "products-schema",
+      "key_field": "products-key",
+      "category_field": "products-category",
+      "price_field": "products-price"
+    }
+  }
+]
+"#;
 
 fn number(value: f64) -> Number {
     Number::new(value).unwrap()
@@ -404,6 +423,85 @@ fn legacy_fixture() -> Document {
     document
 }
 
+fn definition_migration_fixture() -> Document {
+    let text_field = |id: &str| FieldDefinition {
+        id: id.into(),
+        key: id.into(),
+        field_type: FieldType::Text,
+        required: true,
+        constraint: FieldConstraint::None,
+    };
+    let number_field = |id: &str| FieldDefinition {
+        id: id.into(),
+        key: id.into(),
+        field_type: FieldType::Number,
+        required: true,
+        constraint: FieldConstraint::None,
+    };
+
+    let mut document = Document::empty("definition-document", "Definition migration");
+    document.schemas.insert(
+        "orders-schema".into(),
+        Schema {
+            id: "orders-schema".into(),
+            key: "orders".into(),
+            fields: BTreeMap::from([
+                ("orders-key".into(), text_field("orders-key")),
+                ("orders-quantity".into(), number_field("orders-quantity")),
+            ]),
+        },
+    );
+    document.schemas.insert(
+        "products-schema".into(),
+        Schema {
+            id: "products-schema".into(),
+            key: "products".into(),
+            fields: BTreeMap::from([
+                ("products-key".into(), text_field("products-key")),
+                ("products-category".into(), text_field("products-category")),
+                ("products-price".into(), number_field("products-price")),
+            ]),
+        },
+    );
+    document.keyed_grouped_sum_definitions.insert(
+        "definition-orders-by-category".into(),
+        KeyedGroupedSumDefinition {
+            id: "definition-orders-by-category".into(),
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: "orders-schema".into(),
+                lookup_key_field: "orders-key".into(),
+                quantity_field: "orders-quantity".into(),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: "products-schema".into(),
+                key_field: "products-key".into(),
+                category_field: "products-category".into(),
+                price_field: "products-price".into(),
+            },
+        },
+    );
+    document
+}
+
+fn assert_definition_roles(document: &Document) {
+    let definition = document
+        .keyed_grouped_sum_definitions
+        .values()
+        .find(|definition| definition.id == "definition-orders-by-category".into())
+        .unwrap();
+    assert_eq!(definition.id, "definition-orders-by-category".into());
+    assert_eq!(definition.orders.schema, "orders-schema".into());
+    assert_eq!(definition.orders.lookup_key_field, "orders-key".into());
+    assert_eq!(definition.orders.quantity_field, "orders-quantity".into());
+    assert_eq!(definition.products.schema, "products-schema".into());
+    assert_eq!(definition.products.key_field, "products-key".into());
+    assert_eq!(
+        definition.products.category_field,
+        "products-category".into()
+    );
+    assert_eq!(definition.products.price_field, "products-price".into());
+}
+
 #[test]
 fn explicit_migrations_preserve_meaning_and_the_existing_v1_edge() {
     let document = legacy_fixture();
@@ -429,28 +527,25 @@ fn explicit_migrations_preserve_meaning_and_the_existing_v1_edge() {
 
 #[test]
 fn v2_saved_definition_bindings_survive_explicit_conversion() {
-    let mut document = legacy_fixture();
-    document.keyed_grouped_sum_definitions.insert(
-        "definition".into(),
-        KeyedGroupedSumDefinition {
-            id: "definition".into(),
-            orders: KeyedGroupedSumOrdersBinding {
-                schema: "schema".into(),
-                lookup_key_field: "text".into(),
-                quantity_field: "number".into(),
-            },
-            products: KeyedGroupedSumProductsBinding {
-                schema: "schema".into(),
-                key_field: "text".into(),
-                category_field: "text".into(),
-                price_field: "number".into(),
-            },
-        },
-    );
+    let document = definition_migration_fixture();
+    assert_eq!(NONEMPTY_DEFINITION_GOLDEN.len(), 370);
     let v2 = encode_roproj_v2(&document).unwrap();
+    let decoded_v2 = decode_roproj_v2(&v2).unwrap();
+    assert_definition_roles(&decoded_v2);
+    assert_eq!(decoded_v2, document);
+    assert_eq!(
+        v2.file("definitions.json").unwrap(),
+        NONEMPTY_DEFINITION_GOLDEN
+    );
+
     let v3 = migrate_roproj_v2_to_v3(&v2).unwrap();
-    assert_eq!(v3.file("definitions.json"), v2.file("definitions.json"));
-    assert_eq!(decode_roproj_v3(&v3).unwrap(), document);
+    let decoded_v3 = decode_roproj_v3(&v3).unwrap();
+    assert_definition_roles(&decoded_v3);
+    assert_eq!(decoded_v3, document);
+    assert_eq!(
+        v3.file("definitions.json").unwrap(),
+        NONEMPTY_DEFINITION_GOLDEN
+    );
 }
 
 #[test]

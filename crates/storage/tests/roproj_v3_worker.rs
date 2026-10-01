@@ -15,6 +15,24 @@ use tachiko_storage::{
     encode_roproj_v3, migrate_roproj_to_v3, publish_roproj_v3, read_canonical_roproj_v3,
 };
 
+const NONEMPTY_DEFINITION_GOLDEN: &[u8] = br#"[
+  {
+    "id": "definition-orders-by-category",
+    "orders": {
+      "schema": "orders-schema",
+      "lookup_key_field": "orders-key",
+      "quantity_field": "orders-quantity"
+    },
+    "products": {
+      "schema": "products-schema",
+      "key_field": "products-key",
+      "category_field": "products-category",
+      "price_field": "products-price"
+    }
+  }
+]
+"#;
+
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct FixtureDirectory(PathBuf);
@@ -104,24 +122,65 @@ fn fixture() -> Document {
             ]),
         },
     );
+    add_definition_binding_schemas(&mut document);
     document.keyed_grouped_sum_definitions.insert(
-        "definition".into(),
+        "definition-orders-by-category".into(),
         KeyedGroupedSumDefinition {
-            id: "definition".into(),
+            id: "definition-orders-by-category".into(),
             orders: KeyedGroupedSumOrdersBinding {
-                schema: "schema".into(),
-                lookup_key_field: "text".into(),
-                quantity_field: "number".into(),
+                schema: "orders-schema".into(),
+                lookup_key_field: "orders-key".into(),
+                quantity_field: "orders-quantity".into(),
             },
             products: KeyedGroupedSumProductsBinding {
-                schema: "schema".into(),
-                key_field: "text".into(),
-                category_field: "text".into(),
-                price_field: "number".into(),
+                schema: "products-schema".into(),
+                key_field: "products-key".into(),
+                category_field: "products-category".into(),
+                price_field: "products-price".into(),
             },
         },
     );
     document
+}
+
+fn add_definition_binding_schemas(document: &mut Document) {
+    let text_field = |id: &str| FieldDefinition {
+        id: id.into(),
+        key: id.into(),
+        field_type: FieldType::Text,
+        required: true,
+        constraint: FieldConstraint::None,
+    };
+    let number_field = |id: &str| FieldDefinition {
+        id: id.into(),
+        key: id.into(),
+        field_type: FieldType::Number,
+        required: true,
+        constraint: FieldConstraint::None,
+    };
+    document.schemas.insert(
+        "orders-schema".into(),
+        Schema {
+            id: "orders-schema".into(),
+            key: "orders".into(),
+            fields: BTreeMap::from([
+                ("orders-key".into(), text_field("orders-key")),
+                ("orders-quantity".into(), number_field("orders-quantity")),
+            ]),
+        },
+    );
+    document.schemas.insert(
+        "products-schema".into(),
+        Schema {
+            id: "products-schema".into(),
+            key: "products".into(),
+            fields: BTreeMap::from([
+                ("products-key".into(), text_field("products-key")),
+                ("products-category".into(), text_field("products-category")),
+                ("products-price".into(), number_field("products-price")),
+            ]),
+        },
+    );
 }
 
 fn files(tree: &CanonicalRoProjectV3) -> Vec<(String, Vec<u8>)> {
@@ -129,6 +188,25 @@ fn files(tree: &CanonicalRoProjectV3) -> Vec<(String, Vec<u8>)> {
         .iter()
         .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
         .collect()
+}
+
+fn assert_definition_roles(document: &Document) {
+    let definition = document
+        .keyed_grouped_sum_definitions
+        .values()
+        .find(|definition| definition.id == "definition-orders-by-category".into())
+        .unwrap();
+    assert_eq!(definition.id, "definition-orders-by-category".into());
+    assert_eq!(definition.orders.schema, "orders-schema".into());
+    assert_eq!(definition.orders.lookup_key_field, "orders-key".into());
+    assert_eq!(definition.orders.quantity_field, "orders-quantity".into());
+    assert_eq!(definition.products.schema, "products-schema".into());
+    assert_eq!(definition.products.key_field, "products-key".into());
+    assert_eq!(
+        definition.products.category_field,
+        "products-category".into()
+    );
+    assert_eq!(definition.products.price_field, "products-price".into());
 }
 
 fn write_tree(root: &std::path::Path, files: &[(String, Vec<u8>)]) {
@@ -172,6 +250,7 @@ fn writer_rejects_invalid_constraint_declaration_and_roundtrips_valid_meaning() 
     );
     let tree = encode_roproj_v3(&document).unwrap();
     let decoded = decode_roproj_v3(&tree).unwrap();
+    assert_definition_roles(&decoded);
     assert_eq!(
         decoded.entities["entity"].fields["date"],
         Value::Date(Date::new(9_999, 12, 31).unwrap())
@@ -185,6 +264,21 @@ fn writer_rejects_invalid_constraint_declaration_and_roundtrips_valid_meaning() 
         document.entities["entity"].fields["formula"]
     );
     assert_eq!(tree, encode_roproj_v3(&decoded).unwrap());
+    assert_eq!(
+        tree.file("definitions.json").unwrap(),
+        NONEMPTY_DEFINITION_GOLDEN
+    );
+
+    let directory = FixtureDirectory::new();
+    let path = directory.0.join("definition-binding-roles.roproj");
+    publish_roproj_v3(&path, &tree).unwrap();
+    let host_tree = read_canonical_roproj_v3(&path).unwrap();
+    let host_document = decode_roproj_v3(&host_tree).unwrap();
+    assert_definition_roles(&host_document);
+    assert_eq!(
+        host_tree.file("definitions.json").unwrap(),
+        NONEMPTY_DEFINITION_GOLDEN
+    );
 }
 
 #[test]
