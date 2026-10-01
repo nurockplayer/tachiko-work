@@ -1,9 +1,9 @@
 use std::{fmt::Write as _, panic::catch_unwind};
 
-use tachiko_storage::{
-    FormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, V2_MAX_NUMBER_TOKEN_BYTES,
-    canonicalize_legacy_v1, from_bytes, from_str,
-};
+use tachiko_storage::{FormatError, canonicalize_legacy_v1, from_bytes, from_str};
+
+const EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES: usize = 8_388_608;
+const EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES: usize = 256;
 
 fn padded(prefix: &str, suffix: &str, target: usize) -> String {
     let filler = target
@@ -88,7 +88,7 @@ fn assert_input_limit(error: &FormatError, actual: usize) {
         error,
         FormatError::ResourceLimit {
             resource: "input",
-            limit: NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
+            limit: EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
             actual: found,
         } if *found == actual
     ));
@@ -97,17 +97,17 @@ fn assert_input_limit(error: &FormatError, actual: usize) {
 #[test]
 fn normal_profile_admits_exact_boundary_for_v1_and_v2() {
     for source in [
-        valid_v1(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES),
-        valid_v2(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES),
+        valid_v1(EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES),
+        valid_v2(EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES),
     ] {
-        assert_eq!(source.len(), NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
+        assert_eq!(source.len(), EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
         assert!(from_bytes(source.as_bytes()).is_ok());
     }
 }
 
 #[test]
 fn normal_profile_rejects_valid_v1_and_v2_one_byte_over() {
-    let oversized = NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1;
+    let oversized = EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1;
     for source in [valid_v1(oversized), valid_v2(oversized)] {
         assert_input_limit(&from_bytes(source.as_bytes()).unwrap_err(), oversized);
     }
@@ -115,7 +115,7 @@ fn normal_profile_rejects_valid_v1_and_v2_one_byte_over() {
 
 #[test]
 fn oversized_resource_limit_precedes_every_latent_format_error() {
-    let oversized = NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1;
+    let oversized = EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1;
     let cases = [
         ("invalid UTF-8", invalid_utf8(oversized)),
         ("invalid JSON", malformed_json(oversized).into_bytes()),
@@ -145,7 +145,7 @@ fn oversized_resource_limit_precedes_every_latent_format_error() {
                 error,
                 FormatError::ResourceLimit {
                     resource: "input",
-                    limit: NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
+                    limit: EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
                     actual,
                 } if actual == oversized
             ),
@@ -184,10 +184,10 @@ fn admitted_input_keeps_the_existing_strict_precedence() {
 
 #[test]
 fn ordinary_legacy_canonicalization_uses_the_same_normal_profile() {
-    let exact = valid_v1(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
+    let exact = valid_v1(EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
     assert!(canonicalize_legacy_v1(exact.as_bytes()).is_ok());
 
-    let oversized = valid_v1(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1);
+    let oversized = valid_v1(EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1);
     assert_input_limit(
         &canonicalize_legacy_v1(oversized.as_bytes()).unwrap_err(),
         oversized.len(),
@@ -210,16 +210,16 @@ fn admitted_hostile_shapes_remain_bounded_by_existing_fail_closed_rules() {
     let huge_member_name = padded(
         r#"{"format_version":3,""#,
         r#"":0}"#,
-        NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
+        EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
     );
     let many_members = many_members(381_000);
-    assert!(many_members.len() <= NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
+    assert!(many_members.len() <= EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
     let deeply_nested = format!(
         "{{\"format_version\":3,\"future\":{}0{}}}",
         "[".repeat(10_000),
         "]".repeat(10_000)
     );
-    let oversized_number = format!("1{}", "0".repeat(V2_MAX_NUMBER_TOKEN_BYTES));
+    let oversized_number = format!("1{}", "0".repeat(EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES));
     let v2_number = format!(r#"{{"format_version":2,"future":{oversized_number}}}"#);
 
     let result = catch_unwind(|| from_bytes(huge_member_name.as_bytes()))
@@ -247,8 +247,8 @@ fn admitted_hostile_shapes_remain_bounded_by_existing_fail_closed_rules() {
         result,
         FormatError::ResourceLimit {
             resource: "number token",
-            limit: V2_MAX_NUMBER_TOKEN_BYTES,
+            limit: EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES,
             actual,
-        } if actual == V2_MAX_NUMBER_TOKEN_BYTES + 1
+        } if actual == EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES + 1
     ));
 }

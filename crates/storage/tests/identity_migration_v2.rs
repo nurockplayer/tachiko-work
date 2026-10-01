@@ -2,9 +2,11 @@ use std::fs;
 
 use tachiko_semantic_core::{Document, Expression, FieldType, Number, Value};
 use tachiko_storage::{
-    FORMAT_VERSION, FormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, V2_MAX_NUMBER_TOKEN_BYTES,
-    from_bytes, from_str, load, to_canonical_string,
+    FORMAT_VERSION, FormatError, from_bytes, from_str, load, to_canonical_string,
 };
+
+const EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES: usize = 8_388_608;
+const EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES: usize = 256;
 
 const LEGACY_GRAPH: &str = r#"{
   "format_version": 1,
@@ -291,8 +293,8 @@ fn v2_binary64_reader_and_writer_match_the_accepted_numeric_vectors() {
 
 #[test]
 fn v2_resource_limits_admit_the_exact_boundary_and_reject_one_byte_more() {
-    let admitted_number = format!("0.{}", "0".repeat(V2_MAX_NUMBER_TOKEN_BYTES - 2));
-    assert_eq!(admitted_number.len(), V2_MAX_NUMBER_TOKEN_BYTES);
+    let admitted_number = format!("0.{}", "0".repeat(EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES - 2));
+    assert_eq!(admitted_number.len(), EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES);
     assert!(from_str(&v2_number_source(&admitted_number, "Document")).is_ok());
 
     let blocked_number = format!("{admitted_number}0");
@@ -301,17 +303,20 @@ fn v2_resource_limits_admit_the_exact_boundary_and_reject_one_byte_more() {
         error,
         FormatError::ResourceLimit {
             resource: "number token",
-            limit: V2_MAX_NUMBER_TOKEN_BYTES,
+            limit: EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES,
             actual,
-        } if actual == V2_MAX_NUMBER_TOKEN_BYTES + 1
+        } if actual == EXPECTED_V2_MAX_NUMBER_TOKEN_BYTES + 1
     ));
 
     let base = v2_number_source("0", "Document");
     let exact_input = format!(
         "{base}{}",
-        " ".repeat(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES - base.len())
+        " ".repeat(EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES - base.len())
     );
-    assert_eq!(exact_input.len(), NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
+    assert_eq!(
+        exact_input.len(),
+        EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES
+    );
     assert!(from_str(&exact_input).is_ok());
 
     let oversized_input = format!("{exact_input} ");
@@ -320,9 +325,9 @@ fn v2_resource_limits_admit_the_exact_boundary_and_reject_one_byte_more() {
         error,
         FormatError::ResourceLimit {
             resource: "input",
-            limit: NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
+            limit: EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
             actual,
-        } if actual == NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1
+        } if actual == EXPECTED_NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1
     ));
 }
 
