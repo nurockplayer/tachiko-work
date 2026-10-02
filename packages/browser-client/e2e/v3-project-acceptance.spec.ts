@@ -701,11 +701,11 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const matrixProfile = (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string): any => ({
       dateValue, quantity, catalogue: [DEFINITION_ID], revision, occurrence: occurrenceUuid, dateType: marked,
     });
-    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string): Promise<void> => {
+    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800): Promise<void> => {
       const profile = matrixProfile(marked, occurrenceUuid, dateValue, quantity, revision);
       await assertDateProjection({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, profile);
       const summary = await client.queryKeyedGroupedSum(DEFINITION_ID);
-      if (summary.revision !== revision || JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", quantity === 6 ? 1200 : 800]].sort())) throw new Error(`T2 literal catalogue summary changed at ${revision}`);
+      if (summary.revision !== revision || JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", stationery]].sort())) throw new Error(`T2 literal catalogue summary changed at ${revision}`);
       if (marked) await expectCode(() => client.exportProject(revision), "unsupported_project", revision);
       else {
         const saved = await client.exportProject(revision);
@@ -739,14 +739,14 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       await checkMatrixResident(marked, occurrenceUuid, "2026-09-29", 4, "resident/3");
     };
     const replayMatrixHistory = async (marked: boolean, occurrenceUuid: string): Promise<void> => {
-      for (const [type, dateValue, quantity, revision] of [
-        ["redo", "2026-09-29", 6, "resident/4"], ["undo", "2026-09-29", 4, "resident/5"],
-        ["undo", "2026-09-28", 4, "resident/6"], ["redo", "2026-09-29", 4, "resident/7"],
-        ["redo", "2026-09-29", 6, "resident/8"],
+      for (const [type, dateValue, quantity, revision, stationery] of [
+        ["redo", "2026-09-29", 6, "resident/4", 1200], ["undo", "2026-09-29", 4, "resident/5", 800],
+        ["undo", "2026-09-28", 4, "resident/6", 800], ["redo", "2026-09-29", 4, "resident/7", 800],
+        ["redo", "2026-09-29", 6, "resident/8", 1200],
       ] as const) {
         const operation = await client.trackerCommand({ type, expected_revision: `resident/${Number(revision.split("/")[1]) - 1}` });
         if (operation.resulting_revision !== revision) throw new Error(`T2 ${marked ? "v3" : "legacy"} history lost ${type}`);
-        await checkMatrixResident(marked, occurrenceUuid, dateValue, quantity, revision);
+        await checkMatrixResident(marked, occurrenceUuid, dateValue, quantity, revision, stationery);
       }
     };
     const matrixCandidates: Array<{ label: string; code: string; bytes: Uint8Array; revision?: string }> = [
@@ -954,10 +954,10 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       occurrence: { scope: `designer-occurrence/${overSeedUuid}/import_${dateImportUuid}_0001`, revision: "resident/19" }, ...overLiveExpected,
     }, "failed selected Worker export changed live over-budget state");
     await expectCode(() => client.exportProject("resident/19"), "unsupported_project", "resident/19");
-    for (const [type, dateValue, quantity, revision] of [
-      ["redo", "2026-09-28", 6, "resident/20"], ["undo", "2026-09-28", 4, "resident/21"],
-      ["undo", "2026-09-26", 4, "resident/22"], ["redo", "2026-09-28", 4, "resident/23"],
-      ["redo", "2026-09-28", 6, "resident/24"],
+    for (const [type, dateValue, quantity, revision, stationery] of [
+      ["redo", "2026-09-28", 6, "resident/20", 1200], ["undo", "2026-09-28", 4, "resident/21", 800],
+      ["undo", "2026-09-26", 4, "resident/22", 800], ["redo", "2026-09-28", 4, "resident/23", 800],
+      ["redo", "2026-09-28", 6, "resident/24", 1200],
     ] as const) {
       const operation = await client.trackerCommand({ type, expected_revision: revision === "resident/20" ? "resident/19" : `resident/${Number(revision.split("/")[1]) - 1}` });
       if (operation.resulting_revision !== revision) throw new Error(`over-budget failure lost ${type} history`);
@@ -965,7 +965,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       equal({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, projection, `over-budget history ${type} changed literal state`);
       for (const id of overIds) {
         const summary = await client.queryKeyedGroupedSum(id);
-        if (summary.definition_id !== id || summary.revision !== revision || JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", quantity === 4 ? 800 : 1200]].sort())) throw new Error(`over-budget history ${type} changed catalogue result ${id}`);
+        if (summary.definition_id !== id || summary.revision !== revision || JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", stationery]].sort())) throw new Error(`over-budget history ${type} changed catalogue result ${id}`);
       }
       await expectCode(() => client.exportProject(revision), "unsupported_project", revision);
     }

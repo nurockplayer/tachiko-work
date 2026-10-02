@@ -4,8 +4,8 @@ mod fixtures;
 
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, import_csv};
 use tachiko_designer_runtime::{
-    DesignerRequest, DesignerRuntime, ImportFieldType, ImportSelection, NewTableColumnInput,
-    StoredValueProjection, import_workbook,
+    DesignerRequest, ImportFieldType, ImportSelection, NewTableColumnInput, StoredValueProjection,
+    import_workbook,
 };
 use tachiko_storage::{CanonicalRoProjectV3, FormatError, decode_roproj_v3, encode_roproj_v3};
 use tachiko_workspace_engine::{Date, FieldConstraint, SchemaId};
