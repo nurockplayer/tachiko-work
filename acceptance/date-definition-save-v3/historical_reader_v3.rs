@@ -105,10 +105,17 @@ fn check_legacy_control(document: &Document, date: bool, definition: bool) {
         assert_eq!(field.id.as_str(), FIELDS[index]);
         assert_eq!(field.field_type, field_type);
         assert!(!field.required);
-        assert_eq!(
-            field.constraint,
-            tachiko_semantic_core::FieldConstraint::None
-        );
+        // The pinned reader predates durable constraints; its strict legacy
+        // representation has exactly these four field members.
+        let field_record = serde_json::to_value(field).unwrap();
+        let mut members = field_record
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        members.sort_unstable();
+        assert_eq!(members, ["field_type", "id", "key", "required"]);
     }
     for (index, code, category, quantity, date_value) in [
         (0, "PEN", "Stationery", 4.0, "2026-09-28"),
