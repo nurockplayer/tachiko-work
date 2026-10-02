@@ -179,10 +179,13 @@ pub fn frame_v3(tree: &CanonicalRoProjectV3) -> Vec<u8> {
     bytes
 }
 
+// These existing-API adapters are used only by the fixture validation target.
+#[allow(dead_code)]
 pub fn inspect_existing_api(bytes: &[u8]) -> Result<OpenedProjection, DesignerError> {
     inspect_project(bytes)
 }
 
+#[allow(dead_code)] // The selected target uses the public adapter directly.
 pub fn open_existing_api(
     slot: &mut Option<DesignerRuntime>,
     bytes: &[u8],
@@ -268,4 +271,77 @@ pub fn malformed_definition_payloads(original: &str) -> Vec<(&'static str, Vec<u
         b"[\n  \"not-a-definition-record\"\n]\n".to_vec(),
     ));
     cases
+}
+
+/// Inputs are explicit so context checks never mutate process environment.
+#[derive(Clone, Copy, Default)]
+pub struct CaptureInputs<'a> {
+    pub required: Option<&'a str>,
+    pub directory: Option<&'a str>,
+    pub head: Option<&'a str>,
+    pub run_id: Option<&'a str>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CaptureContext<'a> {
+    pub directory: &'a str,
+    pub head: &'a str,
+    pub run_id: &'a str,
+}
+
+pub fn resolve_capture_context<'a>(
+    input: CaptureInputs<'a>,
+    compiled_head: Option<&str>,
+    compiled_run_id: Option<&str>,
+) -> Result<Option<CaptureContext<'a>>, &'static str> {
+    if input.required.is_some_and(|value| value != "1") {
+        return Err("CAPTURE_REQUIRED must be exactly 1 when supplied");
+    }
+    if input.required.is_none()
+        && input.directory.is_none()
+        && input.head.is_none()
+        && input.run_id.is_none()
+        && compiled_head.is_none()
+        && compiled_run_id.is_none()
+    {
+        return Ok(None);
+    }
+    let (Some(directory), Some(head), Some(run_id)) = (input.directory, input.head, input.run_id)
+    else {
+        return Err("capture requires complete runtime directory/head/run context");
+    };
+    if directory.is_empty()
+        || !std::path::Path::new(directory).is_absolute()
+        || directory.contains('\0')
+    {
+        return Err("capture directory must be a nonempty absolute path");
+    }
+    if head.len() != 40
+        || !head
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("capture head must be lowercase 40-hex");
+    }
+    if run_id.len() != 36
+        || !run_id.bytes().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+            }
+        })
+    {
+        return Err("capture run must be a canonical lowercase UUID");
+    }
+    match (compiled_head, compiled_run_id) {
+        (Some(compiled_head), Some(compiled_run_id))
+            if compiled_head == head && compiled_run_id == run_id => {}
+        _ => return Err("capture runtime context must match both compiled identities"),
+    }
+    Ok(Some(CaptureContext {
+        directory,
+        head,
+        run_id,
+    }))
 }

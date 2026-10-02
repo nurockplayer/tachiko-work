@@ -314,18 +314,33 @@ fn selected_v3_export(
 }
 
 fn capture_candidate_output(profile: &str, bytes: &[u8]) {
-    let root = std::env::var("TACHIKO_V3_ACCEPTANCE_CAPTURE_DIR")
-        .expect("PREREQUISITE_NOTRUN_CAPTURE_DIR_UNSET: use the fresh-capture runner");
-    let candidate_head = option_env!("TACHIKO_V3_ACCEPTANCE_CANDIDATE_HEAD")
-        .expect("PREREQUISITE_NOTRUN_CANDIDATE_HEAD_UNSET: compile with the sealed candidate head");
-    let run_id = option_env!("TACHIKO_V3_ACCEPTANCE_RUN_ID")
-        .expect("PREREQUISITE_NOTRUN_RUN_ID_UNSET: compile with a new capture run ID");
-    assert_eq!(
-        candidate_head.len(),
-        40,
-        "capture must name one exact Git commit"
-    );
-    let root = std::path::PathBuf::from(root);
+    let read_context = |name| match std::env::var(name) {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => panic!("capture context must be UTF-8: {name}"),
+    };
+    let required = read_context("TACHIKO_V3_ACCEPTANCE_CAPTURE_REQUIRED");
+    let directory = read_context("TACHIKO_V3_ACCEPTANCE_CAPTURE_DIR");
+    let head = read_context("TACHIKO_V3_ACCEPTANCE_CANDIDATE_HEAD");
+    let run = read_context("TACHIKO_V3_ACCEPTANCE_RUN_ID");
+    let context = acceptance_fixtures::resolve_capture_context(
+        acceptance_fixtures::CaptureInputs {
+            required: required.as_deref(),
+            directory: directory.as_deref(),
+            head: head.as_deref(),
+            run_id: run.as_deref(),
+        },
+        option_env!("TACHIKO_V3_ACCEPTANCE_CANDIDATE_HEAD"),
+        option_env!("TACHIKO_V3_ACCEPTANCE_RUN_ID"),
+    )
+    .expect("capture qualification requires complete matching context");
+    let Some(context) = context else {
+        // Ordinary cargo test runs every assertion but emits no qualification artifacts.
+        return;
+    };
+    let candidate_head = context.head;
+    let run_id = context.run_id;
+    let root = std::path::PathBuf::from(context.directory);
     let lease: serde_json::Value = serde_json::from_slice(
         &std::fs::read(root.join("capture-lease.json"))
             .expect("PREREQUISITE_NOTRUN_CAPTURE_LEASE_MISSING"),
@@ -354,19 +369,19 @@ fn capture_candidate_output(profile: &str, bytes: &[u8]) {
         file.sync_all().expect("flush candidate output");
     };
     write_new(&root.join(format!("{profile}.twd")), bytes);
+    let receipt = BTreeMap::from([
+        ("producer_head", serde_json::Value::from(candidate_head)),
+        ("capture_run_id", serde_json::Value::from(run_id)),
+        ("kind", serde_json::Value::from(kind)),
+        ("document_id", serde_json::Value::from(DOCUMENT_ID)),
+        ("schema_id", serde_json::Value::from(SCHEMA_ID)),
+        ("field_ids", serde_json::to_value(FIELD_IDS).unwrap()),
+        ("entity_ids", serde_json::to_value(ROW_IDS).unwrap()),
+        ("profile", serde_json::Value::from(profile)),
+    ]);
     write_new(
         &root.join(format!("{profile}.source.json")),
-        &serde_json::to_vec_pretty(&serde_json::json!({
-            "producer_head": candidate_head,
-            "capture_run_id": run_id,
-            "kind": kind,
-            "document_id": DOCUMENT_ID,
-            "schema_id": SCHEMA_ID,
-            "field_ids": FIELD_IDS,
-            "entity_ids": ROW_IDS,
-            "profile": profile,
-        }))
-        .unwrap(),
+        &serde_json::to_vec_pretty(&receipt).unwrap(),
     );
 }
 
@@ -495,6 +510,7 @@ fn fixture_definition(schema: &str, fields: &[String]) -> KeyedGroupedSumDefinit
     }
 }
 
+#[allow(clippy::too_many_lines)] // One complete literal projection oracle keeps schema, identity and value assertions together.
 fn assert_opened_fixture(opened: &OpenedProjection, expected: &Document) {
     let schema = expected.schemas.values().next().unwrap();
     let collection = CollectionSummary {
@@ -1098,6 +1114,7 @@ fn neither_lossless_reopen() {
 const FULL_OPENED_PROJECTION_LIMIT: usize = 65_536;
 const FULL_OPENED_PROJECTION_LIMIT_PLUS_ONE: usize = 65_537;
 
+#[allow(clippy::too_many_lines)] // One independent literal projection assembly is the sizing oracle.
 fn independent_opened_projection(
     revision: &str,
     definition_ids: &[String],
@@ -1323,6 +1340,7 @@ fn document_with_budget_catalogue(ids: &[String], date_value: &str, quantity: f6
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One ordered exact-budget and history-preservation acceptance trace.
 fn exact_full_catalogue_opened_projection_boundary_and_plus_one() {
     for target in [
         FULL_OPENED_PROJECTION_LIMIT,
@@ -1693,7 +1711,9 @@ fn replay_history_after_candidate(
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One finite two-origin rejection and history-preservation matrix.
 fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() {
+    const TRANSFER_MAX: usize = 64 * 1024 * 1024;
     let (source, _, _, _) = prepared(true, true);
     let valid = selected_v3_export(&source, "resident/2").unwrap().bytes;
     let expected_valid = saved_document(&valid);
@@ -1810,7 +1830,6 @@ fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() 
         "unsupported_project",
     ));
 
-    const TRANSFER_MAX: usize = 64 * 1024 * 1024;
     let exact_transfer = vec![0; TRANSFER_MAX];
     let over_transfer = vec![0; TRANSFER_MAX + 1];
     invalid.push((
@@ -2065,6 +2084,7 @@ fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() 
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One ordered replacement, reset and history acceptance trace.
 fn successful_legacy_replacement_clears_v3_origin_marker() {
     let (mut slot, _) = historied_resident(true, ORIGINAL);
     assert_ordinary_v3_export_refused(slot.as_mut().unwrap());

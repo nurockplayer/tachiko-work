@@ -17,6 +17,7 @@ const APPROVED_EXPORTS = new Set([
   "tachiko_designer_project_inspect",
   "tachiko_designer_spreadsheet_run",
   "tachiko_designer_project_export",
+  "tachiko_designer_project_export_v3",
   "tachiko_designer_canonical_tree_export",
   "tachiko_designer_portable_ro_export",
   "tachiko_designer_occurrence_observe",

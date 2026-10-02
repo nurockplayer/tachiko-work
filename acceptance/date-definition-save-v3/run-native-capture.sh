@@ -41,6 +41,7 @@ target_dir="/tmp/tachiko-v3-cargo-target-${short_head}-${run_id}"
 
 export TACHIKO_V3_ACCEPTANCE_CANDIDATE_HEAD="${candidate_head}"
 export TACHIKO_V3_ACCEPTANCE_RUN_ID="${run_id}"
+export TACHIKO_V3_ACCEPTANCE_CAPTURE_REQUIRED=1
 export TACHIKO_V3_ACCEPTANCE_CAPTURE_DIR="${capture_dir}"
 export CARGO_TARGET_DIR="${target_dir}"
 export CARGO_BUILD_JOBS=1

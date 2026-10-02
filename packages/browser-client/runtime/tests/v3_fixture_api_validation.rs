@@ -4,8 +4,8 @@ mod fixtures;
 
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, import_csv};
 use tachiko_designer_runtime::{
-    DesignerError, DesignerRequest, DesignerRuntime, ImportFieldType, ImportSelection,
-    NewTableColumnInput, OpenedProjection, StoredValueProjection, import_workbook,
+    DesignerRequest, DesignerRuntime, ImportFieldType, ImportSelection, NewTableColumnInput,
+    StoredValueProjection, import_workbook,
 };
 use tachiko_storage::{CanonicalRoProjectV3, FormatError, decode_roproj_v3, encode_roproj_v3};
 use tachiko_workspace_engine::{Date, FieldConstraint, SchemaId};
@@ -55,13 +55,23 @@ fn valid_constraint_fixtures_roundtrip_in_the_existing_v3_storage_codec() {
                         && definition.products.schema != extra.id)
             );
         }
-        let _typed_open_api: fn(&[u8]) -> Result<OpenedProjection, DesignerError> =
-            fixtures::inspect_existing_api;
-        let _typed_replace_api: fn(
-            &mut Option<DesignerRuntime>,
-            &[u8],
-            &str,
-        ) -> Result<OpenedProjection, DesignerError> = fixtures::open_existing_api;
+        let error = fixtures::inspect_existing_api(&transfer).unwrap_err();
+        assert_eq!(
+            error.failure_projection("resident/0").code,
+            "unsupported_project"
+        );
+        let mut slot = None;
+        let error = fixtures::open_existing_api(
+            &mut slot,
+            &transfer,
+            "00000000-0000-4000-8000-000000000001",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.failure_projection("resident/0").code,
+            "unsupported_project"
+        );
+        assert!(slot.is_none());
     }
 }
 
@@ -191,5 +201,165 @@ fn real_import_keeps_the_unedited_26_date_and_new_occurrence_identities() {
             .failure_projection("resident/3")
             .code,
         "invalid_tracker_operation"
+    );
+}
+
+const CAPTURE_HEAD: &str = "6ed764735ad2bbd7be6a04a67eaaaf4d8e107817";
+const CAPTURE_RUN: &str = "00000000-0000-4000-8000-000000000001";
+
+fn complete_capture_context() -> fixtures::CaptureInputs<'static> {
+    fixtures::CaptureInputs {
+        required: Some("1"),
+        directory: Some("/tmp/capture"),
+        head: Some(CAPTURE_HEAD),
+        run_id: Some(CAPTURE_RUN),
+    }
+}
+
+#[test]
+fn capture_context_distinguishes_regression_from_qualified_capture() {
+    use fixtures::{CaptureInputs, resolve_capture_context};
+    assert_eq!(
+        resolve_capture_context(CaptureInputs::default(), None, None),
+        Ok(None)
+    );
+    let complete = resolve_capture_context(
+        complete_capture_context(),
+        Some(CAPTURE_HEAD),
+        Some(CAPTURE_RUN),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        (complete.directory, complete.head, complete.run_id),
+        ("/tmp/capture", CAPTURE_HEAD, CAPTURE_RUN)
+    );
+}
+
+#[test]
+fn capture_context_rejects_partial_runtime_inputs() {
+    use fixtures::{CaptureInputs, resolve_capture_context};
+    let full = complete_capture_context();
+    for partial in [
+        CaptureInputs {
+            required: Some("1"),
+            ..CaptureInputs::default()
+        },
+        CaptureInputs {
+            directory: Some("/tmp/capture"),
+            ..CaptureInputs::default()
+        },
+        CaptureInputs {
+            head: Some(CAPTURE_HEAD),
+            ..CaptureInputs::default()
+        },
+        CaptureInputs {
+            run_id: Some(CAPTURE_RUN),
+            ..CaptureInputs::default()
+        },
+        CaptureInputs {
+            directory: None,
+            ..full
+        },
+        CaptureInputs { head: None, ..full },
+        CaptureInputs {
+            run_id: None,
+            ..full
+        },
+    ] {
+        assert!(resolve_capture_context(partial, Some(CAPTURE_HEAD), Some(CAPTURE_RUN)).is_err());
+    }
+}
+
+#[test]
+fn capture_context_rejects_malformed_runtime_inputs() {
+    use fixtures::{CaptureInputs, resolve_capture_context};
+    let full = complete_capture_context();
+    for malformed in [
+        CaptureInputs {
+            required: Some("0"),
+            ..full
+        },
+        CaptureInputs {
+            required: Some(""),
+            ..full
+        },
+        CaptureInputs {
+            directory: Some(""),
+            ..full
+        },
+        CaptureInputs {
+            directory: Some("relative"),
+            ..full
+        },
+        CaptureInputs {
+            directory: Some("/tmp/\0capture"),
+            ..full
+        },
+        CaptureInputs {
+            head: Some(""),
+            ..full
+        },
+        CaptureInputs {
+            head: Some("bad"),
+            ..full
+        },
+        CaptureInputs {
+            head: Some("6ED764735AD2BBD7BE6A04A67EAAAF4D8E107817"),
+            ..full
+        },
+        CaptureInputs {
+            run_id: Some(""),
+            ..full
+        },
+        CaptureInputs {
+            run_id: Some("not-a-uuid"),
+            ..full
+        },
+        CaptureInputs {
+            run_id: Some("00000000_0000-4000-8000-000000000001"),
+            ..full
+        },
+        CaptureInputs {
+            run_id: Some("abcdefAB-0000-4000-8000-000000000001"),
+            ..full
+        },
+    ] {
+        assert!(resolve_capture_context(malformed, Some(CAPTURE_HEAD), Some(CAPTURE_RUN)).is_err());
+    }
+}
+
+#[test]
+fn capture_context_requires_both_matching_compiled_identities() {
+    use fixtures::{CaptureInputs, resolve_capture_context};
+    for compiled in [
+        (None, None),
+        (Some(CAPTURE_HEAD), None),
+        (None, Some(CAPTURE_RUN)),
+        (
+            Some("0000000000000000000000000000000000000000"),
+            Some(CAPTURE_RUN),
+        ),
+        (
+            Some(CAPTURE_HEAD),
+            Some("00000000-0000-4000-8000-000000000002"),
+        ),
+    ] {
+        assert!(
+            resolve_capture_context(complete_capture_context(), compiled.0, compiled.1).is_err()
+        );
+        if compiled != (None, None) {
+            assert!(
+                resolve_capture_context(CaptureInputs::default(), compiled.0, compiled.1).is_err()
+            );
+        }
+    }
+    assert!(
+        resolve_capture_context(
+            CaptureInputs::default(),
+            Some(CAPTURE_HEAD),
+            Some(CAPTURE_RUN)
+        )
+        .is_err()
     );
 }

@@ -890,10 +890,10 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     assertBoundaryV3(boundarySave.bytes, "2026-09-28", 4, boundaryIds);
     equal(await residentState(), { occurrence: boundaryOccurrence, ...atLimitExpected }, "successful Worker boundary export changed full live state");
     await expectCode(() => client.exportProject("resident/19"), "unsupported_project", "resident/19");
-    for (const [type, dateValue, quantity, revision] of [
-      ["redo", "2026-09-28", 6, "resident/20"], ["undo", "2026-09-28", 4, "resident/21"],
-      ["undo", "2026-09-26", 4, "resident/22"], ["redo", "2026-09-28", 4, "resident/23"],
-      ["redo", "2026-09-28", 6, "resident/24"],
+    for (const [type, dateValue, quantity, revision, stationery] of [
+      ["redo", "2026-09-28", 6, "resident/20", 1200], ["undo", "2026-09-28", 4, "resident/21", 800],
+      ["undo", "2026-09-26", 4, "resident/22", 800], ["redo", "2026-09-28", 4, "resident/23", 800],
+      ["redo", "2026-09-28", 6, "resident/24", 1200],
     ] as const) {
       const liveOccurrence = await client.observeOccurrence();
       const operation = await client.trackerCommand({ type, expected_revision: liveOccurrence.revision });
@@ -903,8 +903,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       if (JSON.stringify({ bootstrap: current.bootstrap, table: current.table }) !== JSON.stringify(expected)) throw new Error(`History ${type} changed full boundary projection`);
       for (const id of boundaryIds) {
         const summary = await client.queryKeyedGroupedSum(id);
-        const total = quantity === 4 ? 800 : 1200;
-        if (JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", total]].sort())) throw new Error(`History ${type} changed catalogue result ${id}`);
+        if (JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", stationery]].sort())) throw new Error(`History ${type} changed catalogue result ${id}`);
       }
       await expectCode(() => client.exportProject(revision), "unsupported_project", revision);
     }
@@ -1079,7 +1078,11 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     await expectCode(() => client.exportProject(closeSource.bootstrap.revision), "unsupported_project", closeSource.bootstrap.revision);
     await client.closeProject();
     await expectClosed();
-    const afterClose: any = await withUuid<any>("00000000-0000-4000-8000-000000000011", () => client.newTable("after close", [{ name: "value", field_type: "text" }]));
+    const afterClose: any = await withUuid<any>("00000000-0000-4000-8000-000000000011", () => client.newTable("after_close", [{ name: "value", field_type: "text" }]));
+    const afterCloseSaved = await client.exportProject("resident/0");
+    const afterCloseEntries = decodeEntries(new Uint8Array(afterCloseSaved.bytes));
+    const afterCloseManifest = JSON.parse(new TextDecoder().decode(afterCloseEntries.find(([path]) => path === "manifest.json")![1]));
+    if (afterCloseSaved.revision !== "resident/0" || afterCloseManifest.format_version !== 1) throw new Error("Close/New did not reset ordinary v1 export at resident/0");
     await client.closeProject();
     await expectClosed();
     await client.close();

@@ -1,12 +1,34 @@
 # Work #374 explicit-v3 acceptance seed
 
-Status: repair-v2 acceptance-only preparation, unqualified and not Ready. Current materialization base: `33b26e2a8d34593030118c53dbe79b6f8fdc6e0e`; reviewed predecessor: `72adac7526ec334c921e98b63ddd3e369b97a1ad` (INADEQUATE). The new local repair commit is recorded in the replacement package sidecar. Production remains STOP / seam HOLD.
+Status: Work #493 bounded eight-path acceptance repair over local candidate `6ed764735ad2bbd7be6a04a67eaaaf4d8e107817`. The earlier repair-v2 preparation record below is historical. This repair requires fresh exact-byte adequacy and serial candidate qualification; it does not grant behavioral PASS, final review, publication, or release existing HOLDs.
 
 Historical preparation record: The exact base is `34de067d5e4ff3813f27281e7140e14e8ffff8db` (tree `1f80379bbdf43385dc31c63eab3b51c605fdd13c`). The worktree was checked before editing: the seed files were local additions and no production source was modified. A bounded fixture/API `cargo check` passed after disabling the inherited `sccache` wrapper; no behavior tests, browser tests, heavy Cargo suites, GitHub writes, commit, push, PR, or merge were performed.
 
 The controlling contract is Work #374 amended ruling/comment `5920381363`. Keep the v1 18-file bridge unchanged. The explicit v3 selected export uses TWDPROJ1 framing and the exact 19-file `.roproj/v3` path order. The v3-origin marker applies to the complete catalogue and actual `OpenedProjection`, blocks ordinary-export downgrade, survives Bootstrap/Edit/Undo/Redo and failed replacement, and clears on successful New, Import, legacy replacement, or Close. This seed does not pick any additional durable formats or API/error contracts.
 
 The author-provided prior seed diff digest was `8fd9654e63643c6b5489a5e316aa07b52ed3d8fa1b621028363e09558f7e1eb5`. The initially available `git diff --binary` digest in this checkout was `ed6952fcd8b1d0a2bbfc9e3d483d4464ceb4f4bf80016d5105d370b103c0e605`; it did not include the untracked capture runner. The prior digest is retained as provenance but was not treated as proof that earlier repairs happened. All on-disk files were inspected directly. Preserve this seed's original base and additions; do not rebase it blindly. The user reports main later advanced to `33b26e2a8d34593030118c53dbe79b6f8fdc6e0e`, with only four Work #491 storage-test files changed from this base and no runtime/producer behavior change. Those storage files are outside this seed's allowlist. Recheck applicability at seed freeze; do not change the baseline or touch those files here.
+
+## Ordinary regression versus qualified capture
+
+Ordinary `cargo test --manifest-path packages/browser-client/runtime/Cargo.toml
+--locked --test v3_project_acceptance` runs every assertion in all sixteen native
+cases without writing artifacts when all runtime and compiled capture context
+is absent. This earns regression evidence only, never qualified capture credit.
+The output helper alone returns early; no test or behavioral assertion is skipped.
+
+The fresh-capture runner sets `TACHIKO_V3_ACCEPTANCE_CAPTURE_REQUIRED=1` and the
+runtime directory, exact head and run UUID. Both compiled identities must match.
+Any supplied context, partial compiled identity, malformed required flag, invalid
+path/head/UUID, or runtime/compiled mismatch fails closed. Pure fixture tests
+cover these branches without changing process environment. Capture still verifies
+the fresh lease, creates outputs exclusively, checks all sixteen cases and seals
+receipts with the unchanged eight members. The Worker Close/New trace now uses
+`after_close` and asserts ordinary v1 export at `resident/0` before Close.
+
+The unsafe-surface scanner inventory adds only the selected
+`tachiko_designer_project_export_v3` ABI; all rejection and macro rules remain
+unchanged. Function-local lint allowances explain the finite literal acceptance
+traces and shared helper visibility; no global suppression is introduced.
 
 ## Frozen fixture and independent oracle
 
