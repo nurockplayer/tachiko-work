@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import type { KeyedGroupedSumDefinitionInput } from "../src/runtime/protocol.ts";
 
 const CAPTURE_DIR = process.env.TACHIKO_V3_ACCEPTANCE_CAPTURE_DIR;
 const CANDIDATE_HEAD = process.env.TACHIKO_V3_ACCEPTANCE_CANDIDATE_HEAD;
@@ -36,7 +37,7 @@ const REQUIRED_CAPTURE_PROFILES = [
   "date-definition", "date-only", "definition-only", "neither",
   "legacy-ingress-date-only", "legacy-ingress-definition-only", "legacy-ingress-neither",
   "ordinary-date-only", "ordinary-definition-only", "ordinary-neither",
-  "constrained-text", "constrained-number", "boundary-fresh-65536", "boundary-fresh-65537-probe",
+  "constrained-text", "constrained-number", "constrained-nondefault-text", "constrained-nondefault-number", "boundary-fresh-65536", "boundary-fresh-65537-probe",
 ];
 
 function requireEnvironment(value: string | undefined, name: string): string {
@@ -49,7 +50,7 @@ function hex(bytes: Uint8Array): string {
 }
 
 async function verifyNativeCapture(): Promise<{
-  dateOnly: Uint8Array; dateDefinition: Uint8Array; mixedCsv: Uint8Array; constrainedText: Uint8Array; constrainedNumber: Uint8Array;
+  dateOnly: Uint8Array; dateDefinition: Uint8Array; mixedCsv: Uint8Array; constrainedText: Uint8Array; constrainedNumber: Uint8Array; constrainedNondefaultText: Uint8Array; constrainedNondefaultNumber: Uint8Array;
   boundaryAt: Uint8Array; boundaryOver: Uint8Array;
 }> {
   const dir = requireEnvironment(CAPTURE_DIR, "CANDIDATE_CAPTURE");
@@ -115,16 +116,19 @@ async function verifyNativeCapture(): Promise<{
   const dateDefinition = new Uint8Array(await readFile(join(dir, "date-definition.twd")));
   const constrainedText = new Uint8Array(await readFile(join(dir, "constrained-text.twd")));
   const constrainedNumber = new Uint8Array(await readFile(join(dir, "constrained-number.twd")));
+  const constrainedNondefaultText = new Uint8Array(await readFile(join(dir, "constrained-nondefault-text.twd")));
+  const constrainedNondefaultNumber = new Uint8Array(await readFile(join(dir, "constrained-nondefault-number.twd")));
   const boundaryAt = new Uint8Array(await readFile(join(dir, "boundary-fresh-65536.twd")));
   const boundaryOver = new Uint8Array(await readFile(join(dir, "boundary-fresh-65537-probe.twd")));
   const mixedCsv = new Uint8Array(await readFile(CSV_PATH));
-  return { dateOnly, dateDefinition, mixedCsv, constrainedText, constrainedNumber, boundaryAt, boundaryOver };
+  return { dateOnly, dateDefinition, mixedCsv, constrainedText, constrainedNumber, constrainedNondefaultText, constrainedNondefaultNumber, boundaryAt, boundaryOver };
 }
 
 test("actual Worker imports, explicitly exports and reopens every v3 profile", async ({ page }) => {
   const { mixedCsv } = await verifyNativeCapture();
   await page.goto("/");
   const results = await page.evaluate(async (args) => {
+    const DEFINITION_ID = args.definitionId;
     const modulePath: string = "/vendor/tachiko/experimental-client.js";
     const module = await import(modulePath) as {
       createExperimentalDesignerClient: () => any;
@@ -313,10 +317,10 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
         await assertLegacyGuard(client, state);
         if (profile.definition) {
           const definition = await client.createKeyedGroupedSum(state.revision, {
-            id: DEFINITION_ID, orders_schema: ids.schema, order_lookup_key_field: ids.fields[0],
-            order_quantity_field: ids.fields[2], products_schema: ids.schema,
-            product_key_field: ids.fields[0], product_category_field: ids.fields[1], product_price_field: ids.fields[3],
-          });
+            id: DEFINITION_ID, orders_schema: ids.schema, order_lookup_key_field: ids.fields[0]!,
+            order_quantity_field: ids.fields[2]!, products_schema: ids.schema,
+            product_key_field: ids.fields[0]!, product_category_field: ids.fields[1]!, product_price_field: ids.fields[3]!,
+          } satisfies KeyedGroupedSumDefinitionInput);
           state = { ...state, definition: true, catalogue: [DEFINITION_ID], revision: "resident/2" };
           equal(definition.publication.resulting_revision, state.revision, "definition publication revision changed");
           await assertCurrent(client, state);
@@ -427,7 +431,7 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
         assertOpened(secondOpen, final); await assertCurrent(client, final); await assertV3Guard(client, final);
         const secondReexport = await client.exportProjectV3("resident/0");
         assertV3(secondReexport.bytes, final);
-        if (profile.definition) await assertSummary(client, state.revision, 1200);
+        if (profile.definition) await assertSummary(client, final.revision, 1200);
         results.push(profile.name);
       } finally {
         await client.closeProject().catch(() => undefined);
@@ -435,16 +439,17 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
       }
     }
     return results;
-  }, { csv: Array.from(mixedCsv), profiles: PROFILES });
+  }, { definitionId: DEFINITION_ID, csv: Array.from(mixedCsv), profiles: PROFILES });
   expect(results).toEqual(PROFILES.map((profile) => profile.name));
 });
 
 test("Worker preserves typed failures and resets origin after replacement or close", async ({ page }) => {
-  const { dateOnly, dateDefinition, mixedCsv, constrainedText, constrainedNumber, boundaryAt, boundaryOver } = await verifyNativeCapture();
+  const { dateOnly, dateDefinition, mixedCsv, constrainedText, constrainedNumber, constrainedNondefaultText, constrainedNondefaultNumber, boundaryAt, boundaryOver } = await verifyNativeCapture();
   const legacyNeither = new Uint8Array(await readFile(join(SEED_ROOT, "legacy/neither.twd")));
   const legacyDefinitionOnly = new Uint8Array(await readFile(join(SEED_ROOT, "legacy/definition-only.twd")));
   await page.goto("/");
   const result = await page.evaluate(async (input) => {
+    const DEFINITION_ID = input.definitionId;
     const modulePath: string = "/vendor/tachiko/experimental-client.js";
     const module = await import(modulePath) as {
       createExperimentalDesignerClient: () => any;
@@ -486,7 +491,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     // and provide a fresh transferable buffer at every call site.
     const v3Master = Uint8Array.from(input.v3);
     const legacyNeitherMaster = Uint8Array.from(input.legacyNeither);
-    const constrainedMasters = [Uint8Array.from(input.constrainedText), Uint8Array.from(input.constrainedNumber)];
+    const constrainedMasters = [input.constrainedText, input.constrainedNumber, input.constrainedNondefaultText, input.constrainedNondefaultNumber].map((bytes) => Uint8Array.from(bytes));
     const boundaryAtMaster = Uint8Array.from(input.boundaryAt);
     const boundaryOverMaster = Uint8Array.from(input.boundaryOver);
     const dateDefinitionMaster = Uint8Array.from(input.dateDefinition);
@@ -771,6 +776,33 @@ test("Worker preserves typed failures and resets origin after replacement or clo
         await replayMatrixHistory(marked, openUuid);
       }
     }
+    // Each rejection starts with an independent marked mixed U=[A], R=[B].
+    // The second Import reaches the real install:true request: the public
+    // validation callback changes the selection only after a successful preview.
+    for (const operation of ["new", "import-preview", "import-install"] as const) {
+      const rejectedUuid = nextMatrixUuid();
+      await prepareMatrixResident(true, rejectedUuid);
+      const beforeRejected = await residentState();
+      if (operation === "new") {
+        await expectCode(() => client.newTable("rejected", [{ name: "value", field_type: "not-a-type" }]), "invalid_table_operation", "resident/3");
+      } else {
+        const selection = { column_types: [["text", "text", "number", "number", "date"]], extra_columns: [[]] };
+        let previewValidated = false;
+        if (operation === "import-preview") selection.column_types = [];
+        await expectCode(() => client.importSpreadsheet(
+          Uint8Array.from(input.mixedCsv).buffer, "csv", { delimiter: ",", header: true }, selection,
+          operation === "import-install" ? (candidate: any) => {
+            equal(candidate.opened.bootstrap.revision, "resident/0", "failed-install probe requires a real successful preview");
+            previewValidated = true;
+            selection.column_types = [];
+          } : undefined,
+        ), "invalid_tracker_operation", "resident/3");
+        equal(previewValidated, operation === "import-install", "Import rejection happened at the wrong preview/install phase");
+      }
+      await unchanged(beforeRejected, `rejected ${operation}`);
+      await checkMatrixResident(true, rejectedUuid, "2026-09-29", 4, "resident/3");
+      await replayMatrixHistory(true, rejectedUuid);
+    }
     occurrence = await client.observeOccurrence();
     const titleExpected = boundaryProjection("resident/0", [DEFINITION_ID]);
     titleExpected.bootstrap.title = "x".repeat(4096);
@@ -827,12 +859,12 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     await assertDateProjection(t3Opened, { dateValue: "2026-09-26", quantity: 4, catalogue: [], revision: "resident/0", occurrence: t3OpenUuid });
     await expectCode(() => client.exportProject("resident/0"), "unsupported_project", "resident/0");
     for (let index = 0; index < boundaryIds.length; index += 1) {
-      const id = boundaryIds[index];
+      const id = boundaryIds[index]!;
       const publication = await client.createKeyedGroupedSum(`resident/${index}`, {
-        id, orders_schema: `${boundaryPrefix}0002`, order_lookup_key_field: boundaryFieldIds[0],
-        order_quantity_field: boundaryFieldIds[2], products_schema: `${boundaryPrefix}0002`,
-        product_key_field: boundaryFieldIds[0], product_category_field: boundaryFieldIds[1], price_field: boundaryFieldIds[3],
-      });
+        id, orders_schema: `${boundaryPrefix}0002`, order_lookup_key_field: boundaryFieldIds[0]!,
+        order_quantity_field: boundaryFieldIds[2]!, products_schema: `${boundaryPrefix}0002`,
+        product_key_field: boundaryFieldIds[0]!, product_category_field: boundaryFieldIds[1]!, product_price_field: boundaryFieldIds[3]!,
+      } satisfies KeyedGroupedSumDefinitionInput);
       if (publication.publication.resulting_revision !== `resident/${index + 1}`) throw new Error(`Definition publication ${id} did not produce resident/${index + 1}`);
       await expectCode(() => client.exportProject(`resident/${index + 1}`), "unsupported_project", `resident/${index + 1}`);
     }
@@ -906,10 +938,10 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     await assertDateProjection(overSeed, { dateValue: "2026-09-26", quantity: 4, catalogue: [], revision: "resident/0", occurrence: overSeedUuid });
     for (let index = 0; index < overIds.length; index += 1) {
       const publication = await client.createKeyedGroupedSum(`resident/${index}`, {
-        id: overIds[index], orders_schema: `${boundaryPrefix}0002`, order_lookup_key_field: boundaryFieldIds[0],
-        order_quantity_field: boundaryFieldIds[2], products_schema: `${boundaryPrefix}0002`,
-        product_key_field: boundaryFieldIds[0], product_category_field: boundaryFieldIds[1], price_field: boundaryFieldIds[3],
-      });
+        id: overIds[index]!, orders_schema: `${boundaryPrefix}0002`, order_lookup_key_field: boundaryFieldIds[0]!,
+        order_quantity_field: boundaryFieldIds[2]!, products_schema: `${boundaryPrefix}0002`,
+        product_key_field: boundaryFieldIds[0]!, product_category_field: boundaryFieldIds[1]!, product_price_field: boundaryFieldIds[3]!,
+      } satisfies KeyedGroupedSumDefinitionInput);
       if (publication.publication.resulting_revision !== `resident/${index + 1}`) throw new Error("over-budget catalogue publication revision changed");
     }
     await client.editDate("resident/16", { entity: boundaryEntityIds[0], field: boundaryFieldIds[4] }, "2026-09-28");
@@ -1053,12 +1085,14 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     await client.close();
     return { legacy: legacyOpen.bootstrap.revision, newDocument: newOpen.bootstrap.revision, imported: imported.opened.bootstrap.revision, afterClose: afterClose.bootstrap.revision };
   }, {
+    definitionId: DEFINITION_ID,
     v3: Array.from(dateOnly),
     dateDefinition: Array.from(dateDefinition),
     legacyNeither: Array.from(legacyNeither),
     legacyDefinitionOnly: Array.from(legacyDefinitionOnly),
     mixedCsv: Array.from(mixedCsv),
     constrainedText: Array.from(constrainedText), constrainedNumber: Array.from(constrainedNumber),
+    constrainedNondefaultText: Array.from(constrainedNondefaultText), constrainedNondefaultNumber: Array.from(constrainedNondefaultNumber),
     boundaryAt: Array.from(boundaryAt), boundaryOver: Array.from(boundaryOver),
   });
   expect(result.legacy).toBe("resident/0");

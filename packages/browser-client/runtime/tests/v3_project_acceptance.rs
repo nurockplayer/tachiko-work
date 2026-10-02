@@ -685,7 +685,7 @@ fn imported_base(date: bool, occurrence: &str) -> (DesignerRuntime, Document, St
         .map(|value| (*value).to_owned())
         .collect::<Vec<_>>();
     let mut expected = fixture_document(DOCUMENT_ID.into(), SCHEMA_ID, &fields, &rows, date);
-    set_first_date(&mut expected, "2026-09-28", date);
+    set_first_date(&mut expected, "2026-09-26", date);
     assert_opened_fixture(&imported.opened, &expected);
     (runtime, expected, ROW_IDS[0].to_owned())
 }
@@ -711,10 +711,6 @@ fn prepared(date: bool, definition: bool) -> (DesignerRuntime, Document, String,
     );
     set_first_date(&mut expected, "2026-09-28", date);
     let field_ids = FIELD_IDS
-        .iter()
-        .map(|value| (*value).to_owned())
-        .collect::<Vec<_>>();
-    let row_ids = ROW_IDS
         .iter()
         .map(|value| (*value).to_owned())
         .collect::<Vec<_>>();
@@ -1332,13 +1328,12 @@ fn exact_full_catalogue_opened_projection_boundary_and_plus_one() {
         FULL_OPENED_PROJECTION_LIMIT,
         FULL_OPENED_PROJECTION_LIMIT_PLUS_ONE,
     ] {
-        let mut slot = None;
         let (mut runtime, mut expected, entity) = imported_base(true, ORIGINAL);
         assert_live_fixture(&mut runtime, &expected, ORIGINAL, "resident/0");
         let seed = selected_v3_export(&runtime, "resident/0")
             .expect("small imported Date-only project must allow selected v3 export");
         assert_eq!(saved_document(&seed.bytes), expected);
-        slot = Some(runtime);
+        let mut slot = Some(runtime);
         close_project(&mut slot);
         assert!(
             slot.is_none(),
@@ -1557,98 +1552,15 @@ fn replace_v3_file(bytes: &[u8], path: &str, replacement: Vec<u8>) -> Vec<u8> {
     frame_bundle(&entries)
 }
 
-fn invalid_definition_transfers(valid: &[u8]) -> Vec<(String, Vec<u8>)> {
+fn invalid_definition_transfers(valid: &[u8]) -> Vec<(&'static str, Vec<u8>)> {
     let original = opaque_bundle_entries(valid)
         .into_iter()
         .find(|(path, _)| path == "definitions.json")
         .unwrap()
         .1;
-    let original = String::from_utf8(original).unwrap();
-    let replace_once = |source: &str, from: &str, to: &str| {
-        assert_eq!(
-            source.matches(from).count(),
-            1,
-            "mutator must target one canonical member"
-        );
-        source.replacen(from, to, 1).into_bytes()
-    };
-    let mut cases = vec![
-        (
-            "empty definition id",
-            replace_once(
-                &original,
-                r#""id": "acceptance-orders-summary""#,
-                r#""id": """#,
-            ),
-        ),
-        (
-            "omitted definition id",
-            replace_once(
-                &original,
-                "    \"id\": \"acceptance-orders-summary\",\n",
-                "",
-            ),
-        ),
-        (
-            "missing schema reference",
-            replace_once(
-                &original,
-                r#"    "orders": {
-      "schema": "import_00000000-0000-4000-8000-000000000001_0002""#,
-                r#"    "orders": {
-      "schema": "missing-schema""#,
-            ),
-        ),
-        (
-            "missing field reference",
-            replace_once(
-                &original,
-                r#""lookup_key_field": "import_00000000-0000-4000-8000-000000000003""#,
-                r#""lookup_key_field": "missing-field""#,
-            ),
-        ),
-        (
-            "wrong bound field type",
-            replace_once(
-                &original,
-                r#""quantity_field": "import_00000000-0000-4000-8000-000000000005""#,
-                r#""quantity_field": "import_00000000-0000-4000-8000-000000000007""#,
-            ),
-        ),
-    ];
-    let lookup_with_comma =
-        "      \"lookup_key_field\": \"import_00000000-0000-4000-8000-000000000003\",\n";
-    let lookup_without_comma = lookup_with_comma.replace(",\n", "\n");
-    let quantity_line =
-        "      \"quantity_field\": \"import_00000000-0000-4000-8000-000000000005\"\n";
-    let missing_binding = replace_once(
-        &replace_once(&original, lookup_with_comma, &lookup_without_comma),
-        quantity_line,
-        "",
-    );
-    cases.push(("missing binding member", missing_binding));
-    let record = original
-        .strip_prefix("[\n")
-        .unwrap()
-        .strip_suffix("]\n")
-        .unwrap()
-        .trim_end();
-    cases.push((
-        "duplicate definition record",
-        format!("[\n{record},\n{record}\n]\n").into_bytes(),
-    ));
-    cases.push((
-        "unknown catalogue item shape",
-        b"[\n  \"not-a-definition-record\"\n]\n".to_vec(),
-    ));
-    cases
+    acceptance_fixtures::malformed_definition_payloads(std::str::from_utf8(&original).unwrap())
         .into_iter()
-        .map(|(name, body)| {
-            (
-                name.to_owned(),
-                replace_v3_file(valid, "definitions.json", body),
-            )
-        })
+        .map(|(name, body)| (name, replace_v3_file(valid, "definitions.json", body)))
         .collect()
 }
 
@@ -1768,7 +1680,7 @@ fn replay_history_after_candidate(
         );
         if expected
             .keyed_grouped_sum_definitions
-            .contains_key(DEFINITION)
+            .contains_key(&KeyedGroupedSumDefinitionId::from(DEFINITION))
         {
             summary(runtime, if quantity == 4.0 { 800.0 } else { 1200.0 });
         }
@@ -1877,7 +1789,7 @@ fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() 
         (document, acceptance_fixtures::frame_v3(&tree))
     };
     let (title_at_document, title_at) = title_document(4_096);
-    let (title_over_document, title_over) = title_document(4_097);
+    let (_, title_over) = title_document(4_097);
     invalid.push((
         "over title resource profile",
         title_over,
@@ -1995,12 +1907,66 @@ fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() 
                 }
                 if expected
                     .keyed_grouped_sum_definitions
-                    .contains_key(DEFINITION)
+                    .contains_key(&KeyedGroupedSumDefinitionId::from(DEFINITION))
                 {
                     summary(slot.as_mut().unwrap(), 800.0);
                 }
                 replay_history_after_candidate(&mut slot, &mut expected, &occurrence, marked);
             }
+        }
+
+        // Failed New uses the actual replacement request. Import has no native
+        // public slot adapter: candidate failure is checked here; actual preview
+        // and install:true replacement preservation belongs to the Worker case.
+        for operation in ["New", "ImportCandidateOnly"] {
+            counter += 1;
+            let occurrence = format!("00000000-0000-4000-8000-{counter:012x}");
+            let (mut slot, mut expected) = historied_resident(marked, &occurrence);
+            let before = slot.as_ref().unwrap().observe_occurrence();
+            let error = if operation == "New" {
+                slot.as_mut()
+                    .unwrap()
+                    .handle(DesignerRequest::NewTable {
+                        occurrence_id: FRESH.into(),
+                        name: "rejected".into(),
+                        columns: vec![tachiko_designer_runtime::NewTableColumnInput {
+                            name: "value".into(),
+                            field_type: "not-a-type".into(),
+                        }],
+                    })
+                    .expect_err("unsupported New field type must fail before replacement")
+            } else {
+                let workbook = import_csv(
+                    CSV,
+                    &ImportOptions {
+                        delimiter: ',',
+                        header: true,
+                    },
+                )
+                .unwrap();
+                let selection = ImportSelection {
+                    column_types: vec![],
+                    extra_columns: vec![vec![]],
+                };
+                import_workbook(&workbook, &selection, FRESH)
+                    .err()
+                    .expect("invalid Import selection cannot construct a candidate")
+            };
+            let code = if operation == "New" {
+                "invalid_table_operation"
+            } else {
+                "invalid_tracker_operation"
+            };
+            assert_eq!(error.failure_projection("resident/3").code, code);
+            assert_eq!(slot.as_ref().unwrap().observe_occurrence(), before);
+            assert_live_fixture(slot.as_mut().unwrap(), &expected, &occurrence, "resident/3");
+            summary(slot.as_mut().unwrap(), 800.0);
+            if marked {
+                assert_ordinary_v3_export_refused(slot.as_mut().unwrap());
+            } else {
+                assert_legacy_origin(slot.as_mut().unwrap(), &expected, Some(2));
+            }
+            replay_history_after_candidate(&mut slot, &mut expected, &occurrence, marked);
         }
 
         // Successful Inspect preserves the complete resident and history.
@@ -2289,7 +2255,15 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
         &import_rows,
         true,
     );
-    set_first_date(&mut expected_import, "2026-09-26", true);
+    expected_import
+        .entities
+        .get_mut(import_rows[0].as_str())
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from(import_fields[4].as_str()),
+            Value::Date(Date::parse("2026-09-26").unwrap()),
+        );
     assert_opened_fixture(&imported.opened, &expected_import);
     // import_workbook has no public resident-slot API. This assignment models
     // the host-owned candidate install; Worker importSpreadsheet covers the
@@ -2452,97 +2426,57 @@ fn fresh_candidate_ordinary_legacy_exports_remain_v1_v2_compatible() {
 
 #[test]
 fn candidate_inspect_and_open_refuse_valid_v3_text_and_number_constraints() {
-    for (name, field_index) in [("constrained-text", 1), ("constrained-number", 2)] {
-        let input = acceptance_fixtures::constrained_v3_transfer(field_index);
+    let profiles = [
+        (
+            "constrained-text",
+            acceptance_fixtures::constrained_v3_transfer(1),
+        ),
+        (
+            "constrained-number",
+            acceptance_fixtures::constrained_v3_transfer(2),
+        ),
+        (
+            "constrained-nondefault-text",
+            acceptance_fixtures::nondefault_constrained_v3_transfer(1),
+        ),
+        (
+            "constrained-nondefault-number",
+            acceptance_fixtures::nondefault_constrained_v3_transfer(2),
+        ),
+    ];
+    let mut counter = 400;
+    for (name, input) in profiles {
         capture_candidate_output(name, &input);
-
-        let inspect_error = inspect_project(&input)
-            .expect_err("valid v3 constraint input is outside the bounded runtime profile");
-        assert_eq!(
-            inspect_error.failure_projection("resident/0").code,
-            "unsupported_project"
-        );
-
-        let (source, mut expected, entity, quantity) = prepared(true, true);
-        let bytes = selected_v3_export(&source, "resident/2")
-            .expect("constraint preservation source is explicitly v3");
-        let mut slot = None;
-        open_project(&mut slot, &bytes.bytes, FRESH)
-            .expect("constraint preservation source opens as v3");
-        let runtime = slot.as_mut().unwrap();
-        assert_ordinary_v3_export_refused(runtime);
-        edit(
-            runtime,
-            &entity,
-            FIELD_IDS[4],
-            ScalarEditInput::Date {
-                value: "2026-09-29".into(),
-            },
-        );
-        set_first_date(&mut expected, "2026-09-29", true);
-        edit(
-            runtime,
-            &entity,
-            &quantity,
-            ScalarEditInput::Number { input: "6".into() },
-        );
-        let revision = runtime.observe_occurrence().revision;
-        runtime
-            .handle(DesignerRequest::Undo {
-                expected_revision: revision,
-            })
-            .expect("leave a real quantity Redo entry before rejected replacement");
-        assert_ordinary_v3_export_refused(runtime);
-        let before = runtime.observe_occurrence();
-        let before_projection = observed_opened(runtime);
-        let open_error = open_project(&mut slot, &input, FRESH)
-            .expect_err("valid v3 constraints must be refused before replacing a live occurrence");
-        assert_eq!(
-            open_error.failure_projection(&before.revision).code,
-            "unsupported_project"
-        );
-        let runtime = slot.as_mut().unwrap();
-        assert_eq!(runtime.observe_occurrence(), before);
-        assert_eq!(observed_opened(runtime), before_projection);
-        assert_ordinary_v3_export_refused(runtime);
-        summary(runtime, 800.0);
-
-        let redo = runtime
-            .handle(DesignerRequest::Redo {
-                expected_revision: before.revision.clone(),
-            })
-            .expect("failed constrained replacement preserves the original Redo entry");
-        assert!(matches!(redo, DesignerResponse::Published(_)));
-        assert_eq!(
-            observed_opened(runtime).table.rows[0].fields[2].stored,
-            Some(StoredValueProjection::Number { value: 6.0 })
-        );
-        assert_ordinary_v3_export_refused(runtime);
-        summary(runtime, 1200.0);
-        let revision = runtime.observe_occurrence().revision;
-        runtime
-            .handle(DesignerRequest::Undo {
-                expected_revision: revision,
-            })
-            .expect("the quantity inverse remains usable after rejected replacement");
-        assert_ordinary_v3_export_refused(runtime);
-        summary(runtime, 800.0);
-        let revision = runtime.observe_occurrence().revision;
-        runtime
-            .handle(DesignerRequest::Undo {
-                expected_revision: revision,
-            })
-            .expect("the original Date Undo entry remains usable after rejected replacement");
-        assert_ordinary_v3_export_refused(runtime);
-        summary(runtime, 800.0);
-        let after_date_undo = observed_opened(runtime);
-        assert_eq!(
-            after_date_undo.table.rows[0].fields[4].stored,
-            Some(StoredValueProjection::Date {
-                value: Date::parse("2026-09-28").unwrap()
-            })
-        );
-        assert_eq!(after_date_undo.bootstrap.collections.len(), 1);
+        for marked in [false, true] {
+            for operation in ["Inspect", "Open"] {
+                counter += 1;
+                let occurrence = format!("00000000-0000-4000-8000-{counter:012x}");
+                let (mut slot, mut expected) = historied_resident(marked, &occurrence);
+                let before = slot.as_ref().unwrap().observe_occurrence();
+                assert_eq!(before.revision, "resident/3");
+                let error = if operation == "Inspect" {
+                    inspect_project(&input).expect_err("all fields, including non-default unbound fields, must have None constraints")
+                } else {
+                    open_project(&mut slot, &input, FRESH).expect_err(
+                        "valid storage constraints are outside the bounded runtime profile",
+                    )
+                };
+                assert_eq!(
+                    error.failure_projection("resident/3").code,
+                    "unsupported_project",
+                    "{name} {operation}"
+                );
+                assert_eq!(slot.as_ref().unwrap().observe_occurrence(), before);
+                assert_live_fixture(slot.as_mut().unwrap(), &expected, &occurrence, "resident/3");
+                summary(slot.as_mut().unwrap(), 800.0);
+                if marked {
+                    assert_ordinary_v3_export_refused(slot.as_mut().unwrap());
+                } else {
+                    assert_legacy_origin(slot.as_mut().unwrap(), &expected, Some(2));
+                }
+                replay_history_after_candidate(&mut slot, &mut expected, &occurrence, marked);
+            }
+        }
     }
 }
 
@@ -2685,6 +2619,28 @@ fn frozen_codec_and_bridge_profile_controls() {
             !date && !definition
         );
         if !date && !definition {
+            let bridge = runtime.export_canonical_tree(&revision).unwrap();
+            let expected_tree = encode_roproj_v1(&document).unwrap();
+            let expected_paths = std::iter::once("manifest.json".to_owned())
+                .chain(std::iter::once("schemas.json".to_owned()))
+                .chain((0..16).map(|index| format!("entities/{index:x}.jsonl")))
+                .collect::<Vec<_>>();
+            let bridge_files = opaque_bundle_entries(&bridge.bytes);
+            assert_eq!(
+                bridge_files
+                    .iter()
+                    .map(|(path, _)| path.clone())
+                    .collect::<Vec<_>>(),
+                expected_paths
+            );
+            assert_eq!(
+                bridge_files,
+                expected_tree
+                    .files()
+                    .iter()
+                    .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
+                    .collect::<Vec<_>>()
+            );
             let portable = runtime.export_portable_ro(&revision).unwrap();
             tachiko_designer_runtime::verify_portable_ro(&portable.bytes).unwrap();
             let mut slot = None;

@@ -1,6 +1,8 @@
 # Work #374 explicit-v3 acceptance seed
 
-Status: local acceptance-only preparation, unqualified and not Ready. The exact base is `34de067d5e4ff3813f27281e7140e14e8ffff8db` (tree `1f80379bbdf43385dc31c63eab3b51c605fdd13c`). The worktree was checked before editing: the seed files were local additions and no production source was modified. A bounded fixture/API `cargo check` passed after disabling the inherited `sccache` wrapper; no behavior tests, browser tests, heavy Cargo suites, GitHub writes, commit, push, PR, or merge were performed.
+Status: repair-v2 acceptance-only preparation, unqualified and not Ready. Current materialization base: `33b26e2a8d34593030118c53dbe79b6f8fdc6e0e`; reviewed predecessor: `72adac7526ec334c921e98b63ddd3e369b97a1ad` (INADEQUATE). The new local repair commit is recorded in the replacement package sidecar. Production remains STOP / seam HOLD.
+
+Historical preparation record: The exact base is `34de067d5e4ff3813f27281e7140e14e8ffff8db` (tree `1f80379bbdf43385dc31c63eab3b51c605fdd13c`). The worktree was checked before editing: the seed files were local additions and no production source was modified. A bounded fixture/API `cargo check` passed after disabling the inherited `sccache` wrapper; no behavior tests, browser tests, heavy Cargo suites, GitHub writes, commit, push, PR, or merge were performed.
 
 The controlling contract is Work #374 amended ruling/comment `5920381363`. Keep the v1 18-file bridge unchanged. The explicit v3 selected export uses TWDPROJ1 framing and the exact 19-file `.roproj/v3` path order. The v3-origin marker applies to the complete catalogue and actual `OpenedProjection`, blocks ordinary-export downgrade, survives Bootstrap/Edit/Undo/Redo and failed replacement, and clears on successful New, Import, legacy replacement, or Close. This seed does not pick any additional durable formats or API/error contracts.
 
@@ -8,7 +10,7 @@ The author-provided prior seed diff digest was `8fd9654e63643c6b5489a5e316aa07b5
 
 ## Frozen fixture and independent oracle
 
-`fixtures/mixed.csv` is the existing 100-byte source. The frozen expected importer identity is Document `import_00000000-0000-4000-8000-000000000001_0001`; Schema `_0002`; fields `_0003` through `_0007`; entities `_0008` and `_0009`. The complete `import_..._` prefix is part of every identity. The expected title is `Imported workbook`; collection/row keys are `sheet_1` and `sheet_1_row_1/2`; all fields are optional and unconstrained. Types are Text, Text, Number, Number, then Date or Text by profile. Literal cell values are PEN/Stationery/4/200/2026-09-28 and NOTE/Paper/5/200/2026-09-27. The full keyed-sum identity and Orders/Products schema and field bindings are literal. Summary results are Paper=1000 and Stationery=800 at quantity 4, 1200 at quantity 6, and 1400 at quantity 7. Three separately hashed immutable legacy `.twd` controls remain under `fixtures/legacy/`.
+`fixtures/mixed.csv` is the existing 100-byte source. The frozen expected importer identity is Document `import_00000000-0000-4000-8000-000000000001_0001`; Schema `_0002`; fields `_0003` through `_0007`; entities `_0008` and `_0009`. The complete `import_..._` prefix is part of every identity. The expected title is `Imported workbook`; collection/row keys are `sheet_1` and `sheet_1_row_1/2`; all fields are optional and unconstrained. Types are Text, Text, Number, Number, then Date or Text by profile. Fresh import starts at PEN/Stationery/4/200/2026-09-26; the real Date/Text edit changes 26 → 28. Prepared literal cell values are PEN/Stationery/4/200/2026-09-28 and NOTE/Paper/5/200/2026-09-27. The full keyed-sum identity and Orders/Products schema and field bindings are literal. Summary results are Paper=1000 and Stationery=800 at quantity 4, 1200 at quantity 6, and 1400 at quantity 7. Three separately hashed immutable legacy `.twd` controls remain under `fixtures/legacy/`.
 
 ## Criterion-to-case inventory
 
@@ -54,17 +56,18 @@ bash acceptance/date-definition-save-v3/run-native-capture.sh
 That runner records its fresh capture path in output. After native completion, export the kit from that same exact candidate commit into the seed checkout, using a clean candidate source checkout as required by the exporter:
 
 ```sh
-bash scripts/export-experimental-designer-client.sh /tmp/tachiko-work-v3-acceptance-prep-20261001/examples/experimental-designer-client/vendor/tachiko
+bash scripts/export-experimental-designer-client.sh "${PWD}/examples/experimental-designer-client/vendor/tachiko"
 TACHIKO_V3_ACCEPTANCE_CAPTURE_DIR=<native-capture-path> bash acceptance/date-definition-save-v3/run-worker-acceptance.sh
 ```
 
-Only after those fresh native and Worker results, copy this reader source into the pinned historical reader checkout and run its exact standalone manifest:
+Only after those fresh native and Worker results, copy `historical_reader_v3.rs` to `<historical-checkout>/crates/storage/tests/v3_candidate_unsupported.rs` and `verify-capture-seal.mjs` beside it. Use a fresh checkout pinned to `518aaa55e046a4e4676b4d5e05d8189c4c6343fe`. Run its exact standalone manifest:
 
 ```sh
 TACHIKO_V3_LEGACY_INPUT_DIR=<seed-path>/fixtures \
 TACHIKO_V3_ACCEPTANCE_CAPTURE_DIR=<native-capture-path> \
 TACHIKO_V3_ACCEPTANCE_CANDIDATE_HEAD=<exact-40-hex-candidate-head> \
 TACHIKO_V3_ACCEPTANCE_RUN_ID=<native-capture-run-id> \
+TACHIKO_V3_ACCEPTANCE_KIT_DIR=<candidate-checkout>/examples/experimental-designer-client/vendor/tachiko \
 CARGO_BUILD_JOBS=1 cargo test --manifest-path <historical-checkout>/crates/storage/Cargo.toml --locked \
   --test v3_candidate_unsupported -- --test-threads=1
 ```
@@ -78,3 +81,18 @@ No candidate producer method or Worker method exists on this base. Consequently 
 Fresh review repair status: the complete two-origin × candidate-operation preservation matrix and the other cited source-level blockers have now been addressed in the local acceptance additions. This has not received a fresh independent adequacy review. The Worker browser and native capture lanes have not run. Lightweight formatting/type/shell checks are preparation checks only and confer no behavioral result.
 
 Changed scope is acceptance-only: `SEED.md`, `SEED.SHA256SUMS`, the native and browser acceptance tests/config, the fixture API check and helper, historical reader, and two acceptance runner scripts. The immutable CSV and legacy fixtures are retained byte-for-byte. No product/runtime source, production contract, Work #491 storage test, browser-suite execution, heavy Cargo suite, or candidate behavior evidence was changed/run here.
+
+## Independent review repair, 2026-10-02
+
+The independent review of predecessor `72adac...` found ten concrete harness gaps. This repair preserves the original package/commit as provenance and addresses those findings without product changes:
+
+- Native compilation: typed definition-map keys, homogeneous static vector labels, UTF-8 intermediate mutation, frozen actual field-ID anchors, removed unused bindings. The unedited import oracle is 26; the new Import reset oracle uses the new occurrence's rows/fields.
+- Actual Worker: both serialized callbacks receive and locally bind the definition ID; all publication inputs satisfy the real `KeyedGroupedSumDefinitionInput`, including `product_price_field`; final fresh-reopen summary expects `resident/0`. Stored products bindings retain `price_field`.
+- Rejected New and Import: native New uses the real request on each origin's U=[A], R=[B]. Native Import candidate construction has no resident slot adapter and earns no replacement-integration credit. Worker New, Import preview failure, and Import install failure each start from independent marked mixed U=[A], R=[B], assert exact typed code/revision, full occurrence/projection/catalogue/origin preservation, and replay both original stacks. The install test uses the existing public validation callback after a successful real preview to invalidate the next install:true selection; it does not mock product semantics.
+- None-only capability: both TextLiteralSet and NumberInclusiveRange are tested on the default schema and in a second empty, non-default schema, unbound to saved definitions. All four inputs are valid v3 storage. Native and Worker separately exercise Inspect and failed Open on both resident origins with complete preservation/history checks.
+- Frozen bridge: successful canonical-v1 export checks exactly eighteen paths and every returned byte against the independent literal document encoded by the frozen v1 codec. Existing project-transfer and external-consumer bridge journeys remain required; this does not replace them.
+- Historical seal: `verify-capture-seal.mjs` checks all thirty-two native artifact files, exact native/Worker completion inventories, completion→native-result/log hashes, receipts, and actual same-commit kit inventory/hashes. The historical Rust target invokes the frozen checker and consumes the verified in-memory snapshots. It retains exact typed old-reader unsupported-version refusal. No new product dependency is introduced. The historical lane consumes native captures; separate Worker export artifacts are not persisted.
+
+Preparation-only checks on actual current interfaces: the full native target reports only absent `export_project_v3` (E0599), with no warnings; the bounded fixture target passes three tests (all eight definition vectors hit their specific intended representation/semantic gate, four storage-valid constraints, real import26/new occurrence IDs and existing rejection codes); strict standalone TypeScript passes using cached pnpm11.25.0 and existing dependencies. Ten synthetic seal controls pass, including changed artifact/receipt bytes and broken native/log/kit links. These synthetic fixtures confer no producer/historical behavior credit. Shell syntax, Rust formatting, source/fixture hashes and diff checks are preparation checks.
+
+One bounded serial native compile/fixture group was run, with a cached final compile recheck after removal of the unused binding. No WASM build, actual browser group, native selected-v3 capture, pinned historical-reader execution, broad/heavy delivery group or second heavy group was run. The selected Rust/Worker product APIs remain missing and all their behavioral proofs remain NOTRUN. A fresh independent adequacy verdict is required on the exact replacement commit. This repair does not grant Ready or release HOLD.

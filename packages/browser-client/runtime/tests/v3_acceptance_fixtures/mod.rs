@@ -126,6 +126,46 @@ pub fn constrained_v3_transfer(field_index: usize) -> Vec<u8> {
     frame_v3(&encode_roproj_v3(&constrained_v3_document(field_index)).unwrap())
 }
 
+/// Put the sole non-None constraint outside the default table and all saved
+/// definition bindings. The empty extra schema is valid storage, not a resource
+/// or missing-reference refusal vector.
+pub fn nondefault_constrained_v3_document(field_index: usize) -> Document {
+    let mut document = constrained_v3_document(field_index);
+    let source = document
+        .schemas
+        .get_mut(&SchemaId::from(SCHEMA_ID))
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from(FIELD_IDS[field_index]))
+        .unwrap();
+    let constraint = std::mem::replace(&mut source.constraint, FieldConstraint::None);
+    let field_type = source.field_type.clone();
+    let id = SchemaId::from("zz_acceptance_unbound_schema");
+    let field_id = FieldId::from("zz_acceptance_unbound_field");
+    document.schemas.insert(
+        id.clone(),
+        Schema {
+            id,
+            key: SchemaKey::from("zz_unused"),
+            fields: BTreeMap::from([(
+                field_id.clone(),
+                FieldDefinition {
+                    id: field_id,
+                    key: FieldKey::from("unused"),
+                    field_type,
+                    required: false,
+                    constraint,
+                },
+            )]),
+        },
+    );
+    document
+}
+
+pub fn nondefault_constrained_v3_transfer(field_index: usize) -> Vec<u8> {
+    frame_v3(&encode_roproj_v3(&nondefault_constrained_v3_document(field_index)).unwrap())
+}
+
 pub fn frame_v3(tree: &CanonicalRoProjectV3) -> Vec<u8> {
     let mut bytes = b"TWDPROJ1".to_vec();
     bytes.extend_from_slice(&u32::try_from(tree.files().len()).unwrap().to_le_bytes());
@@ -149,4 +189,83 @@ pub fn open_existing_api(
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
     open_project(slot, bytes, occurrence_id)
+}
+
+/// Mutate exactly one canonical definition member per vector. These literal
+/// anchors are shared with the existing-API fixture validation target.
+pub fn malformed_definition_payloads(original: &str) -> Vec<(&'static str, Vec<u8>)> {
+    let replace_once = |source: &str, from: &str, to: &str| {
+        assert_eq!(
+            source.matches(from).count(),
+            1,
+            "mutator must target one canonical member"
+        );
+        source.replacen(from, to, 1).into_bytes()
+    };
+    let mut cases = vec![
+        (
+            "empty definition id",
+            replace_once(
+                original,
+                r#""id": "acceptance-orders-summary""#,
+                r#""id": """#,
+            ),
+        ),
+        (
+            "omitted definition id",
+            replace_once(original, "    \"id\": \"acceptance-orders-summary\",\n", ""),
+        ),
+        (
+            "missing schema reference",
+            replace_once(
+                original,
+                r#"    "orders": {
+      "schema": "import_00000000-0000-4000-8000-000000000001_0002""#,
+                r#"    "orders": {
+      "schema": "missing-schema""#,
+            ),
+        ),
+        (
+            "missing field reference",
+            replace_once(
+                original,
+                &format!("\"lookup_key_field\": \"{}\"", FIELD_IDS[0]),
+                r#""lookup_key_field": "missing-field""#,
+            ),
+        ),
+        (
+            "wrong bound field type",
+            replace_once(
+                original,
+                &format!("\"quantity_field\": \"{}\"", FIELD_IDS[2]),
+                &format!("\"quantity_field\": \"{}\"", FIELD_IDS[4]),
+            ),
+        ),
+    ];
+    let lookup_with_comma = format!("      \"lookup_key_field\": \"{}\",\n", FIELD_IDS[0]);
+    let lookup_without_comma = lookup_with_comma.replace(",\n", "\n");
+    let quantity_line = format!("      \"quantity_field\": \"{}\"\n", FIELD_IDS[2]);
+    let without_comma = String::from_utf8(replace_once(
+        original,
+        &lookup_with_comma,
+        &lookup_without_comma,
+    ))
+    .unwrap();
+    let missing_binding = replace_once(&without_comma, &quantity_line, "");
+    cases.push(("missing binding member", missing_binding));
+    let record = original
+        .strip_prefix("[\n")
+        .unwrap()
+        .strip_suffix("]\n")
+        .unwrap()
+        .trim_end();
+    cases.push((
+        "duplicate definition record",
+        format!("[\n{record},\n{record}\n]\n").into_bytes(),
+    ));
+    cases.push((
+        "unknown catalogue item shape",
+        b"[\n  \"not-a-definition-record\"\n]\n".to_vec(),
+    ));
+    cases
 }

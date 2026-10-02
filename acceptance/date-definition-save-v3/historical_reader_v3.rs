@@ -2,7 +2,8 @@
 //! have been freshly captured by the native producer acceptance target.
 use std::{
     collections::BTreeMap,
-    io::{Cursor, Read},
+    io::{Cursor, Read, Write},
+    process::{Command, Stdio},
 };
 
 use tachiko_semantic_core::{
@@ -193,6 +194,66 @@ fn v2_reader_order(entries: &[(String, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
+// No new Rust/product dependency: Node's built-in SHA-256 checks the complete
+// seal and kit. Return decoded snapshots; do not reopen a path after verification.
+fn sealed_capture_artifacts(
+    capture_root: &str,
+    candidate_head: &str,
+    run_id: &str,
+) -> BTreeMap<String, Vec<u8>> {
+    let kit_root = std::env::var("TACHIKO_V3_ACCEPTANCE_KIT_DIR").expect(
+        "NOTRUN_MISSING_KIT_DIRECTORY: historical qualification requires the exact exported kit",
+    );
+    let mut child = Command::new("node")
+        .args([
+            "--input-type=module",
+            "-",
+            capture_root,
+            candidate_head,
+            run_id,
+            &kit_root,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("NOTRUN_MISSING_NODE: seal verification needs Node built-ins");
+    let script = format!(
+        "{}\nprocess.stdout.write(JSON.stringify(verifyCaptureSeal(...process.argv.slice(2))));\n",
+        include_str!("verify-capture-seal.mjs")
+    );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "capture seal failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let verified: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(verified["candidate_head"].as_str(), Some(candidate_head));
+    assert_eq!(verified["run_id"].as_str(), Some(run_id));
+    verified["artifacts"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(name, value)| {
+            let hex = value.as_str().unwrap();
+            assert_eq!(hex.len() % 2, 0);
+            let bytes = hex
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|chunk| u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap())
+                .collect();
+            (name.clone(), bytes)
+        })
+        .collect()
+}
+
 #[test]
 fn historical_reader_controls_are_rechecked_and_candidate_v3_is_truthfully_unsupported() {
     let input_root = std::env::var("TACHIKO_V3_LEGACY_INPUT_DIR").unwrap();
@@ -208,46 +269,15 @@ fn historical_reader_controls_are_rechecked_and_candidate_v3_is_truthfully_unsup
     let capture_root = std::env::var("TACHIKO_V3_ACCEPTANCE_CAPTURE_DIR").unwrap();
     let candidate_head = std::env::var("TACHIKO_V3_ACCEPTANCE_CANDIDATE_HEAD").unwrap();
     let run_id = std::env::var("TACHIKO_V3_ACCEPTANCE_RUN_ID").unwrap();
-    assert_eq!(candidate_head.len(), 40);
-    let lease: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(format!("{capture_root}/capture-lease.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(lease["state"].as_str(), Some("worker_complete"));
-    assert_eq!(
-        lease["candidate_head"].as_str(),
-        Some(candidate_head.as_str())
-    );
-    assert_eq!(lease["run_id"].as_str(), Some(run_id.as_str()));
-    let completion: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(format!("{capture_root}/worker-completion.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        completion["status"].as_str(),
-        Some("native_and_worker_cases_passed")
-    );
-    assert_eq!(
-        completion["candidate_head"].as_str(),
-        Some(candidate_head.as_str())
-    );
-    assert_eq!(completion["capture_run_id"].as_str(), Some(run_id.as_str()));
-    assert_eq!(completion["required_worker_case_count"].as_u64(), Some(2));
-    assert!(
-        completion["kit_artifact_manifest_sha256"]
-            .as_str()
-            .is_some_and(|digest| digest.len() == 64)
-    );
+    let artifacts = sealed_capture_artifacts(&capture_root, &candidate_head, &run_id);
     for (name, date, definition, expected_version) in [
         ("ordinary-date-only", true, false, 2),
         ("ordinary-definition-only", false, true, 2),
         ("ordinary-neither", false, false, 1),
     ] {
-        let bytes = std::fs::read(format!("{capture_root}/{name}.twd")).unwrap();
-        let receipt: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(format!("{capture_root}/{name}.source.json")).unwrap(),
-        )
-        .unwrap();
+        let bytes = &artifacts[&format!("{name}.twd")];
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&artifacts[&format!("{name}.source.json")]).unwrap();
         assert_eq!(receipt["producer_head"].as_str().unwrap(), candidate_head);
         assert_eq!(receipt["capture_run_id"].as_str().unwrap(), run_id);
         assert_eq!(receipt["kind"].as_str(), Some("ordinary_legacy_export"));
@@ -284,11 +314,9 @@ fn historical_reader_controls_are_rechecked_and_candidate_v3_is_truthfully_unsup
         "legacy-ingress-neither",
         "boundary-fresh-65536",
     ] {
-        let bytes = std::fs::read(format!("{capture_root}/{name}.twd")).unwrap();
-        let identity: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(format!("{capture_root}/{name}.source.json")).unwrap(),
-        )
-        .unwrap();
+        let bytes = &artifacts[&format!("{name}.twd")];
+        let identity: serde_json::Value =
+            serde_json::from_slice(&artifacts[&format!("{name}.source.json")]).unwrap();
         assert_eq!(identity["producer_head"].as_str().unwrap(), candidate_head);
         assert_eq!(identity["capture_run_id"].as_str().unwrap(), run_id);
         assert_eq!(identity["kind"].as_str(), Some("selected_v3_export"));

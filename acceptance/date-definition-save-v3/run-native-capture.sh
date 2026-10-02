@@ -103,7 +103,7 @@ const names = [
   "date-definition", "date-only", "definition-only", "neither",
   "legacy-ingress-date-only", "legacy-ingress-definition-only", "legacy-ingress-neither",
   "ordinary-date-only", "ordinary-definition-only", "ordinary-neither",
-  "constrained-text", "constrained-number", "boundary-fresh-65536", "boundary-fresh-65537-probe",
+  "constrained-text", "constrained-number", "constrained-nondefault-text", "constrained-nondefault-number", "boundary-fresh-65536", "boundary-fresh-65537-probe",
 ];
 const allowed = new Set(["capture-lease.json"]);
 const artifacts = {};
