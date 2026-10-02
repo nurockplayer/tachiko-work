@@ -69,7 +69,7 @@ fn valid_document() -> Document {
 
 #[test]
 fn valid_typed_document_has_no_diagnostics() {
-    assert!(validate_document(&valid_document()).is_empty());
+    assert_eq!(validate_document(&valid_document()).as_slice(), []);
 }
 
 #[test]

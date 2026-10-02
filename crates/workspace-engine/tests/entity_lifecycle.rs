@@ -108,7 +108,7 @@ fn duplicate_rebases_only_copied_self_formulas_and_returns_a_valid_preview() {
     let preview = duplicate_entity(&document, "iron_sword", "steel_sword", &mut generator)
         .expect("valid entity duplication should succeed");
 
-    assert!(validate_document(&preview.document).is_empty());
+    assert_eq!(validate_document(&preview.document).as_slice(), []);
     let duplicate = &preview.document.entities["steel_sword"];
     assert_eq!(duplicate.id, EntityId::from("steel_sword"));
     assert_eq!(
@@ -171,7 +171,7 @@ fn rename_changes_only_the_human_key_and_preserves_all_stable_references() {
     let preview = rename_entity(&document, "iron_sword", "moonblade")
         .expect("valid entity rename should succeed");
 
-    assert!(validate_document(&preview.document).is_empty());
+    assert_eq!(validate_document(&preview.document).as_slice(), []);
     assert!(preview.document.entities.contains_key("iron_sword"));
     assert_eq!(
         preview.document.entities["iron_sword"].key,
@@ -300,7 +300,7 @@ fn remove_ignores_owned_self_references_and_returns_a_valid_diff() {
     let preview = remove_entity(&document, "iron_sword")
         .expect("self formula and stored references disappear with their owner");
 
-    assert!(validate_document(&preview.document).is_empty());
+    assert_eq!(validate_document(&preview.document).as_slice(), []);
     assert!(!preview.document.entities.contains_key("iron_sword"));
     assert!(document.entities.contains_key("iron_sword"));
     assert!(preview.diff.changes().iter().any(|change| matches!(

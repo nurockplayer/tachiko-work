@@ -255,7 +255,7 @@ fn optional_value_initialization_obeys_field_and_occurrence_scopes() {
                 )
                 .is_err()
         );
-        assert!(lifecycle.execution_receipts().is_empty());
+        assert_eq!(lifecycle.execution_receipts(), []);
         assert!(
             !document.entities["iron_sword"]
                 .fields
@@ -348,7 +348,7 @@ fn unset_field_requires_value_and_destructive_authority() {
         ));
         assert_eq!(publication.publish_calls, 0);
         assert_eq!(publication.document, original);
-        assert!(lifecycle.execution_receipts().is_empty());
+        assert_eq!(lifecycle.execution_receipts(), []);
     }
 }
 
@@ -397,7 +397,7 @@ fn unset_formula_requires_formula_authority() {
     ));
     assert_eq!(publication.publish_calls, 0);
     assert_eq!(publication.document, original);
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
 }
 
 #[test]
@@ -433,7 +433,7 @@ fn unset_field_without_query_disclosure_fails_closed_before_publication() {
         .unwrap_err();
 
     assert!(matches!(error, PatchLifecycleError::DisclosureDenied));
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
     let mut publication = TestPublication::new(document, "r1", "r2");
     assert!(matches!(
         lifecycle.execute(
@@ -1046,7 +1046,7 @@ fn final_validation_failure_records_failure_without_publication() {
             PatchLifecycleState::ValidationFailed,
         ]
     );
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
     assert_eq!(
         document.entities["iron_sword"].fields["attack_interval"],
         number(0.9)
@@ -1384,7 +1384,7 @@ fn middle_command_failure_never_publishes_a_successful_prefix() {
         lifecycle.proposal_history(&proposal),
         Err(PatchLifecycleError::ProposalNotFound)
     ));
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
 }
 
 #[test]
@@ -1486,7 +1486,7 @@ fn unauthorized_executor_cannot_probe_missing_or_issued_proposal_ids() {
         lifecycle.proposal_history(&proposal).unwrap(),
         history_before
     );
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
 }
 
 #[test]
@@ -1610,7 +1610,7 @@ fn document_occurrence_replacement_does_not_inherit_authority() {
             lifecycle.approval_status(&approval).unwrap(),
             ApprovalStatus::Active
         );
-        assert!(lifecycle.execution_receipts().is_empty());
+        assert_eq!(lifecycle.execution_receipts(), []);
     }
 }
 
@@ -1845,7 +1845,7 @@ fn propose_only_authority_issues_inert_patch_but_reveals_no_preview() {
         lifecycle.proposal_history(&proposal).unwrap(),
         [PatchLifecycleState::Draft, PatchLifecycleState::Planned]
     );
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
 }
 
 #[test]
@@ -1962,19 +1962,15 @@ fn executor_without_query_publishes_but_receives_no_semantic_projection() {
     );
     assert!(receipt.verified);
     assert!(receipt.authorization_footprint.is_none());
-    assert!(receipt.semantic_changes.is_empty());
-    assert!(receipt.formula_impacts.is_empty());
+    assert_eq!(receipt.semantic_changes.as_slice(), []);
+    assert_eq!(receipt.formula_impacts.as_slice(), []);
     assert!(receipt.validation_report.is_none());
     assert!(
         lifecycle.execution_receipts()[0]
             .authorization_footprint
             .is_some()
     );
-    assert!(
-        !lifecycle.execution_receipts()[0]
-            .semantic_changes
-            .is_empty()
-    );
+    assert_ne!(lifecycle.execution_receipts()[0].semantic_changes, []);
     assert!(matches!(
         lifecycle.proposal_provenance(&proposal, &principal("agent"), NOW),
         Err(PatchLifecycleError::DisclosureDenied)
@@ -2550,7 +2546,7 @@ fn approval_expiring_inside_the_publication_guard_never_publishes() {
             lifecycle.approval_status(&approval).unwrap(),
             ApprovalStatus::Expired
         );
-        assert!(lifecycle.execution_receipts().is_empty());
+        assert_eq!(lifecycle.execution_receipts(), []);
     }
 }
 
@@ -2621,7 +2617,7 @@ fn execute_grant_expiring_inside_the_publication_guard_never_publishes() {
             lifecycle.approval_status(&approval).unwrap(),
             ApprovalStatus::Active
         );
-        assert!(lifecycle.execution_receipts().is_empty());
+        assert_eq!(lifecycle.execution_receipts(), []);
     }
 }
 
@@ -3918,7 +3914,7 @@ fn resident_net_zero_is_retryable_for_human_and_delegated_without_success_artifa
                             )
                             .is_none()
                     );
-                    assert!(lifecycle.execution_receipts().is_empty());
+                    assert_eq!(lifecycle.execution_receipts(), []);
                     assert_eq!(lifecycle.proposal_history(&proposal).unwrap(), history);
                     if let Some(approval) = &approval {
                         assert_eq!(
@@ -4018,7 +4014,7 @@ fn exact_formula_and_reference_restoration_are_no_change_but_equal_output_defini
             assert!(matches!(result, Err(PatchLifecycleError::NoChange)));
             assert_eq!(publication.document, document);
             assert_eq!(publication.revision, revision("r1"));
-            assert!(lifecycle.execution_receipts().is_empty());
+            assert_eq!(lifecycle.execution_receipts(), []);
         }
     }
 }
@@ -4078,7 +4074,7 @@ fn no_change_disclosure_requires_full_query_authority_at_guard_time_and_is_retry
                 ApprovalStatus::Active
             );
             assert_eq!(lifecycle.proposal_history(&proposal).unwrap(), history);
-            assert!(lifecycle.execution_receipts().is_empty());
+            assert_eq!(lifecycle.execution_receipts(), []);
         }
         if case != "unguarded" {
             grant(
@@ -4101,7 +4097,7 @@ fn no_change_disclosure_requires_full_query_authority_at_guard_time_and_is_retry
                 lifecycle.approval_status(&approval).unwrap(),
                 ApprovalStatus::Active
             );
-            assert!(lifecycle.execution_receipts().is_empty());
+            assert_eq!(lifecycle.execution_receipts(), []);
         }
     }
 }
@@ -4207,7 +4203,7 @@ fn entity_append_remove_batch_respects_resident_final_candidate_no_change() {
     let after = session.export_snapshot();
     assert_eq!(after.document(), before.document());
     assert_eq!(after.revision(), before.revision());
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
 }
 
 #[test]
@@ -4259,7 +4255,7 @@ fn remove_then_append_cannot_replace_a_base_identity_under_structure_authority()
     assert_eq!(publication.publish_calls, 0);
     assert_eq!(publication.document, document);
     assert_eq!(publication.revision, revision("r1"));
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
 }
 
 #[test]

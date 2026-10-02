@@ -65,7 +65,10 @@ fn every_frozen_writer_refuses_a_valid_non_none_facet_before_output() {
         ),
     ];
     for candidate in candidates {
-        assert!(tachiko_semantic_core::validate_document(&candidate).is_empty());
+        assert_eq!(
+            tachiko_semantic_core::validate_document(&candidate).as_slice(),
+            []
+        );
         assert!(to_canonical_string(&candidate).is_err());
         assert!(encode_roproj_v1(&candidate).is_err());
         assert!(encode_roproj_v2(&candidate).is_err());

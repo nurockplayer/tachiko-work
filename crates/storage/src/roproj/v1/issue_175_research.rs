@@ -2429,7 +2429,7 @@ fn formula_profile_document(
 }
 
 fn balanced_sum(mut nodes: Vec<Expression>) -> Expression {
-    assert!(!nodes.is_empty());
+    assert_ne!(nodes.as_slice(), []);
     while nodes.len() > 1 {
         let mut next = Vec::with_capacity(nodes.len().div_ceil(2));
         let mut iterator = nodes.into_iter();
@@ -2664,7 +2664,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
 }
 
 fn percentile(samples: &mut [Duration], percentile: usize) -> Duration {
-    assert!(!samples.is_empty());
+    assert_ne!(samples, []);
     assert!((1..=100).contains(&percentile));
     samples.sort_unstable();
     let index = (samples.len() * percentile).div_ceil(100) - 1;

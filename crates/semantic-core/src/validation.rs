@@ -1428,7 +1428,7 @@ mod issue_175_research {
 
             assert!(result.is_err());
             assert_eq!(polls, 2);
-            assert!(diagnostics.is_empty());
+            assert_eq!(diagnostics.as_slice(), []);
         }
     }
 }

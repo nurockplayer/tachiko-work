@@ -792,7 +792,7 @@ fn approved_delegated_net_zero_execution_preserves_approval_and_has_no_receipt()
                 )
                 .is_none()
         );
-        assert!(lifecycle.execution_receipts().is_empty());
+        assert_eq!(lifecycle.execution_receipts(), []);
         assert_eq!(
             lifecycle.approval_status(&approval_id).unwrap(),
             ApprovalStatus::Active

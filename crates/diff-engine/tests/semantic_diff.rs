@@ -344,6 +344,6 @@ fn unchanged_documents_have_an_explicit_empty_summary() {
 
     let semantic_diff = diff(&document, &document).unwrap();
 
-    assert!(semantic_diff.changes().is_empty());
+    assert_eq!(semantic_diff.changes(), []);
     assert_eq!(semantic_diff.render_text(), "No semantic changes.\n");
 }

@@ -264,7 +264,7 @@ fn summary_for(
     };
     assert_eq!(result.definition_id, definition_id);
     assert_eq!(result.revision, runtime.observe_occurrence().revision);
-    assert!(result.diagnostics.is_empty());
+    assert_eq!(result.diagnostics.as_slice(), []);
     let groups: BTreeMap<_, _> = result
         .groups
         .iter()
@@ -586,7 +586,7 @@ fn assert_opened_fixture(opened: &OpenedProjection, expected: &Document) {
                     );
                     assert!(field.formula.is_none());
                     assert!(field.calculated.is_none());
-                    assert!(field.diagnostics.is_empty());
+                    assert_eq!(field.diagnostics.as_slice(), []);
                     let expected_field = &expected.schemas[expected_entity.schema.as_str()].fields
                         [field.target.field.as_str()];
                     assert_eq!(
