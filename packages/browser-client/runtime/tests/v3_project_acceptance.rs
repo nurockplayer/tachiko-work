@@ -1669,12 +1669,12 @@ fn replay_history_after_candidate(
     occurrence: &str,
     marked: bool,
 ) {
-    for (operation, revision, date_value, quantity) in [
-        (true, 4, "2026-09-29", 6.0),
-        (false, 5, "2026-09-29", 4.0),
-        (false, 6, "2026-09-28", 4.0),
-        (true, 7, "2026-09-29", 4.0),
-        (true, 8, "2026-09-29", 6.0),
+    for (operation, revision, date_value, quantity, stationery) in [
+        (true, 4, "2026-09-29", 6.0, 1200.0),
+        (false, 5, "2026-09-29", 4.0, 800.0),
+        (false, 6, "2026-09-28", 4.0, 800.0),
+        (true, 7, "2026-09-29", 4.0, 800.0),
+        (true, 8, "2026-09-29", 6.0, 1200.0),
     ] {
         let runtime = slot.as_mut().unwrap();
         let revision_before = runtime.observe_occurrence().revision;
@@ -1700,7 +1700,7 @@ fn replay_history_after_candidate(
             .keyed_grouped_sum_definitions
             .contains_key(&KeyedGroupedSumDefinitionId::from(DEFINITION))
         {
-            summary(runtime, if quantity == 4.0 { 800.0 } else { 1200.0 });
+            summary(runtime, stationery);
         }
         if marked {
             assert_ordinary_v3_export_refused(runtime);
