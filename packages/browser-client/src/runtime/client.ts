@@ -41,6 +41,7 @@ export interface DesignerClient {
   openCanonicalTree?(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
   openLocalDocument?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
+  exportProjectV3?(expectedRevision: string): Promise<ProjectExport>;
   exportCanonicalTree?(expectedRevision: string): Promise<CanonicalTreeExport>;
   exportPortableRo?(expectedRevision: string): Promise<ProjectExport>;
   verifyPortableRo?(bytes: ArrayBuffer): Promise<void>;

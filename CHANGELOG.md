@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The experimental browser client can explicitly export opaque `.roproj/v3`
+  projects with Date and saved grouped-sum definitions together, then reopen
+  them through existing project operations. V3-opened occurrences require the
+  explicit export method for saves; rollback must retain a v3-capable reader.
+
 - Rust workspace callers can explicitly select the in-process
   `tachiko.semantic-conflict/v2` merge preview. It adds atomic field-constraint
   conflict facts and validates unchanged keyed grouped-sum bindings for each

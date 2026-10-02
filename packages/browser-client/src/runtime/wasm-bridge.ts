@@ -19,6 +19,7 @@ type DesignerWasmExports = {
   tachiko_designer_project_inspect(): void;
   tachiko_designer_spreadsheet_run(): void;
   tachiko_designer_project_export(): void;
+  tachiko_designer_project_export_v3(): void;
   tachiko_designer_canonical_tree_export(): void;
   tachiko_designer_portable_ro_export(): void;
   tachiko_designer_portable_ro_verify(): void;
@@ -40,6 +41,9 @@ export type DesignerWasmBridge = {
   openProject(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
   openLocalDocument(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
   exportProject(expectedRevision: string):
+    | { status: "ok"; export: ProjectExport }
+    | Extract<DesignerWireReply, { status: "error" }>;
+  exportProjectV3(expectedRevision: string):
     | { status: "ok"; export: ProjectExport }
     | Extract<DesignerWireReply, { status: "error" }>;
   exportCanonicalTree(expectedRevision: string):
@@ -164,6 +168,41 @@ export async function createDesignerWasmBridge(
         return tooLargeReply("The expected revision exceeds the bridge limit.");
       }
       exports.tachiko_designer_project_export();
+      try {
+        const reply = readReply();
+        if (reply.status === "error") return reply;
+        if (reply.response.type !== "project_exported") {
+          throw new Error(
+            `Expected 'project_exported' response, received '${reply.response.type}'.`,
+          );
+        }
+        const pointer = exports.tachiko_designer_project_ptr();
+        const length = exports.tachiko_designer_project_len();
+        if (length !== reply.response.payload.byte_length) {
+          throw new Error("Designer project export length did not match its receipt.");
+        }
+        const projectBytes = new Uint8Array(
+          exports.memory.buffer,
+          pointer,
+          length,
+        ).slice();
+        return {
+          status: "ok",
+          export: {
+            revision: reply.response.payload.revision,
+            bytes: projectBytes.buffer,
+          },
+        };
+      } finally {
+        exports.tachiko_designer_project_release();
+      }
+    },
+    exportProjectV3: (expectedRevision) => {
+      const revision = encoder.encode(expectedRevision);
+      if (!writeRequest(revision)) {
+        return tooLargeReply("The expected revision exceeds the bridge limit.");
+      }
+      exports.tachiko_designer_project_export_v3();
       try {
         const reply = readReply();
         if (reply.status === "error") return reply;
