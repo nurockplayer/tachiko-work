@@ -128,11 +128,12 @@ describe("Designer Worker request lifecycle", () => {
     const results = Promise.allSettled([
       worker.client.queryTable("first"),
       worker.client.exportProject("resident/0"),
+      worker.client.exportProjectV3("resident/0"),
     ]);
     worker.client.close();
     expect(worker.terminate).toHaveBeenCalledOnce();
     const settled = await results;
-    expect(settled).toHaveLength(2);
+    expect(settled).toHaveLength(3);
     for (const result of settled) {
       expect(result.status).toBe("rejected");
       if (result.status !== "rejected") throw new Error("Closing the client resolved a request");

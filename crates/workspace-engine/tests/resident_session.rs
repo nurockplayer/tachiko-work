@@ -243,7 +243,7 @@ fn field_query_keeps_semantic_formula_calculation_and_presentation_distinct() {
     assert_eq!(stored.stored_value, Some(value(36.0)));
     assert_eq!(stored.formula_definition, None);
     assert_eq!(stored.calculated_value, None);
-    assert!(stored.diagnostics.is_empty());
+    assert_eq!(stored.diagnostics.as_slice(), []);
     assert_eq!(
         stored.presentation_address,
         FieldAddress::new("iron_sword", "damage")
@@ -256,7 +256,7 @@ fn field_query_keeps_semantic_formula_calculation_and_presentation_distinct() {
         formula.calculated_value,
         Some(FormulaCalculationOutcome::Value(Number::new(40.0).unwrap()))
     );
-    assert!(formula.diagnostics.is_empty());
+    assert_eq!(formula.diagnostics.as_slice(), []);
     assert_eq!(
         formula.presentation_address,
         FieldAddress::new("iron_sword", "dps")
@@ -374,7 +374,7 @@ fn scalar_mutation_invalidates_changed_field_and_downstream_projection_at_new_re
     assert_eq!(receipt.resulting_revision, invalidation.resulting_revision);
     assert_eq!(invalidation.document_scope, document_scope_id());
     assert_ne!(cached.revision(), &invalidation.resulting_revision);
-    assert!(invalidation.entities.is_empty());
+    assert_eq!(invalidation.entities.as_slice(), []);
     assert_eq!(invalidation.fields, [damage]);
     assert_eq!(invalidation.affected_calculations, [dps]);
 }
@@ -594,7 +594,7 @@ fn rename_projection_preserves_stable_subject_and_changes_presentation_address()
             FieldRef::new("iron_sword", "price"),
         ]
     );
-    assert!(invalidation.affected_calculations.is_empty());
+    assert_eq!(invalidation.affected_calculations.as_slice(), []);
     assert!(before.is_stale_against(snapshot.document_scope(), &resulting_revision));
     assert_eq!(after.revision(), &resulting_revision);
 }
@@ -636,9 +636,9 @@ fn field_rename_invalidates_schema_bound_presentations_without_recomputing_depen
     assert_eq!(invalidation.document_scope, *snapshot.document_scope());
     assert_eq!(invalidation.base_revision, *snapshot.revision());
     assert_eq!(invalidation.resulting_revision, resulting_revision);
-    assert!(invalidation.entities.is_empty());
+    assert_eq!(invalidation.entities.as_slice(), []);
     assert_eq!(invalidation.fields, [damage]);
-    assert!(invalidation.affected_calculations.is_empty());
+    assert_eq!(invalidation.affected_calculations.as_slice(), []);
     assert_eq!(
         after.value()[0].presentation_address,
         FieldAddress::new("iron_sword", "power")
@@ -674,7 +674,7 @@ fn invalidation_follows_transitive_graph_when_calculated_outputs_do_not_change()
 
     let (receipt, invalidation, _) = execute_damage(&mut session, "resident-equal-output", 45.0);
 
-    assert!(receipt.formula_impacts.is_empty());
+    assert_eq!(receipt.formula_impacts.as_slice(), []);
     assert_eq!(invalidation.fields, [damage]);
     assert_eq!(invalidation.affected_calculations, [dps, matches]);
 }

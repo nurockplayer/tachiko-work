@@ -449,8 +449,8 @@ fn wrong_profile_preview_and_execute_refuse_without_publication_or_fake_evidence
         Err(PatchLifecycleError::EvidenceProfileMismatch)
     ));
     assert_eq!(v2_host.publications, 0);
-    assert!(v2.execution_receipts().is_empty());
-    assert!(v2.execution_receipts_v2().is_empty());
+    assert_eq!(v2.execution_receipts(), []);
+    assert_eq!(v2.execution_receipts_v2(), []);
 
     let mut v1 = lifecycle(false);
     grant(
@@ -510,8 +510,8 @@ fn wrong_profile_preview_and_execute_refuse_without_publication_or_fake_evidence
         Err(PatchLifecycleError::EvidenceProfileMismatch)
     ));
     assert_eq!(v1_host.publications, 0);
-    assert!(v1.execution_receipts().is_empty());
-    assert!(v1.execution_receipts_v2().is_empty());
+    assert_eq!(v1.execution_receipts(), []);
+    assert_eq!(v1.execution_receipts_v2(), []);
 }
 
 #[test]
@@ -880,7 +880,7 @@ fn v2_keyed_definition_change_refuses_with_canonical_delta_error() {
         *source,
         CanonicalDeltaError::UnsupportedKeyedGroupedSumDefinitionChange
     ));
-    assert!(lifecycle.execution_receipts_v2().is_empty());
+    assert_eq!(lifecycle.execution_receipts_v2(), []);
 }
 
 #[test]
@@ -932,7 +932,7 @@ fn global_formula_calculation_failure_blocks_constraint_tightening() {
         PatchLifecycleError::ValidationFailed { .. }
     ));
     assert_eq!(document, original);
-    assert!(lifecycle.execution_receipts_v2().is_empty());
+    assert_eq!(lifecycle.execution_receipts_v2(), []);
 }
 
 #[test]

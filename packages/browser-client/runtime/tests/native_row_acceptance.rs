@@ -224,7 +224,7 @@ fn batch_removal_preserves_survivors_and_undo_restores_original_identities() {
     assert_eq!(content(&redone), content(&after));
     publish(&mut runtime, &remove(&redone, &[&redone.rows[0].id]));
     let empty = table(&mut runtime, &before.collection.id);
-    assert!(empty.rows.is_empty());
+    assert_eq!(empty.rows.as_slice(), []);
     assert_eq!(empty.columns, before.columns);
 }
 
@@ -286,7 +286,7 @@ fn invalid_incomplete_duplicate_stale_and_oversized_requests_preserve_state_and_
         &json!({"type":"undo","expected_revision":before.revision}),
     );
     let undone = table(&mut runtime, &before.collection.id);
-    assert!(undone.rows.is_empty());
+    assert_eq!(undone.rows.as_slice(), []);
     assert_eq!(undone.columns, before.columns);
 }
 

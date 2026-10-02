@@ -47,12 +47,12 @@ fn issue_175_a0_and_a1_outputs_match_complete_formula_and_validation_oracles() {
         outcomes["valid_chain"].0,
         Issue175CalculationOutcome::Complete(_)
     ));
-    assert!(outcomes["valid_chain"].1.is_empty());
+    assert_eq!(outcomes["valid_chain"].1.as_slice(), []);
     assert!(matches!(
         outcomes["cold_numeric_mutation"].0,
         Issue175CalculationOutcome::Complete(_)
     ));
-    assert!(outcomes["cold_numeric_mutation"].1.is_empty());
+    assert_eq!(outcomes["cold_numeric_mutation"].1.as_slice(), []);
     assert_ne!(
         outcomes["valid_chain"].0, outcomes["cold_numeric_mutation"].0,
         "cold numeric mutation must change the complete calculation"

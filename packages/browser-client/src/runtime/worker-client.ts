@@ -205,6 +205,18 @@ export class WorkerDesignerClient implements DesignerClient {
     return reply.export;
   }
 
+  async exportProjectV3(expectedRevision: string): Promise<ProjectExport> {
+    const reply = await this.#send({
+      id: this.#claimId(),
+      kind: "export_project_v3",
+      expected_revision: expectedRevision,
+    });
+    if (reply.status !== "project_exported") {
+      throw new Error(`Expected project export, received '${reply.status}'.`);
+    }
+    return reply.export;
+  }
+
   async exportCanonicalTree(expectedRevision: string): Promise<CanonicalTreeExport> {
     const reply = await this.#send({
       id: this.#claimId(),

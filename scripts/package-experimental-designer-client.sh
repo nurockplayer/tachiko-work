@@ -163,6 +163,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "editDate",
     "updateFormula",
     "exportProject",
+    "exportProjectV3",
     "exportCanonicalTree",
     "openCanonicalTree",
     "exportPortableRo",

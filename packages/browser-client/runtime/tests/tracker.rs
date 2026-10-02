@@ -149,7 +149,7 @@ fn rejected_atomic_paste_keeps_state_revision_and_history() {
             expected_revision: before.revision,
         })
         .unwrap();
-    assert!(table(&mut runtime).rows.is_empty());
+    assert_eq!(table(&mut runtime).rows.as_slice(), []);
     let revision = table(&mut runtime).revision;
     runtime
         .handle(DesignerRequest::Redo {

@@ -124,7 +124,7 @@ fn literal_membership_is_exact_without_case_or_unicode_normalization() {
             text(&["", "A", "a", "é"]),
             Some(Value::Text(value.to_owned())),
         );
-        assert!(validate_document(&candidate).is_empty());
+        assert_eq!(validate_document(&candidate).as_slice(), []);
     }
     for value in ["a ", "e\u{301}", "Ｅ"] {
         let candidate = document(
@@ -151,7 +151,7 @@ fn optional_absence_remains_absent_while_present_values_obey_inclusive_range() {
             fields: BTreeMap::new(),
         },
     );
-    assert!(validate_document(&absent).is_empty());
+    assert_eq!(validate_document(&absent).as_slice(), []);
     assert!(absent.entities["entity"].fields.is_empty());
     for (value, valid) in [
         (-1.0, true),

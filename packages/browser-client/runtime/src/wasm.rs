@@ -682,6 +682,15 @@ pub extern "C" fn tachiko_designer_project_export() {
     });
 }
 
+/// Export the explicitly selected opaque canonical v3 project.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_project_export_v3() {
+    export_project_bytes(
+        DesignerRuntime::export_project_v3,
+        DesignerResponse::ProjectExported,
+    );
+}
+
 /// Encode the exact expected resident revision into the project arena as the
 /// complete canonical v1 tree's private path/byte transfer record.
 #[unsafe(no_mangle)]

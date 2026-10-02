@@ -801,6 +801,6 @@ mod tests {
             .iter()
             .find(|diagnostic| diagnostic.code == RESULT_TOO_LARGE)
             .expect("over-limit ambiguity must identify the unavailable outcome");
-        assert!(result_too_large.candidates.is_empty());
+        assert_eq!(result_too_large.candidates.as_slice(), []);
     }
 }

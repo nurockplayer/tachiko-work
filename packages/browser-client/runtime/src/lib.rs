@@ -10,10 +10,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tachiko_storage::{
-    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2, FormatError,
-    ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, decode_portable_package_v1, decode_roproj_v1,
-    decode_roproj_v2, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2, from_bytes,
-    to_canonical_string,
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2,
+    CanonicalRoProjectV3, FormatError, ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, ROPROJ_V3_PATHS,
+    decode_portable_package_v1, decode_roproj_v1, decode_roproj_v2, encode_portable_package_v1,
+    encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
@@ -722,6 +722,7 @@ pub struct DesignerRuntime {
     redo: Vec<HistoryEntry>,
     pending_cleanup: Option<PendingCleanup>,
     duplicate_serial: usize,
+    opened_from_v3: bool,
 }
 
 #[derive(Clone)]
@@ -815,6 +816,7 @@ impl DesignerRuntime {
             redo: Vec::new(),
             pending_cleanup: None,
             duplicate_serial: 0,
+            opened_from_v3: false,
         };
         runtime.ensure_supported_project()?;
         Ok(runtime)
@@ -1198,6 +1200,12 @@ impl DesignerRuntime {
                 current: current.to_owned(),
             });
         }
+        if self.opened_from_v3 {
+            return Err(DesignerError::UnsupportedProject {
+                message: "This occurrence was opened from .roproj/v3; use explicit v3 export."
+                    .to_owned(),
+            });
+        }
         let snapshot = self.session.export_snapshot();
         let bytes = if document_contains_date(snapshot.document()) {
             encode_project_record_v2(snapshot.document())?
@@ -1208,6 +1216,28 @@ impl DesignerRuntime {
             let tree = encode_roproj_v1(snapshot.document())?;
             encode_project_bundle_v1(&tree)?
         };
+        Ok(ProjectExport {
+            revision: snapshot.revision().as_str().to_owned(),
+            bytes,
+        })
+    }
+
+    /// Export the selected canonical v3 snapshot after equivalent fresh admission.
+    ///
+    /// # Errors
+    /// Returns revision, capability, storage, resource or fresh-projection failures
+    /// without changing the resident occurrence or its history.
+    pub fn export_project_v3(
+        &self,
+        expected_revision: &str,
+    ) -> Result<ProjectExport, DesignerError> {
+        let snapshot = self.exact_snapshot(expected_revision)?;
+        ensure_v3_capabilities(snapshot.document())?;
+        ensure_cheap_document_profile(snapshot.document())?;
+        let tree = encode_roproj_v3(snapshot.document())?;
+        let bytes =
+            encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?;
+        admit_project(&bytes, PREFLIGHT_OCCURRENCE)?;
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
@@ -2984,7 +3014,7 @@ pub fn open_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
-    let (candidate, opened) = admit_document(decode_project_bundle(input)?, occurrence_id)?;
+    let (candidate, opened) = admit_project(input, occurrence_id)?;
     *runtime = Some(candidate);
     Ok(opened)
 }
@@ -3061,7 +3091,10 @@ fn admit_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
-    admit_document(decode_project_bundle(input)?, occurrence_id)
+    let (document, opened_from_v3) = decode_project_bundle(input)?;
+    let (mut candidate, opened) = admit_document(document, occurrence_id)?;
+    candidate.opened_from_v3 = opened_from_v3;
+    Ok((candidate, opened))
 }
 
 fn admit_document(
@@ -3269,7 +3302,7 @@ fn encode_project_record_v2(document: &Document) -> Result<Vec<u8>, DesignerErro
     Ok(output)
 }
 
-fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
+fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     if input.starts_with(PROJECT_RECORD_V2_MAGIC) {
         let payload = &input[PROJECT_RECORD_V2_MAGIC.len()..];
@@ -3278,7 +3311,9 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
                 message: "TWDPROJ2 transfer is missing direct-ro/v2 bytes".to_owned(),
             });
         }
-        return from_bytes(payload).map_err(DesignerError::from);
+        return from_bytes(payload)
+            .map(|document| (document, false))
+            .map_err(DesignerError::from);
     }
     let mut cursor = ProjectBundleCursor::new(input);
     if cursor.take(PROJECT_BUNDLE_V1_MAGIC.len())? != PROJECT_BUNDLE_V1_MAGIC {
@@ -3293,6 +3328,7 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
         });
     }
     let mut files_by_path = BTreeMap::new();
+    let mut ordered_paths = Vec::new();
     for _ in 0..file_count {
         let path_length = cursor.read_u16()? as usize;
         let byte_length = cursor.read_u32()? as usize;
@@ -3302,6 +3338,7 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             })?
             .to_owned();
         let bytes = cursor.take(byte_length)?.to_vec();
+        ordered_paths.push(path.clone());
         if files_by_path.insert(path.clone(), bytes).is_some() {
             return Err(DesignerError::InvalidProjectTransfer {
                 message: format!("duplicate project path '{path}'"),
@@ -3324,12 +3361,24 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
     let expected_paths: &[&str] = match version {
         Some(1) => &ROPROJ_V1_PATHS,
         Some(2) => &ROPROJ_V2_PATHS,
+        Some(3) => &ROPROJ_V3_PATHS,
+        Some(found) if found > 3 => &ROPROJ_V3_PATHS,
         _ => {
             return Err(DesignerError::InvalidProjectTransfer {
                 message: "project manifest has no supported format version".to_owned(),
             });
         }
     };
+    if version.is_some_and(|found| found >= 3)
+        && ordered_paths
+            .iter()
+            .map(String::as_str)
+            .ne(expected_paths.iter().copied())
+    {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: "canonical .roproj/v3 paths are not in their required order".to_owned(),
+        });
+    }
     let mut files = Vec::with_capacity(expected_paths.len());
     for &path in expected_paths {
         let bytes =
@@ -3345,12 +3394,19 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             message: format!("project transfer contains unexpected path '{extra}'"),
         });
     }
+    decode_project_files(files, version)
+}
+
+fn decode_project_files(
+    files: Vec<(String, Vec<u8>)>,
+    version: Option<u64>,
+) -> Result<(Document, bool), DesignerError> {
     match version {
         Some(1) => match CanonicalRoProjectV1::try_from_files_with_profile(
             files,
             ensure_cheap_document_profile,
         ) {
-            Ok((_, document)) => Ok(document),
+            Ok((_, document)) => Ok((document, false)),
             Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
             Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
         },
@@ -3358,10 +3414,45 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             let tree = CanonicalRoProjectV2::try_from_files(files)?;
             let document = decode_roproj_v2(&tree)?;
             ensure_cheap_document_profile(&document)?;
-            Ok(document)
+            Ok((document, false))
         }
+        Some(3) => {
+            // The storage callback is resource-only. Its private error type is
+            // intentionally not part of the consumer API; retain profile errors
+            // separately and project storage failures through invalid_project.
+            let mut profile_error = None;
+            let admitted = CanonicalRoProjectV3::try_from_files_with_profile(files, |document| {
+                ensure_cheap_document_profile(document).map_err(|error| {
+                    profile_error = Some(error);
+                })
+            });
+            let (_, document) = admitted.map_err(|error| {
+                profile_error.unwrap_or_else(|| DesignerError::InvalidProjectTransfer {
+                    message: format!("invalid canonical .roproj/v3: {error:?}"),
+                })
+            })?;
+            ensure_v3_capabilities(&document)?;
+            Ok((document, true))
+        }
+        Some(found) if found > 3 => Err(DesignerError::UnsupportedProject {
+            message: format!("unsupported project manifest version {found}"),
+        }),
         _ => unreachable!("manifest version was dispatched above"),
     }
+}
+
+fn ensure_v3_capabilities(document: &Document) -> Result<(), DesignerError> {
+    if document
+        .schemas
+        .values()
+        .flat_map(|schema| schema.fields.values())
+        .any(|field| field.constraint != tachiko_workspace_engine::FieldConstraint::None)
+    {
+        return Err(DesignerError::UnsupportedProject {
+            message: "Designer v3 admission supports only unconstrained fields.".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn document_contains_date(document: &Document) -> bool {

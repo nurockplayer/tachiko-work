@@ -98,7 +98,7 @@ fn quarterly_plan_supports_authoritative_human_edit_and_impact() {
                 calculated.and_then(CalculationProjection::number),
                 Some(value)
             );
-            assert!(observed.diagnostics.is_empty());
+            assert_eq!(observed.diagnostics.as_slice(), []);
             assert!(observed.formula.is_some());
             assert!(observed.editable_scalar.is_none());
         }

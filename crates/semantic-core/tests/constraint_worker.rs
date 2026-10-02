@@ -131,7 +131,7 @@ fn declaration_limits_emit_the_exact_schema_subject_and_diagnostic_contract() {
             FieldConstraint::TextLiteralSet { values },
             BTreeMap::new(),
         );
-        assert!(constraint_diagnostics(&document).is_empty());
+        assert_eq!(constraint_diagnostics(&document).as_slice(), []);
     }
 }
 
@@ -196,7 +196,7 @@ fn direct_constraints_preserve_unicode_absence_inclusive_bounds_and_sorted_subje
             fields: BTreeMap::new(),
         },
     );
-    assert!(constraint_diagnostics(&absent).is_empty());
+    assert_eq!(constraint_diagnostics(&absent).as_slice(), []);
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn declaration_rejects_wrong_type_pairings_and_accepts_normalized_degenerate_ran
             FieldConstraint::NumberInclusiveRange { min, max },
             BTreeMap::new(),
         );
-        assert!(constraint_diagnostics(&document).is_empty());
+        assert_eq!(constraint_diagnostics(&document).as_slice(), []);
     }
 
     let reversed = constrained_document(

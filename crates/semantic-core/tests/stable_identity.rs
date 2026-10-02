@@ -66,7 +66,7 @@ fn identity_document() -> Document {
 #[test]
 fn opaque_ids_and_mutable_keys_are_distinct_semantic_concepts() {
     let mut document = identity_document();
-    assert!(validate_document(&document).is_empty());
+    assert_eq!(validate_document(&document).as_slice(), []);
 
     let before_entity_id = document
         .resolve_field(&FieldAddress::new("iron_sword", "dps"))
@@ -99,7 +99,7 @@ fn opaque_ids_and_mutable_keys_are_distinct_semantic_concepts() {
             .unwrap(),
         &before_formula
     );
-    assert!(validate_document(&document).is_empty());
+    assert_eq!(validate_document(&document).as_slice(), []);
 }
 
 #[test]
