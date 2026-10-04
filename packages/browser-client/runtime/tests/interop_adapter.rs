@@ -264,6 +264,18 @@ fn capacity_requires_complete_plain_source_at_small_and_large_sizes() {
             capacity_source_admits(&declared),
             "UTF-8 declaration {rows}"
         );
+        for text in ["_x0041_", "_x000G_"] {
+            let changed = mutate(&bytes, "xl/sharedStrings.xml", |xml| {
+                xml.replace("count=\"3\"", "count=\"4\"")
+                    .replace("uniqueCount=\"3\"", "uniqueCount=\"4\"")
+                    .replace("</sst>", &format!("<si><t>{text}</t></si></sst>"))
+            });
+            assert_eq!(
+                capacity_source_admits(&changed),
+                text == "_x000G_",
+                "unused shared string {rows}: {text}"
+            );
+        }
         let mut zip = ZipWriter::new_append(Cursor::new(bytes.clone())).unwrap();
         zip.start_file("docProps/custom.xml", SimpleFileOptions::default())
             .unwrap();

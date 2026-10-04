@@ -105,16 +105,14 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
         );
     }
     let sheet = &workbook.sheets[0];
+    if st_xstring(&sheet.name) || sheet.columns.iter().any(|column| st_xstring(&column.name)) {
+        return fail("Text capacity refuses SpreadsheetML escape patterns");
+    }
     if capacity_header_bytes(sheet) > MAX_TEXT_CAPACITY_HEADER_BYTES {
         return fail("Text capacity CSV header exceeds 39 encoded bytes");
     }
     let mut text_bytes = 0usize;
     let mut csv_bytes = MAX_TEXT_CAPACITY_HEADER_BYTES;
-    // Plain inlineStr emission has at most 100 tag/attribute bytes per cell,
-    // 32 per row, and 16 KiB for all other XML parts, escaped headers and the
-    // maximum legal worksheet name. This includes the separate default style
-    // part. The compression bound below includes ZIP framing separately.
-    let mut expanded = 16 * 1024 + (sheet.rows.len() + 1) * (3 * 100 + 32);
     for row in &sheet.rows {
         csv_bytes += 4; // Two delimiters and CRLF.
         for cell in row {
@@ -126,12 +124,14 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
             if value.len() > 4096 {
                 return fail("Text capacity value exceeds 4096 UTF-8 bytes");
             }
+            if st_xstring(value) {
+                return fail("Text capacity refuses SpreadsheetML escape patterns");
+            }
             if csv_formula_text(value) || !xml_text_valid(value) {
                 return fail("Text capacity requires safe CSV Text and valid XML characters");
             }
             text_bytes += value.len();
             csv_bytes += csv_text_bytes(value);
-            expanded += escaped_xml_bytes(value);
         }
     }
     if text_bytes > MAX_TEXT_CAPACITY_BYTES {
@@ -140,7 +140,9 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     if csv_bytes > MAX_SOURCE_BYTES {
         return fail("Text capacity encoded CSV exceeds 2 MiB");
     }
-    if expanded > MAX_EXPANDED_BYTES {
+    let mut expanded = CapacityXmlCount(16 * 1024);
+    capacity_worksheet(sheet, &mut expanded);
+    if expanded.0 > MAX_EXPANDED_BYTES {
         return fail("Text capacity expanded XLSX exceeds 8 MiB");
     }
     // Worksheet nodes: row + (c,is,t) for every populated Text cell. Empty
@@ -156,6 +158,68 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     // Prove the compressed source bound with the actual deterministic writer.
     // This runs at import/export, not on each scalar edit.
     Ok(())
+}
+
+fn st_xstring(value: &str) -> bool {
+    value.as_bytes().windows(7).any(|token| {
+        token.starts_with(b"_x")
+            && token[2..6].iter().all(u8::is_ascii_hexdigit)
+            && token[6] == b'_'
+    })
+}
+
+trait CapacityXmlSink {
+    fn markup(&mut self, value: &str);
+    fn text(&mut self, value: &str);
+}
+impl CapacityXmlSink for String {
+    fn markup(&mut self, value: &str) {
+        self.push_str(value);
+    }
+    fn text(&mut self, value: &str) {
+        self.push_str(&escape(value));
+    }
+}
+struct CapacityXmlCount(usize);
+impl CapacityXmlSink for CapacityXmlCount {
+    fn markup(&mut self, value: &str) {
+        self.0 += value.len();
+    }
+    fn text(&mut self, value: &str) {
+        self.0 += escaped_xml_bytes(value);
+    }
+}
+// The writer and admission counter share every worksheet token. Other permitted
+// XML members, including escaped headers/name, fit the existing 16 KiB reserve.
+fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
+    output.markup(&format!(
+        "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\">"
+    ));
+    for column in 0..3 {
+        output.markup(&format!(
+            "<c r=\"{}1\" s=\"0\" t=\"s\"><v>{column}</v></c>",
+            column_name(column)
+        ));
+    }
+    output.markup("</row>");
+    for (index, row) in sheet.rows.iter().enumerate() {
+        let number = index + 2;
+        output.markup(&format!("<row r=\"{number}\">"));
+        for (column, cell) in row.iter().enumerate() {
+            let address = format!("{}{number}", column_name(column));
+            if let SourceValue::Text { value } = &cell.value {
+                output.markup(&format!(
+                    "<c r=\"{address}\" s=\"0\" t=\"inlineStr\"><is><t xml:space=\"preserve\">"
+                ));
+                output.text(value);
+                output.markup("</t></is></c>");
+            } else {
+                output.markup(&format!("<c r=\"{address}\" s=\"0\" t=\"n\"></c>"));
+            }
+        }
+        output.markup("</row>");
+    }
+    output.markup("</sheetData></worksheet>");
 }
 
 fn escaped_xml_bytes(value: &str) -> usize {
@@ -469,6 +533,98 @@ impl Xml {
 }
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+fn xml_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
+fn plain_qname(name: &[u8]) -> bool {
+    let parts = name.split(|byte| *byte == b':').collect::<Vec<_>>();
+    parts.len() <= 2
+        && parts.iter().all(|part| {
+            part.first()
+                .is_some_and(|first| first.is_ascii_alphabetic() || *first == b'_')
+                && part
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        })
+}
+fn plain_tag(raw: &[u8], attributes: bool) -> bool {
+    let mut position = raw
+        .iter()
+        .position(|byte| xml_space(*byte))
+        .unwrap_or(raw.len());
+    if !plain_qname(&raw[..position]) {
+        return false;
+    }
+    while position < raw.len() {
+        let separator = position;
+        while position < raw.len() && xml_space(raw[position]) {
+            position += 1;
+        }
+        if position == raw.len() {
+            return true;
+        }
+        if !attributes || position == separator {
+            return false;
+        }
+        let start = position;
+        while position < raw.len() && !xml_space(raw[position]) && raw[position] != b'=' {
+            position += 1;
+        }
+        if !plain_qname(&raw[start..position]) {
+            return false;
+        }
+        while position < raw.len() && xml_space(raw[position]) {
+            position += 1;
+        }
+        if raw.get(position) != Some(&b'=') {
+            return false;
+        }
+        position += 1;
+        while position < raw.len() && xml_space(raw[position]) {
+            position += 1;
+        }
+        let Some(&quote @ (b'\'' | b'"')) = raw.get(position) else {
+            return false;
+        };
+        position += 1;
+        while position < raw.len() && raw[position] != quote {
+            if raw[position] == b'<' {
+                return false;
+            }
+            position += 1;
+        }
+        if position == raw.len() {
+            return false;
+        }
+        position += 1;
+    }
+    true
+}
+fn plain_token(raw: &[u8], event: &Event<'_>) -> bool {
+    match event {
+        Event::Start(_) => raw
+            .strip_prefix(b"<")
+            .and_then(|v| v.strip_suffix(b">"))
+            .is_some_and(|v| plain_tag(v, true)),
+        Event::Empty(_) => raw
+            .strip_prefix(b"<")
+            .and_then(|v| v.strip_suffix(b"/>"))
+            .is_some_and(|v| plain_tag(v, true)),
+        Event::End(_) => raw
+            .strip_prefix(b"</")
+            .and_then(|v| v.strip_suffix(b">"))
+            .is_some_and(|v| plain_tag(v, false)),
+        Event::Decl(_) => raw
+            .strip_prefix(b"<?")
+            .and_then(|v| v.strip_suffix(b"?>"))
+            .is_some_and(|v| plain_tag(v, true)),
+        Event::Text(_) => !raw.windows(3).any(|token| token == b"]]>"),
+        Event::CData(_) | Event::Eof => true,
+        _ => false,
+    }
+}
+
 // Only a complete UTF-8 XML 1.0 declaration has a plain-source proof.
 fn capacity_plain_declaration(decl: &quick_xml::events::BytesDecl<'_>) -> bool {
     let Ok(text) = std::str::from_utf8(decl.as_ref()) else {
@@ -502,13 +658,22 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     reader.config_mut().trim_text(false);
     let mut stack: Vec<(Xml, BTreeMap<String, String>)> = Vec::new();
     let mut root = None;
+    // Reader positions exclude the optional UTF-8 BOM and preserve raw closing tags.
+    let tokens = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     let mut nodes = 0usize;
     let mut plain_document = true;
     let mut document_event = false;
     loop {
+        let start = usize::try_from(reader.buffer_position())
+            .map_err(|_| InteropError("XML offset overflow".into()))?;
         let event = reader
             .read_event()
             .map_err(|e| InteropError(format!("Invalid XML: {e}")))?;
+        let end = usize::try_from(reader.buffer_position())
+            .map_err(|_| InteropError("XML offset overflow".into()))?;
+        plain_document &= tokens
+            .get(start..end)
+            .is_some_and(|raw| plain_token(raw, &event));
         let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(e) | Event::Empty(e) => {
@@ -1098,6 +1263,7 @@ fn capacity_plain_node(node: &Xml) -> bool {
         _ => return false,
     };
     if node.ns != namespace
+        || (matches!(node.name.as_str(), "t" | "v") && st_xstring(&node.text))
         || !node.plain_attribute_namespaces
         || !node.plain_lexical_values
         || !node.namespace_declarations.iter().all(|uri| {
@@ -2483,6 +2649,12 @@ pub(crate) fn export_xlsx_for_profile(
         ));
         sheet_rels.push_str(&format!("<Relationship Id=\"rId{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{n}.xml\"/>"));
         types.push_str(&format!("<Override PartName=\"/xl/worksheets/sheet{n}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"));
+        if profile == OutputProfile::TextCapacity {
+            let mut xml = String::new();
+            capacity_worksheet(s, &mut xml);
+            parts.insert(format!("xl/worksheets/sheet{n}.xml"), xml);
+            continue;
+        }
         let mut xml = format!("<worksheet xmlns=\"{MAIN}\">");
         // CT_Cols contains one or more CT_Col entries. An empty <cols>
         // container is rejected by Excel's package reader, even though the
@@ -2616,4 +2788,45 @@ pub(crate) fn export_xlsx_for_profile(
     let bytes = output.into_inner();
     source_bound(&bytes)?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod capacity_proof_tests {
+    use super::*;
+    #[test]
+    fn raw_token_grammar_and_shared_writer_count_agree() {
+        for (raw, expected) in [
+            ("a p=\"x\"q=\"y\"", false),
+            ("a p=\"x<y\"", false),
+            ("1:a", false),
+            ("a:b:c", false),
+            ("a p=\"x&amp;y\"", true),
+            ("a\tp = 'x' q = \"y\" ", true),
+        ] {
+            assert_eq!(plain_tag(raw.as_bytes(), true), expected, "{raw}");
+        }
+        for (text, expected) in [
+            ("_x000D_", true),
+            ("_x00af_", true),
+            ("_X000D_", false),
+            ("_x000G_", false),
+        ] {
+            assert_eq!(st_xstring(text), expected);
+        }
+        let mut workbook =
+            import_csv(b"a,b,c\none,two,three\n", &ImportOptions::default()).unwrap();
+        workbook.sheets[0].rows[0][0].value = SourceValue::Text {
+            value: "&<>\"'\r\n雪".into(),
+        };
+        workbook.sheets[0].rows[0][1].value = SourceValue::Empty;
+        let row = workbook.sheets[0].rows[0].clone();
+        for rows in [0, 8, 9, 98, 99, 998, 999, 8406] {
+            workbook.sheets[0].rows = vec![row.clone(); rows];
+            let mut output = String::new();
+            let mut count = CapacityXmlCount(0);
+            capacity_worksheet(&workbook.sheets[0], &mut output);
+            capacity_worksheet(&workbook.sheets[0], &mut count);
+            assert_eq!(count.0, output.len(), "{rows}");
+        }
+    }
 }
