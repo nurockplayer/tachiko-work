@@ -69,6 +69,13 @@ monotonic within one Worker, so retained phase samples bound prior allocations;
 128-edit and 10-reopen samples expose retention growth for review. Whole-browser RSS
 is sampled every 100 ms and can miss shorter host-memory peaks.
 
+Acceptance capture returns binary artifacts as `Uint8Array` and metadata as a JSON
+string. The #495 comment 5977814701 control verified identical hashes for all six
+captured files while avoiding Playwright's ordinary byte-number array expansion.
+This changes only test transport; all cells, artifacts and timing boundaries remain.
+Phase timestamps permit correlation with RSS samples. The original pre-page RSS
+baseline and budgets remain; no overhead is subtracted or earlier failed gate waived.
+
 Run after the exact-head seed/implementation and exported kit are qualified for
 execution, under the shared memory guard and serial heavy slot:
 

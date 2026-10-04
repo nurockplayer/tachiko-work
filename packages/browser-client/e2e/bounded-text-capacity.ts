@@ -75,7 +75,7 @@ try {
         let commandId = 0;
         const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
         const workerSessions: string[] = [];
-        const memorySamples: { stage: string; bytes: number; worker: number }[] = [];
+        const memorySamples: { stage: string; at: number; bytes: number; worker: number }[] = [];
         let observerError: unknown;
         pageSession.on("Target.receivedMessageFromTarget", ({ message }) => {
           const reply = JSON.parse(message) as { id?: number; result?: unknown; error?: { message: string } };
@@ -114,7 +114,7 @@ try {
           const observed = await workerCommand(workerSessions.at(-1)!, "Runtime.evaluate", { expression: "globalThis.__capacityObservedMemory.buffer.byteLength", returnByValue: true }) as { result: { value?: number }; exceptionDetails?: unknown };
           assert.equal(observed.exceptionDetails, undefined);
           assert(typeof observed.result.value === "number" && observed.result.value > 0);
-          memorySamples.push({ stage, bytes: observed.result.value, worker: workerSessions.length });
+          memorySamples.push({ stage, at: Date.now(), bytes: observed.result.value, worker: workerSessions.length });
           await sample();
         });
         const workerUrls: string[] = [];
@@ -200,7 +200,7 @@ try {
           const selection = { column_types: [["text", "text", "text"]] as ["text", "text", "text"][], extra_columns: [[]] };
           let saved: ArrayBuffer;
           let originalScope: string;
-          const artifacts: { name: string; bytes: number[] }[] = [];
+          const artifacts: { name: string; bytes: Uint8Array }[] = [];
           const smallProjections: { recipe: string; cells: number; imported: number; opened: number; reopened: number; workerRestarted: boolean }[] = [];
           const checkpoint = (stage: string) => (globalThis as unknown as { capacityCheckpoint(stage: string): Promise<void> }).capacityCheckpoint(stage);
           const smallClosure = async (imported: ImportedProjection, rows: string[][], restart: boolean) => {
@@ -232,7 +232,7 @@ try {
             const smallMetadata = structuredClone(metadata);
             smallMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
             const exported = await timed(`${recipe}_export_xlsx`, () => client.exportSpreadsheet!(current.revision, smallMetadata, "xlsx", smallMetadata.sheets[0]!.schema_id));
-            artifacts.push({ name: `${recipe}-capacity-from-${format}.xlsx`, bytes: Array.from(new Uint8Array(exported.bytes)) });
+            artifacts.push({ name: `${recipe}-capacity-from-${format}.xlsx`, bytes: new Uint8Array(exported.bytes) });
             const reimported = await timed(`${recipe}_reimport`, () => client.importSpreadsheet!(exported.bytes, "xlsx", options, selection));
             metadata = reimported.metadata;
             collection = reimported.opened.bootstrap.default_collection;
@@ -335,17 +335,17 @@ try {
             for (const output of ["csv", "xlsx"] as SpreadsheetFormat[]) {
               const exported = await timed(`export_${output}`, () => client.exportSpreadsheet!(revision, metadata!, output, metadata!.sheets[0]!.schema_id));
               check(!exported.ledger.some((finding) => finding.blocking), "export blocking ledger");
-              artifacts.push({ name: `${format}-${mode}-export.${output}`, bytes: Array.from(new Uint8Array(exported.bytes)) });
+              artifacts.push({ name: `${format}-${mode}-export.${output}`, bytes: new Uint8Array(exported.bytes) });
             }
             await checkpoint("exported");
-            return { timings, heartbeat, artifacts, smallProjections, metadata: metadata!, collection, saved: Array.from(new Uint8Array(saved)), scope: originalScope, cellCount: expected.length * 3 };
+            return { timings, heartbeat, artifacts, smallProjections, metadata: JSON.stringify(metadata!), collection, saved: new Uint8Array(saved), scope: originalScope, cellCount: expected.length * 3 };
           } finally { clearInterval(pulse); await client.closeProject(); await client.close(); }
         }, { origin, format, mode, oracle: manifest });
         for (const artifact of result.artifacts) await writeFile(`${roots.capture}/${artifact.name}`, Buffer.from(artifact.bytes), { flag: "wx" });
         if (mode === "import") {
           const handle = await open(`${roots.capture}/${format}-saved.project`, "wx");
           try { await handle.writeFile(Buffer.from(result.saved)); await handle.sync(); } finally { await handle.close(); }
-          await writeFile(`${roots.capture}/${format}-metadata.json`, JSON.stringify(result.metadata), { flag: "wx" });
+          await writeFile(`${roots.capture}/${format}-metadata.json`, result.metadata, { flag: "wx" });
           await writeFile(`${roots.capture}/${format}-collection.txt`, result.collection, { flag: "wx" });
           await writeFile(`${roots.capture}/${format}-scope.json`, JSON.stringify({ scope: result.scope }), { flag: "wx" });
         }
