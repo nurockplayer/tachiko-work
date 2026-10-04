@@ -43,8 +43,10 @@ function ordinary(value, size) {
   return readReply();
 }
 function spreadsheet(operation, bytes = new Uint8Array(), size) {
+  return spreadsheetRaw(json(operation), bytes, size);
+}
+function spreadsheetRaw(wire, bytes = new Uint8Array(), size) {
   project(bytes);
-  const wire = json(operation);
   request(size ? padded(wire, size) : wire);
   e.tachiko_designer_spreadsheet_run();
   return readReply();
@@ -121,6 +123,9 @@ try {
     const refusal = ordinary({ type: "query_table", collection: small.opened.bootstrap.default_collection }, 65_537);
     error(refusal);
     assert.equal(refusal.error.code, "request_too_large");
+    const invalid = ordinary("!", 65_537);
+    error(invalid);
+    assert.equal(invalid.error.code, "request_too_large");
     assert.deepEqual(observe(), originalOccurrence);
     assert.equal(sha(save(small.opened.bootstrap.revision)), sha(initial));
   });
@@ -216,6 +221,39 @@ try {
       const changed = structuredClone(metadata); mutation(changed);
       await refuse(`metadata refusal ${mutation.toString()}`, () => spreadsheet({ ...exportOperation("xlsx"), metadata: changed }));
     }
+    await probe("metadata discriminator permits type-last objects", () => {
+      const { type, ...rest } = exportOperation("csv");
+      const wire = json({ ...rest, type });
+      assert(wire.length > 65_536);
+      okay(spreadsheetRaw(wire), "spreadsheet_exported");
+      assert.equal(sha(output()), stable.exports.csv);
+      const inspected = okay(spreadsheetRaw(json({ metadata, type: "inspect_project" }), save(revision)), "opened");
+      const resident = okay(ordinary({ type: "query_table", collection }), "table");
+      assert.deepEqual(inspected.table.rows, resident.rows);
+      unchanged(stable);
+    });
+    for (const [name, wire] of [
+      ["invalid nonmetadata payload", '{"type":"import","selection":null}'],
+      ["duplicate export then import", '{"type":"export","type":"import"}'],
+      ["duplicate import then export", '{"type":"import","type":"export"}'],
+      ["duplicate export", '{"type":"export","type":"export"}'],
+      ["malformed allowed tag", '{"type":"export",'],
+      ["positional array control", '["export"]'],
+      ["deep ignored nonmetadata payload", '{"ignored":' + "[".repeat(512) + "0" + "]".repeat(512) + ',"type":"import"}'],
+    ]) {
+      await probe(`metadata discriminator refuses ${name}`, () => {
+        const refused = spreadsheetRaw(encoder.encode(wire), new Uint8Array(), 65_537);
+        error(refused);
+        assert.equal(refused.error.code, "request_too_large");
+        unchanged(stable);
+      });
+    }
+    await probe("allowed discriminator retains typed payload validation", () => {
+      const refused = spreadsheetRaw(json({ type: "export", metadata: null }), new Uint8Array(), 65_537);
+      error(refused);
+      assert.notEqual(refused.error.code, "request_too_large");
+      unchanged(stable);
+    });
     await probe("history remains executable after all refusals", () => {
       publish("redo");
       let fields = okay(ordinary({ type: "query_fields", expected_revision: revision, fields: [target] }), "fields");

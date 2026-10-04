@@ -175,6 +175,15 @@ def verify(directory):
     names = {record["name"] for record in boundary["records"]}
     required = {
         "ordinary request 65536 and 65537",
+        "metadata discriminator permits type-last objects",
+        "metadata discriminator refuses positional array control",
+        "metadata discriminator refuses duplicate export then import",
+        "metadata discriminator refuses duplicate import then export",
+        "metadata discriminator refuses duplicate export",
+        "metadata discriminator refuses malformed allowed tag",
+        "metadata discriminator refuses invalid nonmetadata payload",
+        "metadata discriminator refuses deep ignored nonmetadata payload",
+        "allowed discriminator retains typed payload validation",
         "metadata request exact 4MiB and limit plus one",
         "encoded CSV header row exact 39 bytes and plus one",
         "Unicode XML-sensitive metadata header39 and name31 roundtrips",

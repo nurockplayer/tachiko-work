@@ -46,7 +46,7 @@ tools or unexecuted browser tests as behavioral failures.
 | Encoded CSV header row | 39 bytes | Actual CSV escaping, separators and CRLF |
 | Complete relevant response/reply | 16 MiB | Ordinary field-query replies 64 KiB |
 | Metadata-bearing spreadsheet request | 4 MiB | Only existing Export/InspectProject |
-| Ordinary request | 64 KiB | Checked before parsing, including raw ABI |
+| Ordinary semantic request | 64 KiB | Checked before JSON parsing, including raw ABI |
 | Source CSV/XLSX | 2 MiB | Unchanged |
 | Expanded XLSX / ZIP entries | 8 MiB / 256 | Unchanged |
 | XML nodes / depth | 100,000 / 64 | Unchanged |
@@ -60,6 +60,14 @@ are refused before publication in this enlarged both-formats profile. Existing
 generic typed-XLSX-only behavior is not removed. Embedded CRLF must survive a
 standards-compliant independent XML parser; literal XML line normalization is
 not an acceptable fidelity loss.
+
+The metadata-capable spreadsheet ABI caps its arena at 4 MiB before inspection.
+Above 64 KiB, a byte-bounded object discriminator/JSON-skip pass permits only
+the existing Export and InspectProject operations before typed payload decoding.
+Non-metadata operations are refused at that stage. The skip pass is bounded by
+arena bytes, not a claimed JSON depth limit; full operation decoding retains its
+own parser bounds. Unordered object keys remain valid; duplicate discriminators,
+malformed controls and positional arrays cannot grant the larger request budget.
 
 CSV admission reserves 39 bytes for the complete header row and requires the
 encoded data body plus that reserve to fit 2 MiB. Every metadata-bearing call
