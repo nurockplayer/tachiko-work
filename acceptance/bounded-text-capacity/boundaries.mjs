@@ -130,6 +130,19 @@ try {
     assert.equal(sha(save(small.opened.bootstrap.revision)), sha(initial));
   });
   if (mode !== "parser-only") {
+    await probe("small plain capacity preview uses complete profile", () => {
+      const rows = Array.from({ length: 8 }, () => ["x".repeat(4096), "y".repeat(4096), "z".repeat(4096)]);
+      const input = csv(rows);
+      const preview = okay(spreadsheet({ type: "inspect", format: "csv", csv_options: options }, input), "import_preview");
+      assert(json(preview).length > 65_536);
+      assert.deepEqual(preview.sheets[0].rows.map(row => row.map(cell => cell.value)),
+        rows.map(row => row.map(value => ({ kind: "text", value }))));
+      assert.deepEqual(observe(), originalOccurrence);
+      assert.equal(sha(save(small.opened.bootstrap.revision)), sha(initial));
+      const candidate = okay(importing(input), "imported");
+      assert.deepEqual(candidate.opened.table.rows.map(row => row.fields.map(field => field.stored)),
+        rows.map(row => row.map(value => ({ kind: "text", value }))));
+    });
     const source = await readFile(join(fixtures, "source-8406.csv"));
     let imported = okay(importing(source), "imported");
     let metadata = imported.metadata;

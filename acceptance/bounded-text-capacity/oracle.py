@@ -175,6 +175,7 @@ def verify(directory):
     names = {record["name"] for record in boundary["records"]}
     required = {
         "ordinary request 65536 and 65537",
+        "small plain capacity preview uses complete profile",
         "metadata discriminator permits type-last objects",
         "metadata discriminator refuses positional array control",
         "metadata discriminator refuses duplicate export then import",
