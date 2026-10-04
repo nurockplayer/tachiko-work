@@ -35,6 +35,7 @@ independent of the Rust producer parsers and writers.
 | Metadata-independent export closure | Encoded header row 39 bytes/+1, actual exact 2 MiB output, and scalar quote replacement that would add one encoded byte refused atomically |
 | Complete metadata order and XLSX escaping | Row/column permutations refuse; exact 39-byte Unicode/XML-sensitive headers and 31-character sheet name roundtrip through actual CSV/XLSX readers and independent CSV/ZIP/XML verification |
 | Metadata ABI framing | Type-last Export/InspectProject work; malformed, duplicate, positional-array and deeply nested nonmetadata controls refuse before typed payload decoding; invalid ordinary JSON over64KiB refuses by size; complete resident/history preserved |
+| Small promoted capacity closure | Actual Worker64-row projection over64KiB saves/closes/reopens/exports/reimports with every cell checked; independent XML verifies exported cells and LF/TAB/CR worksheet name |
 
 Actual unchanged-source baseline: new seed native eight-row CSV/XLSX passes;
 64-row CSV refuses an 88,107-byte projection against 65,536. Four native boundary

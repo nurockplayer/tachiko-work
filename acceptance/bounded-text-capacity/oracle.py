@@ -243,6 +243,12 @@ def verify(directory):
     )
     assert imported["cells"] == ROWS * 3 and imported["history_edits_each"] == 128
     for source in ["csv", "xlsx"]:
+        small = directory / f"worker/small-capacity-from-{source}.xlsx"
+        assert parse_xlsx(small) == [HEADERS, *values()[:64]]
+        with zipfile.ZipFile(small) as archive:
+            workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+            sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
+            assert sheet.attrib["name"] == "Capacity\tname\n雪&\r"
         receipt = json.loads(
             (directory / f"native/{source}-fresh-process.json").read_text()
         )

@@ -201,6 +201,22 @@ try {
                 metadata = imported.metadata;
                 collection = imported.opened.bootstrap.default_collection;
                 checkTable(imported.opened.table, expected.slice(0, count));
+                if (count === 64) {
+                  check(new TextEncoder().encode(JSON.stringify(imported.opened)).length > 65_536, "small capacity projection");
+                  const smallSaved = (await timed("small_save", () => client.exportProject(imported.opened.bootstrap.revision))).bytes;
+                  await client.closeProject();
+                  checkTable((await timed("small_reopen", () => client.openProject(smallSaved))).table, expected.slice(0, count));
+                  const smallMetadata = structuredClone(metadata);
+                  smallMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
+                  const current = await client.observeOccurrence();
+                  const exported = await timed("small_export_xlsx", () => client.exportSpreadsheet!(current.revision, smallMetadata, "xlsx", collection));
+                  artifacts.push({ name: `small-capacity-from-${format}.xlsx`, bytes: Array.from(new Uint8Array(exported.bytes)) });
+                  const reimported = await timed("small_reimport", () => client.importSpreadsheet!(exported.bytes, "xlsx", options, selection));
+                  metadata = reimported.metadata;
+                  collection = reimported.opened.bootstrap.default_collection;
+                  same(metadata.sheets[0]!.name, smallMetadata.sheets[0]!.name, "small capacity worksheet-name fidelity");
+                  checkTable(reimported.opened.table, expected.slice(0, count));
+                }
               }
               originalScope = (await client.observeOccurrence()).scope;
               await checkpoint("imported");

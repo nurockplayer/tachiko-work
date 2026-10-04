@@ -15,6 +15,12 @@ rows (25,218 logical cells), no formulas, reference/Date/Boolean/Number fields,
 constraints or saved calculation definitions. Empty Text cells may follow the
 existing missing-value representation; non-Text stored values do not qualify.
 The enlarged profile uses plain/default cell styles and no column widths.
+Capacity source admission also rejects every actual lossy or safe-disabled
+source finding. XLSX styles must be absent or match the documented private
+plain producer tree structurally; rich text and unrepresented presentation do
+not qualify. This conservative rule applies at every row count, including
+small imports that need the enlarged projection budget. Ordinary generic
+admission retains its existing fidelity-ledger behavior.
 Its complete row and column metadata follows canonical stable-ID order, matching
 the imported source order. Reordered, missing, duplicate or stale mappings are
 refused for this enlarged profile; generic mappings keep existing behavior.
@@ -135,7 +141,10 @@ The acceptance seed, actual baseline execution, case map and independent
 adequacy must be frozen before production Ready. Production follows on the
 same isolated branch, with a sole writer and a fresh independent final reviewer.
 Projected review unit: five production paths plus acceptance/unit tests and
-documentation, at most 20 paths and approximately 4,000 meaningful changed lines.
+documentation, originally at most 20 paths and approximately 4,000 meaningful
+changed lines. Review-driven reconciliation in #495 comment 5976675101 retains
+18 paths and permits at most 4,500 meaningful changed lines for the complete
+profile propagation, source-fidelity and small-file closure repair/tests.
 The Steward re-evaluated the 2,000–3,000-line signal before Ready: roughly 2,000
 lines are executable acceptance spanning one inseparable capacity journey and
 its independent oracle. Import, edit/history, save/reopen and both exports must
