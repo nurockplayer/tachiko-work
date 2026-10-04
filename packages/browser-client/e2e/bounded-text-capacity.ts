@@ -319,8 +319,10 @@ try {
               for (const [r, c, value] of oracle.edits) expected[r]![c] = value;
               const previous = await (await fetch(`${origin}/capture/${format}-scope.json`)).json() as { scope: string };
               const scopes = new Set([previous.scope]);
+              const savedByteLength = saved.byteLength;
               for (let cycle = 0; cycle < 10; cycle++) {
-                const opened = await timed("reopen", () => client.openProject(saved));
+                const opened = await timed("reopen", () => client.openProject(saved.slice(0)));
+                same(saved.byteLength, savedByteLength, "reopen retains saved input bytes");
                 checkTable(opened.table);
                 const occurrence = await client.observeOccurrence();
                 same(occurrence.revision, "resident/0", "fresh revision");
