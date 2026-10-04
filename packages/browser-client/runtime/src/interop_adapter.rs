@@ -469,6 +469,27 @@ impl Xml {
 }
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+// Only a complete UTF-8 XML 1.0 declaration has a plain-source proof.
+fn capacity_plain_declaration(decl: &quick_xml::events::BytesDecl<'_>) -> bool {
+    let Ok(text) = std::str::from_utf8(decl.as_ref()) else {
+        return false;
+    };
+    let declaration = quick_xml::events::BytesStart::from_content(text, 3);
+    let mut position = 0;
+    for attribute in declaration.attributes() {
+        let Ok(attribute) = attribute else {
+            return false;
+        };
+        position = match (attribute.key.as_ref(), attribute.value.as_ref(), position) {
+            (b"version", b"1.0", 0) => 1,
+            (b"encoding", value, 1) if value.eq_ignore_ascii_case(b"UTF-8") => 2,
+            (b"standalone", b"yes" | b"no", 1 | 2) => 3,
+            _ => return false,
+        };
+    }
+    position > 0
+}
+
 #[allow(clippy::too_many_lines)] // One XML event state machine and namespace scope.
 fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     let input = std::str::from_utf8(bytes).map_err(|_| InteropError("XML must be UTF-8".into()))?;
@@ -482,6 +503,8 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     let mut stack: Vec<(Xml, BTreeMap<String, String>)> = Vec::new();
     let mut root = None;
     let mut nodes = 0usize;
+    let mut plain_document = true;
+    let mut document_event = false;
     loop {
         let event = reader
             .read_event()
@@ -618,8 +641,14 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     node.plain_lexical_values &=
                         !matches!(node.name.as_str(), "t" | "v") || !e.as_ref().contains(&b'\r');
                     node.text.push_str(&value);
-                } else if !value.trim().is_empty() {
-                    return fail("Text outside XML root");
+                } else {
+                    plain_document &= e
+                        .as_ref()
+                        .iter()
+                        .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'));
+                    if !value.trim().is_empty() {
+                        return fail("Text outside XML root");
+                    }
                 }
             }
             Event::CData(e) => {
@@ -636,15 +665,22 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     return fail("CDATA outside XML root");
                 }
             }
+            Event::Decl(decl) => {
+                plain_document &= !document_event && capacity_plain_declaration(&decl);
+            }
             Event::DocType(_) => return fail("DTD is forbidden"),
             Event::Eof => break,
-            _ => {}
+            // Discarded comments and processing instructions have no plain proof.
+            _ => plain_document = false,
         }
+        document_event = true;
     }
     if !stack.is_empty() {
         return fail("Unclosed XML element");
     }
-    root.ok_or_else(|| InteropError("Missing XML root".into()))
+    let mut root = root.ok_or_else(|| InteropError("Missing XML root".into()))?;
+    root.plain_lexical_values &= plain_document;
+    Ok(root)
 }
 fn attach_xml(
     node: Xml,

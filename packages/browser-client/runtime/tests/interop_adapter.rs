@@ -236,6 +236,34 @@ fn capacity_requires_complete_plain_source_at_small_and_large_sizes() {
             });
             assert!(!capacity_source_admits(&changed), "{rows}: {path}: {to}");
         }
+
+        for prefix in [
+            "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>",
+            "<?xml version=\"1.1\"?>",
+            "<?xml version=\"1.0\" unknown=\"1\"?>",
+            " <?xml version=\"1.0\"?>",
+            "<?XML version=\"1.0\"?>",
+            "<!-- bad -- comment -->",
+            "<!-- harmless -->",
+            "<?app harmless?>",
+            "\u{a0}",
+            "&#32;",
+        ] {
+            let changed = mutate(&bytes, "xl/sharedStrings.xml", |xml| {
+                format!("{prefix}{}", xml.replace(">a</t>", ">é</t>"))
+            });
+            assert!(
+                !capacity_source_admits(&changed),
+                "document {rows}: {prefix}"
+            );
+        }
+        let declared = mutate(&bytes, "xl/sharedStrings.xml", |xml| {
+            format!("<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\r\n{xml}\r\n")
+        });
+        assert!(
+            capacity_source_admits(&declared),
+            "UTF-8 declaration {rows}"
+        );
         let mut zip = ZipWriter::new_append(Cursor::new(bytes.clone())).unwrap();
         zip.start_file("docProps/custom.xml", SimpleFileOptions::default())
             .unwrap();

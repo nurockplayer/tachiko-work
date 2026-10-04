@@ -564,7 +564,7 @@ fn export_spreadsheet(
     // neither the source metadata nor the resident document is changed.
     let mut export_metadata = metadata.clone();
     let mut inserted_headers = Vec::new();
-    if matches!(format, SpreadsheetFormat::Xlsx) {
+    if matches!(format, SpreadsheetFormat::Xlsx) && !runtime.text_capacity {
         for sheet in &mut export_metadata.sheets {
             if !sheet.has_header {
                 sheet.has_header = true;
