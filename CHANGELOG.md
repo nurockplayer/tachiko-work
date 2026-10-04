@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The experimental browser producer admits a bounded 8,406-row, three-Text
+  table through import, scalar edits and history, project save/reopen and both
+  CSV/XLSX exports. Complete projections and metadata use private finite
+  budgets; generic tables, formulas and hostile-file defenses retain their
+  existing limits. See the producer's capacity contract for the exact profile.
+
 - Rust workspace callers can explicitly select the in-process
   `tachiko.semantic-conflict/v2` merge preview. It adds atomic field-constraint
   conflict facts and validates unchanged keyed grouped-sum bindings for each
