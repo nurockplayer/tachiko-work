@@ -140,9 +140,9 @@ fn validate_document_internal(
 
     validate_stable_id(
         document.id.as_str(),
-        "id",
+        || "id".to_owned(),
         "document",
-        SemanticSubject::Document(document.id.clone()),
+        || SemanticSubject::Document(document.id.clone()),
         &mut diagnostics,
     );
     if document.title.trim().is_empty() {
@@ -183,16 +183,16 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
         }
         validate_stable_id(
             schema.id.as_str(),
-            &format!("{schema_path}.id"),
+            || format!("{schema_path}.id"),
             "schema",
-            SemanticSubject::Schema(schema_id.clone()),
+            || SemanticSubject::Schema(schema_id.clone()),
             diagnostics,
         );
         validate_human_key(
             schema.key.as_str(),
-            &format!("{schema_path}.key"),
+            || format!("{schema_path}.key"),
             "schema",
-            SemanticSubject::Schema(schema_id.clone()),
+            || SemanticSubject::Schema(schema_id.clone()),
             diagnostics,
         );
         validate_field_keys(schema_id, schema, &schema_path, diagnostics);
@@ -223,16 +223,16 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
             }
             validate_stable_id(
                 definition.id.as_str(),
-                &format!("{field_path}.id"),
+                || format!("{field_path}.id"),
                 "field",
-                field_subject.clone(),
+                || field_subject.clone(),
                 diagnostics,
             );
             validate_human_key(
                 definition.key.as_str(),
-                &format!("{field_path}.key"),
+                || format!("{field_path}.key"),
                 "field",
-                field_subject.clone(),
+                || field_subject.clone(),
                 diagnostics,
             );
             validate_field_constraint(definition, &field_path, field_subject.clone(), diagnostics);
@@ -259,45 +259,42 @@ fn validate_entities(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     for (entity_id, entity) in &document.entities {
-        let entity_path = format!("entities.{entity_id}");
-        let entity_subject = SemanticSubject::Entity(entity_id.clone());
+        let entity_path = || format!("entities.{entity_id}");
+        let entity_subject = || SemanticSubject::Entity(entity_id.clone());
         if entity_id != &entity.id {
             diagnostics.push(key_mismatch_diagnostic(
-                format!("{entity_path}.id"),
+                format!("{}.id", entity_path()),
                 format!(
                     "entity store key '{entity_id}' does not match stable id '{}'",
                     entity.id
                 ),
-                vec![
-                    entity_subject.clone(),
-                    SemanticSubject::Entity(entity.id.clone()),
-                ],
+                vec![entity_subject(), SemanticSubject::Entity(entity.id.clone())],
                 entity_id.as_str(),
                 entity.id.as_str(),
             ));
         }
         validate_stable_id(
             entity.id.as_str(),
-            &format!("{entity_path}.id"),
+            || format!("{}.id", entity_path()),
             "entity",
-            entity_subject.clone(),
+            &entity_subject,
             diagnostics,
         );
         validate_human_key(
             entity.key.as_str(),
-            &format!("{entity_path}.key"),
+            || format!("{}.key", entity_path()),
             "entity",
-            entity_subject.clone(),
+            &entity_subject,
             diagnostics,
         );
 
         let Some(schema) = document.schemas.get(&entity.schema) else {
             diagnostics.push(
                 core_diagnostic(
-                    format!("{entity_path}.schema"),
+                    format!("{}.schema", entity_path()),
                     DiagnosticCode::MISSING_SCHEMA,
                     format!("schema '{}' does not exist", entity.schema),
-                    vec![entity_subject],
+                    vec![entity_subject()],
                 )
                 .with_related_subjects(vec![SemanticSubject::Schema(entity.schema.clone())]),
             );
@@ -307,15 +304,15 @@ fn validate_entities(
         validate_required_fields(schema, entity_id, entity, diagnostics);
 
         for (field, value) in &entity.fields {
-            let field_path = format!("{entity_path}.fields.{field}");
-            let field_ref = FieldRef::new(entity_id.clone(), field.clone());
+            let field_path = || format!("{}.fields.{field}", entity_path());
+            let field_ref = || FieldRef::new(entity_id.clone(), field.clone());
             let Some(definition) = schema.fields.get(field) else {
                 diagnostics.push(
                     core_diagnostic(
-                        field_path,
+                        field_path(),
                         DiagnosticCode::UNEXPECTED_FIELD,
                         format!("field '{field}' is not declared by schema '{}'", schema.id),
-                        vec![SemanticSubject::EntityField(field_ref)],
+                        vec![SemanticSubject::EntityField(field_ref())],
                     )
                     .with_related_subjects(vec![
                         SemanticSubject::SchemaField {
@@ -406,43 +403,43 @@ fn validate_field_keys(
 
 fn validate_stable_id(
     value: &str,
-    path: &str,
+    path: impl FnOnce() -> String,
     kind: &str,
-    subject: SemanticSubject,
+    subject: impl FnOnce() -> SemanticSubject,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if value.is_empty() {
         diagnostics.push(core_diagnostic(
-            path,
+            path(),
             DiagnosticCode::EMPTY_STABLE_ID,
             format!("{kind} stable id must not be empty"),
-            vec![subject],
+            vec![subject()],
         ));
     }
 }
 
 fn validate_human_key(
     value: &str,
-    path: &str,
+    path: impl FnOnce() -> String,
     kind: &str,
-    subject: SemanticSubject,
+    subject: impl FnOnce() -> SemanticSubject,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if value.is_empty() {
         diagnostics.push(core_diagnostic(
-            path,
+            path(),
             DiagnosticCode::EMPTY_KEY,
             format!("{kind} key must not be empty"),
-            vec![subject],
+            vec![subject()],
         ));
     } else if !is_valid_identifier(value) {
         diagnostics.push(core_diagnostic(
-            path,
+            path(),
             DiagnosticCode::INVALID_KEY,
             format!(
                 "{kind} key '{value}' must use only a-z, 0-9, '_' or '-', starting with a letter or digit"
             ),
-            vec![subject],
+            vec![subject()],
         ));
     }
 }
@@ -502,11 +499,11 @@ fn validate_field_constraint(
 #[allow(clippy::too_many_arguments)]
 fn validate_value(
     document: &Document,
-    field: &FieldRef,
+    field: &impl Fn() -> FieldRef,
     value: &Value,
     expected: &FieldType,
     constraint: &FieldConstraint,
-    path: &str,
+    path: &impl Fn() -> String,
     include_formula_references: bool,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -517,17 +514,17 @@ fn validate_value(
         | (FieldType::Date, Value::Date(_)) => {}
         (FieldType::Number, Value::Formula(expression)) => {
             if include_formula_references {
-                validate_expression(document, field, expression, path, diagnostics);
+                validate_expression(document, &field(), expression, &path(), diagnostics);
             }
         }
         (FieldType::Reference { schema }, Value::Reference(entity_id)) => {
             let Some(target) = document.entities.get(entity_id) else {
                 diagnostics.push(
                     core_diagnostic(
-                        path,
+                        path(),
                         DiagnosticCode::MISSING_REFERENCE,
                         format!("referenced entity stable id '{entity_id}' does not exist"),
-                        vec![SemanticSubject::EntityField(field.clone())],
+                        vec![SemanticSubject::EntityField(field())],
                     )
                     .with_related_subjects(vec![SemanticSubject::Entity(entity_id.clone())]),
                 );
@@ -536,13 +533,13 @@ fn validate_value(
             if &target.schema != schema {
                 diagnostics.push(
                     core_diagnostic(
-                        path,
+                        path(),
                         DiagnosticCode::REFERENCE_TYPE_MISMATCH,
                         format!(
-                            "field '{field}' expects schema '{schema}', but entity '{entity_id}' uses schema '{}'",
-                            target.schema
+                            "field '{}' expects schema '{schema}', but entity '{entity_id}' uses schema '{}'",
+                            field(), target.schema
                         ),
-                        vec![SemanticSubject::EntityField(field.clone())],
+                        vec![SemanticSubject::EntityField(field())],
                     )
                     .with_related_subjects(vec![SemanticSubject::Entity(entity_id.clone())])
                     .with_fact(DiagnosticFact::new("expected_schema", schema.as_str()))
@@ -552,14 +549,15 @@ fn validate_value(
         }
         _ => diagnostics.push(
             core_diagnostic(
-                path,
+                path(),
                 DiagnosticCode::TYPE_MISMATCH,
                 format!(
-                    "field '{field}' expects {}, but found {}",
+                    "field '{}' expects {}, but found {}",
+                    field(),
                     field_type_name(expected),
                     value_type_name(value)
                 ),
-                vec![SemanticSubject::EntityField(field.clone())],
+                vec![SemanticSubject::EntityField(field())],
             )
             .with_fact(DiagnosticFact::new(
                 "expected_kind",
@@ -569,14 +567,13 @@ fn validate_value(
         ),
     }
 
-    validate_stored_value_constraint(constraint, value, field, path, diagnostics);
+    validate_stored_value_constraint(constraint, value, || (field(), path()), diagnostics);
 }
 
 fn validate_stored_value_constraint(
     constraint: &FieldConstraint,
     value: &Value,
-    field: &FieldRef,
-    path: &str,
+    context: impl FnOnce() -> (FieldRef, String),
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let violates_constraint = match (constraint, value) {
@@ -589,11 +586,12 @@ fn validate_stored_value_constraint(
         _ => false,
     };
     if violates_constraint {
+        let (field, path) = context();
         diagnostics.push(core_diagnostic(
             path,
             DiagnosticCode::FIELD_VALUE_CONSTRAINT_MISMATCH,
             "stored field value does not satisfy its declared constraint",
-            vec![SemanticSubject::EntityField(field.clone())],
+            vec![SemanticSubject::EntityField(field)],
         ));
     }
 }
@@ -1209,7 +1207,12 @@ mod issue_175_research {
                 .with_fact(DiagnosticFact::new("actual_kind", value_type_name(value))),
             ),
         }
-        validate_stored_value_constraint(constraint, value, field, path, diagnostics);
+        validate_stored_value_constraint(
+            constraint,
+            value,
+            || (field.clone(), path.to_owned()),
+            diagnostics,
+        );
         Ok(())
     }
 
