@@ -261,7 +261,7 @@ def verify(directory):
     with zipfile.ZipFile(metadata_xlsx) as archive:
         workbook = ET.fromstring(archive.read("xl/workbook.xml"))
         sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
-        assert sheet.attrib["name"] == "雪&\"<'>" + "n" * 25
+        assert sheet.attrib["name"] == "雪&\"<'>\n\t\r" + "n" * 22
     for path in files:
         actual = (
             list(csv.reader(io.StringIO(path.read_bytes().decode(), newline="")))

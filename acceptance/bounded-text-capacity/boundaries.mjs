@@ -154,7 +154,7 @@ try {
     await probe("Unicode XML-sensitive metadata header39 and name31 roundtrips", async () => {
       const before = snapshot();
       const changed = structuredClone(metadata);
-      changed.sheets[0].name = '雪&"<\'>'.concat("n".repeat(25));
+      changed.sheets[0].name = '雪&"<\'>\n\t\r'.concat("n".repeat(22));
       const names = ["雪&", "<i>", 'url"\''.concat("x".repeat(20))];
       assert.equal(Array.from(changed.sheets[0].name).length, 31);
       for (let c = 0; c < 3; c++) changed.sheets[0].columns[c].name = names[c];
