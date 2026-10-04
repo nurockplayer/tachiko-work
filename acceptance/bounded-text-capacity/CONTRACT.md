@@ -15,6 +15,9 @@ rows (25,218 logical cells), no formulas, reference/Date/Boolean/Number fields,
 constraints or saved calculation definitions. Empty Text cells may follow the
 existing missing-value representation; non-Text stored values do not qualify.
 The enlarged profile uses plain/default cell styles and no column widths.
+Its complete row and column metadata follows canonical stable-ID order, matching
+the imported source order. Reordered, missing, duplicate or stale mappings are
+refused for this enlarged profile; generic mappings keep existing behavior.
 Existing smaller generic and native Tracker profiles keep their own behavior.
 The approximately thirteen-column review shape is characterization only.
 
@@ -67,6 +70,10 @@ reserve survives fresh project reopen without retaining spreadsheet metadata or
 changing storage/API contracts. XLSX closure independently includes escaped
 headers, permitted sheet-name overhead, tags, ZIP members, expanded size and
 fresh-reader limits; the CSV reserve alone does not prove XLSX closure.
+The private capacity XLSX encoder may use fixed shared-string header indices,
+with actual labels and sheet names isolated in bounded uncompressed ZIP entries.
+Any metadata allowance must cover their complete escaped XML and ZIP framing;
+surrogate compressed header bytes alone cannot prove the bound.
 
 Ordinary semantic commands, formula limits, selective field-query target and
 byte limits, occurrence/revision laws, authorization and canonical formats do

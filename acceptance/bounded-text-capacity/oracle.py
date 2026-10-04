@@ -177,6 +177,7 @@ def verify(directory):
         "ordinary request 65536 and 65537",
         "metadata request exact 4MiB and limit plus one",
         "encoded CSV header row exact 39 bytes and plus one",
+        "Unicode XML-sensitive metadata header39 and name31 roundtrips",
         "oversized non-metadata spreadsheet operations",
         "4096 UTF8 Text byte ceiling",
         "aggregate Text exact 1MiB and plus one",
@@ -244,6 +245,23 @@ def verify(directory):
             assert receipt["cells"] == ROWS * 3 and len(receipt["workerUrls"]) == 1
     worker = json.loads((directory / "worker/worker-complete.json").read_text())
     assert worker["receipts"] == 4 and worker["cells"] == ROWS * 3
+    metadata_headers = ["雪&", "<i>", "url\"'" + "x" * 20]
+    header_output = io.StringIO(newline="")
+    csv.writer(header_output, lineterminator="\r\n").writerow(metadata_headers)
+    assert len(header_output.getvalue().encode()) == 39
+    metadata_csv = directory / "capacity-metadata.csv"
+    metadata_xlsx = directory / "capacity-metadata.xlsx"
+    assert list(
+        csv.reader(io.StringIO(metadata_csv.read_bytes().decode(), newline=""))
+    ) == [
+        metadata_headers,
+        *values(),
+    ]
+    assert parse_xlsx(metadata_xlsx) == [metadata_headers, *values()]
+    with zipfile.ZipFile(metadata_xlsx) as archive:
+        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+        sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
+        assert sheet.attrib["name"] == "雪&\"<'>" + "n" * 25
     for path in files:
         actual = (
             list(csv.reader(io.StringIO(path.read_bytes().decode(), newline="")))

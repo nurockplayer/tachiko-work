@@ -33,6 +33,7 @@ independent of the Rust producer parsers and writers.
 | Enlarged envelopes and closure | Raw ABI ordinary 65,536/65,537 bytes, metadata request 4 MiB/+1, oversized non-metadata controls, Text 4,096/4,097 UTF-8 bytes, aggregate Text 1 MiB/+1 and CSV encoded output 2 MiB/+1 |
 | Narrow profile and complete metadata | Raw ABI atomic default-style/header/column-width/13-column disqualification and malformed metadata; native `capacity_profile_boundaries` checks identity/profile-string, metadata 3 MiB, complete projection 16 MiB, selective 64 KiB boundaries and structural disqualification |
 | Metadata-independent export closure | Encoded header row 39 bytes/+1, actual exact 2 MiB output, and scalar quote replacement that would add one encoded byte refused atomically |
+| Complete metadata order and XLSX escaping | Row/column permutations refuse; exact 39-byte Unicode/XML-sensitive headers and 31-character sheet name roundtrip through actual CSV/XLSX readers and independent CSV/ZIP/XML verification |
 
 Actual unchanged-source baseline: new seed native eight-row CSV/XLSX passes;
 64-row CSV refuses an 88,107-byte projection against 65,536. Four native boundary

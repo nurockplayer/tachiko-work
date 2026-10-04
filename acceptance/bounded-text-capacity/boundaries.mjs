@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const [wasmPath, fixtures, resultPath, mode] = process.argv.slice(2);
 assert(wasmPath && fixtures && resultPath);
@@ -132,7 +132,8 @@ try {
     let revision = imported.opened.bootstrap.revision;
     const target = imported.opened.table.rows[0].fields[0].target;
     const baselineValue = imported.opened.table.rows[0].fields[0].stored.value;
-    const exportOperation = format => ({ type: "export", format, expected_revision: revision, metadata, collection });
+    const exportOperation = format => ({ type: "export", format, expected_revision: revision, metadata,
+      collection: metadata.sheets[0].schema_id });
     function snapshot() {
       const table = okay(ordinary({ type: "query_table", collection }), "table");
       const exports = {};
@@ -150,6 +151,25 @@ try {
       return publication;
     }
     function unchanged(before) { assert.deepEqual(snapshot(), before); }
+    await probe("Unicode XML-sensitive metadata header39 and name31 roundtrips", async () => {
+      const before = snapshot();
+      const changed = structuredClone(metadata);
+      changed.sheets[0].name = '雪&"<\'>'.concat("n".repeat(25));
+      const names = ["雪&", "<i>", 'url"\''.concat("x".repeat(20))];
+      assert.equal(Array.from(changed.sheets[0].name).length, 31);
+      for (let c = 0; c < 3; c++) changed.sheets[0].columns[c].name = names[c];
+      for (const format of ["csv", "xlsx"]) {
+        okay(spreadsheet({ ...exportOperation(format), metadata: changed }), "spreadsheet_exported");
+        const bytes = output();
+        await writeFile(join(dirname(resultPath), `capacity-metadata.${format}`), bytes, { flag: "wx" });
+        const candidate = okay(importing(bytes, format, { install: false }), "imported");
+        assert.deepEqual(candidate.metadata.sheets[0].columns.map(c => c.name), names);
+        if (format === "xlsx") assert.equal(candidate.metadata.sheets[0].name, changed.sheets[0].name);
+        assert.deepEqual(candidate.opened.table.rows.map(row => row.fields.map(field => field.stored)),
+          imported.opened.table.rows.map(row => row.fields.map(field => field.stored)));
+        unchanged(before);
+      }
+    });
     // Establish both history stacks, then prove each refusal preserves them.
     publish("edit_scalar", { target, input: { kind: "text", value: "history-earlier" } });
     publish("edit_scalar", { target, input: { kind: "text", value: "history-marker" } });
@@ -190,6 +210,8 @@ try {
       m => { m.sheets[0].has_header = false; },
       m => { m.sheets[0].rows[1].entity_id = m.sheets[0].rows[0].entity_id; },
       m => { m.sheets[0].columns[0].name = "=SUM(A1)"; },
+      m => { [m.sheets[0].rows[0], m.sheets[0].rows[1]] = [m.sheets[0].rows[1], m.sheets[0].rows[0]]; },
+      m => { [m.sheets[0].columns[0], m.sheets[0].columns[1]] = [m.sheets[0].columns[1], m.sheets[0].columns[0]]; },
     ]) {
       const changed = structuredClone(metadata); mutation(changed);
       await refuse(`metadata refusal ${mutation.toString()}`, () => spreadsheet({ ...exportOperation("xlsx"), metadata: changed }));
