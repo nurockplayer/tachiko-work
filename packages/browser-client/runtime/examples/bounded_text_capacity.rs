@@ -3,6 +3,7 @@
 use std::{collections::BTreeMap, env, fs, path::Path, time::Instant};
 
 use serde::Deserialize;
+use serde_json::json;
 use tachiko_designer_runtime::{
     DesignerRequest, DesignerResponse, DesignerRuntime, ImportFieldType, ImportSelection,
     InteropMetadata, ScalarEditInput, StoredValueProjection, TableProjection, import_workbook,
@@ -413,10 +414,8 @@ fn reopen(fixtures: &Path, capture: &Path, format: &str) {
     times.save(&capture.join(format!("{format}-reopen-timings.json")));
     fs::write(
         capture.join(format!("{format}-fresh-process.json")),
-        serde_json::to_vec(
-            &serde_json::json!({"pid": std::process::id(), "cycles": 10, "cells": ROWS * 3}),
-        )
-        .unwrap(),
+        serde_json::to_vec(&json!({"pid": std::process::id(), "cycles": 10, "cells": ROWS * 3}))
+            .unwrap(),
     )
     .unwrap();
 }
@@ -488,7 +487,7 @@ fn run(fixtures: &Path, capture: &Path) {
     }
     assert!(import_csv(&[0xff], &ImportOptions::default()).is_err());
     assert!(import_csv(&vec![b'a'; 2 * 1024 * 1024 + 1], &ImportOptions::default()).is_err());
-    fs::write(capture.join("native-import-complete.json"), serde_json::to_vec(&serde_json::json!({"pid": std::process::id(), "formats": ["csv", "xlsx"], "cells": ROWS * 3, "history_edits_each": 128})).unwrap()).unwrap();
+    fs::write(capture.join("native-import-complete.json"), serde_json::to_vec(&json!({"pid": std::process::id(), "formats": ["csv", "xlsx"], "cells": ROWS * 3, "history_edits_each": 128})).unwrap()).unwrap();
 }
 
 fn main() {
