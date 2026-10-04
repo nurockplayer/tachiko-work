@@ -184,6 +184,7 @@ try {
             const sheet = metadata.sheets[0]!;
             same(sheet.columns.map((column) => column.name), ["account_id", "profile_url", "unix_timestamp"], "header labels");
             same(table.collection.id, sheet.schema_id, "collection identity");
+            same(table.collection.key, collection, "query collection key");
             same(table.columns.map((c) => c.id), sheet.columns.map((c) => c.field_id), "field identities");
             same(table.rows.map((r) => r.id), sheet.rows.map((r) => r.entity_id), "row identities/order");
             table.rows.forEach((row, r) => {
@@ -230,7 +231,7 @@ try {
             if (restart) check(size(reopened) > 65_536, "fresh Worker promoted Opened payload");
             const smallMetadata = structuredClone(metadata);
             smallMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
-            const exported = await timed(`${recipe}_export_xlsx`, () => client.exportSpreadsheet!(current.revision, smallMetadata, "xlsx", collection));
+            const exported = await timed(`${recipe}_export_xlsx`, () => client.exportSpreadsheet!(current.revision, smallMetadata, "xlsx", smallMetadata.sheets[0]!.schema_id));
             artifacts.push({ name: `${recipe}-capacity-from-${format}.xlsx`, bytes: Array.from(new Uint8Array(exported.bytes)) });
             const reimported = await timed(`${recipe}_reimport`, () => client.importSpreadsheet!(exported.bytes, "xlsx", options, selection));
             metadata = reimported.metadata;
@@ -285,7 +286,7 @@ try {
               saved = (await timed("save", () => client.exportProject(revision))).bytes;
               const savedHash = await digest(saved);
               const exportHashes: Record<string, string> = {};
-              for (const output of ["csv", "xlsx"] as const) exportHashes[output] = await digest((await client.exportSpreadsheet!(revision, metadata!, output, collection)).bytes);
+              for (const output of ["csv", "xlsx"] as const) exportHashes[output] = await digest((await client.exportSpreadsheet!(revision, metadata!, output, metadata!.sheets[0]!.schema_id)).bytes);
               const preserve = async (action: () => Promise<unknown>) => {
                 const before = await client.observeOccurrence();
                 let rejected = false;
@@ -294,7 +295,7 @@ try {
                 same(await client.observeOccurrence(), before, "rejection preserves occurrence/revision");
                 checkTable(await client.queryTable(collection));
                 same(await digest((await client.exportProject(revision)).bytes), savedHash, "rejection preserves canonical bytes");
-                for (const output of ["csv", "xlsx"] as const) same(await digest((await client.exportSpreadsheet!(revision, metadata!, output, collection)).bytes), exportHashes[output], "rejection preserves spreadsheet export bytes");
+                for (const output of ["csv", "xlsx"] as const) same(await digest((await client.exportSpreadsheet!(revision, metadata!, output, metadata!.sheets[0]!.schema_id)).bytes), exportHashes[output], "rejection preserves spreadsheet export bytes");
                 const undone = await timed("undo", () => client.trackerCommand!({ type: "undo", expected_revision: revision }), { target, value: "history-126" });
                 const prior = structuredClone(expected); prior[0]![0] = "history-126";
                 checkTable(await client.queryTable(collection), prior);
@@ -332,7 +333,7 @@ try {
             }
             const revision = (await client.observeOccurrence()).revision;
             for (const output of ["csv", "xlsx"] as SpreadsheetFormat[]) {
-              const exported = await timed(`export_${output}`, () => client.exportSpreadsheet!(revision, metadata!, output, collection));
+              const exported = await timed(`export_${output}`, () => client.exportSpreadsheet!(revision, metadata!, output, metadata!.sheets[0]!.schema_id));
               check(!exported.ledger.some((finding) => finding.blocking), "export blocking ledger");
               artifacts.push({ name: `${format}-${mode}-export.${output}`, bytes: Array.from(new Uint8Array(exported.bytes)) });
             }
