@@ -5231,11 +5231,11 @@ mod tests {
             true,
         )
         .unwrap();
-        assert!(
+        assert_eq!(
             runtime
                 .bootstrap_projection()
-                .keyed_grouped_sum_definition_ids
-                .is_empty()
+                .keyed_grouped_sum_definition_ids,
+            [] as [String; 0]
         );
         let before = runtime.export_project("resident/0").unwrap().bytes;
         let target = runtime.query_table("orders").unwrap().rows[0].fields[0]
