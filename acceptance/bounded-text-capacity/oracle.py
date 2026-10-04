@@ -205,6 +205,7 @@ def verify(directory):
         "PASS full Opened reply16777216/16777217",
         "PASS unchanged ordinary queryFields complete reply65536/65537",
         "PASS large constraint/multiple-schema/non-Text/formula/saved-definition disqualification",
+        "PASS row-limit refusal preserves None, complete resident, exports and both history stacks",
     ]:
         assert marker in profile, f"missing profile group: {marker}"
     expected = values()

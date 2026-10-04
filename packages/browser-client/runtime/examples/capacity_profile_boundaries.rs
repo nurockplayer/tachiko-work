@@ -5,8 +5,9 @@ use std::{collections::BTreeMap, env};
 use serde_json::{Value as Json, json};
 use tachiko_designer_runtime::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, FieldBatchProjection,
-    InteropMetadata, OpenedProjection, TableProjection, open_local_document, process_wire_request,
-    validate_import_metadata,
+    InteropMetadata, OpenedProjection, ScalarEditInput, TableProjection,
+    interop_adapter::{export_csv, export_xlsx},
+    open_local_document, process_wire_request, validate_import_metadata,
 };
 use tachiko_storage::to_canonical_string;
 use tachiko_workspace_engine::{
@@ -270,6 +271,102 @@ fn projection_document(target: usize) -> (Document, OpenedProjection) {
     (at, expected)
 }
 
+fn publish(runtime: &mut DesignerRuntime, request: DesignerRequest) {
+    let before = runtime.observe_occurrence();
+    let DesignerResponse::Published(publication) = runtime.handle(request).unwrap() else {
+        panic!("publication expected")
+    };
+    let after = runtime.observe_occurrence();
+    assert_eq!(publication.base_revision, before.revision);
+    assert_eq!(publication.resulting_revision, after.revision);
+    assert_ne!(after.revision, before.revision);
+    assert_eq!(after.scope, before.scope);
+}
+
+fn history(runtime: &mut DesignerRuntime, redo: bool) {
+    let expected_revision = runtime.observe_occurrence().revision;
+    publish(
+        runtime,
+        if redo {
+            DesignerRequest::Redo { expected_revision }
+        } else {
+            DesignerRequest::Undo { expected_revision }
+        },
+    );
+}
+
+fn export_bytes(runtime: &DesignerRuntime, metadata: &InteropMetadata) -> [Vec<u8>; 3] {
+    let revision = runtime.observe_occurrence().revision;
+    let workbook = runtime.export_workbook(&revision, metadata).unwrap();
+    [
+        runtime.export_project(&revision).unwrap().bytes,
+        export_csv(&workbook.sheets[0]).unwrap(),
+        export_xlsx(&workbook).unwrap(),
+    ]
+}
+
+fn refused_open_preserves(candidate: &Document) {
+    const NEW_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000152";
+    let input = to_canonical_string(candidate).unwrap();
+    let mut empty = None;
+    assert!(open_local_document(&mut empty, input.as_bytes(), NEW_OCCURRENCE).is_err());
+    assert!(
+        empty.is_none(),
+        "refusal must not install into an empty resident"
+    );
+
+    let seed = document(2);
+    let metadata = metadata(&seed);
+    let mut resident = Some(runtime(seed));
+    let current = resident.as_mut().unwrap();
+    let original_rows = table(current).rows;
+    let target = original_rows[0].fields[0].target.clone();
+    let mut states = Vec::new();
+    for value in ["history-one", "history-two"] {
+        publish(
+            current,
+            DesignerRequest::EditScalar {
+                expected_revision: current.observe_occurrence().revision,
+                target: target.clone(),
+                input: ScalarEditInput::Text {
+                    value: value.into(),
+                },
+            },
+        );
+        states.push(table(current).rows);
+    }
+    history(current, false); // One Undo entry and one Redo entry must both remain.
+    assert_eq!(table(current).rows, states[0]);
+    let before_occurrence = current.observe_occurrence();
+    let before_table = table(current);
+    let before_exports = export_bytes(current, &metadata);
+
+    assert!(open_local_document(&mut resident, input.as_bytes(), NEW_OCCURRENCE).is_err());
+    let current = resident.as_mut().expect("refusal must retain the resident");
+    assert_eq!(current.observe_occurrence(), before_occurrence);
+    assert_eq!(table(current), before_table); // Includes every cell, identity and revision.
+    assert_eq!(export_bytes(current, &metadata), before_exports);
+    // First consume the pre-existing Redo, then both Undo entries. Rebuild both
+    // states afterward to prove complete history content, not merely stack size.
+    for (redo, expected) in [
+        (true, &states[1]),
+        (false, &states[0]),
+        (false, &original_rows),
+        (true, &states[0]),
+        (true, &states[1]),
+    ] {
+        history(current, redo);
+        assert_eq!(&table(current).rows, expected);
+    }
+}
+
+fn atomic_control() {
+    refused_open_preserves(&document(8_407));
+    println!(
+        "PASS row-limit refusal preserves None, complete resident, exports and both history stacks"
+    );
+}
+
 fn projections() {
     let (at, expected) = projection_document(16 * MIB);
     let actual = opened(&at).unwrap();
@@ -283,11 +380,9 @@ fn projections() {
     );
     let (over, expected_over) = projection_document(16 * MIB + 1);
     assert_eq!(wire_size(&expected_over), 16 * MIB + 1);
-    // Admission must include encoded-open closure; success here exposes a gap.
-    assert!(
-        opened(&over).is_err(),
-        "complete Opened reply +1 must refuse before replacement"
-    );
+    // Exercise this exact oversized encoded-open candidate with both empty and
+    // populated destinations; an install-then-error implementation must fail.
+    refused_open_preserves(&over);
     println!(
         "PASS full Opened reply16777216/16777217; component-at-cap is superseded by wrapper cap"
     );
@@ -423,6 +518,7 @@ fn main() {
         ("identities", identities as fn()),
         ("metadata", metadata_limit),
         ("projections", projections),
+        ("atomic", atomic_control),
         ("fields", field_queries),
         ("ineligible", ineligible),
     ] {

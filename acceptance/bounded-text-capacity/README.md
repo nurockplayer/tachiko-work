@@ -26,6 +26,7 @@ independent of the Rust producer parsers and writers.
 | Save/export closure | Native/Worker exportProject, inspectImportedProject, independent fresh reopen, canonical byte equality, CSV/XLSX export |
 | Source and resident preservation | Source SHA retained; malformed/8407 import refusals and stale edits in real Worker; malformed native open and oversized ordinary request |
 | Refusal retains history/export state | Full cells, occurrence/revision, project bytes, CSV/XLSX bytes; Undo/Redo proves retained history |
+| Full Opened reply limit+1 is atomic | Native exact 16 MiB+1 replacement retains an empty destination or existing resident, complete cells/exports and both history stacks; independent row-limit atomic control |
 | Independent output verification | `oracle.py verify` requires exact 16-file export matrix and native/Worker completion receipts; compares every cell with independent CSV/XML parsers |
 | Measured producer budgets | Per-operation timings, browser heartbeat, sampled whole-Chromium RSS, actual Worker linear-memory phase samples |
 | Actual raw-WASM file defenses | `resource_fixtures.py` and `boundaries.mjs`: source 2 MiB, expanded 8 MiB, XML 100,000 nodes, ZIP 256 members at/+1, preserved parser refusals |
