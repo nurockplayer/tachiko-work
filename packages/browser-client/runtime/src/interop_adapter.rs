@@ -13,6 +13,9 @@ pub const MAX_COLUMNS: usize = 16;
 pub const MAX_DATA_ROWS: usize = 64;
 pub const MAX_NATIVE_TRACKER_DATA_ROWS: usize = 128;
 pub const MAX_FORMULAS: usize = 32;
+pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
+pub(crate) const MAX_TEXT_CAPACITY_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_TEXT_CAPACITY_HEADER_BYTES: usize = 39;
 
 /// Output capacity is explicit so native Tracker can remain a bounded outbound
 /// exception without changing the shared import/export profile.
@@ -20,6 +23,7 @@ pub const MAX_FORMULAS: usize = 32;
 pub(crate) enum OutputProfile {
     Shared,
     NativeTracker,
+    TextCapacity,
 }
 
 impl OutputProfile {
@@ -27,8 +31,143 @@ impl OutputProfile {
         match self {
             Self::Shared => MAX_DATA_ROWS,
             Self::NativeTracker => MAX_NATIVE_TRACKER_DATA_ROWS,
+            Self::TextCapacity => MAX_TEXT_CAPACITY_ROWS,
         }
     }
+}
+
+/// A private resource exception selected from complete source content.
+pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
+    workbook.sheets.len() == 1
+        && text_capacity_sheet_shape(&workbook.sheets[0])
+        && !workbook.ledger.iter().any(|finding| {
+            matches!(
+                finding.code.as_str(),
+                "header_style_not_preserved" | "column_width_outside_grid"
+            )
+        })
+}
+
+fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
+    sheet.has_header
+        && sheet.columns.len() == 3
+        && sheet.rows.len() <= MAX_TEXT_CAPACITY_ROWS
+        && sheet.columns.iter().all(|column| column.width.is_none())
+        && sheet.rows.iter().all(|row| {
+            row.len() == 3
+                && row.iter().all(|cell| {
+                    cell.formula.is_none()
+                        && matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. })
+                        && cell.style == CellStyle::default()
+                })
+        })
+}
+
+pub(crate) fn output_profile(workbook: &SourceWorkbook) -> OutputProfile {
+    if workbook
+        .sheets
+        .iter()
+        .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS)
+        && text_capacity_shape(workbook)
+    {
+        OutputProfile::TextCapacity
+    } else {
+        OutputProfile::Shared
+    }
+}
+
+/// Exact RFC CSV width, including quote doubling and empty-field quotes.
+pub(crate) fn csv_text_bytes(value: &str) -> usize {
+    value.len()
+        + if value.is_empty() || value.contains([',', '"', '\n', '\r']) {
+            2 + value.bytes().filter(|byte| *byte == b'"').count()
+        } else {
+            0
+        }
+}
+
+pub(crate) fn capacity_header_bytes(sheet: &SourceSheet) -> usize {
+    sheet
+        .columns
+        .iter()
+        .map(|column| csv_text_bytes(&column.name))
+        .sum::<usize>()
+        + 4
+}
+
+/// Prove both encodings before admitting this both-formats resource profile.
+/// The CSV body uses an invariant header reservation, independent of host metadata.
+pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
+    if !text_capacity_shape(workbook) {
+        return fail(
+            "Text capacity requires one headered, default-style 8,406-row three-Text table",
+        );
+    }
+    let sheet = &workbook.sheets[0];
+    if capacity_header_bytes(sheet) > MAX_TEXT_CAPACITY_HEADER_BYTES {
+        return fail("Text capacity CSV header exceeds 39 encoded bytes");
+    }
+    let mut text_bytes = 0usize;
+    let mut csv_bytes = MAX_TEXT_CAPACITY_HEADER_BYTES;
+    // Plain inlineStr emission has at most 100 tag/attribute bytes per cell,
+    // 32 per row, and 16 KiB for all other XML parts, escaped headers and the
+    // maximum legal worksheet name. This includes the separate default style
+    // part. The compression bound below includes ZIP framing separately.
+    let mut expanded = 16 * 1024 + (sheet.rows.len() + 1) * (3 * 100 + 32);
+    for row in &sheet.rows {
+        csv_bytes += 4; // Two delimiters and CRLF.
+        for cell in row {
+            let value = match &cell.value {
+                SourceValue::Text { value } => value.as_str(),
+                SourceValue::Empty => "",
+                _ => return fail("Text capacity contains a non-Text value"),
+            };
+            if value.len() > 4096 {
+                return fail("Text capacity value exceeds 4096 UTF-8 bytes");
+            }
+            if csv_formula_text(value) || !xml_text_valid(value) {
+                return fail("Text capacity requires safe CSV Text and valid XML characters");
+            }
+            text_bytes += value.len();
+            csv_bytes += csv_text_bytes(value);
+            expanded += escaped_xml_bytes(value);
+        }
+    }
+    if text_bytes > MAX_TEXT_CAPACITY_BYTES {
+        return fail("Text capacity aggregate Text exceeds 1048576 bytes");
+    }
+    if csv_bytes > MAX_SOURCE_BYTES {
+        return fail("Text capacity encoded CSV exceeds 2 MiB");
+    }
+    if expanded > MAX_EXPANDED_BYTES {
+        return fail("Text capacity expanded XLSX exceeds 8 MiB");
+    }
+    // Worksheet nodes: row + (c,is,t) for every populated Text cell. Empty
+    // cells need fewer nodes. Other parts are independent XML documents.
+    if 2 + (sheet.rows.len() + 1) * 10 > 100_000 {
+        return fail("Text capacity XML exceeds 100000 nodes");
+    }
+    for column in &sheet.columns {
+        if csv_formula_text(&column.name) || !xml_text_valid(&column.name) {
+            return fail("Text capacity requires safe CSV headers and valid XML characters");
+        }
+    }
+    // Prove the compressed source bound with the actual deterministic writer.
+    // This runs at import/export, not on each scalar edit.
+    Ok(())
+}
+
+fn escaped_xml_bytes(value: &str) -> usize {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'&' => 5,
+            b'<' | b'>' => 4,
+            b'"' | b'\'' => 6,
+            b'\r' => 5,
+            _ => 1,
+        })
+        .sum()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -198,8 +337,10 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         } else {
             field.push(ch);
         }
-        if row.len() > MAX_COLUMNS || rows.len() > MAX_DATA_ROWS + usize::from(options.header) {
-            return fail("CSV exceeds row or column bounds");
+        if row.len() > MAX_COLUMNS
+            || rows.len() > MAX_TEXT_CAPACITY_ROWS + usize::from(options.header)
+        {
+            return fail("CSV exceeds 8,406 row or column bounds");
         }
     }
     if quoted {
@@ -210,7 +351,9 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         rows.push(row);
     }
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
-    if width == 0 || width > MAX_COLUMNS || rows.len() > MAX_DATA_ROWS + usize::from(options.header)
+    if width == 0
+        || width > MAX_COLUMNS
+        || rows.len() > MAX_TEXT_CAPACITY_ROWS + usize::from(options.header)
     {
         return fail("CSV exceeds profile bounds");
     }
@@ -245,7 +388,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
                 .collect()
         })
         .collect();
-    Ok(finish_source_admission(SourceWorkbook {
+    let workbook = SourceWorkbook {
         sheets: vec![SourceSheet {
             name: "Imported table".into(),
             has_header: options.header,
@@ -268,7 +411,11 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
                 false,
             ),
         ],
-    }))
+    };
+    if workbook.sheets[0].rows.len() > MAX_DATA_ROWS {
+        validate_text_capacity(&workbook)?;
+    }
+    Ok(finish_source_admission(workbook))
 }
 
 // Namespace-aware bounded XML tree. No DTD or entity expansion is accepted.
@@ -947,8 +1094,8 @@ fn coordinate(address: &str) -> Result<(usize, usize)> {
     let row = address[split..]
         .parse::<usize>()
         .map_err(|_| InteropError("Invalid cell row".into()))?;
-    if col == 0 || row == 0 || row > MAX_DATA_ROWS + 1 {
-        return fail("Cell row exceeds profile");
+    if col == 0 || row == 0 || row > MAX_TEXT_CAPACITY_ROWS + 1 {
+        return fail("Cell row exceeds 8,406 profile");
     }
     Ok((row - 1, col - 1))
 }
@@ -1380,8 +1527,8 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 .ok_or_else(|| InteropError("Missing worksheet row index".into()))?
                 .parse::<usize>()
                 .map_err(|_| InteropError("Invalid row index".into()))?;
-            if row_index == 0 || row_index > MAX_DATA_ROWS + 1 {
-                return fail("Worksheet row exceeds profile");
+            if row_index == 0 || row_index > MAX_TEXT_CAPACITY_ROWS + 1 {
+                return fail("Worksheet row exceeds 8,406 profile");
             }
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
@@ -1488,6 +1635,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             row.resize(width, SourceCell::default());
         }
         let header = rows.remove(0);
+        let mut capacity_plain = header.iter().all(|cell| cell.style == CellStyle::default());
         let mut headers = BTreeSet::new();
         let mut columns = Vec::new();
         for (i, c) in header.into_iter().enumerate() {
@@ -1559,6 +1707,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     .map(str::parse::<f64>)
                     .transpose()
                     .map_err(|_| InteropError("Invalid column width".into()))?;
+                capacity_plain &= w.is_none();
                 if min == 0
                     || max < min
                     || max > MAX_COLUMNS
@@ -1574,6 +1723,11 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 }
             }
         }
+        if rows.len() > MAX_DATA_ROWS && !capacity_plain {
+            return fail(
+                "8,406-row capacity requires default source headers and no column widths, including outside the grid",
+            );
+        }
         sheets.push(SourceSheet {
             name,
             has_header: true,
@@ -1583,7 +1737,15 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     }
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
     ledger.push(finding(FidelityCategory::NativeEquivalent,"bounded_workbook","source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
-    Ok(finish_source_admission(SourceWorkbook { sheets, ledger }))
+    let workbook = SourceWorkbook { sheets, ledger };
+    if workbook
+        .sheets
+        .iter()
+        .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS)
+    {
+        validate_text_capacity(&workbook)?;
+    }
+    Ok(finish_source_admission(workbook))
 }
 
 /// Every parsed source uses the same representation predicate as output. Existing
@@ -1609,7 +1771,12 @@ fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
 /// # Errors
 /// Rejects an oversized or invalid scalar output profile.
 pub fn export_csv(sheet: &SourceSheet) -> Result<Vec<u8>> {
-    export_csv_for_profile(sheet, OutputProfile::Shared)
+    let profile = if sheet.rows.len() > MAX_DATA_ROWS && text_capacity_sheet_shape(sheet) {
+        OutputProfile::TextCapacity
+    } else {
+        OutputProfile::Shared
+    };
+    export_csv_for_profile(sheet, profile)
 }
 
 /// Emit the selected sheet values using one explicit bounded output profile.
@@ -1619,6 +1786,12 @@ pub(crate) fn export_csv_for_profile(
     sheet: &SourceSheet,
     profile: OutputProfile,
 ) -> Result<Vec<u8>> {
+    if profile == OutputProfile::TextCapacity {
+        validate_text_capacity(&SourceWorkbook {
+            sheets: vec![sheet.clone()],
+            ledger: Vec::new(),
+        })?;
+    }
     if sheet.columns.is_empty()
         || sheet.columns.len() > MAX_COLUMNS
         || sheet.rows.len() > profile.max_data_rows()
@@ -1732,6 +1905,11 @@ fn escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+        .replace('\r', "&#13;")
+}
+
+fn capacity_attribute(value: &str) -> String {
+    escape(value).replace('\n', "&#10;").replace('\t', "&#9;")
 }
 fn column_name(index: usize) -> String {
     let mut n = index + 1;
@@ -1753,13 +1931,16 @@ pub(crate) fn valid_worksheet_name(name: &str) -> bool {
         && xml_text_valid(name)
 }
 pub(crate) fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
-    validate_output_for_profile(workbook, OutputProfile::Shared)
+    validate_output_for_profile(workbook, output_profile(workbook))
 }
 
 pub(crate) fn validate_output_for_profile(
     workbook: &SourceWorkbook,
     profile: OutputProfile,
 ) -> Result<()> {
+    if profile == OutputProfile::TextCapacity {
+        validate_text_capacity(workbook)?;
+    }
     if workbook.sheets.is_empty() || workbook.sheets.len() > MAX_SHEETS {
         return fail("Export requires 1..=4 sheets");
     }
@@ -1869,7 +2050,7 @@ fn output_style(cell: &SourceCell) -> CellStyle {
 /// Rejects blocking findings, invalid output values/styles and bounded size limits.
 #[allow(clippy::too_many_lines, clippy::format_push_string)] // Bounded deterministic XML assembly; temporary strings stay within the tiny workbook profile.
 pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
-    export_xlsx_for_profile(workbook, OutputProfile::Shared)
+    export_xlsx_for_profile(workbook, output_profile(workbook))
 }
 
 /// Emit typed worksheets using the selected bounded output profile.
@@ -1885,7 +2066,11 @@ pub(crate) fn export_xlsx_for_profile(
         serde_json::to_string(&CellStyle::default()).map_err(|e| InteropError(e.to_string()))?,
     ];
     let mut styles = vec![CellStyle::default()];
-    for s in &workbook.sheets {
+    for s in workbook
+        .sheets
+        .iter()
+        .filter(|_| profile != OutputProfile::TextCapacity)
+    {
         for row in &s.rows {
             for c in row {
                 let style = output_style(c);
@@ -1929,6 +2114,23 @@ pub(crate) fn export_xlsx_for_profile(
     );
     let mut parts = BTreeMap::new();
     parts.insert("xl/styles.xml".into(), style_xml);
+    if profile == OutputProfile::TextCapacity {
+        parts.insert("xl/styles.xml".into(), format!("<styleSheet xmlns=\"{MAIN}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"));
+        let headers = workbook.sheets[0]
+            .columns
+            .iter()
+            .map(|column| {
+                format!(
+                    "<si><t xml:space=\"preserve\">{}</t></si>",
+                    escape(&column.name)
+                )
+            })
+            .collect::<String>();
+        parts.insert(
+            "xl/sharedStrings.xml".into(),
+            format!("<sst xmlns=\"{MAIN}\" count=\"3\" uniqueCount=\"3\">{headers}</sst>"),
+        );
+    }
     let mut sheet_list = String::new();
     let mut sheet_rels = String::new();
     let mut types = String::new();
@@ -1936,7 +2138,11 @@ pub(crate) fn export_xlsx_for_profile(
         let n = index + 1;
         sheet_list.push_str(&format!(
             "<sheet name=\"{}\" sheetId=\"{n}\" r:id=\"rId{n}\"/>",
-            escape(&s.name)
+            if profile == OutputProfile::TextCapacity {
+                capacity_attribute(&s.name)
+            } else {
+                escape(&s.name)
+            }
         ));
         sheet_rels.push_str(&format!("<Relationship Id=\"rId{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{n}.xml\"/>"));
         types.push_str(&format!("<Override PartName=\"/xl/worksheets/sheet{n}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"));
@@ -1982,29 +2188,37 @@ pub(crate) fn export_xlsx_for_profile(
             xml.push_str(&format!("<row r=\"{}\">", r + 1));
             for (col, c) in row.iter().enumerate() {
                 let address = format!("{}{}", column_name(col), r + 1);
-                let key = serde_json::to_string(&output_style(c))
-                    .map_err(|e| InteropError(e.to_string()))?;
-                let sid = style_keys.iter().position(|x| x == &key).unwrap_or(0);
+                let sid = if profile == OutputProfile::TextCapacity {
+                    0
+                } else {
+                    let key = serde_json::to_string(&output_style(c))
+                        .map_err(|e| InteropError(e.to_string()))?;
+                    style_keys.iter().position(|x| x == &key).unwrap_or(0)
+                };
                 let formula = c
                     .formula
                     .as_ref()
                     .map(|f| format!("<f>{}</f>", escape(f.trim_start_matches('='))))
                     .unwrap_or_default();
-                let (kind, body) = match &c.value {
-                    SourceValue::Empty => ("n", formula.clone()),
-                    SourceValue::Text { value } => (
-                        "inlineStr",
-                        format!(
-                            "{formula}<is><t xml:space=\"preserve\">{}</t></is>",
-                            escape(value)
+                let (kind, body) = if profile == OutputProfile::TextCapacity && r == 0 {
+                    ("s", format!("<v>{col}</v>"))
+                } else {
+                    match &c.value {
+                        SourceValue::Empty => ("n", formula.clone()),
+                        SourceValue::Text { value } => (
+                            "inlineStr",
+                            format!(
+                                "{formula}<is><t xml:space=\"preserve\">{}</t></is>",
+                                escape(value)
+                            ),
                         ),
-                    ),
-                    SourceValue::Number { value } => ("n", format!("{formula}<v>{value}</v>")),
-                    SourceValue::Boolean { value } => {
-                        ("b", format!("{formula}<v>{}</v>", u8::from(*value)))
-                    }
-                    SourceValue::Date { value } => {
-                        ("d", format!("{formula}<v>{}</v>", escape(value)))
+                        SourceValue::Number { value } => ("n", format!("{formula}<v>{value}</v>")),
+                        SourceValue::Boolean { value } => {
+                            ("b", format!("{formula}<v>{}</v>", u8::from(*value)))
+                        }
+                        SourceValue::Date { value } => {
+                            ("d", format!("{formula}<v>{}</v>", escape(value)))
+                        }
                     }
                 };
                 xml.push_str(&format!(
@@ -2017,15 +2231,37 @@ pub(crate) fn export_xlsx_for_profile(
         parts.insert(format!("xl/worksheets/sheet{n}.xml"), xml);
     }
     parts.insert("xl/workbook.xml".into(),format!("<workbook xmlns=\"{MAIN}\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><workbookPr date1904=\"0\"/><sheets>{sheet_list}</sheets><calcPr calcMode=\"auto\" fullCalcOnLoad=\"1\"/></workbook>"));
-    parts.insert("xl/_rels/workbook.xml.rels".into(),format!("<Relationships xmlns=\"{REL}\">{sheet_rels}<Relationship Id=\"styles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>"));
+    let strings_relationship = if profile == OutputProfile::TextCapacity {
+        "<Relationship Id=\"strings\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>"
+    } else {
+        ""
+    };
+    parts.insert("xl/_rels/workbook.xml.rels".into(),format!("<Relationships xmlns=\"{REL}\">{sheet_rels}{strings_relationship}<Relationship Id=\"styles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>"));
     parts.insert("_rels/.rels".into(),format!("<Relationships xmlns=\"{REL}\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"));
-    parts.insert("[Content_Types].xml".into(),format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>{types}</Types>"));
+    let strings_type = if profile == OutputProfile::TextCapacity {
+        "<Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/>"
+    } else {
+        ""
+    };
+    parts.insert("[Content_Types].xml".into(),format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>{strings_type}{types}</Types>"));
+    if profile == OutputProfile::TextCapacity
+        && parts.values().map(String::len).sum::<usize>() > MAX_EXPANDED_BYTES
+    {
+        return fail("Text capacity expanded XLSX exceeds 8 MiB");
+    }
     let mut output = Cursor::new(Vec::new());
     {
         let mut writer = ZipWriter::new(&mut output);
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         for (name, xml) in parts {
+            let options = if profile == OutputProfile::TextCapacity
+                && matches!(name.as_str(), "xl/workbook.xml" | "xl/sharedStrings.xml")
+            {
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)
+            } else {
+                options
+            };
             writer
                 .start_file(name, options)
                 .map_err(|e| InteropError(e.to_string()))?;

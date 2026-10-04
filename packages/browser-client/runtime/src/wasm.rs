@@ -11,14 +11,14 @@ use crate::interop_adapter::{
 };
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
-    MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply,
-    ensure_wire_reply_size, inspect_project, open_local_document, open_portable_ro, open_project,
-    process_wire_request, request_too_large_reply, verify_portable_ro,
+    MAX_PROJECT_TRANSFER_BYTES, MAX_SPREADSHEET_METADATA_REQUEST_BYTES, MAX_WIRE_REQUEST_BYTES,
+    ProjectExportProjection, encode_reply, ensure_wire_reply_size, inspect_project,
+    open_local_document, open_portable_ro, open_project, process_wire_request,
+    request_too_large_reply, verify_portable_ro,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
     NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
-    inspect_imported_project,
 };
 
 #[derive(Clone, Copy, Deserialize)]
@@ -63,7 +63,21 @@ enum SpreadsheetOperation {
     },
 }
 
+#[derive(Deserialize)]
+struct MetadataControl {
+    #[serde(rename = "type")]
+    kind: MetadataControlKind,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum MetadataControlKind {
+    Export,
+    InspectProject,
+}
+
 struct SpreadsheetResult {
+    text_capacity: bool,
     response: DesignerResponse,
     candidate: Option<DesignerRuntime>,
     export: Option<Vec<u8>>,
@@ -72,6 +86,7 @@ struct SpreadsheetResult {
 impl SpreadsheetResult {
     fn read_only(response: DesignerResponse) -> Self {
         Self {
+            text_capacity: false,
             response,
             candidate: None,
             export: None,
@@ -91,7 +106,7 @@ thread_local! {
 /// Resize the private request arena and return its linear-memory offset.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_request_reserve(length: u32) -> u32 {
-    if length as usize > MAX_WIRE_REQUEST_BYTES {
+    if length as usize > MAX_SPREADSHEET_METADATA_REQUEST_BYTES {
         REQUEST_TOO_LARGE.set(true);
         REQUEST.with(|request| request.borrow_mut().clear());
         return 0;
@@ -182,6 +197,10 @@ pub extern "C" fn tachiko_designer_portable_ro_open() {
         } else {
             REQUEST.with(|request| {
                 let request = request.borrow();
+                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
+                    return serde_json::from_slice(&request_too_large_reply(runtime.as_ref()))
+                        .expect("bounded refusal is JSON");
+                }
                 let Ok(occurrence_id) = std::str::from_utf8(&request) else {
                     return DesignerWireReply::Error {
                         error: DesignerError::InvalidOccurrenceIdentity
@@ -249,7 +268,27 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
     let project = PROJECT.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
     RUNTIME.with(|slot| {
         let mut runtime = slot.borrow_mut();
-        if request_too_large || request.len() > MAX_WIRE_REQUEST_BYTES {
+        let metadata_control = if request.len() > MAX_WIRE_REQUEST_BYTES {
+            request
+                .iter()
+                .copied()
+                .find(|byte| !byte.is_ascii_whitespace())
+                == Some(b'{')
+                && serde_json::from_slice::<MetadataControl>(&request)
+                    .map(|control| {
+                        matches!(
+                            control.kind,
+                            MetadataControlKind::Export | MetadataControlKind::InspectProject
+                        )
+                    })
+                    .unwrap_or(false)
+        } else {
+            true
+        };
+        if request_too_large
+            || request.len() > MAX_SPREADSHEET_METADATA_REQUEST_BYTES
+            || !metadata_control
+        {
             RESPONSE.with(|response| {
                 *response.borrow_mut() = request_too_large_reply(runtime.as_ref());
             });
@@ -272,7 +311,7 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
                 let reply = DesignerWireReply::Ok {
                     response: result.response,
                 };
-                if let Err(error) = ensure_wire_reply_size(&reply) {
+                if let Err(error) = ensure_wire_reply_size(&reply, result.text_capacity) {
                     DesignerWireReply::Error {
                         error: error.failure_projection(current_revision(runtime.as_ref())),
                     }
@@ -326,9 +365,15 @@ fn spreadsheet_operation(
             csv_options,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            Ok(SpreadsheetResult::read_only(
-                DesignerResponse::ImportPreview(Box::new(workbook)),
-            ))
+            let capacity = workbook
+                .sheets
+                .iter()
+                .any(|sheet| sheet.rows.len() > crate::interop_adapter::MAX_DATA_ROWS)
+                && crate::interop_adapter::text_capacity_shape(&workbook);
+            let mut result =
+                SpreadsheetResult::read_only(DesignerResponse::ImportPreview(Box::new(workbook)));
+            result.text_capacity = capacity;
+            Ok(result)
         }
         SpreadsheetOperation::Import {
             format,
@@ -340,16 +385,19 @@ fn spreadsheet_operation(
             let workbook = import_source(project, format, &csv_options)?;
             let (candidate, imported) = import_workbook(&workbook, &selection, &occurrence_id)?;
             Ok(SpreadsheetResult {
+                text_capacity: candidate.text_capacity,
                 response: DesignerResponse::Imported(Box::new(imported)),
                 candidate: install.then_some(candidate),
                 export: None,
             })
         }
         SpreadsheetOperation::InspectProject { metadata } => {
-            let opened = inspect_imported_project(project, &metadata)?;
-            Ok(SpreadsheetResult::read_only(DesignerResponse::Opened(
-                Box::new(opened),
-            )))
+            let (opened, text_capacity) =
+                crate::interop_document::inspect_imported_project_with_profile(project, &metadata)?;
+            let mut result =
+                SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
+            result.text_capacity = text_capacity;
+            Ok(result)
         }
         SpreadsheetOperation::Export {
             expected_revision,
@@ -437,6 +485,7 @@ fn export_native_tracker_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        text_capacity: runtime.text_capacity,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
             byte_length: bytes.len(),
@@ -498,6 +547,7 @@ fn export_native_budget_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        text_capacity: runtime.text_capacity,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
             byte_length: bytes.len(),
@@ -566,6 +616,7 @@ fn export_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        text_capacity: runtime.text_capacity,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
             byte_length: bytes.len(),
@@ -605,6 +656,10 @@ fn process_project_candidate(install: bool, local_document: bool) {
         } else {
             REQUEST.with(|request| {
                 let request = request.borrow();
+                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
+                    return serde_json::from_slice(&request_too_large_reply(runtime.as_ref()))
+                        .expect("bounded refusal is JSON");
+                }
                 let Ok(occurrence_id) = std::str::from_utf8(&request) else {
                     return DesignerWireReply::Error {
                         error: DesignerError::InvalidOccurrenceIdentity
@@ -642,6 +697,10 @@ pub extern "C" fn tachiko_designer_project_export() {
         let reply = if let Some(runtime) = runtime.as_ref() {
             REQUEST.with(|request| {
                 let request = request.borrow();
+                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
+                    return serde_json::from_slice(&request_too_large_reply(Some(runtime)))
+                        .expect("bounded refusal is JSON");
+                }
                 match std::str::from_utf8(&request) {
                     Ok(expected_revision) => match runtime.export_project(expected_revision) {
                         Ok(export) => {
@@ -735,6 +794,10 @@ fn export_project_bytes<E>(
         let reply = if let Some(runtime) = runtime.as_ref() {
             REQUEST.with(|request| {
                 let request = request.borrow();
+                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
+                    return serde_json::from_slice(&request_too_large_reply(Some(runtime)))
+                        .expect("bounded refusal is JSON");
+                }
                 match std::str::from_utf8(&request) {
                     Ok(expected_revision) => match export(runtime, expected_revision) {
                         Ok(export) => {

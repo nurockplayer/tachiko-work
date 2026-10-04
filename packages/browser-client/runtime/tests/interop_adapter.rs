@@ -9,6 +9,111 @@ fn simple() -> SourceWorkbook {
     import_csv(b"Name,Amount\nAda,12\n", &ImportOptions::default()).unwrap()
 }
 
+fn capacity_book() -> SourceWorkbook {
+    let source = format!("a,b,c\n{}", "one,two,three\n".repeat(65));
+    import_csv(source.as_bytes(), &ImportOptions::default()).unwrap()
+}
+
+#[test]
+fn capacity_xlsx_worksheet_compression_is_independent_of_metadata() {
+    let mut book = capacity_book();
+    book.sheets[0].rows[0][0].value = SourceValue::Text {
+        value: "CR\r\nLF & <".into(),
+    };
+    let first = export_xlsx(&book).unwrap();
+    book.sheets[0].name = "metadata\n\t\r".into();
+    for (column, name) in book.sheets[0]
+        .columns
+        .iter_mut()
+        .zip(["a & <", "b\r\n", "c\t"])
+    {
+        column.name = name.into();
+    }
+    let second = export_xlsx(&book).unwrap();
+    let worksheet = |bytes: &[u8]| {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut entry = archive.by_name("xl/worksheets/sheet1.xml").unwrap();
+        let size = entry.compressed_size();
+        let mut contents = String::new();
+        entry.read_to_string(&mut contents).unwrap();
+        (size, contents)
+    };
+    assert_eq!(worksheet(&first), worksheet(&second));
+    let mut archive = ZipArchive::new(Cursor::new(&second)).unwrap();
+    for path in ["xl/workbook.xml", "xl/sharedStrings.xml"] {
+        assert_eq!(
+            archive.by_name(path).unwrap().compression(),
+            zip::CompressionMethod::Stored
+        );
+    }
+    let parsed = import_xlsx(&second).unwrap();
+    assert_eq!(parsed.sheets[0].name, book.sheets[0].name);
+    assert_eq!(parsed.sheets[0].columns, book.sheets[0].columns);
+    assert_eq!(
+        parsed.sheets[0].rows[0][0].value,
+        book.sheets[0].rows[0][0].value
+    );
+}
+
+#[test]
+fn capacity_source_cannot_hide_header_style_or_out_of_grid_width() {
+    let bytes = export_xlsx(&capacity_book()).unwrap();
+    let styled = mutate(&bytes, "xl/styles.xml", |xml| {
+        xml.replace("<fonts count=\"1\">", "<fonts count=\"2\">")
+            .replace("</fonts>", "<font><b/></font></fonts>")
+            .replace("<cellXfs count=\"1\">", "<cellXfs count=\"2\">")
+            .replace("</cellXfs>", "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs>")
+    });
+    let styled = mutate(&styled, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace("r=\"A1\" s=\"0\"", "r=\"A1\" s=\"1\"")
+    });
+    assert!(
+        import_xlsx(&styled)
+            .unwrap_err()
+            .0
+            .contains("default source headers")
+    );
+    let width = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<sheetData>",
+            "<cols><col min=\"4\" max=\"4\" width=\"12\"/></cols><sheetData>",
+        )
+    });
+    assert!(import_xlsx(&width).unwrap_err().0.contains("column widths"));
+    // Existing small generic source-only losses keep their original behavior.
+    let small = export_xlsx(&simple()).unwrap();
+    let width = mutate(&small, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<sheetData>",
+            "<cols><col min=\"4\" max=\"4\" width=\"12\"/></cols><sheetData>",
+        )
+    });
+    let inspected = import_xlsx(&width).unwrap();
+    assert!(
+        inspected
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "column_width_outside_grid" && !finding.blocking)
+    );
+}
+
+#[test]
+fn existing_64_row_text_source_keeps_generic_styles_and_long_headers() {
+    let source = format!(
+        "{},b,c\n{}",
+        "generic-label".repeat(8),
+        "one,two,three\n".repeat(64)
+    );
+    let mut book = import_csv(source.as_bytes(), &ImportOptions::default()).unwrap();
+    book.sheets[0].rows[0][0].style.bold = true;
+    book.sheets[0].columns[1].width = Some(12.0);
+    let parsed = import_xlsx(&export_xlsx(&book).unwrap()).unwrap();
+    assert_eq!(parsed.sheets[0].rows.len(), 64);
+    assert_eq!(parsed.sheets[0].columns, book.sheets[0].columns);
+    assert!(parsed.sheets[0].rows[0][0].style.bold);
+    assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+}
+
 #[test]
 fn admitted_workbooks_pass_the_shared_output_style_predicate() {
     let mut book = simple();

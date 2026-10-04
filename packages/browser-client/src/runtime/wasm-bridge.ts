@@ -31,6 +31,7 @@ type DesignerWasmExports = {
 };
 
 const MAX_WIRE_REQUEST_BYTES = 65_536;
+const MAX_METADATA_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
 
 export type DesignerWasmBridge = {
@@ -66,8 +67,8 @@ export async function createDesignerWasmBridge(
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
-  const writeRequest = (input: Uint8Array): boolean => {
-    if (input.length > MAX_WIRE_REQUEST_BYTES) return false;
+  const writeRequest = (input: Uint8Array, maximum = MAX_WIRE_REQUEST_BYTES): boolean => {
+    if (input.length > maximum) return false;
     const requestPointer = exports.tachiko_designer_request_reserve(input.length);
     new Uint8Array(exports.memory.buffer, requestPointer, input.length).set(input);
     return true;
@@ -96,7 +97,9 @@ export async function createDesignerWasmBridge(
 
   return {
     spreadsheet: (operation, bytes) => {
-      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES || !writeRequest(encoder.encode(JSON.stringify(operation)))) {
+      const maximum = operation.type === "export" || operation.type === "inspect_project"
+        ? MAX_METADATA_REQUEST_BYTES : MAX_WIRE_REQUEST_BYTES;
+      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES || !writeRequest(encoder.encode(JSON.stringify(operation)), maximum)) {
         return tooLargeReply("The spreadsheet request exceeds the private bridge limits.");
       }
       const pointer = exports.tachiko_designer_project_reserve(bytes.byteLength);
