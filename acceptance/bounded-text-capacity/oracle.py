@@ -207,6 +207,24 @@ def verify(directory):
         ]
         for delta in [0, 1]
     )
+    string_cases = json.loads(
+        (directory / "fixtures/string-escape-manifest.json").read_text()
+    )
+    assert len(string_cases) == 88
+    required.update(
+        f"ST {'refusal' if case['refuse'] else 'near-match'} {case['file']}"
+        for case in string_cases
+    )
+    for pattern in ["_x0041_", "_x00aF_", "_x005F_x0041_"]:
+        required.add(f"ST edit {pattern}")
+        for header in ["false", "true"]:
+            required.update(
+                f"ST CSV {count} header={header} {pattern}" for count in [8, 8406]
+            )
+            required.update(
+                f"ST metadata {kind} header={header} {pattern}"
+                for kind in ["csv", "xlsx", "inspect"]
+            )
     assert required <= names, f"missing mandatory boundary cases: {required - names}"
     assert boundary["wasm_linear_memory_high_water_bytes"] <= 256 * 1024 * 1024
     profile = (directory / "native-profile-boundaries.log").read_text()
@@ -217,6 +235,7 @@ def verify(directory):
         "PASS unchanged ordinary queryFields complete reply65536/65537",
         "PASS large constraint/multiple-schema/non-Text/formula/saved-definition disqualification",
         "PASS row-limit refusal preserves None, complete resident, exports and both history stacks",
+        "PASS ST_Xstring capacity reopen refusal, near-matches and generic preservation",
     ]:
         assert marker in profile, f"missing profile group: {marker}"
     expected = values()

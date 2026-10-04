@@ -194,6 +194,36 @@ try {
     publish("undo");
     const stable = snapshot();
     const refuse = async (name, action, capacity) => probe(name, () => { error(action(), capacity); unchanged(stable); });
+    for (const item of JSON.parse(await readFile(join(fixtures, "string-escape-manifest.json"), "utf8"))) {
+      const bytes = await readFile(join(fixtures, item.file));
+      if (item.refuse) await refuse(`ST refusal ${item.file}`, () => importing(bytes, "xlsx"));
+      else await probe(`ST near-match ${item.file}`, () => {
+        const candidate = okay(importing(bytes, "xlsx", { install: false }), "imported");
+        assert.equal(candidate.opened.table.rows.length, item.rows);
+        const sheet = candidate.metadata.sheets[0];
+        if (item.location === "header") assert.equal(sheet.columns[0].name, item.value);
+        else if (item.location === "sheet") assert.equal(sheet.name, item.value);
+        else assert.deepEqual(candidate.opened.table.rows[0].fields[0].stored, { kind: "text", value: item.value });
+        unchanged(stable);
+      });
+    }
+    for (const pattern of ["_x0041_", "_x00aF_", "_x005F_x0041_"]) {
+      const value = `left${pattern}right`;
+      await refuse(`ST edit ${pattern}`, () => ordinary({ type: "edit_scalar", expected_revision: revision, target, input: { kind: "text", value } }));
+      for (const count of [8, 8406]) for (const header of [false, true]) {
+        const rows = Array.from({ length: count }, () => Array(3).fill("v".repeat(count === 8 ? 4096 : 1)));
+        if (!header) rows[0][0] = value;
+        const input = csv(rows, header ? [value, "b", "c"] : ["a", "b", "c"]);
+        await refuse(`ST CSV ${count} header=${header} ${pattern}`, () => importing(input));
+      }
+      for (const header of [false, true]) {
+        const changed = structuredClone(metadata);
+        changed.sheets[0].columns.forEach((column, index) => { column.name = ["a", "b", "c"][index]; });
+        if (header) changed.sheets[0].columns[0].name = value; else changed.sheets[0].name = value;
+        for (const format of ["csv", "xlsx"]) await refuse(`ST metadata ${format} header=${header} ${pattern}`, () => spreadsheet({ ...exportOperation(format), metadata: changed }));
+        await refuse(`ST metadata inspect header=${header} ${pattern}`, () => spreadsheet({ type: "inspect_project", metadata: changed }, save(revision)));
+      }
+    }
     for (const format of ["csv", "xlsx"]) {
       for (const file of [`source-8407.${format}`, `malformed.${format}`]) {
         const invalid = await readFile(join(fixtures, file));

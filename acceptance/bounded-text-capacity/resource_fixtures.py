@@ -7,6 +7,7 @@ XML whitespace or an explicit unsupported extension, never real source data.
 import csv
 import io
 import json
+import re
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
@@ -23,6 +24,121 @@ def pack(parts, compression=zipfile.ZIP_DEFLATED):
             info.compress_type = compression
             archive.writestr(info, data)
     return out.getvalue()
+
+
+def string_escape_variants(folder):
+    worksheet = "xl/worksheets/sheet1.xml"
+    variants = [
+        "_x0041_",
+        "_x00aF_",
+        "_x005F_x0041_",
+        "_x00&#52;1_",
+        "_X0041_",
+        "_x041_",
+        "_x00G1_",
+    ]
+    records = []
+    for count in [8, 8406]:
+        rows = [["v" * (4096 if count == 8 else 1)] * 3 for _ in range(count)]
+        rows[0][0] = "ESCAPE_SENTINEL"
+        with zipfile.ZipFile(io.BytesIO(xlsx(rows))) as archive:
+            original = {name: archive.read(name) for name in archive.namelist()}
+        for old, new in [
+            (b"account_id", b"a"),
+            (b"profile_url", b"b"),
+            (b"unix_timestamp", b"c"),
+        ]:
+            original[worksheet] = original[worksheet].replace(old, new, 1)
+        for location in ["str", "inline", "shared", "header", "sheet"]:
+            for index, spelling in enumerate(variants):
+                parts = dict(original)
+                value = f"left{spelling}right".encode()
+                cell = b'<c r="A2" t="str"><v>ESCAPE_SENTINEL</v></c>'
+                if location == "inline":
+                    parts[worksheet] = parts[worksheet].replace(
+                        cell,
+                        b'<c r="A2" t="inlineStr"><is><t>' + value + b"</t></is></c>",
+                    )
+                elif location == "shared":
+                    parts[worksheet] = parts[worksheet].replace(
+                        cell, b'<c r="A2" t="s"><v>0</v></c>'
+                    )
+                    parts["xl/sharedStrings.xml"] = (
+                        b'<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="1" uniqueCount="1"><si><t>'
+                        + value
+                        + b"</t></si></sst>"
+                    )
+                    parts["xl/_rels/workbook.xml.rels"] = parts[
+                        "xl/_rels/workbook.xml.rels"
+                    ].replace(
+                        b"</Relationships>",
+                        b'<Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>',
+                    )
+                    parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace(
+                        b"</Types>",
+                        b'<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>',
+                    )
+                elif location == "sheet":
+                    parts["xl/workbook.xml"] = parts["xl/workbook.xml"].replace(
+                        b"Synthetic", value
+                    )
+                else:
+                    old = b"<v>a</v>" if location == "header" else b"ESCAPE_SENTINEL"
+                    new = b"<v>" + value + b"</v>" if location == "header" else value
+                    parts[worksheet] = parts[worksheet].replace(old, new, 1)
+                roots = [ET.fromstring(part) for part in parts.values()]
+                decoded = "".join(
+                    text
+                    for root in roots
+                    for node in root.iter()
+                    for text in [node.text or "", *node.attrib.values()]
+                )
+                assert bool(re.search(r"_x[0-9A-Fa-f]{4}_", decoded)) == (index < 4)
+                name = f"string-{count}-{location}-{index}.xlsx"
+                (folder / name).write_bytes(pack(parts))
+                records.append(
+                    {
+                        "file": name,
+                        "refuse": index < 4,
+                        "rows": count,
+                        "xml_valid": True,
+                        "location": location,
+                        "value": ET.fromstring(b"<t>" + value + b"</t>").text,
+                    }
+                )
+        malformed = [
+            (worksheet, b"ESCAPE_SENTINEL", spelling)
+            for spelling in [b"&undefined;", b"&#0;", b"&#x110000;", b"]]>"]
+        ]
+        malformed += [
+            (worksheet, b'<c r="A2" t=', b'<c r="A2"t='),
+            (
+                worksheet,
+                b"<worksheet",
+                b'<?xml version="1.0"encoding="UTF-8"?><worksheet',
+            ),
+            ("xl/workbook.xml", b'name="Synthetic"', b'name="Bad<name"'),
+            (worksheet, b'<c r="A2"', b'<bad::c r="A2"'),
+            (worksheet, b"</worksheet>", b"</bad::worksheet>"),
+        ]
+        for index, (path, before, after) in enumerate(malformed):
+            parts = dict(original)
+            assert before in parts[path]
+            parts[path] = parts[path].replace(before, after, 1)
+            try:
+                ET.fromstring(parts[path])
+            except ET.ParseError:
+                pass
+            else:
+                raise AssertionError("malformed XML negative unexpectedly parses")
+            name = f"string-{count}-malformed-{index}.xlsx"
+            (folder / name).write_bytes(pack(parts))
+            records.append(
+                {"file": name, "refuse": True, "rows": count, "xml_valid": False}
+            )
+    (folder / "string-escape-manifest.json").write_text(
+        json.dumps(records, indent=2) + "\n"
+    )
 
 
 def generate(folder):
@@ -173,6 +289,7 @@ def generate(folder):
     assert len(csv_output(rows)) - 39 + len(b"a,b,c\r\n") < 2 * 1024 * 1024
     (folder / "export-short-header-reserve.xlsx").write_bytes(pack(short_parts))
     (folder / "resource-manifest.json").write_text(json.dumps(records, indent=2) + "\n")
+    string_escape_variants(folder)
     print(json.dumps(records))
 
 

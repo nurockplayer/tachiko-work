@@ -67,6 +67,14 @@ generic typed-XLSX-only behavior is not removed. Embedded CRLF must survive a
 standards-compliant independent XML parser; literal XML line normalization is
 not an acceptable fidelity loss.
 
+The capacity profile conservatively excludes every seven-byte
+`_x[0-9A-Fa-f]{4}_` sequence anywhere in decoded Text, a header or a sheet name.
+Only lowercase `x` matches; hexadecimal letters may use either case. Literal
+spellings, escaped-escape forms such as `_x005F_x0041_` and sequences produced
+by XML character references are refused. This bounds OOXML ST_Xstring exposure
+without introducing an escape codec. Nearby nonmatches and generic behavior
+remain unchanged. #495 reconciliation `5977017424` governs this clarification.
+
 The metadata-capable spreadsheet ABI caps its arena at 4 MiB before inspection.
 Above 64 KiB, a byte-bounded object discriminator/JSON-skip pass permits only
 the existing Export and InspectProject operations before typed payload decoding.
@@ -143,8 +151,9 @@ same isolated branch, with a sole writer and a fresh independent final reviewer.
 Projected review unit: five production paths plus acceptance/unit tests and
 documentation, originally at most 20 paths and approximately 4,000 meaningful
 changed lines. Review-driven reconciliation in #495 comment 5976675101 retains
-18 paths and permits at most 4,500 meaningful changed lines for the complete
-profile propagation, source-fidelity and small-file closure repair/tests.
+18 paths; follow-up reconciliation `5977017424` permits at most 4,900 meaningful
+changed lines for complete profile propagation, source-fidelity, small-file
+closure and this conservative ST_Xstring refusal repair/tests.
 The Steward re-evaluated the 2,000–3,000-line signal before Ready: roughly 2,000
 lines are executable acceptance spanning one inseparable capacity journey and
 its independent oracle. Import, edit/history, save/reopen and both exports must

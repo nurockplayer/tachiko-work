@@ -195,11 +195,14 @@ fn export_artifacts(
     times: &mut Timings,
 ) {
     let revision = runtime.observe_occurrence().revision;
-    let workbook = times.measure("export_workbook", || {
-        runtime.export_workbook(&revision, metadata).unwrap()
+    let csv = times.measure("export_csv", || {
+        let workbook = runtime.export_workbook(&revision, metadata).unwrap();
+        export_csv(&workbook.sheets[0]).unwrap()
     });
-    let csv = times.measure("export_csv", || export_csv(&workbook.sheets[0]).unwrap());
-    let xlsx = times.measure("export_xlsx", || export_xlsx(&workbook).unwrap());
+    let xlsx = times.measure("export_xlsx", || {
+        let workbook = runtime.export_workbook(&revision, metadata).unwrap();
+        export_xlsx(&workbook).unwrap()
+    });
     fs::write(out.join(format!("{prefix}-export.csv")), csv).unwrap();
     fs::write(out.join(format!("{prefix}-export.xlsx")), xlsx).unwrap();
 }

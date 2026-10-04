@@ -512,6 +512,33 @@ fn ineligible() {
     );
 }
 
+fn string_escape_profile() {
+    for value in ["left_x0041_right", "_x00aF_", "_x005F_x0041_"] {
+        let mut candidate = document(129);
+        set_text(&mut candidate, "r00000", "a", value.into());
+        refused_open_preserves(&candidate);
+        let mut generic = document(2);
+        set_text(&mut generic, "r00000", "a", value.into());
+        assert_eq!(
+            opened(&generic).unwrap().table.rows[0].fields[0].stored,
+            Some(tachiko_designer_runtime::StoredValueProjection::Text {
+                value: value.into()
+            })
+        );
+    }
+    for value in ["_X0041_", "_x041_", "_x00G1_"] {
+        let mut candidate = document(129);
+        set_text(&mut candidate, "r00000", "a", value.into());
+        assert_eq!(
+            opened(&candidate).unwrap().table.rows[0].fields[0].stored,
+            Some(tachiko_designer_runtime::StoredValueProjection::Text {
+                value: value.into()
+            })
+        );
+    }
+    println!("PASS ST_Xstring capacity reopen refusal, near-matches and generic preservation");
+}
+
 fn main() {
     let group = env::args().nth(1).unwrap_or_else(|| "all".into());
     for (name, check) in [
@@ -521,6 +548,7 @@ fn main() {
         ("atomic", atomic_control),
         ("fields", field_queries),
         ("ineligible", ineligible),
+        ("strings", string_escape_profile),
     ] {
         if group == "all" || group == name {
             check();
