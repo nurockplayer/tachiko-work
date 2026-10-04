@@ -40,6 +40,10 @@ def values(count=ROWS):
     return result
 
 
+def promoted_opened_values():
+    return [[character * 4096 for character in "xyz"] for _ in range(8)]
+
+
 def escaped(value):
     return (
         value.replace("&", "&amp;")
@@ -135,6 +139,7 @@ def generate(directory):
         "headers": HEADERS,
         "types": ["text"] * 3,
         "rows": rows,
+        "promoted_opened_rows": promoted_opened_values(),
         "edits": [[r, c, value] for (r, c), value in EDITS.items()],
     }
     (directory / "manifest.json").write_text(
@@ -145,6 +150,15 @@ def generate(directory):
             (directory / f"source-{count}.{extension}").write_bytes(
                 encode(values(count))
             )
+    for extension, encode in [("csv", csv_bytes), ("xlsx", xlsx)]:
+        path = directory / f"promoted-opened.{extension}"
+        path.write_bytes(encode(promoted_opened_values()))
+        actual = (
+            list(csv.reader(io.StringIO(path.read_bytes().decode(), newline="")))
+            if extension == "csv"
+            else parse_xlsx(path)
+        )
+        assert actual == [HEADERS, *promoted_opened_values()]
     (directory / "malformed.csv").write_bytes(
         b'account_id,profile_url,unix_timestamp\r\n"unclosed'
     )
@@ -262,13 +276,22 @@ def verify(directory):
         (directory / "native/native-import-complete.json").read_text()
     )
     assert imported["cells"] == ROWS * 3 and imported["history_edits_each"] == 128
+    assert {p.name for p in (directory / "worker").glob("*-capacity-from-*.xlsx")} == {
+        f"{recipe}-capacity-from-{source}.xlsx"
+        for recipe in ["small", "promoted-opened"]
+        for source in ["csv", "xlsx"]
+    }, "incomplete/extra small capacity artifact matrix"
     for source in ["csv", "xlsx"]:
-        small = directory / f"worker/small-capacity-from-{source}.xlsx"
-        assert parse_xlsx(small) == [HEADERS, *values()[:64]]
-        with zipfile.ZipFile(small) as archive:
-            workbook = ET.fromstring(archive.read("xl/workbook.xml"))
-            sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
-            assert sheet.attrib["name"] == "Capacity\tname\n雪&\r"
+        for recipe, rows in [
+            ("small", values(64)),
+            ("promoted-opened", promoted_opened_values()),
+        ]:
+            small = directory / f"worker/{recipe}-capacity-from-{source}.xlsx"
+            assert parse_xlsx(small) == [HEADERS, *rows]
+            with zipfile.ZipFile(small) as archive:
+                workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+                sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
+                assert sheet.attrib["name"] == "Capacity\tname\n雪&\r"
         receipt = json.loads(
             (directory / f"native/{source}-fresh-process.json").read_text()
         )
@@ -277,7 +300,20 @@ def verify(directory):
             receipt = json.loads(
                 (directory / f"worker/{source}-{mode}-receipt.json").read_text()
             )
-            assert receipt["cells"] == ROWS * 3 and len(receipt["workerUrls"]) == 1
+            assert receipt["cells"] == ROWS * 3
+            assert len(receipt["workerUrls"]) == (2 if mode == "import" else 1)
+            cases = receipt["smallProjections"]
+            if mode == "import":
+                assert [case["recipe"] for case in cases] == [
+                    "promoted-opened",
+                    "small",
+                ]
+                assert [case["cells"] for case in cases] == [24, 192]
+                assert all(case["imported"] > 65536 for case in cases)
+                assert cases[0]["opened"] > 65536 and cases[0]["reopened"] > 65536
+                assert [case["workerRestarted"] for case in cases] == [True, False]
+            else:
+                assert cases == []
     worker = json.loads((directory / "worker/worker-complete.json").read_text())
     assert worker["receipts"] == 4 and worker["cells"] == ROWS * 3
     metadata_headers = ["雪&", "<i>", "url\"'" + "x" * 20]

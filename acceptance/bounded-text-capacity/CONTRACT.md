@@ -151,9 +151,12 @@ same isolated branch, with a sole writer and a fresh independent final reviewer.
 Projected review unit: five production paths plus acceptance/unit tests and
 documentation, originally at most 20 paths and approximately 4,000 meaningful
 changed lines. Review-driven reconciliation in #495 comment 5976675101 retains
-18 paths; follow-up reconciliation `5977017424` permits at most 4,900 meaningful
+18 paths; follow-up reconciliation `5977408805` permits at most 5,150 meaningful
 changed lines for complete profile propagation, source-fidelity, small-file
-closure and this conservative ST_Xstring refusal repair/tests.
+closure, conservative ST_Xstring refusal and independently proved Imported versus
+Opened promotion through fresh Worker reopen. It supersedes the 4,900-line
+reconciliation `5977017424` and interim 5,050-line `5977362115` without changing
+workload or performance gates.
 The Steward re-evaluated the 2,000–3,000-line signal before Ready: roughly 2,000
 lines are executable acceptance spanning one inseparable capacity journey and
 its independent oracle. Import, edit/history, save/reopen and both exports must

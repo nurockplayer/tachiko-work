@@ -35,7 +35,16 @@ independent of the Rust producer parsers and writers.
 | Metadata-independent export closure | Encoded header row 39 bytes/+1, actual exact 2 MiB output, and scalar quote replacement that would add one encoded byte refused atomically |
 | Complete metadata order and XLSX escaping | Row/column permutations refuse; exact 39-byte Unicode/XML-sensitive headers and 31-character sheet name roundtrip through actual CSV/XLSX readers and independent CSV/ZIP/XML verification |
 | Metadata ABI framing | Type-last Export/InspectProject work; malformed, duplicate, positional-array and deeply nested nonmetadata controls refuse before typed payload decoding; invalid ordinary JSON over64KiB refuses by size; complete resident/history preserved |
-| Small promoted capacity closure | Actual Worker64-row projection over64KiB saves/closes/reopens/exports/reimports with every cell checked; independent XML verifies exported cells and LF/TAB/CR worksheet name |
+| Small promoted capacity closure | Both formats: 64-row Imported payload over64KiB retains all192 cells through save/close/reopen/export/reimport; separate 8×3×4096 Text fixture proves Opened payload over64KiB before and after Worker termination/fresh Worker reopen, retaining all24 cells. Independent XML requires all four artifacts and exact LF/TAB/CR worksheet name |
+
+The 64-row fixture promotes the complete Imported reply; its Opened payload fits
+the ordinary limit. It does not prove promoted Opened/fresh-open behavior. The
+separate `promoted-opened` recipe does. Each import browser leg has two Workers:
+the promoted-Opened preflight terminates its Worker, then the fresh Worker runs
+the remaining small closure and complete 8,406-row/128-edit journey. Its four main
+memory checkpoints retain that one Worker. The separate full-browser-restart leg
+still uses one Worker for all ten close/reopen cycles; the small preflight earns
+no full-browser-termination credit. Receipts retain payload sizes and both recipes.
 
 Actual unchanged-source baseline: new seed native eight-row CSV/XLSX passes;
 64-row CSV refuses an 88,107-byte projection against 65,536. Four native boundary

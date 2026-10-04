@@ -7,10 +7,10 @@ import { mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { chromium } from "@playwright/test";
 import type { ExperimentalDesignerClient } from "../src/experimental-client.ts";
-import type { InteropMetadata, SpreadsheetFormat } from "../src/runtime/interop-protocol.ts";
+import type { ImportedProjection, InteropMetadata, SpreadsheetFormat } from "../src/runtime/interop-protocol.ts";
 import type { TableProjection } from "../src/runtime/protocol.ts";
 
-type Manifest = { rows: string[][]; edits: [number, number, string][] };
+type Manifest = { rows: string[][]; edits: [number, number, string][]; promoted_opened_rows: string[][] };
 const [kitArg, fixtureArg, captureArg] = process.argv.slice(2);
 assert(kitArg && fixtureArg && captureArg, "KIT FIXTURES NEW_CAPTURE required");
 const roots = { kit: resolve(kitArg), fixtures: resolve(fixtureArg), capture: resolve(captureArg) };
@@ -75,7 +75,7 @@ try {
         let commandId = 0;
         const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
         const workerSessions: string[] = [];
-        const memorySamples: { stage: string; bytes: number }[] = [];
+        const memorySamples: { stage: string; bytes: number; worker: number }[] = [];
         let observerError: unknown;
         pageSession.on("Target.receivedMessageFromTarget", ({ message }) => {
           const reply = JSON.parse(message) as { id?: number; result?: unknown; error?: { message: string } };
@@ -110,15 +110,26 @@ try {
         await pageSession.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: false });
         await page.exposeBinding("capacityCheckpoint", async (_source, stage: string) => {
           assert.equal(observerError, undefined);
-          assert.equal(workerSessions.length, 1);
-          const observed = await workerCommand(workerSessions[0]!, "Runtime.evaluate", { expression: "globalThis.__capacityObservedMemory.buffer.byteLength", returnByValue: true }) as { result: { value?: number }; exceptionDetails?: unknown };
+          assert(workerSessions.length >= 1 && workerSessions.length <= (mode === "import" ? 2 : 1));
+          const observed = await workerCommand(workerSessions.at(-1)!, "Runtime.evaluate", { expression: "globalThis.__capacityObservedMemory.buffer.byteLength", returnByValue: true }) as { result: { value?: number }; exceptionDetails?: unknown };
           assert.equal(observed.exceptionDetails, undefined);
           assert(typeof observed.result.value === "number" && observed.result.value > 0);
-          memorySamples.push({ stage, bytes: observed.result.value });
+          memorySamples.push({ stage, bytes: observed.result.value, worker: workerSessions.length });
           await sample();
         });
         const workerUrls: string[] = [];
-        page.on("worker", (worker) => workerUrls.push(worker.url()));
+        const workerTerminations: Promise<void>[] = [];
+        page.on("worker", (worker) => {
+          workerUrls.push(worker.url());
+          workerTerminations.push(new Promise<void>((done) => worker.once("close", done)));
+        });
+        await page.exposeBinding("capacityWorkerTerminated", async () => {
+          assert.equal(workerTerminations.length, 1, "preflight Worker must terminate before replacement");
+          await new Promise<void>((done, reject) => {
+            const timeout = setTimeout(() => reject(new Error("Worker termination timeout")), 1000);
+            void workerTerminations[0]!.then(() => { clearTimeout(timeout); done(); });
+          });
+        });
         await page.goto(origin);
         const result = await page.evaluate(async ({ origin, format, mode, oracle }) => {
           const check: (condition: unknown, message: string) => asserts condition = (condition, message) => {
@@ -189,9 +200,49 @@ try {
           let saved: ArrayBuffer;
           let originalScope: string;
           const artifacts: { name: string; bytes: number[] }[] = [];
+          const smallProjections: { recipe: string; cells: number; imported: number; opened: number; reopened: number; workerRestarted: boolean }[] = [];
           const checkpoint = (stage: string) => (globalThis as unknown as { capacityCheckpoint(stage: string): Promise<void> }).capacityCheckpoint(stage);
+          const smallClosure = async (imported: ImportedProjection, rows: string[][], restart: boolean) => {
+            metadata = imported.metadata;
+            collection = imported.opened.bootstrap.default_collection;
+            checkTable(imported.opened.table, rows);
+            const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+            // The actual public payload alone exceeds the old complete reply limit.
+            // Imported promotion does not imply Opened promotion on fresh reopen.
+            const importedBytes = size(imported), openedBytes = size(imported.opened);
+            check(importedBytes > 65_536, "small promoted Imported payload");
+            if (restart) check(openedBytes > 65_536, "small promoted Opened payload");
+            const recipe = restart ? "promoted-opened" : "small";
+            const smallSaved = (await timed(`${recipe}_save`, () => client.exportProject(imported.opened.bootstrap.revision))).bytes;
+            const before = await client.observeOccurrence();
+            if (restart) await checkpoint("promoted-opened-before-termination");
+            await client.closeProject();
+            if (restart) {
+              await client.close();
+              await (globalThis as unknown as { capacityWorkerTerminated(): Promise<void> }).capacityWorkerTerminated();
+              client = createExperimentalDesignerClient();
+            }
+            const reopened = await timed(`${recipe}_reopen`, () => client.openProject(smallSaved));
+            checkTable(reopened.table, rows);
+            const current = await client.observeOccurrence();
+            check(current.scope !== before.scope, "small fresh occurrence");
+            same(current.revision, "resident/0", "small fresh revision");
+            if (restart) check(size(reopened) > 65_536, "fresh Worker promoted Opened payload");
+            const smallMetadata = structuredClone(metadata);
+            smallMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
+            const exported = await timed(`${recipe}_export_xlsx`, () => client.exportSpreadsheet!(current.revision, smallMetadata, "xlsx", collection));
+            artifacts.push({ name: `${recipe}-capacity-from-${format}.xlsx`, bytes: Array.from(new Uint8Array(exported.bytes)) });
+            const reimported = await timed(`${recipe}_reimport`, () => client.importSpreadsheet!(exported.bytes, "xlsx", options, selection));
+            metadata = reimported.metadata;
+            collection = reimported.opened.bootstrap.default_collection;
+            same(metadata.sheets[0]!.name, smallMetadata.sheets[0]!.name, "small worksheet-name fidelity");
+            checkTable(reimported.opened.table, rows);
+            smallProjections.push({ recipe, cells: rows.length * 3, imported: importedBytes, opened: openedBytes, reopened: size(reopened), workerRestarted: restart });
+          };
           try {
             if (mode === "import") {
+              const promotedInput = await bytes(`fixtures/promoted-opened.${format}`);
+              await smallClosure(await timed("promoted-opened_import", () => client.importSpreadsheet!(promotedInput, format, options, selection)), oracle.promoted_opened_rows, true);
               for (const count of [8, 64, 65, 128, 129, 1024, 1025, 8406]) {
                 const input = await bytes(`fixtures/source-${count}.${format}`);
                 const inspected = await timed("inspect", () => client.inspectSpreadsheet!(input, format, options));
@@ -202,20 +253,7 @@ try {
                 collection = imported.opened.bootstrap.default_collection;
                 checkTable(imported.opened.table, expected.slice(0, count));
                 if (count === 64) {
-                  check(new TextEncoder().encode(JSON.stringify(imported.opened)).length > 65_536, "small capacity projection");
-                  const smallSaved = (await timed("small_save", () => client.exportProject(imported.opened.bootstrap.revision))).bytes;
-                  await client.closeProject();
-                  checkTable((await timed("small_reopen", () => client.openProject(smallSaved))).table, expected.slice(0, count));
-                  const smallMetadata = structuredClone(metadata);
-                  smallMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
-                  const current = await client.observeOccurrence();
-                  const exported = await timed("small_export_xlsx", () => client.exportSpreadsheet!(current.revision, smallMetadata, "xlsx", collection));
-                  artifacts.push({ name: `small-capacity-from-${format}.xlsx`, bytes: Array.from(new Uint8Array(exported.bytes)) });
-                  const reimported = await timed("small_reimport", () => client.importSpreadsheet!(exported.bytes, "xlsx", options, selection));
-                  metadata = reimported.metadata;
-                  collection = reimported.opened.bootstrap.default_collection;
-                  same(metadata.sheets[0]!.name, smallMetadata.sheets[0]!.name, "small capacity worksheet-name fidelity");
-                  checkTable(reimported.opened.table, expected.slice(0, count));
+                  await smallClosure(imported, expected.slice(0, count), false);
                 }
               }
               originalScope = (await client.observeOccurrence()).scope;
@@ -299,7 +337,7 @@ try {
               artifacts.push({ name: `${format}-${mode}-export.${output}`, bytes: Array.from(new Uint8Array(exported.bytes)) });
             }
             await checkpoint("exported");
-            return { timings, heartbeat, artifacts, metadata: metadata!, collection, saved: Array.from(new Uint8Array(saved)), scope: originalScope, cellCount: expected.length * 3 };
+            return { timings, heartbeat, artifacts, smallProjections, metadata: metadata!, collection, saved: Array.from(new Uint8Array(saved)), scope: originalScope, cellCount: expected.length * 3 };
           } finally { clearInterval(pulse); await client.closeProject(); await client.close(); }
         }, { origin, format, mode, oracle: manifest });
         for (const artifact of result.artifacts) await writeFile(`${roots.capture}/${artifact.name}`, Buffer.from(artifact.bytes), { flag: "wx" });
@@ -310,15 +348,18 @@ try {
           await writeFile(`${roots.capture}/${format}-collection.txt`, result.collection, { flag: "wx" });
           await writeFile(`${roots.capture}/${format}-scope.json`, JSON.stringify({ scope: result.scope }), { flag: "wx" });
         }
-        assert.equal(workerUrls.length, 1, "one actual moduleWorker per browser run");
+        assert.equal(workerUrls.length, mode === "import" ? 2 : 1, "promotion preflight restarts once; main journey retains one Worker");
         assert(workerUrls.every((url) => url === `${origin}/kit/experimental-client.worker.js`));
         clearInterval(sampler);
         await pendingSample;
         await sample();
         assert.equal(sampleError, undefined, "memory sampling must succeed");
         assert.equal(observerError, undefined);
-        assert.equal(memorySamples.length, 4);
-        const receipt = { format, mode, browser: browser.version(), workerUrls, timings: result.timings, heartbeat: result.heartbeat, memory: samples, wasmMemory: memorySamples, instrumentation: "CDP startup observer retains actual Worker exported WebAssembly.Memory; no artifact rewrite", cells: result.cellCount };
+        assert.equal(memorySamples.length, mode === "import" ? 5 : 4);
+        assert.deepEqual(memorySamples.map(({ stage }) => stage), mode === "import" ? ["promoted-opened-before-termination", "imported", "history-64", "history-128", "exported"] : ["reopen-1", "reopen-5", "reopen-10", "exported"]);
+        assert(memorySamples.slice(-4).every(({ worker }) => worker === workerUrls.length), "all main journey checkpoints retain the same Worker");
+        assert.deepEqual(mode === "import" ? ["edit", "undo", "redo"].map((name) => result.timings[name]?.length) : ["reopen", "resave"].map((name) => result.timings[name]?.length), mode === "import" ? [131, 10, 10] : [10, 10], "complete unchanged main operation counts");
+        const receipt = { format, mode, browser: browser.version(), workerUrls, smallProjections: result.smallProjections, timings: result.timings, heartbeat: result.heartbeat, memory: samples, wasmMemory: memorySamples, instrumentation: "CDP startup observer retains actual Worker exported WebAssembly.Memory; no artifact rewrite", cells: result.cellCount };
         receipts.push(receipt);
         await writeFile(`${roots.capture}/${format}-${mode}-receipt.json`, JSON.stringify(receipt, null, 2), { flag: "wx" });
         assert(memorySamples.every(({ bytes }) => bytes <= 256 * 1024 * 1024), "actual Worker WASM linear-memory budget");
