@@ -41,10 +41,11 @@ pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
     workbook.sheets.len() == 1
         && text_capacity_sheet_shape(&workbook.sheets[0])
         && !workbook.ledger.iter().any(|finding| {
-            matches!(
-                finding.code.as_str(),
-                "header_style_not_preserved" | "column_width_outside_grid"
-            )
+            finding.code == "bounded_workbook"
+                || matches!(
+                    finding.category,
+                    FidelityCategory::LossyOnExport | FidelityCategory::UnsupportedSafeDisabled
+                )
         })
 }
 
@@ -161,10 +162,9 @@ fn escaped_xml_bytes(value: &str) -> usize {
     value
         .bytes()
         .map(|byte| match byte {
-            b'&' => 5,
+            b'&' | b'\r' => 5,
             b'<' | b'>' => 4,
             b'"' | b'\'' => 6,
-            b'\r' => 5,
             _ => 1,
         })
         .sum()
@@ -427,6 +427,8 @@ struct Xml {
     namespace_declarations: Vec<String>,
     children: Vec<Xml>,
     text: String,
+    plain_attribute_namespaces: bool,
+    plain_lexical_values: bool,
 }
 impl Xml {
     fn attr(&self, key: &str) -> Option<&str> {
@@ -500,12 +502,15 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                 let mut attrs = BTreeMap::new();
                 let mut namespace_declarations = Vec::new();
                 let mut attribute_count = 0;
+                let mut plain_lexical_values = true;
                 for a in e.attributes() {
                     attribute_count += 1;
                     if attribute_count > 64 {
                         return fail("XML attribute count exceeds profile");
                     }
                     let a = a.map_err(|e| InteropError(e.to_string()))?;
+                    plain_lexical_values &=
+                        !a.value.iter().any(|b| matches!(b, b'\t' | b'\n' | b'\r'));
                     let key = std::str::from_utf8(a.key.as_ref())
                         .map_err(|_| InteropError("Invalid XML attribute".into()))?
                         .to_owned();
@@ -520,12 +525,21 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                         return fail("XML attribute exceeds profile");
                     }
                     if key == "xmlns" {
+                        plain_lexical_values &= !matches!(
+                            value.as_str(),
+                            "http://www.w3.org/XML/1998/namespace"
+                                | "http://www.w3.org/2000/xmlns/"
+                        );
                         if value.len() > 512 {
                             return fail("XML namespace URI exceeds profile");
                         }
                         namespace_declarations.push(value.clone());
                         bindings.insert(String::new(), value);
                     } else if let Some(prefix) = key.strip_prefix("xmlns:") {
+                        plain_lexical_values &= prefix != "xmlns"
+                            && (prefix == "xml")
+                                == (value == "http://www.w3.org/XML/1998/namespace")
+                            && value != "http://www.w3.org/2000/xmlns/";
                         if value.len() > 512 {
                             return fail("XML namespace URI exceeds profile");
                         }
@@ -539,6 +553,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     return fail("XML namespace scope exceeds profile");
                 }
                 let mut expanded_attributes = BTreeSet::new();
+                let mut plain_attribute_namespaces = true;
                 for key in attrs.keys() {
                     let (prefix, local) = key.split_once(':').unwrap_or(("", key));
                     let uri = if prefix.is_empty() {
@@ -552,6 +567,11 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     if !expanded_attributes.insert((uri, local)) {
                         return fail("Duplicate expanded XML attribute");
                     }
+                    plain_attribute_namespaces &= uri.is_empty()
+                        || (uri
+                            == "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                            && local == "id")
+                        || (uri == "http://www.w3.org/XML/1998/namespace" && local == "space");
                 }
                 let qname = std::str::from_utf8(e.name().as_ref())
                     .map_err(|_| InteropError("Invalid XML element".into()))?
@@ -574,6 +594,8 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     namespace_declarations,
                     children: Vec::new(),
                     text: String::new(),
+                    plain_attribute_namespaces,
+                    plain_lexical_values,
                 };
                 if empty {
                     attach_xml(node, &mut stack, &mut root)?;
@@ -593,6 +615,8 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     return fail("Invalid escaped XML character");
                 }
                 if let Some((node, _)) = stack.last_mut() {
+                    node.plain_lexical_values &=
+                        !matches!(node.name.as_str(), "t" | "v") || !e.as_ref().contains(&b'\r');
                     node.text.push_str(&value);
                 } else if !value.trim().is_empty() {
                     return fail("Text outside XML root");
@@ -605,6 +629,8 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     return fail("Invalid CDATA XML character");
                 }
                 if let Some((node, _)) = stack.last_mut() {
+                    node.plain_lexical_values &=
+                        !matches!(node.name.as_str(), "t" | "v") || !e.as_ref().contains(&b'\r');
                     node.text.push_str(value);
                 } else {
                     return fail("CDATA outside XML root");
@@ -987,6 +1013,265 @@ fn builtin_format(id: u32) -> Option<String> {
         _ => Some(format!("unsupported_builtin_{id}")),
     }
 }
+fn capacity_styles_xml() -> String {
+    format!(
+        "<styleSheet xmlns=\"{MAIN}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"
+    )
+}
+
+fn same_plain_tree(actual: &Xml, expected: &Xml) -> bool {
+    actual.plain_attribute_namespaces
+        && actual.plain_lexical_values
+        && actual.namespace_declarations.iter().all(|uri| uri == MAIN)
+        && actual.name == expected.name
+        && actual.ns == expected.ns
+        && actual.attrs == expected.attrs
+        && actual.text.trim_matches([' ', '\t', '\n', '\r'])
+            == expected.text.trim_matches([' ', '\t', '\n', '\r'])
+        && actual.children.len() == expected.children.len()
+        && actual
+            .children
+            .iter()
+            .zip(&expected.children)
+            .all(|(a, b)| same_plain_tree(a, b))
+}
+
+/// Closed raw-source proof for the minimal fixture and private plain writer.
+/// Unknown presentation remains admissible only under the existing generic ledger.
+fn capacity_plain_node(node: &Xml) -> bool {
+    const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+    const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let (namespace, attrs, children): (&str, &[&str], &[&str]) = match node.name.as_str() {
+        "Types" => (TYPES, &[], &["Default", "Override"]),
+        "Default" => (TYPES, &["Extension", "ContentType"], &[]),
+        "Override" => (TYPES, &["PartName", "ContentType"], &[]),
+        "Relationships" => (REL, &[], &["Relationship"]),
+        "Relationship" => (REL, &["Id", "Type", "Target"], &[]),
+        "workbook" => (MAIN, &[], &["workbookPr", "sheets"]),
+        "workbookPr" => (MAIN, &["date1904"], &[]),
+        "sheets" => (MAIN, &[], &["sheet"]),
+        "sheet" => (MAIN, &["name", "sheetId", "rel:id"], &[]),
+        "worksheet" => (MAIN, &[], &["sheetData"]),
+        "sheetData" => (MAIN, &[], &["row"]),
+        "row" => (MAIN, &["r"], &["c"]),
+        "c" => (MAIN, &["r", "s", "t"], &["v", "is"]),
+        "sst" => (MAIN, &["count", "uniqueCount"], &["si"]),
+        "si" | "is" => (MAIN, &[], &["t"]),
+        "t" => (MAIN, &["xml:space"], &[]),
+        "v" => (MAIN, &[], &[]),
+        _ => return false,
+    };
+    if node.ns != namespace
+        || !node.plain_attribute_namespaces
+        || !node.plain_lexical_values
+        || !node.namespace_declarations.iter().all(|uri| {
+            [
+                MAIN,
+                REL,
+                TYPES,
+                OFFICE,
+                "http://www.w3.org/XML/1998/namespace",
+            ]
+            .contains(&uri.as_str())
+        })
+        || !node.attrs.keys().all(|key| {
+            attrs.contains(&match key.rsplit_once(':') {
+                Some((_, "id")) => "rel:id",
+                Some((_, "space")) => "xml:space",
+                _ => key.as_str(),
+            })
+        })
+        || !node
+            .children
+            .iter()
+            .all(|child| children.contains(&child.name.as_str()) && capacity_plain_node(child))
+        || (!matches!(node.name.as_str(), "t" | "v")
+            && !node.text.trim_matches([' ', '\t', '\n', '\r']).is_empty())
+    {
+        return false;
+    }
+    capacity_plain_values(node)
+}
+
+fn capacity_plain_values(node: &Xml) -> bool {
+    const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    match node.name.as_str() {
+        "workbook" => node.kids("sheets").count() == 1 && node.kids("workbookPr").count() <= 1,
+        "sheets" | "worksheet" | "si" | "is" => node.children.len() == 1,
+        "workbookPr" => node.attr("date1904") == Some("0"),
+        "sheet" => {
+            node.attr("name").is_some()
+                && node.attr("sheetId") == Some("1")
+                && node.attr("rel:id").is_some()
+        }
+        "c" => {
+            matches!(node.attr("s"), None | Some("0"))
+                && match node.attr("t") {
+                    Some("inlineStr") => node.children.len() == 1 && node.children[0].name == "is",
+                    Some("str" | "s") => node.children.len() == 1 && node.children[0].name == "v",
+                    None | Some("n") => node.children.is_empty(),
+                    _ => false,
+                }
+        }
+        "t" => node.attrs.values().all(|value| value == "preserve"),
+        "sst" => node
+            .attrs
+            .values()
+            .all(|value| value.parse::<usize>().ok() == Some(node.children.len())),
+        "Relationship" => {
+            let role = match node.attr("Target") {
+                Some("xl/workbook.xml") => "officeDocument",
+                Some("worksheets/sheet1.xml") => "worksheet",
+                Some("styles.xml") => "styles",
+                Some("sharedStrings.xml") => "sharedStrings",
+                _ => return false,
+            };
+            node.attr("Type") == Some(format!("{OFFICE}/{role}").as_str()) && node.attrs.len() == 3
+        }
+        "Default" => {
+            matches!(
+                (node.attr("Extension"), node.attr("ContentType")),
+                (
+                    Some("rels"),
+                    Some("application/vnd.openxmlformats-package.relationships+xml")
+                ) | (Some("xml"), Some("application/xml"))
+            ) && node.attrs.len() == 2
+        }
+        "Override" => {
+            node.attr("PartName")
+                .and_then(|path| path.strip_prefix('/'))
+                .and_then(capacity_part_kind)
+                .is_some_and(|(root, _, kind)| {
+                    ["workbook", "worksheet", "styleSheet", "sst"].contains(&root)
+                        && node.attr("ContentType") == Some(kind)
+                })
+                && node.attrs.len() == 2
+        }
+        _ => true,
+    }
+}
+
+fn capacity_part_kind(path: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    Some(match path {
+        "[Content_Types].xml" => (
+            "Types",
+            "http://schemas.openxmlformats.org/package/2006/content-types",
+            "application/xml",
+        ),
+        "_rels/.rels" | "xl/_rels/workbook.xml.rels" => (
+            "Relationships",
+            REL,
+            "application/vnd.openxmlformats-package.relationships+xml",
+        ),
+        "xl/workbook.xml" => (
+            "workbook",
+            MAIN,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        ),
+        "xl/worksheets/sheet1.xml" => (
+            "worksheet",
+            MAIN,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
+        ),
+        "xl/styles.xml" => (
+            "styleSheet",
+            MAIN,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml",
+        ),
+        "xl/sharedStrings.xml" => (
+            "sst",
+            MAIN,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml",
+        ),
+        _ => return None,
+    })
+}
+
+fn capacity_plain_parts(parts: &BTreeMap<String, Vec<u8>>) -> Result<bool> {
+    if [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "xl/workbook.xml",
+        "xl/_rels/workbook.xml.rels",
+        "xl/worksheets/sheet1.xml",
+    ]
+    .iter()
+    .any(|path| !parts.contains_key(*path))
+    {
+        return Ok(false);
+    }
+    for (path, bytes) in parts {
+        let Some((root, namespace, _)) = capacity_part_kind(path) else {
+            return Ok(false);
+        };
+        let Ok(xml) = parse_xml(bytes) else {
+            return Ok(false);
+        };
+        if xml.name != root || xml.ns != namespace {
+            return Ok(false);
+        }
+        if path == "xl/styles.xml" {
+            if !same_plain_tree(&xml, &parse_xml(capacity_styles_xml().as_bytes())?) {
+                return Ok(false);
+            }
+        } else if !capacity_plain_node(&xml) || !capacity_plain_bindings(path, &xml, parts) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn capacity_plain_bindings(path: &str, xml: &Xml, parts: &BTreeMap<String, Vec<u8>>) -> bool {
+    let main_parts = parts.keys().filter(|path| {
+        capacity_part_kind(path).is_some_and(|(root, _, _)| {
+            ["workbook", "worksheet", "styleSheet", "sst"].contains(&root)
+        })
+    });
+    match path {
+        "[Content_Types].xml" => {
+            let expected = main_parts
+                .map(|path| format!("/{path}"))
+                .collect::<BTreeSet<_>>();
+            let declared = xml
+                .kids("Override")
+                .filter_map(|node| node.attr("PartName"))
+                .collect::<BTreeSet<_>>();
+            expected
+                .iter()
+                .map(String::as_str)
+                .eq(declared.iter().copied())
+                && declared.len() == xml.kids("Override").count()
+                && xml
+                    .kids("Default")
+                    .filter_map(|node| node.attr("Extension"))
+                    .collect::<BTreeSet<_>>()
+                    == ["rels", "xml"].into_iter().collect()
+                && xml.kids("Default").count() == 2
+        }
+        "_rels/.rels" => {
+            xml.children.len() == 1 && xml.children[0].attr("Target") == Some("xl/workbook.xml")
+        }
+        "xl/_rels/workbook.xml.rels" => {
+            let mut expected = BTreeSet::from(["worksheets/sheet1.xml"]);
+            for (part, target) in [
+                ("xl/styles.xml", "styles.xml"),
+                ("xl/sharedStrings.xml", "sharedStrings.xml"),
+            ] {
+                if parts.contains_key(part) {
+                    expected.insert(target);
+                }
+            }
+            let declared = xml
+                .children
+                .iter()
+                .filter_map(|node| node.attr("Target"))
+                .collect::<BTreeSet<_>>();
+            declared == expected && declared.len() == xml.children.len()
+        }
+        _ => true,
+    }
+}
+
 fn parse_styles(
     parts: &BTreeMap<String, Vec<u8>>,
     ledger: &mut Vec<FidelityFinding>,
@@ -1070,7 +1355,17 @@ fn parse_styles(
             alignment: horizontal,
         });
     }
-    ledger.push(finding(FidelityCategory::LossyOnExport,"style_profile","xl/styles.xml","Basic bold/RGB solid fill/wrap/border/alignment/number format retained; font family, theme colors and other layout details are source-only",false));
+    if same_plain_tree(&xml, &parse_xml(capacity_styles_xml().as_bytes())?) {
+        ledger.push(finding(
+            FidelityCategory::NativeEquivalent,
+            "plain_styles",
+            "xl/styles.xml",
+            "The complete private plain style tree is represented by default cell styles",
+            false,
+        ));
+    } else {
+        ledger.push(finding(FidelityCategory::LossyOnExport,"style_profile","xl/styles.xml","Basic bold/RGB solid fill/wrap/border/alignment/number format retained; font family, theme colors and other layout details are source-only",false));
+    }
     if styles.is_empty() {
         styles.push(CellStyle::default());
     }
@@ -1228,7 +1523,7 @@ fn c_unknown(node: &Xml) -> bool {
         }
         _ => return true,
     };
-    !node.text.trim().is_empty()
+    !node.text.trim_matches([' ', '\t', '\n', '\r']).is_empty()
         || node
             .children
             .iter()
@@ -1736,7 +2031,10 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         });
     }
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
-    ledger.push(finding(FidelityCategory::NativeEquivalent,"bounded_workbook","source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
+    let plain = capacity_plain_parts(&parts)?;
+    // Parser-derived classification replaces the existing record with a shorter
+    // code. Nonplain generic source ledgers and their wire width stay unchanged.
+    ledger.push(finding(FidelityCategory::NativeEquivalent,if plain {"plain_workbook"} else {"bounded_workbook"},"source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
     let workbook = SourceWorkbook { sheets, ledger };
     if workbook
         .sheets
@@ -2050,7 +2348,14 @@ fn output_style(cell: &SourceCell) -> CellStyle {
 /// Rejects blocking findings, invalid output values/styles and bounded size limits.
 #[allow(clippy::too_many_lines, clippy::format_push_string)] // Bounded deterministic XML assembly; temporary strings stay within the tiny workbook profile.
 pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
-    export_xlsx_for_profile(workbook, output_profile(workbook))
+    export_xlsx_for_profile(
+        workbook,
+        if validate_text_capacity(workbook).is_ok() {
+            OutputProfile::TextCapacity
+        } else {
+            OutputProfile::Shared
+        },
+    )
 }
 
 /// Emit typed worksheets using the selected bounded output profile.
@@ -2115,17 +2420,13 @@ pub(crate) fn export_xlsx_for_profile(
     let mut parts = BTreeMap::new();
     parts.insert("xl/styles.xml".into(), style_xml);
     if profile == OutputProfile::TextCapacity {
-        parts.insert("xl/styles.xml".into(), format!("<styleSheet xmlns=\"{MAIN}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"));
-        let headers = workbook.sheets[0]
-            .columns
-            .iter()
-            .map(|column| {
-                format!(
-                    "<si><t xml:space=\"preserve\">{}</t></si>",
-                    escape(&column.name)
-                )
-            })
-            .collect::<String>();
+        parts.insert("xl/styles.xml".into(), capacity_styles_xml());
+        let mut headers = String::new();
+        for column in &workbook.sheets[0].columns {
+            headers.push_str("<si><t xml:space=\"preserve\">");
+            headers.push_str(&escape(&column.name));
+            headers.push_str("</t></si>");
+        }
         parts.insert(
             "xl/sharedStrings.xml".into(),
             format!("<sst xmlns=\"{MAIN}\" count=\"3\" uniqueCount=\"3\">{headers}</sst>"),
@@ -2230,7 +2531,12 @@ pub(crate) fn export_xlsx_for_profile(
         xml.push_str("</sheetData></worksheet>");
         parts.insert(format!("xl/worksheets/sheet{n}.xml"), xml);
     }
-    parts.insert("xl/workbook.xml".into(),format!("<workbook xmlns=\"{MAIN}\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><workbookPr date1904=\"0\"/><sheets>{sheet_list}</sheets><calcPr calcMode=\"auto\" fullCalcOnLoad=\"1\"/></workbook>"));
+    let calculation = if profile == OutputProfile::TextCapacity {
+        ""
+    } else {
+        "<calcPr calcMode=\"auto\" fullCalcOnLoad=\"1\"/>"
+    };
+    parts.insert("xl/workbook.xml".into(),format!("<workbook xmlns=\"{MAIN}\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><workbookPr date1904=\"0\"/><sheets>{sheet_list}</sheets>{calculation}</workbook>"));
     let strings_relationship = if profile == OutputProfile::TextCapacity {
         "<Relationship Id=\"strings\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>"
     } else {

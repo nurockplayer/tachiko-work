@@ -114,6 +114,151 @@ fn existing_64_row_text_source_keeps_generic_styles_and_long_headers() {
     assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
 }
 
+fn capacity_source_admits(bytes: &[u8]) -> bool {
+    let Ok(book) = import_xlsx(bytes) else {
+        return false;
+    };
+    tachiko_designer_runtime::import_workbook(
+        &book,
+        &tachiko_designer_runtime::ImportSelection {
+            column_types: vec![vec![tachiko_designer_runtime::ImportFieldType::Text; 3]],
+            extra_columns: vec![vec![]],
+        },
+        "00000000-0000-4000-8000-000000000000",
+    )
+    .is_ok()
+}
+
+fn plain_source_losses() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
+        ("xl/styles.xml", "<font>", "<font><i/>"),
+        ("xl/styles.xml", "name val=\"Arial\"", "name val=\"Other\""),
+        ("xl/styles.xml", "<font>", "<font><color theme=\"1\"/>"),
+        (
+            "xl/styles.xml",
+            "<xf numFmtId",
+            "<xf unknown=\"1\" numFmtId",
+        ),
+        (
+            "xl/sharedStrings.xml",
+            "<t xml:space=\"preserve\">a</t>",
+            "<r><t>a</t></r>",
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            "<c r=\"A2\"",
+            "<c unknown=\"1\" r=\"A2\"",
+        ),
+        ("xl/workbook.xml", "<sheets>", "<sheets unknown=\"1\">"),
+        (
+            "[Content_Types].xml",
+            "spreadsheetml.sheet.main+xml",
+            "spreadsheetml.styles+xml",
+        ),
+        ("_rels/.rels", "<Relationships ", "<sst "),
+        ("xl/_rels/workbook.xml.rels", "/worksheet\"", "/styles\""),
+        (
+            "xl/worksheets/sheet1.xml",
+            "<sheetData>",
+            "<sheetData>\u{a0}",
+        ),
+        ("xl/workbook.xml", "sheetId=\"1\"", "sheetId=\"0\""),
+        ("xl/sharedStrings.xml", ">a</t>", ">a\rb</t>"),
+        ("xl/sharedStrings.xml", ">a</t>", "><![CDATA[a\r\nb]]></t>"),
+        ("xl/worksheets/sheet1.xml", "<v>0</v>", "<v>0\r</v>"),
+        (
+            "xl/workbook.xml",
+            "name=\"Imported table\"",
+            "name=\"a\tb\"",
+        ),
+        (
+            "xl/workbook.xml",
+            "name=\"Imported table\"",
+            "name=\"a\nb\"",
+        ),
+        (
+            "xl/workbook.xml",
+            "name=\"Imported table\"",
+            "name=\"a\rb\"",
+        ),
+        (
+            "xl/workbook.xml",
+            "<sheets>",
+            "<sheets xmlns:xml=\"urn:wrong\">",
+        ),
+        (
+            "xl/workbook.xml",
+            "<sheets>",
+            "<sheets xmlns:other=\"http://www.w3.org/XML/1998/namespace\">",
+        ),
+        (
+            "xl/workbook.xml",
+            "<sheets>",
+            "<sheets xmlns:xmlns=\"urn:wrong\">",
+        ),
+    ]
+}
+
+#[test]
+fn capacity_requires_complete_plain_source_at_small_and_large_sizes() {
+    for rows in [8, 8406] {
+        let source = format!("a,b,c\n{}", "one,two,three\n".repeat(rows));
+        let mut book = import_csv(source.as_bytes(), &ImportOptions::default()).unwrap();
+        if rows == 8 {
+            for cell in book.sheets[0].rows.iter_mut().flatten().take(16) {
+                cell.value = SourceValue::Text {
+                    value: "v".repeat(4096),
+                };
+            }
+        }
+        let bytes = export_xlsx(&book).unwrap();
+        assert!(capacity_source_admits(&bytes), "default {rows}");
+        let aliased = mutate(&bytes, "xl/styles.xml", |xml| {
+            xml.replace("<styleSheet ", "<q:styleSheet xmlns:q=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" ")
+                .replace("</styleSheet>", "</q:styleSheet>")
+                .replace("numFmtId=\"0\" fontId=\"0\"", "fontId=\"0\" numFmtId=\"0\"")
+        });
+        assert!(
+            capacity_source_admits(&aliased),
+            "style prefix/order {rows}"
+        );
+        let wrong_root = mutate(&bytes, "[Content_Types].xml", |_| {
+            "<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"0\" uniqueCount=\"0\"/>".into()
+        });
+        assert!(
+            !capacity_source_admits(&wrong_root),
+            "valid wrong root {rows}"
+        );
+        for (path, from, to) in plain_source_losses() {
+            let changed = mutate(&bytes, path, |xml| {
+                assert!(xml.contains(from), "fixture lacks {from}");
+                xml.replace(from, to)
+            });
+            assert!(!capacity_source_admits(&changed), "{rows}: {path}: {to}");
+        }
+        let mut zip = ZipWriter::new_append(Cursor::new(bytes.clone())).unwrap();
+        zip.start_file("docProps/custom.xml", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"<Properties/>").unwrap();
+        assert!(!capacity_source_admits(&zip.finish().unwrap().into_inner()));
+        let references = mutate(&bytes, "xl/sharedStrings.xml", |xml| {
+            xml.replace(">a</t>", ">a&#13;b</t>")
+        });
+        let references = mutate(&references, "xl/workbook.xml", |xml| {
+            xml.replace("name=\"Imported table\"", "name=\"a&#9;b&#10;c&#13;\"")
+                .replace("><", ">\r\n<")
+        });
+        assert!(capacity_source_admits(&references), "references {rows}");
+        let generic = import_csv(b"a,b,c\none,two,three\n", &ImportOptions::default()).unwrap();
+        let generic = export_xlsx(&generic).unwrap();
+        let generic = mutate(&generic, "xl/styles.xml", |xml| {
+            xml.replace("<font>", "<font><i/>")
+        });
+        let generic = import_xlsx(&generic).unwrap();
+        assert!(generic.ledger.iter().any(|f| f.code == "style_profile"));
+    }
+}
+
 #[test]
 fn admitted_workbooks_pass_the_shared_output_style_predicate() {
     let mut book = simple();

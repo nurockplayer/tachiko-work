@@ -798,11 +798,26 @@ pub fn import_workbook(
         let revision = runtime.current_revision().to_owned();
         runtime.update_formula(&revision, &field_target(&next), &source)?;
     }
-    let mut runtime = DesignerRuntime::from_document(
+    let runtime = DesignerRuntime::from_document(
         runtime.session.export_snapshot().document().clone(),
         occurrence_id,
     )?;
+    if runtime.text_capacity && !super::interop_adapter::text_capacity_shape(workbook) {
+        return Err(tracker_error(
+            "Text capacity requires the complete original source profile",
+        ));
+    }
     validate_import_metadata(runtime.session.export_snapshot().document(), &metadata)?;
+    finish_import(runtime, workbook, metadata, ledger, occurrence_id)
+}
+
+fn finish_import(
+    mut runtime: DesignerRuntime,
+    workbook: &SourceWorkbook,
+    metadata: InteropMetadata,
+    mut ledger: Vec<FidelityFinding>,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, ImportedProjection), DesignerError> {
     // Admission covers the final typed candidate, including user-added columns
     // and bound formulas. Reuse the same representation proof as saved-project
     // inspection and export before exposing or installing this occurrence.
@@ -852,41 +867,35 @@ pub fn import_workbook(
             &projection,
             super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
         )?;
-    } else {
-        if let Err(original_error) = super::ensure_complete_projection_size(
+    } else if let Err(original_error) =
+        super::ensure_complete_projection_size("imported", &projection, super::MAX_PROJECTION_BYTES)
+    {
+        // Promotion is candidate-local and requires complete actual source
+        // presentation. A generic import that already fits keeps its profile.
+        if !super::interop_adapter::text_capacity_shape(workbook) {
+            return Err(original_error);
+        }
+        let candidate = DesignerRuntime::from_document_profile(
+            runtime.session.export_snapshot().into_document(),
+            occurrence_id,
+            true,
+        )?;
+        let exported =
+            candidate.export_workbook(candidate.current_revision(), &projection.metadata)?;
+        let bytes =
+            super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
+                .map_err(|error| tracker_error(&error.0))?;
+        super::interop_adapter::import_xlsx(&bytes).map_err(|error| tracker_error(&error.0))?;
+        projection.opened = OpenedProjection {
+            bootstrap: candidate.bootstrap_projection(),
+            table: candidate.query_table(&candidate.default_collection)?,
+        };
+        super::ensure_complete_projection_size(
             "imported",
             &projection,
-            super::MAX_PROJECTION_BYTES,
-        ) {
-            // Promotion is candidate-local and requires complete actual source
-            // presentation. A generic import that already fits keeps its profile.
-            if !super::interop_adapter::text_capacity_shape(workbook) {
-                return Err(original_error);
-            }
-            let candidate = DesignerRuntime::from_document_profile(
-                runtime.session.export_snapshot().into_document(),
-                occurrence_id,
-                true,
-            )?;
-            let exported =
-                candidate.export_workbook(candidate.current_revision(), &projection.metadata)?;
-            let bytes = super::interop_adapter::export_xlsx_for_profile(
-                &exported,
-                OutputProfile::TextCapacity,
-            )
-            .map_err(|error| tracker_error(&error.0))?;
-            super::interop_adapter::import_xlsx(&bytes).map_err(|error| tracker_error(&error.0))?;
-            projection.opened = OpenedProjection {
-                bootstrap: candidate.bootstrap_projection(),
-                table: candidate.query_table(&candidate.default_collection)?,
-            };
-            super::ensure_complete_projection_size(
-                "imported",
-                &projection,
-                super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
-            )?;
-            runtime = candidate;
-        }
+            super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+        )?;
+        runtime = candidate;
     }
     Ok((runtime, projection))
 }
@@ -1325,28 +1334,7 @@ pub fn validate_import_metadata(
     document: &Document,
     metadata: &InteropMetadata,
 ) -> Result<(), DesignerError> {
-    let capacity =
-        super::is_text_capacity_document(document) && document.entities.len() > MAX_DATA_ROWS;
-    if metadata.version != 1
-        || metadata.sheets.is_empty()
-        || metadata.sheets.len() > MAX_SHEETS
-        || metadata.sheets.len() != document.schemas.len()
-    {
-        return Err(tracker_error(
-            "interop metadata version or worksheet count is invalid",
-        ));
-    }
-    super::ensure_projection_size_with_limit(
-        metadata,
-        if capacity {
-            3 * 1024 * 1024
-        } else {
-            super::MAX_PROJECTION_BYTES
-        },
-    )?;
-    if capacity {
-        validate_capacity_metadata(document, metadata)?;
-    }
+    let capacity = validate_metadata_envelope(document, metadata)?;
     let mut schemas = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut rows = BTreeSet::new();
@@ -1433,6 +1421,35 @@ pub fn validate_import_metadata(
     Ok(())
 }
 
+fn validate_metadata_envelope(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> Result<bool, DesignerError> {
+    let capacity =
+        super::is_text_capacity_document(document) && document.entities.len() > MAX_DATA_ROWS;
+    if metadata.version != 1
+        || metadata.sheets.is_empty()
+        || metadata.sheets.len() > MAX_SHEETS
+        || metadata.sheets.len() != document.schemas.len()
+    {
+        return Err(tracker_error(
+            "interop metadata version or worksheet count is invalid",
+        ));
+    }
+    super::ensure_projection_size_with_limit(
+        metadata,
+        if capacity {
+            3 * 1024 * 1024
+        } else {
+            super::MAX_PROJECTION_BYTES
+        },
+    )?;
+    if capacity {
+        validate_capacity_metadata(document, metadata)?;
+    }
+    Ok(capacity)
+}
+
 fn validate_capacity_metadata(
     document: &Document,
     metadata: &InteropMetadata,
@@ -1451,12 +1468,12 @@ fn validate_capacity_metadata(
             .rows
             .iter()
             .map(|row| row.entity_id.as_str())
-            .eq(document.entities.keys().map(|id| id.as_str()))
+            .eq(document.entities.keys().map(EntityId::as_str))
         || !sheet
             .columns
             .iter()
             .map(|column| column.field_id.as_str())
-            .eq(schema.fields.keys().map(|id| id.as_str()))
+            .eq(schema.fields.keys().map(FieldId::as_str))
     {
         return Err(tracker_error(
             "capacity metadata must preserve canonical row and column identity order",

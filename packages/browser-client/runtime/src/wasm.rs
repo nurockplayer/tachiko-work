@@ -274,14 +274,12 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
                 .copied()
                 .find(|byte| !byte.is_ascii_whitespace())
                 == Some(b'{')
-                && serde_json::from_slice::<MetadataControl>(&request)
-                    .map(|control| {
-                        matches!(
-                            control.kind,
-                            MetadataControlKind::Export | MetadataControlKind::InspectProject
-                        )
-                    })
-                    .unwrap_or(false)
+                && serde_json::from_slice::<MetadataControl>(&request).is_ok_and(|control| {
+                    matches!(
+                        control.kind,
+                        MetadataControlKind::Export | MetadataControlKind::InspectProject
+                    )
+                })
         } else {
             true
         };
@@ -365,11 +363,7 @@ fn spreadsheet_operation(
             csv_options,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            let capacity = workbook
-                .sheets
-                .iter()
-                .any(|sheet| sheet.rows.len() > crate::interop_adapter::MAX_DATA_ROWS)
-                && crate::interop_adapter::text_capacity_shape(&workbook);
+            let capacity = crate::interop_adapter::validate_text_capacity(&workbook).is_ok();
             let mut result =
                 SpreadsheetResult::read_only(DesignerResponse::ImportPreview(Box::new(workbook)));
             result.text_capacity = capacity;
