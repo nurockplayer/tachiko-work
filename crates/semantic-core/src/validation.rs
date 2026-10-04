@@ -277,14 +277,14 @@ fn validate_entities(
             entity.id.as_str(),
             || format!("{}.id", entity_path()),
             "entity",
-            &entity_subject,
+            entity_subject,
             diagnostics,
         );
         validate_human_key(
             entity.key.as_str(),
             || format!("{}.key", entity_path()),
             "entity",
-            &entity_subject,
+            entity_subject,
             diagnostics,
         );
 
