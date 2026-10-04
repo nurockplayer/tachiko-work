@@ -1085,14 +1085,17 @@ impl DesignerRuntime {
             revision: self.session.revision().as_str().to_owned(),
             default_collection: self.default_collection.clone(),
             collections: self.collections.clone(),
-            keyed_grouped_sum_definition_ids: self
-                .session
-                .export_snapshot()
-                .document()
-                .keyed_grouped_sum_definitions
-                .keys()
-                .map(ToString::to_string)
-                .collect(),
+            keyed_grouped_sum_definition_ids: if self.text_capacity {
+                Vec::new()
+            } else {
+                self.session
+                    .export_snapshot()
+                    .document()
+                    .keyed_grouped_sum_definitions
+                    .keys()
+                    .map(ToString::to_string)
+                    .collect()
+            },
         }
     }
 
@@ -2720,7 +2723,7 @@ impl DesignerRuntime {
         if edits.is_empty() || edits.len() > MAX_FIELD_QUERY_TARGETS {
             return Err(tracker_error("the edit range is empty or too large"));
         }
-        let snapshot = self.session.export_snapshot();
+        let snapshot = (!self.text_capacity).then(|| self.session.export_snapshot());
         let mut seen = BTreeSet::new();
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
@@ -2729,14 +2732,34 @@ impl DesignerRuntime {
             if !seen.insert(field.clone()) {
                 return Err(tracker_error("duplicate cell targets are unsupported"));
             }
-            let old = snapshot
-                .document()
-                .entities
-                .get(&field.entity)
-                .and_then(|entity| entity.fields.get(&field.field))
-                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
-                    field: field.clone(),
-                })?;
+            let projection = if self.text_capacity {
+                Some(
+                    self.session
+                        .query_fields(std::slice::from_ref(&field))
+                        .map_err(|error| match error {
+                            WorkspaceError::MissingField { field } => {
+                                DesignerError::UnsupportedScalarEdit { field }
+                            }
+                            other => other.into(),
+                        })?,
+                )
+            } else {
+                None
+            };
+            let old = if self.text_capacity {
+                projection
+                    .as_ref()
+                    .and_then(|query| query.value().first())
+                    .and_then(|value| value.stored_value.as_ref())
+            } else {
+                snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
+                    .and_then(|entity| entity.fields.get(&field.field))
+            }
+            .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                field: field.clone(),
+            })?;
             let value = parse_scalar(old, &edit.input, &field)?;
             if &value != old {
                 forward.push(SemanticCommand::set_field_value(field.clone(), value));
@@ -5194,6 +5217,88 @@ mod tests {
         };
         assert!(super::ensure_wire_reply_size(&reply, runtime.text_capacity).is_err());
         assert!(super::ensure_wire_reply_size(&reply, true).is_ok());
+    }
+
+    #[test]
+    fn capacity_scalar_refusals_preserve_order_atomicity_and_empty_history() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["old-a", "old-b", "old-c"],
+        );
+        let mut runtime = DesignerRuntime::from_document_profile(
+            base.session.export_snapshot().into_document(),
+            "00000000-0000-4000-8000-000000000000",
+            true,
+        )
+        .unwrap();
+        assert!(
+            runtime
+                .bootstrap_projection()
+                .keyed_grouped_sum_definition_ids
+                .is_empty()
+        );
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let target = runtime.query_table("orders").unwrap().rows[0].fields[0]
+            .target
+            .clone();
+        let mut missing = target.clone();
+        missing.field = "missing".into();
+        let mut missing_entity = target.clone();
+        missing_entity.entity = "missing".into();
+        let edit = |target: &super::FieldTarget, value: &str| super::CellEdit {
+            target: target.clone(),
+            input: ScalarEditInput::Text {
+                value: value.into(),
+            },
+        };
+        let malformed = super::CellEdit {
+            target: target.clone(),
+            input: ScalarEditInput::Number {
+                input: "malformed".into(),
+            },
+        };
+        for (edits, unsupported) in [
+            (vec![edit(&missing, "changed")], Some(missing.clone())),
+            (vec![edit(&missing_entity, "changed")], Some(missing_entity)),
+            (vec![edit(&target, "changed"), malformed.clone()], None),
+            (
+                vec![malformed.clone(), edit(&missing, "changed")],
+                Some(target.clone()),
+            ),
+            (
+                vec![
+                    edit(&target, "changed"),
+                    edit(&missing, "changed"),
+                    malformed,
+                ],
+                Some(missing),
+            ),
+        ] {
+            let error = runtime.edit_cells("resident/0", &edits).unwrap_err();
+            if let Some(expected) = unsupported {
+                assert!(
+                    matches!(error, super::DesignerError::UnsupportedScalarEdit { field } if field == expected.as_field_ref())
+                );
+            } else {
+                assert!(
+                    matches!(error, super::DesignerError::InvalidTrackerOperation { message } if message.contains("duplicate"))
+                );
+            }
+            assert_eq!(runtime.current_revision(), "resident/0");
+            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert!(runtime.undo.is_empty());
+            assert!(runtime.redo.is_empty());
+        }
+        assert!(matches!(
+            runtime.edit_cells("resident/0", &[edit(&target, "old-a")]),
+            Err(super::DesignerError::Lifecycle(
+                super::PatchLifecycleError::NoChange
+            ))
+        ));
+        for redo in [false, true] {
+            assert!(runtime.history_edit("resident/0", redo).is_err());
+        }
+        assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
     }
 
     #[test]

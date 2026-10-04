@@ -168,23 +168,26 @@ fn st_xstring(value: &str) -> bool {
     })
 }
 
-trait CapacityXmlSink {
-    fn markup(&mut self, value: &str);
+trait CapacityXmlSink: std::fmt::Write {
     fn text(&mut self, value: &str);
 }
 impl CapacityXmlSink for String {
-    fn markup(&mut self, value: &str) {
-        self.push_str(value);
-    }
     fn text(&mut self, value: &str) {
-        self.push_str(&escape(value));
+        if value.contains(['&', '<', '>', '"', '\'', '\r']) {
+            self.push_str(&escape(value));
+        } else {
+            self.push_str(value);
+        }
     }
 }
 struct CapacityXmlCount(usize);
-impl CapacityXmlSink for CapacityXmlCount {
-    fn markup(&mut self, value: &str) {
+impl std::fmt::Write for CapacityXmlCount {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
         self.0 += value.len();
+        Ok(())
     }
+}
+impl CapacityXmlSink for CapacityXmlCount {
     fn text(&mut self, value: &str) {
         self.0 += escaped_xml_bytes(value);
     }
@@ -192,34 +195,39 @@ impl CapacityXmlSink for CapacityXmlCount {
 // The writer and admission counter share every worksheet token. Other permitted
 // XML members, including escaped headers/name, fit the existing 16 KiB reserve.
 fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
-    output.markup(&format!(
+    write!(
+        output,
         "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\">"
-    ));
+    )
+    .expect("capacity XML sinks are infallible");
     for column in 0..3 {
-        output.markup(&format!(
+        write!(
+            output,
             "<c r=\"{}1\" s=\"0\" t=\"s\"><v>{column}</v></c>",
-            column_name(column)
-        ));
+            ["A", "B", "C"][column]
+        )
+        .expect("capacity XML sinks are infallible");
     }
-    output.markup("</row>");
+    write!(output, "</row>").expect("capacity XML sinks are infallible");
     for (index, row) in sheet.rows.iter().enumerate() {
         let number = index + 2;
-        output.markup(&format!("<row r=\"{number}\">"));
+        write!(output, "<row r=\"{number}\">").expect("capacity XML sinks are infallible");
         for (column, cell) in row.iter().enumerate() {
-            let address = format!("{}{number}", column_name(column));
+            let column = ["A", "B", "C"][column];
             if let SourceValue::Text { value } = &cell.value {
-                output.markup(&format!(
-                    "<c r=\"{address}\" s=\"0\" t=\"inlineStr\"><is><t xml:space=\"preserve\">"
-                ));
+                write!(output,
+                    "<c r=\"{column}{number}\" s=\"0\" t=\"inlineStr\"><is><t xml:space=\"preserve\">"
+                ).expect("capacity XML sinks are infallible");
                 output.text(value);
-                output.markup("</t></is></c>");
+                write!(output, "</t></is></c>").expect("capacity XML sinks are infallible");
             } else {
-                output.markup(&format!("<c r=\"{address}\" s=\"0\" t=\"n\"></c>"));
+                write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
+                    .expect("capacity XML sinks are infallible");
             }
         }
-        output.markup("</row>");
+        write!(output, "</row>").expect("capacity XML sinks are infallible");
     }
-    output.markup("</sheetData></worksheet>");
+    write!(output, "</sheetData></worksheet>").expect("capacity XML sinks are infallible");
 }
 
 fn escaped_xml_bytes(value: &str) -> usize {
@@ -2792,7 +2800,10 @@ pub(crate) fn export_xlsx_for_profile(
 
 #[cfg(test)]
 mod capacity_proof_tests {
-    use super::*;
+    use super::{
+        CapacityXmlCount, ImportOptions, SourceValue, capacity_worksheet, export_xlsx, import_csv,
+        import_xlsx, plain_tag, st_xstring,
+    };
     #[test]
     fn raw_token_grammar_and_shared_writer_count_agree() {
         for (raw, expected) in [
@@ -2819,6 +2830,19 @@ mod capacity_proof_tests {
             value: "&<>\"'\r\n雪".into(),
         };
         workbook.sheets[0].rows[0][1].value = SourceValue::Empty;
+        for value in ["plain雪\t\n", "&", "<", ">", "\"", "'", "\r"] {
+            workbook.sheets[0].rows[0][0].value = SourceValue::Text {
+                value: value.into(),
+            };
+            let reopened = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+            assert_eq!(
+                reopened.sheets[0].rows[0][0].value,
+                workbook.sheets[0].rows[0][0].value
+            );
+        }
+        workbook.sheets[0].rows[0][0].value = SourceValue::Text {
+            value: "&<>\"'\r\n雪".into(),
+        };
         let row = workbook.sheets[0].rows[0].clone();
         for rows in [0, 8, 9, 98, 99, 998, 999, 8406] {
             workbook.sheets[0].rows = vec![row.clone(); rows];
