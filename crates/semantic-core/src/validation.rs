@@ -356,14 +356,23 @@ fn validate_schema_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) 
 }
 
 fn validate_entity_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
-    let mut groups = BTreeMap::<_, Vec<_>>::new();
+    // A unique key needs only a borrowed first ID. Allocate the owned
+    // diagnostic IDs only for actual duplicate groups.
+    let mut groups = BTreeMap::<_, (&crate::EntityId, Vec<&crate::EntityId>)>::new();
     for (entity_id, entity) in &document.entities {
         groups
-            .entry(entity.key.clone())
-            .or_default()
-            .push(entity_id.clone());
+            .entry(&entity.key)
+            .and_modify(|(_, duplicates)| duplicates.push(entity_id))
+            .or_insert((entity_id, Vec::new()));
     }
-    for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+    for (key, (first, duplicates)) in groups
+        .into_iter()
+        .filter(|(_, (_, duplicates))| !duplicates.is_empty())
+    {
+        let ids = std::iter::once(first)
+            .chain(duplicates)
+            .cloned()
+            .collect::<Vec<_>>();
         diagnostics.push(core_diagnostic(
             format!("entity_keys.{key}"),
             DiagnosticCode::DUPLICATE_KEY,
@@ -1017,16 +1026,23 @@ mod issue_175_research {
         diagnostics: &mut Vec<Diagnostic>,
         cancelled: &mut impl FnMut() -> bool,
     ) -> ValidationControl {
-        let mut groups = BTreeMap::<_, Vec<_>>::new();
+        let mut groups = BTreeMap::<_, (&crate::EntityId, Vec<&crate::EntityId>)>::new();
         for (entity_id, entity) in &document.entities {
             poll_cancellation(cancelled)?;
             groups
-                .entry(entity.key.clone())
-                .or_default()
-                .push(entity_id.clone());
+                .entry(&entity.key)
+                .and_modify(|(_, duplicates)| duplicates.push(entity_id))
+                .or_insert((entity_id, Vec::new()));
         }
-        for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+        for (key, (first, duplicates)) in groups
+            .into_iter()
+            .filter(|(_, (_, duplicates))| !duplicates.is_empty())
+        {
             poll_cancellation(cancelled)?;
+            let ids = std::iter::once(first)
+                .chain(duplicates)
+                .cloned()
+                .collect::<Vec<_>>();
             diagnostics.push(core_diagnostic(
                 format!("entity_keys.{key}"),
                 DiagnosticCode::DUPLICATE_KEY,

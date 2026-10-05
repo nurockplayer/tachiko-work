@@ -1341,49 +1341,46 @@ impl DesignerRuntime {
         }
 
         let entities = self.session.query_entities(&spec.entities)?;
-        let targets = entities
-            .value()
-            .iter()
-            .flat_map(|entity| {
-                spec.columns
-                    .iter()
-                    .filter(|column| entity.fields.contains(&column.id))
-                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
-            })
-            .collect::<Vec<_>>();
-        let field_query = self.session.query_fields(&targets)?;
-        let mut fields = field_query
-            .value()
-            .iter()
-            .map(|field| (field.field.clone(), self.project_field(field)))
-            .collect::<BTreeMap<_, _>>();
-        let rows = entities
-            .value()
-            .iter()
-            .map(|entity| RowProjection {
-                id: entity.id.to_string(),
-                key: entity.key.to_string(),
-                fields: spec
-                    .columns
-                    .iter()
-                    .filter_map(|column| {
-                        let target = FieldRef::new(entity.id.clone(), column.id.clone());
-                        if self.text_capacity {
-                            // Each capacity cell occurs once in this table.
-                            // Move its authoritative projection instead of
-                            // cloning every label and Text value a second time.
-                            fields.remove(&target)
-                        } else {
+        let rows = if self.text_capacity {
+            self.build_capacity_table_rows(spec, entities.value())?
+        } else {
+            let targets = entities
+                .value()
+                .iter()
+                .flat_map(|entity| {
+                    spec.columns
+                        .iter()
+                        .filter(|column| entity.fields.contains(&column.id))
+                        .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
+                })
+                .collect::<Vec<_>>();
+            let field_query = self.session.query_fields(&targets)?;
+            let fields = field_query
+                .value()
+                .iter()
+                .map(|field| (field.field.clone(), self.project_field(field)))
+                .collect::<BTreeMap<_, _>>();
+            entities
+                .value()
+                .iter()
+                .map(|entity| RowProjection {
+                    id: entity.id.to_string(),
+                    key: entity.key.to_string(),
+                    fields: spec
+                        .columns
+                        .iter()
+                        .filter_map(|column| {
+                            let target = FieldRef::new(entity.id.clone(), column.id.clone());
                             fields.get(&target).cloned()
-                        }
-                    })
-                    .collect(),
-            })
-            .collect();
+                        })
+                        .collect(),
+                })
+                .collect()
+        };
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
-            revision: field_query.revision().as_str().to_owned(),
+            revision: entities.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: spec
                 .columns
@@ -1399,6 +1396,46 @@ impl DesignerRuntime {
             rows,
         };
         Ok(projection)
+    }
+
+    fn build_capacity_table_rows(
+        &self,
+        spec: &CollectionSpec,
+        entities: &[tachiko_workspace_engine::EntityInspection],
+    ) -> Result<Vec<RowProjection>, DesignerError> {
+        // The full entity query has already succeeded. With only an immutable
+        // resident borrow, every row query observes that same revision. Keep
+        // at most one row's owned field observations alive alongside the final
+        // table, rather than another whole table and a field-keyed index.
+        let mut rows = Vec::with_capacity(entities.len());
+        let mut targets = Vec::with_capacity(spec.columns.len());
+        for entity in entities {
+            targets.clear();
+            targets.extend(
+                spec.columns
+                    .iter()
+                    .filter(|column| entity.fields.contains(&column.id))
+                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone())),
+            );
+            let field_query = self.session.query_fields(&targets)?;
+            let fields = spec
+                .columns
+                .iter()
+                .filter_map(|column| {
+                    field_query
+                        .value()
+                        .iter()
+                        .find(|field| field.field.field == column.id)
+                        .map(|field| self.project_field(field))
+                })
+                .collect();
+            rows.push(RowProjection {
+                id: entity.id.to_string(),
+                key: entity.key.to_string(),
+                fields,
+            });
+        }
+        Ok(rows)
     }
 
     fn project_field(
@@ -5128,6 +5165,79 @@ mod tests {
         PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput,
         ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
     };
+
+    #[test]
+    fn capacity_table_projection_matches_ordinary_owned_projection() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["001", "雪\nquoted \"text\"", "\r\n"],
+        );
+        let mut document = base.session.export_snapshot().into_document();
+        for schema in document.schemas.values_mut() {
+            for field in schema.fields.values_mut() {
+                field.required = false;
+            }
+        }
+        let template = document.entities.values().next().unwrap().clone();
+        document.entities.clear();
+        for index in 0..12 {
+            let mut entity = template.clone();
+            entity.id = EntityId::from(format!("r{index:04}"));
+            entity.key = super::EntityKey::from(format!("row_{index}"));
+            let ids = entity.fields.keys().cloned().collect::<Vec<_>>();
+            if index % 3 == 0 {
+                entity.fields.remove(&ids[1]);
+            }
+            if index % 3 == 1 {
+                entity
+                    .fields
+                    .insert(ids[2].clone(), Value::Text(String::new()));
+            }
+            if index % 3 == 2 {
+                entity.fields.clear();
+            }
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        let mut runtime = DesignerRuntime::from_document_profile(
+            document,
+            "00000000-0000-4000-8000-000000000000",
+            true,
+        )
+        .unwrap();
+        // Query projection must preserve presentation order even when it is
+        // different from the resident field query's stable-ID ordering.
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .columns
+            .reverse();
+        let capacity = runtime.build_table_projection("orders").unwrap();
+        runtime.text_capacity = false;
+        let ordinary = runtime.build_table_projection("orders").unwrap();
+        assert_eq!(capacity, ordinary);
+        assert_eq!(
+            serde_json::to_vec(&capacity).unwrap(),
+            serde_json::to_vec(&ordinary).unwrap()
+        );
+        assert_eq!(capacity.rows.len(), 12);
+        assert_eq!(capacity.rows[2].fields, [] as [super::FieldProjection; 0]);
+
+        // Both routes validate the complete entity request before projecting
+        // fields, and neither may change the resident revision on refusal.
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .entities
+            .push(EntityId::from("missing"));
+        let before = runtime.session.export_snapshot();
+        let ordinary_error = runtime.build_table_projection("orders").unwrap_err();
+        runtime.text_capacity = true;
+        let capacity_error = runtime.build_table_projection("orders").unwrap_err();
+        assert_eq!(capacity_error.to_string(), ordinary_error.to_string());
+        assert_eq!(runtime.session.export_snapshot(), before);
+    }
 
     #[test]
     fn capacity_scalar_cannot_promote_a_generic_resident() {

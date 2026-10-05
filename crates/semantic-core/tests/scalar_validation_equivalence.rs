@@ -127,7 +127,7 @@ fn mixed_valid_scalars_optional_absence_and_exact_constraints() {
         .get_mut("text")
         .unwrap()
         .constraint = FieldConstraint::TextLiteralSet {
-        values: vec!["".into(), "雪".into()],
+        values: vec![String::new(), "雪".into()],
     };
     document
         .entities
