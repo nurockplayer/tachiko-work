@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The experimental browser producer admits a bounded 8,406-row, three-Text
+  table through import, scalar edits and history, project save/reopen and both
+  CSV/XLSX exports. Complete projections and metadata use private finite
+  budgets; generic tables, formulas and hostile-file defenses retain their
+  existing limits. See the producer's capacity contract for the exact profile.
+
 - The experimental browser client can explicitly export opaque `.roproj/v3`
   projects with Date and saved grouped-sum definitions together, then reopen
   them through existing project operations. V3-opened occurrences require the
