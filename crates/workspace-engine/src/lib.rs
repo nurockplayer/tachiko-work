@@ -1651,6 +1651,29 @@ pub(crate) fn field_value_candidate(
     field: &FieldRef,
     value: &Value,
 ) -> Result<Document, WorkspaceError> {
+    check_field_value_candidate(document, field, value)?;
+    let mut candidate = document.clone();
+    install_checked_field_value(&mut candidate, field, value)?;
+    Ok(candidate)
+}
+
+/// Reuse a request-local candidate that the planner already owns. The same
+/// ordered checks run before any mutation; an unsuccessful atomic batch still
+/// drops its private candidate without touching the caller's document.
+pub(crate) fn apply_field_value_candidate(
+    candidate: &mut Document,
+    field: &FieldRef,
+    value: &Value,
+) -> Result<(), WorkspaceError> {
+    check_field_value_candidate(candidate, field, value)?;
+    install_checked_field_value(candidate, field, value)
+}
+
+fn check_field_value_candidate(
+    document: &Document,
+    field: &FieldRef,
+    value: &Value,
+) -> Result<(), WorkspaceError> {
     let entity =
         document
             .entities
@@ -1703,7 +1726,14 @@ pub(crate) fn field_value_candidate(
         })?;
     }
 
-    let mut candidate = document.clone();
+    Ok(())
+}
+
+fn install_checked_field_value(
+    candidate: &mut Document,
+    field: &FieldRef,
+    value: &Value,
+) -> Result<(), WorkspaceError> {
     candidate
         .entities
         .get_mut(&field.entity)
@@ -1712,7 +1742,7 @@ pub(crate) fn field_value_candidate(
         })?
         .fields
         .insert(field.field.clone(), value.clone());
-    Ok(candidate)
+    Ok(())
 }
 
 /// Build the narrow inverse candidate for removing one optional stored value.

@@ -55,6 +55,10 @@ chmod +x "${fixture}/scripts/repository-source.sh" "${fixture}/scripts/package-e
 cat >"${fixture}/packages/browser-client/scripts/build-runtime.sh" <<'EOF_BUILD'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -f "${TMPDIR}/assert-network-environment" ]]; then
+  printf 'invoked\n' >>"${TMPDIR}/package-tool-invocations"
+  source "${TMPDIR}/assert-network-environment"
+fi
 [[ "$#" -eq 1 ]] || exit 64
 mkdir -p "$1"
 printf 'committed wasm\n' >"$1/designer_runtime.wasm"
@@ -70,6 +74,10 @@ chmod +x "${fixture}/packages/browser-client/scripts/build-runtime.sh"
 cat >"${fake_bin}/pnpm" <<'EOF_PNPM'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -f "${TMPDIR}/assert-network-environment" ]]; then
+  printf 'invoked\n' >>"${TMPDIR}/package-tool-invocations"
+  source "${TMPDIR}/assert-network-environment"
+fi
 designer=""
 if [[ "${1:-}" == "--dir" ]]; then
   designer="$2"
@@ -213,6 +221,116 @@ assert.match(emitted,/COMMITTED_CLIENT_SOURCE/,'output leaked a same-path workin
 assert.doesNotMatch(emitted,/DIRTY_CLIENT_SOURCE|STAGED_CLIENT_SOURCE|SYMLINK_CLIENT_SOURCE/);
 EOF_NODE
 }
+
+# Exercise real isolated package subprocesses with inert proxy sentinel values.
+# No network runs in this fixture, and failures report variable names only.
+cat >"${controlled_tmp}/assert-network-environment" <<'EOF_ENV'
+for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+  expected="$(cat "${TMPDIR}/network-expectation")"
+  if [[ "${expected}" == enabled ]]; then
+    [[ "${!name-}" == "http://fixture-${name}.invalid:9" ]] || { echo "proxy mismatch: ${name}" >&2; exit 65; }
+  else
+    [[ ! -v "${name}" ]] || { echo "unexpected proxy: ${name}" >&2; exit 65; }
+  fi
+done
+if [[ -f "${TMPDIR}/ca-expectation" ]]; then
+  expected_ca="$(cat "${TMPDIR}/ca-expectation")"
+  [[ "${NODE_EXTRA_CA_CERTS-}" == "${expected_ca}" && "${CARGO_HTTP_CAINFO-}" == "${expected_ca}" ]] || { echo 'existing CA path mismatch' >&2; exit 65; }
+else
+  [[ ! -v NODE_EXTRA_CA_CERTS && ! -v CARGO_HTTP_CAINFO ]] || { echo 'unexpected CA path' >&2; exit 65; }
+fi
+for name in ALL_PROXY all_proxy NODE_OPTIONS SSL_CERT_FILE NODE_TLS_REJECT_UNAUTHORIZED CARGO_HTTP_SSL_VERIFY NPM_CONFIG_STRICT_SSL NPM_CONFIG_REGISTRY CARGO_BUILD_TARGET TACHIKO_EXPORT_INHERIT_PROXY TACHIKO_EXPORT_INHERIT_CA; do
+  [[ ! -v "${name}" ]] || { echo "ambient variable leaked: ${name}" >&2; exit 65; }
+done
+[[ "${NPM_CONFIG_USERCONFIG}" == /dev/null && "${NPM_CONFIG_GLOBALCONFIG}" == /dev/null ]] || exit 65
+printf 'checked\n' >>"${TMPDIR}/network-checks"
+EOF_ENV
+for mode in unset 0 1; do
+  if [[ "${mode}" == 1 ]]; then expectation=enabled; else expectation=disabled; fi
+  printf '%s\n' "${expectation}" >"${controlled_tmp}/network-expectation"
+  : >"${controlled_tmp}/network-checks"
+  (
+    unset TACHIKO_EXPORT_INHERIT_PROXY TACHIKO_EXPORT_INHERIT_CA
+    if [[ "${mode}" != unset ]]; then export TACHIKO_EXPORT_INHERIT_PROXY="${mode}"; fi
+    for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy NODE_EXTRA_CA_CERTS SSL_CERT_FILE NPM_CONFIG_REGISTRY CARGO_BUILD_TARGET; do
+      export "${name}=http://fixture-${name}.invalid:9"
+    done
+    export NODE_OPTIONS=--no-warnings
+    run_export "${test_root}/network-${mode}-kit"
+  )
+  [[ "$(wc -l <"${controlled_tmp}/network-checks" | tr -d ' ')" == 4 ]] || fail 'network environment was not checked in all four package subprocesses'
+  assert_manifest_and_exact_inventory "${test_root}/network-${mode}-kit"
+  assert_owned_slot_absent
+done
+# Opt-in must not synthesize absent transport variables.
+printf 'disabled\n' >"${controlled_tmp}/network-expectation"
+(
+  unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+  export TACHIKO_EXPORT_INHERIT_PROXY=1
+  run_export "${test_root}/network-absent-kit"
+)
+assert_owned_slot_absent
+if TACHIKO_EXPORT_INHERIT_PROXY=invalid run_export "${test_root}/network-invalid-kit"; then
+  fail 'invalid transport opt-in was accepted'
+fi
+assert_no_output "${test_root}/network-invalid-kit"
+assert_owned_slot_absent
+# No certificate is trusted or network request made by these fake builders.
+# A path containing spaces exercises exact, quoted propagation to both tools.
+ca_fixture="${controlled_tmp}/existing CA.pem"
+printf 'inert CA fixture\n' >"${ca_fixture}"
+for ca_mode in unset 0; do
+  (
+    unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy TACHIKO_EXPORT_INHERIT_CA
+    if [[ "${ca_mode}" == 0 ]]; then export TACHIKO_EXPORT_INHERIT_CA=0; fi
+    export NODE_EXTRA_CA_CERTS="${ca_fixture}" CARGO_HTTP_CAINFO=excluded
+    export NODE_TLS_REJECT_UNAUTHORIZED=1 CARGO_HTTP_SSL_VERIFY=true NPM_CONFIG_STRICT_SSL=true
+    run_export "${test_root}/ca-disabled-${ca_mode}-kit"
+  )
+  assert_owned_slot_absent
+done
+printf '%s\n' "${ca_fixture}" >"${controlled_tmp}/ca-expectation"
+: >"${controlled_tmp}/network-checks"
+(
+  unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+  export TACHIKO_EXPORT_INHERIT_CA=1 NODE_EXTRA_CA_CERTS="${ca_fixture}"
+  export CARGO_HTTP_CAINFO=excluded SSL_CERT_FILE=excluded
+  run_export "${test_root}/ca-enabled-kit"
+)
+[[ "$(wc -l <"${controlled_tmp}/network-checks" | tr -d ' ')" == 4 ]] || fail 'CA environment was not checked in all four subprocesses'
+assert_manifest_and_exact_inventory "${test_root}/ca-enabled-kit"
+assert_owned_slot_absent
+rm -- "${controlled_tmp}/ca-expectation"
+for ca_case in missing empty relative nonexistent directory; do
+  : >"${controlled_tmp}/package-tool-invocations"
+  ca_log="${test_root}/ca-${ca_case}.log"
+  if (
+    export TACHIKO_EXPORT_INHERIT_CA=1
+    case "${ca_case}" in
+      missing) unset NODE_EXTRA_CA_CERTS ;;
+      empty) export NODE_EXTRA_CA_CERTS='' ;;
+      relative) export NODE_EXTRA_CA_CERTS=relative.pem ;;
+      nonexistent) export NODE_EXTRA_CA_CERTS="${controlled_tmp}/absent.pem" ;;
+      directory) export NODE_EXTRA_CA_CERTS="${controlled_tmp}" ;;
+    esac
+    run_export "${test_root}/ca-${ca_case}-kit"
+  ) >"${ca_log}" 2>&1; then fail "invalid CA path accepted: ${ca_case}"; fi
+  grep -Fx 'package-experimental-designer-client: CA opt-in requires an existing readable absolute NODE_EXTRA_CA_CERTS file' "${ca_log}" >/dev/null ||
+    fail "CA path refusal did not originate in preflight: ${ca_case}"
+  [[ ! -s "${controlled_tmp}/package-tool-invocations" ]] || fail "invalid CA path reached a package tool: ${ca_case}"
+  assert_no_output "${test_root}/ca-${ca_case}-kit"
+  assert_owned_slot_absent
+done
+: >"${controlled_tmp}/package-tool-invocations"
+if TACHIKO_EXPORT_INHERIT_CA=invalid run_export "${test_root}/ca-invalid-kit" >"${test_root}/ca-invalid.log" 2>&1; then
+  fail 'invalid CA opt-in was accepted'
+fi
+grep -Fx 'package-experimental-designer-client: TACHIKO_EXPORT_INHERIT_CA must be 0 or 1' "${test_root}/ca-invalid.log" >/dev/null ||
+  fail 'invalid CA opt-in did not refuse in preflight'
+[[ ! -s "${controlled_tmp}/package-tool-invocations" ]] || fail 'invalid CA opt-in reached a package tool'
+assert_no_output "${test_root}/ca-invalid-kit"
+assert_owned_slot_absent
+rm -- "${controlled_tmp}/assert-network-environment"
 
 # An occupied deterministic slot is never reusable or deletable. Check both a
 # directory and a symlink before any successful export claims its own slot.

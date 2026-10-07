@@ -27,8 +27,12 @@ use thiserror::Error;
 use super::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
-    field_value_candidate, finalize_edit, unset_field_candidate,
+    apply_field_value_candidate, field_value_candidate, finalize_edit, unset_field_candidate,
 };
+
+#[cfg(test)]
+#[path = "candidate_allocation_tests.rs"]
+mod candidate_allocation_tests;
 
 macro_rules! opaque_text_id {
     ($name:ident) => {
@@ -3120,7 +3124,7 @@ impl PatchLifecycle {
                             scope: scope.clone(),
                         });
                     }
-                    candidate = field_value_candidate(&candidate, field, value)?;
+                    apply_field_value_candidate(&mut candidate, field, value)?;
                 }
                 SemanticCommand::UnsetField { field } => {
                     let entity = candidate.entities.get(&field.entity).ok_or_else(|| {

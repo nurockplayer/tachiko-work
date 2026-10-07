@@ -798,10 +798,12 @@ pub fn import_workbook(
         let revision = runtime.current_revision().to_owned();
         runtime.update_formula(&revision, &field_target(&next), &source)?;
     }
-    let runtime = DesignerRuntime::from_document(
-        runtime.session.export_snapshot().document().clone(),
-        occurrence_id,
-    )?;
+    let document = runtime.session.export_snapshot().into_document();
+    // The temporary occurrence has finished binding formulas. Its detached
+    // snapshot owns the complete document; release the old runtime before
+    // validating and projecting the final occurrence.
+    drop(runtime);
+    let runtime = DesignerRuntime::from_document(document, occurrence_id)?;
     if runtime.text_capacity && !super::interop_adapter::text_capacity_shape(workbook) {
         return Err(tracker_error(
             "Text capacity requires the complete original source profile",
@@ -850,6 +852,7 @@ fn finish_import(
         )
         .map_err(|error| tracker_error(&error.0))?;
     }
+    drop(exported);
     let bootstrap = runtime.bootstrap_projection();
     let table = runtime.query_table(&bootstrap.default_collection)?;
     ledger.push(FidelityFinding {
@@ -1532,6 +1535,7 @@ impl DesignerRuntime {
         }
         self.export_workbook_from_metadata(
             expected_revision,
+            snapshot.document(),
             metadata,
             if self.text_capacity {
                 OutputProfile::TextCapacity
@@ -1560,6 +1564,7 @@ impl DesignerRuntime {
         let metadata = native_tracker_metadata(snapshot.document(), presentation)?;
         self.export_workbook_from_metadata(
             expected_revision,
+            snapshot.document(),
             &metadata,
             OutputProfile::NativeTracker,
         )
@@ -1583,7 +1588,13 @@ impl DesignerRuntime {
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         let metadata = native_budget_metadata(self, presentation)?;
-        self.export_workbook_from_metadata(expected_revision, &metadata, OutputProfile::Shared)
+        let snapshot = self.session.export_snapshot();
+        self.export_workbook_from_metadata(
+            expected_revision,
+            snapshot.document(),
+            &metadata,
+            OutputProfile::Shared,
+        )
     }
 
     /// Export only the active native Budget view as calculated scalar values.
@@ -1656,14 +1667,21 @@ impl DesignerRuntime {
     fn export_workbook_from_metadata(
         &self,
         expected_revision: &str,
+        document: &Document,
         metadata: &InteropMetadata,
         profile: OutputProfile,
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
-        let snapshot = self.session.export_snapshot();
-        let document = snapshot.document();
+        // The caller holds the exact immutable snapshot already used for
+        // metadata admission. No second owned document is needed here.
         let mut addresses = BTreeMap::new();
-        for sheet in &metadata.sheets {
+        // Capacity admission excludes formulas, the sole consumers of A1
+        // addresses. Other profiles retain their full reference index.
+        for sheet in metadata
+            .sheets
+            .iter()
+            .filter(|_| profile != OutputProfile::TextCapacity)
+        {
             let present = sheet.rows.iter().filter(|row| {
                 document
                     .entities
