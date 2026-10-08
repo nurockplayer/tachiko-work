@@ -317,10 +317,7 @@ fn rejection_preserves_resident(
         let before = resident.as_ref().unwrap().observe_occurrence();
         assert!(open_project(&mut resident, &invalid, REOPENED).is_err());
         assert_eq!(resident.as_ref().unwrap().observe_occurrence(), before);
-        assert_eq!(
-            saved_bytes(resident.as_ref().unwrap(), carrier),
-            saved
-        );
+        assert_eq!(saved_bytes(resident.as_ref().unwrap(), carrier), saved);
         verify(
             &table(resident.as_mut().unwrap(), collection),
             &manifest.rows,
@@ -358,10 +355,7 @@ fn rejection_preserves_resident(
     assert_eq!(reply["status"], "error");
     assert_eq!(reply["error"]["code"], "request_too_large");
     assert_eq!(resident.as_ref().unwrap().observe_occurrence(), before);
-    assert_eq!(
-        saved_bytes(resident.as_ref().unwrap(), carrier),
-        saved
-    );
+    assert_eq!(saved_bytes(resident.as_ref().unwrap(), carrier), saved);
 }
 
 fn reopen(fixtures: &Path, capture: &Path, format: &str, carrier: &str) {
@@ -469,7 +463,14 @@ fn run(fixtures: &Path, capture: &Path, carrier: &str) {
         fs::write(capture.join(format!("{format}-collection.txt")), collection).unwrap();
         export_artifacts(&runtime, &imported.metadata, capture, format, &mut times);
         scopes.insert(format, runtime.observe_occurrence().scope);
-        rejection_preserves_resident(runtime, collection, &imported.metadata, &manifest, &bytes, carrier);
+        rejection_preserves_resident(
+            runtime,
+            collection,
+            &imported.metadata,
+            &manifest,
+            &bytes,
+            carrier,
+        );
         times.save(&capture.join(format!("{format}-timings.json")));
     }
     for format in ["csv", "xlsx"] {
