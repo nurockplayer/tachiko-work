@@ -4,9 +4,11 @@
 use std::io::{Cursor, Read};
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, SourceWorkbook, import_csv};
 use tachiko_designer_runtime::{
-    CleanupOperation, DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget,
-    ImportFieldType, ImportSelection, InteropMetadata, ScalarEditInput, TableProjection,
-    import_workbook, inspect_imported_project, open_imported_project, open_project,
+    CleanupOperation, CollectionSummary, ColumnProjection, DesignerError, DesignerRequest,
+    DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType,
+    ImportSelection, InteropMetadata, RowProjection, ScalarEditInput, ScalarKind,
+    StoredValueProjection, TableProjection, import_workbook, inspect_imported_project,
+    open_imported_project, open_project,
 };
 use tachiko_storage::{CanonicalRoProjectV1, decode_roproj_v1, from_bytes};
 use tachiko_workspace_engine::{
@@ -348,17 +350,148 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
     // Existing generic opening remains separately callable; metadata-bearing
     // opening must not become a silent prerequisite for ordinary authoring.
     for rows in [65, 66, 128] {
-        let source = DesignerRuntime::from_document(native_document(rows), ORIGINAL).unwrap();
+        let mut source = DesignerRuntime::from_document(native_document(rows), ORIGINAL).unwrap();
+        let original = document(&source);
         let saved = opaque(&source);
         let mut resident = None;
         open_project(&mut resident, &saved, FRESH).unwrap();
-        assert_eq!(table(resident.as_mut().unwrap()).rows.len(), rows);
-        assert_eq!(document(resident.as_ref().unwrap()), document(&source));
-        let selected = v3_bytes(&source);
-        let mut v3 = None;
-        open_project(&mut v3, &selected, SECOND).unwrap();
-        assert_eq!(table(v3.as_mut().unwrap()).rows.len(), rows);
-        ordinary_export_refuses(v3.as_ref().unwrap());
+        let fresh = resident.as_mut().unwrap();
+        assert_eq!(table(fresh).rows.len(), rows);
+        assert_eq!(document(fresh), original);
+
+        if rows <= 66 {
+            let selected = v3_bytes(&source);
+            let mut v3 = None;
+            open_project(&mut v3, &selected, SECOND).unwrap();
+            assert_eq!(table(v3.as_mut().unwrap()).rows.len(), rows);
+            ordinary_export_refuses(v3.as_ref().unwrap());
+            continue;
+        }
+
+        // The expected full Table projection comes directly from the unchanged
+        // document and the established projection semantics, not from the
+        // candidate runtime's result.
+        let expected = expected_native_table(&original, &format!("{FRESH}/0"));
+        let expected_bytes = serde_json::to_vec(&expected).unwrap();
+        assert_eq!(expected_bytes.len(), 73_213);
+        assert!(expected_bytes.len() > 65_536);
+        assert_eq!(table(fresh), expected);
+
+        // A valid storage-v3 document is independently framed from the same
+        // original snapshot. Selected v3 export refuses this Table envelope.
+        let before_export_occurrence = source.observe_occurrence();
+        let before_export_bootstrap = bootstrap(&mut source);
+        let before_export_table = table(&mut source);
+        let before_export_saved = carriers(&source);
+        let export_error = source
+            .export_project_v3(&before_export_occurrence.revision)
+            .expect_err("the original Table projection exceeds the native reply limit");
+        assert!(matches!(
+            export_error,
+            DesignerError::UnsupportedProject { .. }
+        ));
+        assert_eq!(source.observe_occurrence(), before_export_occurrence);
+        assert_eq!(bootstrap(&mut source), before_export_bootstrap);
+        assert_eq!(table(&mut source), before_export_table);
+        assert_eq!(carriers(&source), before_export_saved);
+
+        let encoded = independently_frame_v3(&original);
+        let inspect_error = tachiko_designer_runtime::inspect_project(&encoded)
+            .expect_err("v3 Inspect refuses the original oversized Table projection");
+        assert!(matches!(
+            inspect_error,
+            DesignerError::UnsupportedProject { .. }
+        ));
+        let mut empty = None;
+        let open_error = open_project(&mut empty, &encoded, FRESH)
+            .expect_err("v3 open refuses the original oversized Table projection");
+        assert!(matches!(
+            open_error,
+            DesignerError::UnsupportedProject { .. }
+        ));
+        assert!(empty.is_none());
+
+        let (mut seeded, metadata) = imported(8);
+        let states = seed_histories(&mut seeded);
+        let before_occurrence = seeded.observe_occurrence();
+        let before_bootstrap = bootstrap(&mut seeded);
+        let before_table = table(&mut seeded);
+        let before_saved = carriers(&seeded);
+        let before_workbook = workbook(&seeded, &metadata);
+        let mut seeded = Some(seeded);
+        let open_error = open_project(&mut seeded, &encoded, FRESH)
+            .expect_err("v3 open refusal preserves the seeded resident");
+        assert!(matches!(
+            open_error,
+            DesignerError::UnsupportedProject { .. }
+        ));
+        let retained = seeded.as_mut().unwrap();
+        assert_eq!(retained.observe_occurrence(), before_occurrence);
+        assert_eq!(bootstrap(retained), before_bootstrap);
+        assert_eq!(table(retained), before_table);
+        assert_eq!(carriers(retained), before_saved);
+        assert_eq!(workbook(retained, &metadata), before_workbook);
+        assert_histories(retained, &states);
+    }
+}
+
+fn expected_native_table(document: &Document, revision: &str) -> TableProjection {
+    let schema = document.schemas.get(&SchemaId::from("s")).unwrap();
+    let entities = document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == schema.id)
+        .collect::<Vec<_>>();
+    TableProjection {
+        revision: revision.to_owned(),
+        tracker_profile: None,
+        native_table_profile: Some(true),
+        collection: CollectionSummary {
+            id: schema.id.to_string(),
+            key: schema.key.to_string(),
+            entity_count: entities.len(),
+        },
+        columns: schema
+            .fields
+            .values()
+            .map(|field| ColumnProjection {
+                id: field.id.to_string(),
+                key: field.key.to_string(),
+                field_type: "text".to_owned(),
+                dropdown_options: None,
+            })
+            .collect(),
+        rows: entities
+            .into_iter()
+            .map(|entity| RowProjection {
+                id: entity.id.to_string(),
+                key: entity.key.to_string(),
+                fields: schema
+                    .fields
+                    .values()
+                    .map(|definition| {
+                        let value = entity.fields.get(&definition.id).unwrap();
+                        let Value::Text(text) = value else {
+                            panic!("the fixed native table fixture contains only Text values")
+                        };
+                        FieldProjection {
+                            target: FieldTarget {
+                                entity: entity.id.to_string(),
+                                field: definition.id.to_string(),
+                            },
+                            address: format!("{}.{}", entity.key, definition.key),
+                            stored: Some(StoredValueProjection::Text {
+                                value: text.clone(),
+                            }),
+                            formula: None,
+                            calculated: None,
+                            diagnostics: Vec::new(),
+                            editable_scalar: Some(ScalarKind::Text),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect(),
     }
 }
 
