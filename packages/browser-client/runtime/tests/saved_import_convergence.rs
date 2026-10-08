@@ -371,7 +371,7 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         // The expected full Table projection comes directly from the unchanged
         // document and the established projection semantics, not from the
         // candidate runtime's result.
-        let expected = expected_native_table(&original, &format!("{FRESH}/0"));
+        let expected = expected_native_table(&original, "resident/0");
         let expected_bytes = serde_json::to_vec(&expected).unwrap();
         assert_eq!(expected_bytes.len(), 73_213);
         assert!(expected_bytes.len() > 65_536);
