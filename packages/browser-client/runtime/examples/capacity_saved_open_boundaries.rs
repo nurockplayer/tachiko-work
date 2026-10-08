@@ -328,9 +328,7 @@ fn refused_saved_carrier_preserves(candidate: &Document, input: &[u8]) {
     const NEW_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000152";
     let candidate_metadata = metadata(candidate);
     let mut empty = None;
-    assert!(
-        open_imported_project(&mut empty, &input, &candidate_metadata, NEW_OCCURRENCE).is_err()
-    );
+    assert!(open_imported_project(&mut empty, input, &candidate_metadata, NEW_OCCURRENCE).is_err());
     assert!(
         empty.is_none(),
         "refusal must not install into an empty resident"
@@ -363,7 +361,7 @@ fn refused_saved_carrier_preserves(candidate: &Document, input: &[u8]) {
     let before_exports = export_bytes(current, &metadata);
 
     assert!(
-        open_imported_project(&mut resident, &input, &candidate_metadata, NEW_OCCURRENCE).is_err()
+        open_imported_project(&mut resident, input, &candidate_metadata, NEW_OCCURRENCE).is_err()
     );
     let current = resident.as_mut().expect("refusal must retain the resident");
     assert_eq!(current.observe_occurrence(), before_occurrence);
