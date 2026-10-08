@@ -45,6 +45,10 @@ enum SpreadsheetOperation {
     InspectProject {
         metadata: InteropMetadata,
     },
+    OpenProject {
+        occurrence_id: String,
+        metadata: InteropMetadata,
+    },
     Export {
         expected_revision: String,
         metadata: InteropMetadata,
@@ -74,6 +78,7 @@ struct MetadataControl {
 enum MetadataControlKind {
     Export,
     InspectProject,
+    OpenProject,
 }
 
 struct SpreadsheetResult {
@@ -277,7 +282,9 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
                 && serde_json::from_slice::<MetadataControl>(&request).is_ok_and(|control| {
                     matches!(
                         control.kind,
-                        MetadataControlKind::Export | MetadataControlKind::InspectProject
+                        MetadataControlKind::Export
+                            | MetadataControlKind::InspectProject
+                            | MetadataControlKind::OpenProject
                     )
                 })
         } else {
@@ -392,6 +399,19 @@ fn spreadsheet_operation(
                 SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
             result.text_capacity = text_capacity;
             Ok(result)
+        }
+        SpreadsheetOperation::OpenProject {
+            occurrence_id,
+            metadata,
+        } => {
+            let (candidate, opened) =
+                crate::admit_imported_project(project, &occurrence_id, &metadata)?;
+            Ok(SpreadsheetResult {
+                text_capacity: candidate.text_capacity,
+                response: DesignerResponse::Opened(Box::new(opened)),
+                candidate: Some(candidate),
+                export: None,
+            })
         }
         SpreadsheetOperation::Export {
             expected_revision,

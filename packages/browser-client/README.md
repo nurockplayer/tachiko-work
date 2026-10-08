@@ -46,10 +46,23 @@ existing 64-operation session Undo horizon is unchanged.
 
 The ordinary Designer request ABI checks 64 KiB before parsing. The spreadsheet
 ABI caps its arena at 4 MiB, then uses a bounded operation-kind discriminator;
-above 64 KiB it admits only existing Export/InspectProject operations before
-decoding their complete payload. Other controls and selective field replies
-remain at 64 KiB. Capacity artifacts require a capacity-capable reader; downgrading
-the producer cannot make the old pin support them. The capacity profile remains
-separate from v3 and does not alter v3 origin/export behavior or the Sheet's
-Date + saved-definition guard. Producer qualification and the separate Sheet
-import/edit/durable save/restart/reopen qualification remain distinct.
+above 64 KiB it admits only Export, InspectProject and metadata-aware OpenProject
+operations before decoding their complete payload. Other controls and selective
+field replies remain at 64 KiB. Capacity artifacts require a capacity-capable
+reader; downgrading the producer cannot make the old pin support them. The
+capacity profile remains separate from v3 and does not alter v3 origin/export
+behavior or the Sheet's Date + saved-definition guard. Producer qualification
+and the separate Sheet import/edit/durable save/restart/reopen qualification
+remain distinct.
+
+Saved spreadsheet carriers use metadata-aware admission: native Rust callers
+can use `open_imported_project(runtime, input, metadata, occurrence_id)`, and
+the Worker client exposes the optional `openImportedProject` capability through
+the existing spreadsheet operation. Inspection does not authorize a later
+open; actual open revalidates the carrier, metadata mappings, XLSX/CSV closure
+and complete reply before replacing the resident occurrence. It has no ordinary
+open fallback. V3 keeps its strict ordinary profile and origin behavior;
+capacity promotion applies only to eligible non-v3 Text candidates. Enlarged
+Text-capacity Deduplicate removals are refused before preview or publication.
+These producer changes remain pending qualification and do not qualify or
+change any consumer pin or immutable kit.

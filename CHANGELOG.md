@@ -12,6 +12,16 @@ All notable changes to Tachiko Work are documented in this file.
   budgets; generic tables, formulas and hostile-file defenses retain their
   existing limits. See the producer's capacity contract for the exact profile.
 
+- Saved spreadsheet carriers have metadata-aware native
+  `open_imported_project` and optional Worker `openImportedProject` routes.
+  Actual open independently revalidates mappings, XLSX/CSV closure and the
+  complete reply before replacement; inspection does not authorize open and
+  there is no ordinary-open fallback. Eligible non-v3 Text candidates may use
+  the capacity profile, while v3 retains strict ordinary admission and origin
+  behavior. Enlarged Text-capacity Deduplicate removals refuse before
+  publication. Producer qualification remains pending; no immutable kit or
+  consumer pin is qualified by this entry.
+
 - The experimental browser client can explicitly export opaque `.roproj/v3`
   projects with Date and saved grouped-sum definitions together, then reopen
   them through existing project operations. V3-opened occurrences require the

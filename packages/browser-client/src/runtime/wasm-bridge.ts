@@ -101,7 +101,7 @@ export async function createDesignerWasmBridge(
 
   return {
     spreadsheet: (operation, bytes) => {
-      const maximum = operation.type === "export" || operation.type === "inspect_project"
+      const maximum = operation.type === "export" || operation.type === "inspect_project" || operation.type === "open_project"
         ? MAX_METADATA_REQUEST_BYTES : MAX_WIRE_REQUEST_BYTES;
       if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES || !writeRequest(encoder.encode(JSON.stringify(operation)), maximum)) {
         return tooLargeReply("The spreadsheet request exceeds the private bridge limits.");

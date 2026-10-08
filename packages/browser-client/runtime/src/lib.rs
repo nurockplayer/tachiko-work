@@ -800,7 +800,10 @@ impl DesignerRuntime {
             }
             return Self::from_document_profile(document, occurrence_id, true);
         }
-        Self::from_document_profile(document, occurrence_id, false)
+        let (runtime, opened) =
+            Self::from_document_profile_with_opened(document, occurrence_id, false)?;
+        ensure_opened_projection_size(&opened, false)?;
+        Ok(runtime)
     }
 
     fn from_document_profile(
@@ -808,6 +811,17 @@ impl DesignerRuntime {
         occurrence_id: &str,
         text_capacity: bool,
     ) -> Result<Self, DesignerError> {
+        let (runtime, opened) =
+            Self::from_document_profile_with_opened(document, occurrence_id, text_capacity)?;
+        ensure_opened_wire_projection_size(&opened, text_capacity)?;
+        Ok(runtime)
+    }
+
+    fn from_document_profile_with_opened(
+        document: Document,
+        occurrence_id: &str,
+        text_capacity: bool,
+    ) -> Result<(Self, OpenedProjection), DesignerError> {
         ensure_document_profile(&document, text_capacity)?;
         if text_capacity {
             ensure_capacity_document_encoding(&document)?;
@@ -858,8 +872,7 @@ impl DesignerRuntime {
             bootstrap: runtime.bootstrap_projection(),
             table: runtime.query_table(&runtime.default_collection)?,
         };
-        ensure_opened_projection_size(&opened, text_capacity)?;
-        Ok(runtime)
+        Ok((runtime, opened))
     }
 
     /// Execute one private adapter request without exposing the canonical document.
@@ -876,7 +889,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table("tracker")?,
                 };
-                ensure_opened_projection_size(&opened, candidate.text_capacity)?;
+                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -886,7 +899,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
                 };
-                ensure_opened_projection_size(&opened, candidate.text_capacity)?;
+                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -900,7 +913,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
                 };
-                ensure_opened_projection_size(&opened, candidate.text_capacity)?;
+                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -1276,7 +1289,9 @@ impl DesignerRuntime {
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
         ensure_v3_capabilities(snapshot.document())?;
-        ensure_cheap_document_profile(snapshot.document())?;
+        // V3 always uses the strict original profile. The non-v3 capacity
+        // retry is intentionally not an export or re-admission capability.
+        ensure_document_profile(snapshot.document(), false)?;
         let tree = encode_roproj_v3(snapshot.document())?;
         let bytes =
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?;
@@ -2013,7 +2028,11 @@ impl DesignerRuntime {
             .get(command.target())
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
-        Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+        if self.opened_from_v3 {
+            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+        } else {
+            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+        }
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
             let mut publication = self.session.publication_authority(&mut self.clock);
@@ -2099,7 +2118,11 @@ impl DesignerRuntime {
             .get_mut(&field.entity)
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity.fields.insert(field.field, Value::Number(value));
-        Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+        if self.opened_from_v3 {
+            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+        } else {
+            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+        }
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
             let mut publication = self.session.publication_authority(&mut self.clock);
@@ -2255,6 +2278,15 @@ impl DesignerRuntime {
         commands: Vec<SemanticCommand>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
+        if self.text_capacity
+            && commands
+                .iter()
+                .any(|command| matches!(command, SemanticCommand::RemoveEntity { .. }))
+        {
+            return Err(tracker_error(
+                "capacity Text projects cannot deduplicate rows",
+            ));
+        }
         let snapshot = self.session.export_snapshot();
         let mut candidate = snapshot.document().clone();
         for command in &commands {
@@ -2357,7 +2389,9 @@ impl DesignerRuntime {
             }
         }
         if validate(&candidate).is_ok() {
-            if self.text_capacity {
+            if self.opened_from_v3 {
+                Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+            } else if self.text_capacity {
                 match commands.as_slice() {
                     [
                         SemanticCommand::SetFieldValue {
@@ -3230,6 +3264,23 @@ pub fn open_project(
     Ok(opened)
 }
 
+/// Admit a saved project together with the exact source mapping used to
+/// reconstruct its spreadsheet representation before replacing the resident.
+///
+/// # Errors
+/// Returns canonical, mapping, closure, or complete-reply failures while
+/// preserving the current occurrence and its history.
+pub fn open_imported_project(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    metadata: &InteropMetadata,
+    occurrence_id: &str,
+) -> Result<OpenedProjection, DesignerError> {
+    let (candidate, opened) = admit_imported_project(input, occurrence_id, metadata)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
 /// Admit exactly one raw local `.ro` document without widening the private
 /// saved-project transfer format accepted by [`open_project`].
 ///
@@ -3303,9 +3354,73 @@ fn admit_project(
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
     let (document, opened_from_v3) = decode_project_bundle(input)?;
-    let (mut candidate, opened) = admit_document(document, occurrence_id)?;
+    let (mut candidate, opened) = if opened_from_v3 {
+        admit_v3_document(document, occurrence_id)?
+    } else {
+        admit_document(document, occurrence_id)?
+    };
     candidate.opened_from_v3 = opened_from_v3;
     Ok((candidate, opened))
+}
+
+fn admit_v3_document(
+    document: Document,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
+    let (candidate, opened) =
+        DesignerRuntime::from_document_profile_with_opened(document, occurrence_id, false)?;
+    ensure_opened_projection_size(&opened, false)?;
+    Ok((candidate, opened))
+}
+
+pub(crate) fn admit_imported_project(
+    input: &[u8],
+    occurrence_id: &str,
+    metadata: &InteropMetadata,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
+    let (document, opened_from_v3) = decode_project_bundle(input)?;
+    interop_document::validate_import_metadata(&document, metadata)?;
+    if opened_from_v3 {
+        let (candidate, opened) = admit_v3_document(document, occurrence_id)?;
+        let mut candidate = candidate;
+        candidate.opened_from_v3 = true;
+        interop_document::validate_saved_open_closure(&candidate, metadata)?;
+        ensure_opened_wire_projection_size(&opened, false)?;
+        return Ok((candidate, opened));
+    }
+
+    let ordinary: Result<(DesignerRuntime, OpenedProjection), DesignerError> = (|| {
+        let (candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
+            document.clone(),
+            occurrence_id,
+            false,
+        )?;
+        ensure_opened_wire_projection_size(&opened, false)?;
+        interop_document::validate_saved_open_closure(&candidate, metadata)?;
+        Ok((candidate, opened))
+    })();
+    match ordinary {
+        Ok((mut candidate, opened)) => {
+            candidate.opened_from_v3 = false;
+            Ok((candidate, opened))
+        }
+        Err(error)
+            if is_text_capacity_document(&document)
+                && !matches!(&error, DesignerError::InvalidOccurrenceIdentity) =>
+        {
+            // Metadata and capacity provenance are terminal gates. Only after
+            // both pass may an eligible non-v3 candidate retry the complete
+            // admission in the enlarged profile.
+            interop_document::validate_saved_open_capacity_metadata(&document, metadata)?;
+            let (mut candidate, opened) =
+                DesignerRuntime::from_document_profile_with_opened(document, occurrence_id, true)?;
+            interop_document::validate_saved_open_closure(&candidate, metadata)?;
+            ensure_opened_wire_projection_size(&opened, true)?;
+            candidate.opened_from_v3 = false;
+            Ok((candidate, opened))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn admit_document(
@@ -3412,6 +3527,23 @@ fn ensure_table_projection_size(table: &TableProjection) -> Result<(), DesignerE
 }
 
 fn ensure_opened_projection_size(
+    opened: &OpenedProjection,
+    text_capacity: bool,
+) -> Result<(), DesignerError> {
+    if text_capacity {
+        return ensure_capacity_opened_reply(opened);
+    }
+    ensure_projection_size_with_limit(
+        opened,
+        if opened.table.tracker_profile == Some(true) {
+            MAX_NATIVE_TRACKER_PROJECTION_BYTES
+        } else {
+            MAX_PROJECTION_BYTES
+        },
+    )
+}
+
+fn ensure_opened_wire_projection_size(
     opened: &OpenedProjection,
     text_capacity: bool,
 ) -> Result<(), DesignerError> {
@@ -3702,7 +3834,7 @@ fn decode_project_files(
             // separately and project storage failures through invalid_project.
             let mut profile_error = None;
             let admitted = CanonicalRoProjectV3::try_from_files_with_profile(files, |document| {
-                ensure_cheap_document_profile(document).map_err(|error| {
+                ensure_document_profile(document, false).map_err(|error| {
                     profile_error = Some(error);
                 })
             });
@@ -3837,7 +3969,9 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                         bootstrap: candidate.bootstrap_projection(),
                         table: candidate.query_table(&candidate.default_collection)?,
                     };
-                    ensure_opened_projection_size(&opened, candidate.text_capacity)?;
+                    // New project publication is still an ordinary wire
+                    // operation; prove its complete reply before replacement.
+                    ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
                     *runtime = Some(candidate);
                     Ok(DesignerResponse::Opened(Box::new(opened)))
                 });
@@ -5717,6 +5851,107 @@ mod tests {
             reopened.export_project("resident/0").unwrap().bytes,
             saved.bytes
         );
+        let mut metadata_destination = None;
+        let metadata_opened = super::open_imported_project(
+            &mut metadata_destination,
+            &saved.bytes,
+            &imported.metadata,
+            "00000000-0000-4000-8000-000000000002",
+        )
+        .unwrap();
+        let metadata_candidate = metadata_destination.unwrap();
+        assert!(metadata_candidate.text_capacity);
+        assert_eq!(metadata_opened.table.rows, imported.opened.table.rows);
+    }
+
+    fn duplicate_text_document(rows: usize) -> super::Document {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["duplicate", "value", "value"],
+        );
+        let mut document = base.session.export_snapshot().document().clone();
+        let template = document.entities.values().next().unwrap().clone();
+        document.entities.clear();
+        for index in 0..rows {
+            let mut entity = template.clone();
+            entity.id = EntityId::from(format!("dedup-row-{index:03}"));
+            entity.key = super::EntityKey::from(format!("dedup_row_{index:03}"));
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        document
+    }
+
+    #[test]
+    fn capacity_dedup_refuses_before_preview_or_publication_but_ordinary_dedup_remains() {
+        for rows in [65, 66] {
+            let document = duplicate_text_document(rows);
+            let mut runtime = DesignerRuntime::from_document_profile(
+                document,
+                "00000000-0000-4000-8000-000000000000",
+                true,
+            )
+            .unwrap();
+            let before = runtime.export_project("resident/0").unwrap().bytes;
+            let entities = runtime.collection_specs["orders"]
+                .entities
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            let key_field = runtime.collection_specs["orders"].columns[0].id.to_string();
+            let error = runtime
+                .preview_cleanup(
+                    "resident/0",
+                    &super::CleanupOperation::Deduplicate {
+                        entities,
+                        key_fields: vec![key_field],
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                DesignerError::InvalidTrackerOperation { .. }
+            ));
+            let removed = runtime.collection_specs["orders"].entities[0].clone();
+            assert!(
+                runtime
+                    .publish_commands(
+                        "resident/0",
+                        vec![SemanticCommand::RemoveEntity { entity: removed }],
+                    )
+                    .is_err()
+            );
+            assert_eq!(runtime.current_revision(), "resident/0");
+            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert!(runtime.undo.is_empty());
+            assert!(runtime.redo.is_empty());
+            assert!(runtime.pending_cleanup.is_none());
+        }
+
+        let document = duplicate_text_document(8);
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        assert!(!runtime.text_capacity);
+        let entities = runtime.collection_specs["orders"]
+            .entities
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let key_field = runtime.collection_specs["orders"].columns[0].id.to_string();
+        let preview = runtime
+            .preview_cleanup(
+                "resident/0",
+                &super::CleanupOperation::Deduplicate {
+                    entities,
+                    key_fields: vec![key_field],
+                },
+            )
+            .unwrap();
+        assert_eq!(preview.removed_entities.len(), 7);
+        runtime
+            .commit_cleanup("resident/0", &preview.preview_id)
+            .unwrap();
+        assert_eq!(runtime.query_table("orders").unwrap().rows.len(), 1);
     }
 
     fn native_column_runtime(columns: &[(&str, &str)], values: &[&str]) -> DesignerRuntime {

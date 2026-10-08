@@ -67,6 +67,11 @@ impl DesignerRuntime {
         operation: &CleanupOperation,
     ) -> Result<CleanupPreview, DesignerError> {
         self.check_revision(expected_revision)?;
+        if self.text_capacity && matches!(operation, CleanupOperation::Deduplicate { .. }) {
+            return Err(tracker_error(
+                "capacity Text projects cannot deduplicate rows",
+            ));
+        }
         self.prepare_cleanup(expected_revision, operation)
     }
 }
@@ -2234,9 +2239,35 @@ pub(crate) fn inspect_imported_project_with_profile(
     input: &[u8],
     metadata: &InteropMetadata,
 ) -> Result<(OpenedProjection, bool), DesignerError> {
-    let (candidate, opened) = super::admit_project(input, PREFLIGHT_OCCURRENCE)?;
-    candidate.export_workbook(candidate.current_revision(), metadata)?;
+    let (candidate, opened) = super::admit_imported_project(input, PREFLIGHT_OCCURRENCE, metadata)?;
     Ok((opened, candidate.text_capacity))
+}
+
+pub(crate) fn validate_saved_open_closure(
+    candidate: &DesignerRuntime,
+    metadata: &InteropMetadata,
+) -> Result<(), DesignerError> {
+    let workbook = candidate.export_workbook(candidate.current_revision(), metadata)?;
+    let profile = if candidate.text_capacity {
+        OutputProfile::TextCapacity
+    } else {
+        OutputProfile::Shared
+    };
+    let encoded = super::interop_adapter::export_xlsx_for_profile(&workbook, profile)
+        .map_err(|error| tracker_error(&error.0))?;
+    super::interop_adapter::import_xlsx(&encoded).map_err(|error| tracker_error(&error.0))?;
+    for sheet in &workbook.sheets {
+        super::interop_adapter::export_csv_for_profile(sheet, profile)
+            .map_err(|error| tracker_error(&error.0))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_saved_open_capacity_metadata(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> Result<(), DesignerError> {
+    validate_capacity_metadata(document, metadata)
 }
 
 fn column_letters(mut index: usize) -> String {
