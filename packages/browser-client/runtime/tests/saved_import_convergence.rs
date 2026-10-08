@@ -9,7 +9,7 @@ use tachiko_designer_runtime::interop_adapter::{ImportOptions, SourceWorkbook, i
 use tachiko_designer_runtime::{
     CleanupOperation, CollectionSummary, ColumnProjection, DesignerError, DesignerRequest,
     DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType,
-    ImportSelection, InteropMetadata, RowProjection, ScalarEditInput, ScalarKind,
+    ImportSelection, InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
     StoredValueProjection, TableProjection, import_workbook, inspect_imported_project,
     open_imported_project, open_project,
 };
@@ -525,6 +525,134 @@ fn independently_frame_v3(document: &Document) -> Vec<u8> {
         bytes.extend(file.bytes());
     }
     bytes
+}
+
+fn assert_native_saved_snapshot(runtime: &DesignerRuntime, expected: &Document) {
+    assert_eq!(document(runtime), *expected);
+    for carrier in carriers(runtime) {
+        let mut reopened = None;
+        open_project(&mut reopened, &carrier, SECOND).unwrap();
+        assert_eq!(document(reopened.as_ref().unwrap()), *expected);
+    }
+}
+
+fn assert_native_row_history(
+    runtime: &mut DesignerRuntime,
+    original: &Document,
+    before_row_edit: &Document,
+    after_row_edit: &Document,
+    before_saved: &[Vec<u8>; 2],
+    after_saved: &[Vec<u8>; 2],
+) {
+    history(runtime, false);
+    assert_native_saved_snapshot(runtime, before_row_edit);
+    assert_eq!(&carriers(runtime), before_saved);
+    history(runtime, false);
+    assert_native_saved_snapshot(runtime, original);
+    history(runtime, true);
+    assert_native_saved_snapshot(runtime, before_row_edit);
+    assert_eq!(&carriers(runtime), before_saved);
+    history(runtime, true);
+    assert_native_saved_snapshot(runtime, after_row_edit);
+    assert_eq!(&carriers(runtime), after_saved);
+}
+
+#[test]
+fn native_capacity_insert_keeps_full_history_and_saved_reopen() {
+    let mut runtime = DesignerRuntime::from_document(native_document(127), ORIGINAL).unwrap();
+    let states = seed_histories(&mut runtime);
+    let before = states[1].clone();
+    let before_saved = carriers(&runtime);
+    let initializers = ["a", "b", "c"]
+        .into_iter()
+        .map(|field| RowInitializer {
+            field: field.into(),
+            input: ScalarEditInput::Text {
+                value: format!("inserted-{field}"),
+            },
+        })
+        .collect();
+    assert!(matches!(
+        runtime
+            .handle(DesignerRequest::InsertRow {
+                expected_revision: runtime.observe_occurrence().revision,
+                collection: "s".into(),
+                initializers,
+            })
+            .unwrap(),
+        DesignerResponse::Published(_)
+    ));
+    let after = document(&runtime);
+    assert_eq!(after.entities.len(), 128);
+    assert_eq!(table(&mut runtime).rows.len(), 128);
+    let added = after
+        .entities
+        .values()
+        .filter(|entity| !before.entities.contains_key(&entity.id))
+        .collect::<Vec<_>>();
+    assert_eq!(added.len(), 1);
+    let mut expected = before.clone();
+    let mut expected_entity = added[0].clone();
+    expected_entity.schema = SchemaId::from("s");
+    expected_entity.fields = ["a", "b", "c"]
+        .into_iter()
+        .map(|field| {
+            (
+                FieldId::from(field),
+                Value::Text(format!("inserted-{field}")),
+            )
+        })
+        .collect();
+    expected
+        .entities
+        .insert(expected_entity.id.clone(), expected_entity);
+    assert_eq!(after, expected);
+    let after_saved = carriers(&runtime);
+    assert_native_saved_snapshot(&runtime, &expected);
+    assert_native_row_history(
+        &mut runtime,
+        &states[0],
+        &before,
+        &expected,
+        &before_saved,
+        &after_saved,
+    );
+}
+
+#[test]
+fn native_capacity_remove_keeps_full_history_and_saved_reopen() {
+    let mut runtime = DesignerRuntime::from_document(native_document(127), FRESH).unwrap();
+    let states = seed_histories(&mut runtime);
+    let before = states[1].clone();
+    let before_saved = carriers(&runtime);
+    let mut expected = before.clone();
+    assert!(
+        expected
+            .entities
+            .remove(&EntityId::from("r00000"))
+            .is_some()
+    );
+    assert!(matches!(
+        runtime
+            .handle(DesignerRequest::RemoveTableRows {
+                expected_revision: runtime.observe_occurrence().revision,
+                collection: "s".into(),
+                entities: vec!["r00000".into()],
+            })
+            .unwrap(),
+        DesignerResponse::Published(_)
+    ));
+    assert_eq!(table(&mut runtime).rows.len(), 126);
+    assert_native_saved_snapshot(&runtime, &expected);
+    let after_saved = carriers(&runtime);
+    assert_native_row_history(
+        &mut runtime,
+        &states[0],
+        &before,
+        &expected,
+        &before_saved,
+        &after_saved,
+    );
 }
 
 #[test]
