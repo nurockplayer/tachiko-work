@@ -297,6 +297,34 @@ try {
       assert.notEqual(refused.error.code, "request_too_large");
       unchanged(stable);
     });
+    // PROPOSED ONLY: metadata-bearing `open_project` on the existing spreadsheet ABI.
+    const savedForOpen = save(revision);
+    const openOperation = { type: "open_project", occurrence_id: uuid(), metadata };
+    const openWire = json(openOperation); // JSON UTF-8 bytes, as consumed by the raw ABI.
+    assert(openWire.length <= 4 * 1024 * 1024);
+    
+    await refuse("saved open request 4MiB plus one", () => {
+      const reply = spreadsheetRaw(openWire, savedForOpen, 4 * 1024 * 1024 + 1);
+      error(reply); assert.equal(reply.error.code, "request_too_large");
+      return reply;
+    });
+    
+    for (const [name, text] of [
+      ["malformed open discriminator", '{"type":"open_project",'],
+      ["duplicate open discriminator", '{"type":"open_project","type":"open_project"}'],
+      ["positional open discriminator", '["open_project"]'],
+    ]) {
+      await refuse(name, () => {
+        const reply = spreadsheetRaw(encoder.encode(text), savedForOpen, 65_537);
+        error(reply); assert.equal(reply.error.code, "request_too_large");
+        return reply;
+      });
+    }
+    await refuse("allowed open discriminator retains typed metadata validation", () => {
+      const reply = spreadsheetRaw(json({ ...openOperation, metadata: null }), savedForOpen, 65_537);
+      error(reply); assert.notEqual(reply.error.code, "request_too_large");
+      return reply;
+    });
     await probe("history remains executable after all refusals", () => {
       publish("redo");
       let fields = okay(ordinary({ type: "query_fields", expected_revision: revision, fields: [target] }), "fields");
@@ -390,6 +418,29 @@ try {
       assert.equal(reopened.table.rows.length, 8406);
       assert.deepEqual(reopened.table.rows[8405], final);
     });
+    // PROPOSED ONLY: exact 4MiB open succeeds and installs a fresh occurrence.
+    const savedForExactOpen = save(revision);
+    const beforeExactOpenTable = okay(ordinary({ type: "query_table", collection }), "table");
+    const beforeExactOpenOccurrence = okay(observe(), "occurrence_observed");
+    const exactOpenOperation = { type: "open_project", occurrence_id: uuid(), metadata };
+    const { type, ...openRest } = exactOpenOperation;
+    const typeLastWire = json({ ...openRest, type });
+    assert.match(decoder.decode(typeLastWire), /,"type":"open_project"}$/);
+    const exactOpened = okay(
+      spreadsheetRaw(typeLastWire, savedForExactOpen, 4 * 1024 * 1024),
+      "opened",
+    );
+    assert.deepEqual(
+      exactOpened.table.rows.map(row => row.fields.map(field => ({ target: field.target, stored: field.stored, formula: field.formula, diagnostics: field.diagnostics }))),
+      beforeExactOpenTable.rows.map(row => row.fields.map(field => ({ target: field.target, stored: field.stored, formula: field.formula, diagnostics: field.diagnostics }))),
+    );
+    assert.deepEqual(exactOpened.table.rows.map(row => row.id), beforeExactOpenTable.rows.map(row => row.id));
+    assert.deepEqual(exactOpened.table.columns, beforeExactOpenTable.columns);
+    const afterExactOpenOccurrence = okay(observe(), "occurrence_observed");
+    assert.notEqual(afterExactOpenOccurrence.scope, beforeExactOpenOccurrence.scope);
+    assert.equal(afterExactOpenOccurrence.revision, "resident/0");
+    assert.equal(afterExactOpenOccurrence.revision, exactOpened.bootstrap.revision);
+    assert.equal(sha(save(afterExactOpenOccurrence.revision)), sha(savedForExactOpen));
     assert(memoryPeak <= 256 * 1024 * 1024, `raw ABI WASM highwater ${memoryPeak}; separate actual Worker measurement required`);
   }
   completed = true;

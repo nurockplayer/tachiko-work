@@ -11,7 +11,7 @@ use tachiko_designer_runtime::{
     interop_adapter::{
         ImportOptions, SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
     },
-    open_project, process_wire_request,
+    open_imported_project, open_project, process_wire_request,
 };
 
 const ROWS: usize = 8_406;
@@ -59,6 +59,15 @@ impl Timings {
                 );
             }
         }
+    }
+}
+
+fn saved_bytes(runtime: &DesignerRuntime, carrier: &str) -> Vec<u8> {
+    let revision = runtime.observe_occurrence().revision;
+    match carrier {
+        "opaque" => runtime.export_project(&revision).unwrap().bytes,
+        "canonical" => runtime.export_canonical_tree(&revision).unwrap().bytes,
+        _ => panic!("unknown saved carrier"),
     }
 }
 
@@ -289,6 +298,7 @@ fn rejection_preserves_resident(
     metadata: &InteropMetadata,
     manifest: &Manifest,
     saved: &[u8],
+    carrier: &str,
 ) {
     let mut resident = Some(runtime);
     let initial = resident.as_ref().unwrap().observe_occurrence();
@@ -308,12 +318,7 @@ fn rejection_preserves_resident(
         assert!(open_project(&mut resident, &invalid, REOPENED).is_err());
         assert_eq!(resident.as_ref().unwrap().observe_occurrence(), before);
         assert_eq!(
-            resident
-                .as_ref()
-                .unwrap()
-                .export_project(&before.revision)
-                .unwrap()
-                .bytes,
+            saved_bytes(resident.as_ref().unwrap(), carrier),
             saved
         );
         verify(
@@ -354,17 +359,12 @@ fn rejection_preserves_resident(
     assert_eq!(reply["error"]["code"], "request_too_large");
     assert_eq!(resident.as_ref().unwrap().observe_occurrence(), before);
     assert_eq!(
-        resident
-            .as_ref()
-            .unwrap()
-            .export_project(&before.revision)
-            .unwrap()
-            .bytes,
+        saved_bytes(resident.as_ref().unwrap(), carrier),
         saved
     );
 }
 
-fn reopen(fixtures: &Path, capture: &Path, format: &str) {
+fn reopen(fixtures: &Path, capture: &Path, format: &str, carrier: &str) {
     let original: serde_json::Value =
         serde_json::from_slice(&fs::read(capture.join("native-import-complete.json")).unwrap())
             .unwrap();
@@ -385,21 +385,21 @@ fn reopen(fixtures: &Path, capture: &Path, format: &str) {
     let collection = fs::read_to_string(capture.join(format!("{format}-collection.txt"))).unwrap();
     let mut times = Timings::default();
     let mut resident = None;
+    assert_eq!(original["carrier"], carrier);
     let mut scopes = std::collections::BTreeSet::new();
+    scopes.insert(original["scopes"][format].as_str().unwrap().to_owned());
     for cycle in 0..10 {
         let occurrence = format!("00000000-0000-4000-8000-{:012}", cycle + 2);
-        times.measure("reopen", || {
-            open_project(&mut resident, &bytes, &occurrence).unwrap()
+        let opened = times.measure("reopen", || {
+            open_imported_project(&mut resident, &bytes, &metadata, &occurrence).unwrap()
         });
+        verify(&opened.table, &manifest.rows, &metadata);
         let runtime = resident.as_mut().unwrap();
         assert!(scopes.insert(runtime.observe_occurrence().scope));
         assert_eq!(runtime.observe_occurrence().revision, "resident/0");
         verify(&table(runtime, &collection), &manifest.rows, &metadata);
         assert_eq!(
-            times.measure("resave", || runtime
-                .export_project("resident/0")
-                .unwrap()
-                .bytes),
+            times.measure("resave", || saved_bytes(runtime, carrier)),
             bytes
         );
         if cycle == 9 {
@@ -417,14 +417,15 @@ fn reopen(fixtures: &Path, capture: &Path, format: &str) {
     times.save(&capture.join(format!("{format}-reopen-timings.json")));
     fs::write(
         capture.join(format!("{format}-fresh-process.json")),
-        serde_json::to_vec(&json!({"pid": std::process::id(), "cycles": 10, "cells": ROWS * 3}))
+        serde_json::to_vec(&json!({"pid": std::process::id(), "cycles": 10, "cells": ROWS * 3, "carrier": carrier, "saved_open_route": "metadata-aware", "capacity_performance_qualification": true, "producer_qualification": false}))
             .unwrap(),
     )
     .unwrap();
 }
 
-fn run(fixtures: &Path, capture: &Path) {
+fn run(fixtures: &Path, capture: &Path, carrier: &str) {
     fs::create_dir(capture).expect("capture directory must be new");
+    let mut scopes = BTreeMap::new();
     for format in ["csv", "xlsx"] {
         let mut times = Timings::default();
         for count in [8, 64, 65, 128, 129, 1024, 1025] {
@@ -454,8 +455,7 @@ fn run(fixtures: &Path, capture: &Path) {
             &imported.metadata,
             &mut times,
         );
-        let revision = runtime.observe_occurrence().revision;
-        let bytes = times.measure("save", || runtime.export_project(&revision).unwrap().bytes);
+        let bytes = times.measure("save", || saved_bytes(&runtime, carrier));
         let inspected = times.measure("inspect_saved", || {
             inspect_imported_project(&bytes, &imported.metadata).unwrap()
         });
@@ -468,7 +468,8 @@ fn run(fixtures: &Path, capture: &Path) {
         .unwrap();
         fs::write(capture.join(format!("{format}-collection.txt")), collection).unwrap();
         export_artifacts(&runtime, &imported.metadata, capture, format, &mut times);
-        rejection_preserves_resident(runtime, collection, &imported.metadata, &manifest, &bytes);
+        scopes.insert(format, runtime.observe_occurrence().scope);
+        rejection_preserves_resident(runtime, collection, &imported.metadata, &manifest, &bytes, carrier);
         times.save(&capture.join(format!("{format}-timings.json")));
     }
     for format in ["csv", "xlsx"] {
@@ -490,18 +491,18 @@ fn run(fixtures: &Path, capture: &Path) {
     }
     assert!(import_csv(&[0xff], &ImportOptions::default()).is_err());
     assert!(import_csv(&vec![b'a'; 2 * 1024 * 1024 + 1], &ImportOptions::default()).is_err());
-    fs::write(capture.join("native-import-complete.json"), serde_json::to_vec(&json!({"pid": std::process::id(), "formats": ["csv", "xlsx"], "cells": ROWS * 3, "history_edits_each": 128})).unwrap()).unwrap();
+    fs::write(capture.join("native-import-complete.json"), serde_json::to_vec(&json!({"pid": std::process::id(), "formats": ["csv", "xlsx"], "cells": ROWS * 3, "history_edits_each": 128, "carrier": carrier, "scopes": scopes, "capacity_performance_qualification": true, "producer_qualification": false})).unwrap()).unwrap();
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     assert!(
-        args.len() >= 4,
-        "run|reopen FIXTURES NEW_CAPTURE [csv|xlsx]"
+        (args[1] == "run" && args.len() == 5) || (args[1] == "reopen" && args.len() == 6),
+        "run FIXTURES NEW_CAPTURE opaque|canonical; reopen FIXTURES CAPTURE csv|xlsx opaque|canonical"
     );
     match args[1].as_str() {
-        "run" => run(Path::new(&args[2]), Path::new(&args[3])),
-        "reopen" => reopen(Path::new(&args[2]), Path::new(&args[3]), &args[4]),
+        "run" => run(Path::new(&args[2]), Path::new(&args[3]), &args[4]),
+        "reopen" => reopen(Path::new(&args[2]), Path::new(&args[3]), &args[4], &args[5]),
         _ => panic!("unknown command"),
     }
 }

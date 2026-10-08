@@ -7,6 +7,8 @@ New synthetic recipe, not the historical Sheet #150 artifact/hash.
 import csv
 import hashlib
 import io
+import math
+from rss_oracle import check_rss_budget
 import json
 import sys
 import xml.etree.ElementTree as ET
@@ -256,12 +258,14 @@ def verify(directory):
     for (r, c), value in EDITS.items():
         expected[r][c] = value
     expected_names = {
-        f"native/{source}{suffix}-export.{output}"
+        f"native-{carrier}/{source}{suffix}-export.{output}"
+        for carrier in ["opaque", "canonical"]
         for source in ["csv", "xlsx"]
         for suffix in ["", "-reopened"]
         for output in ["csv", "xlsx"]
     } | {
-        f"worker/{source}-{mode}-export.{output}"
+        f"worker/{source}-{carrier}-{mode}-export.{output}"
+        for carrier in ["opaque", "canonical"]
         for source in ["csv", "xlsx"]
         for mode in ["import", "reopen"]
         for output in ["csv", "xlsx"]
@@ -272,50 +276,69 @@ def verify(directory):
     assert {str(p.relative_to(directory)) for p in files} == expected_names, (
         "incomplete/extra export matrix"
     )
-    imported = json.loads(
-        (directory / "native/native-import-complete.json").read_text()
-    )
-    assert imported["cells"] == ROWS * 3 and imported["history_edits_each"] == 128
+    def check_timings(timings, counts):
+        for name, count in counts.items():
+            assert len(timings[name]) == count, (name, count)
+        for name, samples in timings.items():
+            assert samples and all(isinstance(x, (int, float)) and math.isfinite(x) and x >= 0 for x in samples)
+            assert max(samples) <= (1000 if name in ("edit", "undo", "redo") else 10000)
+            if name in ("edit", "undo", "redo"):
+                assert sorted(samples)[math.ceil(len(samples) * .95) - 1] <= 500
+
     assert {p.name for p in (directory / "worker").glob("*-capacity-from-*.xlsx")} == {
-        f"{recipe}-capacity-from-{source}.xlsx"
+        f"{recipe}-capacity-from-{source}-{carrier}.xlsx"
         for recipe in ["small", "promoted-opened"]
         for source in ["csv", "xlsx"]
+        for carrier in ["opaque", "canonical"]
     }, "incomplete/extra small capacity artifact matrix"
-    for source in ["csv", "xlsx"]:
-        for recipe, rows in [
-            ("small", values(64)),
-            ("promoted-opened", promoted_opened_values()),
-        ]:
-            small = directory / f"worker/{recipe}-capacity-from-{source}.xlsx"
-            assert parse_xlsx(small) == [HEADERS, *rows]
-            with zipfile.ZipFile(small) as archive:
-                workbook = ET.fromstring(archive.read("xl/workbook.xml"))
-                sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
-                assert sheet.attrib["name"] == "Capacity\tname\n雪&\r"
-        receipt = json.loads(
-            (directory / f"native/{source}-fresh-process.json").read_text()
-        )
-        assert receipt["pid"] != imported["pid"] and receipt["cycles"] == 10
-        for mode in ["import", "reopen"]:
-            receipt = json.loads(
-                (directory / f"worker/{source}-{mode}-receipt.json").read_text()
-            )
-            assert receipt["cells"] == ROWS * 3
-            assert len(receipt["workerUrls"]) == (2 if mode == "import" else 1)
-            cases = receipt["smallProjections"]
-            if mode == "import":
-                assert [case["recipe"] for case in cases] == [
-                    "promoted-opened",
-                    "small",
-                ]
-                assert [case["cells"] for case in cases] == [24, 192]
-                assert all(case["imported"] > 65536 for case in cases)
-                assert cases[0]["opened"] > 65536 and cases[0]["reopened"] > 65536
-                assert [case["workerRestarted"] for case in cases] == [True, False]
-            else:
-                assert cases == []
+    for carrier in ["opaque", "canonical"]:
+        native = directory / f"native-{carrier}"
+        imported = json.loads((native / "native-import-complete.json").read_text())
+        assert imported["cells"] == ROWS * 3 and imported["history_edits_each"] == 128
+        assert imported["carrier"] == carrier
+        for source in ["csv", "xlsx"]:
+            check_timings(json.loads((native / f"{source}-timings.json").read_text()), {"edit": 131, "undo": 3, "redo": 3})
+            check_timings(json.loads((native / f"{source}-reopen-timings.json").read_text()), {"reopen": 10, "resave": 10})
+            fresh = json.loads((native / f"{source}-fresh-process.json").read_text())
+            assert fresh["pid"] != imported["pid"] and fresh["cycles"] == 10
+            assert fresh["cells"] == ROWS * 3 and fresh["carrier"] == carrier
+            assert fresh["saved_open_route"] == "metadata-aware"
+            for recipe, rows in [("small", values(64)), ("promoted-opened", promoted_opened_values())]:
+                small = directory / f"worker/{recipe}-capacity-from-{source}-{carrier}.xlsx"
+                assert parse_xlsx(small) == [HEADERS, *rows]
+                with zipfile.ZipFile(small) as archive:
+                    workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+                    sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
+                    assert sheet.attrib["name"] == "Capacity\tname\n雪&\r"
+            for mode in ["import", "reopen"]:
+                receipt = json.loads((directory / f"worker/{source}-{carrier}-{mode}-receipt.json").read_text())
+                assert (receipt["format"], receipt["carrier"], receipt["mode"], receipt["savedOpenRoute"]) == (source, carrier, mode, "metadata-aware")
+                check_rss_budget(receipt["memory"])
+                assert receipt["cells"] == ROWS * 3
+                assert len(receipt["workerUrls"]) == (2 if mode == "import" else 1)
+                counts = {"edit": 131, "undo": 10, "redo": 10} if mode == "import" else {"reopen": 10, "resave": 10}
+                check_timings(receipt["timings"], counts)
+                heartbeat = receipt["heartbeat"]
+                assert heartbeat and all(isinstance(x, (int, float)) and math.isfinite(x) and x >= 0 for x in heartbeat)
+                assert sorted(heartbeat)[math.ceil(len(heartbeat) * .95) - 1] <= 100 and max(heartbeat) <= 250
+                memory = receipt["wasmMemory"]
+                stages = ["promoted-opened-before-termination", "imported", "history-64", "history-128", "exported"] if mode == "import" else ["reopen-1", "reopen-5", "reopen-10", "exported"]
+                assert [x["stage"] for x in memory] == stages
+                assert all(isinstance(x["bytes"], int) and 0 < x["bytes"] <= 256 * 1024 * 1024 for x in memory)
+                assert all(x["worker"] == len(receipt["workerUrls"]) for x in memory[-4:])
+                cases = receipt["smallProjections"]
+                if mode == "import":
+                    assert [x["recipe"] for x in cases] == ["promoted-opened", "small"]
+                    assert [x["cells"] for x in cases] == [24, 192]
+                    assert all(x["imported"] > 65536 for x in cases)
+                    assert cases[0]["opened"] > 65536 and cases[0]["reopened"] > 65536
+                    assert [x["workerRestarted"] for x in cases] == [True, False]
+                else:
+                    assert cases == []
     worker = json.loads((directory / "worker/worker-complete.json").read_text())
-    assert worker["receipts"] == 4 and worker["cells"] == ROWS * 3
+    assert worker["receipts"] == 8 and worker["cells"] == ROWS * 3
+    assert worker["carriers"] == ["opaque", "canonical"]
+    assert worker["capacity_performance_qualification"] is True and worker["producer_qualification"] is False
     metadata_headers = ["雪&", "<i>", "url\"'" + "x" * 20]
     header_output = io.StringIO(newline="")
     csv.writer(header_output, lineterminator="\r\n").writerow(metadata_headers)
@@ -340,7 +363,7 @@ def verify(directory):
             else parse_xlsx(path)
         )
         assert actual == [HEADERS, *expected], f"all-cell discrepancy: {path}"
-    print(json.dumps({"verified": [str(p) for p in files], "cells_per_file": ROWS * 3}))
+    print(json.dumps({"verified": [str(p) for p in files], "cells_per_file": ROWS * 3, "capacity_performance_qualification": True, "producer_qualification": False}))
 
 
 if __name__ == "__main__":

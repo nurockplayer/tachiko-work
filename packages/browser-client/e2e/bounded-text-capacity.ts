@@ -8,6 +8,8 @@ import { resolve, sep } from "node:path";
 import { chromium } from "@playwright/test";
 import type { ExperimentalDesignerClient } from "../src/experimental-client.ts";
 import type { ImportedProjection, InteropMetadata, SpreadsheetFormat } from "../src/runtime/interop-protocol.ts";
+import { collectRssSample, requireCompleteRss } from "./capacity-rss.ts";
+import type { RssSample } from "./capacity-rss.ts";
 import type { TableProjection } from "../src/runtime/protocol.ts";
 
 type Manifest = { rows: string[][]; edits: [number, number, string][]; promoted_opened_rows: string[][] };
@@ -39,34 +41,55 @@ await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
 const address = server.address();
 assert(address && typeof address !== "string");
 const origin = `http://127.0.0.1:${address.port}`;
-const receipts: unknown[] = [];
+type CapacityReceipt = {
+  format: "csv" | "xlsx"; carrier: "opaque" | "canonical"; mode: "import" | "reopen";
+  savedOpenRoute: "metadata-aware"; performance_qualification: false;
+  browser: string; workerUrls: string[]; instrumentation: string; cells: number;
+  smallProjections: { recipe: string; cells: number; imported: number; opened: number; reopened: number; workerRestarted: boolean }[];
+  timings: Record<string, number[]>; heartbeat: number[];
+  memory: RssSample[];
+  wasmMemory: { stage: string; at: number; bytes: number; worker: number }[];
+};
+const receipts: CapacityReceipt[] = [];
 
 try {
   for (const format of ["csv", "xlsx"] as const) {
+    for (const carrier of ["opaque", "canonical"] as const) {
     // Closing the whole browser after import forces fresh host/Worker/WASM state.
     for (const mode of ["import", "reopen"] as const) {
       const browser = await chromium.launch({ headless: true, ...(process.env.CAPACITY_CHROMIUM ? { executablePath: process.env.CAPACITY_CHROMIUM } : {}) });
       const browserSession = await browser.newBrowserCDPSession();
-      const samples: { at: number; rss: number }[] = [];
+      const samples: RssSample[] = [];
+      let measurementFailureWritten = false;
       let pendingSample: Promise<void> | undefined;
       let sampleError: unknown;
       const sample = () => {
         if (pendingSample) return pendingSample;
         pendingSample = (async () => {
-          const { processInfo } = await browserSession.send("SystemInfo.getProcessInfo");
-          const memory = await Promise.all(processInfo.map(async ({ id }) => {
-            try {
-              const status = await readFile(`/proc/${id}/status`, "utf8");
-              return Number(status.match(/^VmRSS:\s+(\d+) kB$/m)?.[1] ?? 0) * 1024;
-            } catch { return 0; }
-          }));
-          samples.push({ at: Date.now(), rss: memory.reduce((a, b) => a + b, 0) });
+          const measured = await collectRssSample({
+            listProcesses: async () => {
+              const { processInfo } = await browserSession.send("SystemInfo.getProcessInfo");
+              return processInfo.map(({ id, type }) => ({ pid: id, type }));
+            },
+            readStatus: pid => readFile(`/proc/${pid}/status`, "utf8"),
+            probePid: pid => { process.kill(pid, 0); },
+            now: Date.now,
+          });
+          samples.push(measured);
+          if (!measured.complete && !measurementFailureWritten) {
+            measurementFailureWritten = true;
+            await writeFile(`${roots.capture}/${format}-${carrier}-${mode}-measurement-unverified.json`, JSON.stringify({
+              status: "BLOCKED_MEASUREMENT", performance_qualification: false, format, carrier, mode, sample: measured,
+            }, null, 2), { flag: "wx" });
+          }
+          requireCompleteRss(measured);
         })().finally(() => { pendingSample = undefined; });
         return pendingSample;
       };
-      await sample();
-      const sampler = setInterval(() => { void sample().catch((error: unknown) => { sampleError = error; }); }, 100);
+      let sampler: ReturnType<typeof setInterval> | undefined;
       try {
+        await sample(); // Complete pre-page baseline, unchanged placement.
+        sampler = setInterval(() => { void sample().catch((error: unknown) => { sampleError ??= error; }); }, 100);
         const page = await browser.newPage();
         // CDP pauses the actual exported-kit Worker before startup. The observer
         // retains only its exported Memory; it does not replace Rust/bridge calls.
@@ -131,13 +154,14 @@ try {
           });
         });
         await page.goto(origin);
-        const result = await page.evaluate(async ({ origin, format, mode, oracle }) => {
+        const result = await page.evaluate(async ({ origin, format, carrier, mode, oracle }) => {
           const check: (condition: unknown, message: string) => asserts condition = (condition, message) => {
             if (!condition) throw new Error(message);
           };
           const same = (actual: unknown, expected: unknown, label: string) => check(JSON.stringify(actual) === JSON.stringify(expected), label);
-          const { createExperimentalDesignerClient } = await import(`${origin}/kit/experimental-client.js`) as {
+          const { createExperimentalDesignerClient, projectTransferFromEntries } = await import(`${origin}/kit/experimental-client.js`) as {
             createExperimentalDesignerClient: () => ExperimentalDesignerClient;
+            projectTransferFromEntries: (entries: { path: string; bytes: ArrayBuffer }[]) => ArrayBuffer;
           };
           const timings: Record<string, number[]> = {};
           const timed = async <T>(name: string, action: () => Promise<T>, expected?: { target: { entity: string; field: string }; value: string }) => {
@@ -172,6 +196,13 @@ try {
             const now = performance.now(); heartbeat.push(now - lastBeat); lastBeat = now;
           }, 16);
           let client = createExperimentalDesignerClient();
+          const requireSavedOpen = () => check(typeof client.openImportedProject === "function", "NOTRUN_MISSING_METHOD: openImportedProject required before dispatch");
+          requireSavedOpen();
+          const saveCarrier = async (revision: string): Promise<ArrayBuffer> => {
+            if (carrier === "opaque") return (await client.exportProject(revision)).bytes;
+            const tree = await client.exportCanonicalTree(revision);
+            return projectTransferFromEntries(tree.files);
+          };
           let metadata: InteropMetadata;
           let collection = "";
           let expected = structuredClone(oracle.rows);
@@ -214,7 +245,7 @@ try {
             check(importedBytes > 65_536, "small promoted Imported payload");
             if (restart) check(openedBytes > 65_536, "small promoted Opened payload");
             const recipe = restart ? "promoted-opened" : "small";
-            const smallSaved = (await timed(`${recipe}_save`, () => client.exportProject(imported.opened.bootstrap.revision))).bytes;
+            const smallSaved = await timed(`${recipe}_save`, () => saveCarrier(imported.opened.bootstrap.revision));
             const before = await client.observeOccurrence();
             if (restart) await checkpoint("promoted-opened-before-termination");
             await client.closeProject();
@@ -222,8 +253,9 @@ try {
               await client.close();
               await (globalThis as unknown as { capacityWorkerTerminated(): Promise<void> }).capacityWorkerTerminated();
               client = createExperimentalDesignerClient();
+              requireSavedOpen();
             }
-            const reopened = await timed(`${recipe}_reopen`, () => client.openProject(smallSaved));
+            const reopened = await timed(`${recipe}_reopen`, () => client.openImportedProject!(smallSaved.slice(0), metadata));
             checkTable(reopened.table, rows);
             const current = await client.observeOccurrence();
             check(current.scope !== before.scope, "small fresh occurrence");
@@ -232,7 +264,7 @@ try {
             const smallMetadata = structuredClone(metadata);
             smallMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
             const exported = await timed(`${recipe}_export_xlsx`, () => client.exportSpreadsheet!(current.revision, smallMetadata, "xlsx", smallMetadata.sheets[0]!.schema_id));
-            artifacts.push({ name: `${recipe}-capacity-from-${format}.xlsx`, bytes: new Uint8Array(exported.bytes) });
+            artifacts.push({ name: `${recipe}-capacity-from-${format}-${carrier}.xlsx`, bytes: new Uint8Array(exported.bytes) });
             const reimported = await timed(`${recipe}_reimport`, () => client.importSpreadsheet!(exported.bytes, "xlsx", options, selection));
             metadata = reimported.metadata;
             collection = reimported.opened.bootstrap.default_collection;
@@ -283,7 +315,7 @@ try {
               }
               checkTable(await client.queryTable(collection));
               same((await client.observeOccurrence()).scope, originalScope, "edits preserve occurrence");
-              saved = (await timed("save", () => client.exportProject(revision))).bytes;
+              saved = await timed("save", () => saveCarrier(revision));
               const savedHash = await digest(saved);
               const exportHashes: Record<string, string> = {};
               for (const output of ["csv", "xlsx"] as const) exportHashes[output] = await digest((await client.exportSpreadsheet!(revision, metadata!, output, metadata!.sheets[0]!.schema_id)).bytes);
@@ -294,7 +326,7 @@ try {
                 check(rejected, "invalid operation must reject");
                 same(await client.observeOccurrence(), before, "rejection preserves occurrence/revision");
                 checkTable(await client.queryTable(collection));
-                same(await digest((await client.exportProject(revision)).bytes), savedHash, "rejection preserves canonical bytes");
+                same(await digest(await saveCarrier(revision)), savedHash, "rejection preserves canonical bytes");
                 for (const output of ["csv", "xlsx"] as const) same(await digest((await client.exportSpreadsheet!(revision, metadata!, output, metadata!.sheets[0]!.schema_id)).bytes), exportHashes[output], "rejection preserves spreadsheet export bytes");
                 const undone = await timed("undo", () => client.trackerCommand!({ type: "undo", expected_revision: revision }), { target, value: "history-126" });
                 const prior = structuredClone(expected); prior[0]![0] = "history-126";
@@ -313,21 +345,21 @@ try {
               await preserve(() => client.queryFields("resident/0", [target]));
               checkTable((await timed("inspect_project", () => client.inspectImportedProject!(saved, metadata!))).table);
             } else {
-              metadata = await (await fetch(`${origin}/capture/${format}-metadata.json`)).json() as InteropMetadata;
-              collection = await (await fetch(`${origin}/capture/${format}-collection.txt`)).text();
-              saved = await bytes(`capture/${format}-saved.project`);
+              metadata = await (await fetch(`${origin}/capture/${format}-${carrier}-metadata.json`)).json() as InteropMetadata;
+              collection = await (await fetch(`${origin}/capture/${format}-${carrier}-collection.txt`)).text();
+              saved = await bytes(`capture/${format}-${carrier}-saved.project`);
               for (const [r, c, value] of oracle.edits) expected[r]![c] = value;
-              const previous = await (await fetch(`${origin}/capture/${format}-scope.json`)).json() as { scope: string };
+              const previous = await (await fetch(`${origin}/capture/${format}-${carrier}-scope.json`)).json() as { scope: string };
               const scopes = new Set([previous.scope]);
               const savedByteLength = saved.byteLength;
               for (let cycle = 0; cycle < 10; cycle++) {
-                const opened = await timed("reopen", () => client.openProject(saved.slice(0)));
+                const opened = await timed("reopen", () => client.openImportedProject!(saved.slice(0), metadata));
                 same(saved.byteLength, savedByteLength, "reopen retains saved input bytes");
                 checkTable(opened.table);
                 const occurrence = await client.observeOccurrence();
                 same(occurrence.revision, "resident/0", "fresh revision");
                 check(!scopes.has(occurrence.scope), "fresh occurrence"); scopes.add(occurrence.scope);
-                same(await digest((await timed("resave", () => client.exportProject("resident/0"))).bytes), await digest(saved), "fresh save equality");
+                same(await digest((await timed("resave", () => saveCarrier("resident/0")))), await digest(saved), "fresh save equality");
                 if (cycle === 0 || cycle === 4 || cycle === 9) await checkpoint(`reopen-${cycle + 1}`);
                 if (cycle < 9) await client.closeProject();
               }
@@ -337,34 +369,35 @@ try {
             for (const output of ["csv", "xlsx"] as SpreadsheetFormat[]) {
               const exported = await timed(`export_${output}`, () => client.exportSpreadsheet!(revision, metadata!, output, metadata!.sheets[0]!.schema_id));
               check(!exported.ledger.some((finding) => finding.blocking), "export blocking ledger");
-              artifacts.push({ name: `${format}-${mode}-export.${output}`, bytes: new Uint8Array(exported.bytes) });
+              artifacts.push({ name: `${format}-${carrier}-${mode}-export.${output}`, bytes: new Uint8Array(exported.bytes) });
             }
             await checkpoint("exported");
             return { timings, heartbeat, artifacts, smallProjections, metadata: JSON.stringify(metadata!), collection, saved: new Uint8Array(saved), scope: originalScope, cellCount: expected.length * 3 };
           } finally { clearInterval(pulse); await client.closeProject(); await client.close(); }
-        }, { origin, format, mode, oracle: manifest });
+        }, { origin, format, carrier, mode, oracle: manifest });
         for (const artifact of result.artifacts) await writeFile(`${roots.capture}/${artifact.name}`, Buffer.from(artifact.bytes), { flag: "wx" });
         if (mode === "import") {
-          const handle = await open(`${roots.capture}/${format}-saved.project`, "wx");
+          const handle = await open(`${roots.capture}/${format}-${carrier}-saved.project`, "wx");
           try { await handle.writeFile(Buffer.from(result.saved)); await handle.sync(); } finally { await handle.close(); }
-          await writeFile(`${roots.capture}/${format}-metadata.json`, result.metadata, { flag: "wx" });
-          await writeFile(`${roots.capture}/${format}-collection.txt`, result.collection, { flag: "wx" });
-          await writeFile(`${roots.capture}/${format}-scope.json`, JSON.stringify({ scope: result.scope }), { flag: "wx" });
+          await writeFile(`${roots.capture}/${format}-${carrier}-metadata.json`, result.metadata, { flag: "wx" });
+          await writeFile(`${roots.capture}/${format}-${carrier}-collection.txt`, result.collection, { flag: "wx" });
+          await writeFile(`${roots.capture}/${format}-${carrier}-scope.json`, JSON.stringify({ scope: result.scope }), { flag: "wx" });
         }
         assert.equal(workerUrls.length, mode === "import" ? 2 : 1, "promotion preflight restarts once; main journey retains one Worker");
         assert(workerUrls.every((url) => url === `${origin}/kit/experimental-client.worker.js`));
         clearInterval(sampler);
         await pendingSample;
         await sample();
-        assert.equal(sampleError, undefined, "memory sampling must succeed");
+        if (sampleError !== undefined) throw sampleError;
+        samples.forEach(requireCompleteRss);
         assert.equal(observerError, undefined);
         assert.equal(memorySamples.length, mode === "import" ? 5 : 4);
         assert.deepEqual(memorySamples.map(({ stage }) => stage), mode === "import" ? ["promoted-opened-before-termination", "imported", "history-64", "history-128", "exported"] : ["reopen-1", "reopen-5", "reopen-10", "exported"]);
         assert(memorySamples.slice(-4).every(({ worker }) => worker === workerUrls.length), "all main journey checkpoints retain the same Worker");
         assert.deepEqual(mode === "import" ? ["edit", "undo", "redo"].map((name) => result.timings[name]?.length) : ["reopen", "resave"].map((name) => result.timings[name]?.length), mode === "import" ? [131, 10, 10] : [10, 10], "complete unchanged main operation counts");
-        const receipt = { format, mode, browser: browser.version(), workerUrls, smallProjections: result.smallProjections, timings: result.timings, heartbeat: result.heartbeat, memory: samples, wasmMemory: memorySamples, instrumentation: "CDP startup observer retains actual Worker exported WebAssembly.Memory; no artifact rewrite", cells: result.cellCount };
+        const receipt: CapacityReceipt = { format, carrier, mode, savedOpenRoute: "metadata-aware", performance_qualification: false, browser: browser.version(), workerUrls, smallProjections: result.smallProjections, timings: result.timings, heartbeat: result.heartbeat, memory: samples, wasmMemory: memorySamples, instrumentation: "CDP startup observer retains actual Worker exported WebAssembly.Memory; no artifact rewrite", cells: result.cellCount };
         receipts.push(receipt);
-        await writeFile(`${roots.capture}/${format}-${mode}-receipt.json`, JSON.stringify(receipt, null, 2), { flag: "wx" });
+        await writeFile(`${roots.capture}/${format}-${carrier}-${mode}-receipt.json`, JSON.stringify(receipt, null, 2), { flag: "wx" });
         assert(memorySamples.every(({ bytes }) => bytes <= 256 * 1024 * 1024), "actual Worker WASM linear-memory budget");
         const percentile = (values: number[], fraction: number) => values.toSorted((a, b) => a - b)[Math.ceil(values.length * fraction) - 1]!;
         for (const [name, values] of Object.entries(result.timings)) {
@@ -374,11 +407,15 @@ try {
         }
         assert(result.heartbeat.length > 0);
         assert(percentile(result.heartbeat, .95) <= 100 && Math.max(...result.heartbeat) <= 250, "main-thread heartbeat budget");
-        assert(samples.length >= 2 && samples.every(({ rss }) => rss > 0), "real Linux process memory evidence");
-        assert(Math.max(...samples.map(({ rss }) => rss)) - samples[0]!.rss <= 512 * 1024 * 1024, "process memory increase budget");
-      } finally { clearInterval(sampler); await pendingSample; await browser.close(); }
+        assert(samples.length >= 2, "complete Linux process memory evidence");
+        assert(Math.max(...samples.map(({ rss }) => rss!)) - samples[0]!.rss! <= 512 * 1024 * 1024, "process memory increase budget");
+      } finally {
+        clearInterval(sampler);
+        try { await pendingSample; } finally { await browser.close(); }
+      }
     }
     assert.equal(createHash("sha256").update(await readFile(`${roots.fixtures}/source-8406.${format}`)).digest("hex"), sourceHashes.get(format), "source preserved");
+    }
   }
-  await writeFile(`${roots.capture}/worker-complete.json`, JSON.stringify({ receipts: receipts.length, cells: 25218, modes: ["import", "fresh-browser-reopen"] }), { flag: "wx" });
+  await writeFile(`${roots.capture}/worker-complete.json`, JSON.stringify({ receipts: receipts.length, cells: 25218, carriers: ["opaque", "canonical"], capacity_performance_qualification: true, producer_qualification: false, modes: ["import", "fresh-browser-reopen"] }), { flag: "wx" });
 } finally { server.close(); }

@@ -1,3 +1,31 @@
+<!-- work495-resume-acceptance-reconciliation:20261008 -->
+## Retained-package reconciliation (acceptance proposal)
+
+This source-only acceptance package is assembled against exact private serial
+base811f5de3353d8f3628f9e93266cc2704b1323dc5/tree120666d31ff2d61b4affa0b409bbaddc86b7088f.
+It preserves complete v3@589, engine@642, capacity@44 and public248 source units.
+The retained nine-file v2 qualification amendment and current native/Worker/raw
+supplements are combined, including independently reviewed native inspection
+16MiB/+1 additions and explicit saved-open boundary `all` invocation (including
+`atomic`8,407). No production Ready or behavioral qualification follows from
+source assembly; absent saved-open implementation is an UNVERIFIED setup seam.
+
+Preserve original pure-project raw OpenedProjection65,536/+1, spreadsheet
+metadata-aware complete-wire65,536/+1 and capacity complete-wire16MiB/+1 as
+separate guards. Preserve original v3 resource/fresh constructor/capability,
+origin and refusal of metadata-aware capacity retry. Pure v3 export is not
+forbidden merely because a runtime previously used capacity. No fixture or
+threshold is changed to conceal the55-byte envelope distinction.
+
+The old path/line scope below describes the original capacity unit. It is not a
+current integration bound. Retain separately reviewable v3/engine/capacity units;
+the manifest and owner case map measure cumulative acceptance growth and record
+remaining implementation scope/decomposition before any Ready assignment.
+Complete v3 native16/Worker2 capture, historical reader at518aaa55, compatibility
+and release gates remain separate executable obligations; seal checks alone do
+not run them. Sheet integration and its missing-capability/normal-entry/pin/
+manifest/guard/rollback qualification belong to a separate fresh session.
+
 # Work #489 / Sheet #150 bounded Text capacity
 
 Status: acceptance preparation, not a Ready or qualification receipt.
@@ -51,7 +79,7 @@ tools or unexecuted browser tests as behavioral failures.
 | Complete imported metadata | 3 MiB | Full mappings validated |
 | Encoded CSV header row | 39 bytes | Actual CSV escaping, separators and CRLF |
 | Complete relevant response/reply | 16 MiB | Ordinary field-query replies 64 KiB |
-| Metadata-bearing spreadsheet request | 4 MiB | Only existing Export/InspectProject |
+| Metadata-bearing spreadsheet request | 4 MiB | Export/InspectProject and authorized saved-open OpenProject |
 | Ordinary semantic request | 64 KiB | Checked before JSON parsing, including raw ABI |
 | Source CSV/XLSX | 2 MiB | Unchanged |
 | Expanded XLSX / ZIP entries | 8 MiB / 256 | Unchanged |
@@ -77,7 +105,7 @@ remain unchanged. #495 reconciliation `5977017424` governs this clarification.
 
 The metadata-capable spreadsheet ABI caps its arena at 4 MiB before inspection.
 Above 64 KiB, a byte-bounded object discriminator/JSON-skip pass permits only
-the existing Export and InspectProject operations before typed payload decoding.
+the existing Export and InspectProject operations and the owner-authorized metadata-bearing OpenProject operation before typed payload decoding.
 Non-metadata operations are refused at that stage. The skip pass is bounded by
 arena bytes, not a claimed JSON depth limit; full operation decoding retains its
 own parser bounds. Unordered object keys remain valid; duplicate discriminators,
@@ -166,7 +194,7 @@ Guarded child and one PR retain a single capacity-profile review model and one
 rollback boundary. No unrelated v3/compatibility cleanup is included. Reconcile
 growth beyond this estimate before continuing.
 
-#493/#494 owns its separate v3 branch. Its live head was `589fe709` at intake;
+#493/#494 retains its separate original v3 branch and historical provenance. The founder transferred convergence ownership to Sol in6044007958; this acceptance package does not mutate either original branch. Historically, #493/#494 owned its separate v3 branch. Its live head was `589fe709` at intake;
 older handoffs retain different heads. No mutation or release of that lane is
 implied. Shared runtime integration is serialized and requires requalification;
 capacity does not incorporate or relax the v3 guard. No automatic main merge,

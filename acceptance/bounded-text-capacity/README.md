@@ -23,11 +23,11 @@ independent of the Rust producer parsers and writers.
 | Retention pressure | 128 additional distinct scalar edits; Worker checkpoints at 64/128 edits |
 | Native full termination and reopen | `run.sh` waits for importer exit, launches fresh `reopen`; native asserts prior PID gone, 10 close/open cycles |
 | Browser full termination and reopen | Separate Chromium launches for import and reopen; 10 close/open cycles reuse one real module Worker |
-| Save/export closure | Native/Worker exportProject, inspectImportedProject, independent fresh reopen, canonical byte equality, CSV/XLSX export |
+| Save/export closure | Separate opaque exportProject and canonical export_canonical_tree/exportCanonicalTree+projectTransferFromEntries; inspectImportedProject; mandatory metadata-aware open_imported_project/openImportedProject; 10 fresh close/open cycles and resave equality for each source format/carrier; CSV/XLSX export |
 | Source and resident preservation | Source SHA retained; malformed/8407 import refusals and stale edits in real Worker; malformed native open and oversized ordinary request |
 | Refusal retains history/export state | Full cells, occurrence/revision, project bytes, CSV/XLSX bytes; Undo/Redo proves retained history |
 | Full Opened reply limit+1 is atomic | Native exact 16 MiB+1 replacement retains an empty destination or existing resident, complete cells/exports and both history stacks; independent row-limit atomic control |
-| Independent output verification | `oracle.py verify` requires exact 16-file export matrix and native/Worker completion receipts; compares every cell with independent CSV/XML parsers |
+| Independent output verification | `oracle.py verify` requires exact 32-file main export matrix across both selected save carriers and native/Worker completion receipts; compares every cell with independent CSV/XML parsers |
 | Measured producer budgets | Per-operation timings, browser heartbeat, sampled whole-Chromium RSS, actual Worker linear-memory phase samples |
 | Actual raw-WASM file defenses | `resource_fixtures.py` and `boundaries.mjs`: source 2 MiB, expanded 8 MiB, XML 100,000 nodes, ZIP 256 members at/+1, preserved parser refusals |
 | Enlarged envelopes and closure | Raw ABI ordinary 65,536/65,537 bytes, metadata request 4 MiB/+1, oversized non-metadata controls, Text 4,096/4,097 UTF-8 bytes, aggregate Text 1 MiB/+1 and CSV encoded output 2 MiB/+1 |
@@ -80,7 +80,7 @@ Run after the exact-head seed/implementation and exported kit are qualified for
 execution, under the shared memory guard and serial heavy slot:
 
 ```sh
-bash acceptance/bounded-text-capacity/run.sh /absolute/exact-kit /absolute/new-evidence
+bash acceptance/bounded-text-capacity/run.sh /absolute/exact-kit /absolute/new-evidence /absolute/same-candidate-v3-capture <exact-v3-run-uuid>
 ```
 
 Provide disk-backed TMP/cache, repository-pinned pnpm and `CAPACITY_CHROMIUM` for
@@ -104,3 +104,69 @@ qualification. Real Sheet navigation/focus/paint, normal host persistence receip
 the exact new producer/consumer pairing, hosted gates and independent final review
 remain separate required consumer/integration gates; this harness does not clear
 them or authorize a pin change, merge or deployment.
+
+## Proposed saved-open qualification amendment — UNAPPLIED / UNRUN
+
+This amendment is proposed against exact public248e7d47, not frozen acceptance
+or an implementation-admission verdict. Work495 owner5999679572 selects the new
+metadata-aware saved-open APIs; ordinary malformed-open controls remain ordinary.
+The private811f5de/tree120666 baseline is unavailable here and unqualified. Missing
+API/compile/setup evidence is NOTRUN/UNVERIFIED, never behavioral RED or PASS.
+
+The full lifecycle now repeats independently for source CSV/XLSX × selected
+opaque/canonical save carrier. Native run/reopen uses distinct native-opaque and
+native-canonical capture directories; actual Worker uses eight distinct browser
+legs, retaining the original sampler, pre-page RSS baseline, heartbeat, history
+counts, 10 reopen/resave counts, and fixed thresholds in every leg. Small64 and
+promoted-Opened8 preflights also use both carriers. Identical carrier bytes do not
+replace proof that the two actual save APIs and framing paths were invoked.
+
+The independent oracle requires exactly32 main exports and8 small XLSX artifacts;
+it verifies complete cells and independently rechecks timing, counts, heartbeat,
+RSS and linear-memory phase receipts. Raw Worker receipts are explicitly
+performance_qualification:false because they are persisted before assertions.
+Only completed capacity checks may record capacity_performance_qualification:true.
+producer_qualification remains false: these checks do not qualify complete v3,
+the historical reader, hosted/release gates, independent review or Sheet.
+
+Retain complete v3 acceptance at589fe709 and its65-path compatibility delta,
+including16 native cases, both real Worker cases, capture seals, original
+65,536/65,537-byte admission and typed failures, v3-origin histories/reset,
+selected export, fixture/API/explicit-v3 regressions, and the pinned518aaa55
+historical-reader refusal. Keep retained compact66/Dedup, exact16MiB/+1 saved-open,
+raw-ABI4MiB/+1 and absent-capability supplements. Their separate case map and
+source identities must be admitted by the acceptance owner and independently
+reviewed with this amendment before Ready. No old seed, summary or prior receipt
+is a substitute for the complete package. All proposed behavior is UNRUN.
+
+## RSS measurement completeness amendment v2 — UNAPPLIED / UNFROZEN / UNRUN
+
+Independent review6049456855 found inherited missing-live-PID zero substitution.
+The acceptance-only capacity-rss.ts helper now records each enumerated PID/type
+as measured positive integer RSS, proven exited via kill(pid,0) ESRCH with check
+timestamp, or unverified read/parse/liveness failure. ENOENT or absent VmRSS alone
+cannot establish exit. Incomplete samples carry null aggregate RSS and explicit
+BLOCKED_MEASUREMENT/performance UNVERIFIED evidence; no invented measured zero.
+
+Pre-page baseline and100ms sampling cadence,512MiB increase,256MiB Worker memory,
+timing/heartbeat thresholds and all v1 matrices remain unchanged. Every captured
+sample must cover the exact enumerated PID/type set. The independent rss_oracle.py
+validates identities, uniqueness, integer bytes/timestamps, exit evidence, complete
+coverage and aggregate equality before evaluating the unchanged512MiB budget.
+Aggregate-only v1 receipts cannot qualify. A missing or malformed live renderer,
+unknown/permission-denied liveness, omitted renderer or unproved exit blocks
+measurement qualification. Fully measured over-budget RSS remains a separate
+performance assertion, only after measurement completeness is established.
+
+Small deterministic TypeScript sensor controls serialize typed sample receipts;
+Python oracle controls consume those exact receipts. They include complete64MiB
+baseline→432MiB positive, missing/unparseable live renderer negatives, missing
+VmRSS, unknown exit, explicit ESRCH exit positive, omitted900MiB renderer despite
+positive32MiB aggregate, missing exit proof and old aggregate-only evidence. The
+complete932MiB control checks the unchanged512MiB budget separately. These are
+synthetic helper checks, not measured product/browser/reference evidence.
+
+Native lifecycle, ordinary/raw ABI controls, v3 and both saved carriers are
+unchanged from v1. Each of all eight Worker browser legs needs complete RSS
+evidence. Both proposal versions and independent NOT ADEQUATE finding are retained;
+fresh independent adequacy and acceptance-owner reconciliation remain required.
