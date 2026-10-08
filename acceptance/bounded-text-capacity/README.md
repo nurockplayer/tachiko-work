@@ -170,3 +170,14 @@ Native lifecycle, ordinary/raw ABI controls, v3 and both saved carriers are
 unchanged from v1. Each of all eight Worker browser legs needs complete RSS
 evidence. Both proposal versions and independent NOT ADEQUATE finding are retained;
 fresh independent adequacy and acceptance-owner reconciliation remain required.
+# Ordinary saved-open complete reply boundary
+
+The source-only reconciliation adds an independently sized ordinary full-wire
+65,536/65,537 pair, separate from original pure-v3 raw65,536/65,537 and enlarged
+capacity16MiB/+1. A Number column prevents capacity promotion. The native
+`capacity_saved_open_boundaries -- all NEW_FIXTURE_DIRECTORY` produces the
+direct-v2, canonical-v1 and selected-v3 bytes plus expected complete projections.
+`ordinary-saved-open-wire.mjs MATCHING_WASM FIXTURE_DIRECTORY NEW_RESULT` checks
+all six through the actual spreadsheet ABI, measures actual reply bytes, and
+proves install/refusal atomicity and both seeded histories. `run.sh` invokes both
+stages serially; these additions are uncompiled/unrun until admitted execution.

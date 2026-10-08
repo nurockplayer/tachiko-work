@@ -38,6 +38,11 @@ cargo run --release --locked --manifest-path "${manifest}" --example capacity_pr
 # distinct 8,407-row metadata-aware atomic refusal; ordinary profile is separate.
 cargo test --locked --manifest-path "${manifest}" --test saved_import_convergence > "${out}/saved-import-convergence.log" 2>&1
 cargo run --release --locked --manifest-path "${manifest}" --example capacity_saved_open_boundaries -- all > "${out}/saved-open-boundaries.log" 2>&1
+# Ordinary Opened 64 KiB stays distinct from saved-open's enlarged 16 MiB gate.
+# The native example emits six exact carrier/size fixtures; the raw ABI probe
+# measures the actual Rust reply bytes and checks inspect/open atomicity.
+cargo run --release --locked --manifest-path "${manifest}" --example capacity_saved_open_boundaries -- all "${out}/ordinary-projection-fixtures" > "${out}/ordinary-projection-fixtures.log" 2>&1
+pnpm --dir "${repo_root}/packages/browser-client" exec node "${repo_root}/acceptance/bounded-text-capacity/ordinary-saved-open-wire.mjs" "${kit}/designer_runtime.wasm" "${out}/ordinary-projection-fixtures" "${out}/ordinary-saved-open-wire.json"
 uv run --no-project "${repo_root}/acceptance/bounded-text-capacity/saved_import_oracle.py" generate "${out}/compact66-fixtures"
 for shape in compact66 full8406; do
   fixtures="${out}/compact66-fixtures"; fixture_manifest="saved-import-manifest.json"

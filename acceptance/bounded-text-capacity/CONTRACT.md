@@ -17,6 +17,22 @@ origin and refusal of metadata-aware capacity retry. Pure v3 export is not
 forbidden merely because a runtime previously used capacity. No fixture or
 threshold is changed to conceal the55-byte envelope distinction.
 
+The complete ordinary envelope boundary is an explicit paired executable
+obligation, not inferred from the pure-project or enlarged-capacity tests.
+`capacity_saved_open_boundaries -- all NEW_FIXTURE_DIRECTORY` independently
+constructs valid Number/Text/Text documents with full opened replies exactly
+65,536 and65,537 bytes, and captures direct-v2, canonical-v1 and selected-v3
+carriers. Both raw projections still fit original pure-project64KiB admission.
+Native metadata-aware inspect/open must accept the exact limit and refuse the
+one-byte excess with ProjectionTooLarge(65,537,65,536), preserving an empty
+resident or every resident cell, occurrence/revision, export and both histories.
+`ordinary-saved-open-wire.mjs` uses those exact carriers on the actual WASM
+spreadsheet ABI. It checks actual UTF8 reply bytes, complete returned payload,
+read-only inspection, replacement scope/revision and typed refusals before any
+installation, with export-byte and complete Undo/Redo replay invariants. This
+includes selected-v3 metadata-aware admission without widening its pure-project
+raw-projection law. The runner requires all six raw carrier/size cases.
+
 The old path/line scope below describes the original capacity unit. It is not a
 current integration bound. Retain separately reviewable v3/engine/capacity units;
 the manifest and owner case map measure cumulative acceptance growth and record

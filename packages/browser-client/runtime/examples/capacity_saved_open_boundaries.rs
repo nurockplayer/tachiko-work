@@ -1,7 +1,7 @@
 //! Acceptance-only public-native-API boundary fixtures for Work #489 / Sheet #150.
 //! UNCOMPILED/UNRUN proposal: retain exact original fixture calculations and
 //! outcomes, exercise the new metadata-aware saved-open route for projections.
-//! Run only group "projections"; other source groups are retained, not new credit.
+//! Qualification runs every group, including the ordinary complete-wire pair.
 use std::{collections::BTreeMap, env};
 
 use serde_json::{Value as Json, json};
@@ -591,9 +591,146 @@ fn main() {
         ("fields", field_queries),
         ("ineligible", ineligible),
         ("strings", string_escape_profile),
+        ("ordinary-projections", ordinary_saved_open_projections),
     ] {
         if group == "all" || group == name {
             check();
         }
     }
+}
+
+fn ordinary_wire_size(opened: &OpenedProjection) -> usize {
+    // Ordinary admission measures the actual fresh resident/0 envelope, without
+    // the separate enlarged-capacity worst-revision reservation.
+    serde_json::to_vec(&json!({"status":"ok","response":{"type":"opened","payload":opened}}))
+        .unwrap()
+        .len()
+}
+
+fn ordinary_projection_document(target: usize) -> (Document, OpenedProjection) {
+    let mut candidate = document(24);
+    schema(&mut candidate)
+        .fields
+        .get_mut(&FieldId::from("a"))
+        .unwrap()
+        .field_type = FieldType::Number;
+    for entity in candidate.entities.values_mut() {
+        entity
+            .fields
+            .insert(FieldId::from("a"), Value::Number(Number::new(1.0).unwrap()));
+    }
+    // Number makes this ineligible for the three-Text capacity promotion. Start
+    // well below the cap, then independently account for each unescaped ASCII
+    // Text byte in the complete returned projection rather than probing until
+    // the candidate implementation accepts a selected size.
+    let mut expected = opened(&candidate).unwrap();
+    let mut remaining = target.checked_sub(ordinary_wire_size(&expected)).unwrap();
+    for (entity, row) in candidate
+        .entities
+        .values_mut()
+        .zip(&mut expected.table.rows)
+    {
+        for key in ["b", "c"] {
+            let added = remaining.min(4095);
+            let value = "x".repeat(1 + added);
+            entity
+                .fields
+                .insert(FieldId::from(key), Value::Text(value.clone()));
+            row.fields
+                .iter_mut()
+                .find(|field| field.target.field == key)
+                .unwrap()
+                .stored = Some(tachiko_designer_runtime::StoredValueProjection::Text { value });
+            remaining -= added;
+        }
+    }
+    assert_eq!(remaining, 0);
+    assert_eq!(ordinary_wire_size(&expected), target);
+    assert_eq!(serde_json::to_vec(&expected).unwrap().len() + 55, target);
+    tachiko_workspace_engine::validate(&candidate).unwrap();
+    (candidate, expected)
+}
+
+fn ordinary_saved_carriers(candidate: &Document) -> Vec<(&'static str, Vec<u8>)> {
+    let [direct, canonical] = saved_carriers(candidate);
+    let tree = tachiko_storage::encode_roproj_v3(candidate).unwrap();
+    let mut selected_v3 = b"TWDPROJ1".to_vec();
+    selected_v3.extend(u32::try_from(tree.files().len()).unwrap().to_le_bytes());
+    for file in tree.files() {
+        selected_v3.extend(u16::try_from(file.path().len()).unwrap().to_le_bytes());
+        selected_v3.extend(u32::try_from(file.bytes().len()).unwrap().to_le_bytes());
+        selected_v3.extend(file.path().as_bytes());
+        selected_v3.extend(file.bytes());
+    }
+    vec![
+        ("direct-v2", direct),
+        ("canonical-v1", canonical),
+        ("selected-v3", selected_v3),
+    ]
+}
+
+fn ordinary_saved_open_projections() {
+    let capture = env::args().nth(2).map(std::path::PathBuf::from);
+    if let Some(directory) = &capture {
+        std::fs::create_dir(directory).expect("new exclusive ordinary wire fixture directory");
+    }
+    let mut inventory = Vec::new();
+    for target in [65_536, 65_537] {
+        let (candidate, expected) = ordinary_projection_document(target);
+        let mapped = metadata(&candidate);
+        for (name, bytes) in ordinary_saved_carriers(&candidate) {
+            // Both candidates fit the original pure-project raw cap, including
+            // selected-v3; only the spreadsheet complete envelope separates them.
+            assert_eq!(
+                tachiko_designer_runtime::inspect_project(&bytes).unwrap(),
+                expected
+            );
+            if target == 65_536 {
+                let inspected = inspect_imported_project(&bytes, &mapped).unwrap();
+                assert_eq!(inspected, expected);
+                assert_eq!(ordinary_wire_size(&inspected), target);
+                let mut empty = None;
+                let opened =
+                    open_imported_project(&mut empty, &bytes, &mapped, OCCURRENCE).unwrap();
+                assert_eq!(opened, expected);
+                assert!(empty.is_some());
+            } else {
+                let check = |error| match error {
+                    DesignerError::ProjectionTooLarge { actual, maximum } => {
+                        assert_eq!((actual, maximum), (65_537, 65_536));
+                    }
+                    other => panic!("expected ordinary complete-wire refusal, got {other:?}"),
+                };
+                check(inspect_imported_project(&bytes, &mapped).unwrap_err());
+                let mut empty = None;
+                check(open_imported_project(&mut empty, &bytes, &mapped, OCCURRENCE).unwrap_err());
+                assert!(empty.is_none());
+                // The shared helper seeds both stacks and checks all resident
+                // cells, occurrence/revision, saved/export bytes and replay.
+                refused_saved_carrier_preserves(&candidate, &bytes);
+            }
+            if let Some(directory) = &capture {
+                let file = format!("{name}-{target}.twd");
+                let mut output = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(directory.join(&file))
+                    .unwrap();
+                std::io::Write::write_all(&mut output, &bytes).unwrap();
+                inventory.push(json!({"file":file,"carrier":name,"wire_bytes":target,
+                    "metadata":mapped,"expected":expected}));
+            }
+        }
+    }
+    if let Some(directory) = &capture {
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join("manifest.json"))
+            .unwrap();
+        std::io::Write::write_all(&mut output, &serde_json::to_vec(&inventory).unwrap()).unwrap();
+    }
+    println!(
+        "PASS ordinary metadata complete-wire65536/65537 inspect/open, three carriers and histories"
+    );
 }
