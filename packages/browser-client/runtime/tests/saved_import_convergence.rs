@@ -1,7 +1,10 @@
 //! Proposed supplementary regression source for Work #495; UNCOMPILED/UNRUN.
 //! No prior f33 receipt supplies evidence for this file. Expected outcomes come
 //! from owner contract5999679572 and adopted disposition6024421600.
-use std::io::{Cursor, Read};
+use std::{
+    fmt::Write as _,
+    io::{Cursor, Read},
+};
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, SourceWorkbook, import_csv};
 use tachiko_designer_runtime::{
     CleanupOperation, CollectionSummary, ColumnProjection, DesignerError, DesignerRequest,
@@ -65,7 +68,7 @@ fn imported(rows: usize) -> (DesignerRuntime, InteropMetadata) {
     let mut csv = String::from("a,b,c\r\n");
     for i in 0..rows {
         let v = if i < 2 { 0 } else { i };
-        csv.push_str(&format!("key{v:03},value{v:03},00{v:03}\r\n"));
+        write!(csv, "key{v:03},value{v:03},00{v:03}\r\n").unwrap();
     }
     let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
     let selection = ImportSelection {
@@ -130,7 +133,7 @@ fn document(runtime: &DesignerRuntime) -> Document {
         cursor.read_exact(&mut body).unwrap();
         files.push((String::from_utf8(path).unwrap(), body));
     }
-    assert_eq!(cursor.position() as usize, bytes.len());
+    assert_eq!(usize::try_from(cursor.position()).unwrap(), bytes.len());
     decode_roproj_v1(&CanonicalRoProjectV1::try_from_files(files).unwrap()).unwrap()
 }
 fn carriers(runtime: &DesignerRuntime) -> [Vec<u8>; 2] {
