@@ -2278,15 +2278,6 @@ impl DesignerRuntime {
         commands: Vec<SemanticCommand>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
-        if self.text_capacity
-            && commands
-                .iter()
-                .any(|command| matches!(command, SemanticCommand::RemoveEntity { .. }))
-        {
-            return Err(tracker_error(
-                "capacity Text projects cannot deduplicate rows",
-            ));
-        }
         let snapshot = self.session.export_snapshot();
         let mut candidate = snapshot.document().clone();
         for command in &commands {
@@ -5899,27 +5890,28 @@ mod tests {
                 .collect::<Vec<_>>();
             let key_field = runtime.collection_specs["orders"].columns[0].id.to_string();
             let error = runtime
-                .preview_cleanup(
-                    "resident/0",
-                    &super::CleanupOperation::Deduplicate {
+                .handle(DesignerRequest::PreviewCleanup {
+                    expected_revision: "resident/0".to_owned(),
+                    operation: super::CleanupOperation::Deduplicate {
                         entities,
                         key_fields: vec![key_field],
                     },
-                )
+                })
                 .unwrap_err();
             assert!(matches!(
                 error,
                 DesignerError::InvalidTrackerOperation { .. }
             ));
-            let removed = runtime.collection_specs["orders"].entities[0].clone();
-            assert!(
-                runtime
-                    .publish_commands(
-                        "resident/0",
-                        vec![SemanticCommand::RemoveEntity { entity: removed }],
-                    )
-                    .is_err()
-            );
+            let error = runtime
+                .handle(DesignerRequest::CommitCleanup {
+                    expected_revision: "resident/0".to_owned(),
+                    preview_id: "absent-cleanup-plan".to_owned(),
+                })
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                DesignerError::InvalidTrackerOperation { .. }
+            ));
             assert_eq!(runtime.current_revision(), "resident/0");
             assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
             assert!(runtime.undo.is_empty());
@@ -5952,6 +5944,175 @@ mod tests {
             .commit_cleanup("resident/0", &preview.preview_id)
             .unwrap();
         assert_eq!(runtime.query_table("orders").unwrap().rows.len(), 1);
+    }
+
+    fn native_capacity_127_runtime() -> DesignerRuntime {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["a", "b", "c"],
+        );
+        let mut document = base.session.export_snapshot().into_document();
+        let template = document.entities.values().next().unwrap().clone();
+        document.entities.clear();
+        for index in 0..127 {
+            let mut entity = template.clone();
+            entity.id = EntityId::from(format!("native-row-{index:03}"));
+            entity.key = super::EntityKey::from(format!("native_row_{index:03}"));
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        DesignerRuntime::from_document_profile(
+            document,
+            "00000000-0000-4000-8000-000000000070",
+            true,
+        )
+        .unwrap()
+    }
+
+    fn native_saved_state(runtime: &DesignerRuntime) -> (super::Document, [Vec<u8>; 2]) {
+        let revision = runtime.current_revision().to_owned();
+        (
+            runtime.session.export_snapshot().document().clone(),
+            [
+                runtime.export_canonical_tree(&revision).unwrap().bytes,
+                runtime.export_project(&revision).unwrap().bytes,
+            ],
+        )
+    }
+
+    fn assert_native_saved_state(
+        runtime: &DesignerRuntime,
+        expected_document: &super::Document,
+        expected_carriers: &[Vec<u8>; 2],
+    ) {
+        let (document, carriers) = native_saved_state(runtime);
+        assert_eq!(&document, expected_document);
+        assert_eq!(&carriers, expected_carriers);
+        for carrier in expected_carriers {
+            let mut reopened = None;
+            super::open_project(
+                &mut reopened,
+                carrier,
+                "00000000-0000-4000-8000-000000000071",
+            )
+            .unwrap();
+            assert_eq!(
+                reopened
+                    .as_ref()
+                    .unwrap()
+                    .session
+                    .export_snapshot()
+                    .document(),
+                expected_document
+            );
+        }
+    }
+
+    fn edit_native_history_scalar(runtime: &mut DesignerRuntime) -> super::Document {
+        let entity = runtime.collection_specs["orders"].entities[0].to_string();
+        let field = runtime.collection_specs["orders"].columns[0].id.to_string();
+        runtime
+            .edit_scalar(
+                "resident/0",
+                &super::FieldTarget { entity, field },
+                &ScalarEditInput::Text {
+                    value: "earlier-history".to_owned(),
+                },
+            )
+            .unwrap();
+        runtime.session.export_snapshot().document().clone()
+    }
+
+    fn native_history(runtime: &mut DesignerRuntime, redo: bool) {
+        let expected_revision = runtime.current_revision().to_owned();
+        let request = if redo {
+            DesignerRequest::Redo { expected_revision }
+        } else {
+            DesignerRequest::Undo { expected_revision }
+        };
+        assert!(matches!(
+            runtime.handle(request).unwrap(),
+            super::DesignerResponse::Published(_)
+        ));
+    }
+
+    #[test]
+    fn native_capacity_insert_undo_redo_preserves_complete_history() {
+        let mut runtime = native_capacity_127_runtime();
+        assert!(runtime.text_capacity);
+        let (original, original_carriers) = native_saved_state(&runtime);
+        let before_row = edit_native_history_scalar(&mut runtime);
+        let (_, before_row_carriers) = native_saved_state(&runtime);
+        assert_ne!(before_row, original);
+
+        let initializers = row_initializers(&runtime);
+        assert!(matches!(
+            runtime
+                .handle(DesignerRequest::InsertRow {
+                    expected_revision: runtime.current_revision().to_owned(),
+                    collection: "orders".to_owned(),
+                    initializers,
+                })
+                .unwrap(),
+            super::DesignerResponse::Published(_)
+        ));
+        let (after_row, after_row_carriers) = native_saved_state(&runtime);
+        assert_eq!(after_row.entities.len(), 128);
+        assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
+
+        native_history(&mut runtime, false);
+        assert_native_saved_state(&runtime, &before_row, &before_row_carriers);
+        native_history(&mut runtime, false);
+        assert_native_saved_state(&runtime, &original, &original_carriers);
+        native_history(&mut runtime, true);
+        assert_native_saved_state(&runtime, &before_row, &before_row_carriers);
+        native_history(&mut runtime, true);
+        assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
+    }
+
+    #[test]
+    fn native_capacity_remove_undo_redo_preserves_complete_history() {
+        let mut runtime = native_capacity_127_runtime();
+        assert!(runtime.text_capacity);
+        let (original, original_carriers) = native_saved_state(&runtime);
+        let before_row = edit_native_history_scalar(&mut runtime);
+        let (_, before_row_carriers) = native_saved_state(&runtime);
+        assert_ne!(before_row, original);
+
+        let row = runtime.collection_specs["orders"]
+            .entities
+            .last()
+            .unwrap()
+            .to_string();
+        let mut expected_after = before_row.clone();
+        assert!(
+            expected_after
+                .entities
+                .remove(&EntityId::from(row.clone()))
+                .is_some()
+        );
+        assert!(matches!(
+            runtime
+                .handle(DesignerRequest::RemoveTableRows {
+                    expected_revision: runtime.current_revision().to_owned(),
+                    collection: "orders".to_owned(),
+                    entities: vec![row],
+                })
+                .unwrap(),
+            super::DesignerResponse::Published(_)
+        ));
+        let (after_row, after_row_carriers) = native_saved_state(&runtime);
+        assert_eq!(after_row, expected_after);
+        assert_eq!(after_row.entities.len(), 126);
+        assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
+
+        native_history(&mut runtime, false);
+        assert_native_saved_state(&runtime, &before_row, &before_row_carriers);
+        native_history(&mut runtime, false);
+        assert_native_saved_state(&runtime, &original, &original_carriers);
+        native_history(&mut runtime, true);
+        assert_native_saved_state(&runtime, &before_row, &before_row_carriers);
+        native_history(&mut runtime, true);
+        assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
     }
 
     fn native_column_runtime(columns: &[(&str, &str)], values: &[&str]) -> DesignerRuntime {
