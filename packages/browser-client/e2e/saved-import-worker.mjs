@@ -3,14 +3,21 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { arch, platform, release } from 'node:os';
 import { resolve, sep } from 'node:path';
 import { chromium } from '@playwright/test';
-const [kitArg, fixturesArg, captureArg, manifestArg = 'saved-import-manifest.json'] = process.argv.slice(2);
+const args = process.argv.slice(2);
+assert(args.length >= 3 && args.length <= 5, 'KIT FIXTURES NEW_CAPTURE [MANIFEST [--mvp]] required');
+const [kitArg, fixturesArg, captureArg, manifestArg = 'saved-import-manifest.json', modeArg] = args;
+assert(manifestArg !== '--mvp', '--mvp must follow an explicit manifest argument');
+assert(modeArg === undefined || modeArg === '--mvp', 'unknown or misplaced argument');
+const mvp = modeArg === '--mvp';
 assert(kitArg && fixturesArg && captureArg, 'KIT FIXTURES NEW_CAPTURE required');
 const roots = {kit: resolve(kitArg), fixtures: resolve(fixturesArg), capture: resolve(captureArg)};
 await mkdir(roots.capture, {recursive: false});
 const fixture = JSON.parse(await readFile(`${roots.fixtures}/${manifestArg}`, 'utf8'));
 assert([66, 8406].includes(fixture.rows.length));
+if (mvp) assert.equal(fixture.rows.length, 8406, '--mvp requires exactly 8406 fixture rows');
 assert.equal(fixture.headers.length, 3);
 const sourceStem = fixture.rows.length === 66 ? 'saved-import-66' : 'source-8406';
 const server = createServer(async (request, response) => {
@@ -26,17 +33,20 @@ const server = createServer(async (request, response) => {
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const receipt = [];
+const environment = {node: process.version, os: `${platform()} ${release()}`, architecture: arch()};
 try {
   for (const format of ['csv', 'xlsx']) for (const carrier of ['canonical', 'opaque']) {
     let saved;
     for (const phase of ['save', 'restart-reopen']) {
+      const phaseStarted = Date.now();
       const browser = await chromium.launch({headless: true, ...(process.env.CAPACITY_CHROMIUM ? {executablePath: process.env.CAPACITY_CHROMIUM} : {})});
+      let phaseReceipt;
       try {
         const page = await browser.newPage();
         const workerUrls = [];
         page.on('worker', worker => workerUrls.push(worker.url()));
         await page.goto(origin);
-        const result = await page.evaluate(async ({origin, fixture, format, carrier, phase, saved, sourceStem}) => {
+        const result = await page.evaluate(async ({origin, fixture, format, carrier, phase, saved, sourceStem, mvp}) => {
           const check = (ok, message) => { if (!ok) throw Error(message); };
           const same = (a, b, label) => check(JSON.stringify(a) === JSON.stringify(b), label);
           const fail = async action => { let rejected = false; try { await action(); } catch { rejected = true; } check(rejected, 'required atomic refusal'); };
@@ -53,8 +63,15 @@ try {
           let expected = structuredClone(phase === 'save' ? fixture.rows : saved.expected);
           let metadata, collection;
           const captures = [];
+          const editProofs = [];
+          const durationsMs = {edit: [], undo: [], redo: [], query: []};
           let captureSequence = 0;
-          const currentTable = () => client.queryTable(collection);
+          const timed = async (key, action) => {
+            const start = performance.now();
+            try { return await action(); }
+            finally { durationsMs[key].push(performance.now() - start); }
+          };
+          const currentTable = () => timed('query', () => client.queryTable(collection));
           const checkTable = table => {
             same(table.rows.length, expected.length, 'all rows');
             same(table.columns.length, 3, 'three columns');
@@ -112,6 +129,24 @@ try {
             } else {
               await openSaved(saved);
             }
+            if (mvp && phase === 'save') {
+              const fixedEdits = [[0, 0, '000-edited-雪,"first"\r\nkept'], [4203, 1, 'https://example.invalid/edited-middle?x=0007'], [8405, 2, '0001700008405999']];
+              for (const [row, column, value] of fixedEdits) {
+                const target = (await currentTable()).rows[row].fields[column].target;
+                const original = expected[row][column];
+                const editBefore = await client.observeOccurrence();
+                await timed('edit', () => client.editText(editBefore.revision, target, value));
+                expected[row][column] = value; checkTable(await currentTable());
+                const editOccurrence = await client.observeOccurrence();
+                await timed('undo', () => client.trackerCommand({type: 'undo', expected_revision: editOccurrence.revision}));
+                expected[row][column] = original; checkTable(await currentTable());
+                const undoOccurrence = await client.observeOccurrence();
+                await timed('redo', () => client.trackerCommand({type: 'redo', expected_revision: undoOccurrence.revision}));
+                expected[row][column] = value; checkTable(await currentTable());
+                const redoOccurrence = await client.observeOccurrence();
+                editProofs.push({row, column, target, original, value, actions:['edit','undo','redo'], revisions:[editBefore.revision, editOccurrence.revision, undoOccurrence.revision, redoOccurrence.revision]});
+              }
+            }
             const first = await snapshot();
             const oldScope = first.occurrence.scope;
             if (phase === 'restart-reopen') check(oldScope !== saved.scope, 'whole-browser/Worker fresh occurrence');
@@ -131,6 +166,13 @@ try {
             same(await snapshot(), before, 'invalid inspection preserves every resident/export field');
             await fail(() => client.openImportedProject(savedBytes.slice(0), bad));
             same(await snapshot(), before, 'invalid metadata preserves every resident/export field');
+            if (mvp) for (const file of [`malformed.${format}`, 'source-8407.' + format]) {
+              const response = await fetch(`${origin}/fixtures/${file}`);
+              check(response.ok, `required refusal fixture unavailable: ${file}`);
+              const source = await response.arrayBuffer();
+              await fail(() => client.importSpreadsheet(source, format, {delimiter: ',', header: true}, {column_types:[['text','text','text']], extra_columns:[[]]}));
+              same(await snapshot(), before, `${file} refusal preserves resident/revision/history/exports`);
+            }
             if (expected.length === 66) {
               const all = await currentTable();
               await fail(async () => {
@@ -145,9 +187,9 @@ try {
             }
             const final = await snapshot();
             same(ordinaryOpenCalls, 0, 'no ordinary-open fallback');
-            return {saved:{metadata, opaque:final.opaque, files:final.files, expected, scope:final.occurrence.scope}, captures};
+            return {saved:{metadata, opaque:final.opaque, files:final.files, expected, scope:final.occurrence.scope}, captures, editProofs, durationsMs};
           } finally { await client.close(); }
-        }, {origin, fixture, format, carrier, phase, saved, sourceStem});
+        }, {origin, fixture, format, carrier, phase, saved, sourceStem, mvp});
         assert.equal(workerUrls.length, 1, 'one actual Worker per browser phase');
         assert(workerUrls[0].endsWith('/kit/experimental-client.worker.js'));
         saved = result.saved;
@@ -161,8 +203,12 @@ try {
           catch (error) { if (error.code !== 'ENOENT') throw error; await writeFile(output, bytes); }
           await writeFile(`${output}.expected.json`, JSON.stringify(capture.expected));
         }
-        receipt.push({format, carrier, phase, fixtureRows:fixture.rows.length, fixtureRecipe:fixture.recipe, workerUrls, browser:browser.version(), outcome:'PASS'});
-      } finally { await browser.close(); }
+        phaseReceipt = {format, carrier, phase, mvp, fixtureRows:fixture.rows.length, fixtureRecipe:fixture.recipe, workerUrls, browser:browser.version(), environment, durationsMs:result.durationsMs, editProofs:result.editProofs, rss:{status:'UNVERIFIED', reason:'CDP observed 7 Chromium processes while /proc observed 9; platform and process coverage differ, so whole-browser RSS is not established.'}, outcome:'PASS'};
+      } finally {
+        await browser.close();
+        if (phaseReceipt) phaseReceipt.phaseElapsedMs = Date.now() - phaseStarted;
+      }
+      receipt.push(phaseReceipt);
     }
   }
   await writeFile(`${roots.capture}/worker-result.json`, JSON.stringify(receipt, null, 2));

@@ -7,6 +7,7 @@ import csv
 import hashlib
 import io
 import json
+import math
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
@@ -14,6 +15,13 @@ from pathlib import Path
 
 ROWS = 66
 HEADERS = ["a", "b", "c"]
+MVP_EDITS = {
+    (0, 0): '000-edited-雪,"first"\r\nkept',
+    (4203, 1): "https://example.invalid/edited-middle?x=0007",
+    (8405, 2): "0001700008405999",
+}
+HISTORY_ONE = "history-one雪&<>"
+HISTORY_TWO = "history-two雪&<>"
 MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 def values():
@@ -122,18 +130,67 @@ def generate(directory):
     print(json.dumps({"fixture_readback_only": True, "cells": 198, "sha256": hashes}))
 
 
-def verify(directory, fixture_path=None):
+def mvp_snapshot(rows, phase, index):
+    expected = [list(row) for row in rows]
+    # The first save snapshot follows all edit/Undo/Redo proofs. Reopen begins
+    # from that saved matrix and exercises the existing history sequence.
+    for coordinate, value in MVP_EDITS.items():
+        row, column = coordinate
+        expected[row][column] = value
+    if phase == "save" and index == 0:
+        return expected
+    if phase == "restart-reopen" and index == 0:
+        expected[-1][0] = HISTORY_TWO
+        return expected
+    if index == 6:
+        expected[-1][0] = HISTORY_TWO
+    else:
+        expected[-1][0] = HISTORY_ONE
+    return expected
+
+
+def verify(directory, fixture_path=None, mvp=False):
     fixture = json.loads(Path(fixture_path).read_text()) if fixture_path else {"headers": HEADERS, "rows": values()}
     assert len(fixture["rows"]) in (66, 8406) and len(fixture["headers"]) == 3
     count = len(fixture["rows"])
+    if mvp:
+        assert count == 8406, "--mvp requires exactly 8406 fixture rows"
     snapshots = 6 if count == 66 else 5
     receipts = json.loads((directory / "worker-result.json").read_text())
     expected_receipts = {(f, c, p) for f in ["csv", "xlsx"] for c in ["canonical", "opaque"] for p in ["save", "restart-reopen"]}
     assert len(receipts) == 8
     assert {(r["format"], r["carrier"], r["phase"]) for r in receipts} == expected_receipts
     assert all(r["outcome"] == "PASS" and len(r["workerUrls"]) == 1 and r["fixtureRows"] == count for r in receipts)
+    if mvp:
+        assert all(r.get("mvp") is True for r in receipts), "missing MVP-mode receipt"
+        assert all(r.get("browser") and r.get("environment", {}).get("node") and r["environment"].get("os") and r["environment"].get("architecture") for r in receipts), "missing runtime metadata"
+        valid_duration = lambda value: type(value) in (int, float) and math.isfinite(value) and value >= 0
+        assert all(valid_duration(r.get("phaseElapsedMs")) for r in receipts), "missing or invalid observed browser-phase duration"
+        assert all(set(r.get("durationsMs", {})) == {"edit", "undo", "redo", "query"} and all(isinstance(v, list) and all(valid_duration(t) for t in v) for v in r["durationsMs"].values()) for r in receipts), "invalid observed operation durations"
+        assert all(all(r["durationsMs"][name] for name in ["edit", "undo", "redo", "query"]) for r in receipts if r["phase"] == "save"), "missing observed edit/Undo/Redo/query duration"
+        assert all(r.get("rss", {}).get("status") == "UNVERIFIED" and "7" in r["rss"].get("reason", "") and "9" in r["rss"].get("reason", "") for r in receipts), "RSS must remain explicitly unverified"
+        assert all(len(r.get("editProofs", [])) == (3 if r["phase"] == "save" else 0) for r in receipts), "missing first/middle/last edit Undo/Redo proofs"
+        for receipt in receipts:
+            if receipt["phase"] != "save":
+                continue
+            for proof, coordinate in zip(receipt["editProofs"], MVP_EDITS):
+                row, column = coordinate
+                assert (proof["row"], proof["column"], proof["value"]) == (row, column, MVP_EDITS[coordinate])
+                assert proof["original"] == fixture["rows"][row][column]
+                assert isinstance(proof.get("target", {}).get("entity"), str) and isinstance(proof["target"].get("field"), str)
+                assert proof.get("actions") == ["edit", "undo", "redo"] and len(proof["revisions"]) == 4
+                assert all(isinstance(value, str) and value.startswith("resident/") for value in proof["revisions"]), "invalid edit proof revision prefix"
+                revisions = [int(value.removeprefix("resident/")) for value in proof["revisions"]]
+                assert revisions == list(range(revisions[0], revisions[0] + 4)), "edit/undo/redo revision chain"
     outputs = sorted(directory.glob("*.csv")) + sorted(directory.glob("*.xlsx"))
     expected_names = {f"{f}-{c}-{phase}-{index}-snapshot.{output}" for f, c, phase in expected_receipts for index in range(snapshots) for output in ["csv", "xlsx"]}
+    if mvp:
+        expected_names = {
+            f"{receipt['format']}-{receipt['carrier']}-{receipt['phase']}-{index}-snapshot.{output}"
+            for receipt in receipts
+            for index in range(7)
+            for output in ["csv", "xlsx"]
+        }
     assert {p.name for p in outputs} == expected_names, "complete process/carrier/snapshot/export matrix"
     assert {p.name + ".expected.json" for p in outputs} == {p.name for p in directory.glob("*.expected.json")}
     for path in outputs:
@@ -143,20 +200,22 @@ def verify(directory, fixture_path=None):
         # Filename syntax is checked through expected_names above; the snapshot
         # index is directly before the final snapshot suffix.
         index = int(fields[-2])
-        independent = [list(row) for row in fixture["rows"]]
-        if index == 0:
-            if "restart-reopen" in path.name:
-                independent[-1][0] = "history-two雪&<>"
-        elif index == snapshots - 1:
-            independent[-1][0] = "history-two雪&<>"
-        else:
-            independent[-1][0] = "history-one雪&<>"
+        phase = "restart-reopen" if "-restart-reopen-" in path.name else "save"
+        independent = mvp_snapshot(fixture["rows"], phase, index) if mvp else [list(row) for row in fixture["rows"]]
+        if not mvp:
+            if index == 0:
+                if "restart-reopen" in path.name:
+                    independent[-1][0] = HISTORY_TWO
+            elif index == snapshots - 1:
+                independent[-1][0] = HISTORY_TWO
+            else:
+                independent[-1][0] = HISTORY_ONE
         assert expected == independent, f"held expectation discrepancy {path}"
         # Output comparison below uses independent source plus explicit edits,
         # never accepting candidate-generated sidecars as the oracle itself.
         actual = list(csv.reader(io.StringIO(path.read_bytes().decode(), newline=""))) if path.suffix == ".csv" else parse_xlsx(path)
         assert actual == [fixture["headers"], *independent], f"independent all-cell export discrepancy {path}"
-    print(json.dumps({"verified_export_files": len(outputs), "cells_each": count * 3, "performance_qualification": False}))
+    print(json.dumps({"verified_export_files": len(outputs), "cells_each": count * 3, "mvp": mvp, "performance_qualification": False, "rss": "UNVERIFIED" if mvp else None}))
 
 if __name__ == "__main__":
     action, directory, *rest = sys.argv[1:]
@@ -164,7 +223,12 @@ if __name__ == "__main__":
         assert not rest
         generate(Path(directory))
     elif action == "verify":
-        assert len(rest) <= 1
-        verify(Path(directory), rest[0] if rest else None)
+        assert len(rest) <= 2, "unexpected verify arguments"
+        assert not rest or rest[0] != "--mvp", "--mvp must follow fixture_path"
+        mvp = len(rest) == 2 and rest[1] == "--mvp"
+        assert len(rest) < 2 or mvp, "unknown verify argument"
+        fixture_path = rest[0] if rest else None
+        assert not mvp or fixture_path is not None, "--mvp requires fixture_path"
+        verify(Path(directory), fixture_path, mvp)
     else:
         raise ValueError(action)

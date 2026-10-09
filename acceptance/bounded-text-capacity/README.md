@@ -14,6 +14,21 @@ URLs, exact Text timestamps, leading zeros, UTF-8, quotes, LF and embedded CRLF.
 Its manifest contains every expected cell. Python CSV/ZIP/ElementTree readback is
 independent of the Rust producer parsers and writers.
 
+The saved-import Worker keeps its existing compact/standard invocation and also
+accepts `--mvp` after its manifest argument. For the 8,406-row journey, pass the
+fixture `manifest.json` and `--mvp`; the independent export oracle uses the same
+fixture path followed by `--mvp`:
+
+```sh
+node packages/browser-client/e2e/saved-import-worker.mjs KIT FIXTURES NEW_CAPTURE manifest.json --mvp
+uv run --no-project python acceptance/bounded-text-capacity/saved_import_oracle.py verify NEW_CAPTURE FIXTURES/manifest.json --mvp
+```
+
+MVP mode records edit/Undo/Redo proofs for the fixed first, middle and last cell
+edits before its first snapshot, then verifies malformed and 8,407-row import
+refusals against the complete pre-refusal resident snapshot. Browser timing and
+runtime metadata are observations; RSS remains explicitly unverified.
+
 | Requirement | Executable case |
 | --- | --- |
 | CSV/XLSX and old size landmarks | Native `run` and Worker import: 8/64/65/128/129/1024/1025/8406 rows |
