@@ -814,7 +814,7 @@ fn roproj_canonicalize_rejects_an_output_identical_to_its_source() {
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("overlaps source"));
     assert_eq!(snapshot_tree_topology(&input), source_before);
-    assert!(staging_entries(temp.path()).is_empty());
+    assert_eq!(staging_entries(temp.path()), [] as [PathBuf; 0]);
 }
 
 #[test]

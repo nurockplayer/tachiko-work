@@ -184,3 +184,24 @@ Deeper authority: [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md),
 the [Semantic API specification](../specs/semantic-api.md), and the
 [frontend/runtime boundary](../architecture/frontend-backend-boundary.md).
+
+### Builds behind an existing HTTP proxy
+
+The exporter isolates package and compiler configuration. On a host whose
+approved network transport requires an existing HTTP proxy, set
+`TACHIKO_EXPORT_INHERIT_PROXY=1` for the export command. This opt-in preserves
+only `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and their lowercase equivalents,
+with the caller's existing values. The default (`0` or unset) passes none.
+It does not select a new proxy, import package-manager configuration, change
+certificate trust, or disable locked-install and supply-chain verification.
+Do not print proxy values in build logs. This option does not make a build
+on a different host qualify as reference-host performance evidence.
+
+If that existing proxy also requires the CA file already configured in the
+caller's `NODE_EXTRA_CA_CERTS`, separately set `TACHIKO_EXPORT_INHERIT_CA=1`.
+The file must be an existing readable absolute file path. The exporter passes
+that exact path to Node as `NODE_EXTRA_CA_CERTS` and Cargo as `CARGO_HTTP_CAINFO`.
+It does not download a CA, modify the system trust store, or inherit TLS-disable
+switches. Missing or invalid paths refuse before package execution. Unset or
+`0` keeps CA overrides excluded; any other opt-in value refuses. Only use this
+option for a CA file whose existing trust and provenance have been verified.

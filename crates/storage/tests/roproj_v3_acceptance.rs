@@ -279,7 +279,10 @@ fn none_and_number_range_tags_have_fixed_version_owned_bytes() {
 #[test]
 fn all_constraint_tags_date_formulas_and_stable_ids_roundtrip_without_reinterpretation() {
     let original = fixture();
-    assert!(tachiko_semantic_core::validate_document(&original).is_empty());
+    assert_eq!(
+        tachiko_semantic_core::validate_document(&original).as_slice(),
+        []
+    );
     let tree = encode_roproj_v3(&original).unwrap();
     let decoded = decode_roproj_v3(&tree).unwrap();
     assert_eq!(decoded, original);

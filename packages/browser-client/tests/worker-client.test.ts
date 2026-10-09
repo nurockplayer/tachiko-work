@@ -110,3 +110,25 @@ describe("Designer canonical and portable storage bridge", () => {
     });
   });
 });
+
+
+describe("selected v3 Worker export", () => {
+  it("sends the exact revision through the selected opaque export request", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const bytes = new Uint8Array([1, 2, 3]).buffer;
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: { id: number; kind: string; expected_revision: string }) => {
+        expect(request.kind).toBe("export_project_v3");
+        expect(request.expected_revision).toBe("resident/17");
+        receive?.({ data: { id: request.id, status: "project_exported",
+          export: { revision: "resident/17", bytes } } } as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    expect(await client.exportProjectV3("resident/17")).toEqual({ revision: "resident/17", bytes });
+  });
+});

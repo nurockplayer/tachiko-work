@@ -6,6 +6,27 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The experimental browser producer admits a bounded 8,406-row, three-Text
+  table through import, scalar edits and history, project save/reopen and both
+  CSV/XLSX exports. Complete projections and metadata use private finite
+  budgets; generic tables, formulas and hostile-file defenses retain their
+  existing limits. See the producer's capacity contract for the exact profile.
+
+- Saved spreadsheet carriers have metadata-aware native
+  `open_imported_project` and optional Worker `openImportedProject` routes.
+  Actual open independently revalidates mappings, XLSX/CSV closure and the
+  complete reply before replacement; inspection does not authorize open and
+  there is no ordinary-open fallback. Eligible non-v3 Text candidates may use
+  the capacity profile, while v3 retains strict ordinary admission and origin
+  behavior. Enlarged Text-capacity Deduplicate removals refuse before
+  publication. Producer qualification remains pending; no immutable kit or
+  consumer pin is qualified by this entry.
+
+- The experimental browser client can explicitly export opaque `.roproj/v3`
+  projects with Date and saved grouped-sum definitions together, then reopen
+  them through existing project operations. V3-opened occurrences require the
+  explicit export method for saves; rollback must retain a v3-capable reader.
+
 - Rust workspace callers can explicitly select the in-process
   `tachiko.semantic-conflict/v2` merge preview. It adds atomic field-constraint
   conflict facts and validates unchanged keyed grouped-sum bindings for each

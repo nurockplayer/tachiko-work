@@ -160,7 +160,7 @@ fn unchanged_equal_and_one_sided_constraints_produce_canonical_v2_delta() {
     let unchanged = merged(&base, &base, &base);
     assert_eq!(unchanged.document, base);
     assert_eq!(unchanged.delta.contract(), "tachiko.semantic-delta/v2");
-    assert!(unchanged.delta.facts().is_empty());
+    assert_eq!(unchanged.delta.facts(), []);
 
     let mut changed = base.clone();
     set_constraint(&mut changed, range(10.0));
@@ -415,7 +415,7 @@ fn invalid_inputs_preserve_each_role_and_complete_shared_diagnostics() {
     let mut invalid = base.clone();
     set_constraint(&mut invalid, range(1.0));
     let expected = validation_report(&invalid).stable_observations();
-    assert!(!expected.is_empty());
+    assert_ne!(expected.as_slice(), []);
     for (a, b, c, expected_role) in [
         (&invalid, &base, &base, ValidationRole::MergeBase),
         (&base, &invalid, &base, ValidationRole::MergeOurs),
@@ -546,5 +546,5 @@ fn explicit_v2_preview_does_not_reinterpret_frozen_v1_entry() {
     ));
     let result = merged(&constrained, &constrained, &constrained);
     assert_eq!(result.document, constrained);
-    assert!(result.delta.facts().is_empty());
+    assert_eq!(result.delta.facts(), []);
 }

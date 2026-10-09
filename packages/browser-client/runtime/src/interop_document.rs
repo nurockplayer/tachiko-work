@@ -67,6 +67,11 @@ impl DesignerRuntime {
         operation: &CleanupOperation,
     ) -> Result<CleanupPreview, DesignerError> {
         self.check_revision(expected_revision)?;
+        if self.text_capacity && matches!(operation, CleanupOperation::Deduplicate { .. }) {
+            return Err(tracker_error(
+                "capacity Text projects cannot deduplicate rows",
+            ));
+        }
         self.prepare_cleanup(expected_revision, operation)
     }
 }
@@ -798,27 +803,108 @@ pub fn import_workbook(
         let revision = runtime.current_revision().to_owned();
         runtime.update_formula(&revision, &field_target(&next), &source)?;
     }
-    let runtime = DesignerRuntime::from_document(
-        runtime.session.export_snapshot().document().clone(),
-        occurrence_id,
-    )?;
+    let document = runtime.session.export_snapshot().into_document();
+    // The temporary occurrence has finished binding formulas. Its detached
+    // snapshot owns the complete document; release the old runtime before
+    // validating and projecting the final occurrence.
+    drop(runtime);
+    let runtime = DesignerRuntime::from_document(document, occurrence_id)?;
+    if runtime.text_capacity && !super::interop_adapter::text_capacity_shape(workbook) {
+        return Err(tracker_error(
+            "Text capacity requires the complete original source profile",
+        ));
+    }
     validate_import_metadata(runtime.session.export_snapshot().document(), &metadata)?;
+    finish_import(runtime, workbook, metadata, ledger, occurrence_id)
+}
+
+fn finish_import(
+    mut runtime: DesignerRuntime,
+    workbook: &SourceWorkbook,
+    metadata: InteropMetadata,
+    mut ledger: Vec<FidelityFinding>,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, ImportedProjection), DesignerError> {
     // Admission covers the final typed candidate, including user-added columns
     // and bound formulas. Reuse the same representation proof as saved-project
     // inspection and export before exposing or installing this occurrence.
-    runtime.export_workbook(runtime.current_revision(), &metadata)?;
+    let exported = match runtime.export_workbook(runtime.current_revision(), &metadata) {
+        Ok(exported) => exported,
+        Err(error)
+            if !runtime.text_capacity && super::interop_adapter::text_capacity_shape(workbook) =>
+        {
+            let candidate = DesignerRuntime::from_document_profile(
+                runtime.session.export_snapshot().into_document(),
+                occurrence_id,
+                true,
+            )?;
+            let exported = candidate
+                .export_workbook(candidate.current_revision(), &metadata)
+                .map_err(|_| error)?;
+            runtime = candidate;
+            exported
+        }
+        Err(error) => return Err(error),
+    };
+    if runtime.text_capacity {
+        let encoded =
+            super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
+                .map_err(|error| tracker_error(&error.0))?;
+        super::interop_adapter::import_xlsx(&encoded).map_err(|error| tracker_error(&error.0))?;
+        super::interop_adapter::export_csv_for_profile(
+            &exported.sheets[0],
+            OutputProfile::TextCapacity,
+        )
+        .map_err(|error| tracker_error(&error.0))?;
+    }
+    drop(exported);
     let bootstrap = runtime.bootstrap_projection();
     let table = runtime.query_table(&bootstrap.default_collection)?;
     ledger.push(FidelityFinding {
         category: FidelityCategory::Converted, code: "stable_reference_binding".into(), location: "workbook".into(),
         message: "Worksheet coordinates and selected types were accepted as stable semantic identities; formula export uses absolute references to those identities.".into(), blocking: false,
     });
-    let projection = ImportedProjection {
+    let mut projection = ImportedProjection {
         opened: OpenedProjection { bootstrap, table },
         metadata,
         ledger,
     };
-    ensure_projection_size(&projection)?;
+    if runtime.text_capacity {
+        super::ensure_complete_projection_size(
+            "imported",
+            &projection,
+            super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+        )?;
+    } else if let Err(original_error) =
+        super::ensure_complete_projection_size("imported", &projection, super::MAX_PROJECTION_BYTES)
+    {
+        // Promotion is candidate-local and requires complete actual source
+        // presentation. A generic import that already fits keeps its profile.
+        if !super::interop_adapter::text_capacity_shape(workbook) {
+            return Err(original_error);
+        }
+        let candidate = DesignerRuntime::from_document_profile(
+            runtime.session.export_snapshot().into_document(),
+            occurrence_id,
+            true,
+        )?;
+        let exported =
+            candidate.export_workbook(candidate.current_revision(), &projection.metadata)?;
+        let bytes =
+            super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
+                .map_err(|error| tracker_error(&error.0))?;
+        super::interop_adapter::import_xlsx(&bytes).map_err(|error| tracker_error(&error.0))?;
+        projection.opened = OpenedProjection {
+            bootstrap: candidate.bootstrap_projection(),
+            table: candidate.query_table(&candidate.default_collection)?,
+        };
+        super::ensure_complete_projection_size(
+            "imported",
+            &projection,
+            super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+        )?;
+        runtime = candidate;
+    }
     Ok((runtime, projection))
 }
 
@@ -826,6 +912,19 @@ fn validate_selection(
     workbook: &SourceWorkbook,
     selection: &ImportSelection,
 ) -> Result<(), DesignerError> {
+    let capacity = workbook
+        .sheets
+        .iter()
+        .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS);
+    if capacity
+        && (!super::interop_adapter::text_capacity_shape(workbook)
+            || selection.column_types != vec![vec![ImportFieldType::Text; 3]]
+            || selection.extra_columns != vec![Vec::new()])
+    {
+        return Err(tracker_error(
+            "8,406-row capacity requires three selected Text fields and no extra columns",
+        ));
+    }
     if workbook.ledger.iter().any(|finding| finding.blocking) {
         return Err(tracker_error("blocking fidelity findings prevent import"));
     }
@@ -845,7 +944,12 @@ fn validate_selection(
         if !names.insert(sheet.name.to_ascii_lowercase())
             || sheet.columns.is_empty()
             || sheet.columns.len() + selection.extra_columns[index].len() > MAX_COLUMNS
-            || sheet.rows.len() > MAX_DATA_ROWS
+            || sheet.rows.len()
+                > if capacity {
+                    super::interop_adapter::MAX_TEXT_CAPACITY_ROWS
+                } else {
+                    MAX_DATA_ROWS
+                }
             || selection.column_types[index].len() != sheet.columns.len()
         {
             return Err(tracker_error(
@@ -1238,16 +1342,7 @@ pub fn validate_import_metadata(
     document: &Document,
     metadata: &InteropMetadata,
 ) -> Result<(), DesignerError> {
-    if metadata.version != 1
-        || metadata.sheets.is_empty()
-        || metadata.sheets.len() > MAX_SHEETS
-        || metadata.sheets.len() != document.schemas.len()
-    {
-        return Err(tracker_error(
-            "interop metadata version or worksheet count is invalid",
-        ));
-    }
-    ensure_projection_size(metadata)?;
+    let capacity = validate_metadata_envelope(document, metadata)?;
     let mut schemas = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut rows = BTreeSet::new();
@@ -1265,7 +1360,12 @@ pub fn validate_import_metadata(
         if sheet.columns.is_empty()
             || sheet.columns.len() > MAX_COLUMNS
             || sheet.columns.len() != schema.fields.len()
-            || sheet.rows.len() > MAX_DATA_ROWS
+            || sheet.rows.len()
+                > if capacity {
+                    super::interop_adapter::MAX_TEXT_CAPACITY_ROWS
+                } else {
+                    MAX_DATA_ROWS
+                }
         {
             return Err(tracker_error(
                 "interop row/column mappings exceed bounds or omit declared fields",
@@ -1329,6 +1429,98 @@ pub fn validate_import_metadata(
     Ok(())
 }
 
+fn validate_metadata_envelope(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> Result<bool, DesignerError> {
+    let capacity =
+        super::is_text_capacity_document(document) && document.entities.len() > MAX_DATA_ROWS;
+    if metadata.version != 1
+        || metadata.sheets.is_empty()
+        || metadata.sheets.len() > MAX_SHEETS
+        || metadata.sheets.len() != document.schemas.len()
+    {
+        return Err(tracker_error(
+            "interop metadata version or worksheet count is invalid",
+        ));
+    }
+    super::ensure_projection_size_with_limit(
+        metadata,
+        if capacity {
+            3 * 1024 * 1024
+        } else {
+            super::MAX_PROJECTION_BYTES
+        },
+    )?;
+    if capacity {
+        validate_capacity_metadata(document, metadata)?;
+    }
+    Ok(capacity)
+}
+
+fn validate_capacity_metadata(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> Result<(), DesignerError> {
+    let sheet = metadata
+        .sheets
+        .first()
+        .ok_or_else(|| tracker_error("capacity metadata sheet is missing"))?;
+    let schema = document
+        .schemas
+        .values()
+        .next()
+        .ok_or_else(|| tracker_error("capacity schema is missing"))?;
+    if metadata.sheets.len() != 1
+        || !sheet
+            .rows
+            .iter()
+            .map(|row| row.entity_id.as_str())
+            .eq(document.entities.keys().map(EntityId::as_str))
+        || !sheet
+            .columns
+            .iter()
+            .map(|column| column.field_id.as_str())
+            .eq(schema.fields.keys().map(FieldId::as_str))
+    {
+        return Err(tracker_error(
+            "capacity metadata must preserve canonical row and column identity order",
+        ));
+    }
+    if !sheet.has_header
+        || sheet.columns.len() != 3
+        || sheet.columns.iter().any(|column| column.width.is_some())
+        || sheet.rows.iter().any(|row| {
+            row.styles
+                .iter()
+                .any(|style| *style != CellStyle::default())
+        })
+    {
+        return Err(tracker_error(
+            "capacity metadata requires a header, no widths and default styles",
+        ));
+    }
+    let header = SourceSheet {
+        name: sheet.name.clone(),
+        has_header: true,
+        columns: sheet
+            .columns
+            .iter()
+            .map(|column| SourceColumn {
+                name: column.name.clone(),
+                width: None,
+            })
+            .collect(),
+        rows: Vec::new(),
+    };
+    let workbook = SourceWorkbook {
+        sheets: vec![header],
+        ledger: Vec::new(),
+    };
+    super::interop_adapter::validate_text_capacity(&workbook)
+        .map_err(|error| tracker_error(&error.0))
+}
+
 impl DesignerRuntime {
     /// Rebuild source workbook values and formulas from the exact live snapshot.
     ///
@@ -1343,7 +1535,19 @@ impl DesignerRuntime {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
         validate_import_metadata(snapshot.document(), metadata)?;
-        self.export_workbook_from_metadata(expected_revision, metadata, OutputProfile::Shared)
+        if self.text_capacity {
+            validate_capacity_metadata(snapshot.document(), metadata)?;
+        }
+        self.export_workbook_from_metadata(
+            expected_revision,
+            snapshot.document(),
+            metadata,
+            if self.text_capacity {
+                OutputProfile::TextCapacity
+            } else {
+                OutputProfile::Shared
+            },
+        )
     }
 
     /// Export the one stock Tracker profile without fabricating import provenance.
@@ -1365,6 +1569,7 @@ impl DesignerRuntime {
         let metadata = native_tracker_metadata(snapshot.document(), presentation)?;
         self.export_workbook_from_metadata(
             expected_revision,
+            snapshot.document(),
             &metadata,
             OutputProfile::NativeTracker,
         )
@@ -1388,7 +1593,13 @@ impl DesignerRuntime {
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         let metadata = native_budget_metadata(self, presentation)?;
-        self.export_workbook_from_metadata(expected_revision, &metadata, OutputProfile::Shared)
+        let snapshot = self.session.export_snapshot();
+        self.export_workbook_from_metadata(
+            expected_revision,
+            snapshot.document(),
+            &metadata,
+            OutputProfile::Shared,
+        )
     }
 
     /// Export only the active native Budget view as calculated scalar values.
@@ -1461,14 +1672,21 @@ impl DesignerRuntime {
     fn export_workbook_from_metadata(
         &self,
         expected_revision: &str,
+        document: &Document,
         metadata: &InteropMetadata,
         profile: OutputProfile,
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
-        let snapshot = self.session.export_snapshot();
-        let document = snapshot.document();
+        // The caller holds the exact immutable snapshot already used for
+        // metadata admission. No second owned document is needed here.
         let mut addresses = BTreeMap::new();
-        for sheet in &metadata.sheets {
+        // Capacity admission excludes formulas, the sole consumers of A1
+        // addresses. Other profiles retain their full reference index.
+        for sheet in metadata
+            .sheets
+            .iter()
+            .filter(|_| profile != OutputProfile::TextCapacity)
+        {
             let present = sheet.rows.iter().filter(|row| {
                 document
                     .entities
@@ -2014,9 +2232,42 @@ pub fn inspect_imported_project(
     input: &[u8],
     metadata: &InteropMetadata,
 ) -> Result<OpenedProjection, DesignerError> {
-    let (candidate, opened) = super::admit_project(input, PREFLIGHT_OCCURRENCE)?;
-    candidate.export_workbook(candidate.current_revision(), metadata)?;
-    Ok(opened)
+    inspect_imported_project_with_profile(input, metadata).map(|(opened, _)| opened)
+}
+
+pub(crate) fn inspect_imported_project_with_profile(
+    input: &[u8],
+    metadata: &InteropMetadata,
+) -> Result<(OpenedProjection, bool), DesignerError> {
+    let (candidate, opened) = super::admit_imported_project(input, PREFLIGHT_OCCURRENCE, metadata)?;
+    Ok((opened, candidate.text_capacity))
+}
+
+pub(crate) fn validate_saved_open_closure(
+    candidate: &DesignerRuntime,
+    metadata: &InteropMetadata,
+) -> Result<(), DesignerError> {
+    let workbook = candidate.export_workbook(candidate.current_revision(), metadata)?;
+    let profile = if candidate.text_capacity {
+        OutputProfile::TextCapacity
+    } else {
+        OutputProfile::Shared
+    };
+    let encoded = super::interop_adapter::export_xlsx_for_profile(&workbook, profile)
+        .map_err(|error| tracker_error(&error.0))?;
+    super::interop_adapter::import_xlsx(&encoded).map_err(|error| tracker_error(&error.0))?;
+    for sheet in &workbook.sheets {
+        super::interop_adapter::export_csv_for_profile(sheet, profile)
+            .map_err(|error| tracker_error(&error.0))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_saved_open_capacity_metadata(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> Result<(), DesignerError> {
+    validate_capacity_metadata(document, metadata)
 }
 
 fn column_letters(mut index: usize) -> String {

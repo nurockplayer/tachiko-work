@@ -154,8 +154,8 @@ fn formula_reasoning_returns_bound_meaning_dependencies_dependents_and_validatio
             FieldRef::new("iron_sword", "damage"),
         ]
     );
-    assert!(facts.direct_dependents.is_empty());
-    assert!(facts.affected_subjects.is_empty());
+    assert_eq!(facts.direct_dependents.as_slice(), []);
+    assert_eq!(facts.affected_subjects.as_slice(), []);
     assert_eq!(
         facts.calculation,
         FormulaCalculationOutcome::Value(Number::new(40.0).unwrap())
@@ -398,7 +398,7 @@ fn scenario_without_source_query_returns_no_evaluated_source_context() {
         error,
         FormulaOperationError::Lifecycle(PatchLifecycleError::DisclosureDenied)
     ));
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
 }
 
 #[test]
@@ -978,7 +978,7 @@ fn formula_update_admission_and_gate_failures_preserve_proposal_boundary() {
         PatchLifecycleError::ValidationFailed { .. }
     ));
     assert!(lifecycle.proposal_history(&cycle_id).is_ok());
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
     assert_eq!(document, game_balance_document("game", "Game"));
 }
 
@@ -1083,7 +1083,7 @@ fn formula_inverse_restore_keeps_stale_denied_and_nonformula_attempts_nonpublish
             if matches!(*source, WorkspaceError::NotFormula { .. })
     ));
     assert_missing_proposal(&lifecycle, &nonformula_id);
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
     assert_eq!(document, original);
 }
 
@@ -1122,7 +1122,7 @@ fn propose_without_query_reveals_nothing_and_issues_no_formula_proposal() {
         .unwrap_err();
 
     assert!(matches!(error, PatchLifecycleError::DisclosureDenied));
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
     assert!(matches!(
         lifecycle.proposal_history(&proposal_id),
         Err(PatchLifecycleError::ProposalNotFound)
@@ -1386,7 +1386,7 @@ fn scenario_source_cycle_returns_structured_formula_failure_without_mutation() {
         )
     ));
     assert_eq!(document, original);
-    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(lifecycle.execution_receipts(), []);
 }
 
 #[test]

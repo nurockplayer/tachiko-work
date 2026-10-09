@@ -244,7 +244,7 @@ fn malformed_incomplete_stale_and_duplicate_additions_leave_no_history_entry() {
         &json!({"type":"undo","expected_revision":before.revision}),
     );
     let undone = table(&mut runtime, &before.collection.id);
-    assert!(undone.rows.is_empty());
+    assert_eq!(undone.rows.as_slice(), []);
     assert_eq!(undone.columns, before.columns);
 }
 

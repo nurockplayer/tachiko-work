@@ -19,6 +19,7 @@ type DesignerWasmExports = {
   tachiko_designer_project_inspect(): void;
   tachiko_designer_spreadsheet_run(): void;
   tachiko_designer_project_export(): void;
+  tachiko_designer_project_export_v3(): void;
   tachiko_designer_canonical_tree_export(): void;
   tachiko_designer_portable_ro_export(): void;
   tachiko_designer_portable_ro_verify(): void;
@@ -31,6 +32,7 @@ type DesignerWasmExports = {
 };
 
 const MAX_WIRE_REQUEST_BYTES = 65_536;
+const MAX_METADATA_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
 
 export type DesignerWasmBridge = {
@@ -40,6 +42,9 @@ export type DesignerWasmBridge = {
   openProject(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
   openLocalDocument(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
   exportProject(expectedRevision: string):
+    | { status: "ok"; export: ProjectExport }
+    | Extract<DesignerWireReply, { status: "error" }>;
+  exportProjectV3(expectedRevision: string):
     | { status: "ok"; export: ProjectExport }
     | Extract<DesignerWireReply, { status: "error" }>;
   exportCanonicalTree(expectedRevision: string):
@@ -66,8 +71,8 @@ export async function createDesignerWasmBridge(
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
-  const writeRequest = (input: Uint8Array): boolean => {
-    if (input.length > MAX_WIRE_REQUEST_BYTES) return false;
+  const writeRequest = (input: Uint8Array, maximum = MAX_WIRE_REQUEST_BYTES): boolean => {
+    if (input.length > maximum) return false;
     const requestPointer = exports.tachiko_designer_request_reserve(input.length);
     new Uint8Array(exports.memory.buffer, requestPointer, input.length).set(input);
     return true;
@@ -96,7 +101,9 @@ export async function createDesignerWasmBridge(
 
   return {
     spreadsheet: (operation, bytes) => {
-      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES || !writeRequest(encoder.encode(JSON.stringify(operation)))) {
+      const maximum = operation.type === "export" || operation.type === "inspect_project" || operation.type === "open_project"
+        ? MAX_METADATA_REQUEST_BYTES : MAX_WIRE_REQUEST_BYTES;
+      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES || !writeRequest(encoder.encode(JSON.stringify(operation)), maximum)) {
         return tooLargeReply("The spreadsheet request exceeds the private bridge limits.");
       }
       const pointer = exports.tachiko_designer_project_reserve(bytes.byteLength);
@@ -164,6 +171,41 @@ export async function createDesignerWasmBridge(
         return tooLargeReply("The expected revision exceeds the bridge limit.");
       }
       exports.tachiko_designer_project_export();
+      try {
+        const reply = readReply();
+        if (reply.status === "error") return reply;
+        if (reply.response.type !== "project_exported") {
+          throw new Error(
+            `Expected 'project_exported' response, received '${reply.response.type}'.`,
+          );
+        }
+        const pointer = exports.tachiko_designer_project_ptr();
+        const length = exports.tachiko_designer_project_len();
+        if (length !== reply.response.payload.byte_length) {
+          throw new Error("Designer project export length did not match its receipt.");
+        }
+        const projectBytes = new Uint8Array(
+          exports.memory.buffer,
+          pointer,
+          length,
+        ).slice();
+        return {
+          status: "ok",
+          export: {
+            revision: reply.response.payload.revision,
+            bytes: projectBytes.buffer,
+          },
+        };
+      } finally {
+        exports.tachiko_designer_project_release();
+      }
+    },
+    exportProjectV3: (expectedRevision) => {
+      const revision = encoder.encode(expectedRevision);
+      if (!writeRequest(revision)) {
+        return tooLargeReply("The expected revision exceeds the bridge limit.");
+      }
+      exports.tachiko_designer_project_export_v3();
       try {
         const reply = readReply();
         if (reply.status === "error") return reply;

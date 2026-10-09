@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createExperimentalDesignerClient,
   openCanonicalTreeFromEntries,
   type ExperimentalDesignerClient,
 } from "../src/experimental-client.ts";
@@ -62,4 +63,20 @@ describe("public canonical-entry preflight", () => {
     expect(openProject).not.toHaveBeenCalled();
     expect(resident).toBe("resident/0");
   });
+});
+
+
+it("exposes explicitly selected v3 export on the experimental entry", () => {
+  vi.stubGlobal("Worker", class {
+    addEventListener() {}
+    postMessage() {}
+    terminate() {}
+  });
+  try {
+    const client = createExperimentalDesignerClient();
+    expect(client.exportProjectV3).toBeTypeOf("function");
+    client.close();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

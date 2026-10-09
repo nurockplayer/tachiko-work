@@ -10,10 +10,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tachiko_storage::{
-    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2, FormatError,
-    ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, decode_portable_package_v1, decode_roproj_v1,
-    decode_roproj_v2, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2, from_bytes,
-    to_canonical_string,
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2,
+    CanonicalRoProjectV3, FormatError, ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, ROPROJ_V3_PATHS,
+    decode_portable_package_v1, decode_roproj_v1, decode_roproj_v2, encode_portable_package_v1,
+    encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
@@ -61,6 +61,10 @@ const MAX_FORMULAS: usize = 32;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
+pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 16 * 1024 * 1024;
+#[cfg(target_arch = "wasm32")]
+pub(crate) const MAX_SPREADSHEET_METADATA_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+const MAX_TEXT_CAPACITY_PROFILE_BYTES: usize = 4 * 1024 * 1024;
 // The stock Tracker's 128 fixed scalar rows carry repeated field projections
 // and may contain one bounded collection of Text. This is a private delivery
 // profile, derived from the existing two 64 KiB input/profile budgets; generic
@@ -705,6 +709,7 @@ impl DesignerError {
 
 /// One Rust-authoritative occurrence composed for the experimental browser client.
 pub struct DesignerRuntime {
+    text_capacity: bool,
     title: String,
     document_scope: DocumentScopeId,
     default_collection: String,
@@ -722,6 +727,7 @@ pub struct DesignerRuntime {
     redo: Vec<HistoryEntry>,
     pending_cleanup: Option<PendingCleanup>,
     duplicate_serial: usize,
+    opened_from_v3: bool,
 }
 
 #[derive(Clone)]
@@ -782,7 +788,44 @@ impl DesignerRuntime {
     /// Returns an app-profile or shared workspace failure before any existing
     /// occurrence is replaced.
     pub fn from_document(document: Document, occurrence_id: &str) -> Result<Self, DesignerError> {
-        ensure_cheap_document_profile(&document)?;
+        // Prefer the existing profile whenever it completely admits the input.
+        // Only an actual three-Text document can retry with the private budget.
+        if is_text_capacity_document(&document) {
+            if document.entities.len() <= MAX_TABLE_ROWS {
+                if let Ok(runtime) =
+                    Self::from_document_profile(document.clone(), occurrence_id, false)
+                {
+                    return Ok(runtime);
+                }
+            }
+            return Self::from_document_profile(document, occurrence_id, true);
+        }
+        let (runtime, opened) =
+            Self::from_document_profile_with_opened(document, occurrence_id, false)?;
+        ensure_opened_projection_size(&opened, false)?;
+        Ok(runtime)
+    }
+
+    fn from_document_profile(
+        document: Document,
+        occurrence_id: &str,
+        text_capacity: bool,
+    ) -> Result<Self, DesignerError> {
+        let (runtime, opened) =
+            Self::from_document_profile_with_opened(document, occurrence_id, text_capacity)?;
+        ensure_opened_wire_projection_size(&opened, text_capacity)?;
+        Ok(runtime)
+    }
+
+    fn from_document_profile_with_opened(
+        document: Document,
+        occurrence_id: &str,
+        text_capacity: bool,
+    ) -> Result<(Self, OpenedProjection), DesignerError> {
+        ensure_document_profile(&document, text_capacity)?;
+        if text_capacity {
+            ensure_capacity_document_encoding(&document)?;
+        }
         validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
         let collection_specs = collection_specs(&document);
         let default_collection = select_default_collection(&collection_specs)?;
@@ -792,12 +835,19 @@ impl DesignerRuntime {
             .collect::<Vec<_>>();
         let title = document.title.clone();
         let document_scope = document_scope(occurrence_id, &document)?;
-        ensure_static_profile(&title, &default_collection, &collections, &collection_specs)?;
+        ensure_static_profile(
+            &title,
+            &default_collection,
+            &collections,
+            &collection_specs,
+            text_capacity,
+        )?;
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
+            text_capacity,
             title,
             document_scope,
             default_collection,
@@ -815,9 +865,14 @@ impl DesignerRuntime {
             redo: Vec::new(),
             pending_cleanup: None,
             duplicate_serial: 0,
+            opened_from_v3: false,
         };
         runtime.ensure_supported_project()?;
-        Ok(runtime)
+        let opened = OpenedProjection {
+            bootstrap: runtime.bootstrap_projection(),
+            table: runtime.query_table(&runtime.default_collection)?,
+        };
+        Ok((runtime, opened))
     }
 
     /// Execute one private adapter request without exposing the canonical document.
@@ -834,7 +889,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table("tracker")?,
                 };
-                ensure_opened_projection_size(&opened)?;
+                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -844,7 +899,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
                 };
-                ensure_opened_projection_size(&opened)?;
+                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -858,7 +913,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
                 };
-                ensure_opened_projection_size(&opened)?;
+                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -1045,14 +1100,17 @@ impl DesignerRuntime {
             revision: self.session.revision().as_str().to_owned(),
             default_collection: self.default_collection.clone(),
             collections: self.collections.clone(),
-            keyed_grouped_sum_definition_ids: self
-                .session
-                .export_snapshot()
-                .document()
-                .keyed_grouped_sum_definitions
-                .keys()
-                .map(ToString::to_string)
-                .collect(),
+            keyed_grouped_sum_definition_ids: if self.text_capacity {
+                Vec::new()
+            } else {
+                self.session
+                    .export_snapshot()
+                    .document()
+                    .keyed_grouped_sum_definitions
+                    .keys()
+                    .map(ToString::to_string)
+                    .collect()
+            },
         }
     }
 
@@ -1147,7 +1205,7 @@ impl DesignerRuntime {
             // publication. Its fixed scalar columns have no formulas, so the
             // generic all-editable-fields refresh is neither reachable nor a
             // valid capacity model for this profile.
-            if table.tracker_profile == Some(true) {
+            if table.tracker_profile == Some(true) || self.text_capacity {
                 continue;
             }
             post_edit_fields.extend(
@@ -1198,6 +1256,12 @@ impl DesignerRuntime {
                 current: current.to_owned(),
             });
         }
+        if self.opened_from_v3 {
+            return Err(DesignerError::UnsupportedProject {
+                message: "This occurrence was opened from .roproj/v3; use explicit v3 export."
+                    .to_owned(),
+            });
+        }
         let snapshot = self.session.export_snapshot();
         let bytes = if document_contains_date(snapshot.document()) {
             encode_project_record_v2(snapshot.document())?
@@ -1208,6 +1272,30 @@ impl DesignerRuntime {
             let tree = encode_roproj_v1(snapshot.document())?;
             encode_project_bundle_v1(&tree)?
         };
+        Ok(ProjectExport {
+            revision: snapshot.revision().as_str().to_owned(),
+            bytes,
+        })
+    }
+
+    /// Export the selected canonical v3 snapshot after equivalent fresh admission.
+    ///
+    /// # Errors
+    /// Returns revision, capability, storage, resource or fresh-projection failures
+    /// without changing the resident occurrence or its history.
+    pub fn export_project_v3(
+        &self,
+        expected_revision: &str,
+    ) -> Result<ProjectExport, DesignerError> {
+        let snapshot = self.exact_snapshot(expected_revision)?;
+        ensure_v3_capabilities(snapshot.document())?;
+        // V3 always uses the strict original profile. The non-v3 capacity
+        // retry is intentionally not an export or re-admission capability.
+        ensure_document_profile(snapshot.document(), false)?;
+        let tree = encode_roproj_v3(snapshot.document())?;
+        let bytes =
+            encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?;
+        admit_project(&bytes, PREFLIGHT_OCCURRENCE)?;
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
@@ -1276,51 +1364,68 @@ impl DesignerRuntime {
     }
 
     fn query_table(&self, collection: &str) -> Result<TableProjection, DesignerError> {
+        let projection = self.build_table_projection(collection)?;
+        if self.text_capacity {
+            ensure_complete_projection_size(
+                "table",
+                &projection,
+                MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+            )?;
+        } else {
+            ensure_table_projection_size(&projection)?;
+        }
+        Ok(projection)
+    }
+
+    fn build_table_projection(&self, collection: &str) -> Result<TableProjection, DesignerError> {
         let spec = self.collection_spec(collection)?;
-        if spec.columns.len() > MAX_TABLE_FIELDS || spec.entities.len() > MAX_TABLE_ROWS {
+        if spec.columns.len() > MAX_TABLE_FIELDS || spec.entities.len() > self.max_table_rows() {
             return Err(DesignerError::CollectionTooLarge {
                 collection: collection.to_owned(),
             });
         }
 
         let entities = self.session.query_entities(&spec.entities)?;
-        let targets = entities
-            .value()
-            .iter()
-            .flat_map(|entity| {
-                spec.columns
-                    .iter()
-                    .filter(|column| entity.fields.contains(&column.id))
-                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
-            })
-            .collect::<Vec<_>>();
-        let field_query = self.session.query_fields(&targets)?;
-        let fields = field_query
-            .value()
-            .iter()
-            .map(|field| (field.field.clone(), self.project_field(field)))
-            .collect::<BTreeMap<_, _>>();
-        let rows = entities
-            .value()
-            .iter()
-            .map(|entity| RowProjection {
-                id: entity.id.to_string(),
-                key: entity.key.to_string(),
-                fields: spec
-                    .columns
-                    .iter()
-                    .filter_map(|column| {
-                        fields
-                            .get(&FieldRef::new(entity.id.clone(), column.id.clone()))
-                            .cloned()
-                    })
-                    .collect(),
-            })
-            .collect();
+        let rows = if self.text_capacity {
+            self.build_capacity_table_rows(spec, entities.value())?
+        } else {
+            let targets = entities
+                .value()
+                .iter()
+                .flat_map(|entity| {
+                    spec.columns
+                        .iter()
+                        .filter(|column| entity.fields.contains(&column.id))
+                        .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
+                })
+                .collect::<Vec<_>>();
+            let field_query = self.session.query_fields(&targets)?;
+            let fields = field_query
+                .value()
+                .iter()
+                .map(|field| (field.field.clone(), self.project_field(field)))
+                .collect::<BTreeMap<_, _>>();
+            entities
+                .value()
+                .iter()
+                .map(|entity| RowProjection {
+                    id: entity.id.to_string(),
+                    key: entity.key.to_string(),
+                    fields: spec
+                        .columns
+                        .iter()
+                        .filter_map(|column| {
+                            let target = FieldRef::new(entity.id.clone(), column.id.clone());
+                            fields.get(&target).cloned()
+                        })
+                        .collect(),
+                })
+                .collect()
+        };
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
-            revision: field_query.revision().as_str().to_owned(),
+            revision: entities.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: spec
                 .columns
@@ -1335,8 +1440,47 @@ impl DesignerRuntime {
                 .collect(),
             rows,
         };
-        ensure_table_projection_size(&projection)?;
         Ok(projection)
+    }
+
+    fn build_capacity_table_rows(
+        &self,
+        spec: &CollectionSpec,
+        entities: &[tachiko_workspace_engine::EntityInspection],
+    ) -> Result<Vec<RowProjection>, DesignerError> {
+        // The full entity query has already succeeded. With only an immutable
+        // resident borrow, every row query observes that same revision. Keep
+        // at most one row's owned field observations alive alongside the final
+        // table, rather than another whole table and a field-keyed index.
+        let mut rows = Vec::with_capacity(entities.len());
+        let mut targets = Vec::with_capacity(spec.columns.len());
+        for entity in entities {
+            targets.clear();
+            targets.extend(
+                spec.columns
+                    .iter()
+                    .filter(|column| entity.fields.contains(&column.id))
+                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone())),
+            );
+            let field_query = self.session.query_fields(&targets)?;
+            let fields = spec
+                .columns
+                .iter()
+                .filter_map(|column| {
+                    field_query
+                        .value()
+                        .iter()
+                        .find(|field| field.field.field == column.id)
+                        .map(|field| self.project_field(field))
+                })
+                .collect();
+            rows.push(RowProjection {
+                id: entity.id.to_string(),
+                key: entity.key.to_string(),
+                fields,
+            });
+        }
+        Ok(rows)
     }
 
     fn project_field(
@@ -1400,7 +1544,7 @@ impl DesignerRuntime {
                 .map(|field| self.project_field(field))
                 .collect(),
         };
-        ensure_projection_size(&projection)?;
+        ensure_complete_projection_size("fields", &projection, MAX_PROJECTION_BYTES)?;
         Ok(projection)
     }
 
@@ -1884,7 +2028,11 @@ impl DesignerRuntime {
             .get(command.target())
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
-        Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+        if self.opened_from_v3 {
+            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+        } else {
+            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+        }
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
             let mut publication = self.session.publication_authority(&mut self.clock);
@@ -1970,7 +2118,11 @@ impl DesignerRuntime {
             .get_mut(&field.entity)
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity.fields.insert(field.field, Value::Number(value));
-        Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+        if self.opened_from_v3 {
+            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+        } else {
+            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+        }
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
             let mut publication = self.session.publication_authority(&mut self.clock);
@@ -2126,7 +2278,8 @@ impl DesignerRuntime {
         commands: Vec<SemanticCommand>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
-        let mut candidate = self.session.export_snapshot().document().clone();
+        let snapshot = self.session.export_snapshot();
+        let mut candidate = snapshot.document().clone();
         for command in &commands {
             match command {
                 SemanticCommand::AppendCollection { schema, entities } => {
@@ -2227,12 +2380,60 @@ impl DesignerRuntime {
             }
         }
         if validate(&candidate).is_ok() {
-            Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+            if self.opened_from_v3 {
+                Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+            } else if self.text_capacity {
+                match commands.as_slice() {
+                    [
+                        SemanticCommand::SetFieldValue {
+                            field,
+                            value: Value::Text(value),
+                        },
+                    ] if matches!(
+                        snapshot
+                            .document()
+                            .entities
+                            .get(&field.entity)
+                            .and_then(|entity| entity.fields.get(&field.field)),
+                        Some(Value::Text(_))
+                    ) =>
+                    {
+                        self.preflight_capacity_scalar(&candidate, field, value)?;
+                    }
+                    _ => {
+                        Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, true)?;
+                    }
+                }
+            } else {
+                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
+            }
         }
-        let snapshot = self.session.export_snapshot();
+        let capacity_text_edit = self.text_capacity
+            && !commands.is_empty()
+            && commands.iter().all(|command| {
+                matches!(
+                    command,
+                    SemanticCommand::SetFieldValue {
+                        value: Value::Text(_),
+                        ..
+                    } | SemanticCommand::UnsetField { .. }
+                )
+            });
+        // Capacity Text human requests own their proposal evidence for this
+        // one call. Other command families retain the existing lifecycle.
+        let mut local_lifecycle = if capacity_text_edit {
+            Some(designer_lifecycle(
+                snapshot.document_scope(),
+                snapshot.document(),
+                &self.principal,
+            )?)
+        } else {
+            None
+        };
         let proposal_id = self.next_proposal_id()?;
         let body = SemanticPatchBody::atomic_batch(commands)?;
-        self.lifecycle.propose(
+        let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
+        lifecycle.propose(
             snapshot.document_scope(),
             snapshot.document(),
             snapshot.revision(),
@@ -2244,7 +2445,7 @@ impl DesignerRuntime {
             ),
             self.clock.tick(),
         )?;
-        self.lifecycle.preview(
+        lifecycle.preview(
             snapshot.document_scope(),
             snapshot.document(),
             snapshot.revision(),
@@ -2255,7 +2456,7 @@ impl DesignerRuntime {
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
             let mut publication = self.session.publication_authority(&mut self.clock);
-            let receipt = self.lifecycle.execute(
+            let receipt = lifecycle.execute(
                 &proposal_id,
                 None,
                 &self.principal,
@@ -2272,9 +2473,11 @@ impl DesignerRuntime {
                 .clone();
             (receipt, invalidation)
         };
-        self.refresh_structure();
-        if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
-            self.formula_sources = sources;
+        if !capacity_text_edit {
+            self.refresh_structure();
+            if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
+                self.formula_sources = sources;
+            }
         }
         Ok(PublicationProjection {
             base_revision: receipt.base_revision.as_str().to_owned(),
@@ -2293,6 +2496,41 @@ impl DesignerRuntime {
         })
     }
 
+    fn preflight_capacity_scalar(
+        &self,
+        candidate: &Document,
+        target: &FieldRef,
+        value: &str,
+    ) -> Result<(), DesignerError> {
+        // The encoder validates Text widths and both-format byte closure from
+        // one temporary workbook. Identity admission stays separate so this
+        // request does not build and scan that workbook twice.
+        ensure_capacity_document_identities(candidate)?;
+        ensure_capacity_document_encoding(candidate)?;
+        // Complete Opened below includes this entire Table and a larger
+        // envelope, so its one count also proves the Table response bound.
+        let mut table = self.build_table_projection(&self.default_collection)?;
+        let projected = table
+            .rows
+            .iter_mut()
+            .find(|row| row.id == target.entity.as_str())
+            .and_then(|row| {
+                row.fields
+                    .iter_mut()
+                    .find(|field| field.target.field == target.field.as_str())
+            })
+            .ok_or_else(|| {
+                tracker_error("capacity scalar target must be an existing Text field")
+            })?;
+        projected.stored = Some(StoredValueProjection::Text {
+            value: value.to_owned(),
+        });
+        ensure_capacity_opened_reply(&OpenedProjection {
+            bootstrap: self.bootstrap_projection(),
+            table,
+        })
+    }
+
     fn refresh_structure(&mut self) {
         self.collection_specs = collection_specs(self.session.export_snapshot().document());
         self.collections = self
@@ -2300,6 +2538,14 @@ impl DesignerRuntime {
             .values()
             .map(|spec| spec.summary.clone())
             .collect();
+    }
+
+    fn max_table_rows(&self) -> usize {
+        if self.text_capacity {
+            interop_adapter::MAX_TEXT_CAPACITY_ROWS
+        } else {
+            MAX_TABLE_ROWS
+        }
     }
 
     /// Create a bounded operational tracker using existing scalar schema authority.
@@ -2569,7 +2815,7 @@ impl DesignerRuntime {
         if edits.is_empty() || edits.len() > MAX_FIELD_QUERY_TARGETS {
             return Err(tracker_error("the edit range is empty or too large"));
         }
-        let snapshot = self.session.export_snapshot();
+        let snapshot = (!self.text_capacity).then(|| self.session.export_snapshot());
         let mut seen = BTreeSet::new();
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
@@ -2578,14 +2824,34 @@ impl DesignerRuntime {
             if !seen.insert(field.clone()) {
                 return Err(tracker_error("duplicate cell targets are unsupported"));
             }
-            let old = snapshot
-                .document()
-                .entities
-                .get(&field.entity)
-                .and_then(|entity| entity.fields.get(&field.field))
-                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
-                    field: field.clone(),
-                })?;
+            let projection = if self.text_capacity {
+                Some(
+                    self.session
+                        .query_fields(std::slice::from_ref(&field))
+                        .map_err(|error| match error {
+                            WorkspaceError::MissingField { field } => {
+                                DesignerError::UnsupportedScalarEdit { field }
+                            }
+                            other => other.into(),
+                        })?,
+                )
+            } else {
+                None
+            };
+            let old = if self.text_capacity {
+                projection
+                    .as_ref()
+                    .and_then(|query| query.value().first())
+                    .and_then(|value| value.stored_value.as_ref())
+            } else {
+                snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
+                    .and_then(|entity| entity.fields.get(&field.field))
+            }
+            .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                field: field.clone(),
+            })?;
             let value = parse_scalar(old, &edit.input, &field)?;
             if &value != old {
                 forward.push(SemanticCommand::set_field_value(field.clone(), value));
@@ -2984,7 +3250,24 @@ pub fn open_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
-    let (candidate, opened) = admit_document(decode_project_bundle(input)?, occurrence_id)?;
+    let (candidate, opened) = admit_project(input, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+/// Admit a saved project together with the exact source mapping used to
+/// reconstruct its spreadsheet representation before replacing the resident.
+///
+/// # Errors
+/// Returns canonical, mapping, closure, or complete-reply failures while
+/// preserving the current occurrence and its history.
+pub fn open_imported_project(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    metadata: &InteropMetadata,
+    occurrence_id: &str,
+) -> Result<OpenedProjection, DesignerError> {
+    let (candidate, opened) = admit_imported_project(input, occurrence_id, metadata)?;
     *runtime = Some(candidate);
     Ok(opened)
 }
@@ -3061,7 +3344,74 @@ fn admit_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
-    admit_document(decode_project_bundle(input)?, occurrence_id)
+    let (document, opened_from_v3) = decode_project_bundle(input)?;
+    let (mut candidate, opened) = if opened_from_v3 {
+        admit_v3_document(document, occurrence_id)?
+    } else {
+        admit_document(document, occurrence_id)?
+    };
+    candidate.opened_from_v3 = opened_from_v3;
+    Ok((candidate, opened))
+}
+
+fn admit_v3_document(
+    document: Document,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
+    let (candidate, opened) =
+        DesignerRuntime::from_document_profile_with_opened(document, occurrence_id, false)?;
+    ensure_opened_projection_size(&opened, false)?;
+    Ok((candidate, opened))
+}
+
+pub(crate) fn admit_imported_project(
+    input: &[u8],
+    occurrence_id: &str,
+    metadata: &InteropMetadata,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
+    let (document, opened_from_v3) = decode_project_bundle(input)?;
+    interop_document::validate_import_metadata(&document, metadata)?;
+    if opened_from_v3 {
+        let (candidate, opened) = admit_v3_document(document, occurrence_id)?;
+        let mut candidate = candidate;
+        candidate.opened_from_v3 = true;
+        interop_document::validate_saved_open_closure(&candidate, metadata)?;
+        ensure_opened_wire_projection_size(&opened, false)?;
+        return Ok((candidate, opened));
+    }
+
+    let ordinary: Result<(DesignerRuntime, OpenedProjection), DesignerError> = (|| {
+        let (candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
+            document.clone(),
+            occurrence_id,
+            false,
+        )?;
+        ensure_opened_wire_projection_size(&opened, false)?;
+        interop_document::validate_saved_open_closure(&candidate, metadata)?;
+        Ok((candidate, opened))
+    })();
+    match ordinary {
+        Ok((mut candidate, opened)) => {
+            candidate.opened_from_v3 = false;
+            Ok((candidate, opened))
+        }
+        Err(error)
+            if is_text_capacity_document(&document)
+                && !matches!(&error, DesignerError::InvalidOccurrenceIdentity) =>
+        {
+            // Metadata and capacity provenance are terminal gates. Only after
+            // both pass may an eligible non-v3 candidate retry the complete
+            // admission in the enlarged profile.
+            interop_document::validate_saved_open_capacity_metadata(&document, metadata)?;
+            let (mut candidate, opened) =
+                DesignerRuntime::from_document_profile_with_opened(document, occurrence_id, true)?;
+            interop_document::validate_saved_open_closure(&candidate, metadata)?;
+            ensure_opened_wire_projection_size(&opened, true)?;
+            candidate.opened_from_v3 = false;
+            Ok((candidate, opened))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn admit_document(
@@ -3072,7 +3422,7 @@ fn admit_document(
     let bootstrap = candidate.bootstrap_projection();
     let table = candidate.query_table(&bootstrap.default_collection)?;
     let opened = OpenedProjection { bootstrap, table };
-    ensure_opened_projection_size(&opened)?;
+    ensure_opened_projection_size(&opened, candidate.text_capacity)?;
     Ok((candidate, opened))
 }
 
@@ -3089,15 +3439,71 @@ fn ensure_projection_size_with_limit(
     projection: &impl Serialize,
     maximum: usize,
 ) -> Result<(), DesignerError> {
-    let actual = serde_json::to_vec(projection)
-        .map_err(|error| DesignerError::UnsupportedProject {
+    let mut counter = ProjectionByteCounter(0);
+    serde_json::to_writer(&mut counter, projection).map_err(|error| {
+        DesignerError::UnsupportedProject {
             message: format!("a Designer projection could not be encoded: {error}"),
-        })?
-        .len();
+        }
+    })?;
+    let actual = counter.0;
     if actual > maximum {
         return Err(DesignerError::ProjectionTooLarge { actual, maximum });
     }
     Ok(())
+}
+
+struct ProjectionByteCounter(usize);
+
+impl std::io::Write for ProjectionByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(bytes.len());
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct CompleteReply<'a, T> {
+    status: &'static str,
+    response: CompleteResponse<'a, T>,
+}
+
+#[derive(Serialize)]
+struct CompleteResponse<'a, T> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    payload: &'a T,
+}
+
+fn ensure_complete_projection_size(
+    kind: &'static str,
+    payload: &impl Serialize,
+    maximum: usize,
+) -> Result<(), DesignerError> {
+    ensure_projection_size_with_limit(
+        &CompleteReply {
+            status: "ok",
+            response: CompleteResponse { kind, payload },
+        },
+        maximum,
+    )
+}
+
+fn ensure_capacity_opened_reply(opened: &OpenedProjection) -> Result<(), DesignerError> {
+    let worst_revision = "resident/18446744073709551615";
+    let reserve = worst_revision
+        .len()
+        .saturating_sub(opened.bootstrap.revision.len())
+        + worst_revision
+            .len()
+            .saturating_sub(opened.table.revision.len());
+    ensure_complete_projection_size(
+        "opened",
+        opened,
+        MAX_TEXT_CAPACITY_PROJECTION_BYTES - reserve,
+    )
 }
 
 fn ensure_table_projection_size(table: &TableProjection) -> Result<(), DesignerError> {
@@ -3111,7 +3517,13 @@ fn ensure_table_projection_size(table: &TableProjection) -> Result<(), DesignerE
     )
 }
 
-fn ensure_opened_projection_size(opened: &OpenedProjection) -> Result<(), DesignerError> {
+fn ensure_opened_projection_size(
+    opened: &OpenedProjection,
+    text_capacity: bool,
+) -> Result<(), DesignerError> {
+    if text_capacity {
+        return ensure_capacity_opened_reply(opened);
+    }
     ensure_projection_size_with_limit(
         opened,
         if opened.table.tracker_profile == Some(true) {
@@ -3122,8 +3534,28 @@ fn ensure_opened_projection_size(opened: &OpenedProjection) -> Result<(), Design
     )
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn ensure_wire_reply_size(reply: &DesignerWireReply) -> Result<(), DesignerError> {
+fn ensure_opened_wire_projection_size(
+    opened: &OpenedProjection,
+    text_capacity: bool,
+) -> Result<(), DesignerError> {
+    if text_capacity {
+        return ensure_capacity_opened_reply(opened);
+    }
+    ensure_complete_projection_size(
+        "opened",
+        opened,
+        if opened.table.tracker_profile == Some(true) {
+            MAX_NATIVE_TRACKER_PROJECTION_BYTES
+        } else {
+            MAX_PROJECTION_BYTES
+        },
+    )
+}
+
+pub(crate) fn ensure_wire_reply_size(
+    reply: &DesignerWireReply,
+    text_capacity: bool,
+) -> Result<(), DesignerError> {
     let maximum = match reply {
         DesignerWireReply::Ok {
             response: DesignerResponse::Opened(opened),
@@ -3131,6 +3563,10 @@ pub(crate) fn ensure_wire_reply_size(reply: &DesignerWireReply) -> Result<(), De
         DesignerWireReply::Ok {
             response: DesignerResponse::Table(table),
         } if table.tracker_profile == Some(true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
+        DesignerWireReply::Ok {
+            response: DesignerResponse::Fields(_),
+        } => MAX_PROJECTION_BYTES,
+        DesignerWireReply::Ok { .. } if text_capacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
         _ => MAX_PROJECTION_BYTES,
     };
     ensure_projection_size_with_limit(reply, maximum)
@@ -3269,7 +3705,7 @@ fn encode_project_record_v2(document: &Document) -> Result<Vec<u8>, DesignerErro
     Ok(output)
 }
 
-fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
+fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     if input.starts_with(PROJECT_RECORD_V2_MAGIC) {
         let payload = &input[PROJECT_RECORD_V2_MAGIC.len()..];
@@ -3278,7 +3714,9 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
                 message: "TWDPROJ2 transfer is missing direct-ro/v2 bytes".to_owned(),
             });
         }
-        return from_bytes(payload).map_err(DesignerError::from);
+        return from_bytes(payload)
+            .map(|document| (document, false))
+            .map_err(DesignerError::from);
     }
     let mut cursor = ProjectBundleCursor::new(input);
     if cursor.take(PROJECT_BUNDLE_V1_MAGIC.len())? != PROJECT_BUNDLE_V1_MAGIC {
@@ -3293,6 +3731,7 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
         });
     }
     let mut files_by_path = BTreeMap::new();
+    let mut ordered_paths = Vec::new();
     for _ in 0..file_count {
         let path_length = cursor.read_u16()? as usize;
         let byte_length = cursor.read_u32()? as usize;
@@ -3302,6 +3741,7 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             })?
             .to_owned();
         let bytes = cursor.take(byte_length)?.to_vec();
+        ordered_paths.push(path.clone());
         if files_by_path.insert(path.clone(), bytes).is_some() {
             return Err(DesignerError::InvalidProjectTransfer {
                 message: format!("duplicate project path '{path}'"),
@@ -3324,12 +3764,24 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
     let expected_paths: &[&str] = match version {
         Some(1) => &ROPROJ_V1_PATHS,
         Some(2) => &ROPROJ_V2_PATHS,
+        Some(3) => &ROPROJ_V3_PATHS,
+        Some(found) if found > 3 => &ROPROJ_V3_PATHS,
         _ => {
             return Err(DesignerError::InvalidProjectTransfer {
                 message: "project manifest has no supported format version".to_owned(),
             });
         }
     };
+    if version.is_some_and(|found| found >= 3)
+        && ordered_paths
+            .iter()
+            .map(String::as_str)
+            .ne(expected_paths.iter().copied())
+    {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: "canonical .roproj/v3 paths are not in their required order".to_owned(),
+        });
+    }
     let mut files = Vec::with_capacity(expected_paths.len());
     for &path in expected_paths {
         let bytes =
@@ -3345,12 +3797,19 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             message: format!("project transfer contains unexpected path '{extra}'"),
         });
     }
+    decode_project_files(files, version)
+}
+
+fn decode_project_files(
+    files: Vec<(String, Vec<u8>)>,
+    version: Option<u64>,
+) -> Result<(Document, bool), DesignerError> {
     match version {
         Some(1) => match CanonicalRoProjectV1::try_from_files_with_profile(
             files,
             ensure_cheap_document_profile,
         ) {
-            Ok((_, document)) => Ok(document),
+            Ok((_, document)) => Ok((document, false)),
             Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
             Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
         },
@@ -3358,10 +3817,45 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             let tree = CanonicalRoProjectV2::try_from_files(files)?;
             let document = decode_roproj_v2(&tree)?;
             ensure_cheap_document_profile(&document)?;
-            Ok(document)
+            Ok((document, false))
         }
+        Some(3) => {
+            // The storage callback is resource-only. Its private error type is
+            // intentionally not part of the consumer API; retain profile errors
+            // separately and project storage failures through invalid_project.
+            let mut profile_error = None;
+            let admitted = CanonicalRoProjectV3::try_from_files_with_profile(files, |document| {
+                ensure_document_profile(document, false).map_err(|error| {
+                    profile_error = Some(error);
+                })
+            });
+            let (_, document) = admitted.map_err(|error| {
+                profile_error.unwrap_or_else(|| DesignerError::InvalidProjectTransfer {
+                    message: format!("invalid canonical .roproj/v3: {error:?}"),
+                })
+            })?;
+            ensure_v3_capabilities(&document)?;
+            Ok((document, true))
+        }
+        Some(found) if found > 3 => Err(DesignerError::UnsupportedProject {
+            message: format!("unsupported project manifest version {found}"),
+        }),
         _ => unreachable!("manifest version was dispatched above"),
     }
+}
+
+fn ensure_v3_capabilities(document: &Document) -> Result<(), DesignerError> {
+    if document
+        .schemas
+        .values()
+        .flat_map(|schema| schema.fields.values())
+        .any(|field| field.constraint != tachiko_workspace_engine::FieldConstraint::None)
+    {
+        return Err(DesignerError::UnsupportedProject {
+            message: "Designer v3 admission supports only unconstrained fields.".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn document_contains_date(document: &Document) -> bool {
@@ -3466,7 +3960,9 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                         bootstrap: candidate.bootstrap_projection(),
                         table: candidate.query_table(&candidate.default_collection)?,
                     };
-                    ensure_opened_projection_size(&opened)?;
+                    // New project publication is still an ordinary wire
+                    // operation; prove its complete reply before replacement.
+                    ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
                     *runtime = Some(candidate);
                     Ok(DesignerResponse::Opened(Box::new(opened)))
                 });
@@ -3522,6 +4018,22 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                 diagnostics: Vec::new(),
             },
         },
+    };
+    let reply = if let Err(error) = ensure_wire_reply_size(
+        &reply,
+        runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.text_capacity),
+    ) {
+        DesignerWireReply::Error {
+            error: error.failure_projection(
+                runtime
+                    .as_ref()
+                    .map_or("unavailable", DesignerRuntime::current_revision),
+            ),
+        }
+    } else {
+        reply
     };
     encode_reply(&reply)
 }
@@ -3793,6 +4305,149 @@ fn select_default_collection(
 }
 
 fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
+    match ensure_document_profile(document, false) {
+        Ok(()) => Ok(()),
+        Err(_) if is_text_capacity_document(document) => ensure_document_profile(document, true),
+        Err(error) => Err(error),
+    }
+}
+
+fn is_text_capacity_document(document: &Document) -> bool {
+    let Some(schema) = document.schemas.values().next() else {
+        return false;
+    };
+    document.schemas.len() == 1
+        && schema.fields.len() == 3
+        && document.keyed_grouped_sum_definitions.is_empty()
+        && schema.fields.values().all(|field| {
+            field.field_type == FieldType::Text
+                && field.constraint == tachiko_workspace_engine::FieldConstraint::None
+        })
+        && document.entities.values().all(|entity| {
+            entity.schema == schema.id
+                && entity.fields.iter().all(|(id, value)| {
+                    schema.fields.contains_key(id) && matches!(value, Value::Text(_))
+                })
+        })
+}
+
+fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWorkbook {
+    use interop_adapter::{SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook};
+    let schema = &document
+        .schemas
+        .values()
+        .next()
+        .expect("capacity shape has a schema");
+    SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Capacity".into(),
+            has_header: true,
+            columns: ["a", "b", "c"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                })
+                .collect(),
+            rows: document
+                .entities
+                .values()
+                .map(|entity| {
+                    schema
+                        .fields
+                        .keys()
+                        .map(|id| SourceCell {
+                            value: match entity.fields.get(id) {
+                                Some(Value::Text(value)) => SourceValue::Text {
+                                    value: value.clone(),
+                                },
+                                _ => SourceValue::Empty,
+                            },
+                            ..SourceCell::default()
+                        })
+                        .collect()
+                })
+                .collect(),
+        }],
+        ledger: Vec::new(),
+    }
+}
+
+fn ensure_capacity_document_encoding(document: &Document) -> Result<(), DesignerError> {
+    let workbook = capacity_document_workbook(document);
+    let encoded = interop_adapter::export_xlsx_for_profile(
+        &workbook,
+        interop_adapter::OutputProfile::TextCapacity,
+    )
+    .map_err(|error| tracker_error(&error.0))?;
+    // Canonical row/column ID order fixes the compressed worksheet bytes.
+    // Variable headers and worksheet name occupy separate STORED members.
+    // Their complete permitted XML and ZIP framing fit the 16 KiB reserve.
+    if encoded.len().saturating_add(16 * 1024) > interop_adapter::MAX_SOURCE_BYTES {
+        return Err(tracker_error(
+            "Text capacity compressed XLSX plus metadata reserve exceeds 2 MiB",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_capacity_document_identities(document: &Document) -> Result<(), DesignerError> {
+    if !is_text_capacity_document(document)
+        || document.entities.len() > interop_adapter::MAX_TEXT_CAPACITY_ROWS
+    {
+        return Err(tracker_error(
+            "Text capacity requires at most 8,406 rows in one three-Text schema",
+        ));
+    }
+    let mut total = 0usize;
+    let mut add = |label: &str, value: &str, maximum: usize| {
+        if value.len() > maximum {
+            return Err(tracker_error(&format!(
+                "capacity {label} exceeds {maximum} UTF-8 bytes"
+            )));
+        }
+        total = total.saturating_add(value.len());
+        if total > MAX_TEXT_CAPACITY_PROFILE_BYTES {
+            return Err(tracker_error(
+                "aggregate capacity profile strings exceed 4194304 bytes",
+            ));
+        }
+        Ok(())
+    };
+    add("document identity", document.id.as_str(), 256)?;
+    add("title", &document.title, MAX_PROFILE_STRING_BYTES)?;
+    for (id, schema) in &document.schemas {
+        add("schema map identity", id.as_str(), 256)?;
+        add("schema identity", schema.id.as_str(), 256)?;
+        add("schema key", schema.key.as_str(), 256)?;
+        for (id, field) in &schema.fields {
+            add("field map identity", id.as_str(), 256)?;
+            add("field identity", field.id.as_str(), 256)?;
+            add("field key", field.key.as_str(), 256)?;
+        }
+    }
+    for (id, entity) in &document.entities {
+        add("entity map identity", id.as_str(), 256)?;
+        add("entity identity", entity.id.as_str(), 256)?;
+        add("entity key", entity.key.as_str(), 256)?;
+        add("entity schema identity", entity.schema.as_str(), 256)?;
+        for id in entity.fields.keys() {
+            add("stored field identity", id.as_str(), 256)?;
+        }
+    }
+    Ok(())
+}
+
+fn ensure_capacity_document_profile(document: &Document) -> Result<(), DesignerError> {
+    ensure_capacity_document_identities(document)?;
+    interop_adapter::validate_text_capacity(&capacity_document_workbook(document))
+        .map_err(|error| tracker_error(&error.0))
+}
+
+fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(), DesignerError> {
+    if text_capacity {
+        return ensure_capacity_document_profile(document);
+    }
     let mut profile_string_bytes = 0usize;
     ensure_profile_string(
         &mut profile_string_bytes,
@@ -4028,6 +4683,7 @@ fn ensure_static_profile(
     default_collection: &str,
     collections: &[CollectionSummary],
     collection_specs: &BTreeMap<String, CollectionSpec>,
+    text_capacity: bool,
 ) -> Result<(), DesignerError> {
     if collections.len() > MAX_COLLECTIONS {
         return Err(DesignerError::UnsupportedProject {
@@ -4043,7 +4699,13 @@ fn ensure_static_profile(
         });
     }
     for collection in collection_specs.values() {
-        if collection.columns.len() > MAX_TABLE_FIELDS || collection.entities.len() > MAX_TABLE_ROWS
+        if collection.columns.len() > MAX_TABLE_FIELDS
+            || collection.entities.len()
+                > if text_capacity {
+                    interop_adapter::MAX_TEXT_CAPACITY_ROWS
+                } else {
+                    MAX_TABLE_ROWS
+                }
         {
             return Err(DesignerError::UnsupportedProject {
                 message: DesignerError::CollectionTooLarge {
@@ -4094,11 +4756,17 @@ fn ensure_static_profile(
         resulting_revision: "resident/18446744073709551615".to_owned(),
         entities,
         fields: fields.clone(),
-        affected_calculations: if native_tracker { Vec::new() } else { fields },
+        affected_calculations: if native_tracker || text_capacity {
+            Vec::new()
+        } else {
+            fields
+        },
     };
     ensure_projection_size_with_limit(
         &publication,
-        if native_tracker {
+        if text_capacity {
+            MAX_TEXT_CAPACITY_PROJECTION_BYTES
+        } else if native_tracker {
             MAX_NATIVE_TRACKER_PROJECTION_BYTES
         } else {
             MAX_PROJECTION_BYTES
@@ -4713,6 +5381,739 @@ mod tests {
         PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput,
         ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
     };
+
+    #[test]
+    fn capacity_table_projection_matches_ordinary_owned_projection() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["001", "雪\nquoted \"text\"", "\r\n"],
+        );
+        let mut document = base.session.export_snapshot().into_document();
+        for schema in document.schemas.values_mut() {
+            for field in schema.fields.values_mut() {
+                field.required = false;
+            }
+        }
+        let template = document.entities.values().next().unwrap().clone();
+        document.entities.clear();
+        for index in 0..12 {
+            let mut entity = template.clone();
+            entity.id = EntityId::from(format!("r{index:04}"));
+            entity.key = super::EntityKey::from(format!("row_{index}"));
+            let ids = entity.fields.keys().cloned().collect::<Vec<_>>();
+            if index % 3 == 0 {
+                entity.fields.remove(&ids[1]);
+            }
+            if index % 3 == 1 {
+                entity
+                    .fields
+                    .insert(ids[2].clone(), Value::Text(String::new()));
+            }
+            if index % 3 == 2 {
+                entity.fields.clear();
+            }
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        let mut runtime = DesignerRuntime::from_document_profile(
+            document,
+            "00000000-0000-4000-8000-000000000000",
+            true,
+        )
+        .unwrap();
+        // Query projection must preserve presentation order even when it is
+        // different from the resident field query's stable-ID ordering.
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .columns
+            .reverse();
+        let capacity = runtime.build_table_projection("orders").unwrap();
+        runtime.text_capacity = false;
+        let ordinary = runtime.build_table_projection("orders").unwrap();
+        assert_eq!(capacity, ordinary);
+        assert_eq!(
+            serde_json::to_vec(&capacity).unwrap(),
+            serde_json::to_vec(&ordinary).unwrap()
+        );
+        assert_eq!(capacity.rows.len(), 12);
+        assert_eq!(capacity.rows[2].fields, [] as [super::FieldProjection; 0]);
+
+        // Both routes validate the complete entity request before projecting
+        // fields, and neither may change the resident revision on refusal.
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .entities
+            .push(EntityId::from("missing"));
+        let before = runtime.session.export_snapshot();
+        let ordinary_error = runtime.build_table_projection("orders").unwrap_err();
+        runtime.text_capacity = true;
+        let capacity_error = runtime.build_table_projection("orders").unwrap_err();
+        assert_eq!(capacity_error.to_string(), ordinary_error.to_string());
+        assert_eq!(runtime.session.export_snapshot(), before);
+    }
+
+    #[test]
+    fn capacity_scalar_cannot_promote_a_generic_resident() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["x", "x", "x"],
+        );
+        let mut document = base.session.export_snapshot().into_document();
+        let template = document.entities.values().next().unwrap().clone();
+        document.entities.clear();
+        for index in 0..32 {
+            let mut entity = template.clone();
+            entity.id = EntityId::from(format!("r{index:04}"));
+            entity.key = super::EntityKey::from(entity.id.to_string());
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        let mut runtime = DesignerRuntime::from_document_profile(
+            document,
+            "00000000-0000-4000-8000-000000000000",
+            false,
+        )
+        .unwrap();
+        let targets = runtime
+            .query_table("orders")
+            .unwrap()
+            .rows
+            .into_iter()
+            .flat_map(|row| row.fields.into_iter().map(|field| field.target))
+            .collect::<Vec<_>>();
+        let mut refused = false;
+        for target in targets {
+            let revision = runtime.current_revision().to_owned();
+            let before = runtime.export_project(&revision).unwrap().bytes;
+            let result = runtime.edit_cells(
+                &revision,
+                &[super::CellEdit {
+                    target,
+                    input: ScalarEditInput::Text {
+                        value: "x".repeat(4096),
+                    },
+                }],
+            );
+            assert!(!runtime.text_capacity);
+            if result.is_err() {
+                assert_eq!(runtime.current_revision(), revision);
+                assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+                runtime.query_table("orders").unwrap();
+                refused = true;
+                break;
+            }
+        }
+        assert!(
+            refused,
+            "generic projection growth must refuse before publication"
+        );
+    }
+
+    #[test]
+    fn three_text_visible_table_does_not_grant_capacity_wire_budget() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["x", "x", "x"],
+        );
+        let mut document = base.session.export_snapshot().into_document();
+        let mut extra = document.schemas.values().next().unwrap().clone();
+        extra.id = super::SchemaId::from("extra");
+        extra.key = super::SchemaKey::from("extra");
+        document.schemas.insert(extra.id.clone(), extra);
+        assert!(!super::is_text_capacity_document(&document));
+        let runtime = DesignerRuntime::from_document_profile(
+            document,
+            "00000000-0000-4000-8000-000000000000",
+            false,
+        )
+        .unwrap();
+        let mut table = runtime.query_table("orders").unwrap();
+        let size = serde_json::to_vec(&table).unwrap().len();
+        table
+            .revision
+            .push_str(&"r".repeat(super::MAX_PROJECTION_BYTES - size));
+        assert_eq!(
+            serde_json::to_vec(&table).unwrap().len(),
+            super::MAX_PROJECTION_BYTES
+        );
+        let reply = super::DesignerWireReply::Ok {
+            response: super::DesignerResponse::Table(table),
+        };
+        assert!(super::ensure_wire_reply_size(&reply, runtime.text_capacity).is_err());
+        assert!(super::ensure_wire_reply_size(&reply, true).is_ok());
+    }
+
+    #[test]
+    fn capacity_scalar_refusals_preserve_order_atomicity_and_empty_history() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["old-a", "old-b", "old-c"],
+        );
+        let mut runtime = DesignerRuntime::from_document_profile(
+            base.session.export_snapshot().into_document(),
+            "00000000-0000-4000-8000-000000000000",
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            runtime
+                .bootstrap_projection()
+                .keyed_grouped_sum_definition_ids,
+            [] as [String; 0]
+        );
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let target = runtime.query_table("orders").unwrap().rows[0].fields[0]
+            .target
+            .clone();
+        let mut missing = target.clone();
+        missing.field = "missing".into();
+        let mut missing_entity = target.clone();
+        missing_entity.entity = "missing".into();
+        let edit = |target: &super::FieldTarget, value: &str| super::CellEdit {
+            target: target.clone(),
+            input: ScalarEditInput::Text {
+                value: value.into(),
+            },
+        };
+        let malformed = super::CellEdit {
+            target: target.clone(),
+            input: ScalarEditInput::Number {
+                input: "malformed".into(),
+            },
+        };
+        for (edits, unsupported) in [
+            (vec![edit(&missing, "changed")], Some(missing.clone())),
+            (vec![edit(&missing_entity, "changed")], Some(missing_entity)),
+            (vec![edit(&target, "changed"), malformed.clone()], None),
+            (
+                vec![malformed.clone(), edit(&missing, "changed")],
+                Some(target.clone()),
+            ),
+            (
+                vec![
+                    edit(&target, "changed"),
+                    edit(&missing, "changed"),
+                    malformed,
+                ],
+                Some(missing),
+            ),
+        ] {
+            let error = runtime.edit_cells("resident/0", &edits).unwrap_err();
+            if let Some(expected) = unsupported {
+                assert!(
+                    matches!(error, super::DesignerError::UnsupportedScalarEdit { field } if field == expected.as_field_ref())
+                );
+            } else {
+                assert!(
+                    matches!(error, super::DesignerError::InvalidTrackerOperation { message } if message.contains("duplicate"))
+                );
+            }
+            assert_eq!(runtime.current_revision(), "resident/0");
+            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert!(runtime.undo.is_empty());
+            assert!(runtime.redo.is_empty());
+        }
+        assert!(matches!(
+            runtime.edit_cells("resident/0", &[edit(&target, "old-a")]),
+            Err(super::DesignerError::Lifecycle(
+                super::PatchLifecycleError::NoChange
+            ))
+        ));
+        for redo in [false, true] {
+            assert!(runtime.history_edit("resident/0", redo).is_err());
+        }
+        assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+    }
+
+    #[test]
+    fn capacity_text_batch_and_history_keep_proposal_evidence_request_local() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["old-a", "old-b", "old-c"],
+        );
+        let mut runtime = DesignerRuntime::from_document_profile(
+            base.session.export_snapshot().into_document(),
+            "00000000-0000-4000-8000-000000000000",
+            true,
+        )
+        .unwrap();
+        let before = runtime.query_table("orders").unwrap();
+        let targets = before.rows[0]
+            .fields
+            .iter()
+            .take(2)
+            .map(|field| field.target.clone())
+            .collect::<Vec<_>>();
+        runtime
+            .edit_cells(
+                "resident/0",
+                &targets
+                    .iter()
+                    .enumerate()
+                    .map(|(index, target)| super::CellEdit {
+                        target: target.clone(),
+                        input: ScalarEditInput::Text {
+                            value: if index == 0 {
+                                String::new()
+                            } else {
+                                "changed".into()
+                            },
+                        },
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        let after = runtime.query_table("orders").unwrap();
+        assert_ne!(after.rows, before.rows);
+        runtime
+            .handle(DesignerRequest::Undo {
+                expected_revision: "resident/1".into(),
+            })
+            .unwrap();
+        assert_eq!(runtime.query_table("orders").unwrap().rows, before.rows);
+        runtime
+            .handle(DesignerRequest::Redo {
+                expected_revision: "resident/2".into(),
+            })
+            .unwrap();
+        assert_eq!(runtime.query_table("orders").unwrap().rows, after.rows);
+        for serial in 1..=3 {
+            assert!(
+                runtime
+                    .lifecycle
+                    .proposal_history(&ProposalId::from(format!(
+                        "designer-proposal/{}/{serial}",
+                        runtime.row_namespace
+                    )))
+                    .is_err()
+            );
+        }
+        assert!(runtime.text_capacity);
+    }
+
+    #[test]
+    fn capacity_cleanup_can_fill_one_missing_text_and_undo_redo() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["a", "b", "c"],
+        );
+        let target = base.query_table("orders").unwrap().rows[0].fields[0]
+            .target
+            .clone();
+        let mut document = base.session.export_snapshot().into_document();
+        document
+            .schemas
+            .values_mut()
+            .next()
+            .unwrap()
+            .fields
+            .get_mut(&FieldId::from(target.field.clone()))
+            .unwrap()
+            .required = false;
+        document
+            .entities
+            .values_mut()
+            .next()
+            .unwrap()
+            .fields
+            .remove(&FieldId::from(target.field.clone()));
+        let mut runtime = DesignerRuntime::from_document_profile(
+            document,
+            "00000000-0000-4000-8000-000000000000",
+            true,
+        )
+        .unwrap();
+        let before = runtime.query_table("orders").unwrap().rows;
+        assert!(
+            runtime
+                .edit_cells(
+                    "resident/0",
+                    &[super::CellEdit {
+                        target: target.clone(),
+                        input: ScalarEditInput::Text {
+                            value: "direct".into()
+                        }
+                    }]
+                )
+                .is_err()
+        );
+        assert_eq!(runtime.current_revision(), "resident/0");
+        let preview = runtime
+            .preview_cleanup(
+                "resident/0",
+                &super::CleanupOperation::Fill {
+                    fields: vec![target],
+                    input: ScalarEditInput::Text {
+                        value: "filled".into(),
+                    },
+                },
+            )
+            .unwrap();
+        runtime
+            .commit_cleanup("resident/0", &preview.preview_id)
+            .unwrap();
+        let filled = runtime.query_table("orders").unwrap().rows;
+        assert_ne!(filled, before);
+        runtime
+            .handle(DesignerRequest::Undo {
+                expected_revision: "resident/1".into(),
+            })
+            .unwrap();
+        assert_eq!(runtime.query_table("orders").unwrap().rows, before);
+        runtime
+            .handle(DesignerRequest::Redo {
+                expected_revision: "resident/2".into(),
+            })
+            .unwrap();
+        assert_eq!(runtime.query_table("orders").unwrap().rows, filled);
+        for serial in 1..=4 {
+            assert!(
+                runtime
+                    .lifecycle
+                    .proposal_history(&ProposalId::from(format!(
+                        "designer-proposal/{}/{serial}",
+                        runtime.row_namespace
+                    )))
+                    .is_err()
+            );
+        }
+        assert!(runtime.text_capacity);
+    }
+
+    #[test]
+    fn capacity_small_import_reopens_when_complete_opened_exceeds_generic_budget() {
+        let occurrence = "00000000-0000-4000-8000-000000000000";
+        let source = format!("a,b,c\n{}", "v,v,v\n".repeat(8));
+        let mut workbook = super::interop_adapter::import_csv(
+            source.as_bytes(),
+            &super::interop_adapter::ImportOptions::default(),
+        )
+        .unwrap();
+        let selection = super::ImportSelection {
+            column_types: vec![vec![super::ImportFieldType::Text; 3]],
+            extra_columns: vec![vec![]],
+        };
+        let (_, seed) = super::import_workbook(&workbook, &selection, occurrence).unwrap();
+        let wire_size = |opened: &super::OpenedProjection| {
+            serde_json::to_vec(&super::DesignerWireReply::Ok {
+                response: super::DesignerResponse::Opened(Box::new(opened.clone())),
+            })
+            .unwrap()
+            .len()
+        };
+        let mut remaining = super::MAX_PROJECTION_BYTES + 1 - wire_size(&seed.opened);
+        for cell in workbook.sheets[0].rows.iter_mut().flatten() {
+            let extra = remaining.min(4095);
+            cell.value = super::interop_adapter::SourceValue::Text {
+                value: "v".repeat(extra + 1),
+            };
+            remaining -= extra;
+        }
+        assert_eq!(remaining, 0);
+        let (runtime, imported) =
+            super::import_workbook(&workbook, &selection, occurrence).unwrap();
+        assert!(runtime.text_capacity);
+        assert_eq!(wire_size(&imported.opened), super::MAX_PROJECTION_BYTES + 1);
+        assert!(
+            serde_json::to_vec(&imported.opened.table).unwrap().len() < super::MAX_PROJECTION_BYTES
+        );
+        let targets = imported
+            .opened
+            .table
+            .rows
+            .iter()
+            .flat_map(|row| row.fields.iter().map(|field| field.target.clone()))
+            .collect::<Vec<_>>();
+        runtime.query_fields("resident/0", &targets).unwrap();
+        let saved = runtime.export_project("resident/0").unwrap();
+        let mut destination = None;
+        let reopened = super::open_project(
+            &mut destination,
+            &saved.bytes,
+            "00000000-0000-4000-8000-000000000001",
+        )
+        .unwrap();
+        assert_eq!(reopened.table.rows, imported.opened.table.rows);
+        let reopened = destination.unwrap();
+        assert!(reopened.text_capacity);
+        assert_eq!(
+            reopened.export_project("resident/0").unwrap().bytes,
+            saved.bytes
+        );
+        let mut metadata_destination = None;
+        let metadata_opened = super::open_imported_project(
+            &mut metadata_destination,
+            &saved.bytes,
+            &imported.metadata,
+            "00000000-0000-4000-8000-000000000002",
+        )
+        .unwrap();
+        let metadata_candidate = metadata_destination.unwrap();
+        assert!(metadata_candidate.text_capacity);
+        assert_eq!(metadata_opened.table.rows, imported.opened.table.rows);
+    }
+
+    fn duplicate_text_document(rows: usize) -> super::Document {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["duplicate", "value", "value"],
+        );
+        let mut document = base.session.export_snapshot().document().clone();
+        let template = document.entities.values().next().unwrap().clone();
+        document.entities.clear();
+        for index in 0..rows {
+            let mut entity = template.clone();
+            entity.id = EntityId::from(format!("dedup-row-{index:03}"));
+            entity.key = super::EntityKey::from(format!("dedup_row_{index:03}"));
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        document
+    }
+
+    #[test]
+    fn capacity_dedup_refuses_before_preview_or_publication_but_ordinary_dedup_remains() {
+        for rows in [65, 66] {
+            let document = duplicate_text_document(rows);
+            let mut runtime = DesignerRuntime::from_document_profile(
+                document,
+                "00000000-0000-4000-8000-000000000000",
+                true,
+            )
+            .unwrap();
+            let before = runtime.export_project("resident/0").unwrap().bytes;
+            let entities = runtime.collection_specs["orders"]
+                .entities
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            let key_field = runtime.collection_specs["orders"].columns[0].id.to_string();
+            let error = runtime
+                .handle(DesignerRequest::PreviewCleanup {
+                    expected_revision: "resident/0".to_owned(),
+                    operation: super::CleanupOperation::Deduplicate {
+                        entities,
+                        key_fields: vec![key_field],
+                    },
+                })
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                DesignerError::InvalidTrackerOperation { .. }
+            ));
+            let error = runtime
+                .handle(DesignerRequest::CommitCleanup {
+                    expected_revision: "resident/0".to_owned(),
+                    preview_id: "absent-cleanup-plan".to_owned(),
+                })
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                DesignerError::InvalidTrackerOperation { .. }
+            ));
+            assert_eq!(runtime.current_revision(), "resident/0");
+            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert!(runtime.undo.is_empty());
+            assert!(runtime.redo.is_empty());
+            assert!(runtime.pending_cleanup.is_none());
+        }
+
+        let document = duplicate_text_document(8);
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        assert!(!runtime.text_capacity);
+        let entities = runtime.collection_specs["orders"]
+            .entities
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let key_field = runtime.collection_specs["orders"].columns[0].id.to_string();
+        let preview = runtime
+            .preview_cleanup(
+                "resident/0",
+                &super::CleanupOperation::Deduplicate {
+                    entities,
+                    key_fields: vec![key_field],
+                },
+            )
+            .unwrap();
+        assert_eq!(preview.removed_entities.len(), 7);
+        runtime
+            .commit_cleanup("resident/0", &preview.preview_id)
+            .unwrap();
+        assert_eq!(runtime.query_table("orders").unwrap().rows.len(), 1);
+    }
+
+    fn native_capacity_127_runtime() -> DesignerRuntime {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["a", "b", "c"],
+        );
+        let mut document = base.session.export_snapshot().into_document();
+        let template = document.entities.values().next().unwrap().clone();
+        document.entities.clear();
+        for index in 0..127 {
+            let mut entity = template.clone();
+            entity.id = EntityId::from(format!("native-row-{index:03}"));
+            entity.key = super::EntityKey::from(format!("native_row_{index:03}"));
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        DesignerRuntime::from_document_profile(
+            document,
+            "00000000-0000-4000-8000-000000000070",
+            true,
+        )
+        .unwrap()
+    }
+
+    fn native_saved_state(runtime: &DesignerRuntime) -> (super::Document, [Vec<u8>; 2]) {
+        let revision = runtime.current_revision().to_owned();
+        (
+            runtime.session.export_snapshot().document().clone(),
+            [
+                runtime.export_canonical_tree(&revision).unwrap().bytes,
+                runtime.export_project(&revision).unwrap().bytes,
+            ],
+        )
+    }
+
+    fn assert_native_saved_state(
+        runtime: &DesignerRuntime,
+        expected_document: &super::Document,
+        expected_carriers: &[Vec<u8>; 2],
+    ) {
+        let (document, carriers) = native_saved_state(runtime);
+        assert_eq!(&document, expected_document);
+        assert_eq!(&carriers, expected_carriers);
+        for carrier in expected_carriers {
+            let mut reopened = None;
+            super::open_project(
+                &mut reopened,
+                carrier,
+                "00000000-0000-4000-8000-000000000071",
+            )
+            .unwrap();
+            assert_eq!(
+                reopened
+                    .as_ref()
+                    .unwrap()
+                    .session
+                    .export_snapshot()
+                    .document(),
+                expected_document
+            );
+        }
+    }
+
+    fn edit_native_history_scalar(runtime: &mut DesignerRuntime) -> super::Document {
+        let entity = runtime.collection_specs["orders"].entities[0].to_string();
+        let field = runtime.collection_specs["orders"].columns[0].id.to_string();
+        runtime
+            .edit_scalar(
+                "resident/0",
+                &super::FieldTarget { entity, field },
+                &ScalarEditInput::Text {
+                    value: "earlier-history".to_owned(),
+                },
+            )
+            .unwrap();
+        runtime.session.export_snapshot().document().clone()
+    }
+
+    fn native_history(runtime: &mut DesignerRuntime, redo: bool) {
+        let expected_revision = runtime.current_revision().to_owned();
+        let request = if redo {
+            DesignerRequest::Redo { expected_revision }
+        } else {
+            DesignerRequest::Undo { expected_revision }
+        };
+        assert!(matches!(
+            runtime.handle(request).unwrap(),
+            super::DesignerResponse::Published(_)
+        ));
+    }
+
+    #[test]
+    fn native_capacity_insert_undo_redo_preserves_complete_history() {
+        let mut runtime = native_capacity_127_runtime();
+        assert!(runtime.text_capacity);
+        let (original, original_carriers) = native_saved_state(&runtime);
+        let before_row = edit_native_history_scalar(&mut runtime);
+        let (_, before_row_carriers) = native_saved_state(&runtime);
+        assert_ne!(before_row, original);
+
+        let initializers = row_initializers(&runtime);
+        assert!(matches!(
+            runtime
+                .handle(DesignerRequest::InsertRow {
+                    expected_revision: runtime.current_revision().to_owned(),
+                    collection: "orders".to_owned(),
+                    initializers,
+                })
+                .unwrap(),
+            super::DesignerResponse::Published(_)
+        ));
+        let (after_row, after_row_carriers) = native_saved_state(&runtime);
+        assert_eq!(after_row.entities.len(), 128);
+        assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
+
+        native_history(&mut runtime, false);
+        assert_native_saved_state(&runtime, &before_row, &before_row_carriers);
+        native_history(&mut runtime, false);
+        assert_native_saved_state(&runtime, &original, &original_carriers);
+        native_history(&mut runtime, true);
+        assert_native_saved_state(&runtime, &before_row, &before_row_carriers);
+        native_history(&mut runtime, true);
+        assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
+    }
+
+    #[test]
+    fn native_capacity_remove_undo_redo_preserves_complete_history() {
+        let mut runtime = native_capacity_127_runtime();
+        assert!(runtime.text_capacity);
+        let (original, original_carriers) = native_saved_state(&runtime);
+        let before_row = edit_native_history_scalar(&mut runtime);
+        let (_, before_row_carriers) = native_saved_state(&runtime);
+        assert_ne!(before_row, original);
+
+        let row = runtime.collection_specs["orders"]
+            .entities
+            .last()
+            .unwrap()
+            .to_string();
+        let mut expected_after = before_row.clone();
+        assert!(
+            expected_after
+                .entities
+                .remove(&EntityId::from(row.clone()))
+                .is_some()
+        );
+        assert!(matches!(
+            runtime
+                .handle(DesignerRequest::RemoveTableRows {
+                    expected_revision: runtime.current_revision().to_owned(),
+                    collection: "orders".to_owned(),
+                    entities: vec![row],
+                })
+                .unwrap(),
+            super::DesignerResponse::Published(_)
+        ));
+        let (after_row, after_row_carriers) = native_saved_state(&runtime);
+        assert_eq!(after_row, expected_after);
+        assert_eq!(after_row.entities.len(), 126);
+        assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
+
+        native_history(&mut runtime, false);
+        assert_native_saved_state(&runtime, &before_row, &before_row_carriers);
+        native_history(&mut runtime, false);
+        assert_native_saved_state(&runtime, &original, &original_carriers);
+        native_history(&mut runtime, true);
+        assert_native_saved_state(&runtime, &before_row, &before_row_carriers);
+        native_history(&mut runtime, true);
+        assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
+    }
 
     fn native_column_runtime(columns: &[(&str, &str)], values: &[&str]) -> DesignerRuntime {
         let mut runtime = DesignerRuntime::new_table(

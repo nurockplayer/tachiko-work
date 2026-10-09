@@ -173,7 +173,7 @@ fn unchanged_keyed_definition_binding_is_checked_against_both_schema_snapshots()
         .unwrap()
         .fields
         .remove("amount");
-    assert!(validate_document_core(&after).is_empty());
+    assert_eq!(validate_document_core(&after).as_slice(), []);
     assert!(matches!(
         canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after),
         Err(CanonicalDeltaError::InvalidKeyedGroupedSumDefinitions {
@@ -441,7 +441,7 @@ fn constraint_only_change_is_one_atomic_fact_and_equal_state_is_empty() {
             after: range(1.0, 4.0),
         }]
     );
-    assert!(facts(&after, &after).is_empty());
+    assert_eq!(facts(&after, &after).as_slice(), []);
     assert_eq!(
         canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after).unwrap(),
         canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before.clone(), &after.clone()).unwrap()
@@ -473,7 +473,7 @@ fn independently_constructed_equal_text_sets_are_empty_and_changes_are_atomic() 
         .constraint = FieldConstraint::TextLiteralSet {
         values: ["", "old", "é"].into_iter().map(str::to_owned).collect(),
     };
-    assert!(facts(&before, &after).is_empty());
+    assert_eq!(facts(&before, &after).as_slice(), []);
     let after_set = FieldConstraint::TextLiteralSet {
         values: vec!["old".into(), "Ω".into()],
     };
@@ -619,7 +619,7 @@ fn declaration_direct_value_and_complete_formula_admission_apply_to_both_sides()
             .iter()
             .map(tachiko_semantic_core::Diagnostic::stable_observation)
             .collect();
-        assert!(!expected.is_empty());
+        assert_ne!(expected.as_slice(), []);
         for (before, after, expected_side) in [
             (&valid, &invalid, DeltaInputSide::After),
             (&invalid, &valid, DeltaInputSide::Before),

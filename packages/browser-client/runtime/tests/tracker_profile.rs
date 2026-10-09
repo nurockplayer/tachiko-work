@@ -290,7 +290,7 @@ fn unchanged_scalar_wire_reply_preserves_no_change_code_and_revision() {
     };
     assert_eq!(error.code, "no_change");
     assert_eq!(error.current_revision, "resident/0");
-    assert!(error.diagnostics.is_empty());
+    assert_eq!(error.diagnostics.as_slice(), []);
     assert_eq!(
         runtime
             .as_ref()

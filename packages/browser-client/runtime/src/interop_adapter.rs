@@ -13,6 +13,9 @@ pub const MAX_COLUMNS: usize = 16;
 pub const MAX_DATA_ROWS: usize = 64;
 pub const MAX_NATIVE_TRACKER_DATA_ROWS: usize = 128;
 pub const MAX_FORMULAS: usize = 32;
+pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
+pub(crate) const MAX_TEXT_CAPACITY_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_TEXT_CAPACITY_HEADER_BYTES: usize = 39;
 
 /// Output capacity is explicit so native Tracker can remain a bounded outbound
 /// exception without changing the shared import/export profile.
@@ -20,6 +23,7 @@ pub const MAX_FORMULAS: usize = 32;
 pub(crate) enum OutputProfile {
     Shared,
     NativeTracker,
+    TextCapacity,
 }
 
 impl OutputProfile {
@@ -27,8 +31,215 @@ impl OutputProfile {
         match self {
             Self::Shared => MAX_DATA_ROWS,
             Self::NativeTracker => MAX_NATIVE_TRACKER_DATA_ROWS,
+            Self::TextCapacity => MAX_TEXT_CAPACITY_ROWS,
         }
     }
+}
+
+/// A private resource exception selected from complete source content.
+pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
+    workbook.sheets.len() == 1
+        && text_capacity_sheet_shape(&workbook.sheets[0])
+        && !workbook.ledger.iter().any(|finding| {
+            finding.code == "bounded_workbook"
+                || matches!(
+                    finding.category,
+                    FidelityCategory::LossyOnExport | FidelityCategory::UnsupportedSafeDisabled
+                )
+        })
+}
+
+fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
+    sheet.has_header
+        && sheet.columns.len() == 3
+        && sheet.rows.len() <= MAX_TEXT_CAPACITY_ROWS
+        && sheet.columns.iter().all(|column| column.width.is_none())
+        && sheet.rows.iter().all(|row| {
+            row.len() == 3
+                && row.iter().all(|cell| {
+                    cell.formula.is_none()
+                        && matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. })
+                        && cell.style == CellStyle::default()
+                })
+        })
+}
+
+pub(crate) fn output_profile(workbook: &SourceWorkbook) -> OutputProfile {
+    if workbook
+        .sheets
+        .iter()
+        .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS)
+        && text_capacity_shape(workbook)
+    {
+        OutputProfile::TextCapacity
+    } else {
+        OutputProfile::Shared
+    }
+}
+
+/// Exact RFC CSV width, including quote doubling and empty-field quotes.
+pub(crate) fn csv_text_bytes(value: &str) -> usize {
+    value.len()
+        + if value.is_empty() || value.contains([',', '"', '\n', '\r']) {
+            2 + value.bytes().filter(|byte| *byte == b'"').count()
+        } else {
+            0
+        }
+}
+
+pub(crate) fn capacity_header_bytes(sheet: &SourceSheet) -> usize {
+    sheet
+        .columns
+        .iter()
+        .map(|column| csv_text_bytes(&column.name))
+        .sum::<usize>()
+        + 4
+}
+
+/// Prove both encodings before admitting this both-formats resource profile.
+/// The CSV body uses an invariant header reservation, independent of host metadata.
+pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
+    if !text_capacity_shape(workbook) {
+        return fail(
+            "Text capacity requires one headered, default-style 8,406-row three-Text table",
+        );
+    }
+    let sheet = &workbook.sheets[0];
+    if st_xstring(&sheet.name) || sheet.columns.iter().any(|column| st_xstring(&column.name)) {
+        return fail("Text capacity refuses SpreadsheetML escape patterns");
+    }
+    if capacity_header_bytes(sheet) > MAX_TEXT_CAPACITY_HEADER_BYTES {
+        return fail("Text capacity CSV header exceeds 39 encoded bytes");
+    }
+    let mut text_bytes = 0usize;
+    let mut csv_bytes = MAX_TEXT_CAPACITY_HEADER_BYTES;
+    for row in &sheet.rows {
+        csv_bytes += 4; // Two delimiters and CRLF.
+        for cell in row {
+            let value = match &cell.value {
+                SourceValue::Text { value } => value.as_str(),
+                SourceValue::Empty => "",
+                _ => return fail("Text capacity contains a non-Text value"),
+            };
+            if value.len() > 4096 {
+                return fail("Text capacity value exceeds 4096 UTF-8 bytes");
+            }
+            if st_xstring(value) {
+                return fail("Text capacity refuses SpreadsheetML escape patterns");
+            }
+            if csv_formula_text(value) || !xml_text_valid(value) {
+                return fail("Text capacity requires safe CSV Text and valid XML characters");
+            }
+            text_bytes += value.len();
+            csv_bytes += csv_text_bytes(value);
+        }
+    }
+    if text_bytes > MAX_TEXT_CAPACITY_BYTES {
+        return fail("Text capacity aggregate Text exceeds 1048576 bytes");
+    }
+    if csv_bytes > MAX_SOURCE_BYTES {
+        return fail("Text capacity encoded CSV exceeds 2 MiB");
+    }
+    let mut expanded = CapacityXmlCount(16 * 1024);
+    capacity_worksheet(sheet, &mut expanded);
+    if expanded.0 > MAX_EXPANDED_BYTES {
+        return fail("Text capacity expanded XLSX exceeds 8 MiB");
+    }
+    // Worksheet nodes: row + (c,is,t) for every populated Text cell. Empty
+    // cells need fewer nodes. Other parts are independent XML documents.
+    if 2 + (sheet.rows.len() + 1) * 10 > 100_000 {
+        return fail("Text capacity XML exceeds 100000 nodes");
+    }
+    for column in &sheet.columns {
+        if csv_formula_text(&column.name) || !xml_text_valid(&column.name) {
+            return fail("Text capacity requires safe CSV headers and valid XML characters");
+        }
+    }
+    // Prove the compressed source bound with the actual deterministic writer.
+    // This runs at import/export, not on each scalar edit.
+    Ok(())
+}
+
+fn st_xstring(value: &str) -> bool {
+    value.as_bytes().windows(7).any(|token| {
+        token.starts_with(b"_x")
+            && token[2..6].iter().all(u8::is_ascii_hexdigit)
+            && token[6] == b'_'
+    })
+}
+
+trait CapacityXmlSink: std::fmt::Write {
+    fn text(&mut self, value: &str);
+}
+impl CapacityXmlSink for String {
+    fn text(&mut self, value: &str) {
+        if value.contains(['&', '<', '>', '"', '\'', '\r']) {
+            self.push_str(&escape(value));
+        } else {
+            self.push_str(value);
+        }
+    }
+}
+struct CapacityXmlCount(usize);
+impl std::fmt::Write for CapacityXmlCount {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        self.0 += value.len();
+        Ok(())
+    }
+}
+impl CapacityXmlSink for CapacityXmlCount {
+    fn text(&mut self, value: &str) {
+        self.0 += escaped_xml_bytes(value);
+    }
+}
+// The writer and admission counter share every worksheet token. Other permitted
+// XML members, including escaped headers/name, fit the existing 16 KiB reserve.
+fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
+    write!(
+        output,
+        "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\">"
+    )
+    .expect("capacity XML sinks are infallible");
+    for column in 0..3 {
+        write!(
+            output,
+            "<c r=\"{}1\" s=\"0\" t=\"s\"><v>{column}</v></c>",
+            ["A", "B", "C"][column]
+        )
+        .expect("capacity XML sinks are infallible");
+    }
+    write!(output, "</row>").expect("capacity XML sinks are infallible");
+    for (index, row) in sheet.rows.iter().enumerate() {
+        let number = index + 2;
+        write!(output, "<row r=\"{number}\">").expect("capacity XML sinks are infallible");
+        for (column, cell) in row.iter().enumerate() {
+            let column = ["A", "B", "C"][column];
+            if let SourceValue::Text { value } = &cell.value {
+                write!(output,
+                    "<c r=\"{column}{number}\" s=\"0\" t=\"inlineStr\"><is><t xml:space=\"preserve\">"
+                ).expect("capacity XML sinks are infallible");
+                output.text(value);
+                write!(output, "</t></is></c>").expect("capacity XML sinks are infallible");
+            } else {
+                write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
+                    .expect("capacity XML sinks are infallible");
+            }
+        }
+        write!(output, "</row>").expect("capacity XML sinks are infallible");
+    }
+    write!(output, "</sheetData></worksheet>").expect("capacity XML sinks are infallible");
+}
+
+fn escaped_xml_bytes(value: &str) -> usize {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'&' | b'\r' => 5,
+            b'<' | b'>' => 4,
+            b'"' | b'\'' => 6,
+            _ => 1,
+        })
+        .sum()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -198,8 +409,10 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         } else {
             field.push(ch);
         }
-        if row.len() > MAX_COLUMNS || rows.len() > MAX_DATA_ROWS + usize::from(options.header) {
-            return fail("CSV exceeds row or column bounds");
+        if row.len() > MAX_COLUMNS
+            || rows.len() > MAX_TEXT_CAPACITY_ROWS + usize::from(options.header)
+        {
+            return fail("CSV exceeds 8,406 row or column bounds");
         }
     }
     if quoted {
@@ -210,7 +423,9 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         rows.push(row);
     }
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
-    if width == 0 || width > MAX_COLUMNS || rows.len() > MAX_DATA_ROWS + usize::from(options.header)
+    if width == 0
+        || width > MAX_COLUMNS
+        || rows.len() > MAX_TEXT_CAPACITY_ROWS + usize::from(options.header)
     {
         return fail("CSV exceeds profile bounds");
     }
@@ -245,7 +460,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
                 .collect()
         })
         .collect();
-    Ok(finish_source_admission(SourceWorkbook {
+    let workbook = SourceWorkbook {
         sheets: vec![SourceSheet {
             name: "Imported table".into(),
             has_header: options.header,
@@ -268,7 +483,11 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
                 false,
             ),
         ],
-    }))
+    };
+    if workbook.sheets[0].rows.len() > MAX_DATA_ROWS {
+        validate_text_capacity(&workbook)?;
+    }
+    Ok(finish_source_admission(workbook))
 }
 
 // Namespace-aware bounded XML tree. No DTD or entity expansion is accepted.
@@ -280,6 +499,8 @@ struct Xml {
     namespace_declarations: Vec<String>,
     children: Vec<Xml>,
     text: String,
+    plain_attribute_namespaces: bool,
+    plain_lexical_values: bool,
 }
 impl Xml {
     fn attr(&self, key: &str) -> Option<&str> {
@@ -320,6 +541,119 @@ impl Xml {
 }
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+fn xml_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
+fn plain_qname(name: &[u8]) -> bool {
+    let parts = name.split(|byte| *byte == b':').collect::<Vec<_>>();
+    parts.len() <= 2
+        && parts.iter().all(|part| {
+            part.first()
+                .is_some_and(|first| first.is_ascii_alphabetic() || *first == b'_')
+                && part
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        })
+}
+fn plain_tag(raw: &[u8], attributes: bool) -> bool {
+    let mut position = raw
+        .iter()
+        .position(|byte| xml_space(*byte))
+        .unwrap_or(raw.len());
+    if !plain_qname(&raw[..position]) {
+        return false;
+    }
+    while position < raw.len() {
+        let separator = position;
+        while position < raw.len() && xml_space(raw[position]) {
+            position += 1;
+        }
+        if position == raw.len() {
+            return true;
+        }
+        if !attributes || position == separator {
+            return false;
+        }
+        let start = position;
+        while position < raw.len() && !xml_space(raw[position]) && raw[position] != b'=' {
+            position += 1;
+        }
+        if !plain_qname(&raw[start..position]) {
+            return false;
+        }
+        while position < raw.len() && xml_space(raw[position]) {
+            position += 1;
+        }
+        if raw.get(position) != Some(&b'=') {
+            return false;
+        }
+        position += 1;
+        while position < raw.len() && xml_space(raw[position]) {
+            position += 1;
+        }
+        let Some(&quote @ (b'\'' | b'"')) = raw.get(position) else {
+            return false;
+        };
+        position += 1;
+        while position < raw.len() && raw[position] != quote {
+            if raw[position] == b'<' {
+                return false;
+            }
+            position += 1;
+        }
+        if position == raw.len() {
+            return false;
+        }
+        position += 1;
+    }
+    true
+}
+fn plain_token(raw: &[u8], event: &Event<'_>) -> bool {
+    match event {
+        Event::Start(_) => raw
+            .strip_prefix(b"<")
+            .and_then(|v| v.strip_suffix(b">"))
+            .is_some_and(|v| plain_tag(v, true)),
+        Event::Empty(_) => raw
+            .strip_prefix(b"<")
+            .and_then(|v| v.strip_suffix(b"/>"))
+            .is_some_and(|v| plain_tag(v, true)),
+        Event::End(_) => raw
+            .strip_prefix(b"</")
+            .and_then(|v| v.strip_suffix(b">"))
+            .is_some_and(|v| plain_tag(v, false)),
+        Event::Decl(_) => raw
+            .strip_prefix(b"<?")
+            .and_then(|v| v.strip_suffix(b"?>"))
+            .is_some_and(|v| plain_tag(v, true)),
+        Event::Text(_) => !raw.windows(3).any(|token| token == b"]]>"),
+        Event::CData(_) | Event::Eof => true,
+        _ => false,
+    }
+}
+
+// Only a complete UTF-8 XML 1.0 declaration has a plain-source proof.
+fn capacity_plain_declaration(decl: &quick_xml::events::BytesDecl<'_>) -> bool {
+    let Ok(text) = std::str::from_utf8(decl.as_ref()) else {
+        return false;
+    };
+    let declaration = quick_xml::events::BytesStart::from_content(text, 3);
+    let mut position = 0;
+    for attribute in declaration.attributes() {
+        let Ok(attribute) = attribute else {
+            return false;
+        };
+        position = match (attribute.key.as_ref(), attribute.value.as_ref(), position) {
+            (b"version", b"1.0", 0) => 1,
+            (b"encoding", value, 1) if value.eq_ignore_ascii_case(b"UTF-8") => 2,
+            (b"standalone", b"yes" | b"no", 1 | 2) => 3,
+            _ => return false,
+        };
+    }
+    position > 0
+}
+
 #[allow(clippy::too_many_lines)] // One XML event state machine and namespace scope.
 fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     let input = std::str::from_utf8(bytes).map_err(|_| InteropError("XML must be UTF-8".into()))?;
@@ -332,11 +666,22 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     reader.config_mut().trim_text(false);
     let mut stack: Vec<(Xml, BTreeMap<String, String>)> = Vec::new();
     let mut root = None;
+    // Reader positions exclude the optional UTF-8 BOM and preserve raw closing tags.
+    let tokens = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     let mut nodes = 0usize;
+    let mut plain_document = true;
+    let mut document_event = false;
     loop {
+        let start = usize::try_from(reader.buffer_position())
+            .map_err(|_| InteropError("XML offset overflow".into()))?;
         let event = reader
             .read_event()
             .map_err(|e| InteropError(format!("Invalid XML: {e}")))?;
+        let end = usize::try_from(reader.buffer_position())
+            .map_err(|_| InteropError("XML offset overflow".into()))?;
+        plain_document &= tokens
+            .get(start..end)
+            .is_some_and(|raw| plain_token(raw, &event));
         let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(e) | Event::Empty(e) => {
@@ -353,12 +698,15 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                 let mut attrs = BTreeMap::new();
                 let mut namespace_declarations = Vec::new();
                 let mut attribute_count = 0;
+                let mut plain_lexical_values = true;
                 for a in e.attributes() {
                     attribute_count += 1;
                     if attribute_count > 64 {
                         return fail("XML attribute count exceeds profile");
                     }
                     let a = a.map_err(|e| InteropError(e.to_string()))?;
+                    plain_lexical_values &=
+                        !a.value.iter().any(|b| matches!(b, b'\t' | b'\n' | b'\r'));
                     let key = std::str::from_utf8(a.key.as_ref())
                         .map_err(|_| InteropError("Invalid XML attribute".into()))?
                         .to_owned();
@@ -373,12 +721,21 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                         return fail("XML attribute exceeds profile");
                     }
                     if key == "xmlns" {
+                        plain_lexical_values &= !matches!(
+                            value.as_str(),
+                            "http://www.w3.org/XML/1998/namespace"
+                                | "http://www.w3.org/2000/xmlns/"
+                        );
                         if value.len() > 512 {
                             return fail("XML namespace URI exceeds profile");
                         }
                         namespace_declarations.push(value.clone());
                         bindings.insert(String::new(), value);
                     } else if let Some(prefix) = key.strip_prefix("xmlns:") {
+                        plain_lexical_values &= prefix != "xmlns"
+                            && (prefix == "xml")
+                                == (value == "http://www.w3.org/XML/1998/namespace")
+                            && value != "http://www.w3.org/2000/xmlns/";
                         if value.len() > 512 {
                             return fail("XML namespace URI exceeds profile");
                         }
@@ -392,6 +749,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     return fail("XML namespace scope exceeds profile");
                 }
                 let mut expanded_attributes = BTreeSet::new();
+                let mut plain_attribute_namespaces = true;
                 for key in attrs.keys() {
                     let (prefix, local) = key.split_once(':').unwrap_or(("", key));
                     let uri = if prefix.is_empty() {
@@ -405,6 +763,11 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     if !expanded_attributes.insert((uri, local)) {
                         return fail("Duplicate expanded XML attribute");
                     }
+                    plain_attribute_namespaces &= uri.is_empty()
+                        || (uri
+                            == "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                            && local == "id")
+                        || (uri == "http://www.w3.org/XML/1998/namespace" && local == "space");
                 }
                 let qname = std::str::from_utf8(e.name().as_ref())
                     .map_err(|_| InteropError("Invalid XML element".into()))?
@@ -427,6 +790,8 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     namespace_declarations,
                     children: Vec::new(),
                     text: String::new(),
+                    plain_attribute_namespaces,
+                    plain_lexical_values,
                 };
                 if empty {
                     attach_xml(node, &mut stack, &mut root)?;
@@ -446,9 +811,17 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     return fail("Invalid escaped XML character");
                 }
                 if let Some((node, _)) = stack.last_mut() {
+                    node.plain_lexical_values &=
+                        !matches!(node.name.as_str(), "t" | "v") || !e.as_ref().contains(&b'\r');
                     node.text.push_str(&value);
-                } else if !value.trim().is_empty() {
-                    return fail("Text outside XML root");
+                } else {
+                    plain_document &= e
+                        .as_ref()
+                        .iter()
+                        .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'));
+                    if !value.trim().is_empty() {
+                        return fail("Text outside XML root");
+                    }
                 }
             }
             Event::CData(e) => {
@@ -458,20 +831,29 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     return fail("Invalid CDATA XML character");
                 }
                 if let Some((node, _)) = stack.last_mut() {
+                    node.plain_lexical_values &=
+                        !matches!(node.name.as_str(), "t" | "v") || !e.as_ref().contains(&b'\r');
                     node.text.push_str(value);
                 } else {
                     return fail("CDATA outside XML root");
                 }
             }
+            Event::Decl(decl) => {
+                plain_document &= !document_event && capacity_plain_declaration(&decl);
+            }
             Event::DocType(_) => return fail("DTD is forbidden"),
             Event::Eof => break,
-            _ => {}
+            // Discarded comments and processing instructions have no plain proof.
+            _ => plain_document = false,
         }
+        document_event = true;
     }
     if !stack.is_empty() {
         return fail("Unclosed XML element");
     }
-    root.ok_or_else(|| InteropError("Missing XML root".into()))
+    let mut root = root.ok_or_else(|| InteropError("Missing XML root".into()))?;
+    root.plain_lexical_values &= plain_document;
+    Ok(root)
 }
 fn attach_xml(
     node: Xml,
@@ -840,6 +1222,266 @@ fn builtin_format(id: u32) -> Option<String> {
         _ => Some(format!("unsupported_builtin_{id}")),
     }
 }
+fn capacity_styles_xml() -> String {
+    format!(
+        "<styleSheet xmlns=\"{MAIN}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"
+    )
+}
+
+fn same_plain_tree(actual: &Xml, expected: &Xml) -> bool {
+    actual.plain_attribute_namespaces
+        && actual.plain_lexical_values
+        && actual.namespace_declarations.iter().all(|uri| uri == MAIN)
+        && actual.name == expected.name
+        && actual.ns == expected.ns
+        && actual.attrs == expected.attrs
+        && actual.text.trim_matches([' ', '\t', '\n', '\r'])
+            == expected.text.trim_matches([' ', '\t', '\n', '\r'])
+        && actual.children.len() == expected.children.len()
+        && actual
+            .children
+            .iter()
+            .zip(&expected.children)
+            .all(|(a, b)| same_plain_tree(a, b))
+}
+
+/// Closed raw-source proof for the minimal fixture and private plain writer.
+/// Unknown presentation remains admissible only under the existing generic ledger.
+fn capacity_plain_node(node: &Xml) -> bool {
+    const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+    const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let (namespace, attrs, children): (&str, &[&str], &[&str]) = match node.name.as_str() {
+        "Types" => (TYPES, &[], &["Default", "Override"]),
+        "Default" => (TYPES, &["Extension", "ContentType"], &[]),
+        "Override" => (TYPES, &["PartName", "ContentType"], &[]),
+        "Relationships" => (REL, &[], &["Relationship"]),
+        "Relationship" => (REL, &["Id", "Type", "Target"], &[]),
+        "workbook" => (MAIN, &[], &["workbookPr", "sheets"]),
+        "workbookPr" => (MAIN, &["date1904"], &[]),
+        "sheets" => (MAIN, &[], &["sheet"]),
+        "sheet" => (MAIN, &["name", "sheetId", "rel:id"], &[]),
+        "worksheet" => (MAIN, &[], &["sheetData"]),
+        "sheetData" => (MAIN, &[], &["row"]),
+        "row" => (MAIN, &["r"], &["c"]),
+        "c" => (MAIN, &["r", "s", "t"], &["v", "is"]),
+        "sst" => (MAIN, &["count", "uniqueCount"], &["si"]),
+        "si" | "is" => (MAIN, &[], &["t"]),
+        "t" => (MAIN, &["xml:space"], &[]),
+        "v" => (MAIN, &[], &[]),
+        _ => return false,
+    };
+    if node.ns != namespace
+        || (matches!(node.name.as_str(), "t" | "v") && st_xstring(&node.text))
+        || !node.plain_attribute_namespaces
+        || !node.plain_lexical_values
+        || !node.namespace_declarations.iter().all(|uri| {
+            [
+                MAIN,
+                REL,
+                TYPES,
+                OFFICE,
+                "http://www.w3.org/XML/1998/namespace",
+            ]
+            .contains(&uri.as_str())
+        })
+        || !node.attrs.keys().all(|key| {
+            attrs.contains(&match key.rsplit_once(':') {
+                Some((_, "id")) => "rel:id",
+                Some((_, "space")) => "xml:space",
+                _ => key.as_str(),
+            })
+        })
+        || !node
+            .children
+            .iter()
+            .all(|child| children.contains(&child.name.as_str()) && capacity_plain_node(child))
+        || (!matches!(node.name.as_str(), "t" | "v")
+            && !node.text.trim_matches([' ', '\t', '\n', '\r']).is_empty())
+    {
+        return false;
+    }
+    capacity_plain_values(node)
+}
+
+fn capacity_plain_values(node: &Xml) -> bool {
+    const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    match node.name.as_str() {
+        "workbook" => node.kids("sheets").count() == 1 && node.kids("workbookPr").count() <= 1,
+        "sheets" | "worksheet" | "si" | "is" => node.children.len() == 1,
+        "workbookPr" => node.attr("date1904") == Some("0"),
+        "sheet" => {
+            node.attr("name").is_some()
+                && node.attr("sheetId") == Some("1")
+                && node.attr("rel:id").is_some()
+        }
+        "c" => {
+            matches!(node.attr("s"), None | Some("0"))
+                && match node.attr("t") {
+                    Some("inlineStr") => node.children.len() == 1 && node.children[0].name == "is",
+                    Some("str" | "s") => node.children.len() == 1 && node.children[0].name == "v",
+                    None | Some("n") => node.children.is_empty(),
+                    _ => false,
+                }
+        }
+        "t" => node.attrs.values().all(|value| value == "preserve"),
+        "sst" => node
+            .attrs
+            .values()
+            .all(|value| value.parse::<usize>().ok() == Some(node.children.len())),
+        "Relationship" => {
+            let role = match node.attr("Target") {
+                Some("xl/workbook.xml") => "officeDocument",
+                Some("worksheets/sheet1.xml") => "worksheet",
+                Some("styles.xml") => "styles",
+                Some("sharedStrings.xml") => "sharedStrings",
+                _ => return false,
+            };
+            node.attr("Type") == Some(format!("{OFFICE}/{role}").as_str()) && node.attrs.len() == 3
+        }
+        "Default" => {
+            matches!(
+                (node.attr("Extension"), node.attr("ContentType")),
+                (
+                    Some("rels"),
+                    Some("application/vnd.openxmlformats-package.relationships+xml")
+                ) | (Some("xml"), Some("application/xml"))
+            ) && node.attrs.len() == 2
+        }
+        "Override" => {
+            node.attr("PartName")
+                .and_then(|path| path.strip_prefix('/'))
+                .and_then(capacity_part_kind)
+                .is_some_and(|(root, _, kind)| {
+                    ["workbook", "worksheet", "styleSheet", "sst"].contains(&root)
+                        && node.attr("ContentType") == Some(kind)
+                })
+                && node.attrs.len() == 2
+        }
+        _ => true,
+    }
+}
+
+fn capacity_part_kind(path: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    Some(match path {
+        "[Content_Types].xml" => (
+            "Types",
+            "http://schemas.openxmlformats.org/package/2006/content-types",
+            "application/xml",
+        ),
+        "_rels/.rels" | "xl/_rels/workbook.xml.rels" => (
+            "Relationships",
+            REL,
+            "application/vnd.openxmlformats-package.relationships+xml",
+        ),
+        "xl/workbook.xml" => (
+            "workbook",
+            MAIN,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        ),
+        "xl/worksheets/sheet1.xml" => (
+            "worksheet",
+            MAIN,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
+        ),
+        "xl/styles.xml" => (
+            "styleSheet",
+            MAIN,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml",
+        ),
+        "xl/sharedStrings.xml" => (
+            "sst",
+            MAIN,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml",
+        ),
+        _ => return None,
+    })
+}
+
+fn capacity_plain_parts(parts: &BTreeMap<String, Vec<u8>>) -> Result<bool> {
+    if [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "xl/workbook.xml",
+        "xl/_rels/workbook.xml.rels",
+        "xl/worksheets/sheet1.xml",
+    ]
+    .iter()
+    .any(|path| !parts.contains_key(*path))
+    {
+        return Ok(false);
+    }
+    for (path, bytes) in parts {
+        let Some((root, namespace, _)) = capacity_part_kind(path) else {
+            return Ok(false);
+        };
+        let Ok(xml) = parse_xml(bytes) else {
+            return Ok(false);
+        };
+        if xml.name != root || xml.ns != namespace {
+            return Ok(false);
+        }
+        if path == "xl/styles.xml" {
+            if !same_plain_tree(&xml, &parse_xml(capacity_styles_xml().as_bytes())?) {
+                return Ok(false);
+            }
+        } else if !capacity_plain_node(&xml) || !capacity_plain_bindings(path, &xml, parts) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn capacity_plain_bindings(path: &str, xml: &Xml, parts: &BTreeMap<String, Vec<u8>>) -> bool {
+    let main_parts = parts.keys().filter(|path| {
+        capacity_part_kind(path).is_some_and(|(root, _, _)| {
+            ["workbook", "worksheet", "styleSheet", "sst"].contains(&root)
+        })
+    });
+    match path {
+        "[Content_Types].xml" => {
+            let expected = main_parts
+                .map(|path| format!("/{path}"))
+                .collect::<BTreeSet<_>>();
+            let declared = xml
+                .kids("Override")
+                .filter_map(|node| node.attr("PartName"))
+                .collect::<BTreeSet<_>>();
+            expected
+                .iter()
+                .map(String::as_str)
+                .eq(declared.iter().copied())
+                && declared.len() == xml.kids("Override").count()
+                && xml
+                    .kids("Default")
+                    .filter_map(|node| node.attr("Extension"))
+                    .collect::<BTreeSet<_>>()
+                    == ["rels", "xml"].into_iter().collect()
+                && xml.kids("Default").count() == 2
+        }
+        "_rels/.rels" => {
+            xml.children.len() == 1 && xml.children[0].attr("Target") == Some("xl/workbook.xml")
+        }
+        "xl/_rels/workbook.xml.rels" => {
+            let mut expected = BTreeSet::from(["worksheets/sheet1.xml"]);
+            for (part, target) in [
+                ("xl/styles.xml", "styles.xml"),
+                ("xl/sharedStrings.xml", "sharedStrings.xml"),
+            ] {
+                if parts.contains_key(part) {
+                    expected.insert(target);
+                }
+            }
+            let declared = xml
+                .children
+                .iter()
+                .filter_map(|node| node.attr("Target"))
+                .collect::<BTreeSet<_>>();
+            declared == expected && declared.len() == xml.children.len()
+        }
+        _ => true,
+    }
+}
+
 fn parse_styles(
     parts: &BTreeMap<String, Vec<u8>>,
     ledger: &mut Vec<FidelityFinding>,
@@ -923,7 +1565,17 @@ fn parse_styles(
             alignment: horizontal,
         });
     }
-    ledger.push(finding(FidelityCategory::LossyOnExport,"style_profile","xl/styles.xml","Basic bold/RGB solid fill/wrap/border/alignment/number format retained; font family, theme colors and other layout details are source-only",false));
+    if same_plain_tree(&xml, &parse_xml(capacity_styles_xml().as_bytes())?) {
+        ledger.push(finding(
+            FidelityCategory::NativeEquivalent,
+            "plain_styles",
+            "xl/styles.xml",
+            "The complete private plain style tree is represented by default cell styles",
+            false,
+        ));
+    } else {
+        ledger.push(finding(FidelityCategory::LossyOnExport,"style_profile","xl/styles.xml","Basic bold/RGB solid fill/wrap/border/alignment/number format retained; font family, theme colors and other layout details are source-only",false));
+    }
     if styles.is_empty() {
         styles.push(CellStyle::default());
     }
@@ -947,8 +1599,8 @@ fn coordinate(address: &str) -> Result<(usize, usize)> {
     let row = address[split..]
         .parse::<usize>()
         .map_err(|_| InteropError("Invalid cell row".into()))?;
-    if col == 0 || row == 0 || row > MAX_DATA_ROWS + 1 {
-        return fail("Cell row exceeds profile");
+    if col == 0 || row == 0 || row > MAX_TEXT_CAPACITY_ROWS + 1 {
+        return fail("Cell row exceeds 8,406 profile");
     }
     Ok((row - 1, col - 1))
 }
@@ -1081,7 +1733,7 @@ fn c_unknown(node: &Xml) -> bool {
         }
         _ => return true,
     };
-    !node.text.trim().is_empty()
+    !node.text.trim_matches([' ', '\t', '\n', '\r']).is_empty()
         || node
             .children
             .iter()
@@ -1380,8 +2032,8 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 .ok_or_else(|| InteropError("Missing worksheet row index".into()))?
                 .parse::<usize>()
                 .map_err(|_| InteropError("Invalid row index".into()))?;
-            if row_index == 0 || row_index > MAX_DATA_ROWS + 1 {
-                return fail("Worksheet row exceeds profile");
+            if row_index == 0 || row_index > MAX_TEXT_CAPACITY_ROWS + 1 {
+                return fail("Worksheet row exceeds 8,406 profile");
             }
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
@@ -1488,6 +2140,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             row.resize(width, SourceCell::default());
         }
         let header = rows.remove(0);
+        let mut capacity_plain = header.iter().all(|cell| cell.style == CellStyle::default());
         let mut headers = BTreeSet::new();
         let mut columns = Vec::new();
         for (i, c) in header.into_iter().enumerate() {
@@ -1559,6 +2212,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     .map(str::parse::<f64>)
                     .transpose()
                     .map_err(|_| InteropError("Invalid column width".into()))?;
+                capacity_plain &= w.is_none();
                 if min == 0
                     || max < min
                     || max > MAX_COLUMNS
@@ -1574,6 +2228,11 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 }
             }
         }
+        if rows.len() > MAX_DATA_ROWS && !capacity_plain {
+            return fail(
+                "8,406-row capacity requires default source headers and no column widths, including outside the grid",
+            );
+        }
         sheets.push(SourceSheet {
             name,
             has_header: true,
@@ -1582,8 +2241,19 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         });
     }
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
-    ledger.push(finding(FidelityCategory::NativeEquivalent,"bounded_workbook","source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
-    Ok(finish_source_admission(SourceWorkbook { sheets, ledger }))
+    let plain = capacity_plain_parts(&parts)?;
+    // Parser-derived classification replaces the existing record with a shorter
+    // code. Nonplain generic source ledgers and their wire width stay unchanged.
+    ledger.push(finding(FidelityCategory::NativeEquivalent,if plain {"plain_workbook"} else {"bounded_workbook"},"source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
+    let workbook = SourceWorkbook { sheets, ledger };
+    if workbook
+        .sheets
+        .iter()
+        .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS)
+    {
+        validate_text_capacity(&workbook)?;
+    }
+    Ok(finish_source_admission(workbook))
 }
 
 /// Every parsed source uses the same representation predicate as output. Existing
@@ -1609,7 +2279,12 @@ fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
 /// # Errors
 /// Rejects an oversized or invalid scalar output profile.
 pub fn export_csv(sheet: &SourceSheet) -> Result<Vec<u8>> {
-    export_csv_for_profile(sheet, OutputProfile::Shared)
+    let profile = if sheet.rows.len() > MAX_DATA_ROWS && text_capacity_sheet_shape(sheet) {
+        OutputProfile::TextCapacity
+    } else {
+        OutputProfile::Shared
+    };
+    export_csv_for_profile(sheet, profile)
 }
 
 /// Emit the selected sheet values using one explicit bounded output profile.
@@ -1619,6 +2294,12 @@ pub(crate) fn export_csv_for_profile(
     sheet: &SourceSheet,
     profile: OutputProfile,
 ) -> Result<Vec<u8>> {
+    if profile == OutputProfile::TextCapacity {
+        validate_text_capacity(&SourceWorkbook {
+            sheets: vec![sheet.clone()],
+            ledger: Vec::new(),
+        })?;
+    }
     if sheet.columns.is_empty()
         || sheet.columns.len() > MAX_COLUMNS
         || sheet.rows.len() > profile.max_data_rows()
@@ -1732,6 +2413,11 @@ fn escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+        .replace('\r', "&#13;")
+}
+
+fn capacity_attribute(value: &str) -> String {
+    escape(value).replace('\n', "&#10;").replace('\t', "&#9;")
 }
 fn column_name(index: usize) -> String {
     let mut n = index + 1;
@@ -1753,13 +2439,16 @@ pub(crate) fn valid_worksheet_name(name: &str) -> bool {
         && xml_text_valid(name)
 }
 pub(crate) fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
-    validate_output_for_profile(workbook, OutputProfile::Shared)
+    validate_output_for_profile(workbook, output_profile(workbook))
 }
 
 pub(crate) fn validate_output_for_profile(
     workbook: &SourceWorkbook,
     profile: OutputProfile,
 ) -> Result<()> {
+    if profile == OutputProfile::TextCapacity {
+        validate_text_capacity(workbook)?;
+    }
     if workbook.sheets.is_empty() || workbook.sheets.len() > MAX_SHEETS {
         return fail("Export requires 1..=4 sheets");
     }
@@ -1869,7 +2558,14 @@ fn output_style(cell: &SourceCell) -> CellStyle {
 /// Rejects blocking findings, invalid output values/styles and bounded size limits.
 #[allow(clippy::too_many_lines, clippy::format_push_string)] // Bounded deterministic XML assembly; temporary strings stay within the tiny workbook profile.
 pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
-    export_xlsx_for_profile(workbook, OutputProfile::Shared)
+    export_xlsx_for_profile(
+        workbook,
+        if validate_text_capacity(workbook).is_ok() {
+            OutputProfile::TextCapacity
+        } else {
+            OutputProfile::Shared
+        },
+    )
 }
 
 /// Emit typed worksheets using the selected bounded output profile.
@@ -1885,7 +2581,11 @@ pub(crate) fn export_xlsx_for_profile(
         serde_json::to_string(&CellStyle::default()).map_err(|e| InteropError(e.to_string()))?,
     ];
     let mut styles = vec![CellStyle::default()];
-    for s in &workbook.sheets {
+    for s in workbook
+        .sheets
+        .iter()
+        .filter(|_| profile != OutputProfile::TextCapacity)
+    {
         for row in &s.rows {
             for c in row {
                 let style = output_style(c);
@@ -1929,6 +2629,19 @@ pub(crate) fn export_xlsx_for_profile(
     );
     let mut parts = BTreeMap::new();
     parts.insert("xl/styles.xml".into(), style_xml);
+    if profile == OutputProfile::TextCapacity {
+        parts.insert("xl/styles.xml".into(), capacity_styles_xml());
+        let mut headers = String::new();
+        for column in &workbook.sheets[0].columns {
+            headers.push_str("<si><t xml:space=\"preserve\">");
+            headers.push_str(&escape(&column.name));
+            headers.push_str("</t></si>");
+        }
+        parts.insert(
+            "xl/sharedStrings.xml".into(),
+            format!("<sst xmlns=\"{MAIN}\" count=\"3\" uniqueCount=\"3\">{headers}</sst>"),
+        );
+    }
     let mut sheet_list = String::new();
     let mut sheet_rels = String::new();
     let mut types = String::new();
@@ -1936,10 +2649,20 @@ pub(crate) fn export_xlsx_for_profile(
         let n = index + 1;
         sheet_list.push_str(&format!(
             "<sheet name=\"{}\" sheetId=\"{n}\" r:id=\"rId{n}\"/>",
-            escape(&s.name)
+            if profile == OutputProfile::TextCapacity {
+                capacity_attribute(&s.name)
+            } else {
+                escape(&s.name)
+            }
         ));
         sheet_rels.push_str(&format!("<Relationship Id=\"rId{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{n}.xml\"/>"));
         types.push_str(&format!("<Override PartName=\"/xl/worksheets/sheet{n}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"));
+        if profile == OutputProfile::TextCapacity {
+            let mut xml = String::new();
+            capacity_worksheet(s, &mut xml);
+            parts.insert(format!("xl/worksheets/sheet{n}.xml"), xml);
+            continue;
+        }
         let mut xml = format!("<worksheet xmlns=\"{MAIN}\">");
         // CT_Cols contains one or more CT_Col entries. An empty <cols>
         // container is rejected by Excel's package reader, even though the
@@ -1982,29 +2705,37 @@ pub(crate) fn export_xlsx_for_profile(
             xml.push_str(&format!("<row r=\"{}\">", r + 1));
             for (col, c) in row.iter().enumerate() {
                 let address = format!("{}{}", column_name(col), r + 1);
-                let key = serde_json::to_string(&output_style(c))
-                    .map_err(|e| InteropError(e.to_string()))?;
-                let sid = style_keys.iter().position(|x| x == &key).unwrap_or(0);
+                let sid = if profile == OutputProfile::TextCapacity {
+                    0
+                } else {
+                    let key = serde_json::to_string(&output_style(c))
+                        .map_err(|e| InteropError(e.to_string()))?;
+                    style_keys.iter().position(|x| x == &key).unwrap_or(0)
+                };
                 let formula = c
                     .formula
                     .as_ref()
                     .map(|f| format!("<f>{}</f>", escape(f.trim_start_matches('='))))
                     .unwrap_or_default();
-                let (kind, body) = match &c.value {
-                    SourceValue::Empty => ("n", formula.clone()),
-                    SourceValue::Text { value } => (
-                        "inlineStr",
-                        format!(
-                            "{formula}<is><t xml:space=\"preserve\">{}</t></is>",
-                            escape(value)
+                let (kind, body) = if profile == OutputProfile::TextCapacity && r == 0 {
+                    ("s", format!("<v>{col}</v>"))
+                } else {
+                    match &c.value {
+                        SourceValue::Empty => ("n", formula.clone()),
+                        SourceValue::Text { value } => (
+                            "inlineStr",
+                            format!(
+                                "{formula}<is><t xml:space=\"preserve\">{}</t></is>",
+                                escape(value)
+                            ),
                         ),
-                    ),
-                    SourceValue::Number { value } => ("n", format!("{formula}<v>{value}</v>")),
-                    SourceValue::Boolean { value } => {
-                        ("b", format!("{formula}<v>{}</v>", u8::from(*value)))
-                    }
-                    SourceValue::Date { value } => {
-                        ("d", format!("{formula}<v>{}</v>", escape(value)))
+                        SourceValue::Number { value } => ("n", format!("{formula}<v>{value}</v>")),
+                        SourceValue::Boolean { value } => {
+                            ("b", format!("{formula}<v>{}</v>", u8::from(*value)))
+                        }
+                        SourceValue::Date { value } => {
+                            ("d", format!("{formula}<v>{}</v>", escape(value)))
+                        }
                     }
                 };
                 xml.push_str(&format!(
@@ -2016,16 +2747,43 @@ pub(crate) fn export_xlsx_for_profile(
         xml.push_str("</sheetData></worksheet>");
         parts.insert(format!("xl/worksheets/sheet{n}.xml"), xml);
     }
-    parts.insert("xl/workbook.xml".into(),format!("<workbook xmlns=\"{MAIN}\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><workbookPr date1904=\"0\"/><sheets>{sheet_list}</sheets><calcPr calcMode=\"auto\" fullCalcOnLoad=\"1\"/></workbook>"));
-    parts.insert("xl/_rels/workbook.xml.rels".into(),format!("<Relationships xmlns=\"{REL}\">{sheet_rels}<Relationship Id=\"styles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>"));
+    let calculation = if profile == OutputProfile::TextCapacity {
+        ""
+    } else {
+        "<calcPr calcMode=\"auto\" fullCalcOnLoad=\"1\"/>"
+    };
+    parts.insert("xl/workbook.xml".into(),format!("<workbook xmlns=\"{MAIN}\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><workbookPr date1904=\"0\"/><sheets>{sheet_list}</sheets>{calculation}</workbook>"));
+    let strings_relationship = if profile == OutputProfile::TextCapacity {
+        "<Relationship Id=\"strings\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>"
+    } else {
+        ""
+    };
+    parts.insert("xl/_rels/workbook.xml.rels".into(),format!("<Relationships xmlns=\"{REL}\">{sheet_rels}{strings_relationship}<Relationship Id=\"styles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>"));
     parts.insert("_rels/.rels".into(),format!("<Relationships xmlns=\"{REL}\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"));
-    parts.insert("[Content_Types].xml".into(),format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>{types}</Types>"));
+    let strings_type = if profile == OutputProfile::TextCapacity {
+        "<Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/>"
+    } else {
+        ""
+    };
+    parts.insert("[Content_Types].xml".into(),format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>{strings_type}{types}</Types>"));
+    if profile == OutputProfile::TextCapacity
+        && parts.values().map(String::len).sum::<usize>() > MAX_EXPANDED_BYTES
+    {
+        return fail("Text capacity expanded XLSX exceeds 8 MiB");
+    }
     let mut output = Cursor::new(Vec::new());
     {
         let mut writer = ZipWriter::new(&mut output);
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         for (name, xml) in parts {
+            let options = if profile == OutputProfile::TextCapacity
+                && matches!(name.as_str(), "xl/workbook.xml" | "xl/sharedStrings.xml")
+            {
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)
+            } else {
+                options
+            };
             writer
                 .start_file(name, options)
                 .map_err(|e| InteropError(e.to_string()))?;
@@ -2038,4 +2796,61 @@ pub(crate) fn export_xlsx_for_profile(
     let bytes = output.into_inner();
     source_bound(&bytes)?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod capacity_proof_tests {
+    use super::{
+        CapacityXmlCount, ImportOptions, SourceValue, capacity_worksheet, export_xlsx, import_csv,
+        import_xlsx, plain_tag, st_xstring,
+    };
+    #[test]
+    fn raw_token_grammar_and_shared_writer_count_agree() {
+        for (raw, expected) in [
+            ("a p=\"x\"q=\"y\"", false),
+            ("a p=\"x<y\"", false),
+            ("1:a", false),
+            ("a:b:c", false),
+            ("a p=\"x&amp;y\"", true),
+            ("a\tp = 'x' q = \"y\" ", true),
+        ] {
+            assert_eq!(plain_tag(raw.as_bytes(), true), expected, "{raw}");
+        }
+        for (text, expected) in [
+            ("_x000D_", true),
+            ("_x00af_", true),
+            ("_X000D_", false),
+            ("_x000G_", false),
+        ] {
+            assert_eq!(st_xstring(text), expected);
+        }
+        let mut workbook =
+            import_csv(b"a,b,c\none,two,three\n", &ImportOptions::default()).unwrap();
+        workbook.sheets[0].rows[0][0].value = SourceValue::Text {
+            value: "&<>\"'\r\n雪".into(),
+        };
+        workbook.sheets[0].rows[0][1].value = SourceValue::Empty;
+        for value in ["plain雪\t\n", "&", "<", ">", "\"", "'", "\r"] {
+            workbook.sheets[0].rows[0][0].value = SourceValue::Text {
+                value: value.into(),
+            };
+            let reopened = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+            assert_eq!(
+                reopened.sheets[0].rows[0][0].value,
+                workbook.sheets[0].rows[0][0].value
+            );
+        }
+        workbook.sheets[0].rows[0][0].value = SourceValue::Text {
+            value: "&<>\"'\r\n雪".into(),
+        };
+        let row = workbook.sheets[0].rows[0].clone();
+        for rows in [0, 8, 9, 98, 99, 998, 999, 8406] {
+            workbook.sheets[0].rows = vec![row.clone(); rows];
+            let mut output = String::new();
+            let mut count = CapacityXmlCount(0);
+            capacity_worksheet(&workbook.sheets[0], &mut output);
+            capacity_worksheet(&workbook.sheets[0], &mut count);
+            assert_eq!(count.0, output.len(), "{rows}");
+        }
+    }
 }

@@ -230,6 +230,7 @@ export type WorkerRequest =
     }
   | { id: number; kind: "inspect_project"; bytes: ArrayBuffer }
   | { id: number; kind: "export_project"; expected_revision: string }
+  | { id: number; kind: "export_project_v3"; expected_revision: string }
   | { id: number; kind: "export_canonical_tree"; expected_revision: string }
   | { id: number; kind: "export_portable_ro"; expected_revision: string }
   | { id: number; kind: "verify_portable_ro"; bytes: ArrayBuffer }

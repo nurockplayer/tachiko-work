@@ -63,7 +63,7 @@ fn duplicate_field_key(document: &mut Document) {
 fn game_balance_starter_is_immediately_meaningful() {
     let document = game_balance_document("game-balance", "Moonfall: starter balance");
 
-    assert!(validate_document(&document).is_empty());
+    assert_eq!(validate_document(&document).as_slice(), []);
     assert_eq!(document.schemas.len(), 4);
     assert_eq!(document.entities.len(), 4);
 
@@ -125,7 +125,7 @@ fn overview_order_is_stable_and_empty_template_remains_available() {
     assert_eq!(empty_view.schema_count, 0);
     assert_eq!(empty_view.entity_count, 0);
     assert_eq!(empty_view.formula_count, 0);
-    assert!(empty_view.entities.is_empty());
+    assert_eq!(empty_view.entities.as_slice(), []);
 }
 
 #[test]

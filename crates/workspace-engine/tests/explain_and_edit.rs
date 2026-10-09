@@ -43,7 +43,7 @@ fn formula_explanation_connects_expression_dependencies_and_result() {
             FieldRef::new("iron_sword", "damage"),
         ]
     );
-    assert!(explanation.affected_formulas.is_empty());
+    assert_eq!(explanation.affected_formulas.as_slice(), []);
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn input_explanation_shows_downstream_formula_impact() {
 
     assert_eq!(explanation.display_value, "36");
     assert!(explanation.expression.is_none());
-    assert!(explanation.dependencies.is_empty());
+    assert_eq!(explanation.dependencies.as_slice(), []);
     assert_eq!(explanation.affected_formulas.len(), 1);
     assert_eq!(
         explanation.affected_formulas[0].field,

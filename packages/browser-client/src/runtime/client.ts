@@ -24,6 +24,7 @@ export interface DesignerClient {
   inspectSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions): Promise<SourceWorkbook>;
   importSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedProjection) => void): Promise<ImportedProjection>;
   inspectImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
+  openImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
   exportSpreadsheet?(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport>;
   exportNativeTrackerSpreadsheet?(expectedRevision: string, presentation: NativeTrackerExportPresentation, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportNativeBudgetSpreadsheet?(expectedRevision: string, presentation: NativeBudgetExportPresentation, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
@@ -41,6 +42,7 @@ export interface DesignerClient {
   openCanonicalTree?(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
   openLocalDocument?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
+  exportProjectV3?(expectedRevision: string): Promise<ProjectExport>;
   exportCanonicalTree?(expectedRevision: string): Promise<CanonicalTreeExport>;
   exportPortableRo?(expectedRevision: string): Promise<ProjectExport>;
   verifyPortableRo?(bytes: ArrayBuffer): Promise<void>;

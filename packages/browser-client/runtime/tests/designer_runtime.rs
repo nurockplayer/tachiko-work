@@ -1291,7 +1291,7 @@ fn text_and_boolean_edits_publish_against_the_resident_revision() {
     assert_eq!(text.base_revision, "resident/0");
     assert_eq!(text.resulting_revision, "resident/1");
     assert_eq!(text.fields, ["iron_sword.name".into()]);
-    assert!(text.affected_calculations.is_empty());
+    assert_eq!(text.affected_calculations.as_slice(), []);
 
     let DesignerResponse::Published(boolean) = runtime
         .handle(DesignerRequest::EditScalar {
@@ -1306,7 +1306,7 @@ fn text_and_boolean_edits_publish_against_the_resident_revision() {
     assert_eq!(boolean.base_revision, "resident/1");
     assert_eq!(boolean.resulting_revision, "resident/2");
     assert_eq!(boolean.fields, ["iron_sword.enabled".into()]);
-    assert!(boolean.affected_calculations.is_empty());
+    assert_eq!(boolean.affected_calculations.as_slice(), []);
 
     let DesignerResponse::Fields(fields) = runtime
         .handle(DesignerRequest::QueryFields {
@@ -1943,5 +1943,5 @@ fn no_change_lifecycle_result_projects_without_publication_evidence() {
     let failure = error.failure_projection("resident/0");
     assert_eq!(failure.code, "no_change");
     assert_eq!(failure.current_revision, "resident/0");
-    assert!(failure.diagnostics.is_empty());
+    assert_eq!(failure.diagnostics.as_slice(), []);
 }

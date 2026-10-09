@@ -166,7 +166,7 @@ fn native_table_profile_requires_complete_typed_rows_without_publication() {
             .bytes,
         before,
     );
-    assert!(table(&mut runtime, "inventory").rows.is_empty());
+    assert_eq!(table(&mut runtime, "inventory").rows.as_slice(), []);
 }
 
 #[test]

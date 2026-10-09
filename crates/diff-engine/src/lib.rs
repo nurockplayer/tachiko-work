@@ -456,6 +456,9 @@ fn compare_entity(
     changes: &mut Vec<SemanticChange>,
     changed_fields: &mut BTreeSet<FieldRef>,
 ) {
+    if before == after {
+        return;
+    }
     if before.key != after.key {
         changes.push(SemanticChange::EntityKeyChanged {
             entity: entity_id.clone(),

@@ -72,3 +72,11 @@ a durable host save.
 
 See the repository's first-contact guide for the Product Gap walkthrough:
 <https://github.com/nurockplayer/tachiko-work/blob/main/docs/engineering/experimental-designer-client-kit.md>.
+
+For an explicitly selected opaque `.roproj/v3` transfer, call
+`client.exportProjectV3(expectedRevision)`. The bytes support Date and saved
+grouped-sum definitions together and reopen through `inspectProject` and
+`openProject`. They are not canonical-v1 entries or a portable `.ro` artifact.
+Ordinary `exportProject` refuses an occurrence successfully opened from v3;
+continue saving it with the explicit method. Retain a compatible v3 reader
+after emitting these artifacts, including during producer rollback.

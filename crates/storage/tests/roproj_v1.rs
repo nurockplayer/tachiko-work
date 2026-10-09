@@ -155,8 +155,8 @@ fn full_shape_round_trip_is_exact() {
 
     assert_eq!(decoded, document);
     assert_eq!(reencoded.files(), encoded.files());
-    assert!(!encoded.file("entities/6.jsonl").unwrap().is_empty());
-    assert!(!encoded.file("entities/b.jsonl").unwrap().is_empty());
+    assert_ne!(encoded.file("entities/6.jsonl").unwrap(), [] as [u8; 0]);
+    assert_ne!(encoded.file("entities/b.jsonl").unwrap(), [] as [u8; 0]);
 }
 
 #[test]

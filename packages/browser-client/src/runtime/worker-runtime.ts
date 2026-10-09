@@ -44,8 +44,11 @@ export function startDesignerWorker(wasmUrl: string): void {
             scope.postMessage({ id: event.data.id, ...reply });
             break;
           }
-          case "export_project": {
-            const reply = runtime.exportProject(event.data.expected_revision);
+          case "export_project":
+          case "export_project_v3": {
+            const reply = event.data.kind === "export_project_v3"
+              ? runtime.exportProjectV3(event.data.expected_revision)
+              : runtime.exportProject(event.data.expected_revision);
             if (reply.status === "error") {
               scope.postMessage({ id: event.data.id, ...reply });
             } else {

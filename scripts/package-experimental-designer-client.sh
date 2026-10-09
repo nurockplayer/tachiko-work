@@ -79,6 +79,30 @@ clean_env+=(
   "NPM_CONFIG_GLOBALCONFIG=/dev/null"
   "XDG_CONFIG_HOME=${scratch}/config-home"
 )
+# Opt in to the caller's existing transport only. Keep compiler/package config,
+# credential configuration, trust overrides, and other ambient variables isolated.
+case "${TACHIKO_EXPORT_INHERIT_PROXY:-0}" in
+  0) ;;
+  1)
+    for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+      if [[ -v "${name}" ]]; then clean_env+=("${name}=${!name}"); fi
+    done
+    ;;
+  *) fail "TACHIKO_EXPORT_INHERIT_PROXY must be 0 or 1" ;;
+esac
+# Separately opt in to one CA file already configured for the caller's Node.
+# Both fetch tools use that same file; never import TLS-disable switches or
+# unrelated certificate settings from the ambient environment.
+case "${TACHIKO_EXPORT_INHERIT_CA-0}" in
+  0) ;;
+  1)
+    existing_ca="${NODE_EXTRA_CA_CERTS:-}"
+    [[ "${existing_ca}" == /* && -f "${existing_ca}" && -r "${existing_ca}" ]] ||
+      fail "CA opt-in requires an existing readable absolute NODE_EXTRA_CA_CERTS file"
+    clean_env+=("NODE_EXTRA_CA_CERTS=${existing_ca}" "CARGO_HTTP_CAINFO=${existing_ca}")
+    ;;
+  *) fail "TACHIKO_EXPORT_INHERIT_CA must be 0 or 1" ;;
+esac
 mkdir "${scratch}/cargo-home" "${scratch}/config-home"
 
 pnpm_version="$(cd "${producer_dir}" && "${clean_env[@]}" pnpm --version)"
@@ -163,6 +187,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "editDate",
     "updateFormula",
     "exportProject",
+    "exportProjectV3",
     "exportCanonicalTree",
     "openCanonicalTree",
     "exportPortableRo",
