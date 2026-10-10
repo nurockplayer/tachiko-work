@@ -179,6 +179,20 @@ jobs:
           evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
           node acceptance/scalar-carrier/run.mjs "${evidence}/runtime/designer_runtime.wasm" "${evidence}/acceptance" 2>&1 | tee "${evidence}/acceptance.log"
 
+      - name: Install minimum supported Rust for full release gate
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.85.0
+          targets: wasm32-unknown-unknown
+
+      - name: Validate complete release-equivalent gate
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          mkdir -p "${evidence}"
+          bash scripts/release-check.sh 2>&1 | tee "${evidence}/release-check.log"
+
       - name: Preserve scalar-carrier evidence on success or failure
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
