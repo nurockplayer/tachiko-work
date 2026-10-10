@@ -97,12 +97,16 @@ jobs:
 
   browser-client:
     name: Browser client runtime and external consumer journey
+    needs: quality
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
+        id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Rust
+        id: rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
@@ -116,6 +120,7 @@ jobs:
           run_install: false
 
       - name: Install Node.js
+        id: node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -132,10 +137,53 @@ jobs:
         run: pnpm --dir packages/browser-client exec playwright install --with-deps chromium
 
       - name: Validate browser client runtime and external consumer journey
-        run: bash scripts/browser-client-check.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/scalar-carrier-evidence"
+          bash scripts/browser-client-check.sh 2>&1 | tee "${RUNNER_TEMP}/scalar-carrier-evidence/browser-client-check.log"
+
+      - name: Build exact scalar-carrier WASM evidence
+        id: scalar-carrier-build
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' && steps.node.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          mkdir -p "${evidence}"
+          git diff --exit-code HEAD --
+          git show --no-patch --format='%H%n%T%n%P' HEAD >"${evidence}/source-git.txt"
+          sha256sum Cargo.lock packages/browser-client/runtime/Cargo.lock \
+            packages/browser-client/runtime/src/interop_adapter.rs \
+            packages/browser-client/runtime/tests/interop_adapter.rs \
+            acceptance/scalar-carrier/run.mjs acceptance/scalar-carrier/fixtures.py \
+            .github/workflows/ci.yml >"${evidence}/source-files.sha256"
+          { rustc -Vv; cargo -V; node --version; python3 --version; } >"${evidence}/toolchain.txt"
+          bash packages/browser-client/scripts/build-runtime.sh "${evidence}/runtime" 2>&1 | tee "${evidence}/build.log"
+          sha256sum "${evidence}/runtime/designer_runtime.wasm" >"${evidence}/wasm.sha256"
+
+      - name: Exercise actual scalar-carrier WASM acceptance
+        if: ${{ !cancelled() && steps.scalar-carrier-build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          node acceptance/scalar-carrier/run.mjs "${evidence}/runtime/designer_runtime.wasm" "${evidence}/acceptance" 2>&1 | tee "${evidence}/acceptance.log"
+
+      - name: Preserve scalar-carrier evidence on success or failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scalar-carrier-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
   operational-evidence:
     name: Strict operational evidence
+    needs: browser-client
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -161,6 +209,8 @@ jobs:
 
   minimum-rust:
     name: Minimum supported Rust 1.85.0
+    needs: operational-evidence
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
