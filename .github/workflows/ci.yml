@@ -143,6 +143,15 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/scalar-carrier-evidence"
           bash scripts/browser-client-check.sh 2>&1 | tee "${RUNNER_TEMP}/scalar-carrier-evidence/browser-client-check.log"
 
+      - name: Exercise focused native scalar-carrier acceptance
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          mkdir -p "${evidence}"
+          cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --locked --test interop_adapter 2>&1 | tee "${evidence}/native-acceptance.log"
+
       - name: Build exact scalar-carrier WASM evidence
         id: scalar-carrier-build
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' && steps.node.outcome == 'success' }}
