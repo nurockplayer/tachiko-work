@@ -1,12 +1,12 @@
 # Work #503 scalar/carrier acceptance seed
 
-Status: tests-only proposal against Work main
-`a4fc7845456205c541c6f0c393235f0d75adb459`. No production source changes,
-Ready declaration, qualified kit, or consumer acceptance are included.
+Status: bounded repair admitted by [the #503 Ready disposition](https://github.com/nurockplayer/tachiko-work/issues/503#issuecomment-6096139133),
+against main `a4fc7845456205c541c6f0c393235f0d75adb459`. Final repair qualification
+is pending; no qualified kit or consumer acceptance is included.
 
 The issue's expected outcomes and Accepted ADR-0027 fidelity boundary are the
-oracle. This seed is author-prepared for independent adequacy and existing
-Steward disposition, not falsely attributed to the retained Steward.
+oracle. The independently reviewed author-prepared seed was adopted in that disposition;
+it is not falsely attributed as originally authored by the Steward.
 
 ## Coverage
 
@@ -42,9 +42,9 @@ node acceptance/scalar-carrier/run.mjs /absolute/exact/runtime.wasm /absolute/ne
 ```
 
 Run the same seed on baseline first, then the admitted repaired exact candidate.
-The native mismatch/formula tests and raw-WASM first mismatch should demonstrate
-the behavioral failure on baseline. That is an expectation, **not an executed
-RED result**. The runner records the supplied WASM SHA256; the executor must also
+The admitted baseline produced native mismatch/formula failures and a raw-WASM
+first-mismatch failure as recorded below. The runner records the supplied WASM
+SHA256; the executor must also
 bind it to exact source/manifest provenance. A hash alone is not qualification.
 
 The raw-WASM runner creates a new output directory and records `completed:false`
@@ -56,15 +56,27 @@ installation or dependency/lock change is needed.
 
 ## Current evidence limits
 
-Rust/Cargo are unavailable in the current dot executor. Native compile/tests,
-baseline RED, repaired GREEN, actual raw-WASM behavior, formatting/Clippy/MSRV,
-browser/Worker and repository-wide gates are **UNRUN**. Node syntax, ZIP mutation
-falsifiers and runner fail-closed control are harness checks only. They are not
-runtime, producer, or Sheet qualification. Full issue acceptance stays open.
+[Hosted baseline run 38040384393](https://github.com/nurockplayer/tachiko-work/actions/runs/38040384393)
+executed seed `47c858381e157de65475f9daaaad1abe6755054b` on unchanged production:
+43 native adapter tests passed and two mismatch/formula assertions failed.
+Actual raw WASM built and failed the first `number-inline.xlsx` Inspect assertion
+for missing blocking `scalar_mapping_rejected`. `completed:false` means the
+remaining twenty fixtures and subsequent refusal/history/reopen checks did not run.
+The original full browser-client gate separately stopped on test formatting;
+its hosted rustfmt diff is applied mechanically without changing assertions.
 
-The source repair is intentionally not applied before the existing Ready gate.
-The bounded proposed direction is a cell type/carrier structural check shared by
-`cell_value` and `ignorable_formula_cache`, before missing-value defaults. No
-numeric inference, alternate semantic model, Date guard, capacity rule, or
-supported formula-cache change is proposed. One coherent Guarded review unit;
-existing leads, #413, kit/lock and all release HOLDs remain unchanged.
+The artifact's ZIP SHA256 is
+`fb0b6a6f632d1fcde5ba4378a73a3c97ad243b61fadff3a3ed854b5cd0e9997c`;
+WASM SHA256 is
+`b7588bc5295d97539eb47eaf0a2377e50f0eb096a2e1f8c76e5b60d5722dbaab`.
+Full source/tree/toolchain evidence and the immutable private backup are recorded
+in [the seed receipt](https://github.com/nurockplayer/tachiko-work/issues/503#issuecomment-6095905411).
+Rust/Cargo remain unavailable in the dot executor. Repaired native/WASM GREEN,
+full browser/actual-Worker, final repository checks and independent deep review
+are pending. Local harness checks are not runtime or Sheet qualification.
+
+The admitted repair shares structural type/carrier rejection between scalar
+conversion and formula-cache recovery. It preserves compatible caches and blanks.
+No numeric inference, alternate semantic model, Date guard, capacity rule, kit/lock
+or consumer pin change is included. Full #503 acceptance stays open until the
+complete exact-source native/WASM and applicable repository gates pass.
