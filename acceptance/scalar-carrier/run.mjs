@@ -10,10 +10,11 @@ const [wasmPath, destination] = process.argv.slice(2);
 assert(wasmPath && destination, "supply an exact WASM file and a new result directory");
 const resultDir = resolve(destination);
 await mkdir(resultDir); // Refuse to overwrite an earlier run.
-const wasm = await readFile(wasmPath);
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
-const result = { wasm_sha256: sha(wasm), completed: false, records: [] };
+const result = { wasm_sha256: null, completed: false, records: [] };
 try {
+  const wasm = await readFile(wasmPath);
+  result.wasm_sha256 = sha(wasm);
   const { instance } = await WebAssembly.instantiate(wasm, {});
   const e = instance.exports;
   const encoder = new TextEncoder();
@@ -69,7 +70,11 @@ try {
     return output();
   }
   function snapshot() {
-    e.tachiko_designer_occurrence_observe(); const occurrence = reply();
+    e.tachiko_designer_occurrence_observe();
+    const occurrence = okay(reply(), "occurrence_observed");
+    assert.equal(occurrence.revision, revision);
+    assert.equal(typeof occurrence.scope, "string");
+    assert(occurrence.scope.length > 0);
     return { occurrence, table: okay(ordinary({ type: "query_table", collection }), "table"),
       project: sha(save()), csv: sha(exported("csv")), xlsx: sha(exported("xlsx")) };
   }
@@ -104,7 +109,14 @@ try {
       } else {
         assert(!preview.ledger.some(finding => finding.blocking));
         assert.deepEqual(preview.sheets[0].rows[0][0].value, item.expected);
-        okay(importing(bytes, "xlsx", item.field_type, false), "imported");
+        assert.equal(preview.sheets[0].rows[0][0].formula, item.formula);
+        const candidate = okay(importing(bytes, "xlsx", item.field_type, false), "imported");
+        if (item.formula !== null) {
+          const field = candidate.opened.table.rows[0].fields[0];
+          assert.equal(typeof field.formula?.source, "string", "semantic import discarded the source formula");
+          assert(field.formula.source.length > 0);
+          assert.deepEqual(field.calculated, { status: "value", value: 3 });
+        }
       }
       assert.deepEqual(snapshot(), stable);
       result.records.push({ name: item.file, outcome: "PASS" });

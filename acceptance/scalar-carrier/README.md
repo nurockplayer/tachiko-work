@@ -25,6 +25,9 @@ Steward disposition, not falsely attributed to the retained Steward.
   Both history stacks are established before refusals, then Redo and two Undos
   must recover exact earlier snapshots. Canonical reopen and both exports must
   preserve the original resident. Positive imports use `install:false`.
+  Compatible formulas separately assert retained A1 source in the preview,
+  retained semantic formula and a Rust-calculated value of 3. A compatible
+  inline-string cache remains Text in the preview, not an artificial Empty.
 
 `fixtures.py` changes exactly A2 of the runtime-produced seed. All other ZIP
 entries are byte-preserved. Original and mutated XML are retained in generated
@@ -45,7 +48,8 @@ RED result**. The runner records the supplied WASM SHA256; the executor must als
 bind it to exact source/manifest provenance. A hash alone is not qualification.
 
 The raw-WASM runner creates a new output directory and records `completed:false`
-plus failure details on errors. It never overwrites an earlier run or reports
+plus failure details on errors after that directory is created, including a
+missing WASM file. It never overwrites an earlier run or reports
 completed success after setup, missing export, malformed reply, or assertion
 failure. Node and Python standard library suffice for the harness; no package
 installation or dependency/lock change is needed.

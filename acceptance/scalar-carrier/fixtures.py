@@ -29,7 +29,7 @@ CASES = [
     ("formula-missing-cache", 't="n"', "<f>1+2</f>", False, "number", {"kind": "empty"}),
     ("formula-bad-cache", 't="n"', "<f>1+2</f><v>not-a-number</v>", False, "number", {"kind": "empty"}),
     ("formula-error-cache", 't="e"', "<f>1+2</f><v>#VALUE!</v>", False, "number", {"kind": "empty"}),
-    ("formula-inline-cache", 't="inlineStr"', "<f>1+2</f><is><t>3</t></is>", False, "number", {"kind": "empty"}),
+    ("formula-inline-cache", 't="inlineStr"', "<f>1+2</f><is><t>3</t></is>", False, "number", {"kind": "text", "value": "3"}),
 ]
 
 
@@ -57,7 +57,7 @@ def generate(seed, destination):
                 info = zipfile.ZipInfo(path, (2020, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
                 archive.writestr(info, changed if path == worksheet else data)
-        manifest.append({"file": target.name, "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "refuse": refuse, "field_type": field_type, "expected": expected})
+        manifest.append({"file": target.name, "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "refuse": refuse, "field_type": field_type, "expected": expected, "formula": "1+2" if "<f>" in content else None})
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
