@@ -836,13 +836,17 @@ fn formula_cache_cannot_bypass_cell_parent_child_shapes() {
 // #503: replace the complete cell, checking that the fixture actually reached A2.
 fn scalar_carrier_fixture(cell: &str) -> Vec<u8> {
     let source = import_csv(b"Value\nresident\n", &ImportOptions::default()).unwrap();
-    mutate(&export_xlsx(&source).unwrap(), "xl/worksheets/sheet1.xml", |xml| {
-        let marker = "<c r=\"A2\"";
-        assert_eq!(xml.matches(marker).count(), 1);
-        let start = xml.find(marker).unwrap();
-        let end = start + xml[start..].find("</c>").unwrap() + "</c>".len();
-        format!("{}{cell}{}", &xml[..start], &xml[end..])
-    })
+    mutate(
+        &export_xlsx(&source).unwrap(),
+        "xl/worksheets/sheet1.xml",
+        |xml| {
+            let marker = "<c r=\"A2\"";
+            assert_eq!(xml.matches(marker).count(), 1);
+            let start = xml.find(marker).unwrap();
+            let end = start + xml[start..].find("</c>").unwrap() + "</c>".len();
+            format!("{}{cell}{}", &xml[..start], &xml[end..])
+        },
+    )
 }
 
 #[test]
@@ -855,34 +859,52 @@ fn incompatible_scalar_carriers_are_blocking_before_empty_defaults() {
     ] {
         let inspected = import_xlsx(&scalar_carrier_fixture(cell)).unwrap();
         assert!(
-            inspected.ledger.iter().any(|finding| {
-                finding.blocking && finding.code == "scalar_mapping_rejected"
-            }),
+            inspected
+                .ledger
+                .iter()
+                .any(|finding| { finding.blocking && finding.code == "scalar_mapping_rejected" }),
             "incompatible carrier was silently accepted: {cell}"
         );
-        assert!(tachiko_designer_runtime::import_workbook(
-            &inspected,
-            &tachiko_designer_runtime::ImportSelection {
-                column_types: vec![vec![tachiko_designer_runtime::ImportFieldType::Text]],
-                extra_columns: vec![vec![]],
-            },
-            "00000000-0000-4000-8000-000000000000",
-        ).is_err());
+        assert!(
+            tachiko_designer_runtime::import_workbook(
+                &inspected,
+                &tachiko_designer_runtime::ImportSelection {
+                    column_types: vec![vec![tachiko_designer_runtime::ImportFieldType::Text]],
+                    extra_columns: vec![vec![]],
+                },
+                "00000000-0000-4000-8000-000000000000",
+            )
+            .is_err()
+        );
     }
 }
 
 #[test]
 fn compatible_scalar_carriers_and_numeric_blanks_keep_their_values() {
     for (cell, expected) in [
-        ("<c r=\"A2\" t=\"inlineStr\"><is><t>do-not-drop</t></is></c>", SourceValue::Text { value: "do-not-drop".into() }),
-        ("<c r=\"A2\" t=\"n\"><v>123</v></c>", SourceValue::Number { value: 123.0 }),
-        ("<c r=\"A2\"><v>123</v></c>", SourceValue::Number { value: 123.0 }),
+        (
+            "<c r=\"A2\" t=\"inlineStr\"><is><t>do-not-drop</t></is></c>",
+            SourceValue::Text {
+                value: "do-not-drop".into(),
+            },
+        ),
+        (
+            "<c r=\"A2\" t=\"n\"><v>123</v></c>",
+            SourceValue::Number { value: 123.0 },
+        ),
+        (
+            "<c r=\"A2\"><v>123</v></c>",
+            SourceValue::Number { value: 123.0 },
+        ),
         ("<c r=\"A2\" t=\"n\"/>", SourceValue::Empty),
         ("<c r=\"A2\"/>", SourceValue::Empty),
         ("<c r=\"A2\" t=\"n\"><v/></c>", SourceValue::Empty),
     ] {
         let inspected = import_xlsx(&scalar_carrier_fixture(cell)).unwrap();
-        assert!(!inspected.ledger.iter().any(|finding| finding.blocking), "{cell}");
+        assert!(
+            !inspected.ledger.iter().any(|finding| finding.blocking),
+            "{cell}"
+        );
         assert_eq!(inspected.sheets[0].rows[0][0].value, expected, "{cell}");
     }
 }
@@ -896,9 +918,13 @@ fn formula_cache_cannot_hide_incompatible_scalar_carriers() {
         "<c r=\"A2\" t=\"e\"><f>1+2</f><is><t>#VALUE!</t></is></c>",
     ] {
         let inspected = import_xlsx(&scalar_carrier_fixture(cell)).unwrap();
-        assert!(inspected.ledger.iter().any(|finding| {
-            finding.blocking && finding.code == "scalar_mapping_rejected"
-        }), "formula cache weakened structural refusal: {cell}");
+        assert!(
+            inspected
+                .ledger
+                .iter()
+                .any(|finding| { finding.blocking && finding.code == "scalar_mapping_rejected" }),
+            "formula cache weakened structural refusal: {cell}"
+        );
     }
 }
 
@@ -910,9 +936,13 @@ fn duplicate_or_mixed_scalar_carriers_remain_blocking() {
         "<c r=\"A2\" t=\"inlineStr\"><is><t>a</t></is><v>2</v></c>",
     ] {
         let inspected = import_xlsx(&scalar_carrier_fixture(cell)).unwrap();
-        assert!(inspected.ledger.iter().any(|finding| {
-            finding.blocking && finding.code == "scalar_mapping_rejected"
-        }), "{cell}");
+        assert!(
+            inspected
+                .ledger
+                .iter()
+                .any(|finding| { finding.blocking && finding.code == "scalar_mapping_rejected" }),
+            "{cell}"
+        );
     }
 }
 
