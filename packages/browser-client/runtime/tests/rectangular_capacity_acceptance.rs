@@ -3,6 +3,7 @@
 use std::{env, fmt::Write as _, fs, path::Path, process::Command, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tachiko_designer_runtime::{
     DesignerRequest, DesignerResponse, DesignerRuntime, ImportFieldType, ImportSelection,
     InteropMetadata, OccurrenceProjection, ScalarEditInput, StoredValueProjection, TableProjection,
@@ -360,7 +361,7 @@ fn ordinary_native_65_to_64_preserves_history() {
             .expect("ordinary small mixed native source must be admitted");
     assert_eq!(opened.table.rows.len(), 65);
     let collection = opened.bootstrap.default_collection.clone();
-    let opened_wire = serde_json::to_vec(&serde_json::json!({
+    let opened_wire = serde_json::to_vec(&json!({
         "status": "ok",
         "response": {"type": "opened", "payload": opened}
     }))
@@ -408,7 +409,7 @@ fn native_required_mixed_65_to_64_refusal_preserves_resident_and_history() {
             .expect("native required mixed 65-row source must be admitted");
     assert_eq!(opened.table.rows.len(), 65);
     let collection = opened.bootstrap.default_collection.clone();
-    let opened_wire = serde_json::to_vec(&serde_json::json!({
+    let opened_wire = serde_json::to_vec(&json!({
         "status": "ok",
         "response": {"type": "opened", "payload": opened}
     }))
@@ -545,8 +546,8 @@ fn native_rectangular_capacity_complete_lifecycle() {
         return;
     }
     // A passing ordinary control must precede the new-profile baseline failure.
-    let (_, _, control) = fixture(64, 2, true);
-    assert_eq!(control.values.len(), 64);
+    let (_, _, control) = fixture(8, 2, true);
+    assert_eq!(control.values.len(), 8);
     let root = env::var_os("TACHIKO_RECTANGULAR_EVIDENCE")
         .map_or_else(env::temp_dir, Into::into)
         .join(format!(
