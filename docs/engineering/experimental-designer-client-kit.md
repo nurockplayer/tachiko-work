@@ -14,7 +14,7 @@ formulas, validates candidates, or owns canonical state.
 ## Export and vendor the kit
 
 From a fully clean Tachiko Work checkout with Rust, `wasm32-unknown-unknown`, a
-C compiler, and pnpm 11.25.0 installed:
+C compiler, and pnpm 12.11.2 installed:
 
 ```sh
 bash scripts/export-experimental-designer-client.sh \

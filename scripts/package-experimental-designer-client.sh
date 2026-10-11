@@ -106,7 +106,7 @@ esac
 mkdir "${scratch}/cargo-home" "${scratch}/config-home"
 
 pnpm_version="$(cd "${producer_dir}" && "${clean_env[@]}" pnpm --version)"
-[[ "${pnpm_version}" == "11.25.0" ]] || fail "pnpm 11.25.0 is required (found ${pnpm_version})"
+[[ "${pnpm_version}" == "12.11.2" ]] || fail "pnpm 12.11.2 is required (found ${pnpm_version})"
 
 stage_parent="$(mktemp -d "${output_parent}/.tachiko-experimental-client-stage.XXXXXX")"
 cleanup_stage() { rm -rf -- "${stage_parent}"; }

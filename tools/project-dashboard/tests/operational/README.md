@@ -47,7 +47,7 @@ Browser happy path and upstream partial paths DO NOT mock `/api/projection` or i
 
 ## Reproducible validation and promotion
 
-Use Node >=24 and pnpm 11.25.0. Browser development dependencies use the already-selected Designer versions, but remain package-local; no workspace coupling or package-manager migration.
+Use Node >=24 and pnpm 12.11.2. Browser development dependencies use the already-selected Designer versions, but remain package-local; no workspace coupling or package-manager migration.
 
 ```sh
 pnpm --dir tools/project-dashboard install --frozen-lockfile

@@ -86,7 +86,7 @@ fi
 [[ -n "${designer}" ]] || designer="$(pwd)"
 case "${1:-}" in
   --version)
-    printf '%s\n' '11.25.0'
+    printf '%s\n' '12.11.2'
     ;;
   install)
     # The fixture has no dependencies. The exporter still exercises its real

@@ -7,7 +7,7 @@ runtime_manifest="${producer_dir}/runtime/Cargo.toml"
 runtime_root="${producer_dir}/runtime"
 
 command -v pnpm >/dev/null 2>&1 || {
-  echo "browser-client-check: pnpm 11.25.0 is required" >&2
+  echo "browser-client-check: pnpm 12.11.2 is required" >&2
   exit 1
 }
 command -v rg >/dev/null 2>&1 || {
@@ -19,8 +19,8 @@ command -v node >/dev/null 2>&1 || {
   exit 1
 }
 pnpm_version="$(pnpm --dir "${producer_dir}" --version)"
-if [[ "${pnpm_version}" != "11.25.0" ]]; then
-  echo "browser-client-check: pnpm 11.25.0 is required; found ${pnpm_version}" >&2
+if [[ "${pnpm_version}" != "12.11.2" ]]; then
+  echo "browser-client-check: pnpm 12.11.2 is required; found ${pnpm_version}" >&2
   exit 1
 fi
 
