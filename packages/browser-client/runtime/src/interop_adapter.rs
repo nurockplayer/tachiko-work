@@ -1400,7 +1400,10 @@ fn capacity_plain_values(node: &Xml) -> bool {
                 && match node.attr("t") {
                     Some("inlineStr") => node.children.len() == 1 && node.children[0].name == "is",
                     Some("str" | "s") => node.children.len() == 1 && node.children[0].name == "v",
-                    None | Some("n") => node.children.is_empty(),
+                    None | Some("n") => {
+                        node.children.is_empty()
+                            || (node.children.len() == 1 && node.children[0].name == "v")
+                    }
                     _ => false,
                 }
         }
@@ -2649,12 +2652,26 @@ fn output_style(cell: &SourceCell) -> CellStyle {
 pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
     export_xlsx_for_profile(
         workbook,
-        if validate_text_capacity(workbook).is_ok() {
+        if use_text_capacity_writer(workbook) {
             OutputProfile::TextCapacity
         } else {
             OutputProfile::Shared
         },
     )
+}
+
+fn use_text_capacity_writer(workbook: &SourceWorkbook) -> bool {
+    if validate_text_capacity(workbook).is_err() {
+        return false;
+    }
+    let sheet = &workbook.sheets[0];
+    sheet.rows.len() > MAX_DATA_ROWS
+        || (sheet.columns.len() == 3
+            && sheet
+                .rows
+                .iter()
+                .flatten()
+                .all(|cell| matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. })))
 }
 
 /// Emit typed worksheets using the selected bounded output profile.

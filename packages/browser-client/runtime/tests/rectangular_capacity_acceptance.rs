@@ -118,7 +118,10 @@ fn verify(actual: &TableProjection, expected: &Expected) {
             assert_eq!(field.target.field, actual.columns[c].id);
             assert_eq!(field.stored, expected.values[r][c], "cell {r},{c}");
             assert!(field.formula.is_none());
-            assert!(field.diagnostics.is_empty());
+            assert_eq!(
+                field.diagnostics,
+                [] as [tachiko_designer_runtime::DiagnosticProjection; 0]
+            );
         }
     }
 }
