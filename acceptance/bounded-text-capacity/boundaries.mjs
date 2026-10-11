@@ -230,16 +230,24 @@ try {
         await refuse(`atomic import ${file}`, () => importing(invalid, format), file.startsWith("source-") ? /8,?406/ : undefined);
       }
     }
-    await refuse("capacity selected Number", () => importing(source, "csv", {
-      selection: { column_types: [["text", "text", "number"]], extra_columns: [[]] },
-    }));
+    await probe("capacity selected Number", () => {
+      const before = snapshot();
+      const candidate = okay(importing(source, "csv", {
+        selection: { column_types: [["text", "text", "number"]], extra_columns: [[]] },
+        install: false,
+      }), "imported");
+      assert.equal(candidate.opened.table.rows.length, 8406);
+      assert.equal(candidate.opened.table.columns[2].field_type, "number");
+      assert(candidate.opened.table.rows.every(row => row.fields[2].stored?.kind === "number"));
+      unchanged(before);
+    });
     await refuse("capacity fourth selected field", () => importing(source, "csv", {
       selection: { column_types: [["text", "text", "text"]], extra_columns: [[{ name: "extra", field_type: "text" }]] },
     }));
     const closureSource = await readFile(join(fixtures, "candidate-output-closure.xlsx"));
     await refuse("candidate whose CSV escaping exceeds output budget", () => importing(closureSource, "xlsx"));
     const thirteen = csv(Array.from({ length: 8406 }, () => Array(13).fill("v")), Array.from({ length: 13 }, (_, c) => `field_${c}`));
-    await refuse("thirteen-column profile remains unadmitted", () => importing(thirteen, "csv", {
+    await refuse("8406 by thirteen exceeds the cell-product budget", () => importing(thirteen, "csv", {
       selection: { column_types: [Array(13).fill("text")], extra_columns: [[]] },
     }));
     await refuse("capacity without header", () => importing(source.subarray(source.indexOf(10) + 1), "csv", {

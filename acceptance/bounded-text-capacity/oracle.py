@@ -210,7 +210,7 @@ def verify(directory):
         "CSV export exact 2MiB and candidate limit plus one",
         "empty Text retains existing missing-value representation",
         "history remains executable after all refusals",
-        "thirteen-column profile remains unadmitted",
+        "8406 by thirteen exceeds the cell-product budget",
     }
     required.update(
         f"{boundary}-{delta}.xlsx"
@@ -249,7 +249,7 @@ def verify(directory):
         "PASS metadata3145728/3145729",
         "PASS full Opened reply16777216/16777217",
         "PASS unchanged ordinary queryFields complete reply65536/65537",
-        "PASS large constraint/multiple-schema/non-Text/formula/saved-definition disqualification",
+        "PASS large Number admission and constraint/multiple-schema/formula/saved-definition disqualification",
         "PASS row-limit refusal preserves None, complete resident, exports and both history stacks",
         "PASS ST_Xstring capacity reopen refusal, near-matches and generic preservation",
     ]:

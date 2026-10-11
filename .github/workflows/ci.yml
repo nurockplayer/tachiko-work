@@ -164,7 +164,13 @@ jobs:
           git show --no-patch --format='%H%n%T%n%P' HEAD >"${evidence}/source-git.txt"
           sha256sum Cargo.lock packages/browser-client/runtime/Cargo.lock \
             packages/browser-client/runtime/src/interop_adapter.rs \
+            packages/browser-client/runtime/src/interop_document.rs \
+            packages/browser-client/runtime/src/lib.rs \
             packages/browser-client/runtime/tests/interop_adapter.rs \
+            packages/browser-client/runtime/tests/rectangular_capacity_acceptance.rs \
+            acceptance/bounded-text-capacity/rectangle_oracle.py \
+            acceptance/bounded-text-capacity/rectangle_wire.mjs \
+            packages/browser-client/e2e/rectangular-capacity.mjs \
             acceptance/scalar-carrier/run.mjs acceptance/scalar-carrier/fixtures.py \
             .github/workflows/ci.yml >"${evidence}/source-files.sha256"
           { rustc -Vv; cargo -V; node --version; python3 --version; } >"${evidence}/toolchain.txt"
@@ -228,6 +234,12 @@ jobs:
             --example capacity_saved_open_boundaries -- all "${evidence}/rectangle/ordinary" 2>&1 | tee "${evidence}/rectangle/ordinary.log"
           node acceptance/bounded-text-capacity/ordinary-saved-open-wire.mjs \
             "${evidence}/rectangle/kit/designer_runtime.wasm" "${evidence}/rectangle/ordinary" "${evidence}/rectangle/ordinary-wire.json"
+          cargo run --release --locked --manifest-path packages/browser-client/runtime/Cargo.toml \
+            --example capacity_profile_boundaries -- all 2>&1 | tee "${evidence}/rectangle/profile-boundaries.log"
+          python3 acceptance/bounded-text-capacity/oracle.py generate "${evidence}/rectangle/legacy-fixtures" 2>&1 | tee "${evidence}/rectangle/legacy-fixtures.log"
+          PYTHONDONTWRITEBYTECODE=1 python3 acceptance/bounded-text-capacity/resource_fixtures.py "${evidence}/rectangle/legacy-fixtures"
+          node acceptance/bounded-text-capacity/boundaries.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" \
+            "${evidence}/rectangle/legacy-fixtures" "${evidence}/rectangle/legacy-boundaries.json"
 
       - name: Install minimum supported Rust for full release gate
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master

@@ -137,6 +137,16 @@ def generate(directory):
         for row in case["values"]:
             row[0] = {"kind": "text", "value": "x" * 1200}
         group.append(case)
+    for excess, group in [(0, accepted), (1, refused)]:
+        case = recipe(65, 16)
+        case["name"] += f"-header{208 + excess}"
+        case["headers"][0] = "h" * (146 + excess)
+        group.append(case)
+    for label, value in [("expression", "-1+2"), ("nonfinite", "inf"), ("mixed-column", "not-a-number")]:
+        case = recipe(320, 2)
+        case["name"] += "-" + label
+        case["values"][27][1] = {"kind": "text", "value": value}
+        refused.append(case)
     for case in [*accepted, *refused]:
         for extension, encoder in [("csv", csv_bytes), ("xlsx", xlsx_bytes)]:
             path = directory / f'{case["name"]}.{extension}'

@@ -70,6 +70,7 @@ fn verify(actual: &TableProjection, expected: &Expected) {
     }
 }
 
+#[allow(clippy::too_many_lines)] // One generated rectangular source and its independent typed oracle stay together.
 fn fixture(rows: usize, columns: usize, mixed: bool) -> (Vec<u8>, ImportSelection, Expected) {
     let headers: Vec<String> = match columns {
         2 => vec!["date".into(), "amount".into()],
@@ -91,7 +92,7 @@ fn fixture(rows: usize, columns: usize, mixed: bool) -> (Vec<u8>, ImportSelectio
         .iter()
         .map(|t| match t {
             ImportFieldType::Number => "number".into(),
-            _ => "text".into(),
+            ImportFieldType::Text => "text".into(),
         })
         .collect();
     let mut values = Vec::new();
@@ -113,7 +114,7 @@ fn fixture(rows: usize, columns: usize, mixed: bool) -> (Vec<u8>, ImportSelectio
                             3 => 1_000_000.0,
                             4 => 0.000_001,
                             5 => -0.000_000_1,
-                            _ => r as f64 + 0.25,
+                            _ => f64::from(u32::try_from(r).unwrap()) + 0.25,
                         },
                     },
                     _ => StoredValueProjection::Text {
@@ -201,6 +202,7 @@ fn project_bytes(runtime: &DesignerRuntime, carrier: &str) -> Vec<u8> {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Each argument is an explicit member of the retained-source snapshot.
 fn assert_resident_unchanged(
     resident: &mut Option<DesignerRuntime>,
     collection: &str,
@@ -274,7 +276,9 @@ fn native_required_mixed_document(rows: usize, text_width: usize) -> Document {
                     ),
                     (
                         FieldId::from("number"),
-                        Value::Number(Number::new(row as f64 + 0.25).unwrap()),
+                        Value::Number(
+                            Number::new(f64::from(u32::try_from(row).unwrap()) + 0.25).unwrap(),
+                        ),
                     ),
                 ]
                 .into_iter()
@@ -333,6 +337,7 @@ fn ordinary_native_65_to_64_preserves_history() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One full atomic-refusal and retained-history acceptance trace.
 fn native_required_mixed_65_to_64_refusal_preserves_resident_and_history() {
     let bytes = to_canonical_string(&native_required_mixed_document(65, 1_200)).unwrap();
     let mut resident = None;
@@ -438,6 +443,7 @@ fn native_required_mixed_65_to_64_refusal_preserves_resident_and_history() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One complete import, refusal, carrier, process-reopen and history trace.
 fn native_rectangular_capacity_complete_lifecycle() {
     if let Ok(directory) = env::var("TACHIKO_RECTANGULAR_REOPEN") {
         let directory = Path::new(&directory);
@@ -505,17 +511,18 @@ fn native_rectangular_capacity_complete_lifecycle() {
             }
             let (source_runtime, source_imported) =
                 import_workbook(&source_workbook, &selection, ORIGINAL).unwrap();
-            let source = if format == "xlsx" {
+            let xlsx_source = if format == "xlsx" {
                 let revision = source_runtime.observe_occurrence().revision;
                 let typed = source_runtime
                     .export_workbook(&revision, &source_imported.metadata)
                     .unwrap();
                 let bytes = export_xlsx(&typed).unwrap();
-                import_xlsx(&bytes).unwrap()
+                Some(import_xlsx(&bytes).unwrap())
             } else {
-                source_workbook
+                None
             };
-            let (runtime, imported) = import_workbook(&source, &selection, ORIGINAL).unwrap();
+            let source = xlsx_source.as_ref().unwrap_or(&source_workbook);
+            let (runtime, imported) = import_workbook(source, &selection, ORIGINAL).unwrap();
             // IDs belong to this actual imported source and remain frozen for
             // its entire edit/save/reopen/export lifecycle.
             let mut expected = expected_template.clone();
@@ -574,7 +581,7 @@ fn native_rectangular_capacity_complete_lifecycle() {
                         expected_revision: undo_revision,
                     },
                 );
-                verify(&table(&mut runtime, &collection), &expected);
+                verify(&table(runtime, &collection), &expected);
                 let redo_revision = runtime.observe_occurrence().revision;
                 publish(
                     runtime,
@@ -594,8 +601,7 @@ fn native_rectangular_capacity_complete_lifecycle() {
 
                 // A bounded typed candidate is prospective only; it does not
                 // replace the actual resident occurrence.
-                let (prospective, preview) =
-                    import_workbook(&source, &selection, ORIGINAL).unwrap();
+                let (prospective, preview) = import_workbook(source, &selection, ORIGINAL).unwrap();
                 verify(&preview.opened.table, &expected_template);
                 drop(prospective);
                 assert_resident_unchanged(
