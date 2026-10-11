@@ -84,6 +84,13 @@ impl DesignerHost {
     #[must_use]
     pub fn spreadsheet(&mut self, request: &[u8], source: &[u8]) -> HostReply {
         let runtime = &mut self.runtime;
+        // The browser request arena refuses these before anything reads them.
+        if request.len() > MAX_SPREADSHEET_METADATA_REQUEST_BYTES {
+            return HostReply {
+                reply: request_too_large_reply(runtime.as_ref()),
+                bytes: None,
+            };
+        }
         let metadata_control = if request.len() > MAX_WIRE_REQUEST_BYTES {
             request
                 .iter()
@@ -101,7 +108,7 @@ impl DesignerHost {
         } else {
             true
         };
-        if request.len() > MAX_SPREADSHEET_METADATA_REQUEST_BYTES || !metadata_control {
+        if !metadata_control {
             return HostReply {
                 reply: request_too_large_reply(runtime.as_ref()),
                 bytes: None,
