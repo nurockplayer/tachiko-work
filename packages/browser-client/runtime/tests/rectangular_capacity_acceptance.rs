@@ -8,7 +8,8 @@ use tachiko_designer_runtime::{
     InteropMetadata, OccurrenceProjection, ScalarEditInput, StoredValueProjection, TableProjection,
     import_workbook,
     interop_adapter::{
-        ImportOptions, SourceValue, export_csv, export_xlsx, import_csv, import_xlsx,
+        ImportOptions, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
+        export_csv, export_xlsx, import_csv, import_xlsx,
     },
     open_imported_project, process_wire_request,
 };
@@ -20,6 +21,57 @@ use tachiko_workspace_engine::{
 
 const ORIGINAL: &str = "00000000-0000-4000-8000-000000000507";
 const FRESH: &str = "00000000-0000-4000-8000-000000000508";
+
+#[test]
+fn native_explicit_320_by_2_number_confirmation() {
+    // Independent source model isolates explicit selection from CSV inspection.
+    // CSV lexical fidelity and both complete source lifecycles are checked below.
+    let source = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Synthetic".into(),
+            has_header: true,
+            columns: ["date", "amount"]
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                })
+                .to_vec(),
+            rows: (0..320)
+                .map(|row| {
+                    [format!("000-date-{row:03}"), "-13.25".into()]
+                        .map(|value| SourceCell {
+                            value: SourceValue::Text { value },
+                            ..SourceCell::default()
+                        })
+                        .to_vec()
+                })
+                .collect(),
+        }],
+        ledger: vec![],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Text, ImportFieldType::Number]],
+        extra_columns: vec![vec![]],
+    };
+    let (_, imported) = import_workbook(&source, &selection, ORIGINAL)
+        .expect("valid explicit 320 by 2 Text/Number confirmation must be admitted");
+    assert_eq!(imported.opened.table.rows.len(), 320);
+    assert_eq!(imported.opened.table.columns[0].field_type, "text");
+    assert_eq!(imported.opened.table.columns[1].field_type, "number");
+    for (row, actual) in imported.opened.table.rows.iter().enumerate() {
+        assert_eq!(actual.fields.len(), 2);
+        assert_eq!(
+            actual.fields[0].stored,
+            Some(StoredValueProjection::Text {
+                value: format!("000-date-{row:03}"),
+            })
+        );
+        assert_eq!(
+            actual.fields[1].stored,
+            Some(StoredValueProjection::Number { value: -13.25 })
+        );
+    }
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 struct Expected {
@@ -93,6 +145,9 @@ fn fixture(rows: usize, columns: usize, mixed: bool) -> (Vec<u8>, ImportSelectio
         .map(|t| match t {
             ImportFieldType::Number => "number".into(),
             ImportFieldType::Text => "text".into(),
+            ImportFieldType::Boolean | ImportFieldType::Date => {
+                unreachable!("fixture selects only Text and Number")
+            }
         })
         .collect();
     let mut values = Vec::new();
@@ -117,13 +172,16 @@ fn fixture(rows: usize, columns: usize, mixed: bool) -> (Vec<u8>, ImportSelectio
                             _ => f64::from(u32::try_from(r).unwrap()) + 0.25,
                         },
                     },
-                    _ => StoredValueProjection::Text {
+                    ImportFieldType::Text => StoredValueProjection::Text {
                         value: if r % 97 == 0 {
                             format!("000{r:05}_{c},雪\"quote\"\nLF\r\nCRLF")
                         } else {
                             format!("000{r:05}_{c}")
                         },
                     },
+                    ImportFieldType::Boolean | ImportFieldType::Date => {
+                        unreachable!("fixture selects only Text and Number")
+                    }
                 })
             })
             .collect();
@@ -133,7 +191,11 @@ fn fixture(rows: usize, columns: usize, mixed: bool) -> (Vec<u8>, ImportSelectio
                 None => String::new(),
                 Some(StoredValueProjection::Text { value }) => value.clone(),
                 Some(StoredValueProjection::Number { value }) => value.to_string(),
-                _ => unreachable!(),
+                Some(
+                    StoredValueProjection::Boolean { .. }
+                    | StoredValueProjection::Date { .. }
+                    | StoredValueProjection::Reference { .. },
+                ) => unreachable!("fixture produces only Text and Number"),
             })
             .collect();
         values.push(expected);
@@ -601,9 +663,11 @@ fn native_rectangular_capacity_complete_lifecycle() {
 
                 // A bounded typed candidate is prospective only; it does not
                 // replace the actual resident occurrence.
-                let (prospective, preview) = import_workbook(source, &selection, ORIGINAL).unwrap();
-                verify(&preview.opened.table, &expected_template);
-                drop(prospective);
+                {
+                    let (_prospective, preview) =
+                        import_workbook(source, &selection, ORIGINAL).unwrap();
+                    verify(&preview.opened.table, &expected_template);
+                }
                 assert_resident_unchanged(
                     &mut resident,
                     &collection,

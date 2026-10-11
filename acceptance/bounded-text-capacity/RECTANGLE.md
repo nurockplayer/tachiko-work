@@ -6,7 +6,8 @@ Authority: merged [#506](https://github.com/nurockplayer/tachiko-work/pull/506),
 The seed is unverified until hosted execution returns valid behavioral results.
 Expected baseline failure is not PASS and cannot be merged.
 
-- `rectangular_capacity_acceptance.rs`: ordinary native 65→64 success;
+- `rectangular_capacity_acceptance.rs`: independent native source-model
+  320×2 explicit Text/Number confirmation; ordinary native 65→64 success;
   actual-capacity native 65→64 atomic refusal with both history directions;
   native 320×2, 1000×16 mixed and original 8406×3 Text all-cell lifecycles;
   negative CSV lexical inspection, explicit types, missing values, scalar
