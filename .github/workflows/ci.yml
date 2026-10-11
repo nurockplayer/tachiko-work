@@ -179,6 +179,56 @@ jobs:
           evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
           node acceptance/scalar-carrier/run.mjs "${evidence}/runtime/designer_runtime.wasm" "${evidence}/acceptance" 2>&1 | tee "${evidence}/acceptance.log"
 
+      - name: Generate independent rectangular-capacity fixtures
+        id: rectangle-fixtures
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence/rectangle"
+          mkdir -p "${evidence}"
+          python3 acceptance/bounded-text-capacity/rectangle_oracle.py generate "${evidence}/fixtures" 2>&1 | tee "${evidence}/fixture-readback.log"
+
+      - name: Exercise native rectangular-capacity acceptance
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence/rectangle"
+          mkdir -p "${evidence}/native"
+          TACHIKO_RECTANGULAR_EVIDENCE="${evidence}/native" RUST_TEST_THREADS=1 \
+            cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --locked --test rectangular_capacity_acceptance -- --nocapture 2>&1 | tee "${evidence}/native.log"
+
+      - name: Exercise actual rectangular-capacity WASM acceptance
+        id: rectangle-wire
+        if: ${{ !cancelled() && steps.scalar-carrier-build.outcome == 'success' && steps.rectangle-fixtures.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          node acceptance/bounded-text-capacity/rectangle_wire.mjs "${evidence}/runtime/designer_runtime.wasm" \
+            "${evidence}/rectangle/fixtures" "${evidence}/rectangle/wire" 2>&1 | tee "${evidence}/rectangle/wire.log"
+          python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \
+            "${evidence}/rectangle/wire" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/wire-oracle.log"
+
+      - name: Qualify exact rectangular-capacity kit and browser Worker
+        id: rectangle-worker
+        if: ${{ !cancelled() && steps.rectangle-wire.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          bash scripts/export-experimental-designer-client.sh "${evidence}/rectangle/kit" 2>&1 | tee "${evidence}/rectangle/kit.log"
+          sha256sum "${evidence}/rectangle/kit/artifact-manifest.json" >"${evidence}/rectangle/kit-manifest.sha256"
+          pnpm --dir packages/browser-client exec node e2e/rectangular-capacity.mjs \
+            "${evidence}/rectangle/kit" "${evidence}/rectangle/fixtures" "${evidence}/rectangle/worker" 2>&1 | tee "${evidence}/rectangle/worker.log"
+          python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \
+            "${evidence}/rectangle/worker" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/worker-oracle.log"
+          cargo run --release --locked --manifest-path packages/browser-client/runtime/Cargo.toml \
+            --example capacity_saved_open_boundaries -- all "${evidence}/rectangle/ordinary" 2>&1 | tee "${evidence}/rectangle/ordinary.log"
+          node acceptance/bounded-text-capacity/ordinary-saved-open-wire.mjs \
+            "${evidence}/rectangle/kit/designer_runtime.wasm" "${evidence}/rectangle/ordinary" "${evidence}/rectangle/ordinary-wire.json"
+
       - name: Install minimum supported Rust for full release gate
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
