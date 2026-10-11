@@ -112,10 +112,18 @@ fn verify(actual: &TableProjection, expected: &Expected) {
     for (r, row) in actual.rows.iter().enumerate() {
         assert_eq!(row.id, expected.rows[r]);
         assert_eq!(row.id, expected.metadata.sheets[0].rows[r].entity_id);
-        assert_eq!(row.fields.len(), expected.kinds.len());
-        for (c, field) in row.fields.iter().enumerate() {
+        // The established projection omits missing cells. Verify the exact
+        // ordered present subset; every absent logical position stays absent.
+        let present = actual
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(c, _)| expected.values[r][*c].is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(row.fields.len(), present.len());
+        for (field, (c, column)) in row.fields.iter().zip(present) {
             assert_eq!(field.target.entity, row.id);
-            assert_eq!(field.target.field, actual.columns[c].id);
+            assert_eq!(field.target.field, column.id);
             assert_eq!(field.stored, expected.values[r][c], "cell {r},{c}");
             assert!(field.formula.is_none());
             assert_eq!(
@@ -614,7 +622,13 @@ fn native_rectangular_capacity_complete_lifecycle() {
             for (r, c) in [(0, 0), (rows / 2, columns - 1), (rows - 1, 0)] {
                 let runtime = resident.as_mut().unwrap();
                 let before = table(runtime, &collection);
-                let target = before.rows[r].fields[c].target.clone();
+                let target = before.rows[r]
+                    .fields
+                    .iter()
+                    .find(|field| field.target.field == before.columns[c].id)
+                    .expect("selected populated logical cell")
+                    .target
+                    .clone();
                 let (input, value) = if expected.kinds[c] == "number" {
                     (
                         ScalarEditInput::Number {

@@ -59,10 +59,11 @@ try {
               same(table.columns.map(c => c.id), metadata.sheets[0].columns.map(c => c.field_id), "column identity/order");
               same(table.rows.map(r => r.id), metadata.sheets[0].rows.map(r => r.entity_id), "row identity/order");
               table.rows.forEach((row, r) => {
-                same(row.fields.length, caseValue.kinds.length, "complete fields");
-                row.fields.forEach((field, c) => {
-                  same(field.target, { entity: row.id, field: table.columns[c].id }, "stable targets");
-                  same(field.stored, values[r][c], `cell ${r},${c}`);
+                const present = table.columns.flatMap((column, c) => values[r][c] === null ? []
+                  : [{ target: { entity: row.id, field: column.id }, stored: values[r][c], c }]);
+                same(row.fields.map(field => field.target), present.map(cell => cell.target), "exact ordered present subset");
+                row.fields.forEach((field, index) => {
+                  same(field.stored, present[index].stored, `cell ${r},${present[index].c}`);
                   same(field.formula, null, "no formulas"); same(field.diagnostics, [], "no diagnostics");
                 });
               });
@@ -98,7 +99,9 @@ try {
                 const imported = await client.importSpreadsheet(bytes, sourceFormat, { delimiter: ",", header: true }, { column_types: [caseValue.kinds], extra_columns: [[]] });
                 metadata = imported.metadata; collection = imported.opened.bootstrap.default_collection; verify(imported.opened.table);
                 for (const [r, c] of [[0, 0], [Math.floor(values.length / 2), caseValue.kinds.length - 1], [values.length - 1, 0]]) {
-                  const target = (await table()).rows[r].fields[c].target;
+                  const actual = await table();
+                  const target = actual.rows[r].fields.find(field => field.target.field === actual.columns[c].id)?.target;
+                  check(target, "selected populated logical cell");
                   const original = values[r][c];
                   const value = caseValue.kinds[c] === "number" ? { kind: "number", value: 700.25 } : { kind: "text", value: '000-edited-雪,"first"\r\nkept' };
                   const revision = (await client.observeOccurrence()).revision;

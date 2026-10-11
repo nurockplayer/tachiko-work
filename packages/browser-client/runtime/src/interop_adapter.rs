@@ -194,6 +194,23 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn validate_text_capacity_inspection(workbook: &SourceWorkbook) -> Result<()> {
+    if !text_capacity_shape(workbook) {
+        return fail("Source exceeds the bounded Text/Number capacity rectangle");
+    }
+    let sheet = &workbook.sheets[0];
+    let legacy_small_text = sheet.columns.len() == 3
+        && sheet
+            .rows
+            .iter()
+            .flatten()
+            .all(|cell| matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. }));
+    if sheet.rows.len() <= MAX_DATA_ROWS && !legacy_small_text {
+        return fail("Only large or legacy Text sources use the private capacity inspection");
+    }
+    validate_capacity_source_inspection(workbook)
+}
+
 fn validate_capacity_source_inspection(workbook: &SourceWorkbook) -> Result<()> {
     if !text_capacity_shape(workbook) {
         return fail("Source exceeds the bounded Text/Number capacity rectangle");

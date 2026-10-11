@@ -513,7 +513,7 @@ fn ineligible() {
             assert_eq!(projection.columns[0].field_type, "number");
             assert!(projection.rows.iter().all(|row| matches!(
                 row.fields[0].stored,
-                Some(tachiko_designer_runtime::StoredValueProjection::Number { value }) if value == 1.0
+                Some(tachiko_designer_runtime::StoredValueProjection::Number { value }) if value.to_bits() == 1.0_f64.to_bits()
             )));
         }
     }

@@ -137,11 +137,21 @@ jobs:
         run: pnpm --dir packages/browser-client exec playwright install --with-deps chromium
 
       - name: Validate browser client runtime and external consumer journey
+        id: browser-client-validation
         shell: bash
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/scalar-carrier-evidence"
           bash scripts/browser-client-check.sh 2>&1 | tee "${RUNNER_TEMP}/scalar-carrier-evidence/browser-client-check.log"
+
+      - name: Preserve immediate browser-runtime failure diagnostics
+        if: ${{ !cancelled() && steps.browser-client-validation.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-client-failure-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/browser-client-check.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Exercise focused native scalar-carrier acceptance
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' }}
@@ -166,6 +176,7 @@ jobs:
             packages/browser-client/runtime/src/interop_adapter.rs \
             packages/browser-client/runtime/src/interop_document.rs \
             packages/browser-client/runtime/src/lib.rs \
+            packages/browser-client/runtime/src/wasm.rs \
             packages/browser-client/runtime/tests/interop_adapter.rs \
             packages/browser-client/runtime/tests/rectangular_capacity_acceptance.rs \
             acceptance/bounded-text-capacity/rectangle_oracle.py \

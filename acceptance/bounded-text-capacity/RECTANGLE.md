@@ -44,6 +44,10 @@ amend only that contradictory outcome, retaining formula/definition refusal and
 all unrelated limits. A 8406×13 workload still refuses the logical-cell product.
 The extra fourth field over a 8406×3 workload still exceeds that product.
 Keep ordinary-first actual admission distinct from structural eligibility.
+The established row projection omits missing cells. Native/raw/Worker verifiers
+check the exact ordered present-field subset by stable ID against every logical
+cell; absent cells, duplicates and unknown targets cannot pass. Independent
+CSV/typed XLSX export checks still cover every logical matrix position.
 
 One Guarded vertical implementation is justified because source admission without
 edit/save/reopen/both-export closure is an unusable and unsafe partial delivery.

@@ -72,10 +72,12 @@ function verify(actual, caseValue, values) {
   assert.deepEqual(actual.columns.map(c => c.id), metadata.sheets[0].columns.map(c => c.field_id));
   assert.deepEqual(actual.rows.map(r => r.id), metadata.sheets[0].rows.map(r => r.entity_id));
   actual.rows.forEach((row, r) => {
-    assert.equal(row.fields.length, caseValue.kinds.length);
-    row.fields.forEach((field, c) => {
-      assert.deepEqual(field.target, { entity: row.id, field: actual.columns[c].id });
-      assert.deepEqual(field.stored, values[r][c], `cell ${r},${c}`);
+    const present = actual.columns.flatMap((column, c) => values[r][c] === null ? []
+      : [{ target: { entity: row.id, field: column.id }, stored: values[r][c], c }]);
+    // Exact ordered targets reject unknown, duplicate, missing or extra cells.
+    assert.deepEqual(row.fields.map(field => field.target), present.map(cell => cell.target));
+    row.fields.forEach((field, index) => {
+      assert.deepEqual(field.stored, present[index].stored, `cell ${r},${present[index].c}`);
       assert.equal(field.formula, null); assert.deepEqual(field.diagnostics, []);
     });
   });
@@ -153,7 +155,9 @@ if (reopenFile) {
         verify(imported.opened.table, caseValue, values);
         if (["320x2-mixed", "1000x16-mixed", "8406x3-text"].includes(caseValue.name)) {
           for (const [r, c] of [[0, 0], [Math.floor(values.length / 2), caseValue.kinds.length - 1], [values.length - 1, 0]]) {
-            const target = table().rows[r].fields[c].target;
+            const actual = table();
+            const target = actual.rows[r].fields.find(field => field.target.field === actual.columns[c].id)?.target;
+            assert(target, "selected populated logical cell");
             const value = caseValue.kinds[c] === "number" ? { kind: "number", value: 700.25 }
               : { kind: "text", value: '000-edited-雪,"first"\r\nkept' };
             publish("edit_scalar", { target, input: value.kind === "number" ? { kind: "number", input: "700.25" } : value });
