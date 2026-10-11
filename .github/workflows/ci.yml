@@ -136,20 +136,35 @@ jobs:
       - name: Install Chromium
         run: pnpm --dir packages/browser-client exec playwright install --with-deps chromium
 
-      - name: Validate browser client runtime and external consumer journey
-        id: browser-client-validation
+      - name: Install minimum supported Rust for full release gate
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.85.0
+          targets: wasm32-unknown-unknown
+
+      - name: Validate complete release-equivalent gate once
+        id: full-release
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p "${RUNNER_TEMP}/scalar-carrier-evidence"
-          bash scripts/browser-client-check.sh 2>&1 | tee "${RUNNER_TEMP}/scalar-carrier-evidence/browser-client-check.log"
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          mkdir -p "${evidence}/rectangle/native"
+          TACHIKO_RECTANGULAR_EVIDENCE="${evidence}/rectangle/native" \
+            bash scripts/release-check.sh 2>&1 | tee "${evidence}/release-check.log"
 
-      - name: Preserve immediate browser-runtime failure diagnostics
-        if: ${{ !cancelled() && steps.browser-client-validation.outcome == 'failure' }}
-        uses: actions/upload-artifact@v4
+      - name: Preserve native acceptance log and immediate release failure diagnostics
+        if: ${{ !cancelled() && steps.full-release.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          cp "${evidence}/release-check.log" "${evidence}/rectangle/native.log"
+
+      - name: Upload immediate release failure diagnostics
+        if: ${{ !cancelled() && steps.full-release.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: browser-client-failure-${{ github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/scalar-carrier-evidence/browser-client-check.log
+          name: release-failure-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/release-check.log
           if-no-files-found: error
           retention-days: 7
 
@@ -206,16 +221,6 @@ jobs:
           mkdir -p "${evidence}"
           python3 acceptance/bounded-text-capacity/rectangle_oracle.py generate "${evidence}/fixtures" 2>&1 | tee "${evidence}/fixture-readback.log"
 
-      - name: Exercise native rectangular-capacity acceptance
-        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -o pipefail
-          evidence="${RUNNER_TEMP}/scalar-carrier-evidence/rectangle"
-          mkdir -p "${evidence}/native"
-          TACHIKO_RECTANGULAR_EVIDENCE="${evidence}/native" RUST_TEST_THREADS=1 \
-            cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --locked --test rectangular_capacity_acceptance -- --nocapture 2>&1 | tee "${evidence}/native.log"
-
       - name: Exercise actual rectangular-capacity WASM acceptance
         id: rectangle-wire
         if: ${{ !cancelled() && steps.scalar-carrier-build.outcome == 'success' && steps.rectangle-fixtures.outcome == 'success' }}
@@ -262,20 +267,6 @@ jobs:
           PYTHONDONTWRITEBYTECODE=1 python3 acceptance/bounded-text-capacity/resource_fixtures.py "${evidence}/rectangle/legacy-fixtures"
           node acceptance/bounded-text-capacity/boundaries.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" \
             "${evidence}/rectangle/legacy-fixtures" "${evidence}/rectangle/legacy-boundaries.json"
-
-      - name: Install minimum supported Rust for full release gate
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: 1.85.0
-          targets: wasm32-unknown-unknown
-
-      - name: Validate complete release-equivalent gate
-        shell: bash
-        run: |
-          set -o pipefail
-          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
-          mkdir -p "${evidence}"
-          bash scripts/release-check.sh 2>&1 | tee "${evidence}/release-check.log"
 
       - name: Preserve scalar-carrier evidence on success or failure
         if: ${{ always() }}

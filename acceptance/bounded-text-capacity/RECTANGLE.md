@@ -15,7 +15,8 @@ The integrated candidate must pass all final gates; behavioral RED is not PASS.
   request/source/malformed-open refusal preservation.
 - `rectangle_oracle.py`: independent CSV/typed XLSX fixture generation/readback;
   frozen all-cell matrices and edits, complete lifecycle capture coverage,
-  standard-library CSV/ZIP/XML export verification. No producer reader supplies
+  standard-library CSV/ZIP/XML export verification, including existing shared
+  strings with bounded indexes and exact Text/Number distinctions. No producer reader supplies
   its own export oracle. Fixture readback alone is not runtime evidence.
 - `rectangle_wire.mjs`: actual Rust WASM ABI; ordinary eight-row controls before
   valid explicit 320×2 typed confirmation; both source formats, 16/17 columns,
@@ -28,7 +29,9 @@ The integrated candidate must pass all final gates; behavioral RED is not PASS.
   termination and new browser/Worker; complete identity/value/type/export
   checks, refusal preservation and independently observed timings.
 - CI retains complete release, scalar-carrier, normal browser/source-boundary,
-  strict evidence and MSRV gates. It also executes the existing ordinary saved
+  strict evidence and MSRV gates. The unchanged full release gate runs once;
+  its unfiltered native matrix and fresh-child artifacts are retained, without
+  standalone duplicate browser/native invocations. It also executes the existing ordinary saved
   open example and actual WASM 65536/65537 oracle across all six carriers/cases.
 
 Before production Ready, consume actual native and raw-WASM baseline results;

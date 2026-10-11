@@ -102,6 +102,14 @@ def read_xlsx(path, columns):
         rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
         target = next(r.attrib["Target"] for r in rels if r.attrib["Id"] == sheets[0].attrib[f"{{{DOCREL}}}id"])
         assert target == "worksheets/sheet1.xml", "unexpected fixture/export layout"
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            strings = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+            assert strings.tag == f"{{{MAIN}}}sst"
+            for item in strings:
+                assert item.tag == f"{{{MAIN}}}si" and len(item) == 1
+                assert item[0].tag == f"{{{MAIN}}}t", "unexpected shared-string structure"
+                shared.append(item[0].text or "")
         sheet = ET.fromstring(archive.read("xl/" + target))
         result = []
         for r, row in enumerate(sheet.findall(f"{{{MAIN}}}sheetData/{{{MAIN}}}row"), 1):
@@ -114,6 +122,11 @@ def read_xlsx(path, columns):
                 kind = cell.attrib.get("t", "n")
                 if kind == "inlineStr":
                     value = {"kind": "text", "value": "".join(cell.find(f"{{{MAIN}}}is").itertext())}
+                elif kind == "s":
+                    index = cell.findtext(f"{{{MAIN}}}v", "")
+                    assert index and all("0" <= digit <= "9" for digit in index), "invalid shared-string index"
+                    assert int(index) < len(shared), "shared-string index out of bounds"
+                    value = {"kind": "text", "value": shared[int(index)]}
                 elif kind == "str":
                     value = {"kind": "text", "value": cell.findtext(f"{{{MAIN}}}v", "")}
                 else:
