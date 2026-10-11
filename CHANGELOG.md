@@ -124,6 +124,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- XLSX import rejects scalar type/value-carrier mismatches before empty-value
+  defaults or formula-cache recovery can discard their contents. Valid inline
+  strings, numeric values, legitimate numeric blanks and supported formula caches
+  keep their existing behavior.
+
 - Formula authoring in one open Designer occurrence is now a bounded reversible
   semantic action: Undo restores the exact prior Number or formula, and Redo
   re-applies the accepted formula through the normal lifecycle. The narrow

@@ -1,10 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 consumer_dir="${repo_root}/examples/experimental-designer-client"
 vendor_dir="${consumer_dir}/vendor/tachiko"
-check_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-experimental-client-smoke.XXXXXX")"
+tmp_root="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)" || {
+  echo "experimental-designer-client-smoke: could not resolve TMPDIR: ${TMPDIR:-/tmp}" >&2
+  exit 1
+}
+case "${tmp_root}/" in
+  "${repo_root}/"*)
+    tmp_root="$(cd -- /tmp && pwd -P)" || {
+      echo "experimental-designer-client-smoke: could not resolve /tmp" >&2
+      exit 1
+    }
+    case "${tmp_root}/" in
+      "${repo_root}/"*)
+        echo "experimental-designer-client-smoke: no temporary directory outside the source checkout" >&2
+        exit 1 ;;
+    esac ;;
+esac
+check_dir="$(mktemp -d "${tmp_root}/tachiko-experimental-client-smoke.XXXXXX")"
+check_dir="$(cd -- "${check_dir}" && pwd -P)"
 acceptance_runner="${repo_root}/scripts/experimental-designer-client-acceptance.sh"
 
 smoke_completed=0
@@ -133,7 +150,8 @@ pnpm --dir "${repo_root}/packages/browser-client" exec tsc \
   --noEmit \
   --pretty false
 pnpm --dir "${repo_root}/packages/browser-client" exec playwright test \
-  --config playwright.config.ts
+  --config playwright.config.ts \
+  --output "${check_dir}/playwright-results"
 
 # This consumes the just-built primary vendor kit without rebuilding it. It
 # proves the preserved C1 and runtime-canary contracts against the same source
