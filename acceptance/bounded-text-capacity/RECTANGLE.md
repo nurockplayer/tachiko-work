@@ -2,9 +2,9 @@
 
 Authority: merged [#506](https://github.com/nurockplayer/tachiko-work/pull/506),
 `CONTRACT.md` amendment. Baseline source main
-`4e949797a8d224d296e787f66b6a0d343c954eef`; no production edits in this seed.
-The seed is unverified until hosted execution returns valid behavioral results.
-Expected baseline failure is not PASS and cannot be merged.
+`4e949797a8d224d296e787f66b6a0d343c954eef`; tests-only baseline `d53d951`
+reproduced native and actual WASM 320×2 typed-confirmation refusal in CI38114050617.
+The integrated candidate must pass all final gates; behavioral RED is not PASS.
 
 - `rectangular_capacity_acceptance.rs`: independent native source-model
   320×2 explicit Text/Number confirmation; ordinary native 65→64 success;
@@ -21,7 +21,8 @@ Expected baseline failure is not PASS and cannot be merged.
   valid explicit 320×2 typed confirmation; both source formats, 16/17 columns,
   8406/8407 rows, 1576×16/1577×16, 64-row oversize refusal/65-row admission;
   both carriers/fresh Node processes, all-cell/history checks and resident/export
-  preservation on invalid import/open/row operations.
+  preservation on invalid import/open/row operations, including whole-column
+  inspection refusal for malformed expressions, nonfinite and mixed values.
 - `e2e/rectangular-capacity.mjs`: exported immutable kit, actual browser/module
   Worker; three complete workloads, both source formats/save APIs; full browser
   termination and new browser/Worker; complete identity/value/type/export

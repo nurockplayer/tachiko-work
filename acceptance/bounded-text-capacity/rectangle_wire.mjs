@@ -163,8 +163,13 @@ if (reopenFile) {
           }
           publish("undo"); // Both histories populated while refusals execute.
           const before = snapshot();
-          for (const rejected of manifest.refused) for (const rejectedFormat of ["csv", "xlsx"])
-            refused(importing(await source(rejected, rejectedFormat), rejectedFormat, rejected), before);
+          for (const rejected of manifest.refused) for (const rejectedFormat of ["csv", "xlsx"]) {
+            const rejectedBytes = await source(rejected, rejectedFormat);
+            if (["320x2-mixed-expression", "320x2-mixed-nonfinite", "320x2-mixed-column"].includes(rejected.name)
+                && (rejectedFormat === "csv" || rejected.name === "320x2-mixed-expression"))
+              refused(spreadsheet({ type: "inspect", format: rejectedFormat, csv_options: options }, rejectedBytes), before);
+            refused(importing(rejectedBytes, rejectedFormat, rejected), before);
+          }
           if (caseValue.kinds.includes("number"))
             refused(importing(bytes, format, caseValue, { selection: { column_types: [caseValue.kinds.map(() => "text")], extra_columns: [[]] } }), before);
           refused(spreadsheet({ type: "open_project", occurrence_id: uuid(), metadata: { ...metadata, version: 2 } }, save("opaque")), before);

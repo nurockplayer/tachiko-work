@@ -226,6 +226,17 @@ jobs:
           evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
           bash scripts/export-experimental-designer-client.sh "${evidence}/rectangle/kit" 2>&1 | tee "${evidence}/rectangle/kit.log"
           sha256sum "${evidence}/rectangle/kit/artifact-manifest.json" >"${evidence}/rectangle/kit-manifest.sha256"
+          sha256sum "${evidence}/rectangle/kit/designer_runtime.wasm" >"${evidence}/rectangle/kit-wasm.sha256"
+          if cmp --silent "${evidence}/runtime/designer_runtime.wasm" "${evidence}/rectangle/kit/designer_runtime.wasm"; then
+            echo 'direct ABI proof covers byte-identical exported kit WASM' >"${evidence}/rectangle/kit-abi-binding.txt"
+          else
+            node acceptance/scalar-carrier/run.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" "${evidence}/rectangle/kit-scalar" 2>&1 | tee "${evidence}/rectangle/kit-scalar.log"
+            node acceptance/bounded-text-capacity/rectangle_wire.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" \
+              "${evidence}/rectangle/fixtures" "${evidence}/rectangle/kit-wire" 2>&1 | tee "${evidence}/rectangle/kit-wire.log"
+            python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \
+              "${evidence}/rectangle/kit-wire" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/kit-wire-oracle.log"
+            echo 'exported kit WASM independently passed scalar and rectangular ABI proof' >"${evidence}/rectangle/kit-abi-binding.txt"
+          fi
           pnpm --dir packages/browser-client exec node e2e/rectangular-capacity.mjs \
             "${evidence}/rectangle/kit" "${evidence}/rectangle/fixtures" "${evidence}/rectangle/worker" 2>&1 | tee "${evidence}/rectangle/worker.log"
           python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \

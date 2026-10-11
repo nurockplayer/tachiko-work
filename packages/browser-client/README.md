@@ -33,13 +33,17 @@ operations, and resets on successful New, Import, legacy open or Close. Keep a
 v3-capable reader available when rolling back a producer that has emitted v3
 artifacts. Sheet host save/restart qualification remains a separate consumer gate.
 
-## Bounded Text capacity profile
+## Bounded Text/Number capacity profile
 
 The producer supports the private [bounded Text capacity profile](../../acceptance/bounded-text-capacity/CONTRACT.md):
-one headered table with three Text fields and at most 8,406 rows, plain styles,
-no column widths, formulas, constraints or saved calculation definitions.
-Admission proves finite complete projections, exact Text preservation and both
-CSV/XLSX export closure before installing a candidate or publishing an edit.
+one headered table with 1–16 Text or finite Number fields, at most 8,406 rows
+and 25,218 logical cells, plain styles, and no column widths, formulas,
+constraints or saved calculation definitions. Admission tries ordinary limits
+first; enlarged retry preserves legacy three-Text eligibility and requires more
+than 64 rows for new shapes. The CSV header reserve is `max(39, 13 × columns)`.
+Inspection retains raw Text and proves whole-column Number feasibility when
+needed; explicit type confirmation and finite complete projections, exact Text
+preservation and both CSV/XLSX export closure precede candidate publication.
 The existing generic and native Tracker profiles retain their own limits.
 Capacity Text edit requests retain proposal evidence only for that request; the
 existing 64-operation session Undo horizon is unchanged.
@@ -62,7 +66,7 @@ the existing spreadsheet operation. Inspection does not authorize a later
 open; actual open revalidates the carrier, metadata mappings, XLSX/CSV closure
 and complete reply before replacing the resident occurrence. It has no ordinary
 open fallback. V3 keeps its strict ordinary profile and origin behavior;
-capacity promotion applies only to eligible non-v3 Text candidates. Enlarged
+capacity promotion applies only to eligible non-v3 Text/Number candidates. Enlarged
 Text-capacity Deduplicate removals are refused before preview or publication.
-These producer changes remain pending qualification and do not qualify or
-change any consumer pin or immutable kit.
+Qualification binds acceptance to the exact exported kit. Sheet independently
+qualifies its consumer pin and durable user journey.

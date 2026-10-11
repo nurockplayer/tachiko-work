@@ -113,6 +113,9 @@ try {
                 const before = await snapshot();
                 for (const bad of rejected) {
                   const bytes = await (await fetch(`${origin}/fixtures/${bad.name}.${sourceFormat}`)).arrayBuffer();
+                  if (["320x2-mixed-expression", "320x2-mixed-nonfinite", "320x2-mixed-column"].includes(bad.name)
+                      && (sourceFormat === "csv" || bad.name === "320x2-mixed-expression"))
+                    await refusal(() => client.inspectSpreadsheet(bytes.slice(0), sourceFormat, { delimiter: ",", header: true }), before);
                   await refusal(() => client.importSpreadsheet(bytes, sourceFormat, { delimiter: ",", header: true }, { column_types: [bad.kinds], extra_columns: [[]] }), before);
                 }
                 const badMetadata = { ...metadata, version: 2 };
