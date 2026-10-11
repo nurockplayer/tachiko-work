@@ -358,8 +358,12 @@ try {
       const before = snapshot();
       const changed = structuredClone(metadata);
       // Ordinary ASCII avoids quoting ambiguity: the baseline header is 39 bytes.
+      const names = metadata.sheets[0].columns.map(column => column.name);
+      assert(names.every(name => /^[a-z_]+$/.test(name)));
+      assert.equal(encoder.encode(names.join(",") + "\r\n").length, 39);
       changed.sheets[0].columns[0].name += "x";
-      error(spreadsheet({ ...exportOperation("csv"), metadata: changed }), /39/);
+      assert.equal(encoder.encode(changed.sheets[0].columns.map(column => column.name).join(",") + "\r\n").length, 40);
+      error(spreadsheet({ ...exportOperation("csv"), metadata: changed }), /CSV header exceeds its reserved encoded bytes/);
       unchanged(before);
     });
     await probe("oversized non-metadata spreadsheet operations", () => {
