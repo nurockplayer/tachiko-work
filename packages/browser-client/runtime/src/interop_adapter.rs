@@ -194,6 +194,7 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn validate_text_capacity_inspection(workbook: &SourceWorkbook) -> Result<()> {
     if !text_capacity_shape(workbook) {
         return fail("Source exceeds the bounded Text/Number capacity rectangle");
