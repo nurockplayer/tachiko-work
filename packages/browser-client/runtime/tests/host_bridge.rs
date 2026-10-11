@@ -1,5 +1,7 @@
 //! The native host bridge must answer exactly like the private wire path and
 //! preserve the resident occurrence on every refused or failed operation.
+//! The bridge is native-only, so this test is too.
+#![cfg(not(target_arch = "wasm32"))]
 
 use serde_json::{Value, json};
 use tachiko_designer_runtime::{
