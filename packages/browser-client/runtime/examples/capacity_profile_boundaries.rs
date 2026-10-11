@@ -500,15 +500,25 @@ fn ineligible() {
             saved
                 .keyed_grouped_sum_definitions
                 .insert("calc".into(), definition);
-            rejected(saved, "saved definition plus required non-Text binding");
+            rejected(
+                saved,
+                "saved definition with otherwise eligible Number bindings",
+            );
         }
-        rejected(changed, if formula { "formula" } else { "non-Text" });
+        if formula {
+            rejected(changed, "formula");
+        } else {
+            let mut admitted = runtime(changed);
+            let projection = table(&mut admitted);
+            assert_eq!(projection.columns[0].field_type, "number");
+            assert!(projection.rows.iter().all(|row| matches!(
+                row.fields[0].stored,
+                Some(tachiko_designer_runtime::StoredValueProjection::Number { value }) if value.to_bits() == 1.0_f64.to_bits()
+            )));
+        }
     }
     println!(
-        "PASS large constraint/multiple-schema/non-Text/formula/saved-definition disqualification"
-    );
-    println!(
-        "UNREACHABLE isolated valid saved-definition case: its required Number bindings already disqualify the three-Text shape"
+        "PASS large Number admission and constraint/multiple-schema/formula/saved-definition disqualification"
     );
 }
 

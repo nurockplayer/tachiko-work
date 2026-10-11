@@ -542,14 +542,15 @@ fn ineligible() {
                 .insert("calc".into(), definition);
             rejected(saved, "saved definition plus required non-Text binding");
         }
-        rejected(changed, if formula { "formula" } else { "non-Text" });
+        if formula {
+            rejected(changed, "formula");
+        } else {
+            runtime(changed);
+            println!("PASS bounded finite Number admission");
+        }
     }
-    println!(
-        "PASS large constraint/multiple-schema/non-Text/formula/saved-definition disqualification"
-    );
-    println!(
-        "UNREACHABLE isolated valid saved-definition case: its required Number bindings already disqualify the three-Text shape"
-    );
+    println!("PASS large constraint/multiple-schema/formula/saved-definition disqualification");
+    println!("PASS valid saved definition remains excluded despite admissible Number bindings");
 }
 
 fn string_escape_profile() {

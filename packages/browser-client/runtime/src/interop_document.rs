@@ -916,13 +916,17 @@ fn validate_selection(
         .sheets
         .iter()
         .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS);
-    if capacity
-        && (!super::interop_adapter::text_capacity_shape(workbook)
-            || selection.column_types != vec![vec![ImportFieldType::Text; 3]]
-            || selection.extra_columns != vec![Vec::new()])
-    {
+    let capacity_selection = workbook.sheets.first().is_some_and(|sheet| {
+        selection.column_types.len() == 1
+            && selection.column_types[0].len() == sheet.columns.len()
+            && selection.column_types[0]
+                .iter()
+                .all(|kind| matches!(kind, ImportFieldType::Text | ImportFieldType::Number))
+            && selection.extra_columns == vec![Vec::new()]
+    });
+    if capacity && (!super::interop_adapter::text_capacity_shape(workbook) || !capacity_selection) {
         return Err(tracker_error(
-            "8,406-row capacity requires three selected Text fields and no extra columns",
+            "8,406-row capacity requires selected Text/Number fields and no extra columns",
         ));
     }
     if workbook.ledger.iter().any(|finding| finding.blocking) {
@@ -1433,8 +1437,8 @@ fn validate_metadata_envelope(
     document: &Document,
     metadata: &InteropMetadata,
 ) -> Result<bool, DesignerError> {
-    let capacity =
-        super::is_text_capacity_document(document) && document.entities.len() > MAX_DATA_ROWS;
+    let capacity = super::is_text_capacity_document(document)
+        && document.entities.len() > super::interop_adapter::MAX_DATA_ROWS;
     if metadata.version != 1
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
@@ -1488,7 +1492,7 @@ fn validate_capacity_metadata(
         ));
     }
     if !sheet.has_header
-        || sheet.columns.len() != 3
+        || !(1..=MAX_COLUMNS).contains(&sheet.columns.len())
         || sheet.columns.iter().any(|column| column.width.is_some())
         || sheet.rows.iter().any(|row| {
             row.styles
