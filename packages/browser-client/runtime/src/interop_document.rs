@@ -1437,7 +1437,8 @@ fn validate_metadata_envelope(
     document: &Document,
     metadata: &InteropMetadata,
 ) -> Result<bool, DesignerError> {
-    let capacity = super::is_text_capacity_eligible_document(document);
+    let capacity = super::is_text_capacity_document(document)
+        && document.entities.len() > super::interop_adapter::MAX_DATA_ROWS;
     if metadata.version != 1
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
