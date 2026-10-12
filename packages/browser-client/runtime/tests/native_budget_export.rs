@@ -1,8 +1,11 @@
 use std::io::{Cursor, Read};
-use tachiko_designer_runtime::interop_adapter::{CellStyle, SourceValue, export_csv, export_xlsx};
+use tachiko_designer_runtime::interop_adapter::{
+    CellStyle, FidelityCategory, FidelityFinding, SourceValue, export_csv, export_xlsx,
+};
 use tachiko_designer_runtime::{
-    DesignerRequest, DesignerResponse, DesignerRuntime, NativeBudgetExportCollection,
-    NativeBudgetExportPresentation, NativeBudgetExportRow, NativeBudgetExportView,
+    DesignerRequest, DesignerResponse, DesignerRuntime, KeyedGroupedSumDefinitionInput,
+    NativeBudgetExportCollection, NativeBudgetExportPresentation, NativeBudgetExportRow,
+    NativeBudgetExportView,
 };
 use zip::ZipArchive;
 
@@ -60,6 +63,107 @@ fn worksheet_xml(bytes: &[u8], path: &str) -> String {
         .read_to_string(&mut xml)
         .expect("worksheet XML should be UTF-8");
     xml
+}
+
+#[test]
+fn native_budget_exports_disclose_saved_summary_once_without_changing_bytes_or_old_ledgers() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let mapped = presentation(
+        &mut runtime,
+        vec![NativeBudgetExportView {
+            id: "items".into(),
+            name: "Budget Items".into(),
+            collection_id: "budget_items".into(),
+        }],
+    );
+    let csv_before = runtime
+        .export_native_budget_csv_workbook("resident/0", &mapped)
+        .unwrap();
+    let xlsx_before = runtime
+        .export_native_budget_workbook("resident/0", &mapped)
+        .unwrap();
+    assert_eq!(csv_before.ledger, vec![FidelityFinding {
+        category: FidelityCategory::Converted,
+        code: "native_budget_active_csv_values".into(),
+        location: "Budget Items".into(),
+        message: "CSV is rebuilt from the active Budget collection, entity, and field identities with authoritative calculated scalar values; inactive collections and worksheet names are not admitted.".into(),
+        blocking: false,
+    }]);
+    let warning = FidelityFinding {
+        category: FidelityCategory::LossyOnExport,
+        code: "saved_keyed_grouped_sum_definitions_not_exported".into(),
+        location: "workbook".into(),
+        message: "Saved grouped-summary definitions are not included in this spreadsheet export. Keep a Tachiko saved copy to preserve their bindings and recomputation.".into(),
+        blocking: false,
+    };
+    assert!(
+        !xlsx_before
+            .ledger
+            .iter()
+            .any(|finding| finding.code == warning.code)
+    );
+    let response = runtime
+        .handle(DesignerRequest::CreateKeyedGroupedSum {
+            expected_revision: "resident/0".into(),
+            definition: KeyedGroupedSumDefinitionInput {
+                id: "budget-summary".into(),
+                orders_schema: "budget_items".into(),
+                order_lookup_key_field: "name".into(),
+                order_quantity_field: "planned".into(),
+                products_schema: "budget_items".into(),
+                product_key_field: "name".into(),
+                product_category_field: "name".into(),
+                product_price_field: "actual".into(),
+            },
+        })
+        .unwrap();
+    let DesignerResponse::KeyedGroupedSumPublished(published) = response else {
+        panic!("expected a saved keyed grouped-sum definition");
+    };
+    assert_eq!(
+        published.result.diagnostics,
+        [] as [tachiko_designer_runtime::KeyedGroupedSumDiagnosticProjection; 0]
+    );
+    let revision = runtime.observe_occurrence().revision;
+    for _ in 0..2 {
+        let mut csv = runtime
+            .export_native_budget_csv_workbook(&revision, &mapped)
+            .unwrap();
+        let mut xlsx = runtime
+            .export_native_budget_workbook(&revision, &mapped)
+            .unwrap();
+        for workbook in [&mut csv, &mut xlsx] {
+            let warnings = workbook
+                .ledger
+                .iter()
+                .filter(|finding| finding.code == warning.code)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                warnings,
+                vec![&warning],
+                "each format must disclose exactly once"
+            );
+            assert_eq!(workbook.ledger.last(), Some(&warning));
+            workbook.ledger.pop();
+        }
+        assert_eq!(
+            export_csv(&csv.sheets[0]).unwrap(),
+            export_csv(&csv_before.sheets[0]).unwrap()
+        );
+        assert_eq!(
+            export_xlsx(&xlsx).unwrap(),
+            export_xlsx(&xlsx_before).unwrap()
+        );
+        assert_eq!(
+            csv, csv_before,
+            "all prior CSV values/styles/findings stay unchanged"
+        );
+        assert_eq!(
+            xlsx, xlsx_before,
+            "all prior XLSX values/styles/findings stay unchanged"
+        );
+    }
+    assert_eq!(runtime.observe_occurrence().revision, revision);
 }
 
 #[test]
