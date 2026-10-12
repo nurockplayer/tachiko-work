@@ -31,19 +31,25 @@ buffed_project="${outside_dir}/buffed.roproj"
 base_package="${outside_dir}/base-package.ro"
 
 "${tachiko_bin}" roproj materialize "${base_direct}" "${base_project}" >/dev/null
-"${tachiko_bin}" roproj pack "${base_project}" "${base_package}" >/dev/null
+# The Git/semantic adapter remains a frozen v1-directory journey. Package
+# consistency now has its own accepted v3 source; it never packages that v1 tree.
+base_portable_project="${outside_dir}/portable.roproj"
+cp -R "${repo_root}/docs/research/fixtures/issue-519-portable-package-v1-v3/input.roproj" \
+  "${base_portable_project}"
+"${tachiko_bin}" roproj pack "${base_portable_project}" "${base_package}" >/dev/null
 
 git -C "${repository_dir}" init --quiet
 cp "${repo_root}/.gitattributes" "${repository_dir}/.gitattributes"
 cp -R "${base_project}" "${repository_dir}/game-balance.roproj"
-cp "${base_package}" "${repository_dir}/game-balance.ro"
-git -C "${repository_dir}" add .gitattributes game-balance.roproj game-balance.ro
+cp -R "${base_portable_project}" "${repository_dir}/portable.roproj"
+cp "${base_package}" "${repository_dir}/portable.ro"
+git -C "${repository_dir}" add .gitattributes game-balance.roproj portable.roproj portable.ro
 git -C "${repository_dir}" \
   -c user.name="Tachiko CI" -c user.email="ci@tachiko.invalid" \
   commit --quiet -m "Track canonical balance project"
 "${tachiko_bin}" roproj compare-package \
-  "${repository_dir}/game-balance.ro" \
-  "${repository_dir}/game-balance.roproj" >/dev/null
+  "${repository_dir}/portable.ro" \
+  "${repository_dir}/portable.roproj" >/dev/null
 git -C "${repository_dir}" switch --quiet -c buffed-sword
 
 "${tachiko_bin}" set "${repository_dir}/game-balance.roproj" \
@@ -92,7 +98,8 @@ grep -F '"value":36' "${smoke_dir}/raw-diff.txt" >/dev/null
 grep -F '"value":45' "${smoke_dir}/raw-diff.txt" >/dev/null
 
 tracked_project="${repository_dir}/game-balance.roproj"
-tracked_package="${repository_dir}/game-balance.ro"
+tracked_portable_project="${repository_dir}/portable.roproj"
+tracked_package="${repository_dir}/portable.ro"
 "${tachiko_bin}" validate "${tracked_project}" >/dev/null
 "${tachiko_bin}" diff "${base_project}" "${tracked_project}" \
   >"${smoke_dir}/inside-diff.txt"
@@ -105,24 +112,30 @@ cmp "${smoke_dir}/outside-diff.txt" "${smoke_dir}/inside-diff.txt"
 cmp "${smoke_dir}/outside-analysis.json" "${smoke_dir}/inside-analysis.json"
 cmp "${smoke_dir}/outside-validation.json" "${smoke_dir}/inside-validation.json"
 
-git -C "${repository_dir}" diff --binary -- game-balance.roproj game-balance.ro \
+# Change one canonical Number value in the v3 fixture while retaining its
+# constraints and saved definition. A stale package must not synchronize it.
+portable_shard="$(rg -l '"value":4' "${tracked_portable_project}"/entities/*.jsonl)"
+sed 's/"value":4/"value":3/' "${portable_shard}" >"${portable_shard}.tmp"
+mv "${portable_shard}.tmp" "${portable_shard}"
+
+git -C "${repository_dir}" diff --binary -- portable.roproj portable.ro \
   >"${smoke_dir}/before-mismatch.diff"
-if "${tachiko_bin}" roproj compare-package "${tracked_package}" "${tracked_project}" \
+if "${tachiko_bin}" roproj compare-package "${tracked_package}" "${tracked_portable_project}" \
   >"${smoke_dir}/stale-package.txt" 2>"${smoke_dir}/stale-package.err"; then
   echo "git-ci-smoke: a stale tracked package unexpectedly matched its source" >&2
   exit 1
 fi
 grep -F "portable_package.source_mismatch" "${smoke_dir}/stale-package.err" >/dev/null
 cmp "${base_package}" "${tracked_package}"
-git -C "${repository_dir}" diff --binary -- game-balance.roproj game-balance.ro \
+git -C "${repository_dir}" diff --binary -- portable.roproj portable.ro \
   >"${smoke_dir}/after-mismatch.diff"
 cmp "${smoke_dir}/before-mismatch.diff" "${smoke_dir}/after-mismatch.diff"
 
 current_package="${smoke_dir}/current-package.ro"
-"${tachiko_bin}" roproj pack "${tracked_project}" "${current_package}" >/dev/null
-"${tachiko_bin}" roproj compare-package "${current_package}" "${tracked_project}" >/dev/null
+"${tachiko_bin}" roproj pack "${tracked_portable_project}" "${current_package}" >/dev/null
+"${tachiko_bin}" roproj compare-package "${current_package}" "${tracked_portable_project}" >/dev/null
 cp "${current_package}" "${tracked_package}"
-"${tachiko_bin}" roproj compare-package "${tracked_package}" "${tracked_project}" >/dev/null
+"${tachiko_bin}" roproj compare-package "${tracked_package}" "${tracked_portable_project}" >/dev/null
 
 noncanonical_project="${smoke_dir}/noncanonical.roproj"
 cp -R "${tracked_project}" "${noncanonical_project}"
@@ -146,7 +159,7 @@ if "${tachiko_bin}" validate "${invalid_project}" \
 fi
 grep -F "divided by zero" "${smoke_dir}/invalid.err" >/dev/null
 
-git -C "${repository_dir}" add game-balance.roproj game-balance.ro
+git -C "${repository_dir}" add game-balance.roproj portable.roproj portable.ro
 git -C "${repository_dir}" \
   -c user.name="Tachiko CI" -c user.email="ci@tachiko.invalid" \
   commit --quiet -m "Buff Iron Sword"

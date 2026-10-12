@@ -6,6 +6,9 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
+use tachiko_semantic_core as semantic;
+#[path = "../acceptance/portable-package-v3/document.rs"]
+mod package_acceptance_document;
 use tachiko_ai_api::{explain_formula, suggest_field_change};
 use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CalculationOutcome, CanonicalAuthoringProjectionError,
@@ -18,9 +21,10 @@ use tachiko_semantic_core::{
 };
 use tachiko_storage::{
     FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, ROPROJ_V1_PATHS,
-    V2_MAX_NUMBER_TOKEN_BYTES, decode_portable_package_v1, decode_roproj_v1,
-    encode_portable_package_v1, encode_roproj_v1, from_bytes as storage_from_bytes,
-    from_str as storage_from_str, portable_package_payload_root, to_canonical_string,
+    V2_MAX_NUMBER_TOKEN_BYTES, decode_portable_package_v1, decode_roproj_v1, decode_roproj_v3,
+    encode_portable_package_v1, encode_roproj_v1, encode_roproj_v3,
+    from_bytes as storage_from_bytes, from_str as storage_from_str, portable_package_payload_root,
+    to_canonical_string,
 };
 use tachiko_workspace_engine::{
     RuntimeValue, ValidationReport,
@@ -80,15 +84,16 @@ const VALIDATION_DISJOINT_CYCLE_COUNT: usize = 4;
 const VALIDATION_DISJOINT_CYCLE_FINGERPRINT: u64 = 18_384_632_427_777_425_720;
 const ROPROJ_V1_EXACT_TREE_FINGERPRINT: u64 = 2_796_923_835_209_599_950;
 const ROPROJ_V1_EXACT_TREE_FILE_COUNT: u64 = 18;
-const PORTABLE_PACKAGE_V1_FINGERPRINT: u64 = 4_165_964_772_177_000_947;
-const PORTABLE_PACKAGE_V1_LENGTH: u64 = 2_692;
+// Independent #519 first-public v3 golden; historical issue-43 bytes are superseded.
+const PORTABLE_PACKAGE_V1_FINGERPRINT: u64 = 153_324_484_093_800_749;
+const PORTABLE_PACKAGE_V1_LENGTH: u64 = 6_155;
 const PORTABLE_PACKAGE_V1_SHA256: [u8; 32] = [
-    0x13, 0x68, 0xeb, 0xe3, 0x8c, 0x86, 0xde, 0x28, 0xd2, 0x37, 0x9a, 0xe6, 0xc0, 0xca, 0x7a, 0x5c,
-    0xa8, 0x50, 0x25, 0x43, 0x00, 0x2f, 0xe0, 0x84, 0xe3, 0x32, 0x54, 0xad, 0x1d, 0xb4, 0xd7, 0xbc,
+    0x2e, 0x8b, 0x98, 0xf4, 0x92, 0x6c, 0x93, 0x10, 0x63, 0xcf, 0x2c, 0xaa, 0x6e, 0xe4, 0xe7, 0x3a,
+    0x81, 0x52, 0xca, 0xce, 0x7f, 0x9c, 0xd5, 0xca, 0x9c, 0xcc, 0x17, 0xe2, 0x12, 0x36, 0x2a, 0x7c,
 ];
 const PORTABLE_PACKAGE_V1_PAYLOAD_ROOT: [u8; 32] = [
-    0x71, 0xe2, 0xb1, 0x17, 0x0a, 0xe3, 0xb2, 0xc2, 0x25, 0x9c, 0xc0, 0xc9, 0x0c, 0x21, 0x73, 0x89,
-    0xa1, 0xe5, 0x9c, 0x49, 0x0b, 0x5c, 0xcd, 0xe4, 0xc6, 0xfe, 0x2d, 0xad, 0xae, 0x1f, 0xed, 0x9c,
+    0xcd, 0xf2, 0xce, 0xc9, 0x03, 0x64, 0xb1, 0x56, 0x2f, 0x5f, 0x8e, 0x48, 0x3a, 0xce, 0x2f, 0x98,
+    0xf4, 0xd2, 0x6a, 0x1f, 0x60, 0x98, 0x18, 0xbf, 0xf1, 0x19, 0x40, 0x48, 0x27, 0x0a, 0xbf, 0x17,
 ];
 
 #[derive(Clone, Copy)]
@@ -386,8 +391,8 @@ fn roproj_v1_record() -> Record {
 }
 
 fn portable_package_v1_record() -> Record {
-    let document = Document::empty("doc-empty", "Empty");
-    let Ok(tree) = encode_roproj_v1(&document) else {
+    let document = package_acceptance_document::document();
+    let Ok(tree) = encode_roproj_v3(&document) else {
         return Record::failure(UNEXPECTED, 47_u64 << 32);
     };
     let root = portable_package_payload_root(&tree);
@@ -419,7 +424,7 @@ fn portable_package_v1_record() -> Record {
     if verified.tree() != &tree || verified.payload_root() != root {
         return Record::failure(UNEXPECTED, (47_u64 << 32) | 3);
     }
-    let Ok(decoded_tree) = decode_roproj_v1(verified.tree()) else {
+    let Ok(decoded_tree) = decode_roproj_v3(verified.tree()) else {
         return Record::failure(UNEXPECTED, (47_u64 << 32) | 4);
     };
     if decoded_tree != document {
@@ -1695,8 +1700,10 @@ fn analysis_success_record() -> Record {
     ];
     let exact = result.lineage.sources.len() == 1
         && result.lineage.sources[0].document == document.id
-        && result.lineage.sources[0].source_revision == SemanticRevision::from("portable-analysis-r1")
-        && result.lineage.sources[0].validator_configuration == ValidatorConfiguration::WorkspaceFull
+        && result.lineage.sources[0].source_revision
+            == SemanticRevision::from("portable-analysis-r1")
+        && result.lineage.sources[0].validator_configuration
+            == ValidatorConfiguration::WorkspaceFull
         && result.lineage.normalized_definition == expected_definition
         && result.lineage.formula_calculation_used
         && result.lineage.derivations == expected_derivations
@@ -1865,8 +1872,7 @@ fn analysis_paired_authorization_record() -> Record {
         &second,
         OperationFamily::FormulaReasoning,
         "comparison-denied",
-    )
-    else {
+    ) else {
         return Record::failure(UNEXPECTED, (53_u64 << 32) | 5);
     };
     if !matches!(
@@ -1889,7 +1895,9 @@ fn analysis_paired_authorization_record() -> Record {
             &wrong_principal,
             TrustedInstant::new(1),
         ),
-        Err(AnalysisOperationError::Lifecycle(PatchLifecycleError::DisclosureDenied))
+        Err(AnalysisOperationError::Lifecycle(
+            PatchLifecycleError::DisclosureDenied
+        ))
     ) {
         return Record::failure(UNEXPECTED, (53_u64 << 32) | 6);
     }
@@ -1989,7 +1997,11 @@ fn analysis_hash_lineage(hash: &mut u64, lineage: &AnalysisLineage) {
     for request in &lineage.normalized_definition.results {
         analysis_hash_result_request(hash, request);
     }
-    mix_framed(hash, b"formula-calculation-used", &[lineage.formula_calculation_used as u8]);
+    mix_framed(
+        hash,
+        b"formula-calculation-used",
+        &[lineage.formula_calculation_used as u8],
+    );
     for derivation in &lineage.derivations {
         match derivation {
             AnalysisDerivation::Predicate(field) => {
@@ -2269,10 +2281,7 @@ fn analysis_pair_fingerprint(result: &PairedAnalysisQueryResult) -> u64 {
     analysis_hash_lineage(&mut hash, &result.lineage);
     analysis_hash_outcome(&mut hash, &result.first);
     analysis_hash_outcome(&mut hash, &result.second);
-    analysis_hash_text(
-        &mut hash,
-        "independent-second-family-denied-analysis-pair",
-    );
+    analysis_hash_text(&mut hash, "independent-second-family-denied-analysis-pair");
     hash
 }
 
@@ -2300,13 +2309,8 @@ fn formula_operation_lifecycle(
     let mut requirements = vec![GrantRequirement::query(family, document_subject.clone())];
     for action in mutation_actions {
         requirements.push(
-            GrantRequirement::mutation(
-                *action,
-                family,
-                mutation_class,
-                document_subject.clone(),
-            )
-            .map_err(|_| ())?,
+            GrantRequirement::mutation(*action, family, mutation_class, document_subject.clone())
+                .map_err(|_| ())?,
         );
     }
     lifecycle
@@ -2323,14 +2327,12 @@ fn formula_operation_lifecycle(
 
 fn formula_query_record() -> Record {
     let document = formula_document(number(42.0), input_reference());
-    let Ok((lifecycle, scope, principal)) =
-        formula_operation_lifecycle(
-            &document,
-            OperationFamily::FormulaReasoning,
-            MutationClass::Formula,
-            &[],
-        )
-    else {
+    let Ok((lifecycle, scope, principal)) = formula_operation_lifecycle(
+        &document,
+        OperationFamily::FormulaReasoning,
+        MutationClass::Formula,
+        &[],
+    ) else {
         return Record::failure(UNEXPECTED, 48_u64 << 32);
     };
     let Ok(result) = lifecycle.query_formula_reasoning(
@@ -2368,14 +2370,12 @@ fn formula_query_record() -> Record {
 fn formula_scenario_record() -> Record {
     let document = formula_document(number(42.0), input_reference());
     let original = document.clone();
-    let Ok((lifecycle, scope, principal)) =
-        formula_operation_lifecycle(
-            &document,
-            OperationFamily::NumberOverrideScenario,
-            MutationClass::Formula,
-            &[],
-        )
-    else {
+    let Ok((lifecycle, scope, principal)) = formula_operation_lifecycle(
+        &document,
+        OperationFamily::NumberOverrideScenario,
+        MutationClass::Formula,
+        &[],
+    ) else {
         return Record::failure(UNEXPECTED, 49_u64 << 32);
     };
     let request = ScenarioRequest::new(
@@ -2657,14 +2657,12 @@ fn resident_session_record() -> Record {
     let installed = session.export_snapshot();
     let mut stale_candidate = installed.document().clone();
     stale_candidate.title = "must not install".to_owned();
-    let stale = session
-        .publication_authority(&mut time)
-        .publish_if_current(
-            installed.document_scope(),
-            initial.revision(),
-            stale_candidate,
-            |_| Some(()),
-        );
+    let stale = session.publication_authority(&mut time).publish_if_current(
+        installed.document_scope(),
+        initial.revision(),
+        stale_candidate,
+        |_| Some(()),
+    );
     if !matches!(stale, Err(SemanticPublicationError::Stale))
         || session.export_snapshot() != installed
         || receipt.base_revision != *initial.revision()
