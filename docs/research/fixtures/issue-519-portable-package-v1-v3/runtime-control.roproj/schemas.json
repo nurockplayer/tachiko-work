@@ -1,0 +1,63 @@
+[
+  {
+    "id": "import_00000000-0000-4000-8000-000000000001_0002",
+    "key": "sheet_1",
+    "fields": [
+      {
+        "id": "import_00000000-0000-4000-8000-000000000001_0003",
+        "key": "column_1",
+        "field_type": {
+          "type": "text"
+        },
+        "required": false,
+        "constraint": {
+          "type": "none"
+        }
+      },
+      {
+        "id": "import_00000000-0000-4000-8000-000000000001_0004",
+        "key": "column_2",
+        "field_type": {
+          "type": "text"
+        },
+        "required": false,
+        "constraint": {
+          "type": "none"
+        }
+      },
+      {
+        "id": "import_00000000-0000-4000-8000-000000000001_0005",
+        "key": "column_3",
+        "field_type": {
+          "type": "number"
+        },
+        "required": false,
+        "constraint": {
+          "type": "none"
+        }
+      },
+      {
+        "id": "import_00000000-0000-4000-8000-000000000001_0006",
+        "key": "column_4",
+        "field_type": {
+          "type": "number"
+        },
+        "required": false,
+        "constraint": {
+          "type": "none"
+        }
+      },
+      {
+        "id": "import_00000000-0000-4000-8000-000000000001_0007",
+        "key": "column_5",
+        "field_type": {
+          "type": "date"
+        },
+        "required": false,
+        "constraint": {
+          "type": "none"
+        }
+      }
+    ]
+  }
+]

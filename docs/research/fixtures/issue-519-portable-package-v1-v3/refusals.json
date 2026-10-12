@@ -1,0 +1,122 @@
+[
+  {
+    "name": "developmental",
+    "code": "portable_package.unsupported_payload_representation"
+  },
+  {
+    "name": "unknown-profile",
+    "code": "portable_package.invalid_manifest"
+  },
+  {
+    "name": "unknown-version",
+    "code": "portable_package.unsupported_version"
+  },
+  {
+    "name": "unknown-payload-profile",
+    "code": "portable_package.unsupported_payload_representation"
+  },
+  {
+    "name": "unknown-payload-version",
+    "code": "portable_package.unsupported_payload_representation"
+  },
+  {
+    "name": "old-payload-claims-before-body",
+    "code": "portable_package.unsupported_payload_representation"
+  },
+  {
+    "name": "integrity",
+    "code": "portable_package.integrity_mismatch"
+  },
+  {
+    "name": "missing-entry",
+    "code": "portable_package.entry_set_mismatch"
+  },
+  {
+    "name": "extra-entry",
+    "code": "portable_package.entry_set_mismatch"
+  },
+  {
+    "name": "duplicate-entry",
+    "code": "portable_package.entry_set_mismatch"
+  },
+  {
+    "name": "alias-entry",
+    "code": "portable_package.entry_set_mismatch"
+  },
+  {
+    "name": "entry-order",
+    "code": "portable_package.noncanonical_container"
+  },
+  {
+    "name": "crc",
+    "code": "portable_package.crc_mismatch"
+  },
+  {
+    "name": "inner-manifest",
+    "code": "portable_package.payload_manifest_mismatch"
+  },
+  {
+    "name": "noncanonical-payload",
+    "code": "portable_package.noncanonical_payload"
+  },
+  {
+    "name": "invalid-semantic-payload",
+    "code": "portable_package.invalid_semantic_payload"
+  },
+  {
+    "name": "compression",
+    "code": "portable_package.noncanonical_container"
+  },
+  {
+    "name": "encryption",
+    "code": "portable_package.noncanonical_container"
+  },
+  {
+    "name": "data-descriptor",
+    "code": "portable_package.noncanonical_container"
+  },
+  {
+    "name": "timestamp",
+    "code": "portable_package.noncanonical_container"
+  },
+  {
+    "name": "truncated",
+    "code": "portable_package.invalid_container"
+  },
+  {
+    "name": "trailing",
+    "code": "portable_package.invalid_container"
+  },
+  {
+    "name": "prepended",
+    "code": "portable_package.invalid_container"
+  },
+  {
+    "name": "split",
+    "code": "portable_package.invalid_container"
+  },
+  {
+    "name": "zip64-sentinel",
+    "code": "portable_package.invalid_container"
+  },
+  {
+    "name": "manifest-depth-256",
+    "code": "portable_package.unsupported_version"
+  },
+  {
+    "name": "manifest-depth-257",
+    "code": "portable_package.resource_limit"
+  },
+  {
+    "name": "duplicate-manifest-member",
+    "code": "portable_package.invalid_manifest"
+  },
+  {
+    "name": "noncanonical-manifest",
+    "code": "portable_package.noncanonical_container"
+  },
+  {
+    "name": "malformed-version",
+    "code": "portable_package.invalid_manifest"
+  }
+]
