@@ -28,12 +28,6 @@ fn transfer(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     }
     bytes
 }
-fn prepared() -> (DesignerRuntime, OpenedProjection) {
-    let mut slot = None;
-    let opened = open_project(&mut slot, &transfer(&bytes::input_files()), RESIDENT)
-        .expect("accepted v3 fixture must already reach runtime admission");
-    (slot.unwrap(), opened)
-}
 fn prepared_control() -> (DesignerRuntime, OpenedProjection) {
     let mut slot = None;
     let opened = open_project(&mut slot, &transfer(&bytes::control_files()), RESIDENT)
@@ -84,10 +78,16 @@ fn assert_storage_class(error: DesignerError, expected: &str) {
 }
 
 #[test]
-fn ac2_required_constrained_fixture_runtime_admission() {
-    let tree = CanonicalRoProjectV3::try_from_files(bytes::input_files()).unwrap();
-    assert_eq!(tree, encode_roproj_v3(&fixture::document()).unwrap());
-    let (mut runtime, opened) = prepared();
+fn ac2_runtime_control_fixture_runtime_admission() {
+    let mut document = fixture::document();
+    for schema in document.schemas.values_mut() {
+        for field in schema.fields.values_mut() {
+            field.constraint = semantic::FieldConstraint::None;
+        }
+    }
+    let tree = CanonicalRoProjectV3::try_from_files(bytes::control_files()).unwrap();
+    assert_eq!(tree, encode_roproj_v3(&document).unwrap());
+    let (mut runtime, opened) = prepared_control();
     assert_eq!(opened.bootstrap.revision, "resident/0");
     assert_eq!(opened.table.revision, "resident/0");
     assert_eq!(
@@ -97,13 +97,53 @@ fn ac2_required_constrained_fixture_runtime_admission() {
     summary(&mut runtime);
     assert_eq!(
         runtime.export_project_v3("resident/0").unwrap().bytes,
-        transfer(&bytes::input_files())
+        transfer(&bytes::control_files())
     );
 }
 
 #[test]
+fn ac2_constrained_golden_verifies_but_open_refuses_capability_without_mutation() {
+    let tree = CanonicalRoProjectV3::try_from_files(bytes::input_files()).unwrap();
+    assert_eq!(tree, encode_roproj_v3(&fixture::document()).unwrap());
+    let (mut runtime, _) = prepared_control();
+    let occurrence = runtime.observe_occurrence();
+    let saved = runtime.export_project_v3(&occurrence.revision).unwrap();
+    let projected = table(&mut runtime);
+    let computed = summary(&mut runtime);
+    let mut slot = Some(runtime);
+    let native_error = open_project(&mut slot, &transfer(&bytes::input_files()), FRESH)
+        .expect_err("constrained v3 input must retain the existing capability refusal");
+    let golden = bytes::vector("golden");
+    let verification = verify_portable_ro(&golden);
+    let result = open_portable_ro(&mut slot, &golden, FRESH);
+    let resident = slot
+        .as_mut()
+        .expect("constrained open refusal cannot clear the resident");
+    assert_eq!(resident.observe_occurrence(), occurrence);
+    assert_eq!(
+        resident.export_project_v3(&occurrence.revision).unwrap(),
+        saved
+    );
+    assert_eq!(table(resident), projected);
+    assert_eq!(summary(resident), computed);
+    for error in [
+        native_error,
+        result.expect_err("constrained package must refuse runtime admission"),
+    ] {
+        let DesignerError::UnsupportedProject { message } = error else {
+            panic!("expected constraint capability refusal, found {error:?}");
+        };
+        assert_eq!(
+            message,
+            "Designer v3 admission supports only unconstrained fields."
+        );
+    }
+    verification.expect("storage-valid constrained golden must verify without runtime admission");
+}
+
+#[test]
 fn ac2_export_matches_golden_and_never_mutates_resident_meaning_or_revision() {
-    let (mut runtime, _) = prepared();
+    let (mut runtime, _) = prepared_control();
     let occurrence = runtime.observe_occurrence();
     let before_table = table(&mut runtime);
     let before_summary = summary(&mut runtime);
@@ -116,9 +156,9 @@ fn ac2_export_matches_golden_and_never_mutates_resident_meaning_or_revision() {
         runtime.export_project_v3(&occurrence.revision).unwrap(),
         before_save
     );
-    let export = result.expect("Date + definitions + both constraints must export as .ro");
+    let export = result.expect("unconstrained Date + definitions must export as .ro");
     assert_eq!(export.revision, occurrence.revision);
-    assert_eq!(export.bytes, bytes::vector("golden"));
+    assert_eq!(export.bytes, bytes::vector("runtime-control"));
     assert_eq!(
         runtime.export_portable_ro(&occurrence.revision).unwrap(),
         export
@@ -140,9 +180,9 @@ fn ac2_export_matches_golden_and_never_mutates_resident_meaning_or_revision() {
 
 #[test]
 fn ac2_independent_golden_verifies_and_opens_in_a_fresh_runtime() {
-    let golden = bytes::vector("golden");
+    let golden = bytes::vector("runtime-control");
     verify_portable_ro(&golden).expect("first-public golden must verify");
-    let (mut reference, expected_opened) = prepared();
+    let (mut reference, expected_opened) = prepared_control();
     let expected_table = table(&mut reference);
     let expected_summary = summary(&mut reference);
     let mut fresh = None;
@@ -159,7 +199,7 @@ fn ac2_independent_golden_verifies_and_opens_in_a_fresh_runtime() {
     assert_eq!(summary(fresh_runtime), expected_summary);
     assert_eq!(
         fresh_runtime.export_project_v3("resident/0").unwrap().bytes,
-        transfer(&bytes::input_files())
+        transfer(&bytes::control_files())
     );
     assert_eq!(
         fresh_runtime

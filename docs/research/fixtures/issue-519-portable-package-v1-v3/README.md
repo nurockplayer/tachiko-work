@@ -15,10 +15,20 @@ shards. The document uses the existing v3 acceptance fixture pattern; its
 import-style IDs are fixed test identities, not evidence of a user import.
 
 `runtime-control.roproj/` is encoded by the same accepted encoder for the same
-document with every constraint set to None. It is a supplementary control to
-reach the existing Designer admission and package-export boundaries; it does
-not replace the constrained acceptance requirement. Current baseline runtime
-v3 admission explicitly refuses constrained fields.
+document with every constraint set to None. Under the Steward's #519 seed
+amendment, this is the runtime-admissible profile for criterion 2, with
+`runtime-control.hex` as its exact export/open golden. Current runtime v3
+admission explicitly refuses constrained fields; expanding admission is outside
+#519 scope while #452 is on Hold.
+
+The constrained `input.roproj/` and `golden.hex` remain required for criterion 1
+storage and CLI pack/unpack/fresh reopen. Runtime verification must succeed on
+this storage-valid golden, while runtime open must retain the existing
+`UnsupportedProject` refusal with the message `Designer v3 admission supports
+only unconstrained fields.` The resident occurrence, revision, table, saved
+definitions and explicit v3 bytes must remain unchanged. A package-codec
+refusal is not the required capability refusal, and constraints must never be
+silently dropped.
 
 The v3 encoder Git blob is `323656cd318060854e30037edfa479fd16c9cd3f`.
 Live GitHub `main` at capture was `b1560ab4331847557f04dfd6833fbffcabfc1169`;
