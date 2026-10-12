@@ -5500,6 +5500,47 @@ mod tests {
     };
 
     #[test]
+    fn field_explanation_reads_direct_dependencies_across_entities_and_collections() {
+        let runtime = DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        // The summary collection reads two entities in the budget-items collection.
+        let explanation = runtime
+            .explain_field("resident/0", &"monthly_summary.actual_total".into())
+            .unwrap();
+        assert_eq!(
+            explanation.formula_source.as_deref(),
+            Some("([rent.actual] + [utilities.actual])")
+        );
+        assert_eq!(
+            explanation.value.calculated,
+            Some(super::CalculationProjection::Value { value: 1360.0 })
+        );
+        let dependencies = &explanation.direct_dependencies;
+        assert_eq!(dependencies.len(), 2);
+        for (dependency, target, value) in [
+            (&dependencies[0], "rent.actual", 1200.0),
+            (&dependencies[1], "utilities.actual", 160.0),
+        ] {
+            assert_eq!(dependency.target, target.into());
+            assert_eq!(
+                dependency.value,
+                runtime
+                    .query_fields("resident/0", &[target.into()])
+                    .unwrap()
+                    .fields[0]
+            );
+            assert_eq!(
+                dependency.value.stored,
+                Some(super::StoredValueProjection::Number { value })
+            );
+        }
+        assert_eq!(
+            explanation.downstream_impacts,
+            vec!["monthly_summary.remaining".into()]
+        );
+        assert!(explanation.diagnostics.is_empty());
+    }
+
+    #[test]
     fn capacity_table_projection_matches_ordinary_owned_projection() {
         let base = native_column_runtime(
             &[("a", "text"), ("b", "text"), ("c", "text")],

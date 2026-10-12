@@ -38,6 +38,13 @@ EOF_FIND
 #!/usr/bin/env bash
 exit "${SMOKE_DIFF_STATUS:-0}"
 EOF_DIFF
+  cat >"$root/bin/cargo" <<'EOF_CARGO'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == "test --manifest-path ${FIXTURE_ROOT}/packages/browser-client/runtime/Cargo.toml --locked --test field_explanation_acceptance" ]] || exit 2
+[[ -n "${TACHIKO_FIELD_EXPLANATION_CAPTURE:-}" && ! -e "$TACHIKO_FIELD_EXPLANATION_CAPTURE" ]] || exit 2
+printf 'fresh native capture\n' >"$TACHIKO_FIELD_EXPLANATION_CAPTURE"
+EOF_CARGO
   cat >"$root/bin/pnpm" <<'EOF_PNPM'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -55,12 +62,14 @@ while (($#)); do
   if [[ "$1" == --output ]]; then output="$2"; shift 2; else shift; fi
 done
 [[ -n "$output" ]] || output="test-results"
+[[ "${TACHIKO_FIELD_EXPLANATION_CAPTURE:-}" == "${output%/*}/field-explanation-capture.json" ]] || exit 2
+[[ "$(<"$TACHIKO_FIELD_EXPLANATION_CAPTURE")" == 'fresh native capture' ]] || exit 2
 mkdir -p "$output"
 printf '{"status":"complete"}\n' >"$output/.last-run.json"
 exit "${SMOKE_PLAYWRIGHT_STATUS:-0}"
 EOF_PNPM
   printf '#!/usr/bin/env bash\nexit 1\n' >"$root/bin/rg"
-  chmod +x "$root/bin/find" "$root/bin/diff" "$root/bin/pnpm" "$root/bin/rg"
+  chmod +x "$root/bin/find" "$root/bin/diff" "$root/bin/cargo" "$root/bin/pnpm" "$root/bin/rg"
   printf '%s\n' '/examples/experimental-designer-client/vendor/' >"$root/.gitignore"
   : >"$root/tmp/.keep"
   git -C "$root" init -q
@@ -113,7 +122,7 @@ run_smoke "$success_root" 0
 [[ "$RUN_STATUS" -eq 0 ]] || { echo "lifecycle test: success smoke returned $RUN_STATUS" >&2; exit 1; }
 [[ "$RUN_OUTPUT" == *"experimental Designer client smoke passed"* ]] || { echo "lifecycle test: success acknowledgement missing" >&2; exit 1; }
 [[ ! -e "$success_root/examples/experimental-designer-client/vendor" ]] || { echo "lifecycle test: success outputs were retained" >&2; exit 1; }
-SMOKE_TMPDIR=tmp run_smoke "$success_root" 0
+TACHIKO_FIELD_EXPLANATION_CAPTURE="$success_root/stale-capture.json" SMOKE_TMPDIR=tmp run_smoke "$success_root" 0
 [[ "$RUN_STATUS" -eq 0 ]] || { echo "lifecycle test: relative-TMPDIR success or clean-checkout re-export returned $RUN_STATUS: $RUN_OUTPUT" >&2; exit 1; }
 [[ ! -e "$success_root/examples/experimental-designer-client/vendor" ]] || { echo "lifecycle test: relative-TMPDIR outputs were retained" >&2; exit 1; }
 SMOKE_TMPDIR=tmp run_smoke "$success_root" 0
@@ -145,6 +154,7 @@ SMOKE_TMPDIR=tmp SMOKE_PLAYWRIGHT_STATUS=37 run_smoke "$failure_root" 0
 [[ "$RUN_STATUS" -eq 37 ]] || { echo "lifecycle test: Playwright failure status changed to $RUN_STATUS" >&2; exit 1; }
 playwright_diagnostic="$(printf '%s\n' "$RUN_OUTPUT" | sed -n 's#^experimental-designer-client-smoke: retained diagnostic directory: ##p')"
 [[ -f "$playwright_diagnostic/playwright-results/.last-run.json" ]] || { echo "lifecycle test: Playwright failure output was not retained at --output" >&2; exit 1; }
+[[ -s "$playwright_diagnostic/field-explanation-capture.json" ]] || { echo "lifecycle test: native parity capture was not retained with Playwright diagnostics" >&2; exit 1; }
 assert_outside_checkout "$failure_root" "$playwright_diagnostic"
 assert_clean_checkout "$failure_root"
 [[ ! -e "$failure_root/packages/browser-client/test-results/.last-run.json" ]] || { echo "lifecycle test: Playwright wrote into source checkout default output" >&2; exit 1; }
