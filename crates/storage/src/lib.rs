@@ -183,7 +183,7 @@ pub fn from_str(source: &str) -> Result<Document, FormatError> {
 pub fn from_bytes(source: &[u8]) -> Result<Document, FormatError> {
     if source.starts_with(&[0x50, 0x4b, 0x03, 0x04]) {
         let package = decode_portable_package_v1(source)?;
-        return decode_roproj_v1(package.tree());
+        return decode_roproj_v3(package.tree());
     }
     let (source_text, version) = inspect_envelope(source)?;
     let document = match version {

@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     FormatError,
-    roproj::{CanonicalRoProjectV1, publish_roproj},
+    roproj::{CanonicalRoProjectV3, publish_roproj_v3},
 };
 
 static NEXT_STAGING_FILE: AtomicU64 = AtomicU64::new(0);
@@ -43,7 +43,7 @@ pub fn read_portable_package(
 /// publication failures without exposing a partial destination.
 pub fn publish_portable_package(
     path: impl AsRef<Path>,
-    tree: &CanonicalRoProjectV1,
+    tree: &CanonicalRoProjectV3,
 ) -> Result<(), FormatError> {
     let path = path.as_ref();
     let bytes = encode(tree)?;
@@ -71,7 +71,7 @@ pub fn publish_portable_package(
 pub fn publish_portable_package_from_roproj(
     source: impl AsRef<Path>,
     destination: impl AsRef<Path>,
-    tree: &CanonicalRoProjectV1,
+    tree: &CanonicalRoProjectV3,
 ) -> Result<(), FormatError> {
     let source = source.as_ref();
     let destination = destination.as_ref();
@@ -79,7 +79,7 @@ pub fn publish_portable_package_from_roproj(
     publish_portable_package(destination, tree)
 }
 
-/// Read an exact canonical `.roproj/v1` source and publish a portable package.
+/// Read an exact canonical `.roproj/v3` source and publish a portable package.
 ///
 /// # Errors
 ///
@@ -101,17 +101,25 @@ pub fn pack_roproj(
 ///
 /// # Errors
 ///
-/// Every host, representation, or semantic rejection maps to the stable
-/// `portable_package.source_not_canonical` meaning.
+/// Other source versions are unsupported and require explicit migration.
+/// Host, representation, and semantic rejections map to
+/// `portable_package.source_not_canonical`; resource bounds retain their class.
 pub fn read_portable_package_source(
     source: impl AsRef<Path>,
-) -> Result<CanonicalRoProjectV1, FormatError> {
-    crate::roproj::host::read_canonical_roproj_bounded(
+) -> Result<CanonicalRoProjectV3, FormatError> {
+    crate::roproj::host::read_canonical_roproj_v3_bounded(
         source,
         PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES,
     )
     .map_err(|error| match error {
         FormatError::PortablePackage(PortablePackageError::ResourceLimit { .. }) => error,
+        FormatError::UnsupportedRoProjectVersion { found, .. } => {
+            PortablePackageError::UnsupportedPayloadRepresentation {
+                format: "tachiko.roproj".to_owned(),
+                version: found.to_string(),
+            }
+            .into()
+        }
         other => map_source_error(&other),
     })
 }
@@ -127,7 +135,7 @@ pub fn publish_unpacked_roproj(
     package: &VerifiedPortablePackageV1,
 ) -> Result<(), FormatError> {
     let destination = destination.as_ref();
-    publish_roproj(destination, package.tree())
+    publish_roproj_v3(destination, package.tree())
         .map_err(|error| map_tree_publication_error(destination, error))
 }
 
@@ -170,7 +178,7 @@ pub fn compare_portable_package_with_roproj(
 /// Returns only the stable source-mismatch failure when roots differ.
 pub fn compare_verified_package_with_roproj(
     package: &VerifiedPortablePackageV1,
-    tracked: &CanonicalRoProjectV1,
+    tracked: &CanonicalRoProjectV3,
 ) -> Result<[u8; 32], FormatError> {
     let tracked_root = payload_root(tracked);
     if package.payload_root() != tracked_root {
@@ -355,6 +363,51 @@ mod tests {
         assert!(!staging.exists());
         assert_eq!(fs::read(&destination).unwrap(), b"racer");
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn old_source_dispatch_precedes_v3_layout_and_payload_interpretation() {
+        let sequence = NEXT_STAGING_FILE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "tachiko-package-source-dispatch-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        for version in [1, 2, 4] {
+            fs::write(
+                root.join("manifest.json"),
+                format!("{{\"format\":\"tachiko.roproj\",\"format_version\":{version}}}"),
+            )
+            .unwrap();
+            assert!(matches!(
+                super::read_portable_package_source(&root),
+                Err(crate::FormatError::PortablePackage(
+                    crate::PortablePackageError::UnsupportedPayloadRepresentation { version: found, .. }
+                )) if found == version.to_string()
+            ));
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_symlink_is_refused_before_dispatch_or_reading_its_target() {
+        let sequence = NEXT_STAGING_FILE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "tachiko-package-source-symlink-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        std::os::unix::fs::symlink(root.join("absent-target"), root.join("manifest.json")).unwrap();
+        assert!(matches!(
+            super::read_portable_package_source(&root),
+            Err(crate::FormatError::PortablePackage(
+                crate::PortablePackageError::SourceNotCanonical { .. }
+            ))
+        ));
+        assert!(!root.join("absent-target").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -1758,7 +1758,7 @@ fn canonical_tree_and_portable_ro_are_distinct_exact_revision_exports() {
 
     let portable = runtime
         .export_portable_ro("resident/0")
-        .expect("the v1 fixture should export as a portable package");
+        .expect("the fixture should export as a v3-backed portable package");
     assert_eq!(portable.revision, "resident/0");
     assert!(portable.bytes.starts_with(b"PK\x03\x04"));
     verify_portable_ro(&portable.bytes).expect("the exported .ro must verify through storage");
@@ -1862,27 +1862,29 @@ fn canonical_and_portable_exports_reject_stale_revisions_without_mutation() {
 }
 
 #[test]
-fn v1_bridge_rejects_date_without_changing_private_project_export() {
-    let runtime = DesignerRuntime::from_document(date_document(), OCCURRENCE_ONE)
+fn v1_tree_bridge_refuses_date_while_v3_portable_export_preserves_it() {
+    let document = date_document();
+    let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE_ONE)
         .expect("Date fixture should remain supported by the Designer runtime");
-    assert!(
-        runtime
-            .export_project("resident/0")
-            .expect("private Date export remains supported")
-            .bytes
-            .starts_with(b"TWDPROJ2")
+    let before = runtime.export_project("resident/0").unwrap().bytes;
+    assert!(before.starts_with(b"TWDPROJ2"));
+    let error = runtime
+        .export_canonical_tree("resident/0")
+        .expect_err("frozen v1 tree bridge must not recast Date as v1");
+    assert_eq!(
+        error.failure_projection("resident/0").code,
+        "unsupported_project"
     );
-    for operation in [
-        runtime.export_canonical_tree("resident/0").map(|_| ()),
-        runtime.export_portable_ro("resident/0").map(|_| ()),
-    ] {
-        let error = operation.expect_err("v1 bridge must not recast Date as v1");
-        assert_eq!(
-            error.failure_projection("resident/0").code,
-            "unsupported_project"
-        );
-    }
+    let portable = runtime.export_portable_ro("resident/0").unwrap();
+    verify_portable_ro(&portable.bytes).unwrap();
+    assert_eq!(
+        tachiko_storage::from_bytes(&portable.bytes).unwrap(),
+        document
+    );
+    let mut fresh = None;
+    open_portable_ro(&mut fresh, &portable.bytes, OCCURRENCE_TWO).unwrap();
     assert_eq!(runtime.observe_occurrence().revision, "resident/0");
+    assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
 }
 
 fn project_transfer_paths(bytes: &[u8]) -> Vec<String> {

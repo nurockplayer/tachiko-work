@@ -1,7 +1,7 @@
 use tachiko_designer_runtime::{
     CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime,
 };
-use tachiko_storage::{encode_portable_package_v1, encode_roproj_v1, from_bytes};
+use tachiko_storage::{encode_portable_package_v1, encode_roproj_v3, from_bytes};
 
 const GAME_BALANCE_RO: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -61,7 +61,7 @@ fn current_direct_ro_is_already_admissible_by_storage_and_designer() {
 fn current_portable_package_v1_is_already_admissible_by_the_same_byte_reader() {
     let document = from_bytes(GAME_BALANCE_RO).expect("direct .ro fixture must decode");
     let tree =
-        encode_roproj_v1(&document).expect("fixture must materialize as canonical .roproj/v1");
+        encode_roproj_v3(&document).expect("fixture must materialize as canonical .roproj/v3");
     let package =
         encode_portable_package_v1(&tree).expect("fixture must package as portable-package/v1");
 

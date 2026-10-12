@@ -10,8 +10,8 @@ use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tachiko_storage::{
-    FormatError, canonicalize_roproj, compare_verified_package_with_roproj, decode_roproj_v1, load,
-    load_roproj, materialize_roproj, publish_canonicalized_roproj,
+    FormatError, canonicalize_roproj, compare_verified_package_with_roproj, decode_roproj_v1,
+    decode_roproj_v3, load, load_roproj, materialize_roproj, publish_canonicalized_roproj,
     publish_portable_package_from_roproj, publish_unpacked_roproj, read_portable_package,
     read_portable_package_source, to_canonical_string,
 };
@@ -185,7 +185,7 @@ pub fn canonicalize_roproject(input: &Path, output: &Path) -> Result<String, Com
 pub fn pack_roproject(input: &Path, output: &Path) -> Result<String, CommandError> {
     ensure_distinct_paths(input, output)?;
     let tree = read_portable_package_source(input)?;
-    let document = decode_roproj_v1(&tree)?;
+    let document = decode_roproj_v3(&tree)?;
     validate_semantics(&document)?;
     publish_portable_package_from_roproj(input, output, &tree)?;
     Ok(format!("packed {}\n", output.display()))
@@ -194,7 +194,7 @@ pub fn pack_roproject(input: &Path, output: &Path) -> Result<String, CommandErro
 pub fn unpack_roproject(input: &Path, output: &Path) -> Result<String, CommandError> {
     ensure_distinct_paths(input, output)?;
     let package = read_portable_package(input)?;
-    let document = decode_roproj_v1(package.tree())?;
+    let document = decode_roproj_v3(package.tree())?;
     validate_semantics(&document)?;
     publish_unpacked_roproj(output, &package)?;
     Ok(format!("unpacked {}\n", output.display()))
@@ -205,10 +205,10 @@ pub fn compare_roproject_package(
     tracked_path: &Path,
 ) -> Result<String, CommandError> {
     let package = read_portable_package(package_path)?;
-    let package_document = decode_roproj_v1(package.tree())?;
+    let package_document = decode_roproj_v3(package.tree())?;
     validate_semantics(&package_document)?;
     let tracked = read_portable_package_source(tracked_path)?;
-    let tracked_document = decode_roproj_v1(&tracked)?;
+    let tracked_document = decode_roproj_v3(&tracked)?;
     validate_semantics(&tracked_document)?;
     compare_verified_package_with_roproj(&package, &tracked)?;
     Ok(format!(

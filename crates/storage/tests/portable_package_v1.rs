@@ -7,13 +7,17 @@ use tachiko_semantic_core::{
 };
 use tachiko_storage::{
     FormatError, PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES, PortablePackageError,
-    decode_portable_package_v1, encode_portable_package_v1, encode_roproj_v1, from_bytes,
+    decode_portable_package_v1, encode_portable_package_v1, encode_roproj_v3, from_bytes,
     portable_package_payload_root, to_canonical_string,
 };
 
-const EMPTY_PACKAGE_HEX: &str = include_str!(concat!(
+use tachiko_semantic_core as semantic;
+#[path = "../../../acceptance/portable-package-v3/document.rs"]
+mod acceptance_document;
+
+const GOLDEN_PACKAGE_HEX: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../docs/research/fixtures/issue-43-portable-package-v1/empty-package-v1.hex"
+    "/../../docs/research/fixtures/issue-519-portable-package-v1-v3/golden.hex"
 ));
 
 fn decode_hex(source: &str) -> Vec<u8> {
@@ -278,8 +282,8 @@ fn replace_entry_body(package: &[u8], name: &str, body: &[u8]) -> Vec<u8> {
 fn package_payload_root(package: &[u8]) -> [u8; 32] {
     let records = zip_records(package);
     let mut root = Sha256::new();
-    root.update(b"tachiko.portable-package/v1\0tachiko.roproj/v1\0");
-    for path in tachiko_storage::ROPROJ_V1_PATHS {
+    root.update(b"tachiko.portable-package/v1\0tachiko.roproj/v3\0");
+    for path in tachiko_storage::ROPROJ_V3_PATHS {
         let record = records
             .iter()
             .find(|record| record.name == format!("payload/{path}"))
@@ -484,26 +488,26 @@ fn reference_document() -> Document {
 }
 
 #[test]
-fn empty_project_matches_the_normative_package_vector() {
-    let tree = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+fn mixed_v3_project_matches_the_independent_package_vector() {
+    let tree = encode_roproj_v3(&acceptance_document::document()).unwrap();
     let package = encode_portable_package_v1(&tree).unwrap();
-    let golden = decode_hex(EMPTY_PACKAGE_HEX);
+    let golden = decode_hex(GOLDEN_PACKAGE_HEX);
 
     assert_eq!(package, golden);
-    assert_eq!(package.len(), 2_692);
+    assert_eq!(package.len(), 6_155);
     assert_eq!(
         encode_hex(&Sha256::digest(&package)),
-        "1368ebe38c86de28d2379ae6c0ca7a5ca8502543002fe084e33254ad1db4d7bc"
+        "2e8b98f4926c931063cf2caa6ee4e73a8152cace7f9cd5ca9ccc17e212362a7c"
     );
     assert_eq!(
         encode_hex(&portable_package_payload_root(&tree)),
-        "71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c"
+        "cdf2cec90364b1562f5f8e483ace2f98f4d26a1f609818bff1194048270abf17"
     );
 }
 
 #[test]
 fn package_round_trip_is_exact_in_both_directions() {
-    let tree = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+    let tree = encode_roproj_v3(&Document::empty("doc-empty", "Empty")).unwrap();
     let first = encode_portable_package_v1(&tree).unwrap();
     let second = encode_portable_package_v1(&tree).unwrap();
     assert_eq!(first, second);
@@ -519,8 +523,8 @@ fn package_round_trip_is_exact_in_both_directions() {
 
 #[test]
 fn byte_reader_content_frames_packages_without_fallback() {
-    let expected = Document::empty("doc-empty", "Empty");
-    let package = decode_hex(EMPTY_PACKAGE_HEX);
+    let expected = acceptance_document::document();
+    let package = decode_hex(GOLDEN_PACKAGE_HEX);
 
     assert_eq!(from_bytes(&package).unwrap(), expected);
     assert!(matches!(
@@ -530,16 +534,20 @@ fn byte_reader_content_frames_packages_without_fallback() {
         ))
     ));
 
-    let direct = to_canonical_string(&expected).unwrap();
-    assert_eq!(from_bytes(direct.as_bytes()).unwrap(), expected);
+    let direct_document = Document::empty("doc-empty", "Empty");
+    let direct = to_canonical_string(&direct_document).unwrap();
+    assert_eq!(from_bytes(direct.as_bytes()).unwrap(), direct_document);
 }
 
 #[test]
 fn unsupported_package_version_wins_before_v1_crc_and_payload_checks() {
-    let mut package = decode_hex(EMPTY_PACKAGE_HEX);
+    let mut package = decode_hex(GOLDEN_PACKAGE_HEX);
     let version = find_bytes(&package, b"\"format_version\": 1");
     package[version + b"\"format_version\": ".len()] = b'2';
-    let payload = find_bytes(&package, b"\"id\": \"doc-empty\"");
+    let payload = find_bytes(
+        &package,
+        format!("\"id\": \"{}\"", acceptance_document::DOCUMENT_ID).as_bytes(),
+    );
     package[payload + b"\"id\": \"".len()] ^= 1;
 
     assert!(matches!(
@@ -559,7 +567,7 @@ fn unsupported_package_version_wins_before_v1_crc_and_payload_checks() {
 #[test]
 fn unsupported_package_version_wins_over_future_owned_manifest_shape() {
     let package = replace_entry_body(
-        &decode_hex(EMPTY_PACKAGE_HEX),
+        &decode_hex(GOLDEN_PACKAGE_HEX),
         "package.json",
         b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 2,\n  \"future\": {\"x\": 1, \"x\": 2}\n}\n",
     );
@@ -580,7 +588,7 @@ fn unsupported_package_version_wins_over_deep_future_owned_values() {
         "]".repeat(140)
     );
     let package = replace_entry_body(
-        &decode_hex(EMPTY_PACKAGE_HEX),
+        &decode_hex(GOLDEN_PACKAGE_HEX),
         "package.json",
         nested.as_bytes(),
     );
@@ -601,7 +609,7 @@ fn future_manifest_nesting_limit_is_explicit() {
         "]".repeat(300)
     );
     let package = replace_entry_body(
-        &decode_hex(EMPTY_PACKAGE_HEX),
+        &decode_hex(GOLDEN_PACKAGE_HEX),
         "package.json",
         nested.as_bytes(),
     );
@@ -632,7 +640,7 @@ fn maximum_zip32_entry_count_dispatches_in_linear_work() {
 
 #[test]
 fn corruption_and_stale_integrity_have_distinct_failures() {
-    let golden = decode_hex(EMPTY_PACKAGE_HEX);
+    let golden = decode_hex(GOLDEN_PACKAGE_HEX);
     let payload = record(&golden, "payload/manifest.json");
 
     let mut corrupted = golden.clone();
@@ -657,12 +665,12 @@ fn corruption_and_stale_integrity_have_distinct_failures() {
 
 #[test]
 fn v1_manifest_metadata_variations_fail_closed() {
-    let golden = decode_hex(EMPTY_PACKAGE_HEX);
+    let golden = decode_hex(GOLDEN_PACKAGE_HEX);
     for body in [
-        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 1\n}\n".as_slice(),
-        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 1,\n  \"payload_root_sha256\": \"71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c\",\n  \"unknown\": true\n}\n".as_slice(),
-        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": \"1\",\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 1,\n  \"payload_root_sha256\": \"71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c\"\n}\n".as_slice(),
-        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 1,\n  \"payload_root_sha256\": \"71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c\"\n}\n".as_slice(),
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 3\n}\n".as_slice(),
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 3,\n  \"payload_root_sha256\": \"cdf2cec90364b1562f5f8e483ace2f98f4d26a1f609818bff1194048270abf17\",\n  \"unknown\": true\n}\n".as_slice(),
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": \"1\",\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 3,\n  \"payload_root_sha256\": \"cdf2cec90364b1562f5f8e483ace2f98f4d26a1f609818bff1194048270abf17\"\n}\n".as_slice(),
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 3,\n  \"payload_root_sha256\": \"cdf2cec90364b1562f5f8e483ace2f98f4d26a1f609818bff1194048270abf17\"\n}\n".as_slice(),
     ] {
         let package = replace_entry_body(&golden, "package.json", body);
         assert!(matches!(
@@ -676,7 +684,7 @@ fn v1_manifest_metadata_variations_fail_closed() {
 
 #[test]
 fn entry_set_variations_fail_closed() {
-    let golden = decode_hex(EMPTY_PACKAGE_HEX);
+    let golden = decode_hex(GOLDEN_PACKAGE_HEX);
 
     let mut unknown = golden.clone();
     replace_entry_name(
@@ -721,7 +729,7 @@ fn entry_set_variations_fail_closed() {
 
 #[test]
 fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
-    let golden = decode_hex(EMPTY_PACKAGE_HEX);
+    let golden = decode_hex(GOLDEN_PACKAGE_HEX);
     let payload = record(&golden, "payload/entities/0.jsonl");
 
     let mut metadata = golden.clone();
@@ -761,14 +769,14 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
     write_u32(&mut disagreement, payload.central_offset + 16, crc ^ 1);
     let mut offset_disagreement = golden;
     write_u32(&mut offset_disagreement, payload.central_offset + 42, 0);
-    let mut local_size_disagreement = decode_hex(EMPTY_PACKAGE_HEX);
+    let mut local_size_disagreement = decode_hex(GOLDEN_PACKAGE_HEX);
     let final_shard = record(&local_size_disagreement, "payload/entities/f.jsonl");
     write_u32(
         &mut local_size_disagreement,
         final_shard.local_offset + 18,
         1,
     );
-    let mut central_size_disagreement = decode_hex(EMPTY_PACKAGE_HEX);
+    let mut central_size_disagreement = decode_hex(GOLDEN_PACKAGE_HEX);
     let final_shard = record(&central_size_disagreement, "payload/entities/f.jsonl");
     write_u32(
         &mut central_size_disagreement,
@@ -777,20 +785,20 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
     );
     let embedded_signature = b"xPK\x03\x04payload";
     let mut central_ambiguous = replace_entry_body(
-        &decode_hex(EMPTY_PACKAGE_HEX),
+        &decode_hex(GOLDEN_PACKAGE_HEX),
         "payload/entities/0.jsonl",
         embedded_signature,
     );
     let shard = record(&central_ambiguous, "payload/entities/0.jsonl");
     write_u32(&mut central_ambiguous, shard.central_offset + 20, 1);
     let mut local_ambiguous = replace_entry_body(
-        &decode_hex(EMPTY_PACKAGE_HEX),
+        &decode_hex(GOLDEN_PACKAGE_HEX),
         "payload/entities/0.jsonl",
         embedded_signature,
     );
     let shard = record(&local_ambiguous, "payload/entities/0.jsonl");
     write_u32(&mut local_ambiguous, shard.local_offset + 18, 1);
-    let mut central_reordered_size = decode_hex(EMPTY_PACKAGE_HEX);
+    let mut central_reordered_size = decode_hex(GOLDEN_PACKAGE_HEX);
     let manifest = record(&central_reordered_size, "package.json");
     let central_start = usize::try_from(read_u32(
         &central_reordered_size,
@@ -824,7 +832,7 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
 
 #[test]
 fn structural_and_noncanonical_zip_variants_have_distinct_failures() {
-    let golden = decode_hex(EMPTY_PACKAGE_HEX);
+    let golden = decode_hex(GOLDEN_PACKAGE_HEX);
     let mut stubbed = b"stub".to_vec();
     stubbed.extend_from_slice(&golden);
     let mut trailed = golden.clone();
@@ -860,7 +868,7 @@ fn structural_and_noncanonical_zip_variants_have_distinct_failures() {
 
 #[test]
 fn payload_claim_canonicality_and_semantics_have_distinct_failures() {
-    let golden = decode_hex(EMPTY_PACKAGE_HEX);
+    let golden = decode_hex(GOLDEN_PACKAGE_HEX);
     let payload = record(&golden, "payload/manifest.json");
 
     let mut claim_mismatch = golden.clone();
@@ -891,7 +899,7 @@ fn payload_claim_canonicality_and_semantics_have_distinct_failures() {
         ))
     ));
 
-    let tree = encode_roproj_v1(&reference_document()).unwrap();
+    let tree = encode_roproj_v3(&reference_document()).unwrap();
     let mut invalid_semantic = encode_portable_package_v1(&tree).unwrap();
     let reference = find_bytes(&invalid_semantic, b"\"value\":\"target-a\"");
     invalid_semantic[reference + b"\"value\":\"target-".len()] = b'z';

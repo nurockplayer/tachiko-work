@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use tachiko_storage::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2,
     CanonicalRoProjectV3, FormatError, ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, ROPROJ_V3_PATHS,
-    decode_portable_package_v1, decode_roproj_v1, decode_roproj_v2, encode_portable_package_v1,
-    encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
+    decode_portable_package_v1, decode_roproj_v1, decode_roproj_v2, decode_roproj_v3,
+    encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes,
+    to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
@@ -1368,7 +1369,7 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        let tree = encode_v1_tree(snapshot.document())?;
+        let tree = encode_roproj_v3(snapshot.document())?;
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes: encode_portable_package_v1(&tree)?,
@@ -3386,8 +3387,11 @@ pub fn open_portable_ro(
 ) -> Result<OpenedProjection, DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     let verified = decode_portable_package_v1(input)?;
-    let document = decode_roproj_v1(verified.tree())?;
-    let (candidate, opened) = admit_document(document, occurrence_id)?;
+    let document = decode_roproj_v3(verified.tree())?;
+    ensure_document_profile(&document, false)?;
+    ensure_v3_capabilities(&document)?;
+    let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
+    candidate.opened_from_v3 = true;
     *runtime = Some(candidate);
     Ok(opened)
 }
@@ -3944,7 +3948,7 @@ fn document_contains_date(document: &Document) -> bool {
 fn encode_v1_tree(document: &Document) -> Result<CanonicalRoProjectV1, DesignerError> {
     if document_contains_date(document) {
         return Err(DesignerError::UnsupportedProject {
-            message: "canonical .roproj/v1 and portable-package/v1 do not support Date fields; use the existing private project export".to_owned(),
+            message: "canonical .roproj/v1 does not support Date fields; use the existing private project export".to_owned(),
         });
     }
     Ok(encode_roproj_v1(document)?)

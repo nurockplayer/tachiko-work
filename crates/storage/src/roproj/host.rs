@@ -45,10 +45,17 @@ pub fn read_canonical_roproj(path: impl AsRef<Path>) -> Result<CanonicalRoProjec
 pub fn read_canonical_roproj_v3(
     path: impl AsRef<Path>,
 ) -> Result<CanonicalRoProjectV3, FormatError> {
-    let root = path.as_ref();
+    read_canonical_roproj_v3_inner(path.as_ref(), None)
+}
+
+fn read_canonical_roproj_v3_inner(
+    root: &Path,
+    mut budget: Option<ReadBudget>,
+) -> Result<CanonicalRoProjectV3, FormatError> {
     require_directory(root, "canonical .roproj/v3 root")?;
-    require_exact_root_entries_with_definitions(root)?;
-    let manifest = read_file(&root.join("manifest.json"))?;
+    // Dispatch before applying the v3 layout or reading any payload body.
+    require_regular_file(&root.join("manifest.json"), "manifest.json")?;
+    let manifest = read_file_with_budget(&root.join("manifest.json"), &mut budget)?;
     let version = manifest_version(&manifest)?;
     if version != super::v3::ROPROJ_V3_FORMAT_VERSION {
         return Err(FormatError::UnsupportedRoProjectVersion {
@@ -56,17 +63,15 @@ pub fn read_canonical_roproj_v3(
             supported: super::v3::ROPROJ_V3_FORMAT_VERSION,
         });
     }
+    require_exact_root_entries_with_definitions(root)?;
     let entities = root.join("entities");
     require_exact_entity_entries(&entities)?;
     let mut files = Vec::with_capacity(ROPROJ_V3_PATHS.len());
-    for relative in ROPROJ_V3_PATHS {
+    files.push((ROPROJ_V3_PATHS[0].to_owned(), manifest));
+    for relative in ROPROJ_V3_PATHS.iter().skip(1) {
         files.push((
-            relative.to_owned(),
-            if relative == "manifest.json" {
-                manifest.clone()
-            } else {
-                read_file(&root.join(relative))?
-            },
+            (*relative).to_owned(),
+            read_file_with_budget(&root.join(relative), &mut budget)?,
         ));
     }
     CanonicalRoProjectV3::try_from_files(files)
@@ -200,11 +205,11 @@ fn write_staging_tree_v3(staging: &Path, tree: &CanonicalRoProjectV3) -> Result<
     Ok(())
 }
 
-pub(crate) fn read_canonical_roproj_bounded(
+pub(crate) fn read_canonical_roproj_v3_bounded(
     path: impl AsRef<Path>,
     limit: usize,
-) -> Result<CanonicalRoProjectV1, FormatError> {
-    read_canonical_roproj_inner(
+) -> Result<CanonicalRoProjectV3, FormatError> {
+    read_canonical_roproj_v3_inner(
         path.as_ref(),
         Some(ReadBudget {
             limit,

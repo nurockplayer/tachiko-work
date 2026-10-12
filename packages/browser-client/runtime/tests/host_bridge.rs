@@ -364,3 +364,48 @@ fn eligible_inspection_controls_keep_lexical_text_and_enlarged_replies() {
         );
     }
 }
+
+#[test]
+fn portable_bridge_preserves_v3_bytes_and_constraint_refusals_without_replacement() {
+    fn fixture(hex: &str) -> Vec<u8> {
+        hex.trim_end()
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
+    }
+    let control = fixture(include_str!(
+        "../../../../docs/research/fixtures/issue-519-portable-package-v1-v3/runtime-control.hex"
+    ));
+    let constrained = fixture(include_str!(
+        "../../../../docs/research/fixtures/issue-519-portable-package-v1-v3/golden.hex"
+    ));
+    let mut host = DesignerHost::new();
+    let opened = json_of(&host.open_portable_ro(&control, FIRST.as_bytes()));
+    assert_eq!(opened["status"], "ok", "{opened}");
+    let before = host.observe_occurrence();
+    let project_before = host.export_project_v3(b"resident/0").bytes.unwrap();
+    let exported = host.export_portable_ro(b"resident/0");
+    assert_eq!(json_of(&exported.reply)["status"], "ok");
+    assert_eq!(exported.bytes.unwrap(), control);
+    assert_eq!(
+        json_of(&host.verify_portable_ro(&constrained))["status"],
+        "ok"
+    );
+    let refused = json_of(&host.open_portable_ro(&constrained, SECOND.as_bytes()));
+    assert_eq!(refused["error"]["code"], "unsupported_project");
+    assert_eq!(host.observe_occurrence(), before);
+    assert_eq!(
+        host.export_project_v3(b"resident/0").bytes.unwrap(),
+        project_before
+    );
+    let mut fresh = DesignerHost::new();
+    assert_eq!(
+        json_of(&fresh.open_portable_ro(&control, THIRD.as_bytes()))["status"],
+        "ok"
+    );
+    assert_eq!(
+        fresh.export_project_v3(b"resident/0").bytes.unwrap(),
+        project_before
+    );
+}
