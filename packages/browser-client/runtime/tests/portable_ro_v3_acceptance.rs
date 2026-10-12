@@ -1,4 +1,5 @@
 //! Steward public-API acceptance for #519, with the same independent storage vector.
+use serde_json::json;
 use tachiko_designer_runtime::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
     KeyedGroupedSumGroupProjection, OpenedProjection, close_project, open_portable_ro,
@@ -6,9 +7,9 @@ use tachiko_designer_runtime::{
 };
 use tachiko_storage::{CanonicalRoProjectV3, encode_roproj_v3};
 use tachiko_workspace_engine as semantic;
-#[path = "../../../../acceptance/portable-package-v3/bytes.rs"]
+#[path = "support/portable_package_v3/bytes.rs"]
 mod bytes;
-#[path = "../../../../acceptance/portable-package-v3/document.rs"]
+#[path = "support/portable_package_v3/document.rs"]
 mod fixture;
 const FIXTURE_ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -237,100 +238,153 @@ fn runtime_refusal(name: &str, expected: &str) {
     assert_storage_class(result.expect_err(name), expected);
     assert_storage_class(verify_portable_ro(&candidate).expect_err(name), expected);
 }
-macro_rules! refusal_case {
-    ($test:ident, $name:literal, $class:literal) => {
-        #[test]
-        fn $test() {
-            runtime_refusal($name, concat!("portable_package.", $class));
-        }
-    };
+#[test]
+fn ac3_developmental() {
+    runtime_refusal(
+        "developmental",
+        "portable_package.unsupported_payload_representation",
+    );
 }
-refusal_case!(
-    ac3_developmental,
-    "developmental",
-    "unsupported_payload_representation"
-);
-refusal_case!(ac3_unknown_profile, "unknown-profile", "invalid_manifest");
-refusal_case!(
-    ac3_unknown_version,
-    "unknown-version",
-    "unsupported_version"
-);
-refusal_case!(
-    ac3_unknown_payload_profile,
-    "unknown-payload-profile",
-    "unsupported_payload_representation"
-);
-refusal_case!(
-    ac3_unknown_payload_version,
-    "unknown-payload-version",
-    "unsupported_payload_representation"
-);
-refusal_case!(
-    ac3_old_payload_claims_before_body,
-    "old-payload-claims-before-body",
-    "unsupported_payload_representation"
-);
-refusal_case!(ac3_integrity, "integrity", "integrity_mismatch");
-refusal_case!(ac3_missing_entry, "missing-entry", "entry_set_mismatch");
-refusal_case!(ac3_extra_entry, "extra-entry", "entry_set_mismatch");
-refusal_case!(ac3_duplicate_entry, "duplicate-entry", "entry_set_mismatch");
-refusal_case!(ac3_alias_entry, "alias-entry", "entry_set_mismatch");
-refusal_case!(ac3_entry_order, "entry-order", "noncanonical_container");
-refusal_case!(ac3_crc, "crc", "crc_mismatch");
-refusal_case!(
-    ac3_inner_manifest,
-    "inner-manifest",
-    "payload_manifest_mismatch"
-);
-refusal_case!(
-    ac3_noncanonical_payload,
-    "noncanonical-payload",
-    "noncanonical_payload"
-);
-refusal_case!(
-    ac3_invalid_semantic_payload,
-    "invalid-semantic-payload",
-    "invalid_semantic_payload"
-);
-refusal_case!(ac3_compression, "compression", "noncanonical_container");
-refusal_case!(ac3_encryption, "encryption", "noncanonical_container");
-refusal_case!(
-    ac3_data_descriptor,
-    "data-descriptor",
-    "noncanonical_container"
-);
-refusal_case!(ac3_timestamp, "timestamp", "noncanonical_container");
-refusal_case!(ac3_truncated, "truncated", "invalid_container");
-refusal_case!(ac3_trailing, "trailing", "invalid_container");
-refusal_case!(ac3_prepended, "prepended", "invalid_container");
-refusal_case!(ac3_split, "split", "invalid_container");
-refusal_case!(ac3_zip64_sentinel, "zip64-sentinel", "invalid_container");
-refusal_case!(
-    ac3_manifest_depth_256,
-    "manifest-depth-256",
-    "unsupported_version"
-);
-refusal_case!(
-    ac3_manifest_depth_257,
-    "manifest-depth-257",
-    "resource_limit"
-);
-refusal_case!(
-    ac3_duplicate_manifest_member,
-    "duplicate-manifest-member",
-    "invalid_manifest"
-);
-refusal_case!(
-    ac3_noncanonical_manifest,
-    "noncanonical-manifest",
-    "noncanonical_container"
-);
-refusal_case!(
-    ac3_malformed_version,
-    "malformed-version",
-    "invalid_manifest"
-);
+#[test]
+fn ac3_unknown_profile() {
+    runtime_refusal("unknown-profile", "portable_package.invalid_manifest");
+}
+#[test]
+fn ac3_unknown_version() {
+    runtime_refusal("unknown-version", "portable_package.unsupported_version");
+}
+#[test]
+fn ac3_unknown_payload_profile() {
+    runtime_refusal(
+        "unknown-payload-profile",
+        "portable_package.unsupported_payload_representation",
+    );
+}
+#[test]
+fn ac3_unknown_payload_version() {
+    runtime_refusal(
+        "unknown-payload-version",
+        "portable_package.unsupported_payload_representation",
+    );
+}
+#[test]
+fn ac3_old_payload_claims_before_body() {
+    runtime_refusal(
+        "old-payload-claims-before-body",
+        "portable_package.unsupported_payload_representation",
+    );
+}
+#[test]
+fn ac3_integrity() {
+    runtime_refusal("integrity", "portable_package.integrity_mismatch");
+}
+#[test]
+fn ac3_missing_entry() {
+    runtime_refusal("missing-entry", "portable_package.entry_set_mismatch");
+}
+#[test]
+fn ac3_extra_entry() {
+    runtime_refusal("extra-entry", "portable_package.entry_set_mismatch");
+}
+#[test]
+fn ac3_duplicate_entry() {
+    runtime_refusal("duplicate-entry", "portable_package.entry_set_mismatch");
+}
+#[test]
+fn ac3_alias_entry() {
+    runtime_refusal("alias-entry", "portable_package.entry_set_mismatch");
+}
+#[test]
+fn ac3_entry_order() {
+    runtime_refusal("entry-order", "portable_package.noncanonical_container");
+}
+#[test]
+fn ac3_crc() {
+    runtime_refusal("crc", "portable_package.crc_mismatch");
+}
+#[test]
+fn ac3_inner_manifest() {
+    runtime_refusal(
+        "inner-manifest",
+        "portable_package.payload_manifest_mismatch",
+    );
+}
+#[test]
+fn ac3_noncanonical_payload() {
+    runtime_refusal(
+        "noncanonical-payload",
+        "portable_package.noncanonical_payload",
+    );
+}
+#[test]
+fn ac3_invalid_semantic_payload() {
+    runtime_refusal(
+        "invalid-semantic-payload",
+        "portable_package.invalid_semantic_payload",
+    );
+}
+#[test]
+fn ac3_compression() {
+    runtime_refusal("compression", "portable_package.noncanonical_container");
+}
+#[test]
+fn ac3_encryption() {
+    runtime_refusal("encryption", "portable_package.noncanonical_container");
+}
+#[test]
+fn ac3_data_descriptor() {
+    runtime_refusal("data-descriptor", "portable_package.noncanonical_container");
+}
+#[test]
+fn ac3_timestamp() {
+    runtime_refusal("timestamp", "portable_package.noncanonical_container");
+}
+#[test]
+fn ac3_truncated() {
+    runtime_refusal("truncated", "portable_package.invalid_container");
+}
+#[test]
+fn ac3_trailing() {
+    runtime_refusal("trailing", "portable_package.invalid_container");
+}
+#[test]
+fn ac3_prepended() {
+    runtime_refusal("prepended", "portable_package.invalid_container");
+}
+#[test]
+fn ac3_split() {
+    runtime_refusal("split", "portable_package.invalid_container");
+}
+#[test]
+fn ac3_zip64_sentinel() {
+    runtime_refusal("zip64-sentinel", "portable_package.invalid_container");
+}
+#[test]
+fn ac3_manifest_depth_256() {
+    runtime_refusal("manifest-depth-256", "portable_package.unsupported_version");
+}
+#[test]
+fn ac3_manifest_depth_257() {
+    runtime_refusal("manifest-depth-257", "portable_package.resource_limit");
+}
+#[test]
+fn ac3_duplicate_manifest_member() {
+    runtime_refusal(
+        "duplicate-manifest-member",
+        "portable_package.invalid_manifest",
+    );
+}
+#[test]
+fn ac3_noncanonical_manifest() {
+    runtime_refusal(
+        "noncanonical-manifest",
+        "portable_package.noncanonical_container",
+    );
+}
+#[test]
+fn ac3_malformed_version() {
+    runtime_refusal("malformed-version", "portable_package.invalid_manifest");
+}
 
 #[test]
 fn ac4_explicit_v3_export_reopen_and_stale_export_guards_remain() {
@@ -457,12 +511,12 @@ fn ac4_csv_xlsx_lossy_on_export_inventory_is_unchanged_and_read_only() {
         let mut slot = None;
         open_project(&mut slot, &transfer(&files), RESIDENT).unwrap();
         let runtime = slot.as_mut().unwrap();
-        let metadata: tachiko_designer_runtime::InteropMetadata = serde_json::from_value(serde_json::json!({
+        let metadata: tachiko_designer_runtime::InteropMetadata = serde_json::from_value(json!({
             "version": 1, "sheets": [{"schema_id": fixture::SCHEMA_ID, "name": "Sheet 1", "has_header": true,
-                "columns": fixture::FIELD_IDS.iter().enumerate().map(|(i,id)| serde_json::json!({
+                "columns": fixture::FIELD_IDS.iter().enumerate().map(|(i,id)| json!({
                     "field_id": id, "name": format!("Column {}", i+1), "width": null
                 })).collect::<Vec<_>>(),
-                "rows": fixture::ROW_IDS.iter().map(|id| serde_json::json!({
+                "rows": fixture::ROW_IDS.iter().map(|id| json!({
                     "entity_id": id, "styles": vec![CellStyle::default();5]
                 })).collect::<Vec<_>>()
             }]
