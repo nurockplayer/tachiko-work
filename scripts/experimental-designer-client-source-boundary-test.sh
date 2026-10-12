@@ -50,6 +50,7 @@ EOF_FIND
   # this test remains isolated to rg status semantics; real integrity checks
   # run in the smoke and immutable-source regressions.
   printf '#!/usr/bin/env bash\nexit 0\n' >"$root/bin/pnpm"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$root/bin/cargo"
   cat >"$root/bin/git" <<'EOF_GIT'
 #!/usr/bin/env bash
 if [[ "$*" == *"rev-parse --verify HEAD^{commit}"* ]]; then
@@ -58,7 +59,7 @@ if [[ "$*" == *"rev-parse --verify HEAD^{commit}"* ]]; then
 fi
 exit 64
 EOF_GIT
-  chmod +x "$root/bin/diff" "$root/bin/find" "$root/bin/pnpm" "$root/bin/git"
+  chmod +x "$root/bin/diff" "$root/bin/find" "$root/bin/pnpm" "$root/bin/cargo" "$root/bin/git"
 }
 
 run_case() {

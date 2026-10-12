@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DesignerRuntimeError } from "../src/runtime/client.ts";
-import type { FailureProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
+import type { FailureProjection, FieldExplanationProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
 import { WorkerDesignerClient } from "../src/runtime/worker-client.ts";
 
 // This fixture supplies transport events only. Request correlation and promise
@@ -66,6 +66,25 @@ function poisonReply(id: number): WorkerReply {
 }
 
 describe("Designer Worker request lifecycle", () => {
+  it("dispatches a revision-pinned field explanation and preserves the complete reply", async () => {
+    const worker = transport();
+    const target = {entity: "row", field: "input"};
+    const explanation: FieldExplanationProjection = {
+      revision: "resident/3", target,
+      value: {target, address: "row.input", stored: {kind: "number", value: 4}, formula: null, calculated: null, diagnostics: [], editable_scalar: "number"},
+      formula_source: null, direct_dependencies: [],
+      downstream_impacts: [{entity: "row", field: "calculated"}], diagnostics: [],
+    };
+    const result = worker.client.explainField("resident/3", target);
+    expect(worker.request(0)).toMatchObject({kind: "command", request: {type: "explain_field", expected_revision: "resident/3", target}});
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "field_explanation", payload: explanation}});
+    await expect(result).resolves.toEqual(explanation);
+
+    const stale = worker.client.explainField("resident/2", target);
+    worker.reply({id: worker.request(1).id, status: "error", error: {code: "stale_revision", message: "Stale query", current_revision: "resident/3", diagnostics: []}});
+    await expect(stale).rejects.toMatchObject({failure: {code: "stale_revision", current_revision: "resident/3"}});
+  });
+
   it("correlates simultaneous table replies by ID rather than arrival order", async () => {
     const worker = transport();
     const first = worker.client.queryTable("first");

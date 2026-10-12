@@ -66,6 +66,22 @@ export type FieldBatchProjection = {
   fields: FieldProjection[];
 };
 
+export type FieldDependencyProjection = {
+  target: FieldTarget;
+  value: FieldProjection;
+};
+
+export type FieldExplanationProjection = {
+  revision: string;
+  target: FieldTarget;
+  value: FieldProjection;
+  formula_source: string | null;
+  direct_dependencies: FieldDependencyProjection[];
+  /** Direct calculated dependents only, in stable-ID order. */
+  downstream_impacts: FieldTarget[];
+  diagnostics: DiagnosticProjection[];
+};
+
 export type PublicationProjection = {
   base_revision: string;
   resulting_revision: string;
@@ -176,6 +192,11 @@ export type DesignerRequest =
       fields: FieldTarget[];
     }
   | {
+      type: "explain_field";
+      expected_revision: string;
+      target: FieldTarget;
+    }
+  | {
       type: "edit_scalar";
       expected_revision: string;
       target: FieldTarget;
@@ -199,6 +220,7 @@ export type DesignerResponse =
   | { type: "opened"; payload: OpenedProjection }
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
+  | { type: "field_explanation"; payload: FieldExplanationProjection }
   | { type: "published"; payload: PublicationProjection }
   | { type: "duplicated"; payload: DuplicateCollectionProjection }
   | { type: "project_exported"; payload: ProjectExportProjection }

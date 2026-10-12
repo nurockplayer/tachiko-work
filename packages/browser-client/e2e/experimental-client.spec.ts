@@ -1,11 +1,44 @@
 import { fileURLToPath } from "node:url";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 
 import { expect, test } from "@playwright/test";
 
 const PRODUCT_GAPS_PROJECT = fileURLToPath(
   new URL("../../../dogfood/product-gaps.roproj", import.meta.url),
 );
+
+test("#515 actual kit module Worker matches native field explanations", async ({ page }) => {
+  const capturePath = process.env.TACHIKO_FIELD_EXPLANATION_CAPTURE;
+  if (!capturePath) throw new Error("Run the native worker_parity_capture case first; see SEED-515.md");
+  const capture = JSON.parse(await readFile(capturePath, "utf8")) as {
+    bytes: number[];
+    requests: Array<{ type: string; expected_revision: string; target: { entity: string; field: string } }>;
+    responses: unknown[];
+  };
+  expect(capture.requests).toEqual([
+    { type: "explain_field", expected_revision: "resident/0", target: { entity: "weapon", field: "f02_damage" } },
+    { type: "explain_field", expected_revision: "resident/0", target: { entity: "weapon", field: "f03_dps" } },
+  ]);
+  const workerUrls: string[] = [];
+  page.on("worker", worker => workerUrls.push(worker.url()));
+  await page.goto("/");
+  const responses = await page.evaluate(async ({ bytes, requests }) => {
+    const entry = "/vendor/tachiko/experimental-client.js";
+    const kit = await import(entry) as typeof import("../src/experimental-client.ts");
+    const client = kit.createExperimentalDesignerClient();
+    try {
+      await client.openProject(new Uint8Array(bytes).buffer);
+      const responses = [];
+      for (const request of requests) {
+        responses.push({ type: "field_explanation", payload: await client.explainField(request.expected_revision, request.target) });
+      }
+      return responses;
+    } finally { await client.close(); }
+  }, capture);
+  expect(workerUrls).toHaveLength(1);
+  expect(workerUrls[0]).toContain("/vendor/tachiko/experimental-client.worker.js");
+  expect(responses).toEqual(capture.responses);
+});
 
 test("exported experimental kit owns the complete external-client workflow", async ({
   page,

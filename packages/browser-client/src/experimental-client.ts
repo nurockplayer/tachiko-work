@@ -117,6 +117,8 @@ export type {
   DiagnosticProjection,
   FailureProjection,
   FieldBatchProjection,
+  FieldDependencyProjection,
+  FieldExplanationProjection,
   FieldProjection,
   FieldTarget,
   OpenedProjection,
