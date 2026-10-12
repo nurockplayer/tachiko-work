@@ -65,15 +65,22 @@ test("spreadsheet export discloses saved definitions through the actual Worker",
       if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(label);
     };
     const bytes = (value: ArrayBuffer): number[] => Array.from(new Uint8Array(value));
+    const withUuid = async <T>(uuid: string, action: () => Promise<T>): Promise<T> => {
+      const original = crypto.randomUUID;
+      Object.defineProperty(crypto, "randomUUID", { configurable: true, value: () => uuid });
+      try { return await action(); }
+      finally { Object.defineProperty(crypto, "randomUUID", { configurable: true, value: original }); }
+    };
     const records = [];
     try {
       // Include an unavailable-only inventory: evaluated groups are not the catalogue.
       for (const missingLookups of [[], [false], [true], [true, true], [false, true]]) {
-        const imported = await importSpreadsheet(
+        // Stable import identities make RED/GREEN captures the same saved snapshot.
+        const imported = await withUuid(`00000000-0000-4000-8000-${String(records.length + 1).padStart(12, "0")}`, () => importSpreadsheet(
           new TextEncoder().encode("P-100,hardware,2,3\n").buffer, "csv",
           { delimiter: ",", header: false },
           { column_types: [["text", "text", "number", "number"]], extra_columns: [[]] },
-        );
+        ));
         const metadata = imported.metadata;
         const sheet = metadata.sheets[0]!;
         const collection = sheet.schema_id;
