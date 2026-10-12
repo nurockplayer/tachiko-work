@@ -83,10 +83,11 @@ and confirms the canonical source/package bytes are unchanged by those
 read-only rejection checks. The runner has no fault-injection production path.
 
 The current authoritative semantics remain in the Accepted decisions and their
-specifications below. The package journey implemented here exercises the
-superseded developmental package/v1-over-roproj/v1 profile; it is not
-qualification for first-public package/v1 over canonical `.roproj/v3`.
-Replacement implementation remains pending under #488.
+specifications below. The Git-review stage uses `scripts/git-ci-smoke.sh`,
+retargeted by #519 to first-public CORE package/v1 over canonical `.roproj/v3`.
+Developmental packages are refused. This stage alone does not qualify the
+complete package contract; Sheet attachments and consumer qualification remain
+separate under #488.
 
 - canonical storage and `.roproj/v1`:
   [ADR-0017](../decisions/ADR-0017-versioned-storage-and-canonical-representation.md),

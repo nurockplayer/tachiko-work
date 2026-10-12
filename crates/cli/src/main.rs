@@ -235,7 +235,7 @@ enum RoProjectCommands {
     },
     /// Pack an exact canonical .roproj tree into a new portable .ro artifact
     Pack {
-        /// Exact canonical .roproj/v1 source tree
+        /// Exact canonical .roproj/v3 source tree
         input: PathBuf,
         /// New portable .ro artifact; existing paths are never overwritten
         output: PathBuf,
@@ -251,7 +251,7 @@ enum RoProjectCommands {
     ComparePackage {
         /// Portable package-v1 .ro artifact
         package: PathBuf,
-        /// Canonical tracked .roproj/v1 source
+        /// Canonical tracked .roproj/v3 source
         tracked: PathBuf,
     },
 }

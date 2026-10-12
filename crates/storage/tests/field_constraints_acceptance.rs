@@ -44,8 +44,9 @@ fn document(field_type: FieldType, constraint: FieldConstraint, value: Option<Va
 }
 
 use tachiko_storage::{
-    decode_roproj_v1, decode_roproj_v2, encode_portable_package_v1, encode_roproj_v1,
-    encode_roproj_v2, from_str, to_canonical_string,
+    decode_portable_package_v1, decode_roproj_v1, decode_roproj_v2, decode_roproj_v3,
+    encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_str,
+    to_canonical_string,
 };
 
 #[test]
@@ -72,12 +73,11 @@ fn every_frozen_writer_refuses_a_valid_non_none_facet_before_output() {
         assert!(to_canonical_string(&candidate).is_err());
         assert!(encode_roproj_v1(&candidate).is_err());
         assert!(encode_roproj_v2(&candidate).is_err());
-        // package/v1 can only be reached through a admitted frozen v1 tree.
-        assert!(
-            encode_roproj_v1(&candidate)
-                .and_then(|tree| encode_portable_package_v1(&tree))
-                .is_err()
-        );
+        // First-public package/v1 carries v3 constraints; frozen writers still refuse.
+        let tree = encode_roproj_v3(&candidate).unwrap();
+        let bytes = encode_portable_package_v1(&tree).unwrap();
+        let package = decode_portable_package_v1(&bytes).unwrap();
+        assert_eq!(decode_roproj_v3(package.tree()).unwrap(), candidate);
     }
 }
 

@@ -28,6 +28,10 @@ pub enum PortablePackageError {
     InvalidManifest { message: String },
     #[error("portable_package.unsupported_version: unsupported package version {found}")]
     UnsupportedVersion { found: String },
+    #[error(
+        "portable_package.unsupported_payload_representation: unsupported payload {format}/v{version}; requires canonical tachiko.roproj/v3; for older source trees use the explicit migrate_roproj_to_v3 source migration"
+    )]
+    UnsupportedPayloadRepresentation { format: String, version: String },
     #[error("portable_package.noncanonical_container: {message}")]
     NonCanonicalContainer { message: String },
     #[error("portable_package.entry_set_mismatch: {message}")]

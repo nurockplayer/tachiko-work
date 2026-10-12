@@ -6,6 +6,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- First-public portable package/v1 now carries exactly canonical `.roproj/v3`,
+  preserving Date, saved grouped-sum definitions, constraints and empty shards.
+  CLI pack/unpack/compare and browser portable export/open/verify share this
+  profile. Older source trees require explicit `migrate_roproj_to_v3`; developmental
+  packages are refused. Browser verification accepts constrained packages, while
+  open retains the existing unconstrained-field capability limit.
+
 - The experimental browser client can explain a field at an exact resident
   revision, returning its authoritative value, formula source, direct inputs
   with current values, direct dependents and diagnostics. Native and Worker
@@ -48,7 +55,8 @@ All notable changes to Tachiko Work are documented in this file.
 - Rust storage callers can now encode and strictly read canonical `.roproj/v3`
   trees with bounded field constraints and Date values, and explicitly migrate
   admitted v1/v2 directories to a distinct no-clobber v3 destination. Ordinary
-  Designer save/open and portable packages do not select v3 yet.
+  Designer save remains version-bound; explicit v3 save/open and portable
+  packages now use the existing v3 codec.
 - The semantic core now recognizes the bounded durable Text literal-set and
   inclusive Number-range constraints. Existing core and resident validation
   reject invalid declarations, direct values, and successful formula results;
@@ -162,9 +170,12 @@ All notable changes to Tachiko Work are documented in this file.
 - ADR-0042 redefines first-public `tachiko.portable-package/v1` as a
   deterministic ZIP32 envelope over exact canonical `.roproj/v3` (Date, saved
   definitions, and constraints), superseding the unreleased developmental
-  v1-over-`.roproj/v1` binding. No legacy reader is kept. Implementation is
-  pending (#519); current tooling still emits the developmental profile until
-  then.
+  v1-over-`.roproj/v1` binding. #519 implements the CORE package codec and
+  tooling; developmental packages are explicitly refused. The browser runtime
+  supports Date and saved definitions within its ordinary v3 profile; constrained
+  packages verify but refuse open, and capacity-profile documents exceeding that
+  profile refuse portable export. Sheet attachments and consumer qualification
+  remain separate; this does not complete #488.
 - The legacy first-party Designer application, its Tauri/PWA hosts, and its
   product-only release route have been retired. The experimental browser-client
   producer and its standalone Rust/WASM runtime remain available for technical

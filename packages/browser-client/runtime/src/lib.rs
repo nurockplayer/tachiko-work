@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tachiko_storage::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2,
     CanonicalRoProjectV3, FormatError, ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, ROPROJ_V3_PATHS,
-    decode_portable_package_v1, decode_roproj_v1, decode_roproj_v2, encode_portable_package_v1,
+    decode_portable_package_v1, decode_roproj_v2, decode_roproj_v3, encode_portable_package_v1,
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
@@ -1368,10 +1368,14 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        let tree = encode_v1_tree(snapshot.document())?;
+        ensure_v3_capabilities(snapshot.document())?;
+        ensure_document_profile(snapshot.document(), false)?;
+        let tree = encode_roproj_v3(snapshot.document())?;
+        let bytes = encode_portable_package_v1(&tree)?;
+        admit_portable_ro(&bytes, PREFLIGHT_OCCURRENCE)?;
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
-            bytes: encode_portable_package_v1(&tree)?,
+            bytes,
         })
     }
 
@@ -3363,6 +3367,9 @@ pub fn open_local_document(
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
     enforce_project_transfer_limit(input.len())?;
+    if input.starts_with(b"PK\x03\x04") {
+        return open_portable_ro(runtime, input, occurrence_id);
+    }
     let document = from_bytes(input).map_err(DesignerError::from)?;
     let (candidate, opened) = admit_document(document, occurrence_id)?;
     *runtime = Some(candidate);
@@ -3384,12 +3391,23 @@ pub fn open_portable_ro(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
-    enforce_project_transfer_limit(input.len())?;
-    let verified = decode_portable_package_v1(input)?;
-    let document = decode_roproj_v1(verified.tree())?;
-    let (candidate, opened) = admit_document(document, occurrence_id)?;
+    let (candidate, opened) = admit_portable_ro(input, occurrence_id)?;
     *runtime = Some(candidate);
     Ok(opened)
+}
+
+fn admit_portable_ro(
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    let verified = decode_portable_package_v1(input)?;
+    let document = decode_roproj_v3(verified.tree())?;
+    ensure_document_profile(&document, false)?;
+    ensure_v3_capabilities(&document)?;
+    let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
+    candidate.opened_from_v3 = true;
+    Ok((candidate, opened))
 }
 
 /// Completely verify one portable-package/v1 `.ro` artifact without changing
@@ -3789,6 +3807,12 @@ fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError
                 message: "TWDPROJ2 transfer is missing direct-ro/v2 bytes".to_owned(),
             });
         }
+        if payload.starts_with(b"PK\x03\x04") {
+            return Err(DesignerError::InvalidProjectTransfer {
+                message: "TWDPROJ2 requires direct-ro/v2 JSON, not portable-package bytes"
+                    .to_owned(),
+            });
+        }
         return from_bytes(payload)
             .map(|document| (document, false))
             .map_err(DesignerError::from);
@@ -3944,7 +3968,7 @@ fn document_contains_date(document: &Document) -> bool {
 fn encode_v1_tree(document: &Document) -> Result<CanonicalRoProjectV1, DesignerError> {
     if document_contains_date(document) {
         return Err(DesignerError::UnsupportedProject {
-            message: "canonical .roproj/v1 and portable-package/v1 do not support Date fields; use the existing private project export".to_owned(),
+            message: "canonical .roproj/v1 does not support Date fields; use the existing private project export".to_owned(),
         });
     }
     Ok(encode_roproj_v1(document)?)

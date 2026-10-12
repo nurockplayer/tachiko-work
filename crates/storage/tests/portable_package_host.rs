@@ -11,7 +11,7 @@ use std::{
 use tachiko_semantic_core::Document;
 use tachiko_storage::{
     FormatError, PortablePackageError, compare_portable_package_with_roproj, pack_roproj,
-    read_canonical_roproj, read_portable_package, unpack_roproj,
+    read_canonical_roproj_v3, read_portable_package, unpack_roproj,
 };
 
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
@@ -47,9 +47,8 @@ fn pack_unpack_and_compare_preserve_exact_canonical_bytes() {
     let first_package = temp.path().join("first.ro");
     let second_package = temp.path().join("second.ro");
     let restored = temp.path().join("restored.roproj");
-    tachiko_storage::materialize_roproj(&source, &Document::empty("doc-portable", "Portable"))
-        .unwrap();
-    let expected = read_canonical_roproj(&source).unwrap();
+    materialize_v3(&source, &Document::empty("doc-portable", "Portable")).unwrap();
+    let expected = read_canonical_roproj_v3(&source).unwrap();
 
     pack_roproj(&source, &first_package).unwrap();
     pack_roproj(&source, &second_package).unwrap();
@@ -63,7 +62,7 @@ fn pack_unpack_and_compare_preserve_exact_canonical_bytes() {
     );
 
     unpack_roproj(&first_package, &restored).unwrap();
-    assert_eq!(read_canonical_roproj(&restored).unwrap(), expected);
+    assert_eq!(read_canonical_roproj_v3(&restored).unwrap(), expected);
     assert_eq!(
         compare_portable_package_with_roproj(&first_package, &source).unwrap(),
         read_portable_package(&first_package)
@@ -77,7 +76,7 @@ fn pack_and_unpack_never_overwrite_existing_destinations() {
     let temp = TempDir::new();
     let source = temp.path().join("source.roproj");
     let package = temp.path().join("package.ro");
-    tachiko_storage::materialize_roproj(&source, &Document::empty("doc", "Document")).unwrap();
+    materialize_v3(&source, &Document::empty("doc", "Document")).unwrap();
     pack_roproj(&source, &package).unwrap();
 
     let existing_package = temp.path().join("existing.ro");
@@ -115,11 +114,11 @@ fn noncanonical_source_and_source_mismatch_are_read_only() {
     let other = temp.path().join("other.roproj");
     let package = temp.path().join("package.ro");
     let rejected = temp.path().join("rejected.ro");
-    tachiko_storage::materialize_roproj(&source, &Document::empty("doc", "Source")).unwrap();
-    tachiko_storage::materialize_roproj(&other, &Document::empty("doc", "Other")).unwrap();
+    materialize_v3(&source, &Document::empty("doc", "Source")).unwrap();
+    materialize_v3(&other, &Document::empty("doc", "Other")).unwrap();
     pack_roproj(&source, &package).unwrap();
     let package_before = fs::read(&package).unwrap();
-    let other_before = read_canonical_roproj(&other).unwrap();
+    let other_before = read_canonical_roproj_v3(&other).unwrap();
 
     assert!(matches!(
         compare_portable_package_with_roproj(&package, &other),
@@ -128,7 +127,7 @@ fn noncanonical_source_and_source_mismatch_are_read_only() {
         ))
     ));
     assert_eq!(fs::read(&package).unwrap(), package_before);
-    assert_eq!(read_canonical_roproj(&other).unwrap(), other_before);
+    assert_eq!(read_canonical_roproj_v3(&other).unwrap(), other_before);
 
     fs::write(source.join("extra"), b"unknown").unwrap();
     assert!(matches!(
@@ -146,7 +145,7 @@ fn concurrent_unpack_uses_the_real_no_replace_primitive() {
     let source = temp.path().join("source.roproj");
     let package = temp.path().join("package.ro");
     let destination = temp.path().join("raced.roproj");
-    tachiko_storage::materialize_roproj(&source, &Document::empty("doc", "Race")).unwrap();
+    materialize_v3(&source, &Document::empty("doc", "Race")).unwrap();
     pack_roproj(&source, &package).unwrap();
 
     let barrier = Arc::new(Barrier::new(3));
@@ -181,7 +180,13 @@ fn concurrent_unpack_uses_the_real_no_replace_primitive() {
         1
     );
     assert_eq!(
-        read_canonical_roproj(&destination).unwrap(),
-        read_canonical_roproj(&source).unwrap()
+        read_canonical_roproj_v3(&destination).unwrap(),
+        read_canonical_roproj_v3(&source).unwrap()
     );
+}
+
+// Host package tests now start from the sole accepted v3 payload family.
+fn materialize_v3(path: &Path, document: &Document) -> Result<(), FormatError> {
+    let tree = tachiko_storage::encode_roproj_v3(document)?;
+    tachiko_storage::publish_roproj_v3(path, &tree)
 }

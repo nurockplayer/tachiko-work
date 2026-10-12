@@ -4,19 +4,20 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tachiko_semantic_core::{Diagnostic, DiagnosticCode, DiagnosticProvider, DiagnosticSeverity};
 
 use super::PortablePackageError;
 use crate::{
     FormatError,
-    roproj::{CanonicalRoProjectV1, ROPROJ_V1_PATHS},
+    roproj::{CanonicalRoProjectV3, ROPROJ_V3_PATHS},
     strict_json::{FrontendError, inspect, inspect_top_level},
 };
 
 const PACKAGE_FORMAT: &str = "tachiko.portable-package";
 const PACKAGE_FORMAT_VERSION: u32 = 1;
 const PAYLOAD_FORMAT: &str = "tachiko.roproj";
-const PAYLOAD_FORMAT_VERSION: u32 = 1;
-const PAYLOAD_DOMAIN: &[u8] = b"tachiko.portable-package/v1\0tachiko.roproj/v1\0";
+const PAYLOAD_FORMAT_VERSION: u32 = 3;
+const PAYLOAD_DOMAIN: &[u8] = b"tachiko.portable-package/v1\0tachiko.roproj/v3\0";
 
 const ZIP_LOCAL_SIGNATURE: u32 = 0x0403_4b50;
 const ZIP_CENTRAL_SIGNATURE: u32 = 0x0201_4b50;
@@ -39,10 +40,11 @@ const PACKAGE_MANIFEST_MAX_JSON_NESTING: usize = 256;
 /// Finite in-memory admission bound for one package-v1 artifact.
 pub const PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 
-const PACKAGE_PATHS: [&str; 19] = [
+const PACKAGE_PATHS: [&str; 20] = [
     "package.json",
     "payload/manifest.json",
     "payload/schemas.json",
+    "payload/definitions.json",
     "payload/entities/0.jsonl",
     "payload/entities/1.jsonl",
     "payload/entities/2.jsonl",
@@ -60,29 +62,22 @@ const PACKAGE_PATHS: [&str; 19] = [
     "payload/entities/e.jsonl",
     "payload/entities/f.jsonl",
 ];
-const PACKAGE_ENTRY_COUNT: u16 = 19;
-const MANIFEST_KEYS: [&str; 5] = [
-    "format",
-    "format_version",
-    "payload_format",
-    "payload_format_version",
-    "payload_root_sha256",
-];
+const PACKAGE_ENTRY_COUNT: u16 = 20;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedPortablePackageV1 {
-    tree: CanonicalRoProjectV1,
+    tree: CanonicalRoProjectV3,
     payload_root: [u8; 32],
 }
 
 impl VerifiedPortablePackageV1 {
     #[must_use]
-    pub fn tree(&self) -> &CanonicalRoProjectV1 {
+    pub fn tree(&self) -> &CanonicalRoProjectV3 {
         &self.tree
     }
 
     #[must_use]
-    pub fn into_tree(self) -> CanonicalRoProjectV1 {
+    pub fn into_tree(self) -> CanonicalRoProjectV3 {
         self.tree
     }
 
@@ -94,11 +89,12 @@ impl VerifiedPortablePackageV1 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PackageManifestV1 {
+struct PackageManifestV1<'a> {
     format: String,
     format_version: u32,
     payload_format: String,
-    payload_format_version: u32,
+    #[serde(borrow)]
+    payload_format_version: &'a serde_json::value::RawValue,
     payload_root_sha256: String,
 }
 
@@ -164,9 +160,9 @@ struct CentralOffsetIndex {
     next_offset: Option<usize>,
 }
 
-/// Calculate the Accepted exact-payload root for a canonical `.roproj/v1` tree.
+/// Calculate the Accepted exact-payload root for a canonical `.roproj/v3` tree.
 #[must_use]
-pub fn payload_root(tree: &CanonicalRoProjectV1) -> [u8; 32] {
+pub fn payload_root(tree: &CanonicalRoProjectV3) -> [u8; 32] {
     calculate_payload_root(tree.files().iter().map(|file| (file.path(), file.bytes())))
 }
 
@@ -183,12 +179,12 @@ fn calculate_payload_root<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8]
     root.finalize().into()
 }
 
-/// Encode an exact canonical `.roproj/v1` tree as canonical package-v1 bytes.
+/// Encode an exact canonical `.roproj/v3` tree as canonical package-v1 bytes.
 ///
 /// # Errors
 ///
 /// Returns a package capacity or declared resource-limit error before allocation.
-pub fn encode(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, FormatError> {
+pub fn encode(tree: &CanonicalRoProjectV3) -> Result<Vec<u8>, FormatError> {
     let root = payload_root(tree);
     let manifest = render_manifest(&root);
     let mut entries = Vec::with_capacity(PACKAGE_PATHS.len());
@@ -222,7 +218,7 @@ pub fn decode(source: &[u8]) -> Result<VerifiedPortablePackageV1, FormatError> {
         .local_records
         .iter()
         .skip(1)
-        .zip(ROPROJ_V1_PATHS)
+        .zip(ROPROJ_V3_PATHS)
         .map(|(record, path)| (path.to_owned(), record.data.to_vec()))
         .collect::<Vec<_>>();
     let found_root = payload_root_from_files(&files);
@@ -230,10 +226,26 @@ pub fn decode(source: &[u8]) -> Result<VerifiedPortablePackageV1, FormatError> {
         return Err(PortablePackageError::IntegrityMismatch.into());
     }
 
-    crate::roproj::v1::dispatch_manifest(&files[0].1)
+    let version = crate::roproj::v3::manifest_version(&files[0].1)
         .map_err(|_| PortablePackageError::PayloadManifestMismatch)?;
+    if version != PAYLOAD_FORMAT_VERSION {
+        return Err(PortablePackageError::PayloadManifestMismatch.into());
+    }
 
-    let tree = CanonicalRoProjectV1::try_from_files(files).map_err(map_payload_error)?;
+    let tree = CanonicalRoProjectV3::try_from_files_with_definition_error(files, |error| {
+        FormatError::InvalidDocument {
+            diagnostics: vec![
+                Diagnostic::new(
+                    DiagnosticCode::new("storage.invalid_keyed_grouped_sum_definition"),
+                    DiagnosticSeverity::Error,
+                    Vec::new(),
+                    DiagnosticProvider::new("tachiko.storage"),
+                )
+                .with_presentation("definitions.json", error.to_string()),
+            ],
+        }
+    })
+    .map_err(map_payload_error)?;
     Ok(VerifiedPortablePackageV1 {
         tree,
         payload_root: found_root,
@@ -315,7 +327,21 @@ fn build_zip(entries: &[Entry<'_>]) -> Result<Vec<u8>, PortablePackageError> {
 }
 
 fn preflight_zip(entries: &[Entry<'_>]) -> Result<usize, PortablePackageError> {
-    if entries.len() >= usize::from(ZIP32_U16_SENTINEL) {
+    preflight_zip_lengths(
+        entries.len(),
+        entries
+            .iter()
+            .map(|entry| (entry.name.len(), entry.body.len())),
+    )
+}
+
+// Preflight lengths independently of allocation so ZIP32 edges can be tested
+// without constructing a multi-gigabyte body. Production uses the same path.
+fn preflight_zip_lengths(
+    entry_count: usize,
+    lengths: impl IntoIterator<Item = (usize, usize)>,
+) -> Result<usize, PortablePackageError> {
+    if entry_count >= usize::from(ZIP32_U16_SENTINEL) {
         return Err(PortablePackageError::CapacityExceeded {
             resource: "entry count",
         });
@@ -323,17 +349,15 @@ fn preflight_zip(entries: &[Entry<'_>]) -> Result<usize, PortablePackageError> {
 
     let mut local_size = 0_u64;
     let mut central_size = 0_u64;
-    for entry in entries {
-        let name_length = u64::try_from(entry.name.len()).map_err(|_| {
-            PortablePackageError::CapacityExceeded {
+    for (name_length, body_length) in lengths {
+        let name_length =
+            u64::try_from(name_length).map_err(|_| PortablePackageError::CapacityExceeded {
                 resource: "entry name length",
-            }
-        })?;
-        let body_length = u64::try_from(entry.body.len()).map_err(|_| {
-            PortablePackageError::CapacityExceeded {
+            })?;
+        let body_length =
+            u64::try_from(body_length).map_err(|_| PortablePackageError::CapacityExceeded {
                 resource: "entry body length",
-            }
-        })?;
+            })?;
         require_zip32(body_length, "entry body length")?;
         local_size = checked_sum(
             checked_sum(local_size, checked_sum(LOCAL_HEADER_LENGTH, name_length)?)?,
@@ -817,24 +841,25 @@ fn parse_manifest(source: &[u8]) -> Result<ParsedManifest, PortablePackageError>
         return Err(PortablePackageError::UnsupportedVersion { found: version });
     }
     inspect(text).map_err(map_manifest_frontend_error)?;
-    let value: serde_json::Value = serde_json::from_str(text)
-        .map_err(|_| invalid_manifest_error("package.json is not valid JSON"))?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| invalid_manifest_error("package.json root is not an object"))?;
-    if object.len() != MANIFEST_KEYS.len()
-        || !MANIFEST_KEYS.iter().all(|key| object.contains_key(*key))
-    {
-        return invalid_manifest("package.json members are missing or unknown");
-    }
-    let manifest: PackageManifestV1 = serde_json::from_value(value)
+    let manifest: PackageManifestV1<'_> = serde_json::from_str(text)
         .map_err(|_| invalid_manifest_error("package.json does not match package v1"))?;
-    if manifest.format != PACKAGE_FORMAT
-        || manifest.format_version != PACKAGE_FORMAT_VERSION
-        || manifest.payload_format != PAYLOAD_FORMAT
-        || manifest.payload_format_version != PAYLOAD_FORMAT_VERSION
+    let payload_version = manifest.payload_format_version.get();
+    if payload_version.is_empty()
+        || payload_version.starts_with('0')
+        || !payload_version.bytes().all(|byte| byte.is_ascii_digit())
     {
-        return invalid_manifest("package.json payload claim is malformed or unsupported");
+        return invalid_manifest("payload_format_version is not a lexical positive integer");
+    }
+    if manifest.format != PACKAGE_FORMAT || manifest.format_version != PACKAGE_FORMAT_VERSION {
+        return invalid_manifest("package.json format claim is malformed");
+    }
+    if manifest.payload_format != PAYLOAD_FORMAT
+        || payload_version != PAYLOAD_FORMAT_VERSION.to_string()
+    {
+        return Err(PortablePackageError::UnsupportedPayloadRepresentation {
+            format: manifest.payload_format,
+            version: payload_version.to_owned(),
+        });
     }
     let payload_root = decode_root(&manifest.payload_root_sha256)?;
     if source != render_manifest(&payload_root).as_bytes() {
@@ -861,7 +886,7 @@ fn validate_canonical_profile(container: &Container<'_>) -> Result<(), PortableP
     if container.end.entries_on_disk != PACKAGE_ENTRY_COUNT
         || container.end.total_entries != PACKAGE_ENTRY_COUNT
     {
-        return noncanonical_container("end record does not describe 19 canonical entries");
+        return noncanonical_container("end record does not describe 20 canonical entries");
     }
 
     for (index, expected_name) in PACKAGE_PATHS.iter().enumerate() {
@@ -1137,7 +1162,7 @@ fn noncanonical_container<T>(message: &str) -> Result<T, PortablePackageError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PortablePackageError, crc32, require_zip32};
+    use super::*;
 
     #[test]
     fn crc32_matches_the_standard_zip_check_vector() {
@@ -1145,12 +1170,205 @@ mod tests {
     }
 
     #[test]
-    fn zip32_sentinel_is_a_capacity_error() {
+    fn package_paths_are_exactly_the_v3_paths_with_one_manifest() {
+        assert_eq!(PACKAGE_PATHS.len(), usize::from(PACKAGE_ENTRY_COUNT));
+        assert_eq!(PACKAGE_PATHS[0], "package.json");
+        assert_eq!(
+            PACKAGE_PATHS[1..]
+                .iter()
+                .map(|path| path.strip_prefix("payload/").unwrap())
+                .collect::<Vec<_>>(),
+            ROPROJ_V3_PATHS
+        );
+    }
+
+    #[test]
+    fn empty_v3_roundtrip_keeps_definitions_and_all_empty_shards() {
+        let tree =
+            crate::encode_roproj_v3(&tachiko_semantic_core::Document::empty("empty", "Empty"))
+                .unwrap();
+        assert_eq!(tree.file("definitions.json").unwrap(), b"[]\n");
+        for path in ROPROJ_V3_PATHS.iter().skip(3) {
+            assert_eq!(tree.file(path).unwrap(), b"");
+        }
+        let bytes = encode(&tree).unwrap();
+        let decoded = decode(&bytes).unwrap();
+        assert_eq!(decoded.tree(), &tree);
+        assert_eq!(encode(decoded.tree()).unwrap(), bytes);
+        assert_ne!(
+            payload_root(&tree),
+            calculate_payload_root(
+                tree.files()
+                    .iter()
+                    .filter(|file| file.path() != "definitions.json")
+                    .map(|file| (file.path(), file.bytes()))
+            )
+        );
+    }
+
+    #[test]
+    fn invalid_saved_definition_is_semantic_while_noncanonical_bytes_remain_representation_errors()
+    {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/research/fixtures/issue-519-portable-package-v1-v3/input.roproj");
+        let original = ROPROJ_V3_PATHS
+            .iter()
+            .map(|path| ((*path).to_owned(), std::fs::read(root.join(path)).unwrap()))
+            .collect::<Vec<_>>();
+        for semantic_failure in [true, false] {
+            let mut files = original.clone();
+            let definitions = &mut files[2].1;
+            if semantic_failure {
+                let source = std::str::from_utf8(definitions).unwrap();
+                // The first schema binding is orders.schema; retain the DTO's
+                // canonical rendering while changing only its semantic target.
+                *definitions = source
+                    .replacen(
+                        "\"schema\": \"import_00000000-0000-4000-8000-000000000001_0002\"",
+                        "\"schema\": \"missing-schema\"",
+                        1,
+                    )
+                    .into_bytes();
+                assert_ne!(*definitions, original[2].1);
+            } else {
+                definitions.push(b'\n');
+            }
+            // Rebuild headers/CRCs and the root so admission reaches payload
+            // validation rather than an earlier integrity refusal.
+            let manifest = render_manifest(&payload_root_from_files(&files));
+            let mut entries = vec![Entry {
+                name: PACKAGE_PATHS[0],
+                body: manifest.as_bytes(),
+            }];
+            entries.extend(files.iter().enumerate().map(|(index, (_, body))| Entry {
+                name: PACKAGE_PATHS[index + 1],
+                body,
+            }));
+            let error = decode(&build_zip(&entries).unwrap()).unwrap_err();
+            if semantic_failure {
+                let FormatError::PortablePackage(PortablePackageError::InvalidSemanticPayload {
+                    diagnostics,
+                }) = error
+                else {
+                    panic!("expected invalid_semantic_payload, found {error}");
+                };
+                assert_eq!(diagnostics.len(), 1);
+                assert!(diagnostics[0].message.contains("missing-schema"));
+            } else {
+                assert!(matches!(
+                    error,
+                    FormatError::PortablePackage(PortablePackageError::NonCanonicalPayload { .. })
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn payload_versions_are_lexical_positive_integers_and_never_fall_back() {
+        let manifest = render_manifest(&[0; 32]);
+        for token in ["0", "-1", "3.0", "3e0", "\"3\"", "null", "true", "[]", "{}"] {
+            let changed = manifest.replace(
+                "\"payload_format_version\": 3",
+                &format!("\"payload_format_version\": {token}"),
+            );
+            assert!(
+                matches!(
+                    parse_manifest(changed.as_bytes()),
+                    Err(PortablePackageError::InvalidManifest { .. })
+                ),
+                "{token}"
+            );
+        }
+        for token in [
+            "1",
+            "2",
+            "4",
+            "4294967296",
+            "999999999999999999999999999999999999",
+            &"9".repeat(400),
+        ] {
+            let changed = manifest.replace(
+                "\"payload_format_version\": 3",
+                &format!("\"payload_format_version\": {token}"),
+            );
+            assert!(
+                matches!(parse_manifest(changed.as_bytes()), Err(PortablePackageError::UnsupportedPayloadRepresentation { format, version }) if format == PAYLOAD_FORMAT && version == token),
+                "{token}"
+            );
+        }
+        assert!(parse_manifest(manifest.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn payload_profile_refuses_unknown_and_malformed_claims_separately() {
+        let manifest = render_manifest(&[0; 32]);
+        let unknown = manifest.replace("tachiko.roproj", "other.roproj");
+        assert!(matches!(
+            parse_manifest(unknown.as_bytes()),
+            Err(PortablePackageError::UnsupportedPayloadRepresentation { .. })
+        ));
+        for token in ["null", "3", "true", "[]"] {
+            let changed = manifest.replace(
+                "\"payload_format\": \"tachiko.roproj\"",
+                &format!("\"payload_format\": {token}"),
+            );
+            assert!(matches!(
+                parse_manifest(changed.as_bytes()),
+                Err(PortablePackageError::InvalidManifest { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn zip32_sentinel_and_total_overflow_fail_before_allocation() {
+        require_zip32(0xffff_fffe, "test field").unwrap();
         assert!(matches!(
             require_zip32(0xffff_ffff, "test field"),
             Err(PortablePackageError::CapacityExceeded {
                 resource: "test field"
             })
         ));
+        assert!(matches!(
+            preflight_zip_lengths(0xffff, []),
+            Err(PortablePackageError::CapacityExceeded {
+                resource: "entry count"
+            })
+        ));
+        assert!(matches!(
+            preflight_zip_lengths(1, [(1, 0xffff_ffff)]),
+            Err(PortablePackageError::CapacityExceeded {
+                resource: "entry body length"
+            })
+        ));
+        assert!(matches!(
+            preflight_zip_lengths(1, [(1, 0xffff_fffe)]),
+            Err(PortablePackageError::CapacityExceeded {
+                resource: "local record section"
+            })
+        ));
+        // Local records fit, but central/end overhead crosses the complete-length bound.
+        assert!(matches!(
+            preflight_zip_lengths(1, [(1, 0xffff_fffe - 31)]),
+            Err(PortablePackageError::CapacityExceeded {
+                resource: "complete archive"
+            })
+        ));
+        assert!(matches!(
+            checked_sum(u64::MAX, 1),
+            Err(PortablePackageError::CapacityExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn archive_budget_includes_zip_and_manifest_overhead() {
+        let overhead = 30 + 1 + 46 + 1 + 22;
+        assert_eq!(
+            preflight_zip_lengths(1, [(1, PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES - overhead)])
+                .unwrap(),
+            PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES
+        );
+        assert!(
+            matches!(preflight_zip_lengths(1, [(1, PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES - overhead + 1)]), Err(PortablePackageError::ResourceLimit { actual, .. }) if actual == PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES + 1)
+        );
     }
 }

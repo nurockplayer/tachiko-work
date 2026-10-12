@@ -626,7 +626,11 @@ fn portable_package_workflow_operates_outside_git_and_preserves_exact_tree() {
     let second = temp.path().join("balance-copy.ro");
     let restored = temp.path().join("restored.roproj");
     save(&direct, &balance_document(100.0)).unwrap();
-    materialize_roproj(&source, &balance_document(100.0)).unwrap();
+    tachiko_storage::publish_roproj_v3(
+        &source,
+        &tachiko_storage::encode_roproj_v3(&balance_document(100.0)).unwrap(),
+    )
+    .unwrap();
     let source_before = snapshot_tree(&source);
 
     for output in [&first, &second] {
@@ -725,7 +729,11 @@ fn portable_package_cli_rejects_workspace_invalid_snapshots_before_publication()
         .unwrap()
         .fields
         .insert(FieldId::from("attack_interval"), number(0.0));
-    materialize_roproj(&invalid_tree, &document).unwrap();
+    tachiko_storage::publish_roproj_v3(
+        &invalid_tree,
+        &tachiko_storage::encode_roproj_v3(&document).unwrap(),
+    )
+    .unwrap();
 
     let rejected_pack = run_from(
         &[

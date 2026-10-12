@@ -2,9 +2,14 @@
 
 Decision state: Accepted under [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md).
 
-Implementation state: Accepted target, not implemented by this docs-only PR.
-The #3 codec implements the superseded developmental package/v1-over-roproj/v1
-binding; it is not evidence of conformance to this first-public profile.
+Implementation state: #519 implements this Accepted first-public CORE package
+profile with a new independent golden vector. The superseded developmental
+package/v1-over-roproj/v1 profile from #3 is refused. Sheet attachments and
+Work/Sheet consumer qualification remain separate obligations; #488 is not
+complete. Browser-runtime verification accepts constrained packages, while
+runtime open refuses their unsupported constraints. Portable export preflights
+fresh admission in the ordinary v3 runtime profile, refusing capacity-profile
+documents beyond its limits.
 
 Package profile: `tachiko.portable-package/v1`
 

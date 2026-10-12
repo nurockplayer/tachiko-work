@@ -2634,10 +2634,7 @@ fn frozen_codec_and_bridge_profile_controls() {
             runtime.export_canonical_tree(&revision).is_ok(),
             !date && !definition
         );
-        assert_eq!(
-            runtime.export_portable_ro(&revision).is_ok(),
-            !date && !definition
-        );
+        assert!(runtime.export_portable_ro(&revision).is_ok());
         if !date && !definition {
             let bridge = runtime.export_canonical_tree(&revision).unwrap();
             let expected_tree = encode_roproj_v1(&document).unwrap();
@@ -2661,15 +2658,15 @@ fn frozen_codec_and_bridge_profile_controls() {
                     .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
                     .collect::<Vec<_>>()
             );
-            let portable = runtime.export_portable_ro(&revision).unwrap();
-            tachiko_designer_runtime::verify_portable_ro(&portable.bytes).unwrap();
-            let mut slot = None;
-            tachiko_designer_runtime::open_portable_ro(&mut slot, &portable.bytes, FRESH).unwrap();
-            assert_eq!(
-                saved_document(&slot.unwrap().export_project("resident/0").unwrap().bytes),
-                document
-            );
         }
+        let portable = runtime.export_portable_ro(&revision).unwrap();
+        tachiko_designer_runtime::verify_portable_ro(&portable.bytes).unwrap();
+        let mut slot = None;
+        tachiko_designer_runtime::open_portable_ro(&mut slot, &portable.bytes, FRESH).unwrap();
+        assert_eq!(
+            saved_document(&slot.unwrap().export_project_v3("resident/0").unwrap().bytes),
+            document
+        );
         if !date {
             let v2 = encode_roproj_v2(&document).unwrap();
             assert_eq!(decode_roproj_v2(&v2).unwrap(), document);
