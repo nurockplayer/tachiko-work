@@ -1368,10 +1368,14 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
+        ensure_v3_capabilities(snapshot.document())?;
+        ensure_document_profile(snapshot.document(), false)?;
         let tree = encode_roproj_v3(snapshot.document())?;
+        let bytes = encode_portable_package_v1(&tree)?;
+        admit_portable_ro(&bytes, PREFLIGHT_OCCURRENCE)?;
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
-            bytes: encode_portable_package_v1(&tree)?,
+            bytes,
         })
     }
 
@@ -3363,6 +3367,9 @@ pub fn open_local_document(
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
     enforce_project_transfer_limit(input.len())?;
+    if input.starts_with(b"PK\x03\x04") {
+        return open_portable_ro(runtime, input, occurrence_id);
+    }
     let document = from_bytes(input).map_err(DesignerError::from)?;
     let (candidate, opened) = admit_document(document, occurrence_id)?;
     *runtime = Some(candidate);
@@ -3384,6 +3391,15 @@ pub fn open_portable_ro(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
+    let (candidate, opened) = admit_portable_ro(input, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+fn admit_portable_ro(
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     let verified = decode_portable_package_v1(input)?;
     let document = decode_roproj_v3(verified.tree())?;
@@ -3391,8 +3407,7 @@ pub fn open_portable_ro(
     ensure_v3_capabilities(&document)?;
     let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
-    *runtime = Some(candidate);
-    Ok(opened)
+    Ok((candidate, opened))
 }
 
 /// Completely verify one portable-package/v1 `.ro` artifact without changing
@@ -3790,6 +3805,12 @@ fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError
         if payload.is_empty() {
             return Err(DesignerError::InvalidProjectTransfer {
                 message: "TWDPROJ2 transfer is missing direct-ro/v2 bytes".to_owned(),
+            });
+        }
+        if payload.starts_with(b"PK\x03\x04") {
+            return Err(DesignerError::InvalidProjectTransfer {
+                message: "TWDPROJ2 requires direct-ro/v2 JSON, not portable-package bytes"
+                    .to_owned(),
             });
         }
         return from_bytes(payload)

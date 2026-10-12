@@ -114,7 +114,7 @@ cmp "${smoke_dir}/outside-validation.json" "${smoke_dir}/inside-validation.json"
 
 # Change one canonical Number value in the v3 fixture while retaining its
 # constraints and saved definition. A stale package must not synchronize it.
-portable_shard="$(rg -l '"value":4' "${tracked_portable_project}"/entities/*.jsonl)"
+portable_shard="$(grep -l '"value":4' "${tracked_portable_project}"/entities/*.jsonl)"
 sed 's/"value":4/"value":3/' "${portable_shard}" >"${portable_shard}.tmp"
 mv "${portable_shard}.tmp" "${portable_shard}"
 

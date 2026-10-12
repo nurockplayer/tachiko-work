@@ -391,5 +391,6 @@ If the direct `.ro` JSON representation evolves incompatibly before `.roproj` re
   tree and wire contract
 - [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](portable-package-v1.md)
   — separate Accepted first-public portable package profile over canonical
-  `.roproj/v3`; replacement implementation remains pending under #488. #3
+  `.roproj/v3`; #519 implements the CORE package; Sheet attachments and consumer qualification
+  remain separate under #488. #3
   supplies the superseded developmental package/v1-over-roproj/v1 codec/host/CLI.

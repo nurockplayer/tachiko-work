@@ -24,7 +24,8 @@ do not require Git.
 
 This implementation state does not supersede ADR-0003. [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) now fixes the
 first-public portable-package v1 and integrity contract over `.roproj/v3`;
-replacement implementation follows #488. Issue #3 implements the superseded
+#519 implements the CORE package and refuses developmental packages; Sheet
+attachments and consumer qualification remain separate under #488. Issue #3 implements the superseded
 developmental v1-payload packaged `.ro` codec, bounded host pack/unpack,
 read-only comparison, and CLI workflow. Issue #44 implements the optional
 provider-neutral Git/CI composition over the standalone semantic/project
@@ -129,7 +130,8 @@ package that disagrees with canonical tracked `.roproj` source reports a
 source mismatch without mutating either side; the tracked source remains
 authoritative in that working context. The #3 packaged `.ro` ZIP codec/CLI workflow and #44
 Git/CI composition implement the superseded developmental v1-payload profile;
-replacement implementation and separate Work/Sheet qualification follow #488.
+#519 implements the CORE replacement with a new independent golden vector;
+Sheet attachments and separate Work/Sheet qualification remain under #488.
 This CORE package excludes Sheet host attachments; actual omissions require
 pre-consent `lossy_on_export` disclosure under the package spec.
 

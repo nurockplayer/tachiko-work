@@ -89,7 +89,7 @@ Canonical detail: [Semantic API](docs/specs/semantic-api.md),
 | --- | --- |
 | Direct `.ro` JSON | Legacy v1 compatibility input; current v2 writer, which supports Date but cannot encode saved keyed grouped-sum definitions. Not the portable ZIP container. |
 | `.roproj/v2` and `.roproj/v3` trees | V2 persists bounded definitions but has no Date. V3 retains those definitions, adds Date and two closed durable field constraints. Storage v3 codecs/migration exist; that alone does not qualify client save/reopen. |
-| Portable `.ro` package v1 | Under [ADR-0042](docs/decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md), first-public v1 is a deterministic ZIP32 envelope over exact canonical `.roproj/v3`. Replacement implementation is pending under [#488](https://github.com/nurockplayer/tachiko-work/issues/488)/[#519](https://github.com/nurockplayer/tachiko-work/issues/519); current code implements the superseded developmental v1-over-`.roproj/v1` profile. Not a universal latest-version container or live incremental database. |
+| Portable `.ro` package v1 | Under [ADR-0042](docs/decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md), first-public v1 is a deterministic ZIP32 envelope over exact canonical `.roproj/v3`. [#519](https://github.com/nurockplayer/tachiko-work/issues/519) implements the CORE package profile and refuses developmental packages. Sheet attachments and consumer qualification remain separate under [#488](https://github.com/nurockplayer/tachiko-work/issues/488). Not a universal latest-version container or live incremental database. |
 
 Use the [format guide](docs/architecture/ro-and-roproj-format.md) and
 [versioned specifications](docs/specs/README.md), not file extensions alone.

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tachiko_semantic_core::{Diagnostic, DiagnosticCode, DiagnosticProvider, DiagnosticSeverity};
 
 use super::PortablePackageError;
 use crate::{
@@ -231,7 +232,20 @@ pub fn decode(source: &[u8]) -> Result<VerifiedPortablePackageV1, FormatError> {
         return Err(PortablePackageError::PayloadManifestMismatch.into());
     }
 
-    let tree = CanonicalRoProjectV3::try_from_files(files).map_err(map_payload_error)?;
+    let tree = CanonicalRoProjectV3::try_from_files_with_definition_error(files, |error| {
+        FormatError::InvalidDocument {
+            diagnostics: vec![
+                Diagnostic::new(
+                    DiagnosticCode::new("storage.invalid_keyed_grouped_sum_definition"),
+                    DiagnosticSeverity::Error,
+                    Vec::new(),
+                    DiagnosticProvider::new("tachiko.storage"),
+                )
+                .with_presentation("definitions.json", error.to_string()),
+            ],
+        }
+    })
+    .map_err(map_payload_error)?;
     Ok(VerifiedPortablePackageV1 {
         tree,
         payload_root: found_root,
@@ -1190,6 +1204,63 @@ mod tests {
                     .map(|file| (file.path(), file.bytes()))
             )
         );
+    }
+
+    #[test]
+    fn invalid_saved_definition_is_semantic_while_noncanonical_bytes_remain_representation_errors()
+    {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/research/fixtures/issue-519-portable-package-v1-v3/input.roproj");
+        let original = ROPROJ_V3_PATHS
+            .iter()
+            .map(|path| ((*path).to_owned(), std::fs::read(root.join(path)).unwrap()))
+            .collect::<Vec<_>>();
+        for semantic_failure in [true, false] {
+            let mut files = original.clone();
+            let definitions = &mut files[2].1;
+            if semantic_failure {
+                let source = std::str::from_utf8(definitions).unwrap();
+                // The first schema binding is orders.schema; retain the DTO's
+                // canonical rendering while changing only its semantic target.
+                *definitions = source
+                    .replacen(
+                        "\"schema\": \"import_00000000-0000-4000-8000-000000000001_0002\"",
+                        "\"schema\": \"missing-schema\"",
+                        1,
+                    )
+                    .into_bytes();
+                assert_ne!(*definitions, original[2].1);
+            } else {
+                definitions.push(b'\n');
+            }
+            // Rebuild headers/CRCs and the root so admission reaches payload
+            // validation rather than an earlier integrity refusal.
+            let manifest = render_manifest(&payload_root_from_files(&files));
+            let mut entries = vec![Entry {
+                name: PACKAGE_PATHS[0],
+                body: manifest.as_bytes(),
+            }];
+            entries.extend(files.iter().enumerate().map(|(index, (_, body))| Entry {
+                name: PACKAGE_PATHS[index + 1],
+                body,
+            }));
+            let error = decode(&build_zip(&entries).unwrap()).unwrap_err();
+            if semantic_failure {
+                let FormatError::PortablePackage(PortablePackageError::InvalidSemanticPayload {
+                    diagnostics,
+                }) = error
+                else {
+                    panic!("expected invalid_semantic_payload, found {error}");
+                };
+                assert_eq!(diagnostics.len(), 1);
+                assert!(diagnostics[0].message.contains("missing-schema"));
+            } else {
+                assert!(matches!(
+                    error,
+                    FormatError::PortablePackage(PortablePackageError::NonCanonicalPayload { .. })
+                ));
+            }
+        }
     }
 
     #[test]

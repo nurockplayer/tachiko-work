@@ -14,7 +14,7 @@ It does **not** define an independent `.ro` contract. Use the documents below ac
 - [`ro-format-v2.md`](ro-format-v2.md) — normative current identity-aware direct `.ro` JSON representation.
 - [`roproj-format.md`](roproj-format.md) and [`roproj-layout-v1.md`](roproj-layout-v1.md) — Accepted `.roproj/v1` version-owned DTO and physical-tree contracts under ADR-0023; the production pure codec and native explicit materialize/validate/canonicalize workflow are implemented by #123.
 - [`../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md`](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md) — Accepted authority for the exact v1 canonical tree, entity placement, canonical JSON/JSONL boundary, and path nonidentity.
-- [`portable-package-v1.md`](portable-package-v1.md) and [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) — Accepted authority for first-public portable-package v1 over exact canonical `.roproj/v3`, payload root, round trips, and tracked-source conflict behavior; replacement implementation remains pending under #488/#519. #3 implements the superseded developmental package/v1-over-roproj/v1 profile.
+- [`portable-package-v1.md`](portable-package-v1.md) and [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) — Accepted authority for first-public portable-package v1 over exact canonical `.roproj/v3`, payload root, round trips, and tracked-source conflict behavior; #519 implements the CORE package; Sheet attachments and consumer qualification remain separate under #488. #3 implements the superseded developmental package/v1-over-roproj/v1 profile.
 - [`../decisions/ADR-0003-ro-and-roproj-representation.md`](../decisions/ADR-0003-ro-and-roproj-representation.md) — Accepted architectural authority for the long-term representation relationship.
 
 ## Current implementation state
@@ -32,7 +32,8 @@ publish only to distinct absent destinations and operate without Git. Packaged
 `.ro` reads, deterministic pack, verified unpack, and tracked-source comparison
 are implemented by #3 for the superseded developmental package/v1-over-roproj/v1
 profile without changing the direct-JSON writer. First-public package/v1 over v3
-remains pending under #488/#519.
+is implemented as the CORE package by #519; Sheet attachments and consumer
+qualification remain separate under #488.
 
 The direct `.ro` v1 profile is stable only as **legacy compatibility input**.
 It is not the separate `.roproj/v1` editable format, the Accepted
@@ -49,7 +50,7 @@ identity and numeric semantics.
 - ADR-0023 and the two `.roproj/v1` specifications resolve #41's durable physical-layout decision; #123 implements the production codec and explicit native host/CLI workflow.
 - [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](portable-package-v1.md)
   supersede #43's developmental package binding with first-public package/v1
-  over exact canonical `.roproj/v3`; replacement implementation remains pending
-  under #488/#519. #3 implements the superseded developmental codec and CLI workflow.
+  over exact canonical `.roproj/v3`; #519 implements the CORE package; Sheet attachments
+  and consumer qualification remain separate under #488. #3 implements the superseded developmental codec and CLI workflow.
 
 For the project-wide authority model, see [`../governance/knowledge-authority.md`](../governance/knowledge-authority.md) and [`../governance/canonical-reconciliation-register.md`](../governance/canonical-reconciliation-register.md).

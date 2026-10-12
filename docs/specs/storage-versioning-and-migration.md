@@ -17,7 +17,9 @@ is implemented by the production codec and PR #331; broader package and
 unbounded product/API work remain outside this contract. `.roproj/v3` storage
 codec/native canonical migration is implemented by #449.
 First-public portable-package/v1 over v3 is Accepted target authority under
-ADR-0042 and remains unimplemented; #3 implements the superseded developmental
+ADR-0042 and is implemented as the CORE package by #519, refusing developmental
+packages; Sheet attachments and consumer qualification remain separate under
+#488. #3 implements the superseded developmental
 v1-payload codec/host/CLI workflow.
 
 Authority: ADR-0017; ADR-0023 for `.roproj` format version 1; ADR-0037 for

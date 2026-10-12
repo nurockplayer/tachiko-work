@@ -170,9 +170,12 @@ All notable changes to Tachiko Work are documented in this file.
 - ADR-0042 redefines first-public `tachiko.portable-package/v1` as a
   deterministic ZIP32 envelope over exact canonical `.roproj/v3` (Date, saved
   definitions, and constraints), superseding the unreleased developmental
-  v1-over-`.roproj/v1` binding. No legacy reader is kept. Implementation is
-  pending (#519); current tooling still emits the developmental profile until
-  then.
+  v1-over-`.roproj/v1` binding. #519 implements the CORE package codec and
+  tooling; developmental packages are explicitly refused. The browser runtime
+  supports Date and saved definitions within its ordinary v3 profile; constrained
+  packages verify but refuse open, and capacity-profile documents exceeding that
+  profile refuse portable export. Sheet attachments and consumer qualification
+  remain separate; this does not complete #488.
 - The legacy first-party Designer application, its Tauri/PWA hosts, and its
   product-only release route have been retired. The experimental browser-client
   producer and its standalone Rust/WASM runtime remain available for technical

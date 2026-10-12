@@ -56,7 +56,8 @@ storage codec and native canonical migration by #449, in
 [`roproj-format-v3.md`](../specs/roproj-format-v3.md) and
 [`roproj-layout-v3.md`](../specs/roproj-layout-v3.md). [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md)
 redefines first-public package/v1 over this exact v3 tree, superseding ADR-0025's
-unreleased binding. Replacement implementation follows #488. Issue #3 implements
+unreleased binding. #519 implements the CORE package and refuses developmental packages; Sheet
+attachments and consumer qualification remain separate under #488. Issue #3 implements
 the developmental v1-payload packaged `.ro` pure codec, bounded
 native pack/unpack and comparison workflows, fail-closed content framing, and
 CLI composition. Issue #44 adds the optional provider-neutral Git/CI adapter:
@@ -124,9 +125,9 @@ automatically overwritten, synchronized, or merged.
 - Current product behavior must document direct `.ro` as the implemented
   ordinary writer, frozen `.roproj/v1` as the implemented canonical editable
   path, bounded `.roproj/v2` storage/Designer persistence as implemented by
-  #330/#331, and portable-package/v1 as the implemented derived single-file
-  artifact with its superseded developmental payload binding; the redefined
-  first-public v3-payload profile remains unimplemented under #488. #449
+  #330/#331, and portable-package/v1 as the implemented CORE single-file
+  artifact over canonical v3 in #519, refusing developmental packages. Sheet
+  attachments and consumer qualification remain separate under #488. #449
   implements `.roproj/v3` storage codec and native canonical
   migration under ADR-0041, while Designer selection/save remains separate.
 - Architecture documents must document `.roproj` as the Accepted canonical editable target under ADR-0003.
@@ -137,7 +138,7 @@ automatically overwritten, synchronized, or merged.
   by #449 under ADR-0041; application/Designer selection remains separate.
 - `.ro` packaging sophistication must not block semantic-core or user-workflow validation.
 - The system provides explicit deterministic direct `.ro` → `.roproj/v1`
-  materialization plus developmental `.roproj/v1` → packaged `.ro` pack and verified
-  unpack. First-public package/v1 targets v3 and awaits replacement
-  implementation. Package reads decode in memory and never implicitly rewrite either
+  materialization plus canonical `.roproj/v3` → packaged `.ro` pack and verified
+  unpack. #519 implements first-public CORE package/v1 over v3 and refuses
+  developmental packages. Package reads decode in memory and never implicitly rewrite either
   representation.

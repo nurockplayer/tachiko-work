@@ -141,11 +141,18 @@ preserve the previous occurrence and data. Occurrence scope comes from the
 resident runtime, stays stable for that occurrence, and changes on successful
 open; it is not a document ID. Revision and scope remain opaque tokens.
 
-The canonical-v1 and portable-v1 paths reject unsupported Date data. The
-existing `exportProject`/`openProject` private transfer path retains its Date
-round trip; those private bytes must not be relabeled as `.ro`. Export produces
-a snapshot. Only the separate host persistence operation can confirm a durable
-save.
+The canonical-v1 path rejects Date and saved definitions. Portable-v1 export
+supports both through canonical `.roproj/v3`, with fresh-admission preflight in
+the ordinary v3 runtime profile. Constrained packages verify but refuse open in
+the browser runtime. Capacity-profile tables exceeding the ordinary 128-row
+limit refuse portable export. Opening a supported portable package preserves
+v3 origin, so ordinary `exportProject` refuses and explicit v3 or portable export
+is required. The existing private transfer path retains its Date round trip;
+those private bytes must not be relabeled as `.ro`. Export produces a snapshot.
+Only the separate host persistence operation can confirm a durable save.
+
+This implements the CORE package capability in #519. Sheet attachments and
+consumer qualification remain separate; #488 is not complete.
 
 Always tear down the occurrence and Worker when the UI is finished:
 

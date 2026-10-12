@@ -61,9 +61,16 @@ including empty shards; `openCanonicalTree(files)` submits those opaque bytes
 to Rust admission. `exportPortableRo(revision)` returns genuine portable `.ro`
 bytes; `verifyPortableRo(bytes)` verifies them without changing the active work,
 and `openPortableRo(bytes)` admits them before replacing it. A rejected open
-preserves the active occurrence. These v1 paths reject unsupported Date data;
-`exportProject` remains the existing private transfer round-trip operation and
+preserves the active occurrence. The canonical-v1 path rejects Date and saved
+definitions. Portable export supports both through canonical `.roproj/v3` and
+preflights fresh admission in the ordinary v3 runtime profile. Constrained
+packages verify but refuse browser-runtime open; capacity-profile tables beyond
+the ordinary 128-row limit refuse portable export. `exportProject` remains the
+existing private transfer round-trip operation and
 its bytes must not be given a public `.ro` filename.
+
+This is the CORE package capability. Sheet attachments and consumer
+qualification remain separate obligations under #488.
 
 `observeOccurrence()` returns the runtime's actual `{scope, revision}`. Scope
 is stable within one live occurrence and fresh after a successful open. Treat

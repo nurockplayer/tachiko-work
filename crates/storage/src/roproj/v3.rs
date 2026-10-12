@@ -7,9 +7,9 @@ use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldConstraint,
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
-    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
-    validate_document, validate_keyed_grouped_sum_definitions,
+    KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
+    KeyedGroupedSumProductsBinding, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema,
+    SchemaId, SchemaKey, Value, validate_document, validate_keyed_grouped_sum_definitions,
 };
 
 use crate::{
@@ -117,6 +117,31 @@ impl CanonicalRoProjectV3 {
         files: Vec<(String, Vec<u8>)>,
         profile: impl FnOnce(&Document) -> Result<(), E>,
     ) -> Result<(Self, Document), CanonicalRoProjectV3AdmissionError<E>> {
+        Self::admit_files(files, profile, |error| {
+            FormatError::InvalidRoProjectRepresentation {
+                message: format!("invalid keyed grouped-sum definition: {error}"),
+            }
+        })
+    }
+
+    // Keep representation and semantic-definition failures distinct for the
+    // package contract without changing the ordinary v3 reader's error API.
+    pub(crate) fn try_from_files_with_definition_error(
+        files: Vec<(String, Vec<u8>)>,
+        definition_error: impl FnOnce(KeyedGroupedSumDefinitionError) -> FormatError,
+    ) -> Result<Self, FormatError> {
+        match Self::admit_files(files, |_| Ok::<(), Infallible>(()), definition_error) {
+            Ok((tree, _)) => Ok(tree),
+            Err(CanonicalRoProjectV3AdmissionError::Format(error)) => Err(error),
+            Err(CanonicalRoProjectV3AdmissionError::Profile(never)) => match never {},
+        }
+    }
+
+    fn admit_files<E>(
+        files: Vec<(String, Vec<u8>)>,
+        profile: impl FnOnce(&Document) -> Result<(), E>,
+        definition_error: impl FnOnce(KeyedGroupedSumDefinitionError) -> FormatError,
+    ) -> Result<(Self, Document), CanonicalRoProjectV3AdmissionError<E>> {
         if files.len() != ROPROJ_V3_PATHS.len() {
             return Err(CanonicalRoProjectV3AdmissionError::Format(
                 FormatError::InvalidRoProjectRepresentation {
@@ -150,13 +175,8 @@ impl CanonicalRoProjectV3 {
         check_v3_document(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         validate_semantic_expression_limits(&document)
             .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
-        validate_keyed_grouped_sum_definitions(&document).map_err(|error| {
-            CanonicalRoProjectV3AdmissionError::Format(
-                FormatError::InvalidRoProjectRepresentation {
-                    message: format!("invalid keyed grouped-sum definition: {error}"),
-                },
-            )
-        })?;
+        validate_keyed_grouped_sum_definitions(&document)
+            .map_err(|error| CanonicalRoProjectV3AdmissionError::Format(definition_error(error)))?;
         let expected =
             encode_validated(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         if expected != tree {
