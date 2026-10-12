@@ -31,12 +31,13 @@ not install a diff or merge driver.
 
 ## Accepted representation and implementation split
 
-ADR-0003 is Accepted and defines `project.roproj/` as the canonical editable/source representation for the mature Git-native workflow, with `.ro` as a portable artifact. ADR-0023 fixes the `.roproj/v1` canonical tree and entity-sharding contract. ADR-0025 fixes portable-package v1 as a deterministic envelope over those exact source bytes.
+ADR-0003 is Accepted and defines `project.roproj/` as the canonical editable/source representation for the mature Git-native workflow, with `.ro` as a portable artifact. ADR-0023 fixes the `.roproj/v1` canonical tree and entity-sharding contract. [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](../specs/portable-package-v1.md) fix first-public portable-package v1 as a deterministic envelope over exact canonical `.roproj/v3` bytes; replacement implementation remains pending under #488/#519.
 
 The production `.roproj/v1` pure codec and native host workflow are implemented
 by #123, not merely selected as representation direction. Issue #3 implements
-the packaged `.ro` codec, exact pack/unpack, read-only comparison, and real
-atomic no-replace destination publication. Issue #44 composes Git attributes,
+the superseded developmental package/v1-over-roproj/v1 codec, exact
+pack/unpack, read-only comparison, and real atomic no-replace destination
+publication. Issue #44 composes Git attributes,
 raw/semantic review, CI validation, and explicit generated-package consistency
 without changing these representation roles. Broader hostile source/path races,
 full durability/recovery, and host hardening remain separately Deferred.
@@ -48,13 +49,15 @@ the one Accepted tree. Issue #44 implements ordinary text attributes and
 provider-neutral validation/review/package-consistency composition. Custom diff
 or merge drivers and semantic merge protocol work remain outside that adapter.
 
-ADR-0025 permits a read-only consistency comparison between a verified
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](../specs/portable-package-v1.md)
+require a read-only consistency comparison between a verified
 portable package and canonical tracked source by calculating the same root
 over the tracked tree's exact paths and bytes. Equal roots mean `consistent`
 and cause no write. Different roots mean explicit source mismatch; the tracked
 `.roproj` remains authoritative, neither side is mutated, and no timestamp or
 filename selects a winner. Issue #44 composes that comparison in Git/CI without
-moving it into the package contract.
+moving it into the package contract; that implementation exercises the
+superseded developmental v1 payload, while replacement over v3 follows #488.
 
 The model itself is the compatibility boundary for future representations.
 

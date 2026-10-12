@@ -22,9 +22,10 @@ exact canonical tree, and canonicalizing the Accepted bounded non-canonical
 family to a distinct absent output. These operations preserve their source and
 do not require Git.
 
-This implementation state does not supersede ADR-0003. ADR-0025 now fixes the
-deterministic portable-package v1 and integrity contract over `.roproj/v1`;
-Issue #3 implements its exact packaged `.ro` codec, bounded host pack/unpack,
+This implementation state does not supersede ADR-0003. [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) now fixes the
+first-public portable-package v1 and integrity contract over `.roproj/v3`;
+replacement implementation follows #488. Issue #3 implements the superseded
+developmental v1-payload packaged `.ro` codec, bounded host pack/unpack,
 read-only comparison, and CLI workflow. Issue #44 implements the optional
 provider-neutral Git/CI composition over the standalone semantic/project
 commands without changing these format contracts.
@@ -35,8 +36,8 @@ constraint-preserving [`.roproj/v3` format](roproj-format-v3.md) and
 [layout](roproj-layout-v3.md), plus the explicit v2→v3 migration boundary;
 #449 implements the storage-owned v3 codec and explicit native canonical
 migration. Designer selection/save and complete application admission remain
-separate. These extensions preserve frozen v1 and portable-package/v1
-boundaries. See
+separate. These extensions preserve frozen editable v1/v2
+boundaries; ADR-0042 supersedes the developmental package payload binding. See
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md) for the
 Accepted authority.
 
@@ -44,7 +45,8 @@ Accepted authority.
 
 The `.ro` filename currently carries the implemented direct-JSON v0.1
 representation. It is also the Provisional filename for the separately
-Accepted and implemented `tachiko.portable-package/v1` representation.
+Accepted first-public `tachiko.portable-package/v1` representation under ADR-0042;
+its replacement implementation is separate from the #3 developmental codec.
 Content framing and representation-local version dispatch, not the extension,
 distinguish them.
 
@@ -111,23 +113,25 @@ The bounded v2 definition-persistence contract is in
 V3 is the Accepted constraint-preserving storage target implemented by #449 under
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md),
 defined by [`roproj-format-v3.md`](roproj-format-v3.md) and
-[`roproj-layout-v3.md`](roproj-layout-v3.md); portable-package/v1 remains a
-separate exact v1 artifact.
+[`roproj-layout-v3.md`](roproj-layout-v3.md); first-public portable-package/v1 now wraps
+this exact v3 tree under ADR-0042.
 
 ## Portable package v1
 
-ADR-0025 and [`portable-package-v1.md`](portable-package-v1.md) define the
-portable artifact as one deterministic 19-entry, store-only ZIP32 envelope
-containing `package.json` and the exact 18 `.roproj/v1` files under `payload/`.
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [`portable-package-v1.md`](portable-package-v1.md) define the
+first-public artifact as one deterministic 20-entry, store-only ZIP32 envelope
+containing `package.json` and the exact 19 `.roproj/v3` files under `payload/`.
 The package manifest adds only representation dispatch and a path-separated
 SHA-256 payload root; it does not define another semantic schema.
 
 Pack and unpack preserve every payload path and byte exactly. A verified
 package that disagrees with canonical tracked `.roproj` source reports a
 source mismatch without mutating either side; the tracked source remains
-authoritative in that working context. The packaged `.ro` ZIP codec and CLI
-pack/unpack/compare workflow are implemented by #3; Issue #44 composes exact
-tracked-source comparison into the optional Git/CI adapter.
+authoritative in that working context. The #3 packaged `.ro` ZIP codec/CLI workflow and #44
+Git/CI composition implement the superseded developmental v1-payload profile;
+replacement implementation and separate Work/Sheet qualification follow #488.
+This CORE package excludes Sheet host attachments; actual omissions require
+pre-consent `lossy_on_export` disclosure under the package spec.
 
 ## Canonical principle
 

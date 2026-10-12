@@ -2,9 +2,13 @@
 
 Date: 2026-08-26
 
-Decision state: Evidence / Hypothesis; authority is promoted only by
-[ADR-0025](../decisions/ADR-0025-portable-package-v1.md) and the
-[normative specification](../specs/portable-package-v1.md)
+Decision state: Superseded evidence.
+
+Superseded by: [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md). This record, its linked executable probe, and
+all Issue #43 fixture/golden bytes document the developmental v1-over-roproj/v1
+profile only. They remain historical evidence in Git, not current conformance
+authority. The [current spec](../specs/portable-package-v1.md) requires a new
+implementation golden vector; the historical body below is retained.
 
 Decision issue: [#43](https://github.com/nurockplayer/tachiko-work/issues/43)
 

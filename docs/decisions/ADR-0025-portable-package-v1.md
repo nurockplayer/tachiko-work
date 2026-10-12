@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0042](ADR-0042-first-public-portable-package-over-roproj-v3.md)
 
 Decision issue: [#43](https://github.com/nurockplayer/tachiko-work/issues/43)
 
@@ -16,6 +16,13 @@ Related authority: ADR-0003, ADR-0015, ADR-0017, and ADR-0023
 
 Tracking issue: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
 for production codecs and CLI implementation
+
+## Reconciliation note
+
+ADR-0042 replaces the unreleased package/v1-over-roproj/v1 payload binding
+with first-public package/v1 over canonical roproj/v3 and adopts the unchanged
+container/integrity construction rules explicitly. This record's historical
+body is retained; use ADR-0042 and the current spec for implementation.
 
 ## Context
 

@@ -6,8 +6,9 @@ Implementation state: Implemented by the dedicated `direct-ro/v2` canonical
 writer. Frozen v1 retains its historical version-scoped writer. The Accepted
 `.roproj/v1` profile is implemented by the production `tachiko-storage` codec
 and explicit host/CLI operations. The Accepted portable-package v1 manifest
-has a separate exact closed spelling implemented by the packaged `.ro` codec
-and native/WASM evidence from #3.
+has a separate exact closed spelling under ADR-0042; the #3 packaged `.ro` codec
+and its native/WASM evidence implement the superseded developmental payload
+binding.
 
 Authority: ADR-0017
 
@@ -86,8 +87,8 @@ complete specification is constrained by ADR-0017, ADR-0018, ADR-0019,
 it does not adopt Rust/Serde declaration order, direct-JSON admission limits,
 or the distinct portable-package v1 manifest profile.
 
-ADR-0025's [`portable-package-v1.md`](portable-package-v1.md) defines the exact
-228-byte `package.json` spelling and embeds the canonical `.roproj/v1` bodies
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [`portable-package-v1.md`](portable-package-v1.md) define the exact
+228-byte `package.json` spelling and embed the canonical `.roproj/v3` bodies
 without rewriting them. That packaging-only JSON DTO does not alter or extend
 the `.roproj/v1` JSON/JSONL profile below.
 

@@ -159,6 +159,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Changed
 
+- ADR-0042 redefines first-public `tachiko.portable-package/v1` as a
+  deterministic ZIP32 envelope over exact canonical `.roproj/v3` (Date, saved
+  definitions, and constraints), superseding the unreleased developmental
+  v1-over-`.roproj/v1` binding. No legacy reader is kept. Implementation is
+  pending (#519); current tooling still emits the developmental profile until
+  then.
 - The legacy first-party Designer application, its Tauri/PWA hosts, and its
   product-only release route have been retired. The experimental browser-client
   producer and its standalone Rust/WASM runtime remain available for technical
@@ -388,6 +394,7 @@ All notable changes to Tachiko Work are documented in this file.
   pack/unpack, and read-only source comparison. `tachiko roproj pack`,
   `unpack`, and `compare-package` compose those operations with workspace
   validation; fixed package evidence agrees on native and WASM.
+  (Superseded by ADR-0042; see Changed.)
 - Production `tachiko-storage` now encodes and decodes the canonical 18-file
   `.roproj/v1` tree. Explicit `tachiko roproj materialize`, `validate`, and
   `canonicalize` commands provide a standalone host workflow with staged,

@@ -666,7 +666,7 @@ This specification does not define or accept:
 - host atomic replacement, fsync, locking, recovery, permissions, symlink-race,
   watcher, browser-storage, or other durability behavior;
 - portable-package container, integrity, and pack/unpack rules, which are
-  separately Accepted by ADR-0025 and
+  separately Accepted by [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and
   [`portable-package-v1.md`](portable-package-v1.md);
 - Git attributes, diff drivers, hooks, CI policy, repository operations, or
   generated `.ro` consistency policy;
@@ -687,7 +687,7 @@ semantic identity, or normative `.roproj/v2` value.
 - [ADR-0019: Staged semantic validation](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0023: `.roproj/v1` canonical tree and sharding](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
 - [ADR-0037: `.roproj/v2` keyed grouped-sum persistence](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
-- [ADR-0025: Portable package v1](../decisions/ADR-0025-portable-package-v1.md)
+- [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md)
 - [`.roproj/v2` physical layout](roproj-layout-v2.md)
 - [Portable package v1](portable-package-v1.md)
 - [Tachiko canonical JSON profile](canonical-json-profile.md)

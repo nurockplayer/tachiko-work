@@ -82,8 +82,11 @@ division-by-zero edit, requires both operations to fail, checks the diagnostic,
 and confirms the canonical source/package bytes are unchanged by those
 read-only rejection checks. The runner has no fault-injection production path.
 
-The authoritative semantics exercised here remain in the Accepted decisions and
-their specifications:
+The current authoritative semantics remain in the Accepted decisions and their
+specifications below. The package journey implemented here exercises the
+superseded developmental package/v1-over-roproj/v1 profile; it is not
+qualification for first-public package/v1 over canonical `.roproj/v3`.
+Replacement implementation remains pending under #488.
 
 - canonical storage and `.roproj/v1`:
   [ADR-0017](../decisions/ADR-0017-versioned-storage-and-canonical-representation.md),
@@ -98,7 +101,7 @@ their specifications:
   and
   [`diagnostics-contract.md`](../specs/diagnostics-contract.md);
 - portable package consistency and fail-closed publication:
-  [ADR-0025](../decisions/ADR-0025-portable-package-v1.md) and
+  [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and
   [`portable-package-v1.md`](../specs/portable-package-v1.md);
 - headless Query/Propose/Execute and resident publication:
   [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),

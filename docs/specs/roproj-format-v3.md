@@ -168,9 +168,10 @@ Explicit v2→v3 migration preserves stable IDs, keys, types, requiredness, valu
 formulas, definitions, and document meaning, adding `none` to every field. It
 must decode, admit, convert, validate, canonicalize, and prepare the complete
 candidate before publication. V1 uses the existing explicit v1→v2 edge first.
-Older formats, v1 portable packages, and package-v2 requests that cannot
-represent this tree fail with a truthful unsupported representation/version
-outcome. Existing Date projects held in the private `TWDPROJ2` host envelope
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) separately redefines first-public portable-package/v1 over
+this exact v3 tree; [the package spec](portable-package-v1.md) rejects older
+payload versions without implicit migration or down-conversion. Existing Date
+projects held in the private `TWDPROJ2` host envelope
 (whose payload is direct-ro/v2) enter v3 only through an explicit user-selected
 conversion/export; ordinary private read/save does not silently change format.
 The private-project conversion path remains separately owned application work.
@@ -178,6 +179,7 @@ The private-project conversion path remains separately owned application work.
 ## Explicitly outside v3
 
 This contract does not alter `.roproj/v1`, `.roproj/v2`, direct-ro/v2,
-portable-package/v1, or frozen semantic delta/conflict v1. It does not define
+the separately governed [portable-package/v1](portable-package-v1.md) under
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md), or frozen semantic delta/conflict v1. It does not define
 portable-package/v2, a public API/SDK/transport, a ConstraintId, a generic
 constraint DSL, UI enforcement, automatic upgrades, or implementation status.

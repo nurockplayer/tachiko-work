@@ -74,5 +74,7 @@ V2 migration is explicit, deterministic, no-clobber, and complete: decode and
 admit the source, add `none` to every field, validate, canonicalize all nineteen
 files, and publish only a complete candidate to an absent destination. V1 first
 uses its existing explicit v1→v2 migration. Ordinary reads and saves do not
-upgrade. Portable-package/v1 remains its exact v1 payload and package-v2 is
-outside this layout; unsupported requests report that boundary truthfully.
+upgrade. First-public portable-package/v1 carries this exact v3 tree under
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the package spec](portable-package-v1.md).
+Its replacement implementation remains separate; older package payloads are
+unsupported and this layout adds no package migration path.

@@ -10,6 +10,17 @@ Amendment decision source: [Issue #275](https://github.com/nurockplayer/tachiko-
 
 Related authority: ADR-0003, ADR-0017, ADR-0023, ADR-0025, the Product Constitution, and the Design Principles
 
+## Reconciliation note
+
+[ADR-0042](ADR-0042-first-public-portable-package-over-roproj-v3.md) supersedes ADR-0025's
+unreleased package/v1-over-roproj/v1 payload binding. First-public package/v1
+now carries exact canonical `.roproj/v3` under the
+[current specification](../specs/portable-package-v1.md); replacement
+implementation remains pending under #488. The package-binding and associated
+production statements in the historical Context below describe the superseded
+developmental profile. The historical prose and interoperability policy remain
+intact.
+
 ## Context
 
 Tachiko Work exists to let users understand, preserve, version, migrate, automate, and extend their work without permanent dependence on one application vendor or one historical file format. That goal requires two things at once:

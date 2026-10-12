@@ -173,9 +173,9 @@ explicit canonicalize/import operation may do so remains deferred.
 This specification does not define production codec implementation, resource
 or error profiles, exact error precedence, host atomic save/locking/recovery,
 or symlink-race defenses. Portable-package and integrity rules are separately
-Accepted by ADR-0025 and
+Accepted by [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and
 [`portable-package-v1.md`](portable-package-v1.md), while their production
-implementation remains deferred. This specification also defers Git/CI
+replacement implementation over v3 follows #488. This specification also defers Git/CI
 integration (#44), semantic delta (#45), semantic merge (#46), future
 assets/views/tests semantics, schema sharding, and a different fanout or
 adaptive sharding strategy. Such changes require their own Accepted decision
