@@ -1,6 +1,8 @@
 //! Steward acceptance seed for #515. Missing API is intentional; see SEED-515.md.
 use std::collections::BTreeMap;
 
+use serde_json::json;
+
 use tachiko_designer_runtime::{
     CalculationProjection, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
     DiagnosticProjection, FieldDependencyProjection, FieldExplanationProjection, FieldProjection,
@@ -461,7 +463,7 @@ fn worker_parity_capture_uses_the_same_native_fixture_and_requests() {
     assert!(input.direct_dependencies.is_empty());
     let calculated = assert_dps(&mut runtime, "resident/0", 120.0);
     if let Some(path) = std::env::var_os("TACHIKO_FIELD_EXPLANATION_CAPTURE") {
-        let capture = serde_json::json!({
+        let capture = json!({
             "bytes": bytes, "requests": requests,
             "responses": [DesignerResponse::FieldExplanation(input), DesignerResponse::FieldExplanation(calculated)],
         });
