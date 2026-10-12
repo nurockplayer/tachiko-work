@@ -2,6 +2,10 @@
 
 This file applies to the entire repository. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing code, tests, release behavior, or documentation. Existing accepted ADRs, canonical specifications, and explicit issue scope take precedence over generic preferences in this file.
 
+## Product context
+
+At a fresh task intake, read the [Mission's product-adoption section](docs/vision/mission.md#product-adoption-and-strategic-levels) and follow its [Constitution](docs/vision/product-constitution.md) links when purpose or scope is at issue. Revisit them before changing target users, client boundaries, release claims or priorities—not on every unchanged loop. [Issue #486](https://github.com/nurockplayer/tachiko-work/issues/486) records the founder's clarification and remaining tactical questions. A market wedge or release profile does not replace the mission, waive an Accepted contract, or grant implementation scope. Record material conflicts on the existing owning issue; routine tasks need no new mission checklist. Handoffs are pointers plus new information, not copies of repository authority.
+
 ## Working principles
 
 Use a DX-driven, tooling-minimalist, automation-first approach:

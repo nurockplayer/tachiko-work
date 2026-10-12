@@ -1,6 +1,13 @@
 # Tachiko Work
 
-**An open engine for data, formulas, and rules—not another spreadsheet UI.**
+**An open engine for user-owned data, formulas, and rules.**
+
+Tachiko's [mission](docs/vision/mission.md#product-adoption-and-strategic-levels)
+is to reduce dependence on Microsoft Office and OOXML through products people
+choose because they work better. Work supplies the shared foundation;
+Tachiko Sheet supplies the first major spreadsheet experience. Familiar daily
+workflows, practical interoperability, and semantic/AI capabilities serve that
+same goal, not competing product identities.
 
 When important work is scattered across spreadsheets and scripts, it is hard to
 know what a change will break. Tachiko Work makes those relationships explicit:

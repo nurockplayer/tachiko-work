@@ -155,8 +155,11 @@ request.
 - **AI requires approval:** AI-facing APIs may read, explain, and propose
   validated operations. They must not mutate user data or bypass explicit human
   approval.
-- **Game development first:** strengthen the real game-balance workflow without
-  drifting into an Office compatibility clone.
+- **Mission-aligned adoption:** follow the [Mission's product-adoption section](docs/vision/mission.md#product-adoption-and-strategic-levels).
+  ADR-0005's game-development first wedge remains Accepted, not the final market
+  boundary. Strengthen shared capabilities and practical Office interoperability;
+  do not substitute either a game demo or an Excel feature checklist for the
+  product mission.
 
 Before changing a shared type, wire format, CLI contract, or release policy,
 scan its direct consumers and tests and verify downstream compatibility.
