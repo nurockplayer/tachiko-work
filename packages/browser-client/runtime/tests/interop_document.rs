@@ -509,10 +509,13 @@ fn deduplicate_history_restores_removed_entity_identity_on_undo_and_redo() {
 }
 
 use tachiko_designer_runtime::interop_adapter::{
-    CellStyle, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
+    CellStyle, FidelityCategory, FidelityFinding, SourceCell, SourceColumn, SourceSheet,
+    SourceValue, SourceWorkbook,
 };
 use tachiko_designer_runtime::{
-    ImportFieldType, ImportSelection, import_workbook, inspect_imported_project,
+    ImportFieldType, ImportSelection, InteropMetadata, KeyedGroupedSumDefinitionInput,
+    KeyedGroupedSumGroupProjection, KeyedGroupedSumProjection, import_workbook,
+    inspect_imported_project,
 };
 fn source_cell(value: SourceValue, formula: Option<&str>) -> SourceCell {
     SourceCell {
@@ -588,6 +591,299 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
         extra_columns: vec![vec![], vec![]],
     };
     (workbook, selection)
+}
+
+fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
+    (
+        SourceWorkbook {
+            ledger: vec![],
+            sheets: vec![SourceSheet {
+                name: "Items".into(),
+                has_header: true,
+                columns: ["Code", "Category", "Quantity", "Price"]
+                    .into_iter()
+                    .map(|name| SourceColumn {
+                        name: name.into(),
+                        width: None,
+                    })
+                    .collect(),
+                rows: vec![vec![
+                    source_cell(
+                        SourceValue::Text {
+                            value: "P-100".into(),
+                        },
+                        None,
+                    ),
+                    source_cell(
+                        SourceValue::Text {
+                            value: "hardware".into(),
+                        },
+                        None,
+                    ),
+                    source_cell(SourceValue::Number { value: 2.0 }, None),
+                    source_cell(SourceValue::Number { value: 3.0 }, None),
+                ]],
+            }],
+        },
+        ImportSelection {
+            column_types: vec![vec![
+                ImportFieldType::Text,
+                ImportFieldType::Text,
+                ImportFieldType::Number,
+                ImportFieldType::Number,
+            ]],
+            extra_columns: vec![vec![]],
+        },
+    )
+}
+
+fn export_summary_definition(
+    metadata: &InteropMetadata,
+    id: &str,
+    missing_lookup: bool,
+) -> KeyedGroupedSumDefinitionInput {
+    let sheet = &metadata.sheets[0];
+    KeyedGroupedSumDefinitionInput {
+        id: id.into(),
+        orders_schema: sheet.schema_id.clone(),
+        order_lookup_key_field: sheet.columns[usize::from(missing_lookup)].field_id.clone(),
+        order_quantity_field: sheet.columns[2].field_id.clone(),
+        products_schema: sheet.schema_id.clone(),
+        product_key_field: sheet.columns[0].field_id.clone(),
+        product_category_field: sheet.columns[1].field_id.clone(),
+        product_price_field: sheet.columns[3].field_id.clone(),
+    }
+}
+
+fn expected_summary_export_ledger(has_definitions: bool) -> Vec<FidelityFinding> {
+    let mut ledger = vec![FidelityFinding {
+        category: FidelityCategory::Converted,
+        code: "bound_formula_absolute_a1".into(),
+        location: "workbook".into(),
+        message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(),
+        blocking: false,
+    }];
+    if has_definitions {
+        ledger.push(FidelityFinding {
+            category: FidelityCategory::LossyOnExport,
+            code: "saved_keyed_grouped_sum_definitions_not_exported".into(),
+            location: "workbook".into(),
+            message: "Saved grouped-summary definitions are not included in this spreadsheet export. Keep a Tachiko saved copy to preserve their bindings and recomputation.".into(),
+            blocking: false,
+        });
+    }
+    ledger
+}
+
+fn assert_summary_native_reopen(
+    bytes: &[u8],
+    metadata: &InteropMetadata,
+    expected: &SourceWorkbook,
+    results: Vec<KeyedGroupedSumProjection>,
+) {
+    let mut reopened = None;
+    let opened = tachiko_designer_runtime::open_project(
+        &mut reopened,
+        bytes,
+        "00000000-0000-4000-8000-000000000001",
+    )
+    .unwrap();
+    assert_eq!(opened.bootstrap.revision, "resident/0");
+    assert_eq!(
+        opened.bootstrap.keyed_grouped_sum_definition_ids,
+        results
+            .iter()
+            .map(|result| result.definition_id.clone())
+            .collect::<Vec<_>>()
+    );
+    let mut reopened = reopened.unwrap();
+    assert_eq!(
+        reopened
+            .export_project("resident/0")
+            .unwrap()
+            .bytes
+            .as_slice(),
+        bytes
+    );
+    assert_eq!(
+        &reopened.export_workbook("resident/0", metadata).unwrap(),
+        expected
+    );
+    for mut result in results {
+        result.revision = "resident/0".into();
+        assert_eq!(
+            reopened
+                .handle(DesignerRequest::QueryKeyedGroupedSum {
+                    definition_id: result.definition_id.clone(),
+                })
+                .unwrap(),
+            DesignerResponse::KeyedGroupedSum(result)
+        );
+    }
+}
+
+#[test]
+fn spreadsheet_export_discloses_saved_definition_inventory_without_mutation() {
+    // Empty control, complete-only, unavailable-only, multiple unavailable, mixed.
+    let cases: &[&[bool]] = &[&[], &[false], &[true], &[true, true], &[false, true]];
+    for missing_lookups in cases {
+        let (source, selection) = grouped_export_fixture();
+        let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        let mut results = Vec::new();
+        for (index, missing_lookup) in missing_lookups.iter().enumerate() {
+            let definition = export_summary_definition(
+                &imported.metadata,
+                &format!("summary-{index}"),
+                *missing_lookup,
+            );
+            let expected_revision = runtime.observe_occurrence().revision;
+            let DesignerResponse::KeyedGroupedSumPublished(published) = runtime
+                .handle(DesignerRequest::CreateKeyedGroupedSum {
+                    expected_revision,
+                    definition,
+                })
+                .unwrap()
+            else {
+                panic!("expected saved summary publication")
+            };
+            assert_eq!(published.result.definition_id, format!("summary-{index}"));
+            assert_eq!(
+                published.result.revision,
+                published.publication.resulting_revision
+            );
+            if *missing_lookup {
+                assert_eq!(published.result.groups.as_slice(), []);
+                assert_eq!(published.result.diagnostics.len(), 1);
+                assert_eq!(published.result.diagnostics[0].code, "lookup.missing_key");
+                assert_eq!(
+                    published.result.diagnostics[0].lookup_key.as_deref(),
+                    Some("hardware")
+                );
+            } else {
+                assert_eq!(published.result.diagnostics.as_slice(), []);
+                assert_eq!(
+                    published.result.groups,
+                    vec![KeyedGroupedSumGroupProjection {
+                        category: "hardware".into(),
+                        value: 6.0,
+                    }]
+                );
+            }
+            results.push(published.result);
+        }
+        let occurrence = runtime.observe_occurrence();
+        let native = runtime.export_project(&occurrence.revision).unwrap();
+        let expected = SourceWorkbook {
+            sheets: source.sheets,
+            ledger: expected_summary_export_ledger(!missing_lookups.is_empty()),
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                runtime
+                    .export_workbook(&occurrence.revision, &imported.metadata)
+                    .unwrap(),
+                expected
+            );
+        }
+        assert_eq!(runtime.observe_occurrence(), occurrence);
+        assert_eq!(
+            runtime.export_project(&occurrence.revision).unwrap(),
+            native
+        );
+        for result in &mut results {
+            result.revision.clone_from(&occurrence.revision);
+            assert_eq!(
+                runtime
+                    .handle(DesignerRequest::QueryKeyedGroupedSum {
+                        definition_id: result.definition_id.clone(),
+                    })
+                    .unwrap(),
+                DesignerResponse::KeyedGroupedSum(result.clone())
+            );
+        }
+
+        assert_summary_native_reopen(&native.bytes, &imported.metadata, &expected, results);
+    }
+}
+
+#[test]
+fn spreadsheet_export_with_saved_definition_keeps_existing_refusals() {
+    let (source, selection) = grouped_export_fixture();
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    runtime
+        .handle(DesignerRequest::CreateKeyedGroupedSum {
+            expected_revision: "resident/0".into(),
+            definition: export_summary_definition(&imported.metadata, "summary", false),
+        })
+        .unwrap();
+    let occurrence = runtime.observe_occurrence();
+    let native = runtime.export_project(&occurrence.revision).unwrap();
+    assert!(matches!(
+        runtime.export_workbook("resident/0", &imported.metadata),
+        Err(tachiko_designer_runtime::DesignerError::StaleQuery { requested, current })
+            if requested == "resident/0" && current == occurrence.revision
+    ));
+    for invalid in [
+        "version",
+        "duplicate_row",
+        "missing_row",
+        "foreign_schema",
+        "foreign_row",
+        "duplicate_field",
+        "missing_field",
+        "foreign_field",
+        "style_shape",
+        "number_format",
+        "worksheet_name",
+    ] {
+        let mut metadata = imported.metadata.clone();
+        match invalid {
+            "version" => metadata.version = 0,
+            "duplicate_row" => {
+                let row = metadata.sheets[0].rows[0].clone();
+                metadata.sheets[0].rows.push(row);
+            }
+            "missing_row" => metadata.sheets[0].rows.clear(),
+            "foreign_schema" => metadata.sheets[0].schema_id = "foreign".into(),
+            "foreign_row" => metadata.sheets[0].rows[0].entity_id = "foreign".into(),
+            "duplicate_field" => {
+                metadata.sheets[0].columns[1].field_id =
+                    metadata.sheets[0].columns[0].field_id.clone();
+            }
+            "missing_field" => {
+                metadata.sheets[0].columns.pop();
+            }
+            "foreign_field" => metadata.sheets[0].columns[0].field_id = "foreign".into(),
+            "style_shape" => metadata.sheets[0].rows[0].styles.clear(),
+            "number_format" => {
+                metadata.sheets[0].rows[0].styles[0].number_format =
+                    Some("unsupported_builtin_5".into());
+            }
+            "worksheet_name" => metadata.sheets[0].name = "Bad:name".into(),
+            _ => unreachable!(),
+        }
+        assert!(
+            runtime
+                .export_workbook(&occurrence.revision, &metadata)
+                .is_err(),
+            "{invalid}"
+        );
+        assert_eq!(runtime.observe_occurrence(), occurrence, "{invalid}");
+        assert_eq!(
+            runtime.export_project(&occurrence.revision).unwrap(),
+            native,
+            "{invalid}"
+        );
+    }
+    assert_eq!(
+        runtime
+            .export_workbook(&occurrence.revision, &imported.metadata)
+            .unwrap(),
+        SourceWorkbook {
+            sheets: source.sheets,
+            ledger: expected_summary_export_ledger(true),
+        }
+    );
 }
 
 #[test]
