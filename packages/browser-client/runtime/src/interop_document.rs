@@ -1668,9 +1668,7 @@ impl DesignerRuntime {
                 blocking: false,
             }],
         };
-        super::interop_adapter::validate_output_for_profile(&workbook, OutputProfile::Shared)
-            .map_err(|error| tracker_error(&error.0))?;
-        Ok(workbook)
+        finalize_export_workbook(document, workbook, OutputProfile::Shared)
     }
 
     fn export_workbook_from_metadata(
@@ -1760,23 +1758,31 @@ impl DesignerRuntime {
                 rows,
             });
         }
-        let mut workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
+        let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
             category: FidelityCategory::Converted, code: "bound_formula_absolute_a1".into(), location: "workbook".into(),
             message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(), blocking: false,
         }] };
-        if !document.keyed_grouped_sum_definitions.is_empty() {
-            workbook.ledger.push(FidelityFinding {
-                category: FidelityCategory::LossyOnExport,
-                code: "saved_keyed_grouped_sum_definitions_not_exported".into(),
-                location: "workbook".into(),
-                message: "Saved grouped-summary definitions are not included in this spreadsheet export. Keep a Tachiko saved copy to preserve their bindings and recomputation.".into(),
-                blocking: false,
-            });
-        }
-        super::interop_adapter::validate_output_for_profile(&workbook, profile)
-            .map_err(|error| tracker_error(&error.0))?;
-        Ok(workbook)
+        finalize_export_workbook(document, workbook, profile)
     }
+}
+
+fn finalize_export_workbook(
+    document: &Document,
+    mut workbook: SourceWorkbook,
+    profile: OutputProfile,
+) -> Result<SourceWorkbook, DesignerError> {
+    if !document.keyed_grouped_sum_definitions.is_empty() {
+        workbook.ledger.push(FidelityFinding {
+            category: FidelityCategory::LossyOnExport,
+            code: "saved_keyed_grouped_sum_definitions_not_exported".into(),
+            location: "workbook".into(),
+            message: "Saved grouped-summary definitions are not included in this spreadsheet export. Keep a Tachiko saved copy to preserve their bindings and recomputation.".into(),
+            blocking: false,
+        });
+    }
+    super::interop_adapter::validate_output_for_profile(&workbook, profile)
+        .map_err(|error| tracker_error(&error.0))?;
+    Ok(workbook)
 }
 
 fn native_budget_active_csv_mapping<'a>(

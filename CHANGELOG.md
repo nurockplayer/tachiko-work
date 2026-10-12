@@ -127,10 +127,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
-- CSV/XLSX exports of imported work explicitly disclose omitted saved
-  grouped-summary definitions with one aggregate fidelity warning, including
-  definitions whose results are unavailable. Spreadsheet contents and native
-  saved copies are unchanged; retain a Tachiko saved copy for recomputation.
+- CSV/XLSX exports of imported work and native Budget work explicitly disclose
+  omitted saved grouped-summary definitions with one aggregate fidelity warning,
+  including definitions whose results are unavailable. Spreadsheet contents and
+  native saved copies are unchanged; retain a Tachiko saved copy for recomputation.
 
 - Small spreadsheet inspection keeps the ordinary reply limit unless the original
   source qualifies as safe legacy three-Text capacity. Prospective Number
