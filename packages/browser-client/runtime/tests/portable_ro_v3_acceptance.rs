@@ -45,7 +45,10 @@ fn summary(runtime: &mut DesignerRuntime) -> DesignerResponse {
         panic!("expected saved summary");
     };
     assert_eq!(projection.revision, "resident/0");
-    assert!(projection.diagnostics.is_empty());
+    assert_eq!(
+        projection.diagnostics,
+        [] as [tachiko_designer_runtime::KeyedGroupedSumDiagnosticProjection; 0]
+    );
     assert_eq!(
         projection.groups,
         vec![
