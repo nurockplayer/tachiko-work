@@ -160,9 +160,12 @@ fn input_has_value_no_rule_or_dependencies_and_one_direct_impact() {
         Some(StoredValueProjection::Number { value: 120.0 })
     );
     assert_eq!(projection.formula_source, None);
-    assert!(projection.direct_dependencies.is_empty());
+    assert_eq!(
+        projection.direct_dependencies,
+        [] as [FieldDependencyProjection; 0]
+    );
     assert_eq!(projection.downstream_impacts, vec![FieldTarget::from(DPS)]);
-    assert!(projection.diagnostics.is_empty());
+    assert_eq!(projection.diagnostics, [] as [DiagnosticProjection; 0]);
 }
 
 fn assert_dps(
@@ -214,7 +217,7 @@ fn assert_dps(
         projection.downstream_impacts,
         vec![BURST.into(), ALPHA.into()]
     );
-    assert!(projection.diagnostics.is_empty());
+    assert_eq!(projection.diagnostics, [] as [DiagnosticProjection; 0]);
     projection
 }
 
@@ -243,7 +246,7 @@ fn chain_excludes_transitive_impacts_and_upstream_dependencies() {
         leaf.value.calculated,
         Some(CalculationProjection::Value { value: 60.0 })
     );
-    assert!(leaf.downstream_impacts.is_empty());
+    assert_eq!(leaf.downstream_impacts, [] as [FieldTarget; 0]);
 }
 
 fn edit(runtime: &mut DesignerRuntime) {
@@ -460,7 +463,10 @@ fn worker_parity_capture_uses_the_same_native_fixture_and_requests() {
     let input = explain(&mut runtime, "resident/0", DAMAGE);
     assert_eq!(input.downstream_impacts, vec![DPS.into()]);
     assert_eq!(input.formula_source, None);
-    assert!(input.direct_dependencies.is_empty());
+    assert_eq!(
+        input.direct_dependencies,
+        [] as [FieldDependencyProjection; 0]
+    );
     let calculated = assert_dps(&mut runtime, "resident/0", 120.0);
     if let Some(path) = std::env::var_os("TACHIKO_FIELD_EXPLANATION_CAPTURE") {
         let capture = json!({

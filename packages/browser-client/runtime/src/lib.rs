@@ -5537,7 +5537,10 @@ mod tests {
             explanation.downstream_impacts,
             vec!["monthly_summary.remaining".into()]
         );
-        assert!(explanation.diagnostics.is_empty());
+        assert_eq!(
+            explanation.diagnostics,
+            [] as [super::DiagnosticProjection; 0]
+        );
     }
 
     #[test]
