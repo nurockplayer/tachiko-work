@@ -206,8 +206,13 @@ pub(crate) fn validate_text_capacity_inspection(workbook: &SourceWorkbook) -> Re
             .iter()
             .flatten()
             .all(|cell| matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. }));
-    if sheet.rows.len() <= MAX_DATA_ROWS && !legacy_small_text {
-        return fail("Only large or legacy Text sources use the private capacity inspection");
+    if sheet.rows.len() <= MAX_DATA_ROWS {
+        if !legacy_small_text {
+            return fail("Only large or legacy Text sources use the private capacity inspection");
+        }
+        // Small sources must qualify as original safe legacy Text, without
+        // prospective Number conversion granting them an enlarged reply.
+        validate_text_capacity(workbook)?;
     }
     validate_capacity_source_inspection(workbook)
 }

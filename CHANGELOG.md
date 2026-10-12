@@ -127,6 +127,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Small spreadsheet inspection keeps the ordinary reply limit unless the original
+  source qualifies as safe legacy three-Text capacity. Prospective Number
+  feasibility no longer grants oversized previews to small unsafe-Text sources.
+
 - XLSX import rejects scalar type/value-carrier mismatches before empty-value
   defaults or formula-cache recovery can discard their contents. Valid inline
   strings, numeric values, legitimate numeric blanks and supported formula caches

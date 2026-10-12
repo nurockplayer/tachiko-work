@@ -96,6 +96,46 @@ function refused(replyValue, before) {
   assert.equal(replyValue.status, "error", "expected refusal");
   assert.deepEqual(snapshot(), before, "refusal mutated resident, revision or export bytes");
 }
+function inspectionBudgetCases(result, before) {
+  const cases = [
+    ["64x3-negative-oversize", 64, 3, 1200, "-13.25", "refused"],
+    ["64x2-negative-oversize", 64, 2, 1200, "-13.25", "refused"],
+    ["64x3-safe-legacy", 64, 3, 1200, "13.25", "capacity"],
+    ["65x3-negative-mixed", 65, 3, 1200, "-13.25", "capacity"],
+    ["8x3-negative-ordinary", 8, 3, 8, "-13.25", "ordinary"],
+  ];
+  for (const [name, rows, columns, textLength, numericText, expected] of cases) {
+    const headers = ["a", "b", "c"].slice(0, columns);
+    const values = ["x".repeat(textLength), numericText, "label"].slice(0, columns);
+    const bytes = encoder.encode([headers.join(","),
+      ...Array.from({ length: rows }, () => values.join(","))].join("\r\n"));
+    if (name === "64x3-negative-oversize") {
+      assert.equal(bytes.length, 77_765);
+      assert.equal(sha(bytes), "8c386f3b27fc8e9d055aabfde159418d0fbd811d6f037765e44ff99ba4f26283");
+    }
+    const inspected = spreadsheet({ type: "inspect", format: "csv", csv_options: options }, bytes);
+    const responseBytes = e.tachiko_designer_response_len();
+    if (expected === "refused") {
+      assert.equal(inspected.status, "error", `${name} escaped the ordinary reply budget`);
+      assert.equal(inspected.error.code, "query_too_large");
+      assert.match(inspected.error.message, /bounded maximum is 65536/);
+      assert(responseBytes <= 65_536);
+    } else {
+      const preview = okay(inspected, "import_preview");
+      assert.equal(preview.sheets.length, 1);
+      assert.equal(preview.sheets[0].rows.length, rows);
+      assert.deepEqual(preview.sheets[0].columns.map(column => column.name), headers);
+      for (const row of preview.sheets[0].rows) {
+        assert.deepEqual(row.map(cell => cell.value), values.map(value => ({ kind: "text", value })),
+          `${name} changed original lexical Text`);
+      }
+      assert(expected === "capacity" ? responseBytes > 65_536 : responseBytes <= 65_536);
+    }
+    assert.deepEqual(snapshot(), before, `${name} inspection changed the resident or exports`);
+    result.inspection_budget.push({ case: name, outcome: "PASS", expected,
+      source_sha256: sha(bytes), source_bytes: bytes.length, response_bytes: responseBytes });
+  }
+}
 const manifest = JSON.parse(await readFile(join(fixtures, "cases.json"), "utf8"));
 const hashes = JSON.parse(await readFile(join(fixtures, "SHA256.json"), "utf8"));
 async function source(caseValue, format) {
@@ -124,7 +164,7 @@ if (reopenFile) {
   await writeFile(reopenFile + ".receipt.json", JSON.stringify({ pid: process.pid, captures }));
 } else {
   await mkdir(destination);
-  const result = { wasm_sha256: sha(wasm), completed: false, records: [] };
+  const result = { wasm_sha256: sha(wasm), completed: false, records: [], inspection_budget: [] };
   try {
     for (const caseValue of manifest.accepted) {
       for (const format of ["csv", "xlsx"]) {
@@ -167,6 +207,7 @@ if (reopenFile) {
           }
           publish("undo"); // Both histories populated while refusals execute.
           const before = snapshot();
+          if (caseValue.name === "320x2-mixed" && format === "csv") inspectionBudgetCases(result, before);
           for (const rejected of manifest.refused) for (const rejectedFormat of ["csv", "xlsx"]) {
             const rejectedBytes = await source(rejected, rejectedFormat);
             if (["320x2-mixed-expression", "320x2-mixed-nonfinite", "320x2-mixed-column"].includes(rejected.name)
@@ -197,6 +238,7 @@ if (reopenFile) {
           wasm_memory_bytes: e.memory.buffer.byteLength });
       }
     }
+    assert.equal(result.inspection_budget.length, 5, "all inspection-budget controls must execute");
     result.completed = true;
   } catch (error) {
     result.failure = String(error); process.exitCode = 1;
