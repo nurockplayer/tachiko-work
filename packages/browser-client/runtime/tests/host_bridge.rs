@@ -5,8 +5,10 @@
 
 use serde_json::{Value, json};
 use tachiko_designer_runtime::{
-    DesignerResponse, DesignerRuntime, DesignerWireReply, ImportFieldType, ImportSelection,
+    DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply, ImportFieldType,
+    ImportSelection,
     host_bridge::{DesignerHost, MAX_HOST_PROJECT_TRANSFER_BYTES},
+    interop_adapter::{ImportOptions, SourceValue, import_csv},
     open_local_document, process_wire_request,
 };
 
@@ -250,4 +252,115 @@ fn spreadsheet_import_installs_only_after_admission_and_exports_csv() {
     );
     let csv = String::from_utf8(export.bytes.expect("export bytes")).unwrap();
     assert!(csv.contains("Alpha") && csv.contains("second"), "{csv}");
+}
+
+fn headered_csv(headers: &[&str], values: &[&str], rows: usize) -> Vec<u8> {
+    let mut lines = vec![headers.join(",")];
+    lines.extend(std::iter::repeat_n(values.join(","), rows));
+    lines.join("\r\n").into_bytes()
+}
+
+fn inspect_request() -> Vec<u8> {
+    request(&json!({
+        "type": "inspect",
+        "format": "csv",
+        "csv_options": { "delimiter": ",", "header": true },
+    }))
+}
+
+#[test]
+fn safe_64_by_2_inspection_keeps_the_ordinary_budget_and_resident() {
+    let source = headered_csv(&["a", "b"], &[&"x".repeat(800), &"y".repeat(800)], 64);
+    assert_eq!(source.len(), 102_595);
+    let workbook = import_csv(&source, &ImportOptions::default()).unwrap();
+    let preview = serde_json::to_vec(&DesignerWireReply::Ok {
+        response: DesignerResponse::ImportPreview(Box::new(workbook)),
+    })
+    .unwrap();
+    assert_eq!(preview.len(), 122_730);
+
+    // WASM uses the ordinary complete-wire budget for this valid small rectangle.
+    for resident in [false, true] {
+        let mut host = DesignerHost::new();
+        let revision = if resident {
+            revision_of(&json_of(
+                &host.open_local_document(GAME_BALANCE_RO, FIRST.as_bytes()),
+            ))
+        } else {
+            "unavailable".to_owned()
+        };
+        let observed = host.observe_occurrence();
+        let exported = host.export_project(revision.as_bytes()).bytes;
+        let inspected = host.spreadsheet(&inspect_request(), &source);
+        let expected = serde_json::to_vec(&DesignerWireReply::Error {
+            error: DesignerError::ProjectionTooLarge {
+                actual: 122_730,
+                maximum: 65_536,
+            }
+            .failure_projection(&revision),
+        })
+        .unwrap();
+        assert!(
+            inspected.reply == expected,
+            "inspection must return the ordinary 65,536-byte refusal"
+        );
+        assert!(inspected.bytes.is_none());
+        assert_eq!(host.observe_occurrence(), observed);
+        assert_eq!(host.export_project(revision.as_bytes()).bytes, exported);
+    }
+}
+
+#[test]
+fn eligible_inspection_controls_keep_lexical_text_and_enlarged_replies() {
+    let x = "x".repeat(800);
+    let y = "y".repeat(800);
+    let long_text = "x".repeat(1_200);
+    let cases = [
+        (vec!["a", "b"], vec![x.as_str(), y.as_str()], 65, true),
+        (
+            vec!["a", "b", "c"],
+            vec![long_text.as_str(), "13.25", "label"],
+            64,
+            true,
+        ),
+        (
+            vec!["a", "b", "c"],
+            vec![long_text.as_str(), "-13.25", "label"],
+            65,
+            true,
+        ),
+        (vec!["a", "b"], vec!["small", "text"], 8, false),
+    ];
+    for (headers, values, rows, enlarged) in cases {
+        let source = headered_csv(&headers, &values, rows);
+        let workbook = import_csv(&source, &ImportOptions::default()).unwrap();
+        assert_eq!(workbook.sheets[0].rows.len(), rows);
+        for row in &workbook.sheets[0].rows {
+            for (cell, value) in row.iter().zip(&values) {
+                assert_eq!(
+                    cell.value,
+                    SourceValue::Text {
+                        value: (*value).into()
+                    }
+                );
+            }
+        }
+        let expected = serde_json::to_vec(&DesignerWireReply::Ok {
+            response: DesignerResponse::ImportPreview(Box::new(workbook)),
+        })
+        .unwrap();
+        assert_eq!(expected.len() > 65_536, enlarged);
+        let mut host = DesignerHost::new();
+        let inspected = host.spreadsheet(&inspect_request(), &source);
+        assert!(
+            inspected.reply == expected,
+            "inspection must preserve the complete preview: {rows} rows, {} columns",
+            headers.len()
+        );
+        assert!(inspected.bytes.is_none());
+        assert_eq!(
+            json_of(&host.observe_occurrence())["error"]["code"],
+            "no_project_open"
+        );
+    }
 }
