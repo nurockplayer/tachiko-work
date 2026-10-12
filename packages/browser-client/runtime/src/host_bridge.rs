@@ -457,7 +457,8 @@ fn spreadsheet_operation(
             csv_options,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            let capacity = crate::interop_adapter::validate_text_capacity(&workbook).is_ok();
+            let capacity =
+                crate::interop_adapter::validate_text_capacity_inspection(&workbook).is_ok();
             let mut result =
                 SpreadsheetResult::read_only(DesignerResponse::ImportPreview(Box::new(workbook)));
             result.text_capacity = capacity;
