@@ -1760,10 +1760,19 @@ impl DesignerRuntime {
                 rows,
             });
         }
-        let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
+        let mut workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
             category: FidelityCategory::Converted, code: "bound_formula_absolute_a1".into(), location: "workbook".into(),
             message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(), blocking: false,
         }] };
+        if !document.keyed_grouped_sum_definitions.is_empty() {
+            workbook.ledger.push(FidelityFinding {
+                category: FidelityCategory::LossyOnExport,
+                code: "saved_keyed_grouped_sum_definitions_not_exported".into(),
+                location: "workbook".into(),
+                message: "Saved grouped-summary definitions are not included in this spreadsheet export. Keep a Tachiko saved copy to preserve their bindings and recomputation.".into(),
+                blocking: false,
+            });
+        }
         super::interop_adapter::validate_output_for_profile(&workbook, profile)
             .map_err(|error| tracker_error(&error.0))?;
         Ok(workbook)
