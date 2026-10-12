@@ -8,7 +8,11 @@ This document captures questions that remain after consolidating Tachiko Work's 
 
 The purpose is not to force immediate answers. It is to distinguish questions that require founder judgment from questions that can be delegated to research and implementation work.
 
-## State ledger (founding execution map)
+## State ledger (historical founding execution map)
+
+These entries preserve the founding-stage research snapshot, not today's
+implementation queue. Read the owning live Issues/Accepted ADRs before acting;
+the mission clarifications below do not reclassify unrelated technical work.
 
 - `#21 Semantic identity` — **Researched**. UUIDv7 provisional recommendation is in place; it is awaiting ADR review and should not be re-researched.
 - `#25 + #37 + #38 Storage/protocol hardening` — **Research queued** (storage DTO boundary + format/version envelope + canonical value encoding/deterministic ordering).
@@ -22,15 +26,15 @@ These are product-identity questions. AI can research and frame tradeoffs, but s
 
 ### 1. How public should the anti-lock-in origin story be?
 
-State: Open
+State: Accepted direction; audience-specific campaign wording remains Open
 
-The private founding motivation is intentionally direct: reduce dependence on Microsoft Office and OOXML.
-
-Open question:
-
-Should public-facing project messaging explicitly frame Microsoft Office / OOXML as the system Tachiko Work wants to liberate users from, or should that language remain mainly in project history while the public mission emphasizes user ownership, openness, migration, and interoperability?
-
-This is a messaging decision, not an architecture blocker.
+The [founder's 2026-10-12 clarification](https://github.com/nurockplayer/tachiko-work/issues/486#issuecomment-6119253334)
+explicitly permits stating the Office/OOXML independence mission in public
+project documentation. The [Mission](../vision/mission.md#product-adoption-and-strategic-levels)
+connects this origin to practical product advantages and user ownership.
+It is no longer an unresolved choice between concealing that origin and naming
+it. Campaign tone, audience and performance claims still require appropriate
+evidence and approval; this grants no marketing launch authorization.
 
 ### 2. What does "user ownership" outrank when tradeoffs become real?
 
@@ -49,15 +53,17 @@ Founder judgment is needed on whether any of these can legitimately override the
 
 ### 3. What is the long-term product boundary?
 
-State: Open
+State: Accepted mission; product and market sequencing remain Open
 
-Current strategy starts with game-development structured data and can later expand toward broader productivity workflows.
+The Constitution and [#486 founder clarification](https://github.com/nurockplayer/tachiko-work/issues/486#issuecomment-6119253334)
+settle the broader direction: better, open productivity products supported by
+client-neutral Work, with Sheet as the first major client. Game development is
+not the final market boundary. ERP/CRM and other clients remain longer-term,
+separately scoped and validated work, not delivered capabilities.
 
-Open question:
-
-Is the long-term ambition truly a general foundation for digital work, including document/spreadsheet-class workflows, or should Tachiko Work intentionally remain strongest around technical, structured, computational, and versioned work even if that means never replacing many traditional Office use cases?
-
-This does not block the current milestone, but it will eventually affect UI, ecosystem, and market strategy.
+ADR-0005 remains Accepted until explicitly amended or superseded. First-cohort
+selection and evidence-backed sequencing remain tactical questions; do not use
+this research map to reopen the mission or block authorized shared capabilities.
 
 ### 4. What must always remain open?
 
@@ -77,7 +83,11 @@ This should be resolved through governance and licensing decisions rather than a
 
 ### 5. What would count as mission success?
 
-State: Open
+State: Open (measurement, not product purpose)
+
+The purpose is settled by #486 and the Mission. The open task is to select
+measurable evidence of actual adoption and reduced Office/OOXML dependence,
+not to choose another mission from the examples below.
 
 Possible interpretations include:
 

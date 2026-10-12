@@ -8,6 +8,36 @@ This project is not only about building a better Office application.
 
 It is about creating an open workspace where individuals, teams, and organizations are no longer permanently dependent on closed document ecosystems, proprietary representation choices, or one vendor's application stack.
 
+## Product adoption and strategic levels
+
+The [founder's clarification in #486](https://github.com/nurockplayer/tachiko-work/issues/486#issuecomment-6119253334)
+reaffirms the [Product Constitution](product-constitution.md); it is not a new
+mission or a claim of delivered capabilities.
+
+The goal is to reduce dependence on Microsoft Office and OOXML by offering
+better, open, user-owned productivity products. People should choose Tachiko for
+practical advantages in usability, performance, useful capabilities,
+interoperability and AI-native workflows, not merely an argument for open
+formats. Everyday spreadsheet competence and semantic change/impact/explanation
+are complementary. “Not an Office clone” does not excuse poor interoperability
+or missing daily-work essentials; it rejects inheriting Office's representation
+as the core model or requiring feature-for-feature parity before any useful MVP.
+
+Work provides the client-neutral semantic foundation; Sheet is the first major
+client, not Work's architectural limit. ERP, CRM and other domain clients are
+longer-term directions. Each needs concrete domain, storage, concurrency,
+authorization and integration work; swapping a UI does not deliver an ERP or
+prove lossless cross-client use. Build only the seams justified by actual work.
+
+Keep the levels distinct: **mission → adoption strategy → client/market tactic
+→ declared release profile → implementation task**. The Constitution constrains
+all levels. ADR-0005 remains the Accepted first-wedge decision until explicitly
+amended or superseded; a game example is not the final market boundary. Preserve
+#486's common-capabilities-first sequencing while first-cohort questions are
+resolved. A bounded Preview, the full Driver profile and public/commercial
+release are different claims with their own existing gates. None changes the
+mission, excuses data loss, or makes every future capability an MVP blocker.
+
 ## The Problem
 
 For decades, Word, Excel, and related Office tools have become the default language of productivity.
