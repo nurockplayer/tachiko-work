@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The experimental browser client can explain a field at an exact resident
+  revision, returning its authoritative value, formula source, direct inputs
+  with current values, direct dependents and diagnostics. Native and Worker
+  reads preserve history and occurrence state and use the existing query budget.
+
 - The experimental browser producer admits one bounded table with 1–16 Text
   or finite Number fields, at most 8,406 rows and 25,218 logical cells through
   import, scalar edits/history, project save/reopen and both CSV/XLSX exports.

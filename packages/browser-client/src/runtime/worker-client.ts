@@ -13,6 +13,7 @@ import type {
   DesignerRequest,
   DesignerResponse,
   FieldBatchProjection,
+  FieldExplanationProjection,
   FieldTarget,
   OpenedProjection,
   OccurrenceProjection,
@@ -313,6 +314,20 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async explainField(
+    expectedRevision: string,
+    target: FieldTarget,
+  ): Promise<FieldExplanationProjection> {
+    return expectResponse(
+      "field_explanation",
+      await this.#command({
+        type: "explain_field",
+        expected_revision: expectedRevision,
+        target,
+      }),
+    );
+  }
+
   async createKeyedGroupedSum(expectedRevision: string, definition: KeyedGroupedSumDefinitionInput): Promise<KeyedGroupedSumPublishedProjection> {
     return expectResponse("keyed_grouped_sum_published", await this.#command({type: "create_keyed_grouped_sum", expected_revision: expectedRevision, definition}));
   }
@@ -463,6 +478,10 @@ function expectResponse(
   type: "fields",
   response: DesignerResponse,
 ): FieldBatchProjection;
+function expectResponse(
+  type: "field_explanation",
+  response: DesignerResponse,
+): FieldExplanationProjection;
 function expectResponse(
   type: "published",
   response: DesignerResponse,

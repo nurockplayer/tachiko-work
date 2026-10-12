@@ -10,6 +10,111 @@ use tachiko_workspace_engine::{
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000300";
 
+fn explanation(
+    runtime: &mut DesignerRuntime,
+    revision: u32,
+    target: &str,
+) -> tachiko_designer_runtime::FieldExplanationProjection {
+    let DesignerResponse::FieldExplanation(projection) = runtime
+        .handle(DesignerRequest::ExplainField {
+            expected_revision: format!("resident/{revision}"),
+            target: target.into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected field explanation")
+    };
+    projection
+}
+
+#[test]
+fn explanation_rewires_direct_edges_after_formula_update_undo_and_redo() {
+    let mut runtime = fixture();
+    assert!(
+        explanation(&mut runtime, 0, "r1.source")
+            .downstream_impacts
+            .is_empty()
+    );
+    formula(&mut runtime, 0, "[r1.source] + [r1.source]");
+    let current = explanation(&mut runtime, 1, "r1.n");
+    assert_eq!(
+        current.formula_source.as_deref(),
+        Some("([r1.source] + [r1.source])")
+    );
+    assert_eq!(current.direct_dependencies.len(), 1);
+    assert_eq!(
+        current.direct_dependencies[0].target,
+        FieldTarget::from("r1.source")
+    );
+    assert_eq!(
+        current.downstream_impacts,
+        vec![FieldTarget::from("r1.dependent")]
+    );
+    assert_eq!(
+        explanation(&mut runtime, 1, "r1.source").downstream_impacts,
+        vec![FieldTarget::from("r1.n")]
+    );
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/1".to_owned(),
+        })
+        .unwrap();
+    assert!(
+        explanation(&mut runtime, 2, "r1.source")
+            .downstream_impacts
+            .is_empty()
+    );
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/2".to_owned(),
+        })
+        .unwrap();
+    let mut restored = explanation(&mut runtime, 3, "r1.n");
+    restored.revision = current.revision.clone();
+    assert_eq!(restored, current);
+}
+
+#[test]
+fn explanation_wire_preserves_complete_projection_and_stale_refusal() {
+    let mut runtime = fixture();
+    formula(&mut runtime, 0, "[r1.source] / 2");
+    let expected = explanation(&mut runtime, 1, "r1.n");
+    assert!(matches!(
+        expected.value.calculated,
+        Some(tachiko_designer_runtime::CalculationProjection::Value { value: 2.5 })
+    ));
+    assert_eq!(expected.diagnostics, expected.value.diagnostics);
+    assert_eq!(expected.direct_dependencies.len(), 1);
+    assert_eq!(
+        expected.downstream_impacts,
+        vec![FieldTarget::from("r1.dependent")]
+    );
+    let mut runtime = Some(runtime);
+    let reply = tachiko_designer_runtime::process_wire_request(
+        &mut runtime,
+        br#"{"type":"explain_field","expected_revision":"resident/1","target":{"entity":"r1","field":"n"}}"#,
+    );
+    let reply: tachiko_designer_runtime::DesignerWireReply =
+        serde_json::from_slice(&reply).unwrap();
+    assert_eq!(
+        reply,
+        tachiko_designer_runtime::DesignerWireReply::Ok {
+            response: DesignerResponse::FieldExplanation(expected)
+        }
+    );
+    let reply = tachiko_designer_runtime::process_wire_request(
+        &mut runtime,
+        br#"{"type":"explain_field","expected_revision":"resident/0","target":{"entity":"r1","field":"n"}}"#,
+    );
+    let reply: tachiko_designer_runtime::DesignerWireReply =
+        serde_json::from_slice(&reply).unwrap();
+    let tachiko_designer_runtime::DesignerWireReply::Error { error } = reply else {
+        panic!("expected stale query refusal");
+    };
+    assert_eq!(error.code, "stale_revision");
+    assert_eq!(error.current_revision, "resident/1");
+}
+
 /// Build the smallest numeric document that can switch between scalar and formula meaning.
 fn fixture() -> DesignerRuntime {
     let mut document = Document::empty("formula_history", "Formula history");

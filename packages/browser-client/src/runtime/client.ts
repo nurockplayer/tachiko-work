@@ -4,6 +4,7 @@ import type {
   TrackerCommand,
   BootstrapProjection,
   FieldBatchProjection,
+  FieldExplanationProjection,
   FieldTarget,
   CanonicalTreeExport,
   CanonicalProjectFile,
@@ -54,6 +55,10 @@ export interface DesignerClient {
     expectedRevision: string,
     fields: FieldTarget[],
   ): Promise<FieldBatchProjection>;
+  explainField(
+    expectedRevision: string,
+    target: FieldTarget,
+  ): Promise<FieldExplanationProjection>;
   editNumber(
     expectedRevision: string,
     target: FieldTarget,
