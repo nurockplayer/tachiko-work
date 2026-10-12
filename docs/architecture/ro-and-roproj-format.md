@@ -44,8 +44,8 @@ implemented by #330/#331 under ADR-0037. The Accepted
 boundary, are defined by
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md) and
 are implemented in storage and the native canonical host by #449. Designer
-selection/save and application admission remain separate; frozen v1/v2 and
-portable-package/v1 contracts do not change.
+selection/save and application admission remain separate; frozen editable v1/v2
+contracts do not change. Package authority is now ADR-0042 below.
 
 This is a transitional implementation state, not a reversal of ADR-0003.
 ADR-0023 fixes the `.roproj/v1` durable representation contract. ADR-0037
@@ -54,9 +54,10 @@ fixes the bounded `.roproj/v2` definition-persistence contract.
 the Accepted `.roproj/v3` constraint-preserving extension, implemented for
 storage codec and native canonical migration by #449, in
 [`roproj-format-v3.md`](../specs/roproj-format-v3.md) and
-[`roproj-layout-v3.md`](../specs/roproj-layout-v3.md). ADR-0025
-fixes the deterministic portable-package v1 envelope and integrity root over
-that exact tree. Issue #3 implements the packaged `.ro` pure codec, bounded
+[`roproj-layout-v3.md`](../specs/roproj-layout-v3.md). [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md)
+redefines first-public package/v1 over this exact v3 tree, superseding ADR-0025's
+unreleased binding. Replacement implementation follows #488. Issue #3 implements
+the developmental v1-payload packaged `.ro` pure codec, bounded
 native pack/unpack and comparison workflows, fail-closed content framing, and
 CLI composition. Issue #44 adds the optional provider-neutral Git/CI adapter:
 existing read-only semantic commands accept exact canonical `.roproj` trees,
@@ -95,21 +96,21 @@ implemented by #449 for codec and native canonical migration under
 [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md),
 with [`roproj-format-v3.md`](../specs/roproj-format-v3.md) and
 [`roproj-layout-v3.md`](../specs/roproj-layout-v3.md) as the normative links;
-portable-package/v1 remains the exact v1 artifact.
+first-public portable-package/v1 now wraps this v3 tree under ADR-0042.
 
 ## Portable representation
 
-Portable package v1 is a derived 19-entry, store-only ZIP32 envelope:
+Portable package v1 is a derived 20-entry, store-only ZIP32 envelope:
 
 ```text
 project.ro
 ├── package.json
-└── payload/              # exact canonical .roproj/v1 files
+└── payload/              # exact canonical .roproj/v3 files
 ```
 
 `package.json` selects `tachiko.portable-package/v1`, claims the
-`tachiko.roproj/v1` payload, and records a path-separated SHA-256 root over all
-18 exact payload files. The package adds no semantic DTO. Its fixed metadata,
+`tachiko.roproj/v3` payload, and records a path-separated SHA-256 root over all
+19 exact payload files. The package adds no semantic DTO. Its fixed metadata,
 entry order, lossless pack/unpack laws, content framing, and tracked-source
 conflict behavior are normative in
 [`portable-package-v1.md`](../specs/portable-package-v1.md).
@@ -124,16 +125,19 @@ automatically overwritten, synchronized, or merged.
   ordinary writer, frozen `.roproj/v1` as the implemented canonical editable
   path, bounded `.roproj/v2` storage/Designer persistence as implemented by
   #330/#331, and portable-package/v1 as the implemented derived single-file
-  artifact; #449 implements `.roproj/v3` storage codec and native canonical
+  artifact with its superseded developmental payload binding; the redefined
+  first-public v3-payload profile remains unimplemented under #488. #449
+  implements `.roproj/v3` storage codec and native canonical
   migration under ADR-0041, while Designer selection/save remains separate.
 - Architecture documents must document `.roproj` as the Accepted canonical editable target under ADR-0003.
 - `.roproj/v1` documents must follow ADR-0023's Accepted physical and wire contract without treating paths, shard names, or line numbers as semantic identity.
-- Portable package v1 implementations must consume ADR-0025's exact envelope and integrity contract without introducing another semantic schema.
+- Portable package v1 implementations must consume [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and the current package spec without introducing another semantic schema.
 - `.roproj/v2` bounded definition persistence is implemented by #330/#331;
   `.roproj/v3` storage codec and native canonical migration are implemented
   by #449 under ADR-0041; application/Designer selection remains separate.
 - `.ro` packaging sophistication must not block semantic-core or user-workflow validation.
 - The system provides explicit deterministic direct `.ro` → `.roproj/v1`
-  materialization plus exact `.roproj/v1` → packaged `.ro` pack and verified
-  unpack. Package reads decode in memory and never implicitly rewrite either
+  materialization plus developmental `.roproj/v1` → packaged `.ro` pack and verified
+  unpack. First-public package/v1 targets v3 and awaits replacement
+  implementation. Package reads decode in memory and never implicitly rewrite either
   representation.

@@ -8,6 +8,13 @@
   codec, runtime, API, UI, native/WASM, or package implementation is authorized by
   this ADR.
 
+## Reconciliation note
+
+Superseded by: [ADR-0042](ADR-0042-first-public-portable-package-over-roproj-v3.md) only for the package/v1 payload binding
+and package-v2 forward-references below. First-public package/v1 now carries
+exact canonical roproj/v3; older sources require existing explicit migration.
+The historical body and editable-directory/semantic decisions remain intact.
+
 ## Decision
 
 Tachiko Work admits exactly two durable schema-field constraints for the Driver

@@ -13,6 +13,13 @@ Specified by: [`.roproj/v2` wire DTOs](../specs/roproj-format-v2.md),
 Related authority: ADR-0015, ADR-0017, ADR-0018, ADR-0019, ADR-0023,
 ADR-0025, and ADR-0036
 
+## Reconciliation note
+
+Superseded by: [ADR-0042](ADR-0042-first-public-portable-package-over-roproj-v3.md) only for the package/v1 payload binding
+and package-v2 forward-references below. First-public package/v1 now carries
+exact canonical roproj/v3; older sources require existing explicit migration.
+The historical body and editable-directory/semantic decisions remain intact.
+
 ## Context
 
 ADR-0036 admits exactly one durable saved semantic family,

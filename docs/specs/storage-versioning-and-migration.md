@@ -3,7 +3,7 @@
 Decision state: Mixed — Accepted invariants under ADR-0017 and Accepted
 `.roproj` namespace format-1 DTO, dispatch, and canonicalization rules under
 ADR-0023; the format-2 definition-persistence contract under ADR-0037; the distinct portable-package v1 namespace and dispatch boundary are
-Accepted under ADR-0025; the bounded format-3 constraint-preserving contract
+Accepted under ADR-0042; the bounded format-3 constraint-preserving contract
 and explicit v2→v3 migration boundary are Accepted under ADR-0041;
 direct-JSON Milestone 02 representation mechanics are Provisional where marked.
 
@@ -13,20 +13,20 @@ identity-aware `direct-ro/v2`, and the
 normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
 contract is implemented by production `tachiko-storage` plus explicit CLI host
 operations. The bounded `.roproj/v2` storage and Designer save/reopen journey
-is implemented by the production codec and PR #331; broader package-v2 and
-unbounded product/API work remain outside this contract. `.roproj/v3` is
-Accepted authority only and remains unimplemented.
-The separately Accepted portable-package v1 codec, content-framed
-reader, bounded host workflow, and CLI pack/unpack/compare operations are
-implemented by #3.
+is implemented by the production codec and PR #331; broader package and
+unbounded product/API work remain outside this contract. `.roproj/v3` storage
+codec/native canonical migration is implemented by #449.
+First-public portable-package/v1 over v3 is Accepted target authority under
+ADR-0042 and remains unimplemented; #3 implements the superseded developmental
+v1-payload codec/host/CLI workflow.
 
 Authority: ADR-0017; ADR-0023 for `.roproj` format version 1; ADR-0037 for
 format version 2; ADR-0041 for format version 3 and its explicit v2→v3
-migration boundary; ADR-0025 for `tachiko.portable-package/v1`
+migration boundary; [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) for first-public `tachiko.portable-package/v1`
 
 Implementation parent: #74
 
-Portable-package production implementation: #3
+Developmental package implementation: #3; replacement: #488
 
 Conformance and identity integration: #40, #70
 
@@ -55,7 +55,7 @@ semantics beyond ADR-0018 (#24), the cross-client diagnostic envelope
 transaction mechanisms (constrained by ADR-0022 and Deferred to future
 host/storage implementation). The separately Accepted package namespace,
 dispatch, and container contract are defined by
-[ADR-0025](../decisions/ADR-0025-portable-package-v1.md) and
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and
 [`portable-package-v1.md`](portable-package-v1.md), not by this specification.
 
 ## Representation namespaces
@@ -307,11 +307,11 @@ closed without body decode, rewrite, or migration.
 
 Saving/reopening v2 preserves only the definition and recomputes ADR-0036
 meaning from the current accepted source state. A canonical cache/result is
-forbidden. `tachiko.portable-package/v1` remains exactly its `.roproj/v1`
-eighteen-path payload; it returns the distinct logical unsupported-payload-
-representation/version outcome for v2 pack input, and must not omit
-`definitions.json`, down-convert, or claim preservation. Package v2 remains
-separately Deferred.
+forbidden. First-public `tachiko.portable-package/v1` now accepts only canonical
+v3 under
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md). V1/v2 sources require existing explicit migration to v3;
+pack never omits `definitions.json` or down-converts. No dual package reader or
+new migration edge is selected.
 
 ## `.roproj/v3` bounded constraint pipeline
 
@@ -331,8 +331,9 @@ read/save does not upgrade; malformed or unsupported sources fail before body
 reinterpretation. Existing Date projects held in the private `TWDPROJ2` host
 envelope (whose payload is direct-ro/v2) enter v3 only through explicit
 user-selected conversion/export from an admitted semantic snapshot.
-Portable-package/v1 remains its exact v1 payload and package-v2 is outside this
-decision. The storage codec and native canonical migration are implemented by
+First-public portable-package/v1 carries exact v3 under [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md)
+and [the package spec](portable-package-v1.md); this does not add migration paths.
+The storage codec and native canonical migration are implemented by
 #449; application calculation admission, Designer selection/save, and
 private-project conversion remain separately owned by #452.
 ## Direct-JSON error precedence and machine meaning

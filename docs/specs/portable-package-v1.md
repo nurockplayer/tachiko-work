@@ -1,273 +1,125 @@
 # Tachiko Work portable package v1
 
-Decision state: Accepted
+Decision state: Accepted under [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md).
 
-Implementation state: The production `.roproj/v1` payload codec and native
-materialize/validate/explicit-canonicalize workflow are implemented by #123.
-Issue #3 implements the packaged-`.ro` pure codec, content-framed reader,
-bounded native host workflows, atomic no-replace publication, tracked-source
-comparison, CLI pack/unpack/compare commands, and native/WASM exact-byte
-evidence for the v1-only payload. ADR-0037's distinct v2-source refusal is
-Accepted authority but is not implemented by this documentation-only decision.
-Direct JSON remains the current writer.
+Implementation state: Accepted target, not implemented by this docs-only PR.
+The #3 codec implements the superseded developmental package/v1-over-roproj/v1
+binding; it is not evidence of conformance to this first-public profile.
 
 Package profile: `tachiko.portable-package/v1`
 
-Payload profile: `tachiko.roproj/v1`
+Payload profile: `tachiko.roproj/v3`
 
-Authority: [ADR-0025](../decisions/ADR-0025-portable-package-v1.md),
-constrained by ADR-0003, ADR-0015, ADR-0017, and ADR-0023
+Authority: [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md); unchanged container rules originate in
+[ADR-0025 §3](../decisions/ADR-0025-portable-package-v1.md#3-canonical-zip32-profile)
+and are restated below. Payload authority: [v3 wire DTOs](roproj-format-v3.md)
+and [v3 physical layout](roproj-layout-v3.md).
 
-Payload authority: [`.roproj/v1` wire DTOs](roproj-format.md) and
-[physical layout](roproj-layout-v1.md)
+Decision issue: [#488](https://github.com/nurockplayer/tachiko-work/issues/488)
 
-Evidence: [portable-package v1 research record](../research/2026-08-26-portable-package-v1.md),
-[executable probe](../research/probes/issue-43-portable-package-v1.mjs), and
-[byte-level golden vector](../research/fixtures/issue-43-portable-package-v1/empty-package-v1.hex)
-
-Production implementation: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
-
-## Purpose and normative language
-
-This specification defines the complete portable-package v1 byte profile,
-payload integrity root, pack/unpack behavior, exact-byte round-trip laws,
-package/tracked-source comparison, and stable failure meanings.
+## Scope and version ownership
 
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
-
-The storage crate and CLI implement the existing v1 payload behavior. The
-ADR-0037 v2-source classification remains separately unimplemented; this
-authority change does not grant production code work. The exact container and
-hash logic in the disposable evidence probe remains independent evidence of the
-byte profile, not a product API.
-
-## Representation role and version ownership
-
-The semantic `Document` remains meaning authority. `.roproj/v1` is the
-canonical editable and Git-native materialization. Portable package v1 is a
-derived single-file envelope over the exact canonical `.roproj/v1` paths and
-bytes.
-
-Portable package v1 MUST NOT introduce or persist a second semantic schema.
-In particular, it defines no package-owned semantic document, schema, field,
-entity, value, formula, reference, identity, revision, operation, or
-authorization DTO.
-
-The version namespace `tachiko.portable-package/v1` is independent from:
-
-- `legacy-direct-ro/v1`;
-- `direct-ro/v2`;
-- `tachiko.roproj/v1`;
-- a semantic-model version;
-- a Tachiko Work release version; and
-- any future signing, trust, extension, transport, or distribution profile.
-
-Package v1 supports exactly `payload_format: "tachiko.roproj"` with
-`payload_format_version: 1`. Supporting another payload representation or
-version requires another package-profile version. An incompatible change to
-any byte rule below also requires another package-profile version.
-
-The `.ro` extension is Provisional. It is a current artifact naming convention,
-not protocol identity and not sufficient input classification.
+This is the first PUBLIC v1: exactly one canonical `.roproj/v3` tree in a
+thin CORE package, with no package-owned semantic DTO or extension area.
+It replaces the unreleased v1-over-roproj/v1 contract. There is no legacy
+package reader/writer, retained-old-vector requirement, or pre-release package
+migration obligation. Future incompatible public changes require another
+package-profile version. Package, payload, semantic-model, and release
+versions are independent namespaces. The `.ro` extension remains Provisional;
+content and manifest dispatch identify the protocol. `direct-ro/v2` remains
+Provisional and is not a public file format.
 
 ## Exact entry vocabulary and order
 
-A package v1 archive contains exactly these 19 regular-file entries in the
-shown local-header and central-directory order:
+Exactly 20 regular-file entries occur in this local-header and central-directory
+order: one package manifest plus all 19 canonical v3 files. This count and
+order agree with `ROPROJ_V3_PATHS` in `crates/storage/src/roproj/v3.rs` and
+[the v3 layout](roproj-layout-v3.md#canonical-tree).
 
-| Index | Exact entry name | Entry bytes |
-| ---: | --- | --- |
-| 1 | `package.json` | Canonical package manifest defined below |
-| 2 | `payload/manifest.json` | Exact `.roproj/v1` `manifest.json` bytes |
-| 3 | `payload/schemas.json` | Exact `.roproj/v1` `schemas.json` bytes |
-| 4 | `payload/entities/0.jsonl` | Exact shard bytes, including zero bytes |
-| 5 | `payload/entities/1.jsonl` | Exact shard bytes, including zero bytes |
-| 6 | `payload/entities/2.jsonl` | Exact shard bytes, including zero bytes |
-| 7 | `payload/entities/3.jsonl` | Exact shard bytes, including zero bytes |
-| 8 | `payload/entities/4.jsonl` | Exact shard bytes, including zero bytes |
-| 9 | `payload/entities/5.jsonl` | Exact shard bytes, including zero bytes |
-| 10 | `payload/entities/6.jsonl` | Exact shard bytes, including zero bytes |
-| 11 | `payload/entities/7.jsonl` | Exact shard bytes, including zero bytes |
-| 12 | `payload/entities/8.jsonl` | Exact shard bytes, including zero bytes |
-| 13 | `payload/entities/9.jsonl` | Exact shard bytes, including zero bytes |
-| 14 | `payload/entities/a.jsonl` | Exact shard bytes, including zero bytes |
-| 15 | `payload/entities/b.jsonl` | Exact shard bytes, including zero bytes |
-| 16 | `payload/entities/c.jsonl` | Exact shard bytes, including zero bytes |
-| 17 | `payload/entities/d.jsonl` | Exact shard bytes, including zero bytes |
-| 18 | `payload/entities/e.jsonl` | Exact shard bytes, including zero bytes |
-| 19 | `payload/entities/f.jsonl` | Exact shard bytes, including zero bytes |
+```text
+package.json
+payload/manifest.json
+payload/schemas.json
+payload/definitions.json
+payload/entities/0.jsonl
+payload/entities/1.jsonl
+payload/entities/2.jsonl
+payload/entities/3.jsonl
+payload/entities/4.jsonl
+payload/entities/5.jsonl
+payload/entities/6.jsonl
+payload/entities/7.jsonl
+payload/entities/8.jsonl
+payload/entities/9.jsonl
+payload/entities/a.jsonl
+payload/entities/b.jsonl
+payload/entities/c.jsonl
+payload/entities/d.jsonl
+payload/entities/e.jsonl
+payload/entities/f.jsonl
+```
 
-Entry names are exactly the listed ASCII bytes, which are also their UTF-8
-encoding. Names are case-sensitive and use `/` as the only separator. There
-are no explicit `payload/` or `payload/entities/` directory entries.
-
-The following are invalid rather than equivalent:
-
-- a missing, unknown, extra, or duplicate entry;
-- `./`, `../`, an absolute path, a drive prefix, or an empty path component;
-- `\` as a separator;
-- percent encoding or another escaped alias;
-- alternate Unicode or case spelling;
-- an explicit directory entry; or
-- the right names in another order.
-
-The `payload/` prefix exists only inside the package. Unpack strips exactly
-that prefix from entries 2 through 19. It neither persists the prefix nor uses
-it as semantic identity.
+The payload bodies MUST be exact canonical v3 bytes, including required
+`definitions.json` (even when `[]\n`) and all sixteen shards (zero bytes when
+empty). Names are the exact shown case-sensitive ASCII/UTF-8 bytes, with `/`
+as the only separator. No explicit directory entry, unknown/missing/extra/
+duplicate path, alias, `./`, `../`, absolute/drive path, empty component,
+backslash, escaped spelling, Unicode variant, or reordered entry is accepted.
+Unpack strips exactly `payload/` from the nineteen payload names. This prefix
+is not persisted or used as semantic identity.
 
 ## `package.json`
 
-### Complete DTO
-
-`package.json` is a closed-world packaging-only object. Its complete member
-set and order are:
-
-1. `format`
-2. `format_version`
-3. `payload_format`
-4. `payload_format_version`
-5. `payload_root_sha256`
-
-Its logical shape is:
+The closed five-member object has this exact member order and fixed values:
 
 ```json
 {
   "format": "tachiko.portable-package",
   "format_version": 1,
   "payload_format": "tachiko.roproj",
-  "payload_format_version": 1,
+  "payload_format_version": 3,
   "payload_root_sha256": "<64 lowercase hexadecimal digits>"
 }
 ```
 
-Every member is required, non-null, and always emitted. Unknown or duplicate
-members are invalid. There is no extension object.
+Every member is required and non-null. Unknown or duplicate members (including
+escaped-equivalent names) are invalid. Both versions MUST be lexical positive
+JSON integers; strings, fractions, exponents, zero, negative, or missing forms
+are malformed. The only supported values are package `1` and payload `3`.
+The root is exactly 64 lowercase ASCII hexadecimal digits.
 
-- `format` MUST be the exact JSON string `"tachiko.portable-package"`.
-- `format_version` MUST be lexical JSON integer `1`. String, fraction,
-  exponent, zero, negative, and missing forms are malformed.
-- `payload_format` MUST be exact string `"tachiko.roproj"`.
-- `payload_format_version` MUST be lexical JSON integer `1`.
-- `payload_root_sha256` MUST be exactly 64 lowercase ASCII hexadecimal digits
-  containing the integrity root defined below.
-
-### Canonical bytes
-
-The file is UTF-8 without BOM, uses the exact two-space indentation and member
-spelling above, has no trailing spaces or blank lines, and ends in exactly one
-LF byte. Because all fixed strings and the hexadecimal root are ASCII,
-canonical `package.json` is always exactly 228 bytes.
-
-For root
-`71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c`,
-the exact file is:
-
-```json
-{
-  "format": "tachiko.portable-package",
-  "format_version": 1,
-  "payload_format": "tachiko.roproj",
-  "payload_format_version": 1,
-  "payload_root_sha256": "71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c"
-}
-```
-
-The LF immediately before the closing fence is part of the file. No other
-whitespace or JSON spelling is canonical.
-
-`package.json` MUST NOT contain semantic document metadata, a copy of the
-inner document ID/title, timestamps, tool or application versions, source
-paths, source-root basename, Git metadata, entry inventories, individual file
-hashes, arbitrary extensions, signatures, keys, provenance, trust, or
-authorization data.
+Canonical bytes are UTF-8 without BOM, exactly the shown two-space indentation,
+member spelling/order, comma and colon spacing, LF line endings, no trailing
+spaces or blank lines, and exactly one final LF. Substituting the actual root
+makes the manifest exactly 228 bytes. There is no document ID/title, timestamp,
+tool version, host path, Git metadata, inventory, per-file hashes, extension,
+signature, provenance, trust, or authorization data.
 
 ## Payload integrity root
 
-### Leaf construction
-
-Let `p` be one exact canonical `.roproj/v1` relative path without the package
-prefix, and `b` its exact file bytes. In the fixed path order below:
-
-```text
-manifest.json
-schemas.json
-entities/0.jsonl
-entities/1.jsonl
-entities/2.jsonl
-entities/3.jsonl
-entities/4.jsonl
-entities/5.jsonl
-entities/6.jsonl
-entities/7.jsonl
-entities/8.jsonl
-entities/9.jsonl
-entities/a.jsonl
-entities/b.jsonl
-entities/c.jsonl
-entities/d.jsonl
-entities/e.jsonl
-entities/f.jsonl
-```
-
-compute:
+For each relative payload path `p` in the entry order above with `payload/`
+removed, and exact file bytes `b`, calculate:
 
 ```text
 leaf(p, b) = SHA-256(UTF8(p) || 0x00 || b)
+domain = ASCII("tachiko.portable-package/v1") || 0x00
+         || ASCII("tachiko.roproj/v3") || 0x00
+payload_root = SHA-256(domain || leaf_1 || ... || leaf_19)
 ```
 
-`UTF8(p)` is exactly the ASCII/UTF-8 byte sequence shown. No length prefix,
-final separator, normalization, case folding, `./`, root basename, or
-`payload/` prefix is included. Each SHA-256 leaf is its raw 32 digest bytes,
-not hexadecimal text.
+Each leaf is its raw 32 digest bytes, not hexadecimal text. No path length,
+final separator, normalization, case folding, root basename, or `payload/`
+prefix is included. All nineteen files contribute, including each empty shard
+and `definitions.json`. Store the root's lowercase hexadecimal encoding in
+`package.json`. The algorithm is unchanged from ADR-0025 §4; its payload
+domain and leaf count now select v3.
 
-Every path contributes a leaf. In particular, each of the 16 required
-zero-byte shards has a distinct leaf because its path precedes the NUL.
-
-### Root construction
-
-Define these exact bytes:
-
-```text
-domain =
-    ASCII("tachiko.portable-package/v1")
-    || 0x00
-    || ASCII("tachiko.roproj/v1")
-    || 0x00
-```
-
-Then:
-
-```text
-payload_root = SHA-256(domain || leaf_1 || ... || leaf_18)
-```
-
-The root stored in `package.json` is the lowercase hexadecimal encoding of
-those 32 bytes.
-
-This algorithm is unrelated to ADR-0023's SHA-256 entity-placement function.
-The placement function hashes one decoded `EntityId`; the package root hashes
-canonical paths and exact file bytes under a distinct domain.
-
-### Claim boundary
-
-The payload root covers exactly the 18 canonical payload paths and bodies. It
-does not cover:
-
-- `package.json`;
-- `payload/`;
-- ZIP headers, names as repeated in ZIP records, offsets, CRCs, or sizes;
-- the artifact filename;
-- the source-root basename or host path;
-- mtimes, permissions, ownership, ACLs, extended attributes, or symlinks;
-- Git history or commit identity; or
-- decoded semantic objects.
-
-The root detects corruption and establishes exact payload equality. It is not
-an authentication code, signature, author identity, trust decision,
-authorization grant, confidentiality mechanism, freshness or rollback proof,
-malicious coordinated-tamper defense, semantic revision identity,
-`DocumentId`, content-addressed object ID, or Git commit ID. An actor able to
-change the payload can also recompute an unauthenticated root and CRCs.
+The root covers exact payload paths and bytes only, not the package manifest,
+ZIP fields, host metadata, Git state, or decoded semantic objects. CRC and the
+unauthenticated root detect corruption/equality; they do not authenticate an
+author, confer trust, protect against coordinated malicious tampering, provide
+confidentiality/freshness/rollback protection, or define semantic identity.
 
 ## Canonical ZIP32 container
 
@@ -282,10 +134,10 @@ The complete archive is:
 ```text
 local header 1 || stored data 1
 ...
-local header 19 || stored data 19
+local header 20 || stored data 20
 central header 1
 ...
-central header 19
+central header 20
 end of central directory
 ```
 
@@ -364,15 +216,15 @@ The one end record is exactly 22 bytes:
 | End signature | 4 | `0x06054b50` |
 | Number of this disk | 2 | `0x0000` |
 | Disk with central start | 2 | `0x0000` |
-| Entries on this disk | 2 | `0x0013` (19) |
-| Total entries | 2 | `0x0013` (19) |
+| Entries on this disk | 2 | `0x0014` (20) |
+| Total entries | 2 | `0x0014` (20) |
 | Central-directory size | 4 | Exact byte length |
 | Central-directory offset | 4 | Exact byte offset |
 | Archive-comment length | 2 | `0x0000` |
 | Archive comment | variable | Absent |
 
 The central-directory offset points to central header 1. Its size consumes
-exactly central headers 1 through 19. The end record follows immediately and
+exactly central headers 1 through 20. The end record follows immediately and
 is the final archive byte sequence.
 
 ### CRC-32
@@ -391,7 +243,7 @@ and recomputation from entry data.
 No count, size, or offset field may use `0xffff` or `0xffffffff` as a ZIP64
 sentinel. Each entry body length, each local-header offset, the central offset,
 the central size, and the complete archive length MUST be at most
-`0xfffffffe`. Package v1 has a fixed entry count of 19, already below the
+`0xfffffffe`. Package v1 has a fixed entry count of 20, already below the
 ordinary 16-bit sentinel.
 
 If canonical source bytes cannot satisfy every ordinary ZIP32 field and the
@@ -423,172 +275,87 @@ Library defaults are never authority. A dependency update that changes any
 canonical byte is an implementation failure unless a later package profile is
 accepted.
 
-## Pack contract
+## Writer and publication
 
-Pack accepts a source root only when all of these are true before publication:
+Pack MUST accept only storage-validated, exact canonical `.roproj/v3` state
+under the v3 DTO/layout and applicable semantic validation rules. It probes
+the source manifest before body interpretation. Other recognized versions
+fail as unsupported payload representation; invalid or noncanonical v3 fails
+without repair. The writer copies all nineteen paths and bytes, computes the
+root and manifest, and prepares the complete canonical archive before atomic
+publication to an absent destination. Source state is never mutated.
 
-1. The root is an ordinary directory supplied explicitly by the caller.
-2. It has exactly the canonical `.roproj/v1` tree and ordinary regular-file
-   types defined by ADR-0023.
-3. `manifest.json` selects supported exact `.roproj/v1` before other payload
-   semantic decoding.
-4. Every JSON/JSONL body, ordering rule, shard placement, and zero-byte shard
-   is already canonical under the two `.roproj/v1` specifications.
-5. Version-owned DTO conversion and the applicable Accepted semantic
-   validation gate succeed.
-6. The resulting exact bytes fit package v1 ZIP32 capacity.
-7. The destination is absent.
+No lowest-representable-version selection, implicit migration/down-conversion,
+dual writer, omitted file, silent canonicalization, symlink following, or
+host-metadata-dependent output is allowed. An older pre-release project is not
+packaged until explicitly migrated to v3 through existing Accepted paths in
+[storage-versioning-and-migration.md](storage-versioning-and-migration.md).
+This decision adds no migration path or private-project conversion.
 
-Pack MUST NOT invoke the bounded `.roproj/v1` canonicalizer, repair placement,
-sort records, rewrite JSON, migrate another representation, follow symlinks,
-drop unknown files, or infer semantic identity from paths. A caller may run an
-explicit canonicalize operation first; it is a separate operation and output.
+## Single reader and manifest-first dispatch
 
-Pack processes payload files in the fixed path order, calculates every leaf
-and the root over exact source bytes, creates canonical `package.json`, and
-writes the fixed ZIP profile. It copies all 18 payload files byte-for-byte,
-including all zero-byte shards.
+Finite complete-input admission and container framing precede dispatch.
+Exact leading bytes `50 4b 03 04` select package handling. The extension alone
+never selects a parser; after selection, failures MUST NOT fall back to direct
+JSON or another package/payload decoder.
 
-The source is never mutated. Root basename, absolute host location, filesystem
-enumeration order, locale, mtimes, permissions, ownership, ACLs, extended
-attributes, and other host metadata do not affect package bytes.
+The reader first locates the unique first stored entry `package.json` and
+performs bounded structural JSON inspection, rejecting duplicate members and
+malformed profile/version fields. It probes exact
+`format: "tachiko.portable-package"` and lexical positive `format_version`
+before requiring v1-owned fields. A different syntactically valid positive
+package version fails as `portable_package.unsupported_version` before
+v1-specific or payload decoding, even if it has a future-owned manifest shape.
+An unknown/other format fails as `portable_package.invalid_manifest`.
 
-For byte-identical canonical input under package v1, output is byte-identical
-on every conforming implementation.
-
-Pack prepares and validates the complete candidate before atomic publication.
-It refuses to overwrite an existing file or other path. Failure leaves the
-destination absent and never exposes a partial file as a successful artifact.
-Exact temporary-file, rename, `fsync`, browser-transaction, buffering, and
-streaming mechanisms remain host-owned implementation details.
-
-## Unpack contract
-
-### Required validation order
-
-Unpack fails closed through these dependency-ordered stages:
+For selected package v1, require the closed manifest, probe `payload_format`
+and `payload_format_version`, and reject any other payload profile/version
+as `portable_package.unsupported_payload_representation` before interpreting
+payload bodies. This includes developmental v1 packages carrying roproj/v1.
+Malformed/missing payload fields fail as `portable_package.invalid_manifest`.
+Then validate in dependency order:
 
 ```text
-content framing and complete container structure
-→ package.json structural probe and package-version dispatch
-→ canonical ZIP profile, local/central agreement, and exact entry set/order
-→ stored sizes and CRC-32
-→ payload SHA-256 integrity root
-→ package payload claims versus payload/manifest.json
-→ exact canonical .roproj/v1 representation
-→ applicable semantic conversion and validation
+canonical manifest bytes and ZIP fields, exact entry set/order, local/central agreement
+→ stored sizes and recomputed CRC-32
+→ recomputed nineteen-leaf SHA-256 payload root
+→ inner manifest agreement: tachiko.roproj, lexical format_version 3
+→ exact canonical v3 DTO/tree and applicable storage semantic validation
 → atomic publication to an absent destination
 ```
 
-This order fixes dependencies and security boundaries, not a total precedence
-among independent failures discovered within one stage.
+An inner manifest that disagrees with the outer claims fails as
+`portable_package.payload_manifest_mismatch` before body interpretation.
+These stages fix dependencies, not total precedence among unrelated defects.
+Unsupported bodies are never decoded, canonicalized, migrated, or published.
+Unpack publishes only the exact nineteen v3 files, without package metadata.
+Every failed publication leaves an absent destination absent; an existing
+path, including one created in a publication race, remains unchanged.
+Atomic no-replace publication and complete preparation are required for pack
+and unpack; concrete host transaction/durability mechanisms remain host-owned.
 
-Before package-version selection, a reader may parse only enough ordinary ZIP
-structure and the unique stored `package.json` entry to dispatch. The
-version-independent manifest probe requires a JSON object with no duplicate
-top-level members, exact decoded `format: "tachiko.portable-package"`, and a
-lexical positive-integer `format_version`. A malformed probe fails explicitly,
-but it MUST NOT require the remaining v1-owned member set before dispatch. A
-syntactically valid `tachiko.portable-package` version other than `1` produces
-`portable_package.unsupported_version` before v1-only manifest validation,
-payload CRC, integrity, `.roproj` DTO, or semantic decoding. Unsupported
-payload bytes MUST NOT be interpreted, canonicalized, migrated, or published.
+## Exact round trips and tracked-source authority
 
-For selected v1, unpack then requires the exact closed five-member manifest,
-canonical ZIP, and entry profile. It rejects unknown, missing, duplicate,
-aliased, reordered, or metadata-bearing entries. It checks local/central
-agreement and recomputes every CRC before calculating the payload root.
-
-After the root matches, unpack verifies that `payload/manifest.json` selects
-the exact payload representation claimed by `package.json`. It then validates
-the payload as an already-canonical `.roproj/v1` tree, not as the bounded
-noncanonical canonicalizer input family. Wrong placement, spelling, ordering,
-unknown fields, extra content, or another supported-but-noncanonical form is
-rejected rather than normalized during unpack.
-
-The complete payload is converted through version-owned DTOs and the
-applicable semantic validation gate. No partial semantic document or
-human-key-based repair is permitted.
-
-### Publication
-
-The destination MUST be absent. Unpack MUST NOT merge with or overwrite an
-existing file or directory. After every preceding stage succeeds, it strips
-only the exact leading `payload/` prefix and publishes exactly the 18
-canonical relative paths and bytes.
-
-No `package.json` field, root, ZIP metadata, filename, or package path is
-copied into `.roproj`. Failure at any stage leaves the destination absent and
-no partial tree visible as success. A publication race that discovers an
-existing destination fails without replacing it.
-
-## Exact lossless laws
-
-For every canonical, supported, semantically valid `.roproj/v1` tree `P`
-accepted by pack:
+For every admitted canonical v3 tree `P` and accepted package `R`:
 
 ```text
-unpack(pack(P)) == P
+unpack(pack(P)) == P              # identical relative paths and bytes
+pack(unpack(R)) == R              # byte-identical archive
+fresh_reopen(unpack(pack(P))) == fresh_reopen(P)
 ```
 
-Equality means the same 18 relative paths and byte-identical body for every
-path. It is stronger than semantic equivalence.
+Fresh reopen uses v3 storage admission and preserves Date, saved definitions,
+constraints, and all other admitted meaning. It adds no formula-calculation
+admission guarantee beyond the existing storage gate. Host paths, permissions,
+symlinks, caches, attachments, and Git history are outside this equality.
 
-For every canonical package-v1 artifact `R` accepted by unpack:
-
-```text
-pack(unpack(R)) == R
-```
-
-Equality means byte-identical package bytes. It follows from exact payload
-preservation, one deterministic manifest/root construction, and one canonical
-ZIP profile.
-
-The laws intentionally exclude root basenames, host paths, timestamps,
-permissions, ownership, ACLs, extended attributes, symlinks, Git metadata,
-caches, and unknown files because none is canonical `.roproj/v1` state.
-
-## Package versus tracked `.roproj`
-
-To compare a verified package with a canonical tracked `.roproj` source:
-
-1. Complete package validation without publishing or mutating it.
-2. Validate the tracked source as exact canonical `.roproj/v1`.
-3. Calculate the tracked root with the identical path/byte algorithm.
-4. Compare the two 32-byte roots.
-
-Equal roots yield machine state `consistent`; no write, timestamp update,
-regeneration, or synchronization follows. Different roots yield
-`portable_package.source_mismatch` and the tracked `.roproj` remains
-authoritative in that working context.
-
-The package and tracked source are never automatically merged or overwritten.
-A differing package may be unpacked only to another distinct absent
-destination. Filename, modification time, size, tool version, `DocumentId`,
-filesystem order, and most-recently-opened state do not choose authority.
-
-Git attributes, CI consistency checks, semantic delta, and merge are outside
-this contract and remain owned by #44, #45, and #46.
-
-## Direct JSON coexistence and framing
-
-Package v1 neither changes nor supersedes `legacy-direct-ro/v1` or
-`direct-ro/v2`. It is not the current CLI writer.
-
-A reader that supports both families MUST classify content before selecting a
-version-specific parser:
-
-- exact initial bytes `50 4b 03 04` select portable-package container handling;
-- existing valid direct-JSON framing selects the direct-JSON reader; and
-- the `.ro` extension alone never selects either representation.
-
-Package v1 forbids a prepended stub, so its local-header signature occurs at
-offset zero. Once package framing is selected, every package error remains a
-package error. Malformed or unsupported package input MUST NOT fall back to a
-direct-JSON parser. The inverse is also true for direct JSON.
-
-This rule does not add a new direct-JSON version or change either direct-JSON
-admission profile.
+A canonical tracked v3 source uses the same root algorithm. Equal roots mean
+`consistent` and authorize no mutation. Different roots mean
+`portable_package.source_mismatch`; tracked source remains authoritative in
+that working context. Neither side is overwritten, merged, synchronized, or
+regenerated. A differing package may be unpacked only to a distinct absent
+destination. Filename, mtime, size, tool version, DocumentId, filesystem order,
+and recent-open state never choose authority.
 
 ## Stable failure meanings
 
@@ -600,16 +367,16 @@ text may map them differently but MUST preserve the distinctions.
 | --- | --- |
 | `portable_package.invalid_container` | Truncated, impossible, stubbed, trailed, split, or otherwise structurally invalid container framing |
 | `portable_package.invalid_manifest` | Missing, duplicate, malformed, unknown-member, or wrong-profile `package.json` metadata for a selected/claimed profile |
-| `portable_package.unsupported_version` | Syntactically valid positive package profile version not supported by the implementation |
+| `portable_package.unsupported_version` | Syntactically valid positive package profile version other than 1 |
 | `portable_package.noncanonical_container` | Structurally parseable archive with noncanonical ZIP fields, manifest bytes, or entry order |
 | `portable_package.entry_set_mismatch` | Missing, unknown, duplicate, extra, or aliased entry name/set |
 | `portable_package.crc_mismatch` | Stored size or CRC disagreement after canonical profile selection |
-| `portable_package.integrity_mismatch` | Recomputed 18-leaf SHA-256 payload root differs from `package.json` |
+| `portable_package.integrity_mismatch` | Recomputed 19-leaf SHA-256 payload root differs from `package.json` |
 | `portable_package.payload_manifest_mismatch` | Inner `.roproj` manifest disagrees with package payload claims |
-| `portable_package.noncanonical_payload` | Payload paths or bytes are not exact canonical `.roproj/v1` representation |
+| `portable_package.noncanonical_payload` | Payload paths or bytes are not exact canonical `.roproj/v3` representation |
 | `portable_package.invalid_semantic_payload` | Exact decoded payload fails applicable Accepted semantic conversion/validation |
-| `portable_package.source_not_canonical` | Pack source is not an exact supported canonical `.roproj/v1` tree |
-| `portable_package.unsupported_payload_representation` | Pack source selects a recognized but unsupported `.roproj` payload representation/version, including `.roproj/v2` |
+| `portable_package.source_not_canonical` | Pack source is not an exact supported canonical `.roproj/v3` tree |
+| `portable_package.unsupported_payload_representation` | Manifest claims select any other payload profile/version, or pack source selects a recognized unsupported `.roproj` version, including v1 and v2 |
 | `portable_package.capacity_exceeded` | Canonical package cannot fit ordinary package-v1 ZIP32 fields/length |
 | `portable_package.resource_limit` | A declared finite host/implementation safety limit below package capacity rejects the input |
 | `portable_package.destination_exists` | Pack or unpack destination is not absent, including a publication race |
@@ -628,171 +395,50 @@ distinction between unsupported version, corruption, noncanonical input,
 semantic invalidity, conflict, capacity, resource admission, destination
 existence, and publication failure.
 
-Before classifying a pack source as `source_not_canonical`, package v1 probes
-its `.roproj` manifest envelope. A recognized `.roproj` version other than its
-sole supported v1 payload returns
-`portable_package.unsupported_payload_representation`; it must not be collapsed
-into noncanonical input, silently canonicalized, down-converted, or packed with
-an omitted payload path. Exact Rust type and public diagnostic spelling remain
-replaceable, but this version distinction is required by ADR-0037.
+## Bounds and untrusted input
 
-Every rejection before successful publication is atomic: an absent
-destination remains absent. If the destination existed, it and its contents
-remain unchanged.
+Reuse the existing finite host bounds: at most 64 MiB (`67,108,864` bytes) of
+complete package input, with the same finite byte budget while reading a pack
+source; the version-independent package manifest probe admits at most 256
+nested JSON containers. Exactly-at-limit input is admitted; one over fails
+as `portable_package.resource_limit`. V3's own DTO, formula, and constraint
+bounds remain applicable. These host bounds remain Provisional mechanisms,
+not semantic limits or ZIP32 capacity. Any additional finite host bound MUST
+identify its resource and value and preserve the distinct resource-limit
+outcome. Parsing and arithmetic MUST be bounded and overflow-checked.
 
-## Normative byte-level golden vector
+Path validation precedes host path construction. No archive-provided symlink
+or unrecognized/aliased path may be extracted or escape the absent destination.
+Compression, ZIP64, signing, encryption, extension registries, new semantic
+DTOs, and trust semantics are outside this profile.
 
-The golden source is the exact empty `.roproj/v1` fixture at
-[`docs/research/fixtures/issue-43-portable-package-v1/empty.roproj/`](../research/fixtures/issue-43-portable-package-v1/empty.roproj/manifest.json):
+## CORE package and host attachment disclosure
 
-- `manifest.json` is the 121-byte empty-document vector from
-  `roproj-format.md`;
-- `schemas.json` is exactly three bytes: `5b 5d 0a`;
-- all 16 required entity shards exist and are zero bytes; and
-- no other path exists.
+Sheet client-held import source bytes, import metadata/fidelity ledger, and
+digest-bound report settings are not carried. A product download MUST disclose
+actually omitted attachments before user consent as explicit `lossy_on_export`
+findings following [#513](https://github.com/nurockplayer/tachiko-work/issues/513).
+Absent attachments MUST NOT generate invented loss findings. A lossless CORE
+package round trip alone does not satisfy #488's complete user-owned workbook
+exit. Work and Sheet consumer qualification remain separate obligations.
 
-Its payload root is:
+## Required implementation evidence
 
-```text
-71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c
-```
+The implementation PR MUST add a new static byte-level golden vector for this
+redefined profile and verify independent exact-byte agreement. The historical
+[Issue #43 evidence](../research/2026-08-26-portable-package-v1.md), probe, and
+fixture bytes remain Superseded evidence in Git; they are not current vectors.
+Developmental code/tests/fixtures may be removed or replaced in implementation;
+no legacy package migration or compatibility obligation is imposed.
 
-The normative package bytes are encoded as one lowercase hexadecimal line in
-[`empty-package-v1.hex`](../research/fixtures/issue-43-portable-package-v1/empty-package-v1.hex).
-The terminal LF in the `.hex` text file is not part of the decoded package.
-
-After hexadecimal decoding, the package has:
-
-| Property | Exact value |
-| --- | ---: |
-| Package length | 2,692 bytes |
-| SHA-256 of complete package | `1368ebe38c86de28d2379ae6c0ca7a5ca8502543002fe084e33254ad1db4d7bc` |
-| `package.json` body length | 228 bytes |
-| Central-directory offset | 1,359 |
-| Central-directory length | 1,311 bytes |
-| End-record offset | 2,670 |
-| Entry count | 19 |
-
-The static hex vector, not a ZIP library's output, is the byte authority. The
-disposable probe manually constructs every record and asserts equality with
-the vector. Standard `unzip -t` also accepts all 19 stored entries, which is
-interoperability evidence rather than normative authority.
-
-## Required conformance cases
-
-A production implementation must cover at least:
-
-1. packing the same canonical `.roproj` twice produces identical bytes;
-2. unpacking a valid package publishes the exact 18 paths and bytes;
-3. one corrupted payload byte fails at CRC/size validation and publishes
-   nothing;
-4. corruption with recomputed CRC but stale SHA-256 root fails integrity and
-   publishes nothing;
-5. missing, duplicate, unknown, or malformed package metadata fails closed;
-6. an unsupported package version, including one with a future-owned manifest
-   shape, wins before v1-only manifest or payload semantic decoding;
-7. unknown, missing, duplicate, extra, or aliased entries fail closed;
-8. a disagreeing tracked `.roproj` produces source mismatch without mutation;
-9. noncanonical ZIP metadata and noncanonical entry order fail closed;
-10. pack → unpack → pack is byte-identical;
-11. all 16 zero-byte shards exist in the package and contribute distinct
-    integrity leaves;
-12. local and central record disagreement fails closed;
-13. prepended stubs, archive/file comments, explicit directories, data
-    descriptors, ZIP64, and trailing bytes fail closed;
-14. an existing destination remains untouched;
-15. a destination created after the last userspace absence check is rejected
-    unchanged by the actual atomic no-replace publication primitive;
-16. a noncanonical pack source creates no artifact; and
-17. content classification never falls back after selecting a malformed
-    package or direct-JSON representation.
-
-The checked-in evidence probe covers the Issue #43 pressure set plus host
-basename/mode/mtime independence, missing/aliased/duplicate entries, duplicate
-metadata, trailing data, existing pack and unpack destinations, noncanonical
-pack source, and content framing. Its empty-payload
-semantic checker is intentionally fixture-specific; production conformance
-uses the production `.roproj/v1` DTO and semantic validation implementation.
-Issue #3 adds the full-shape pure-codec, host, CLI, and native/WASM regressions
-without promoting the disposable probe to product code.
-
-For unpack, the probe demonstrates staged publication only while the
-destination remains absent, rejects a destination visible at its final
-userspace check, and exercises error mapping and cleanup when an injected
-publisher reports a no-replace conflict at the actual publication call. Its
-ordinary Node path still uses check-then-`rename` and leaves the final TOCTOU
-window uncovered. The injected publisher is a seam regression, not an atomic
-host primitive or evidence that Node's rename provides no-replace behavior.
-Issue #3 supplies and tests the real OS-backed atomic no-replace primitive
-required by case 15 for both package files and unpacked directories. Exact host
-publication mechanics remain Provisional while every
-implementation must satisfy the normative no-overwrite and no-partial-success
-result.
-
-## Security and resource boundary
-
-Package inputs are untrusted. Implementations must use bounded parsing,
-overflow-checked arithmetic, exact entry counts, and fail-closed publication.
-Package v1 fixes the ZIP32 capacity boundary but does not fix smaller host
-memory, archive-byte, per-entry-byte, nesting, or time limits. Such finite
-limits are Provisional implementation details until #52 establishes a broader
-hostile-container profile; they must remain explicit and machine-
-distinguishable.
-
-The current production host admits at most 64 MiB of complete package bytes
-and applies the same finite budget while reading a pack source. Its
-version-independent `package.json` probe admits at most 256 nested JSON
-containers. These are the Provisional `portable_package.resource_limit`
-profile, not ZIP32 capacity or semantic document limits.
-
-CRC-32 and the unauthenticated payload root are not security against a
-malicious writer. Signatures, trust roots, authentication, freshness,
-rollback protection, and malicious coordinated-tamper resistance remain #53.
-Encryption and key management are Deferred.
-
-Path validation occurs on archive names before host path construction.
-Implementations must never extract an unrecognized or aliased path, follow an
-archive-provided symlink, or allow a path to escape the absent destination.
-Because the exact package vocabulary contains only fixed ASCII paths and
-ordinary file entries, a conforming unpacker does not need generic archive
-path sanitization as a substitute for exact-set validation.
-
-## Explicitly out of scope
-
-This package profile does not define or authorize:
-
-- a production `.roproj` reader, writer, or canonicalizer;
-- a change to the current direct-JSON CLI writer;
-- compression or ZIP64;
-- package extension areas;
-- signatures, trust, encryption, or key management;
-- cloud distribution;
-- Git/CI automation, generated-artifact policy, or synchronization;
-- semantic delta, revision, operation-log, or merge formats;
-- AI, SemanticPatch, approval, capability, or mutation authority;
-- concrete Rust crates, modules, public APIs, or error enums;
-- exact diagnostic prose or unrelated-failure precedence;
-- streaming versus buffering; or
-- temporary-file, rename, `fsync`, locking, browser-transaction, or recovery
-  mechanics.
-
-## External primitive references
-
-- [PKWARE APPNOTE 6.3.10](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT)
-  defines the ordinary ZIP records, little-endian fields, UTF-8 flag, store
-  method, timestamps, CRC-32, ZIP64 sentinels, and path separator rules used by
-  this narrower canonical profile.
-- [NIST FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final)
-  defines SHA-256.
-- [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259) defines JSON syntax; the
-  package manifest deliberately fixes a much narrower closed canonical DTO.
-
-## Related
-
-- [ADR-0025](../decisions/ADR-0025-portable-package-v1.md)
-- [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
-- [`.roproj/v1` wire DTOs](roproj-format.md)
-- [`.roproj/v1` layout](roproj-layout-v1.md)
-- [Storage versioning and migration](storage-versioning-and-migration.md)
-- [Issue #43](https://github.com/nurockplayer/tachiko-work/issues/43)
-- [Issue #3](https://github.com/nurockplayer/tachiko-work/issues/3)
+Conformance MUST cover deterministic pack; exact nineteen-file unpack;
+pack→unpack→pack and pack→unpack→fresh reopen with Date, saved definitions,
+and both non-`none` constraints; all empty shards and empty definitions;
+strict manifest-first rejection of unknown profiles, package/payload versions
+(including payload v1), missing/duplicate/unknown members and entries;
+CRC corruption and recomputed-CRC/stale-root corruption; inner-manifest
+mismatch; noncanonical ZIP fields/order and all forbidden features;
+noncanonical/invalid semantic source and unsupported older source refusal;
+exact/one-over bounds; tracked-source mismatch without mutation; existing
+and racing destinations without overwrite or partial success; and honest
+attachment disclosure before consent plus no fabricated absent-attachment loss.
