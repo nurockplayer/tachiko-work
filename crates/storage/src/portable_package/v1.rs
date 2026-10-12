@@ -872,7 +872,7 @@ fn validate_canonical_profile(container: &Container<'_>) -> Result<(), PortableP
     if container.end.entries_on_disk != PACKAGE_ENTRY_COUNT
         || container.end.total_entries != PACKAGE_ENTRY_COUNT
     {
-        return noncanonical_container("end record does not describe 19 canonical entries");
+        return noncanonical_container("end record does not describe 20 canonical entries");
     }
 
     for (index, expected_name) in PACKAGE_PATHS.iter().enumerate() {
@@ -1175,7 +1175,7 @@ mod tests {
                 .unwrap();
         assert_eq!(tree.file("definitions.json").unwrap(), b"[]\n");
         for path in ROPROJ_V3_PATHS.iter().skip(3) {
-            assert_eq!(tree.file(path).unwrap(), []);
+            assert_eq!(tree.file(path).unwrap(), b"");
         }
         let bytes = encode(&tree).unwrap();
         let decoded = decode(&bytes).unwrap();

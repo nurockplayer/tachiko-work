@@ -322,6 +322,7 @@ fn replace_entry_name(package: &mut [u8], old: &str, new: &str) {
 fn remove_last_entry(package: &[u8]) -> Vec<u8> {
     let target = record(package, "payload/entities/f.jsonl");
     let old_end = package.len() - 22;
+    let entry_count = read_u16(package, old_end + 10) - 1;
     let old_central_offset = usize::try_from(read_u32(package, old_end + 16)).unwrap();
     let old_central_size = usize::try_from(read_u32(package, old_end + 12)).unwrap();
     let local_length = target.local_end - target.local_offset;
@@ -330,8 +331,8 @@ fn remove_last_entry(package: &[u8]) -> Vec<u8> {
     output.drain(target.central_offset..target.central_end);
     output.drain(target.local_offset..target.local_end);
     let end = output.len() - 22;
-    write_u16(&mut output, end + 8, 18);
-    write_u16(&mut output, end + 10, 18);
+    write_u16(&mut output, end + 8, entry_count);
+    write_u16(&mut output, end + 10, entry_count);
     write_u32(
         &mut output,
         end + 12,
@@ -348,6 +349,7 @@ fn remove_last_entry(package: &[u8]) -> Vec<u8> {
 fn duplicate_last_entry(package: &[u8]) -> Vec<u8> {
     let target = record(package, "payload/entities/f.jsonl");
     let old_end = package.len() - 22;
+    let entry_count = read_u16(package, old_end + 10) + 1;
     let old_central_offset = usize::try_from(read_u32(package, old_end + 16)).unwrap();
     let old_central_size = usize::try_from(read_u32(package, old_end + 12)).unwrap();
     let local = package[target.local_offset..target.local_end].to_vec();
@@ -360,8 +362,8 @@ fn duplicate_last_entry(package: &[u8]) -> Vec<u8> {
     output.extend_from_slice(&central);
     output.extend_from_slice(&package[old_end..]);
     let end = output.len() - 22;
-    write_u16(&mut output, end + 8, 20);
-    write_u16(&mut output, end + 10, 20);
+    write_u16(&mut output, end + 8, entry_count);
+    write_u16(&mut output, end + 10, entry_count);
     write_u32(
         &mut output,
         end + 12,
