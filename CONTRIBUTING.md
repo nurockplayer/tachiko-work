@@ -47,7 +47,7 @@ rustup run 1.85.0 cargo check --manifest-path packages/browser-client/runtime/Ca
 Use the checked-in `Cargo.lock`. The project does not require a global install;
 run the CLI with `cargo run -p tachiko-cli -- <command>` while developing.
 
-The experimental browser-client qualification uses pnpm 11.25.0, Chromium, and
+The experimental browser-client qualification uses pnpm 12.11.2, Chromium, and
 ripgrep (`rg`) for its external-consumer browser journey and exported-kit
 boundary checks. Install ripgrep with the operating system's package manager.
 Use the producer package's checked-in lockfile and pnpm exclusively:

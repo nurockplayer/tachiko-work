@@ -2,7 +2,7 @@
   "name": "@tachiko/open-sheet-export-experiment",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.25.0",
+  "packageManager": "pnpm@12.11.2",
   "engines": {
     "node": ">=24"
   },

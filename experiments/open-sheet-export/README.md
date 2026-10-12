@@ -56,7 +56,7 @@ all binary64 edge cases or arbitrary Excel numerical behavior.
 ## Preflight commands
 
 Use the toolchain required by the live repository (currently Node >=24 and
-pnpm 11.25.0). The local Node 22 syntax check is not runtime qualification.
+pnpm 12.11.2). The local Node 22 syntax check is not runtime qualification.
 Build existing source, not a new exporter:
 
 ```sh
