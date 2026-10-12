@@ -30,10 +30,9 @@ fn explanation(
 #[test]
 fn explanation_rewires_direct_edges_after_formula_update_undo_and_redo() {
     let mut runtime = fixture();
-    assert!(
-        explanation(&mut runtime, 0, "r1.source")
-            .downstream_impacts
-            .is_empty()
+    assert_eq!(
+        explanation(&mut runtime, 0, "r1.source").downstream_impacts,
+        [] as [FieldTarget; 0]
     );
     formula(&mut runtime, 0, "[r1.source] + [r1.source]");
     let current = explanation(&mut runtime, 1, "r1.n");
@@ -59,10 +58,9 @@ fn explanation_rewires_direct_edges_after_formula_update_undo_and_redo() {
             expected_revision: "resident/1".to_owned(),
         })
         .unwrap();
-    assert!(
-        explanation(&mut runtime, 2, "r1.source")
-            .downstream_impacts
-            .is_empty()
+    assert_eq!(
+        explanation(&mut runtime, 2, "r1.source").downstream_impacts,
+        [] as [FieldTarget; 0]
     );
     runtime
         .handle(DesignerRequest::Redo {
