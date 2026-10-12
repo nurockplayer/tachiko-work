@@ -166,6 +166,10 @@ pub enum DesignerRequest {
         expected_revision: String,
         fields: Vec<FieldTarget>,
     },
+    ExplainField {
+        expected_revision: String,
+        target: FieldTarget,
+    },
     EditScalar {
         expected_revision: String,
         target: FieldTarget,
@@ -209,6 +213,7 @@ pub enum DesignerResponse {
     Opened(Box<OpenedProjection>),
     Table(TableProjection),
     Fields(FieldBatchProjection),
+    FieldExplanation(FieldExplanationProjection),
     Published(PublicationProjection),
     Duplicated(DuplicateCollectionProjection),
     CleanupPreview(CleanupPreview),
@@ -300,6 +305,24 @@ pub struct FieldProjection {
     pub calculated: Option<CalculationProjection>,
     pub diagnostics: Vec<DiagnosticProjection>,
     pub editable_scalar: Option<ScalarKind>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct FieldExplanationProjection {
+    pub revision: String,
+    pub target: FieldTarget,
+    pub value: FieldProjection,
+    pub formula_source: Option<String>,
+    pub direct_dependencies: Vec<FieldDependencyProjection>,
+    /// Direct calculated dependents only, in stable-ID order.
+    pub downstream_impacts: Vec<FieldTarget>,
+    pub diagnostics: Vec<DiagnosticProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct FieldDependencyProjection {
+    pub target: FieldTarget,
+    pub value: FieldProjection,
 }
 
 /// Rust-authoritative directly stored scalar kinds supported by this private table path.
@@ -487,6 +510,10 @@ pub struct FailureProjection {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "This transient serialization envelope preserves the pinned unboxed response API; it is not stored in collections."
+)]
 pub enum DesignerWireReply {
     Ok { response: DesignerResponse },
     Error { error: FailureProjection },
@@ -1025,6 +1052,12 @@ impl DesignerRuntime {
             } => Ok(DesignerResponse::Fields(
                 self.query_fields(&expected_revision, &fields)?,
             )),
+            DesignerRequest::ExplainField {
+                expected_revision,
+                target,
+            } => Ok(DesignerResponse::FieldExplanation(
+                self.explain_field(&expected_revision, &target)?,
+            )),
             DesignerRequest::EditScalar {
                 expected_revision,
                 target,
@@ -1544,6 +1577,49 @@ impl DesignerRuntime {
                 .collect(),
         };
         ensure_complete_projection_size("fields", &projection, MAX_PROJECTION_BYTES)?;
+        Ok(projection)
+    }
+
+    fn explain_field(
+        &self,
+        expected_revision: &str,
+        target: &FieldTarget,
+    ) -> Result<FieldExplanationProjection, DesignerError> {
+        // Reuse the revision check, stable-target resolution and complete DTO.
+        // A successful single-target query contains exactly one field.
+        let mut query = self.query_fields(expected_revision, std::slice::from_ref(target))?;
+        let value = query.fields.remove(0);
+        let field = target.as_field_ref();
+        let edges = self.session.direct_field_dependencies();
+        let dependencies = edges
+            .get(&field)
+            .map(|dependencies| dependencies.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let direct_dependencies = self
+            .session
+            .query_fields(&dependencies)?
+            .value()
+            .iter()
+            .map(|dependency| FieldDependencyProjection {
+                target: field_target(&dependency.field),
+                value: self.project_field(dependency),
+            })
+            .collect();
+        let downstream_impacts = edges
+            .iter()
+            .filter(|(_, dependencies)| dependencies.contains(&field))
+            .map(|(dependent, _)| field_target(dependent))
+            .collect();
+        let projection = FieldExplanationProjection {
+            revision: query.revision,
+            target: target.clone(),
+            formula_source: value.formula.as_ref().map(|formula| formula.source.clone()),
+            diagnostics: value.diagnostics.clone(),
+            value,
+            direct_dependencies,
+            downstream_impacts,
+        };
+        ensure_complete_projection_size("field_explanation", &projection, MAX_PROJECTION_BYTES)?;
         Ok(projection)
     }
 
@@ -3563,7 +3639,7 @@ pub(crate) fn ensure_wire_reply_size(
             response: DesignerResponse::Table(table),
         } if table.tracker_profile == Some(true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
         DesignerWireReply::Ok {
-            response: DesignerResponse::Fields(_),
+            response: DesignerResponse::Fields(_) | DesignerResponse::FieldExplanation(_),
         } => MAX_PROJECTION_BYTES,
         DesignerWireReply::Ok { .. } if text_capacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
         _ => MAX_PROJECTION_BYTES,
@@ -5422,6 +5498,50 @@ mod tests {
         PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput,
         ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
     };
+
+    #[test]
+    fn field_explanation_reads_direct_dependencies_across_entities_and_collections() {
+        let runtime = DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        // The summary collection reads two entities in the budget-items collection.
+        let explanation = runtime
+            .explain_field("resident/0", &"monthly_summary.actual_total".into())
+            .unwrap();
+        assert_eq!(
+            explanation.formula_source.as_deref(),
+            Some("([rent.actual] + [utilities.actual])")
+        );
+        assert_eq!(
+            explanation.value.calculated,
+            Some(super::CalculationProjection::Value { value: 1360.0 })
+        );
+        let dependencies = &explanation.direct_dependencies;
+        assert_eq!(dependencies.len(), 2);
+        for (dependency, target, value) in [
+            (&dependencies[0], "rent.actual", 1200.0),
+            (&dependencies[1], "utilities.actual", 160.0),
+        ] {
+            assert_eq!(dependency.target, target.into());
+            assert_eq!(
+                dependency.value,
+                runtime
+                    .query_fields("resident/0", &[target.into()])
+                    .unwrap()
+                    .fields[0]
+            );
+            assert_eq!(
+                dependency.value.stored,
+                Some(super::StoredValueProjection::Number { value })
+            );
+        }
+        assert_eq!(
+            explanation.downstream_impacts,
+            vec!["monthly_summary.remaining".into()]
+        );
+        assert_eq!(
+            explanation.diagnostics,
+            [] as [super::DiagnosticProjection; 0]
+        );
+    }
 
     #[test]
     fn capacity_table_projection_matches_ordinary_owned_projection() {

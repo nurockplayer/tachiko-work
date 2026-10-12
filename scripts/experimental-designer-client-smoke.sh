@@ -149,6 +149,13 @@ pnpm --dir "${repo_root}/packages/browser-client" exec tsc \
   --project "${consumer_dir}/tsconfig.json" \
   --noEmit \
   --pretty false
+
+# Worker parity must compare against fresh native results from this tree.
+export TACHIKO_FIELD_EXPLANATION_CAPTURE="${check_dir}/field-explanation-capture.json"
+cargo test \
+  --manifest-path "${repo_root}/packages/browser-client/runtime/Cargo.toml" \
+  --locked --test field_explanation_acceptance
+
 pnpm --dir "${repo_root}/packages/browser-client" exec playwright test \
   --config playwright.config.ts \
   --output "${check_dir}/playwright-results"

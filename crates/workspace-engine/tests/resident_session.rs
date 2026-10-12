@@ -22,6 +22,48 @@ use tachiko_workspace_engine::{
 
 const NOW: TrustedInstant = TrustedInstant::new(10);
 
+#[test]
+fn borrowed_dependency_facts_are_direct_deduplicated_and_available_on_failure() {
+    for failed in [false, true] {
+        let mut document = game_balance_document("game", "Game");
+        let damage = FieldRef::new("iron_sword", "damage");
+        let interval = FieldRef::new("iron_sword", "attack_interval");
+        let dps = FieldRef::new("iron_sword", "dps");
+        let fields = &mut document.entities.get_mut("iron_sword").unwrap().fields;
+        fields.insert(
+            damage.field.clone(),
+            Value::Formula(Expression::Reference(interval.clone())),
+        );
+        let repeated = Expression::Add {
+            left: Box::new(Expression::Reference(damage.clone())),
+            right: Box::new(Expression::Reference(damage.clone())),
+        };
+        fields.insert(
+            dps.field.clone(),
+            Value::Formula(if failed {
+                Expression::Divide {
+                    left: Box::new(repeated),
+                    right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+                }
+            } else {
+                repeated
+            }),
+        );
+        let session = ResidentWorkspaceSession::new(document_scope_id(), document);
+        let before = session.export_snapshot();
+        let work = session.runtime_measurements();
+        for _ in 0..3 {
+            let edges = session.direct_field_dependencies();
+            assert_eq!(edges[&damage].iter().collect::<Vec<_>>(), vec![&interval]);
+            assert_eq!(edges[&dps].iter().collect::<Vec<_>>(), vec![&damage]);
+            assert!(!edges.contains_key(&interval));
+        }
+        assert_eq!(session.validation_report().value().is_valid(), !failed);
+        assert_eq!(session.runtime_measurements(), work);
+        assert_eq!(session.export_snapshot(), before);
+    }
+}
+
 fn principal() -> PrincipalId {
     PrincipalId::from("human-editor")
 }

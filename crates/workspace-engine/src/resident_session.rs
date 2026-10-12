@@ -57,6 +57,16 @@ impl ResidentWorkspaceSession {
         &self.revision
     }
 
+    /// Borrow the current core direct-dependency facts in stable-ID order.
+    ///
+    /// Entries describe formulas, including failed calculations. Hosts must
+    /// resolve query targets and enforce disclosure before projecting these
+    /// trusted facts, just as for the other resident queries.
+    #[must_use]
+    pub fn direct_field_dependencies(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        self.retained.calculation_state.dependencies()
+    }
+
     /// Run the existing authoritative validation query against this revision.
     #[must_use]
     pub fn validation_report(&self) -> ResidentQueryResult<ValidationReport> {

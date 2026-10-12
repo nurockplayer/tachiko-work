@@ -31,7 +31,7 @@ not install a diff or merge driver.
 
 ## Accepted representation and implementation split
 
-ADR-0003 is Accepted and defines `project.roproj/` as the canonical editable/source representation for the mature Git-native workflow, with `.ro` as a portable artifact. ADR-0023 fixes the `.roproj/v1` canonical tree and entity-sharding contract. [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](../specs/portable-package-v1.md) fix first-public portable-package v1 as a deterministic envelope over exact canonical `.roproj/v3` bytes; replacement implementation remains pending under #488.
+ADR-0003 is Accepted and defines `project.roproj/` as the canonical editable/source representation for the mature Git-native workflow, with `.ro` as a portable artifact. ADR-0023 fixes the `.roproj/v1` canonical tree and entity-sharding contract. [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](../specs/portable-package-v1.md) fix first-public portable-package v1 as a deterministic envelope over exact canonical `.roproj/v3` bytes; replacement implementation remains pending under #488/#519.
 
 The production `.roproj/v1` pure codec and native host workflow are implemented
 by #123, not merely selected as representation direction. Issue #3 implements
