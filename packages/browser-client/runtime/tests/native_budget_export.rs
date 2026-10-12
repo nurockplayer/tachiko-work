@@ -120,7 +120,10 @@ fn native_budget_exports_disclose_saved_summary_once_without_changing_bytes_or_o
     let DesignerResponse::KeyedGroupedSumPublished(published) = response else {
         panic!("expected a saved keyed grouped-sum definition");
     };
-    assert!(published.result.diagnostics.is_empty());
+    assert_eq!(
+        published.result.diagnostics,
+        [] as [tachiko_designer_runtime::KeyedGroupedSumDiagnosticProjection; 0]
+    );
     let revision = runtime.observe_occurrence().revision;
     for _ in 0..2 {
         let mut csv = runtime
