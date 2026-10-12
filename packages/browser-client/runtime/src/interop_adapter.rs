@@ -14,6 +14,7 @@ pub const MAX_DATA_ROWS: usize = 64;
 pub const MAX_NATIVE_TRACKER_DATA_ROWS: usize = 128;
 pub const MAX_FORMULAS: usize = 32;
 pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
+pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 25_218;
 pub(crate) const MAX_TEXT_CAPACITY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_TEXT_CAPACITY_HEADER_BYTES: usize = 39;
 
@@ -51,17 +52,34 @@ pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
 
 fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
     sheet.has_header
-        && sheet.columns.len() == 3
+        && !sheet.columns.is_empty()
+        && sheet.columns.len() <= MAX_COLUMNS
         && sheet.rows.len() <= MAX_TEXT_CAPACITY_ROWS
+        && sheet.rows.len().saturating_mul(sheet.columns.len()) <= MAX_TEXT_CAPACITY_CELLS
         && sheet.columns.iter().all(|column| column.width.is_none())
         && sheet.rows.iter().all(|row| {
-            row.len() == 3
+            row.len() == sheet.columns.len()
                 && row.iter().all(|cell| {
                     cell.formula.is_none()
-                        && matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. })
+                        && matches!(
+                            cell.value,
+                            SourceValue::Empty
+                                | SourceValue::Text { .. }
+                                | SourceValue::Number { .. }
+                        )
                         && cell.style == CellStyle::default()
                 })
         })
+}
+
+pub(crate) fn capacity_header_limit(columns: usize) -> usize {
+    MAX_TEXT_CAPACITY_HEADER_BYTES.max(13 * columns)
+}
+
+pub(crate) fn capacity_auxiliary_xml_reserve(columns: usize) -> usize {
+    capacity_header_limit(columns)
+        .saturating_mul(6)
+        .saturating_add(31 * 6)
 }
 
 pub(crate) fn output_profile(workbook: &SourceWorkbook) -> OutputProfile {
@@ -93,7 +111,8 @@ pub(crate) fn capacity_header_bytes(sheet: &SourceSheet) -> usize {
         .iter()
         .map(|column| csv_text_bytes(&column.name))
         .sum::<usize>()
-        + 4
+        + sheet.columns.len()
+        + 1
 }
 
 /// Prove both encodings before admitting this both-formats resource profile.
@@ -101,37 +120,52 @@ pub(crate) fn capacity_header_bytes(sheet: &SourceSheet) -> usize {
 pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     if !text_capacity_shape(workbook) {
         return fail(
-            "Text capacity requires one headered, default-style 8,406-row three-Text table",
+            "Text capacity requires one headered, default-style Text/Number table within 8,406 rows, 16 columns, and 25,218 cells",
         );
     }
     let sheet = &workbook.sheets[0];
     if st_xstring(&sheet.name) || sheet.columns.iter().any(|column| st_xstring(&column.name)) {
         return fail("Text capacity refuses SpreadsheetML escape patterns");
     }
-    if capacity_header_bytes(sheet) > MAX_TEXT_CAPACITY_HEADER_BYTES {
-        return fail("Text capacity CSV header exceeds 39 encoded bytes");
+    let header_limit = capacity_header_limit(sheet.columns.len());
+    if capacity_header_bytes(sheet) > header_limit {
+        return fail("Text capacity CSV header exceeds its reserved encoded bytes");
     }
     let mut text_bytes = 0usize;
-    let mut csv_bytes = MAX_TEXT_CAPACITY_HEADER_BYTES;
+    let mut csv_bytes = header_limit;
     for row in &sheet.rows {
-        csv_bytes += 4; // Two delimiters and CRLF.
+        csv_bytes += sheet.columns.len() + 1; // Delimiters and CRLF.
         for cell in row {
-            let value = match &cell.value {
-                SourceValue::Text { value } => value.as_str(),
-                SourceValue::Empty => "",
-                _ => return fail("Text capacity contains a non-Text value"),
+            let (value, is_text) = match &cell.value {
+                SourceValue::Text { value } => (value.as_str(), true),
+                SourceValue::Empty => ("", true),
+                SourceValue::Number { value } if value.is_finite() => ("", false),
+                SourceValue::Number { .. } => {
+                    return fail("Text capacity refuses nonfinite Number");
+                }
+                SourceValue::Boolean { .. } | SourceValue::Date { .. } => {
+                    return fail("Text capacity contains a value outside Text/Number");
+                }
             };
-            if value.len() > 4096 {
-                return fail("Text capacity value exceeds 4096 UTF-8 bytes");
+            if is_text {
+                if value.len() > 4096 {
+                    return fail("Text capacity value exceeds 4096 UTF-8 bytes");
+                }
+                if st_xstring(value) {
+                    return fail("Text capacity refuses SpreadsheetML escape patterns");
+                }
+                if csv_formula_text(value) || !xml_text_valid(value) {
+                    return fail("Text capacity requires safe CSV Text and valid XML characters");
+                }
+                text_bytes += value.len();
+                csv_bytes += csv_text_bytes(value);
+            } else if let SourceValue::Number { value } = &cell.value {
+                let canonical = value.to_string();
+                if !xml_text_valid(&canonical) {
+                    return fail("Text capacity Number is invalid XML text");
+                }
+                csv_bytes += csv_text_bytes(&canonical);
             }
-            if st_xstring(value) {
-                return fail("Text capacity refuses SpreadsheetML escape patterns");
-            }
-            if csv_formula_text(value) || !xml_text_valid(value) {
-                return fail("Text capacity requires safe CSV Text and valid XML characters");
-            }
-            text_bytes += value.len();
-            csv_bytes += csv_text_bytes(value);
         }
     }
     if text_bytes > MAX_TEXT_CAPACITY_BYTES {
@@ -145,9 +179,9 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     if expanded.0 > MAX_EXPANDED_BYTES {
         return fail("Text capacity expanded XLSX exceeds 8 MiB");
     }
-    // Worksheet nodes: row + (c,is,t) for every populated Text cell. Empty
-    // cells need fewer nodes. Other parts are independent XML documents.
-    if 2 + (sheet.rows.len() + 1) * 10 > 100_000 {
+    // Worksheet nodes: row + (c,is,t) for populated Text cells. Empty and
+    // Number cells use fewer nodes. Other parts are independent XML documents.
+    if 2 + (sheet.rows.len() + 1) * (1 + 3 * sheet.columns.len()) > 100_000 {
         return fail("Text capacity XML exceeds 100000 nodes");
     }
     for column in &sheet.columns {
@@ -157,6 +191,62 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     }
     // Prove the compressed source bound with the actual deterministic writer.
     // This runs at import/export, not on each scalar edit.
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn validate_text_capacity_inspection(workbook: &SourceWorkbook) -> Result<()> {
+    if !text_capacity_shape(workbook) {
+        return fail("Source exceeds the bounded Text/Number capacity rectangle");
+    }
+    let sheet = &workbook.sheets[0];
+    let legacy_small_text = sheet.columns.len() == 3
+        && sheet
+            .rows
+            .iter()
+            .flatten()
+            .all(|cell| matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. }));
+    if sheet.rows.len() <= MAX_DATA_ROWS {
+        if !legacy_small_text {
+            return fail("Only large or legacy Text sources use the private capacity inspection");
+        }
+        // Small sources must qualify as original safe legacy Text, without
+        // prospective Number conversion granting them an enlarged reply.
+        validate_text_capacity(workbook)?;
+    }
+    validate_capacity_source_inspection(workbook)
+}
+
+fn validate_capacity_source_inspection(workbook: &SourceWorkbook) -> Result<()> {
+    if !text_capacity_shape(workbook) {
+        return fail("Source exceeds the bounded Text/Number capacity rectangle");
+    }
+    let mut prospective = workbook.clone();
+    for column in 0..prospective.sheets[0].columns.len() {
+        let needs_number = prospective.sheets[0].rows.iter().any(|row| {
+            matches!(&row[column].value, SourceValue::Text { value } if value.len() > 4096 || st_xstring(value) || csv_formula_text(value) || !xml_text_valid(value))
+        });
+        if !needs_number {
+            continue;
+        }
+        for row in &mut prospective.sheets[0].rows {
+            if let SourceValue::Text { value } = &row[column].value {
+                let Some(number) = value
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(|value| tachiko_workspace_engine::Number::new(value).ok())
+                else {
+                    return fail("Unsafe Text column is not entirely finite decimal Numbers");
+                };
+                row[column].value = SourceValue::Number {
+                    value: number.get(),
+                };
+            }
+        }
+    }
+    validate_text_capacity(&prospective)?;
+    export_csv_for_profile(&prospective.sheets[0], OutputProfile::TextCapacity)?;
+    export_xlsx_for_profile(&prospective, OutputProfile::TextCapacity)?;
     Ok(())
 }
 
@@ -200,11 +290,11 @@ fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
         "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\">"
     )
     .expect("capacity XML sinks are infallible");
-    for column in 0..3 {
+    for (column, _) in sheet.columns.iter().enumerate() {
         write!(
             output,
             "<c r=\"{}1\" s=\"0\" t=\"s\"><v>{column}</v></c>",
-            ["A", "B", "C"][column]
+            column_name(column)
         )
         .expect("capacity XML sinks are infallible");
     }
@@ -212,17 +302,25 @@ fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
     for (index, row) in sheet.rows.iter().enumerate() {
         let number = index + 2;
         write!(output, "<row r=\"{number}\">").expect("capacity XML sinks are infallible");
-        for (column, cell) in row.iter().enumerate() {
-            let column = ["A", "B", "C"][column];
-            if let SourceValue::Text { value } = &cell.value {
-                write!(output,
-                    "<c r=\"{column}{number}\" s=\"0\" t=\"inlineStr\"><is><t xml:space=\"preserve\">"
-                ).expect("capacity XML sinks are infallible");
-                output.text(value);
-                write!(output, "</t></is></c>").expect("capacity XML sinks are infallible");
-            } else {
-                write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
-                    .expect("capacity XML sinks are infallible");
+        for (index, cell) in row.iter().enumerate() {
+            let column = column_name(index);
+            match &cell.value {
+                SourceValue::Text { value } => {
+                    write!(output,
+                        "<c r=\"{column}{number}\" s=\"0\" t=\"inlineStr\"><is><t xml:space=\"preserve\">"
+                    ).expect("capacity XML sinks are infallible");
+                    output.text(value);
+                    write!(output, "</t></is></c>").expect("capacity XML sinks are infallible");
+                }
+                SourceValue::Number { value } => write!(
+                    output,
+                    "<c r=\"{column}{number}\" s=\"0\" t=\"n\"><v>{value}</v></c>"
+                )
+                .expect("capacity XML sinks are infallible"),
+                SourceValue::Empty | SourceValue::Boolean { .. } | SourceValue::Date { .. } => {
+                    write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
+                        .expect("capacity XML sinks are infallible");
+                }
             }
         }
         write!(output, "</row>").expect("capacity XML sinks are infallible");
@@ -485,7 +583,13 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         ],
     };
     if workbook.sheets[0].rows.len() > MAX_DATA_ROWS {
-        validate_text_capacity(&workbook)?;
+        if !text_capacity_shape(&workbook) {
+            return fail("CSV exceeds the bounded Text/Number capacity rectangle");
+        }
+        // Validate an isolated typed feasibility copy, retaining the lexical
+        // source values for explicit user selection.
+        validate_capacity_source_inspection(&workbook)?;
+        return Ok(workbook);
     }
     Ok(finish_source_admission(workbook))
 }
@@ -1319,7 +1423,10 @@ fn capacity_plain_values(node: &Xml) -> bool {
                 && match node.attr("t") {
                     Some("inlineStr") => node.children.len() == 1 && node.children[0].name == "is",
                     Some("str" | "s") => node.children.len() == 1 && node.children[0].name == "v",
-                    None | Some("n") => node.children.is_empty(),
+                    None | Some("n") => {
+                        node.children.is_empty()
+                            || (node.children.len() == 1 && node.children[0].name == "v")
+                    }
                     _ => false,
                 }
         }
@@ -1711,6 +1818,8 @@ fn c_unknown(node: &Xml) -> bool {
                 .iter()
                 .any(|name| node.kids(name).count() > 1)
                 || (node.child("v").is_some() && node.child("is").is_some())
+                || (node.child("is").is_some() && node.attr("t") != Some("inlineStr"))
+                || (node.child("v").is_some() && node.attr("t") == Some("inlineStr"))
             {
                 return true;
             }
@@ -2251,7 +2360,13 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         .iter()
         .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS)
     {
-        validate_text_capacity(&workbook)?;
+        if !text_capacity_shape(&workbook) {
+            return fail("XLSX exceeds the bounded Text/Number capacity rectangle");
+        }
+        // Validate isolated Number-feasibility hypotheses without changing
+        // the typed values the user sees and explicitly selects.
+        validate_capacity_source_inspection(&workbook)?;
+        return Ok(workbook);
     }
     Ok(finish_source_admission(workbook))
 }
@@ -2560,12 +2675,26 @@ fn output_style(cell: &SourceCell) -> CellStyle {
 pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
     export_xlsx_for_profile(
         workbook,
-        if validate_text_capacity(workbook).is_ok() {
+        if use_text_capacity_writer(workbook) {
             OutputProfile::TextCapacity
         } else {
             OutputProfile::Shared
         },
     )
+}
+
+fn use_text_capacity_writer(workbook: &SourceWorkbook) -> bool {
+    if validate_text_capacity(workbook).is_err() {
+        return false;
+    }
+    let sheet = &workbook.sheets[0];
+    sheet.rows.len() > MAX_DATA_ROWS
+        || (sheet.columns.len() == 3
+            && sheet
+                .rows
+                .iter()
+                .flatten()
+                .all(|cell| matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. })))
 }
 
 /// Emit typed worksheets using the selected bounded output profile.
@@ -2639,7 +2768,11 @@ pub(crate) fn export_xlsx_for_profile(
         }
         parts.insert(
             "xl/sharedStrings.xml".into(),
-            format!("<sst xmlns=\"{MAIN}\" count=\"3\" uniqueCount=\"3\">{headers}</sst>"),
+            format!(
+                "<sst xmlns=\"{MAIN}\" count=\"{}\" uniqueCount=\"{}\">{headers}</sst>",
+                workbook.sheets[0].columns.len(),
+                workbook.sheets[0].columns.len()
+            ),
         );
     }
     let mut sheet_list = String::new();
@@ -2799,11 +2932,142 @@ pub(crate) fn export_xlsx_for_profile(
 }
 
 #[cfg(test)]
+mod scalar_carrier_tests {
+    use super::{CellStyle, MAIN, Xml, c_unknown, cell_value, ignorable_formula_cache, parse_xml};
+
+    fn cell(kind: &str, carrier: &str, formula: &str) -> Xml {
+        let xml = format!("<c xmlns=\"{MAIN}\"{kind}>{formula}{carrier}</c>");
+        parse_xml(xml.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn mismatched_carriers_cannot_reach_defaults_or_formula_cache_recovery() {
+        for (kind, carrier) in [
+            ("", "<is><t>value</t></is>"),
+            (" t=\"n\"", "<is><t>value</t></is>"),
+            (" t=\"str\"", "<is><t>value</t></is>"),
+            (" t=\"b\"", "<is><t>1</t></is>"),
+            (" t=\"s\"", "<is><t>0</t></is>"),
+            (" t=\"e\"", "<is><t>#VALUE!</t></is>"),
+            (" t=\"d\"", "<is><t>2026-10-10</t></is>"),
+            (" t=\"inlineStr\"", "<v>123</v>"),
+        ] {
+            for formula in ["", "<f>1+2</f>"] {
+                let cell = cell(kind, carrier, formula);
+                assert!(c_unknown(&cell), "{kind} {carrier} {formula}");
+                assert!(cell_value(&cell, &[], &CellStyle::default(), false).is_err());
+                assert!(!ignorable_formula_cache(&cell, &CellStyle::default()));
+            }
+        }
+    }
+
+    #[test]
+    fn compatible_and_absent_carriers_keep_formula_cache_eligibility() {
+        for (kind, carrier) in [
+            ("", ""),
+            (" t=\"n\"", "<v/>"),
+            (" t=\"n\"", "<v>3</v>"),
+            (" t=\"inlineStr\"", ""),
+            (" t=\"inlineStr\"", "<is><t>3</t></is>"),
+            (" t=\"e\"", "<v>#VALUE!</v>"),
+            (" t=\"str\"", "<v>cache</v>"),
+        ] {
+            let cell = cell(kind, carrier, "<f>1+2</f>");
+            assert!(!c_unknown(&cell), "{kind} {carrier}");
+            assert!(ignorable_formula_cache(&cell, &CellStyle::default()));
+        }
+    }
+}
+
+#[cfg(test)]
 mod capacity_proof_tests {
+    use std::fmt::Write;
+
     use super::{
-        CapacityXmlCount, ImportOptions, SourceValue, capacity_worksheet, export_xlsx, import_csv,
-        import_xlsx, plain_tag, st_xstring,
+        CapacityXmlCount, ImportOptions, SourceColumn, SourceValue, capacity_auxiliary_xml_reserve,
+        capacity_header_bytes, capacity_header_limit, capacity_worksheet, export_xlsx, import_csv,
+        import_xlsx, plain_tag, st_xstring, validate_text_capacity,
     };
+
+    #[test]
+    fn raw_csv_inspection_defers_capacity_output_until_explicit_number_selection() {
+        use crate::{ImportFieldType, ImportSelection, StoredValueProjection, import_workbook};
+
+        assert_eq!(capacity_header_limit(2), 39);
+        assert_eq!(capacity_header_limit(16), 208);
+        assert_eq!(capacity_auxiliary_xml_reserve(16), 1_434);
+        let wide_headers = super::SourceSheet {
+            name: "Capacity".into(),
+            has_header: true,
+            columns: (0..16)
+                .map(|index| SourceColumn {
+                    name: format!("h{index}"),
+                    width: None,
+                })
+                .collect(),
+            rows: Vec::new(),
+        };
+        assert_eq!(capacity_header_bytes(&wide_headers), 55);
+        let mut csv = String::from("label,amount\n");
+        for row in 0..65 {
+            writeln!(csv, "row{row},{}", if row == 0 { "-13.25" } else { "42.5" }).unwrap();
+        }
+        let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
+        assert!(super::text_capacity_shape(&source));
+        assert_eq!(
+            source.sheets[0].rows[0][1].value,
+            SourceValue::Text {
+                value: "-13.25".into()
+            }
+        );
+        assert!(validate_text_capacity(&source).is_err());
+
+        let selection = ImportSelection {
+            column_types: vec![vec![ImportFieldType::Text, ImportFieldType::Number]],
+            extra_columns: vec![Vec::new()],
+        };
+        let (runtime, imported) =
+            import_workbook(&source, &selection, "00000000-0000-4000-8000-000000000507").unwrap();
+        assert_eq!(imported.opened.table.columns[1].field_type, "number");
+        assert_eq!(
+            imported.opened.table.rows[0].fields[1].stored,
+            Some(StoredValueProjection::Number { value: -13.25 })
+        );
+        let workbook = runtime
+            .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
+            .unwrap();
+        let reopened = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+        assert_eq!(
+            reopened.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: -13.25 }
+        );
+
+        let text_selection = ImportSelection {
+            column_types: vec![vec![ImportFieldType::Text; 2]],
+            extra_columns: vec![Vec::new()],
+        };
+        assert!(
+            import_workbook(
+                &source,
+                &text_selection,
+                "00000000-0000-4000-8000-000000000508"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn unsafe_capacity_text_requires_a_finite_number_for_the_whole_column() {
+        for invalid in ["-1+2", "inf", "not-a-number"] {
+            let mut csv = String::from("label,amount\nrow0,-1\n");
+            writeln!(csv, "row1,{invalid}\nrow2,2").unwrap();
+            for _ in 0..62 {
+                writeln!(csv, "row,2").unwrap();
+            }
+            assert!(import_csv(csv.as_bytes(), &ImportOptions::default()).is_err());
+        }
+    }
+
     #[test]
     fn raw_token_grammar_and_shared_writer_count_agree() {
         for (raw, expected) in [

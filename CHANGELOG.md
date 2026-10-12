@@ -6,9 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
-- The experimental browser producer admits a bounded 8,406-row, three-Text
-  table through import, scalar edits and history, project save/reopen and both
-  CSV/XLSX exports. Complete projections and metadata use private finite
+- The experimental browser producer admits one bounded table with 1–16 Text
+  or finite Number fields, at most 8,406 rows and 25,218 logical cells through
+  import, scalar edits/history, project save/reopen and both CSV/XLSX exports.
+  Ordinary admission stays first; legacy three-Text eligibility is preserved,
+  and new shapes need more than 64 rows for enlarged retry. Complete projections
+  and metadata use private finite
   budgets; generic tables, formulas and hostile-file defenses retain their
   existing limits. See the producer's capacity contract for the exact profile.
 
@@ -16,11 +19,11 @@ All notable changes to Tachiko Work are documented in this file.
   `open_imported_project` and optional Worker `openImportedProject` routes.
   Actual open independently revalidates mappings, XLSX/CSV closure and the
   complete reply before replacement; inspection does not authorize open and
-  there is no ordinary-open fallback. Eligible non-v3 Text candidates may use
+  there is no ordinary-open fallback. Eligible non-v3 Text/Number candidates may use
   the capacity profile, while v3 retains strict ordinary admission and origin
   behavior. Enlarged Text-capacity Deduplicate removals refuse before
-  publication. Producer qualification remains pending; no immutable kit or
-  consumer pin is qualified by this entry.
+  publication. Exact exported-kit producer qualification and Sheet consumer
+  pin/save/restart qualification remain separate gates.
 
 - The experimental browser client can explicitly export opaque `.roproj/v3`
   projects with Date and saved grouped-sum definitions together, then reopen
@@ -123,6 +126,15 @@ All notable changes to Tachiko Work are documented in this file.
   this does not establish full Excel compatibility or a portable project format.
 
 ### Fixed
+
+- Small spreadsheet inspection keeps the ordinary reply limit unless the original
+  source qualifies as safe legacy three-Text capacity. Prospective Number
+  feasibility no longer grants oversized previews to small unsafe-Text sources.
+
+- XLSX import rejects scalar type/value-carrier mismatches before empty-value
+  defaults or formula-cache recovery can discard their contents. Valid inline
+  strings, numeric values, legitimate numeric blanks and supported formula caches
+  keep their existing behavior.
 
 - Formula authoring in one open Designer occurrence is now a bounded reversible
   semantic action: Undo restores the exact prior Number or formula, and Redo

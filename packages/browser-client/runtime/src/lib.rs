@@ -789,14 +789,13 @@ impl DesignerRuntime {
     /// occurrence is replaced.
     pub fn from_document(document: Document, occurrence_id: &str) -> Result<Self, DesignerError> {
         // Prefer the existing profile whenever it completely admits the input.
-        // Only an actual three-Text document can retry with the private budget.
-        if is_text_capacity_document(&document) {
-            if document.entities.len() <= MAX_TABLE_ROWS {
-                if let Ok(runtime) =
-                    Self::from_document_profile(document.clone(), occurrence_id, false)
-                {
-                    return Ok(runtime);
-                }
+        // Preserve the legacy three-Text candidate, while the new rectangle
+        // requires more than the ordinary row cap. Try the ordinary profile
+        // first in both cases.
+        if is_text_capacity_eligible_document(&document) {
+            if let Ok(runtime) = Self::from_document_profile(document.clone(), occurrence_id, false)
+            {
+                return Ok(runtime);
             }
             return Self::from_document_profile(document, occurrence_id, true);
         }
@@ -3396,7 +3395,7 @@ pub(crate) fn admit_imported_project(
             Ok((candidate, opened))
         }
         Err(error)
-            if is_text_capacity_document(&document)
+            if is_text_capacity_eligible_document(&document)
                 && !matches!(&error, DesignerError::InvalidOccurrenceIdentity) =>
         {
             // Metadata and capacity provenance are terminal gates. Only after
@@ -4307,7 +4306,9 @@ fn select_default_collection(
 fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
     match ensure_document_profile(document, false) {
         Ok(()) => Ok(()),
-        Err(_) if is_text_capacity_document(document) => ensure_document_profile(document, true),
+        Err(_) if is_text_capacity_eligible_document(document) => {
+            ensure_document_profile(document, true)
+        }
         Err(error) => Err(error),
     }
 }
@@ -4316,19 +4317,41 @@ fn is_text_capacity_document(document: &Document) -> bool {
     let Some(schema) = document.schemas.values().next() else {
         return false;
     };
+    let columns = schema.fields.len();
     document.schemas.len() == 1
-        && schema.fields.len() == 3
+        && (1..=interop_adapter::MAX_COLUMNS).contains(&columns)
+        && document.entities.len() <= interop_adapter::MAX_TEXT_CAPACITY_ROWS
+        && document.entities.len().saturating_mul(columns)
+            <= interop_adapter::MAX_TEXT_CAPACITY_CELLS
         && document.keyed_grouped_sum_definitions.is_empty()
         && schema.fields.values().all(|field| {
-            field.field_type == FieldType::Text
+            matches!(field.field_type, FieldType::Text | FieldType::Number)
                 && field.constraint == tachiko_workspace_engine::FieldConstraint::None
         })
         && document.entities.values().all(|entity| {
             entity.schema == schema.id
                 && entity.fields.iter().all(|(id, value)| {
-                    schema.fields.contains_key(id) && matches!(value, Value::Text(_))
+                    schema.fields.get(id).is_some_and(|field| {
+                        matches!(
+                            (&field.field_type, value),
+                            (FieldType::Text, Value::Text(_))
+                                | (FieldType::Number, Value::Number(_))
+                        )
+                    })
                 })
         })
+}
+
+fn is_text_capacity_eligible_document(document: &Document) -> bool {
+    is_text_capacity_document(document)
+        && (document.entities.len() > interop_adapter::MAX_DATA_ROWS
+            || document.schemas.values().next().is_some_and(|schema| {
+                schema.fields.len() == 3
+                    && schema
+                        .fields
+                        .values()
+                        .all(|field| field.field_type == FieldType::Text)
+            }))
 }
 
 fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWorkbook {
@@ -4342,10 +4365,13 @@ fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWor
         sheets: vec![SourceSheet {
             name: "Capacity".into(),
             has_header: true,
-            columns: ["a", "b", "c"]
-                .into_iter()
-                .map(|name| SourceColumn {
-                    name: name.into(),
+            columns: schema
+                .fields
+                .values()
+                .enumerate()
+                .map(|(index, _)| SourceColumn {
+                    name: char::from(b'a' + u8::try_from(index).expect("bounded capacity column"))
+                        .to_string(),
                     width: None,
                 })
                 .collect(),
@@ -4361,7 +4387,13 @@ fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWor
                                 Some(Value::Text(value)) => SourceValue::Text {
                                     value: value.clone(),
                                 },
-                                _ => SourceValue::Empty,
+                                Some(Value::Number(value)) => {
+                                    SourceValue::Number { value: value.get() }
+                                }
+                                None => SourceValue::Empty,
+                                Some(_) => {
+                                    unreachable!("capacity shape contains only Text and Number")
+                                }
                             },
                             ..SourceCell::default()
                         })
@@ -4380,23 +4412,32 @@ fn ensure_capacity_document_encoding(document: &Document) -> Result<(), Designer
         interop_adapter::OutputProfile::TextCapacity,
     )
     .map_err(|error| tracker_error(&error.0))?;
-    // Canonical row/column ID order fixes the compressed worksheet bytes.
-    // Variable headers and worksheet name occupy separate STORED members.
-    // Their complete permitted XML and ZIP framing fit the 16 KiB reserve.
-    if encoded.len().saturating_add(16 * 1024) > interop_adapter::MAX_SOURCE_BYTES {
+    let columns = document
+        .schemas
+        .values()
+        .next()
+        .expect("capacity candidate has a schema")
+        .fields
+        .len();
+    // The writer stores workbook.xml and sharedStrings.xml uncompressed. Row
+    // data and ZIP framing are identical for the real metadata export; reserve
+    // six bytes per permitted header byte (XML escaping) plus six per each of
+    // the 31 allowed worksheet-name characters for their variable contents.
+    let auxiliary_reserve = interop_adapter::capacity_auxiliary_xml_reserve(columns);
+    if encoded.len().saturating_add(auxiliary_reserve) > interop_adapter::MAX_SOURCE_BYTES {
         return Err(tracker_error(
-            "Text capacity compressed XLSX plus metadata reserve exceeds 2 MiB",
+            "Text capacity XLSX with maximum permitted headers and sheet name exceeds 2 MiB",
         ));
     }
     Ok(())
 }
 
 fn ensure_capacity_document_identities(document: &Document) -> Result<(), DesignerError> {
-    if !is_text_capacity_document(document)
+    if !is_text_capacity_eligible_document(document)
         || document.entities.len() > interop_adapter::MAX_TEXT_CAPACITY_ROWS
     {
         return Err(tracker_error(
-            "Text capacity requires at most 8,406 rows in one three-Text schema",
+            "Text capacity requires a bounded Text/Number rectangle within 8,406 rows, 16 columns, and 25,218 cells",
         ));
     }
     let mut total = 0usize;
@@ -5509,6 +5550,20 @@ mod tests {
             refused,
             "generic projection growth must refuse before publication"
         );
+    }
+
+    #[test]
+    fn legacy_small_three_text_document_remains_eligible_and_ordinary_first() {
+        let base = native_column_runtime(
+            &[("a", "text"), ("b", "text"), ("c", "text")],
+            &["x", "x", "x"],
+        );
+        let document = base.session.export_snapshot().into_document();
+        assert!(super::is_text_capacity_eligible_document(&document));
+        let runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        assert!(!runtime.text_capacity);
     }
 
     #[test]

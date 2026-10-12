@@ -1,3 +1,119 @@
+<!-- work505-bounded-profile-amendment:20261011 -->
+# Work #505: bounded rectangular Text and Number profile
+
+Decision source: [Work #505](https://github.com/nurockplayer/tachiko-work/issues/505),
+with Sol disposition after focused Astra consultation. This amendment becomes
+Accepted when its authority PR merges. It authorizes acceptance preparation for
+a separate implementation child; it does not claim implementation, qualification,
+a new Sheet kit pin, or deployment. The Work #495 material below remains the
+original three-Text acceptance record where this amendment does not supersede it.
+
+## Supported extension and preserved contracts
+
+One headered, rectangular worksheet/table may contain 1–16 columns and at most
+8,406 data rows, with **rows × columns at most 25,218 logical cells**. Missing
+values count toward that product. Fields use existing Text or Number semantics
+and the existing missing-value representation. Number values must be finite and
+type-valid; Number parsing, canonical representation and inference do not change.
+Keep plain/default styles, no column widths, complete ordered metadata, and the
+existing refusal of lossy or safe-disabled capacity source findings.
+
+Formulas, references, Date, Boolean, constraints, saved calculation definitions
+and capacity Dedup remain outside this extension. Existing ordinary and native
+Tracker behavior is preserved. No persisted flag, format version, public API,
+discriminator, storage contract or migration is introduced. If implementation
+requires one, return that seam for an explicit durable decision before mutation.
+
+Import and type confirmation, scalar edit, history, save, complete process
+termination, fresh reopen, and CSV/XLSX export must land as one complete profile.
+Every cell, stable identity, type and source order must survive. CSV verification
+compares canonical textual values; typed XLSX and saved-project verification also
+compare field types. CSV itself is not a typed storage carrier. Formula-leading
+Text still refuses; legitimate negative Numbers do not become unsafe Text.
+
+## Capacity eligibility is separate from structural validity
+
+Keep ordinary admission first. An ordinary failure may retry with the enlarged
+capacity budget only for the existing eligible three-Text shape, or for a valid
+new Text/Number shape with **more than 64 data rows**. V3 remains excluded from
+enlarged retry. The previous resident's eligibility cannot authorize a new
+candidate or replacement.
+
+Small legacy three-Text capacity continues to work. Small new wide-Text or mixed
+documents keep ordinary limits; in particular the existing Number/Text/Text
+complete saved-open reply boundary remains 65,536 accepted / 65,537 refused.
+Header-only metadata validation checks structure and encoding without requiring
+more than 64 rows; it cannot itself authorize the enlarged response budget.
+
+Validate the complete resulting candidate before publication, including history
+replay. Imported row operations keep their existing restrictions. If an otherwise
+editable native capacity candidate changes from 65 to 64 rows and is not eligible
+under the legacy three-Text rule, refuse atomically. This slice does not add an
+automatic demotion that assumes ordinary complete-wire closure from row count.
+
+## Finite budgets and encoded closure
+
+All existing byte, identity, metadata, projection, transfer, ZIP, XML-depth and
+ordinary request defenses below remain. In particular: Text value 4,096 UTF-8
+bytes; aggregate stored Text 1 MiB; source/encoded CSV 2 MiB; expanded XLSX 8 MiB;
+ZIP 256 entries; XML 100,000 nodes/depth 64. Ceilings compose; none promises that
+every Cartesian combination fits. Refusal precedes resident installation or
+publication, and leaves revisions, both histories and saved/exported bytes intact.
+
+For `c` columns reserve **H(c) = max(39, 13 × c)** bytes for the complete encoded
+CSV header. Require actual escaped headers, separators and CRLF to fit H(c), and
+actual encoded data body plus H(c) to fit 2 MiB. Derive the same reserve after
+metadata-free reopen. This preserves the existing three-column 39-byte boundary
+and its near-limit projects. Count each row's actual separators/CRLF and the
+existing canonical Number output. Do not reuse a three-column `+4` calculation.
+
+The worksheet XML-node upper bound is
+`2 + (rows + 1) × (1 + 3 × columns)`, subject to the unchanged 100,000 ceiling.
+Independently check the actual escaped worksheet, all auxiliary members, ZIP
+framing, expanded size, compressed source size and fresh-reader limits. The old
+three-header 16 KiB auxiliary allowance alone is not evidence for the new shape.
+Existing unsafe Text, invalid XML and conservative OOXML escape refusals remain.
+
+## Required acceptance before the implementation child is Ready
+
+- Freeze the executable seed and case map on exact main, with actual native and
+  raw-WASM baseline refusal for synthetic `320 × 2` Text/Number confirmation.
+  Controls must reach the boundary using valid sources and existing ordinary
+  imports; a setup or compilation failure is not behavioral RED.
+- Qualify that case and a wide mixed case through native and actual browser/module
+  Worker lifecycle: independent all-cell manifests, typed edits, Undo/Redo,
+  both existing save APIs, process termination/fresh reopen, and both exports.
+- Preserve the original `8,406 × 3` Text journey and exact 39-byte header / near-
+  2 MiB closure controls. Cover zero, negative, fraction and exponent Numbers,
+  missing values, leading-zero Text, UTF-8, quotes, LF and embedded CRLF.
+- Cover 16/17 columns, 8,406/8,407 rows and the cell-product boundary, including
+  `1,576 × 16` accepted and `1,577 × 16` refused. Cover selected encoded-byte
+  limit/+1 and publication refusals with full resident/history/export preservation.
+- Retain ordinary Number/Text/Text complete-wire 65,536/65,537 across existing
+  saved carriers and actual WASM, mixed 64-row oversize refusal / eligible 65-row
+  admission, small legacy capacity success, header-only metadata validation,
+  imported row-operation refusal, and native 65→64 candidate/history refusal.
+  Capacity residents must not grant ordinary replacements or V3 enlarged retry.
+- Keep malformed/scalar-carrier, request-arena, selective-response, stale revision
+  and saved-definition controls. Run applicable exact-head regression/release/CI
+  gates and one fresh independent final Oracle review before protected merge.
+
+The implementation child owns a single Guarded vertical PR because admitting a
+source before edit/save/reopen/export closure creates an unsafe partial product.
+Apply decomposition and freeze its production/acceptance file and line estimate
+before Ready; do not attach unrelated cleanup or another architecture campaign.
+Use available qualified cloud execution with exact source, kit and runtime
+receipts; record environment/timings, and treat crashes, hangs, OOM or material
+real-use degradation as failures. No obsolete reference-machine procurement or
+unavailable historical Mac packet is an admission gate for this new child.
+
+Only a newly qualified immutable producer/kit handoff can reach Opus's separate
+Sheet consumer lane. An older kit may fail closed on newly admitted workloads;
+rollback must retain a reader capable of reopening those projects. Work producer
+PASS does not claim Sheet UI, persistence, pin, deployment or consumer PASS.
+
+---
+
 <!-- work495-resume-acceptance-reconciliation:20261008 -->
 ## Retained-package reconciliation (acceptance proposal)
 

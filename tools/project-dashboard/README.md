@@ -3,7 +3,7 @@
 Repository-local, loopback-only read-only Dashboard for the configured GitHub repository.
 It has no write, merge, dispatch, or agent-control routes.
 
-Build and start it with Node 24+ and pnpm 11.25.0:
+Build and start it with Node 24+ and pnpm 12.11.2:
 
 ```sh
 pnpm --dir tools/project-dashboard install --frozen-lockfile

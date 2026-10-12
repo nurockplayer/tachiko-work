@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
     OutputProfile, SourceWorkbook, export_csv, export_csv_for_profile, export_xlsx,
-    export_xlsx_for_profile, import_csv, import_xlsx,
+    export_xlsx_for_profile, import_csv, import_xlsx, validate_text_capacity_inspection,
 };
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
@@ -370,7 +370,7 @@ fn spreadsheet_operation(
             csv_options,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            let capacity = crate::interop_adapter::validate_text_capacity(&workbook).is_ok();
+            let capacity = validate_text_capacity_inspection(&workbook).is_ok();
             let mut result =
                 SpreadsheetResult::read_only(DesignerResponse::ImportPreview(Box::new(workbook)));
             result.text_capacity = capacity;

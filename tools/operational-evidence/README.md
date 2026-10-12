@@ -28,6 +28,6 @@ Run the focused gate from the repository root:
 bash scripts/operational-evidence-check.sh
 ```
 
-The gate uses pnpm 11.25.0, typechecks the strict TypeScript surface, runs the
+The gate uses pnpm 12.11.2, typechecks the strict TypeScript surface, runs the
 deterministic fixture suite, and emits JavaScript plus declarations in the
 ignored `dist/` directory.

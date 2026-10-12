@@ -20,10 +20,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
         with:
-          version: 11.25.0
-          run_install: false
+          node-version-file: false
+          version: 12.11.2
+          install: false
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -97,12 +98,16 @@ jobs:
 
   browser-client:
     name: Browser client runtime and external consumer journey
+    needs: quality
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
+        id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Rust
+        id: rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
@@ -110,12 +115,14 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
         with:
-          version: 11.25.0
-          run_install: false
+          node-version-file: false
+          version: 12.11.2
+          install: false
 
       - name: Install Node.js
+        id: node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -131,11 +138,152 @@ jobs:
       - name: Install Chromium
         run: pnpm --dir packages/browser-client exec playwright install --with-deps chromium
 
-      - name: Validate browser client runtime and external consumer journey
-        run: bash scripts/browser-client-check.sh
+      - name: Install minimum supported Rust for full release gate
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.85.0
+          targets: wasm32-unknown-unknown
+
+      - name: Validate complete release-equivalent gate once
+        id: full-release
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          mkdir -p "${evidence}/rectangle/native"
+          TACHIKO_RECTANGULAR_EVIDENCE="${evidence}/rectangle/native" \
+            bash scripts/release-check.sh 2>&1 | tee "${evidence}/release-check.log"
+
+      - name: Preserve native acceptance log and immediate release failure diagnostics
+        if: ${{ !cancelled() && steps.full-release.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          cp "${evidence}/release-check.log" "${evidence}/rectangle/native.log"
+
+      - name: Upload immediate release failure diagnostics
+        if: ${{ !cancelled() && steps.full-release.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-failure-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/release-check.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Exercise focused native scalar-carrier acceptance
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          mkdir -p "${evidence}"
+          cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --locked --test interop_adapter 2>&1 | tee "${evidence}/native-acceptance.log"
+
+      - name: Build exact scalar-carrier WASM evidence
+        id: scalar-carrier-build
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' && steps.node.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          mkdir -p "${evidence}"
+          git diff --exit-code HEAD --
+          git show --no-patch --format='%H%n%T%n%P' HEAD >"${evidence}/source-git.txt"
+          sha256sum Cargo.lock packages/browser-client/runtime/Cargo.lock \
+            packages/browser-client/runtime/src/interop_adapter.rs \
+            packages/browser-client/runtime/src/interop_document.rs \
+            packages/browser-client/runtime/src/lib.rs \
+            packages/browser-client/runtime/src/wasm.rs \
+            packages/browser-client/runtime/tests/interop_adapter.rs \
+            packages/browser-client/runtime/tests/rectangular_capacity_acceptance.rs \
+            acceptance/bounded-text-capacity/rectangle_oracle.py \
+            acceptance/bounded-text-capacity/rectangle_wire.mjs \
+            packages/browser-client/e2e/rectangular-capacity.mjs \
+            acceptance/scalar-carrier/run.mjs acceptance/scalar-carrier/fixtures.py \
+            .github/workflows/ci.yml >"${evidence}/source-files.sha256"
+          { rustc -Vv; cargo -V; node --version; python3 --version; } >"${evidence}/toolchain.txt"
+          bash packages/browser-client/scripts/build-runtime.sh "${evidence}/runtime" 2>&1 | tee "${evidence}/build.log"
+          sha256sum "${evidence}/runtime/designer_runtime.wasm" >"${evidence}/wasm.sha256"
+
+      - name: Exercise actual scalar-carrier WASM acceptance
+        if: ${{ !cancelled() && steps.scalar-carrier-build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          node acceptance/scalar-carrier/run.mjs "${evidence}/runtime/designer_runtime.wasm" "${evidence}/acceptance" 2>&1 | tee "${evidence}/acceptance.log"
+
+      - name: Generate independent rectangular-capacity fixtures
+        id: rectangle-fixtures
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence/rectangle"
+          mkdir -p "${evidence}"
+          python3 acceptance/bounded-text-capacity/rectangle_oracle.py generate "${evidence}/fixtures" 2>&1 | tee "${evidence}/fixture-readback.log"
+
+      - name: Exercise actual rectangular-capacity WASM acceptance
+        id: rectangle-wire
+        if: ${{ !cancelled() && steps.scalar-carrier-build.outcome == 'success' && steps.rectangle-fixtures.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          node acceptance/bounded-text-capacity/rectangle_wire.mjs "${evidence}/runtime/designer_runtime.wasm" \
+            "${evidence}/rectangle/fixtures" "${evidence}/rectangle/wire" 2>&1 | tee "${evidence}/rectangle/wire.log"
+          python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \
+            "${evidence}/rectangle/wire" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/wire-oracle.log"
+
+      - name: Qualify exact rectangular-capacity kit and browser Worker
+        id: rectangle-worker
+        if: ${{ !cancelled() && steps.rectangle-wire.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          bash scripts/export-experimental-designer-client.sh "${evidence}/rectangle/kit" 2>&1 | tee "${evidence}/rectangle/kit.log"
+          sha256sum "${evidence}/rectangle/kit/artifact-manifest.json" >"${evidence}/rectangle/kit-manifest.sha256"
+          sha256sum "${evidence}/rectangle/kit/designer_runtime.wasm" >"${evidence}/rectangle/kit-wasm.sha256"
+          if cmp --silent "${evidence}/runtime/designer_runtime.wasm" "${evidence}/rectangle/kit/designer_runtime.wasm"; then
+            echo 'direct ABI proof covers byte-identical exported kit WASM' >"${evidence}/rectangle/kit-abi-binding.txt"
+          else
+            node acceptance/scalar-carrier/run.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" "${evidence}/rectangle/kit-scalar" 2>&1 | tee "${evidence}/rectangle/kit-scalar.log"
+            node acceptance/bounded-text-capacity/rectangle_wire.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" \
+              "${evidence}/rectangle/fixtures" "${evidence}/rectangle/kit-wire" 2>&1 | tee "${evidence}/rectangle/kit-wire.log"
+            python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \
+              "${evidence}/rectangle/kit-wire" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/kit-wire-oracle.log"
+            echo 'exported kit WASM independently passed scalar and rectangular ABI proof' >"${evidence}/rectangle/kit-abi-binding.txt"
+          fi
+          pnpm --dir packages/browser-client exec node e2e/rectangular-capacity.mjs \
+            "${evidence}/rectangle/kit" "${evidence}/rectangle/fixtures" "${evidence}/rectangle/worker" 2>&1 | tee "${evidence}/rectangle/worker.log"
+          python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \
+            "${evidence}/rectangle/worker" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/worker-oracle.log"
+          cargo run --release --locked --manifest-path packages/browser-client/runtime/Cargo.toml \
+            --example capacity_saved_open_boundaries -- all "${evidence}/rectangle/ordinary" 2>&1 | tee "${evidence}/rectangle/ordinary.log"
+          node acceptance/bounded-text-capacity/ordinary-saved-open-wire.mjs \
+            "${evidence}/rectangle/kit/designer_runtime.wasm" "${evidence}/rectangle/ordinary" "${evidence}/rectangle/ordinary-wire.json"
+          cargo run --release --locked --manifest-path packages/browser-client/runtime/Cargo.toml \
+            --example capacity_profile_boundaries -- all 2>&1 | tee "${evidence}/rectangle/profile-boundaries.log"
+          python3 acceptance/bounded-text-capacity/oracle.py generate "${evidence}/rectangle/legacy-fixtures" 2>&1 | tee "${evidence}/rectangle/legacy-fixtures.log"
+          PYTHONDONTWRITEBYTECODE=1 python3 acceptance/bounded-text-capacity/resource_fixtures.py "${evidence}/rectangle/legacy-fixtures"
+          node acceptance/bounded-text-capacity/boundaries.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" \
+            "${evidence}/rectangle/legacy-fixtures" "${evidence}/rectangle/legacy-boundaries.json"
+
+      - name: Preserve scalar-carrier evidence on success or failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scalar-carrier-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
   operational-evidence:
     name: Strict operational evidence
+    needs: browser-client
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -144,10 +292,11 @@ jobs:
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
         with:
-          version: 11.25.0
-          run_install: false
+          node-version-file: false
+          version: 12.11.2
+          install: false
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -161,6 +310,8 @@ jobs:
 
   minimum-rust:
     name: Minimum supported Rust 1.85.0
+    needs: operational-evidence
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
