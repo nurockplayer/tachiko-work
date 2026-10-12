@@ -14,7 +14,7 @@ It does **not** define an independent `.ro` contract. Use the documents below ac
 - [`ro-format-v2.md`](ro-format-v2.md) — normative current identity-aware direct `.ro` JSON representation.
 - [`roproj-format.md`](roproj-format.md) and [`roproj-layout-v1.md`](roproj-layout-v1.md) — Accepted `.roproj/v1` version-owned DTO and physical-tree contracts under ADR-0023; the production pure codec and native explicit materialize/validate/canonicalize workflow are implemented by #123.
 - [`../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md`](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md) — Accepted authority for the exact v1 canonical tree, entity placement, canonical JSON/JSONL boundary, and path nonidentity.
-- [`portable-package-v1.md`](portable-package-v1.md) and [`../decisions/ADR-0025-portable-package-v1.md`](../decisions/ADR-0025-portable-package-v1.md) — Accepted authority for the exact portable-package v1 envelope, payload root, round trips, and tracked-source conflict behavior; the production codec, bounded host workflows, and CLI pack/unpack/compare operations are implemented by #3.
+- [`portable-package-v1.md`](portable-package-v1.md) and [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) — Accepted authority for first-public portable-package v1 over exact canonical `.roproj/v3`, payload root, round trips, and tracked-source conflict behavior; replacement implementation remains pending under #488. #3 implements the superseded developmental package/v1-over-roproj/v1 profile.
 - [`../decisions/ADR-0003-ro-and-roproj-representation.md`](../decisions/ADR-0003-ro-and-roproj-representation.md) — Accepted architectural authority for the long-term representation relationship.
 
 ## Current implementation state
@@ -30,7 +30,9 @@ codec. The CLI exposes explicit `tachiko roproj materialize`, canonical-only
 `validate`, and bounded `canonicalize` operations through the native host; they
 publish only to distinct absent destinations and operate without Git. Packaged
 `.ro` reads, deterministic pack, verified unpack, and tracked-source comparison
-are also implemented by #3 without changing the direct-JSON writer.
+are implemented by #3 for the superseded developmental package/v1-over-roproj/v1
+profile without changing the direct-JSON writer. First-public package/v1 over v3
+remains pending under #488.
 
 The direct `.ro` v1 profile is stable only as **legacy compatibility input**.
 It is not the separate `.roproj/v1` editable format, the Accepted
@@ -45,8 +47,9 @@ identity and numeric semantics.
 - #70 owns ADR-0015 stable-identity migration integration.
 - ADR-0018 is the Accepted numeric/formula authority; #24 is closed.
 - ADR-0023 and the two `.roproj/v1` specifications resolve #41's durable physical-layout decision; #123 implements the production codec and explicit native host/CLI workflow.
-- ADR-0025 and `portable-package-v1.md` resolve #43's durable package,
-  integrity, round-trip, and conflict decision; #3 implements the packaged
-  `.ro` codec plus CLI pack/unpack/compare workflow.
+- [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](portable-package-v1.md)
+  supersede #43's developmental package binding with first-public package/v1
+  over exact canonical `.roproj/v3`; replacement implementation remains pending
+  under #488. #3 implements the superseded developmental codec and CLI workflow.
 
 For the project-wide authority model, see [`../governance/knowledge-authority.md`](../governance/knowledge-authority.md) and [`../governance/canonical-reconciliation-register.md`](../governance/canonical-reconciliation-register.md).

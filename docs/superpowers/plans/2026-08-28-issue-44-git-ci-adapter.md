@@ -1,5 +1,15 @@
 # Issue 44 Git and CI Adapter Implementation Plan
 
+## Reconciliation note
+
+This historical implementation plan records the superseded developmental
+package/v1-over-roproj/v1 profile. Current package authority is
+[ADR-0042](../../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and
+[the current specification](../../specs/portable-package-v1.md), which require
+first-public package/v1 over exact canonical `.roproj/v3`. Replacement
+implementation remains pending under #488. The original plan below is retained
+as historical implementation evidence, not current package authority.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement the optional, provider-neutral Git-facing adapter for canonical `.roproj/v1` projects so ordinary raw diffs, deterministic semantic review, CI validation, and tracked-package consistency compose without making Git part of semantic correctness.

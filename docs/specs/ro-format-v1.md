@@ -48,7 +48,8 @@ It is retained so existing files can be decoded and migrated deterministically. 
 - direct `.ro` v1 is an immutable legacy compatibility profile;
 - `.roproj/v1` is the separately Accepted canonical editable/Git-native
   representation under ADR-0023;
-- portable package v1 is separately Accepted under ADR-0025 and
+- first-public portable package v1 over canonical `.roproj/v3` is separately
+  Accepted under [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and
   [`portable-package-v1.md`](portable-package-v1.md), and must not be inferred
   from this direct JSON v1 profile.
 
@@ -388,5 +389,7 @@ If the direct `.ro` JSON representation evolves incompatibly before `.roproj` re
 - #24 — future numeric semantics and final numeric canonical vectors
 - ADR-0023 and the `.roproj/v1` specifications — separate canonical editable
   tree and wire contract
-- ADR-0025 and `portable-package-v1.md` — separate Accepted portable package
-  profile; production codec/host/CLI implementation is supplied by #3
+- [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](portable-package-v1.md)
+  — separate Accepted first-public portable package profile over canonical
+  `.roproj/v3`; replacement implementation remains pending under #488. #3
+  supplies the superseded developmental package/v1-over-roproj/v1 codec/host/CLI.

@@ -202,7 +202,7 @@ and [`ro-format-v1.md`](ro-format-v1.md).
 ## Boundaries
 
 This profile does not define the separately Accepted `.roproj/v1` tree or wire
-contract (ADR-0023), portable package v1 (ADR-0025 and
+contract (ADR-0023), first-public portable package v1 over canonical `.roproj/v3` ([ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and
 [`portable-package-v1.md`](portable-package-v1.md)), cross-document references,
 a public SDK ABI, or UUID as semantic ID meaning. Final broad golden/negative
 corpus closure remains #40.

@@ -125,7 +125,7 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 | --- | --- | --- |
 | #1 MVP Freeze | Superseded as active work / historical accepted scope | Current roadmap is governed by unified milestones and later ADRs. |
 | #2 semantic document model MVP | Implemented historical task | Preserve as implementation history. |
-| #3 thin `.ro` portable artifact packaging | Implemented task with reconciled scope | Implements ADR-0025 and the portable-package v1 specification without redesigning the Accepted contract. |
+| #3 thin `.ro` portable artifact packaging | Implemented superseded developmental profile | Implements ADR-0025's developmental package/v1-over-roproj/v1 profile. Current authority is [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the package specification](../specs/portable-package-v1.md); replacement implementation remains pending under #488. |
 
 ### Decision and strategy issues
 
@@ -183,9 +183,11 @@ Issue `#40` is a completed implementation/evidence task that consumed ADR-0015, 
   explicit bounded canonicalize, staged absent-destination publication, and
   fixed native/WASM exact-tree evidence without implementing package or Git/CI
   behavior.
-- #43 `.ro` package profile: durable decision resolved by ADR-0025, the
-  normative portable-package v1 specification, evidence probe, and golden
-  vector; #3 implements the packaged `.ro` codec/native host/CLI workflow.
+- #43 `.ro` package profile: historically resolved by ADR-0025 and its
+  developmental probe/golden vector; #3 implements the superseded
+  package/v1-over-roproj/v1 codec/native host/CLI workflow. Current authority is
+  [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the package specification](../specs/portable-package-v1.md);
+  replacement implementation remains pending under #488.
 - #44 Git/CI integration: optional LF text attributes, exact-tree read-only semantic commands, provider-neutral CI validation/review, and generated-package consistency composition implemented without Git-shaped semantics.
 
 ### Later runtime, reasoning, migration, collaboration, and standardization
@@ -250,7 +252,7 @@ Issue `#40` is a completed implementation/evidence task that consumed ADR-0015, 
 10. ADR-0018 accepts formula binding, deterministic finite-binary64 meaning, and exact numeric canonical spelling as current authority.
 11. Full RFC 8785/JCS remains rejected for editable-source canonicalization; only its ECMAScript-compatible number primitive is Accepted for a representation that adopts ADR-0018.
 12. ADR-0018's promotion corrections make canonical authoring projection partial, preserve ADR-0014's 4,096-byte limit atomically across rename, and place numeric-token/input resource admission in the representation/profile before semantic conversion without freezing a limit into Number meaning.
-13. Event sourcing, public plugin runtime details, collaboration algorithms, and broader hostile-race/durability policy remain outside ADR-0017 and ADR-0018. `.roproj/v1` sharding is separately Accepted under ADR-0023 and implemented by #123; package mechanics remain separately Accepted under ADR-0025 and implemented by #3 without amending those ADRs.
+13. Event sourcing, public plugin runtime details, collaboration algorithms, and broader hostile-race/durability policy remain outside ADR-0017 and ADR-0018. `.roproj/v1` sharding is separately Accepted under ADR-0023 and implemented by #123; current package mechanics are separately Accepted under [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the package specification](../specs/portable-package-v1.md), with replacement implementation pending under #488; #3 implements the superseded developmental package/v1-over-roproj/v1 profile.
 14. #70 implements ADR-0015 as one atomic transition: opaque IDs and mutable keys, UUIDv7 creation seam, stable formula binding/projection, stable-ID diff/merge continuity, deterministic legacy UUIDv5 migration, and direct-ro/v2 preservation of ADR-0018 semantic meaning.
 15. #40 completes the storage/canonicalization and native/WASM numeric conformance closure without reopening Accepted identity or numeric meaning.
 16. #72 evolves workflow in place into the single workspace-engine application boundary, reduces AI to `ai-api -> workspace-engine`, reduces CLI to `cli -> workspace-engine, storage`, and preserves storage as a sibling.
@@ -283,7 +285,9 @@ The ordered #70 -> #40 -> #72 Core & Format Hardening sequence is complete. The 
 
 Issues #9, #10, #12, #13, #26, #41, #27, #43, and #28 are resolved by amended
 ADR-0007, ADR-0020, ADR-0029, ADR-0021, ADR-0022, ADR-0023, ADR-0024,
-ADR-0025, and ADR-0026 respectively.
+historical ADR-0025, and ADR-0026 respectively. #43's developmental package
+binding is superseded by [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](../specs/portable-package-v1.md);
+replacement implementation remains pending under #488.
 #11 is resolved by ADR-0034 and the reconciled authorization/API/history/
 collaboration specifications without authorizing production implementation.
 Issue `#50` is resolved by ADR-0035 and the reconciled collaboration specification/
@@ -310,10 +314,12 @@ codec/wire/SDK stabilization remains separately owned. `#48` is resolved by ADR-
 production DTO or history mechanism. None of these implementation states changes
 Accepted authority implicitly.
 Production `.roproj/v1` pure codec/native host work is implemented by #123.
-Portable-package v1 packaged `.ro` codec/native host/CLI work is implemented by
-Issue `#3` and consumes, without redesigning, the Accepted package contract and
-the production `.roproj/v1` seam. Issue `#44` implements the optional
-provider-neutral Git/CI adapter over those standalone boundaries. Issue #29
+Issue `#3` implements the superseded developmental package/v1-over-roproj/v1
+codec/native host/CLI profile over the production `.roproj/v1` seam.
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and [the current package specification](../specs/portable-package-v1.md)
+accept first-public package/v1 over exact canonical `.roproj/v3`; replacement
+implementation remains pending under #488. Issue `#44` implements the optional
+provider-neutral Git/CI adapter over the developmental standalone boundaries. Issue #29
 implements the provider-neutral SemanticPatch/authorization lifecycle seam
 without redesigning ADR-0024/ADR-0026, and #30 implements the current hostile-
 client AI boundary over it. Issue #93 supplies the internal resident revision/

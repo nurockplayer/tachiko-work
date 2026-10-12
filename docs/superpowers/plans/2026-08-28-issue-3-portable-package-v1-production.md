@@ -1,5 +1,15 @@
 # Issue 3 Portable Package v1 Production Implementation Plan
 
+## Reconciliation note
+
+This historical implementation plan records the superseded developmental
+package/v1-over-roproj/v1 profile. Current package authority is
+[ADR-0042](../../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) and
+[the current specification](../../specs/portable-package-v1.md), which require
+first-public package/v1 over exact canonical `.roproj/v3`. Replacement
+implementation remains pending under #488. The original plan below is retained
+as historical implementation evidence, not current package authority.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement the Accepted portable-package/v1 contract as a thin, deterministic, lossless `.roproj/v1` container, including exact native/WASM bytes, bounded hostile-input validation, atomic no-clobber host publication, CLI workflows, and tracked-source comparison.
