@@ -66,7 +66,7 @@ ADR-0015; formula meaning remains governed by ADR-0018.
 adds optional `display_name` to Schema and FieldDefinition as durable direct
 semantic state. It is distinct from mutable SchemaKey/FieldKey and stable IDs;
 effective name is the optional name or key fallback. Absence is canonically
-omitted, never null. Implementation remains separate Guarded work under #525.
+omitted, never null. Implementation remains separate Guarded work under #529.
 
 Authoring trims leading/trailing Unicode whitespace and otherwise preserves
 exact spelling. A name must be nonempty, contain no controls or line separators,

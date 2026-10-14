@@ -5,7 +5,7 @@ Decision state: Accepted target under [ADR-0041](../decisions/ADR-0041-bounded-d
 Native display-name amendment: [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
 supersedes the unreleased v3 Schema/FieldDefinition shape and incompatible-version
 rule only as specified below. Name support remains pending separate Guarded
-implementation under #525; existing implementation statements describe the
+implementation under #529; existing implementation statements describe the
 pre-amendment codec.
 
 Implementation state: The storage codec, exact canonical-tree admission,
@@ -124,7 +124,7 @@ unchanged. Display names never identify paths or relationship targets.
 The one replacement strict reader accepts valid nameless v3 bytes. Older
 binaries refuse name-bearing trees and packages; no compatibility with those
 binaries is claimed. Existing valid nameless fixtures MUST remain byte-identical.
-The separate #525 implementation MUST add an independent named fixture with
+The separate #529 implementation MUST add an independent named fixture with
 exact bytes and round-trip evidence; this authority PR creates no fixture.
 
 ### FieldType

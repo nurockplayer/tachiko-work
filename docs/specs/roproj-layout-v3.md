@@ -17,7 +17,7 @@ with canonical member placement/omission defined by
 [the v3 DTO specification](roproj-format-v3.md#schema-and-field-definition).
 All nineteen paths, shard placement, stable-ID ordering, and framing below
 remain unchanged. No name-derived path or label sidecar exists. Valid nameless
-trees stay byte-identical; named-tree codec/fixture evidence belongs to #525's
+trees stay byte-identical; named-tree codec/fixture evidence belongs to #529's
 separate Guarded implementation. Older binaries refuse name-bearing trees.
 
 Every canonical `.roproj/v3` tree contains exactly these 19 regular files:

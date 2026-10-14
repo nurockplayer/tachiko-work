@@ -36,7 +36,7 @@ binaries refuse name-bearing packages. The nineteen payload paths, twenty ZIP
 entries, manifest, hash domains/algorithm, container rules, bounds, and CORE
 attachment disclosure remain unchanged. Named payload bytes change their leaf,
 root, CRCs, and ZIP bytes. Existing valid nameless current-profile vectors must
-stay byte-identical; #525's separate Guarded implementation must add an
+stay byte-identical; #529's separate Guarded implementation must add an
 independent named fixture. ADR-0042's retirement of developmental v1-over-v1
 vectors is unchanged. The sections below are read subject to this amendment.
 

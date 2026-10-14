@@ -54,7 +54,7 @@ indexes are derived state and are not persisted.
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
 adds optional durable `display_name` to Schema (native table) and
 FieldDefinition (native column). This Accepted target is pending separate
-Guarded implementation under #525; the aggregate above describes the prior
+Guarded implementation under #529; the aggregate above describes the prior
 implemented shape. Effective name is `display_name` when present, otherwise
 key; `Document.title` remains independent. Canonical absence omits the member,
 never null. Labels are reviewable direct semantic facts, not relationship

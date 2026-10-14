@@ -336,7 +336,7 @@ migration edge for this pre-release amendment; explicit v1/v2 migration leaves
 names absent rather than inferring labels. Named native projects explicitly
 select revised v3, and canonical-tree, existing v3 opaque-project transfer,
 and portable exports preserve names. Writers for older representations MUST
-refuse name-bearing state rather than silently discard it. #525 implementation
+refuse name-bearing state rather than silently discard it. #529 implementation
 is separate Guarded work and requires an independent named fixture. #452
 constraint admission remains separately owned and its runtime refusal stays.
 

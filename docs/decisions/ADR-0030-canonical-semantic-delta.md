@@ -22,8 +22,11 @@ ADR's direct-state evidence authority through the current pre-release
 `tachiko.semantic-delta/v2` successor selected by ADR-0041. It appends
 `schema_display_name_changed` at Schema change rank 3 and
 `schema_field_display_name_changed` at schema-field change rank 6. Payloads
-carry before/after optional stored names (logical absence or exact string);
-complete schema/field create/delete facts include those names. Label-only
+carry PRESENT typed before/after optional-name facts for a continuing subject,
+whose value is "no stored name" or the exact admitted string. The facet covers
+set, clear, and change of the stored name; outer fact absence means a missing
+subject, not an existing nameless subject. Complete schema/field create/delete
+facts include those names. Label-only
 edits cannot disappear, become key edits, or become delete/create pairs.
 Targets remain stable IDs, not labels. All prior ranks, equality, suppression,
 ordering, and evidence-only laws remain. Frozen logical v1 remains unchanged

@@ -99,6 +99,48 @@ The shared Rust semantic/application authority enforces these rules; a dialog
 may assist but is not the authority. Existing projection-byte/capacity gates
 still reject oversized candidates atomically.
 
+Name failures use the existing [validation stages](../specs/validation-engine.md#authoritative-stages)
+and [diagnostic meaning](../specs/diagnostics-contract.md), not a new validation
+framework:
+
+- **Stage 0 — admission / representation prerequisites:** newly authored names
+  fail admission for an empty result after trimming, more than 4,096 UTF-8 bytes
+  after trimming, or a control/line-separator character in the trimmed result.
+  These are distinct logical failure reasons. A representation reader also
+  rejects an untrimmed stored name under its existing representation-local
+  error precedence; it never trims stored data to admit it. A pre-candidate
+  failure is an admission/command failure, not a `ValidationReport` claiming
+  that a semantic candidate exists.
+- **Stage 1 — intrinsic semantic declaration invariants:** duplicate effective
+  names fail the declaration check in section 4, including an empty table with
+  no entities and a merged candidate. This logical failure reason is distinct
+  from spelling failure and from internal key collision. Publication fails
+  atomically through the existing operation gate. Creation preflights apply
+  the same declaration rule to inputs before subjects exist; such refusals
+  remain pre-candidate command failures, not semantic validation reports.
+
+Failure evidence identifies the affected table or column and the logical
+reason. Where subjects exist, use `SchemaId` or `(SchemaId, FieldId)` and retain
+all colliding subjects plus the compared effective name as related evidence.
+Before `newTable` creates subjects, identify its table input or each affected
+column by its zero-based input index. Before `addColumn` creates a field,
+identify the existing owning `SchemaId` and its new-column input index (0 for
+the single-column operation). A pre-candidate collision retains every affected
+input index and any existing colliding subject ID; do not fabricate IDs or
+make labels/paths diagnostic identity. These input locators are command-failure
+evidence, not new stable semantic subjects.
+
+Follow [prerequisite ordering and accumulation](../specs/validation-engine.md#accumulation-and-cascade-suppression):
+obtain a name string, trim authoring input, then check spelling before comparing
+effective names in the available owning namespace. An unavailable or invalid
+name suppresses its dependent uniqueness check; an unavailable owner suppresses
+that namespace check. Otherwise accumulate independent spelling reasons and
+findings across eligible inputs/subjects deterministically, including independent
+duplicate-name groups. Stage 0 authoring failures still create no candidate or
+semantic validation report; storage keeps its representation-local precedence.
+Exact code spellings, Rust types, and wire encoding remain Provisional under the
+existing diagnostics contract.
+
 ### 4. Compare effective names exactly in their owning namespace
 
 Effective column names are unique within their Schema; effective table names
@@ -165,9 +207,11 @@ canonical stable-target ordering, and fail-closed laws remain.
 For `tachiko.semantic-delta/v2`, append
 `schema_display_name_changed` at Schema change rank 3 and
 `schema_field_display_name_changed` at schema-field change rank 6, after
-constraint rank 5. Each carries typed `before` and `after` optional stored name
-facts: explicit logical absence or the exact admitted string. Complete schema
-and field create/delete payloads also include their optional stored names.
+constraint rank 5. Each carries PRESENT typed `before` and `after` optional-name
+facts for a continuing subject: their value is either "no stored name" or the
+exact admitted string. Set, clear, and change of the stored name all use this
+facet. Complete schema and field create/delete payloads also include their
+optional stored names.
 Names are direct semantic facts, not localized rendered prose. A label-only
 change cannot be an empty delta, a key change, or a delete/create replacement.
 
@@ -175,8 +219,14 @@ For `tachiko.semantic-conflict/v2`, append `display_name` at Schema facet rank
 2 and schema-field facet rank 5, after constraint rank 4. Complete subject
 facts include optional stored names. Unequal concurrent label edits on one
 stable target produce one `display_name` / `concurrent_change` conflict with
-canonical `base / left / right` optional-name facts. Absent and present names
-remain distinct facts even when their effective names happen to match.
+canonical `base / left / right` optional-name facts. Each fact is PRESENT when
+the subject exists and carries a typed optional-name value:
+"no stored name" differs from a stored string, even one equal to key fallback.
+Outer fact absence is reserved for a missing Schema/FieldDefinition subject,
+not for an existing nameless subject. Thus a continuing nameless column renamed
+to `Item` on the left and `項目` on the right has three PRESENT facts (base value
+"no stored name", left `Item`, right `項目`) and one `concurrent_change`, never
+`concurrent_addition`.
 Equal concurrent edits and independent key/label edits retain ordinary merge
 laws; parent deletion/modification evidence includes names and suppresses
 redundant children. Cross-object name collisions after structural merge are
@@ -236,7 +286,9 @@ from the candidate codec as the independent oracle. Historical superseded
 v1-over-v1 package evidence keeps its ADR-0042 status.
 
 Authority only: no code, tests, scripts, CI, or fixtures change here. Native
-implementation is a separate Guarded PR under #525 after this authority merges,
+implementation is a separate Guarded PR under [#529](https://github.com/nurockplayer/tachiko-work/issues/529)
+after this authority merges and #529 receives a separate Ready decision;
+#525 owns only this authority PR. Implementation proceeds
 with a single writer and fresh independent review. Sheet's re-pin, effective-name
 rendering, dialog changes, and actual host save/reopen qualification are
 Sheet-owned. Neither this decision nor Work CORE evidence completes that

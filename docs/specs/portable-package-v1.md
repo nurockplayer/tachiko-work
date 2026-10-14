@@ -34,13 +34,13 @@ canonical omission when absent, never null. Names survive exact-tree
 pack/unpack/fresh reopen. No package version change, v4, dual profile, or
 down-conversion is selected. Older binaries refuse name-bearing packages;
 Sheet rollback past the name-capable Work re-pin cannot reopen them.
-Name support remains pending #525 implementation; #519 evidence predates it.
+Name support remains pending #529 implementation; #519 evidence predates it.
 
 All twenty entries, nineteen payload paths, manifest members/order, hash
 domains/algorithm, container primitives, and bounds remain unchanged. Named
 `schemas.json` changes its leaf, payload root, affected CRCs, and ZIP bytes.
 Existing valid nameless current-profile fixtures MUST remain byte-identical,
-including hashes/CRCs/repack bytes. #525's separate implementation MUST add a
+including hashes/CRCs/repack bytes. #529's separate implementation MUST add a
 new independent static named fixture, with exact schema/package bytes and
 fresh-reopen/repack evidence. This does not revive historical v1-over-v1
 vectors. CORE attachment-loss disclosure below remains required; native name

@@ -24,9 +24,13 @@ Related authority: [ADR-0011](ADR-0011-semantic-three-way-merge.md),
 [ADR-0043](ADR-0043-native-display-names-separate-from-keys.md) amends this
 ADR's direct-facet authority through the current pre-release
 `tachiko.semantic-conflict/v2` successor selected by ADR-0041. It appends
-`display_name` at Schema facet rank 2 and schema-field facet rank 5. Each fact
-is an optional stored name (explicit logical absence or exact admitted string);
-complete subject facts include names. Unequal concurrent name edits produce
+`display_name` at Schema facet rank 2 and schema-field facet rank 5. For an
+existing subject, each fact is PRESENT and carries a typed optional-name value:
+"no stored name" or the exact admitted string. Outer fact absence denotes only
+a missing Schema/FieldDefinition subject; complete subject facts include names.
+Unequal concurrent edits of an existing nameless subject therefore have three
+PRESENT base/left/right facts and produce `concurrent_change`, not
+`concurrent_addition`. Unequal concurrent name edits produce
 one display-name facet conflict at the continuing stable target, with ordinary
 base/left/right identity, structural kinds, ordering, and parent suppression.
 Independent key/name edits may compose; cross-object name collisions are

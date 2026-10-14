@@ -397,7 +397,7 @@ only and does not stabilize a wire, SDK, or Rust DTO.
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
 explicitly supersedes the pre-release v2 direct-facet vocabulary with these
 additions. Frozen v1 is unchanged and MUST refuse name-bearing state rather
-than lose names. #451's implementation predates this amendment; #525
+than lose names. #451's implementation predates this amendment; #529
 realization is separate Guarded work.
 
 | Subject rank | Subject | Logical target | Added facet and rank |
@@ -405,17 +405,24 @@ realization is separate Guarded work.
 | 1 | Schema | `SchemaId` | `display_name = 2` |
 | 2 | Schema field | `(SchemaId, FieldId)` | `display_name = 5` |
 
-The facet's base/left/right facts are optional stored names: explicit logical
-absence or the exact admitted Unicode string. Absence and a present string
-equal to the key fallback are distinct facts. Complete schema/field subject
-payloads include their optional names. All existing ranks, including field
+The facet's base/left/right facts are PRESENT typed optional-name facts whenever
+the Schema/FieldDefinition subject exists. Their value is either "no stored
+name" or the exact admitted Unicode string. Outer fact absence means only that
+the subject is missing; it MUST NOT represent an existing nameless subject.
+"No stored name" and a stored string equal to key fallback are distinct values.
+Complete schema/field subject payloads include their optional names.
+All existing ranks, including field
 constraint rank 4, structural kinds, logical identity, stable-ID ordering,
 same-Document input admission, and parent suppression remain.
 
 Unequal concurrent label edits on one continuing stable target emit one
 `display_name` / `concurrent_change` conflict. Equal edits and independent
-key/label edits follow ordinary three-way laws. Delete/modify and concurrent
-addition evidence carries names in the complete subject fact, suppressing
+key/label edits follow ordinary three-way laws. For example, a continuing
+nameless column renamed to `Item` on the left and `項目` on the right has three
+PRESENT facts: base value "no stored name", left `Item`, right `項目`. Both
+sides differ from base and each other, satisfying the existing
+`concurrent_change` relation; it is not `concurrent_addition`. Delete/modify
+and concurrent addition evidence carries names in the complete subject fact, suppressing
 redundant child conflicts. Unsupported facts/facets fail closed. A structurally
 merged cross-object effective-name collision is a shared validation failure,
 not a new structural conflict kind, and blocks publication. No wire/SDK
