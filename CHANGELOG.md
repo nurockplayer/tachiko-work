@@ -140,6 +140,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- V1 semantic patch batches that change saved grouped-summary definitions
+  together with any other command now reject before publication, preventing
+  omitted ordinary change evidence and skipped per-change admission.
+  Definition-only batches retain their existing lifecycle.
+
 - CSV/XLSX exports of imported work and native Budget work explicitly disclose
   omitted saved grouped-summary definitions with one aggregate fidelity warning,
   including definitions whose results are unavailable. Spreadsheet contents and

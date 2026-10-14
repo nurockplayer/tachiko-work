@@ -3254,11 +3254,24 @@ impl PatchLifecycle {
                 )),
             });
         }
-        // The v1 semantic diff deliberately refuses to represent saved
-        // grouped-summary definition changes. That refusal is not a
-        // publication veto: validate the candidate and preserve the normal
-        // lifecycle/authorization path with an empty v1 diff projection.
+        // V1 has no evidence vocabulary for saved grouped-summary definition
+        // changes, and formulas cannot read definitions. Only definition-only
+        // batches may use an empty projection; mixed batches must be rejected
+        // so this path cannot omit ordinary evidence or per-change admission.
         if base.keyed_grouped_sum_definitions != candidate.keyed_grouped_sum_definitions {
+            if body.commands().iter().any(|command| {
+                !matches!(
+                    command,
+                    SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+                        | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. }
+                )
+            }) {
+                return Err(PatchLifecycleError::CommandRejected {
+                    source: Box::new(WorkspaceError::Diff(
+                        super::DiffError::UnsupportedKeyedGroupedSumDefinitionChange,
+                    )),
+                });
+            }
             match super::validate(&candidate)
                 .and_then(|()| super::preflight_formula_projections(&candidate))
             {
@@ -4945,6 +4958,52 @@ mod tests {
             ),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn changed_definitions_reject_mixed_batches_even_with_net_zero_ordinary_edits() {
+        let document = keyed_grouped_sum_document();
+        let (lifecycle, _) = keyed_grouped_sum_lifecycle(&document);
+        let mut definition = document.keyed_grouped_sum_definitions
+            [&KeyedGroupedSumDefinitionId::from("summary")]
+            .clone();
+        definition.id = KeyedGroupedSumDefinitionId::from("fresh");
+        let field = FieldRef::new("product", "price");
+        let edit = SemanticCommand::set_field_value(
+            field.clone(),
+            Value::Number(Number::new(3.0).unwrap()),
+        );
+        let restore = SemanticCommand::set_field_value(
+            field.clone(),
+            document.entities[&field.entity].fields[&field.field].clone(),
+        );
+        for command in [
+            SemanticCommand::UpsertKeyedGroupedSumDefinition { definition },
+            SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                definition: KeyedGroupedSumDefinitionId::from("summary"),
+            },
+        ] {
+            for commands in [
+                vec![command.clone(), edit.clone(), restore.clone()],
+                vec![edit.clone(), restore.clone(), command.clone()],
+            ] {
+                let body = SemanticPatchBody::atomic_batch(commands).unwrap();
+                let (candidate, writes) = lifecycle.plan_commands(&document, &body).unwrap();
+                assert_eq!(candidate.entities, document.entities);
+                let error = lifecycle
+                    .finalize_evaluation(&document, candidate, &body, writes)
+                    .unwrap_err();
+                let PatchLifecycleError::CommandRejected { source } = error else {
+                    panic!("expected command rejection, got {error:?}");
+                };
+                assert!(matches!(
+                    source.as_ref(),
+                    WorkspaceError::Diff(
+                        crate::DiffError::UnsupportedKeyedGroupedSumDefinitionChange
+                    )
+                ));
+            }
+        }
     }
 
     #[test]
