@@ -260,6 +260,31 @@ pub fn load_roproj(path: impl AsRef<Path>) -> Result<Document, FormatError> {
     decode(&tree)
 }
 
+/// Load an exact canonical v1 or v3 directory using manifest-first dispatch.
+///
+/// Each admitted version retains its existing strict reader and decoder. V2
+/// and all other versions are refused; loading never migrates the source.
+///
+/// # Errors
+///
+/// Returns host, manifest-dispatch, exact canonical admission, or semantic
+/// decode errors.
+pub fn load_roproj_v1_or_v3(path: impl AsRef<Path>) -> Result<Document, FormatError> {
+    let root = path.as_ref();
+    require_directory(root, "canonical .roproj root")?;
+    let manifest_path = root.join("manifest.json");
+    require_regular_file(&manifest_path, "manifest.json")?;
+    let manifest = read_file(&manifest_path)?;
+    match manifest_version(&manifest)? {
+        super::v1::ROPROJ_V1_FORMAT_VERSION => load_roproj(root),
+        super::v3::ROPROJ_V3_FORMAT_VERSION => super::v3::decode(&read_canonical_roproj_v3(root)?),
+        found => Err(FormatError::UnsupportedRoProjectVersion {
+            found,
+            supported: super::v3::ROPROJ_V3_FORMAT_VERSION,
+        }),
+    }
+}
+
 /// Admit the bounded non-canonical `.roproj/v1` family and return a fresh tree.
 ///
 /// This explicit operation never mutates the source. Paths and shard names do
@@ -754,6 +779,30 @@ mod tests {
 
     use super::{NEXT_STAGING_DIRECTORY, finish_staged_publication};
     use std::sync::atomic::Ordering;
+
+    #[test]
+    fn directory_load_refuses_unsupported_versions_before_payload_admission() {
+        let sequence = NEXT_STAGING_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "tachiko-storage-read-dispatch-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        // No payload or canonical layout: the manifest must decide first.
+        for version in [2, 4] {
+            fs::write(
+                root.join("manifest.json"),
+                format!(r#"{{"format":"tachiko.roproj","format_version":{version}}}"#),
+            )
+            .unwrap();
+            assert!(matches!(
+                super::load_roproj_v1_or_v3(&root),
+                Err(crate::FormatError::UnsupportedRoProjectVersion { found, supported: 3 })
+                    if found == version
+            ));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn exclusive_final_publication_rejects_an_empty_directory_created_by_a_racer() {
