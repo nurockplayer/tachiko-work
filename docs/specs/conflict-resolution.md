@@ -490,8 +490,8 @@ selector and same-Document inputs, validates keyed grouped-sum bindings by
 input role, delegates structural reconciliation to merge-engine, and performs
 candidate validation, formula/projection preflight, and canonical v2 delta
 finalization. Changed keyed-definition maps remain a whole-request refusal;
-ADR-0044 adds delta facts but leaves this conflict refusal in force pending the
-lead's definition-facet decision.
+ADR-0044 adds delta facts and keeps this conflict refusal by lead decision; any
+future atomic complete-definition facet needs its own authority amendment.
 
 Issue [#47](https://github.com/nurockplayer/tachiko-work/issues/47) retains
 cross-version migration work.
