@@ -391,24 +391,27 @@ fn ac1_definition_only_batches_keep_the_supported_lifecycle() {
     let remove = SemanticCommand::RemoveKeyedGroupedSumDefinition {
         definition: KeyedGroupedSumDefinitionId::from("summary"),
     };
-    for (label, base, command) in [
-        ("create", absent, upsert(&d, false)),
-        ("change", d.clone(), upsert(&d, true)),
-        ("delete", d.clone(), remove),
-    ] {
-        let (outcome, changed) = run(base, vec![command], false, false);
-        let Outcome::Executed { preview, receipt } = outcome else {
-            panic!("{label}: definition-only batch was not admitted");
-        };
-        let receipt = receipt.unwrap_or_else(|e| panic!("{label}: {e:?}"));
-        assert!(receipt.verified, "{label}");
-        assert!(changed, "{label}: definition change was not installed");
-        // V1 has no definition vocabulary and formulas cannot read definitions.
-        assert_eq!(
-            receipt.semantic_changes, preview.semantic_changes,
-            "{label}"
-        );
-        assert_eq!(preview.formula_impacts.len(), 0, "{label}");
+    for delegated in [false, true] {
+        for (label, base, command) in [
+            ("create", absent.clone(), upsert(&d, false)),
+            ("change", d.clone(), upsert(&d, true)),
+            ("delete", d.clone(), remove.clone()),
+        ] {
+            let label = format!("{label} delegated={delegated}");
+            let (outcome, changed) = run(base, vec![command], false, delegated);
+            let Outcome::Executed { preview, receipt } = outcome else {
+                panic!("{label}: definition-only batch was not admitted");
+            };
+            let receipt = receipt.unwrap_or_else(|e| panic!("{label}: {e:?}"));
+            assert!(receipt.verified, "{label}");
+            assert!(changed, "{label}: definition change was not installed");
+            // V1 has no definition vocabulary and formulas cannot read definitions.
+            assert_eq!(
+                receipt.semantic_changes, preview.semantic_changes,
+                "{label}"
+            );
+            assert_eq!(preview.formula_impacts.len(), 0, "{label}");
+        }
     }
     // A true no-op never yields a receipt.
     let (outcome, changed) = run(d.clone(), vec![upsert(&d, false)], false, false);
@@ -440,7 +443,9 @@ fn ac2_mixed_ordinary_and_definition_batches_are_refused_without_mutation() {
     let remove = SemanticCommand::RemoveKeyedGroupedSumDefinition {
         definition: KeyedGroupedSumDefinitionId::from("summary"),
     };
-    assert_refused_without_mutation("remove", run(d, vec![price(), remove], false, false));
+    for commands in [vec![price(), remove.clone()], vec![remove, price()]] {
+        assert_refused_without_mutation("remove", run(d.clone(), commands, false, false));
+    }
 }
 
 #[test]
