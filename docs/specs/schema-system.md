@@ -68,7 +68,7 @@ semantic state. It is distinct from mutable SchemaKey/FieldKey and stable IDs;
 effective name is the optional name or key fallback. Absence is canonically
 omitted, never null. Implementation remains separate Guarded work under #529.
 
-Authoring trims leading/trailing Unicode whitespace and otherwise preserves
+Authoring trims leading/trailing whitespace from the frozen ADR-0043 section 3 set (Unicode `White_Space`; U+FEFF is not trimmed) and otherwise preserves
 exact spelling. A name must be nonempty, contain no forbidden scalar (General_Category `Cc`, `Zl` or `Zp`; ADR-0043 section 3),
 and be at most 4,096 UTF-8 bytes after trimming. No normalization, case folding,
 width folding, or transliteration applies. Shared Rust authority validates

@@ -60,7 +60,7 @@ key; `Document.title` remains independent. Canonical absence omits the member,
 never null. Labels are reviewable direct semantic facts, not relationship
 targets or a frontend-owned label store.
 
-Authoring trims leading/trailing Unicode whitespace, preserves the remaining
+Authoring trims leading/trailing whitespace from the frozen ADR-0043 section 3 set (Unicode `White_Space`; U+FEFF is not trimmed), preserves the remaining
 scalar sequence exactly, and requires a nonempty single-line name without
 forbidden scalars (General_Category `Cc`, `Zl` or `Zp`; ADR-0043 section 3), at most 4,096 UTF-8 bytes after trimming.
 No normalization, case folding, or width folding is applied. Effective names

@@ -87,11 +87,18 @@ extension bag, or sidecar is added. Stable-ID collection order is unchanged.
 
 ### 3. Validate spelling without normalization
 
-Authoring trims leading/trailing Unicode whitespace. The resulting name must
+Authoring trims leading/trailing whitespace, where whitespace is exactly this
+frozen code-point set (the Unicode `White_Space` property): U+0009–U+000D,
+U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F
+and U+3000. U+FEFF and every other scalar are not trimmed; implementations
+must not substitute a platform trim (for example ECMAScript `String.prototype.trim`,
+which also strips U+FEFF). The set does not follow later Unicode revisions
+without a new authority decision. The resulting name must
 be nonempty, contain no forbidden scalar, and occupy at most 4,096 UTF-8 bytes
 after trimming, before JSON escaping. A forbidden scalar is exactly any Unicode
 scalar whose General_Category is `Cc` (control, including U+0085), `Zl` (line
-separator, U+2028) or `Zp` (paragraph separator, U+2029). The same predicate
+separator, U+2028) or `Zp` (paragraph separator, U+2029); frozen as exactly
+U+0000–U+001F, U+007F–U+009F, U+2028 and U+2029. The same predicate
 applies at authoring and when decoding stored names. Format characters (`Cf`)
 and other whitespace inside the name are not forbidden by this rule. Store the remaining
 Unicode scalar sequence exactly as typed: no NFC/NFKC, case folding, width
@@ -173,6 +180,15 @@ the label itself is never altered. For example, adding `item` beside an
 existing `Item` (key `item`) stores display name `item` with the smallest free
 `column_N` key. Allocation is decided once at creation; a later rename or
 deletion never re-derives or reassigns an existing key.
+
+When one request creates several subjects (for example `newTable` with several
+columns), keys are resolved in zero-based request input order: the table key
+first, then each column in input order. Each input sees as occupied every key
+already in its namespace plus every key resolved for an earlier input of the
+same request, so an ASCII-derived key that an earlier input already took also
+falls back to allocation. For example, `newTable("T", ["項目", "Item Name", "column_1"])`
+assigns `column_1`, `column_2`, then `column_3`. Stable ID order does not
+influence key resolution.
 
 | Input name after trimming | Stored display name | Key result |
 | --- | --- | --- |
@@ -284,7 +300,8 @@ Existing valid nameless v3 and current v1-over-v3 package fixtures **MUST remain
 byte-identical**, including length, hashes, CRCs, and repack bytes. Absence
 must not emit `null`, a fallback-name member, or unrelated golden churn.
 The separate implementation slice **MUST add a new independent static named
-fixture** with exact canonical `schemas.json`, package bytes/root/CRCs, and
+fixture** with exact canonical `schemas.json`, package bytes/root/CRCs,
+at least one multi-column request with several allocated keys, and
 byte-identical repack/fresh-reopen evidence. Do not regenerate expected bytes
 from the candidate codec as the independent oracle. Historical superseded
 v1-over-v1 package evidence keeps its ADR-0042 status.
