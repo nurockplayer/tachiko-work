@@ -139,8 +139,12 @@ refuse a base/left/right occurrence whose definition maps differ, including
 one-sided changes, equal concurrent additions, and matching deletions. It
 returns neither partial conflicts nor a candidate with omitted or silently
 selected definitions. Unchanged definition maps remain subject to existing
-input and candidate validation. The lead must separately settle the question
-below before definition-changing v2 merge can be implemented.
+input and candidate validation. Lead decision (#531): this refusal is the
+accepted behavior for this slice. If definition-changing v2 merge is needed
+later, the selected direction is one atomic complete-definition `subject`
+facet; independently reconciled role-binding facets are rejected as
+speculative. That extension needs its own authority amendment before
+implementation is Ready.
 
 ### 4. Restore definition publication on admitted v2 occurrences
 
@@ -185,16 +189,14 @@ not merge or resolve threads. Sheet re-pin and consumer qualification remain
 Sheet-owned. Documentary consistency, local links/anchors, and diff checks
 are this PR's validation; executable acceptance belongs to implementation.
 
-## Questions for the lead
+## Lead decisions on the intake questions
 
-1. The intake asks to mirror v1's existing definition facts/facets, but the
-   baseline contains only a definition-only publication bypass with empty
-   receipt evidence and explicit delta/merge refusal. Confirm this baseline
-   reconciliation when accepting the authority; no v1 definition vocabulary
-   has been assumed or backfilled.
-2. Should a future definition-changing conflict-v2 extension reconcile each
-   complete definition atomically using one `subject` facet, or use independent
-   role-binding facets? Neither v1 code nor Accepted authority selects that
-   choice. This ADR retains the whole-request merge refusal rather than
-   inventing definition-conflict semantics. The lead decides its scope and
-   ownership before any such implementation becomes Ready.
+1. **Baseline confirmed.** v1 has no saved-definition delta facts or conflict
+   facets; a definition-only publication uses an empty receipt projection, and
+   delta/merge refuse definition changes. This ADR gives v2 complete definition
+   facts rather than copying v1's empty shortcut, and assumes or backfills no
+   v1 vocabulary.
+2. **Conflict v2 keeps refusing definition-changing merges** in this slice
+   (section 3). Any future extension uses one atomic complete-definition
+   `subject` facet; independent role-binding facets are rejected. Sheet has no
+   merge flow, so the refusal costs no current user value.

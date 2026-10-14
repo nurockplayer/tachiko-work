@@ -433,10 +433,10 @@ encoding or resolver mutation mechanism is selected.
 [ADR-0044](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
 adds complete saved-definition delta v2 facts; it does not add conflict targets,
 facets, or definition-specific three-way laws. The inspected v1 contract/code
-has no saved-definition conflict facets to mirror. The choice between an atomic
-complete-definition `subject` facet and independently reconciled role bindings
-is a [question for the lead](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md#questions-for-the-lead),
-not implementation discretion.
+has no saved-definition conflict facets to mirror. A future extension, if needed, uses
+one atomic complete-definition `subject` facet; independently reconciled role
+bindings are rejected ([lead decision](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md#lead-decisions-on-the-intake-questions)).
+That extension still needs its own authority amendment.
 
 Frozen conflict v1 remains unchanged. Conflict v2 continues to refuse the whole
 base/left/right request if saved-definition maps differ, including one-sided
@@ -447,8 +447,8 @@ candidate binding/role validation and existing complete semantic/formula
 finalization. Adding delta evidence does not by itself authorize merge support.
 No conflict rank, identity, PRESENT/absent rule, structural kind, or parent
 suppression rule changes here. The #531 implementation child realizes the
-accepted delta/publication extension; the lead must separately disposition any
-definition-conflict extension before implementation is Ready. #452 constraint
+accepted delta/publication extension; any definition-conflict extension needs
+its own authority amendment before implementation is Ready. #452 constraint
 admission remains out of scope.
 
 ## Human-readable projection

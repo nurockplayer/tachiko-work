@@ -28,10 +28,9 @@ meaning. Named and already admitted constrained v2 occurrences gain the existing
 definition command behavior with complete evidence after realization by the
 #531 implementation child; #452 constraint admission remains excluded.
 Historical v1 refusal text and fixtures below remain frozen v1 authority.
-Conflict v2 also keeps its whole-request definition-change refusal pending the
-lead's separate conflict-facet choice; ADR-0044 does not invent facets absent
-from v1. Its [Questions for the lead](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md#questions-for-the-lead)
-record that boundary. This authority PR claims no implementation completion.
+Conflict v2 keeps its whole-request definition-change refusal; ADR-0044 adds
+no conflict facets, and its [lead decisions](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md#lead-decisions-on-the-intake-questions)
+select an atomic complete-definition facet for any future extension. This authority PR claims no implementation completion.
 
 ## Contract
 
