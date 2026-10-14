@@ -150,6 +150,8 @@ pnpm --dir "${repo_root}/packages/browser-client" exec tsc \
   --noEmit \
   --pretty false
 
+node "${repo_root}/tests/consumer-kit/display-name-repair.mjs" "${vendor_dir}"
+
 # Worker parity must compare against fresh native results from this tree.
 export TACHIKO_FIELD_EXPLANATION_CAPTURE="${check_dir}/field-explanation-capture.json"
 cargo test \

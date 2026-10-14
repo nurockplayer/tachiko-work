@@ -1,7 +1,8 @@
 use super::{
     BTreeMap, BTreeSet, DesignerError, DesignerRequest, DesignerRuntime, Entity, Expression,
-    FieldId, FieldRef, GrantId, NewTableColumnInput, Number, Value, allocate_key, encode_roproj_v3,
-    name_admission, open_portable_ro, open_project, process_wire_request,
+    FieldId, FieldRef, GrantId, NewTableColumnInput, Number, SemanticPublicationAuthority, Value,
+    allocate_key, encode_roproj_v3, name_admission, open_portable_ro, open_project,
+    process_wire_request,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000529";
@@ -572,4 +573,128 @@ fn accumulated_name_failure_reply_is_bounded_and_retains_every_input() {
         );
     }
     assert_eq!(resident.as_ref().unwrap().session.export_snapshot(), before);
+}
+
+fn last_named_column_runtime() -> (DesignerRuntime, String, String) {
+    let mut document =
+        DesignerRuntime::new_table(OCCURRENCE, "Orders", &columns(&["Item", "Other"]))
+            .unwrap()
+            .session
+            .export_snapshot()
+            .into_document();
+    let schema = document.schemas.values_mut().next().unwrap();
+    schema.display_name = None;
+    let ids = schema
+        .fields
+        .keys()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    schema
+        .fields
+        .get_mut(&FieldId::from(ids[1].clone()))
+        .unwrap()
+        .display_name = None;
+    let tree = encode_roproj_v3(&document).unwrap();
+    let carrier =
+        super::encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))
+            .unwrap();
+    let mut resident = None;
+    open_project(&mut resident, &carrier, OCCURRENCE).unwrap();
+    (resident.unwrap(), ids[0].clone(), ids[1].clone())
+}
+
+#[test]
+fn remove_last_name_then_ordinary_edit_uses_retained_profile() {
+    let (mut runtime, named, remaining) = last_named_column_runtime();
+    runtime
+        .remove_column("resident/0", "orders", &named)
+        .unwrap();
+    assert!(
+        !runtime
+            .session
+            .export_snapshot()
+            .document()
+            .has_display_names()
+    );
+    runtime
+        .insert_row(
+            "resident/1",
+            "orders",
+            &[super::RowInitializer {
+                field: remaining,
+                input: super::ScalarEditInput::Text {
+                    value: "Item".into(),
+                },
+            }],
+        )
+        .unwrap();
+    assert_eq!(runtime.query_table("orders").unwrap().rows.len(), 1);
+}
+
+#[test]
+fn undo_redo_last_name_transition_then_ordinary_edit() {
+    let (mut runtime, named, remaining) = last_named_column_runtime();
+    let original = runtime.session.export_snapshot().into_document();
+    runtime
+        .remove_column("resident/0", "orders", &named)
+        .unwrap();
+    let removed = runtime.session.export_snapshot().into_document();
+    runtime.history_edit("resident/1", false).unwrap();
+    assert_eq!(runtime.session.export_snapshot().document(), &original);
+    runtime.history_edit("resident/2", true).unwrap();
+    assert_eq!(runtime.session.export_snapshot().document(), &removed);
+    runtime
+        .insert_row(
+            "resident/3",
+            "orders",
+            &[super::RowInitializer {
+                field: remaining,
+                input: super::ScalarEditInput::Text {
+                    value: "Item".into(),
+                },
+            }],
+        )
+        .unwrap();
+    runtime.history_edit("resident/4", false).unwrap();
+    assert_eq!(runtime.session.export_snapshot().document(), &removed);
+    runtime.history_edit("resident/5", true).unwrap();
+    assert_eq!(runtime.query_table("orders").unwrap().rows.len(), 1);
+}
+
+#[test]
+fn empty_table_name_publication_wire_invalidates_presentation() {
+    let mut runtime =
+        DesignerRuntime::new_table(OCCURRENCE, "Orders", &columns(&["Item"])).unwrap();
+    let table = runtime.query_table("orders").unwrap();
+    let publication = runtime
+        .rename_column("resident/0", "orders", &table.columns[0].id, "Item Name")
+        .unwrap();
+    let wire = serde_json::to_value(publication).unwrap();
+    assert_eq!(
+        wire["schema_fields"],
+        serde_json::json!([{ "schema": table.collection.id, "field": table.columns[0].id }])
+    );
+    // Table rename authoring is deferred. Exercise its trusted engine publication
+    // and the same wire conversion used by every current runtime command.
+    let snapshot = runtime.session.export_snapshot();
+    let mut candidate = snapshot.document().clone();
+    candidate.schemas.values_mut().next().unwrap().display_name = Some("Orders Name".into());
+    let mut authority = runtime.session.publication_authority(&mut runtime.clock);
+    let (scope, _, revision, ()) = authority
+        .publish_if_current(
+            snapshot.document_scope(),
+            snapshot.revision(),
+            candidate,
+            |_| Some(()),
+        )
+        .unwrap();
+    let invalidation = authority
+        .projection_invalidation_for(&scope, snapshot.revision(), &revision)
+        .unwrap();
+    let wire = serde_json::to_value(super::PublicationProjection::from(invalidation)).unwrap();
+    assert_eq!(wire["schemas"], serde_json::json!([table.collection.id]));
+    assert_eq!(wire["schema_fields"], serde_json::json!([]));
+    assert_eq!(wire["entities"], serde_json::json!([]));
+    assert_eq!(wire["fields"], serde_json::json!([]));
+    assert_eq!(wire["affected_calculations"], serde_json::json!([]));
 }

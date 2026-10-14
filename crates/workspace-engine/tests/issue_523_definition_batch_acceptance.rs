@@ -537,3 +537,133 @@ fn ac5_v2_still_refuses_definition_changes() {
         assert_eq!(session.export_snapshot(), snap);
     }
 }
+
+// ADR-0043: frozen v1 must refuse names before the definition-only shortcut,
+// including re-evaluation at preview and execution after nameless admission.
+fn named_definition_refusal(phase: &str, operation: &str) {
+    for schema_name in [false, true] {
+        let mut base = fixture();
+        let command = match operation {
+            "create" => {
+                let command = upsert(&base, false);
+                base.keyed_grouped_sum_definitions.clear();
+                command
+            }
+            "change" => upsert(&base, true),
+            "delete" => SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                definition: "summary".into(),
+            },
+            _ => unreachable!(),
+        };
+        let mut named = base.clone();
+        if schema_name {
+            named.schemas.get_mut("products").unwrap().display_name = Some("Products Name".into());
+        } else {
+            named
+                .schemas
+                .get_mut("products")
+                .unwrap()
+                .fields
+                .get_mut("price")
+                .unwrap()
+                .display_name = Some("Price Name".into());
+        }
+        let mut lifecycle = setup(false, false);
+        let mut session =
+            ResidentWorkspaceSession::new("document-occurrence".into(), named.clone());
+        let snapshot = session.export_snapshot();
+        let proposal = ProposalId::from("named-definition");
+        let editor = PrincipalId::from("editor");
+        let admitted = lifecycle.propose(
+            snapshot.document_scope(),
+            if phase == "proposal" { &named } else { &base },
+            snapshot.revision(),
+            ProposalRequest::new(
+                proposal.clone(),
+                snapshot.revision().clone(),
+                SemanticPatchBody::command(command),
+                editor.clone(),
+            ),
+            TrustedInstant::new(1),
+        );
+        let result = match phase {
+            "proposal" => admitted.map(|_| ()),
+            "preview" => {
+                admitted.unwrap();
+                lifecycle
+                    .preview(
+                        snapshot.document_scope(),
+                        &named,
+                        snapshot.revision(),
+                        &proposal,
+                        &editor,
+                        TrustedInstant::new(2),
+                    )
+                    .map(|_| ())
+            }
+            "execution" => {
+                admitted.unwrap();
+                lifecycle
+                    .execute(
+                        &proposal,
+                        None,
+                        &editor,
+                        &mut session.publication_authority(&mut Clock),
+                        TrustedInstant::new(3),
+                    )
+                    .map(|_| ())
+            }
+            _ => unreachable!(),
+        };
+        assert!(
+            format!("{result:?}").contains("UnsupportedDisplayName"),
+            "{phase}/{operation}/schema={schema_name}: {result:?}"
+        );
+        assert_eq!(session.export_snapshot(), snapshot);
+    }
+}
+
+#[test]
+fn named_definition_create_proposal_refuses_v1() {
+    named_definition_refusal("proposal", "create");
+}
+
+#[test]
+fn named_definition_change_proposal_refuses_v1() {
+    named_definition_refusal("proposal", "change");
+}
+
+#[test]
+fn named_definition_delete_proposal_refuses_v1() {
+    named_definition_refusal("proposal", "delete");
+}
+
+#[test]
+fn named_definition_create_preview_refuses_v1() {
+    named_definition_refusal("preview", "create");
+}
+
+#[test]
+fn named_definition_change_preview_refuses_v1() {
+    named_definition_refusal("preview", "change");
+}
+
+#[test]
+fn named_definition_delete_preview_refuses_v1() {
+    named_definition_refusal("preview", "delete");
+}
+
+#[test]
+fn named_definition_create_execution_refuses_v1() {
+    named_definition_refusal("execution", "create");
+}
+
+#[test]
+fn named_definition_change_execution_refuses_v1() {
+    named_definition_refusal("execution", "change");
+}
+
+#[test]
+fn named_definition_delete_execution_refuses_v1() {
+    named_definition_refusal("execution", "delete");
+}

@@ -145,7 +145,6 @@ impl DesignerRuntime {
             &proposal_id,
             &self.principal,
             self.clock.tick(),
-            snapshot.document().has_display_names(),
         )?;
         let (changes, removed_entities) =
             cleanup_changes(self, expected_revision, snapshot.document(), &commands)?;

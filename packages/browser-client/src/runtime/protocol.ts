@@ -88,9 +88,14 @@ export type FieldExplanationProjection = {
   diagnostics: DiagnosticProjection[];
 };
 
+export type SchemaFieldTarget = { schema: string; field: string };
+
 export type PublicationProjection = {
   base_revision: string;
   resulting_revision: string;
+  /** Stable schema presentation targets, including tables with no rows. */
+  schemas: string[];
+  schema_fields: SchemaFieldTarget[];
   entities: string[];
   fields: FieldTarget[];
   affected_calculations: FieldTarget[];

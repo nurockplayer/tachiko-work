@@ -1126,6 +1126,14 @@ impl PatchLifecycle {
         )
     }
 
+    /// Whether proposals in this registry bind the v2 evidence vocabulary.
+    /// Entry-point selection must follow the registry, even when a publication
+    /// removes the last fact that required v2.
+    #[must_use]
+    pub fn uses_v2_evidence(&self) -> bool {
+        self.evidence_profile == EvidenceProfile::V2
+    }
+
     /// Create a request-local v2 registry using this registry's current trusted
     /// principal, grant and policy state. No proposal, Approval or receipt is
     /// copied or reinterpreted. The synchronous caller must finish the request
@@ -3306,6 +3314,13 @@ impl PatchLifecycle {
             return Err(PatchLifecycleError::CommandRejected {
                 source: Box::new(WorkspaceError::Diff(
                     super::DiffError::UnsupportedFieldConstraintChange,
+                )),
+            });
+        }
+        if base.has_display_names() || candidate.has_display_names() {
+            return Err(PatchLifecycleError::CommandRejected {
+                source: Box::new(WorkspaceError::Diff(
+                    super::DiffError::UnsupportedDisplayName,
                 )),
             });
         }

@@ -39,7 +39,10 @@ use tachiko_workspace_engine::{
         SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticRevision,
         SemanticScope, TrustedInstant,
     },
-    resident_session::{ResidentSnapshot, ResidentWorkspaceSession, TrustedPublicationTimeSource},
+    resident_session::{
+        ResidentProjectionInvalidation, ResidentSnapshot, ResidentWorkspaceSession,
+        TrustedPublicationTimeSource,
+    },
     validate,
 };
 use thiserror::Error;
@@ -617,9 +620,50 @@ pub struct KeyedGroupedSumPublishedProjection {
 pub struct PublicationProjection {
     pub base_revision: String,
     pub resulting_revision: String,
+    pub schemas: Vec<String>,
+    pub schema_fields: Vec<SchemaFieldTarget>,
     pub entities: Vec<String>,
     pub fields: Vec<FieldTarget>,
     pub affected_calculations: Vec<FieldTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SchemaFieldTarget {
+    pub schema: String,
+    pub field: String,
+}
+
+impl From<&ResidentProjectionInvalidation> for PublicationProjection {
+    fn from(invalidation: &ResidentProjectionInvalidation) -> Self {
+        Self {
+            base_revision: invalidation.base_revision.as_str().to_owned(),
+            resulting_revision: invalidation.resulting_revision.as_str().to_owned(),
+            schemas: invalidation
+                .schemas
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            schema_fields: invalidation
+                .schema_fields
+                .iter()
+                .map(|(schema, field)| SchemaFieldTarget {
+                    schema: schema.to_string(),
+                    field: field.to_string(),
+                })
+                .collect(),
+            entities: invalidation
+                .entities
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            fields: invalidation.fields.iter().map(field_target).collect(),
+            affected_calculations: invalidation
+                .affected_calculations
+                .iter()
+                .map(field_target)
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -2144,7 +2188,6 @@ impl DesignerRuntime {
             &proposal_id,
             &self.principal,
             self.clock.tick(),
-            snapshot.document().has_display_names(),
         )?;
         // Use the admitted bound command from this exact authorized preview.
         // The full open-time profile must pass before publication, including
@@ -2178,7 +2221,7 @@ impl DesignerRuntime {
             Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
         }
         let execute_now = self.clock.tick();
-        let (receipt, invalidation) = {
+        let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
             let receipt = designer_execute(
                 &mut lifecycle,
@@ -2186,40 +2229,21 @@ impl DesignerRuntime {
                 &self.principal,
                 &mut publication,
                 execute_now,
-                snapshot.document().has_display_names(),
             )?;
-            let invalidation = publication
+            publication
                 .projection_invalidation_for(
                     snapshot.document_scope(),
                     &receipt.base_revision,
                     &receipt.resulting_revision,
                 )
                 .ok_or(DesignerError::MissingInvalidation)?
-                .clone();
-            (receipt, invalidation)
+                .clone()
         };
         self.refresh_structure();
         if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
             self.formula_sources = sources;
         }
-        Ok((
-            PublicationProjection {
-                base_revision: receipt.base_revision.as_str().to_owned(),
-                resulting_revision: receipt.resulting_revision.as_str().to_owned(),
-                entities: invalidation
-                    .entities
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                fields: invalidation.fields.iter().map(field_target).collect(),
-                affected_calculations: invalidation
-                    .affected_calculations
-                    .iter()
-                    .map(field_target)
-                    .collect(),
-            },
-            forward,
-        ))
+        Ok((PublicationProjection::from(&invalidation), forward))
     }
 
     fn restore_formula_inverse(
@@ -2254,7 +2278,6 @@ impl DesignerRuntime {
             &proposal_id,
             &self.principal,
             self.clock.tick(),
-            snapshot.document().has_display_names(),
         )?;
         let mut candidate = snapshot.document().clone();
         let field = target.as_field_ref();
@@ -2269,7 +2292,7 @@ impl DesignerRuntime {
             Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
         }
         let execute_now = self.clock.tick();
-        let (receipt, invalidation) = {
+        let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
             let receipt = designer_execute(
                 &mut lifecycle,
@@ -2277,37 +2300,21 @@ impl DesignerRuntime {
                 &self.principal,
                 &mut publication,
                 execute_now,
-                snapshot.document().has_display_names(),
             )?;
-            let invalidation = publication
+            publication
                 .projection_invalidation_for(
                     snapshot.document_scope(),
                     &receipt.base_revision,
                     &receipt.resulting_revision,
                 )
                 .ok_or(DesignerError::MissingInvalidation)?
-                .clone();
-            (receipt, invalidation)
+                .clone()
         };
         self.refresh_structure();
         if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
             self.formula_sources = sources;
         }
-        Ok(PublicationProjection {
-            base_revision: receipt.base_revision.as_str().to_owned(),
-            resulting_revision: receipt.resulting_revision.as_str().to_owned(),
-            entities: invalidation
-                .entities
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-            fields: invalidation.fields.iter().map(field_target).collect(),
-            affected_calculations: invalidation
-                .affected_calculations
-                .iter()
-                .map(field_target)
-                .collect(),
-        })
+        Ok(PublicationProjection::from(&invalidation))
     }
 
     /// Resolve private copy gestures once against the exact canonical snapshot.
@@ -2626,10 +2633,9 @@ impl DesignerRuntime {
             &proposal_id,
             &self.principal,
             self.clock.tick(),
-            naming_transition,
         )?;
         let execute_now = self.clock.tick();
-        let (receipt, invalidation) = {
+        let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
             let receipt = designer_execute(
                 lifecycle,
@@ -2637,17 +2643,15 @@ impl DesignerRuntime {
                 &self.principal,
                 &mut publication,
                 execute_now,
-                naming_transition,
             )?;
-            let invalidation = publication
+            publication
                 .projection_invalidation_for(
                     snapshot.document_scope(),
                     &receipt.base_revision,
                     &receipt.resulting_revision,
                 )
                 .ok_or(DesignerError::MissingInvalidation)?
-                .clone();
-            (receipt, invalidation)
+                .clone()
         };
         if !capacity_text_edit {
             self.refresh_structure();
@@ -2655,21 +2659,7 @@ impl DesignerRuntime {
                 self.formula_sources = sources;
             }
         }
-        Ok(PublicationProjection {
-            base_revision: receipt.base_revision.as_str().to_owned(),
-            resulting_revision: receipt.resulting_revision.as_str().to_owned(),
-            entities: invalidation
-                .entities
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-            fields: invalidation.fields.iter().map(field_target).collect(),
-            affected_calculations: invalidation
-                .affected_calculations
-                .iter()
-                .map(field_target)
-                .collect(),
-        })
+        Ok(PublicationProjection::from(&invalidation))
     }
 
     fn preflight_capacity_scalar(
@@ -5010,6 +5000,19 @@ fn ensure_static_profile(
     let publication = PublicationProjection {
         base_revision: "resident/18446744073709551615".to_owned(),
         resulting_revision: "resident/18446744073709551615".to_owned(),
+        schemas: collection_specs
+            .values()
+            .map(|spec| spec.summary.id.clone())
+            .collect(),
+        schema_fields: collection_specs
+            .values()
+            .flat_map(|spec| {
+                spec.columns.iter().map(|column| SchemaFieldTarget {
+                    schema: spec.summary.id.clone(),
+                    field: column.id.to_string(),
+                })
+            })
+            .collect(),
         entities,
         fields: fields.clone(),
         affected_calculations: if native_tracker || text_capacity {
@@ -5061,9 +5064,8 @@ fn designer_preview(
     proposal: &ProposalId,
     principal: &PrincipalId,
     now: TrustedInstant,
-    names: bool,
 ) -> Result<SemanticPatch, DesignerError> {
-    if names {
+    if lifecycle.uses_v2_evidence() {
         Ok(lifecycle
             .preview_v2(
                 snapshot.document_scope(),
@@ -5099,9 +5101,8 @@ fn designer_execute(
     principal: &PrincipalId,
     publication: &mut impl SemanticPublicationAuthority,
     now: TrustedInstant,
-    names: bool,
 ) -> Result<DesignerReceipt, DesignerError> {
-    if names {
+    if lifecycle.uses_v2_evidence() {
         let receipt = lifecycle.execute_v2(proposal, None, principal, publication, now)?;
         Ok(DesignerReceipt {
             base_revision: receipt.base_revision,

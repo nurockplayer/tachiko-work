@@ -140,6 +140,7 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name}));
   }
 
+  /** Return complete entity and schema presentation invalidation from Rust. */
   async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command(request));
   }

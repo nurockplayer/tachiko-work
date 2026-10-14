@@ -620,6 +620,8 @@ fn full_oracle_invalidation(
         document_scope: scope.clone(),
         base_revision: publication.base_revision.clone(),
         resulting_revision: publication.resulting_revision.clone(),
+        schemas: changes.schemas.into_iter().collect(),
+        schema_fields: changes.schema_fields.into_iter().collect(),
         entities: changes.entities.into_iter().collect(),
         fields: changes.fields.into_iter().collect(),
         affected_calculations: affected_calculations.into_iter().collect(),
@@ -628,6 +630,11 @@ fn full_oracle_invalidation(
 
 #[derive(Default)]
 struct FullInvalidationChanges {
+    schemas: BTreeSet<tachiko_semantic_core::SchemaId>,
+    schema_fields: BTreeSet<(
+        tachiko_semantic_core::SchemaId,
+        tachiko_semantic_core::FieldId,
+    )>,
     entities: BTreeSet<EntityId>,
     fields: BTreeSet<FieldRef>,
     calculation_roots: BTreeSet<FieldRef>,
@@ -712,6 +719,11 @@ fn full_oracle_schema_changes(
     for schema_id in schema_ids {
         let before_schema = before.schemas.get(&schema_id);
         let after_schema = after.schemas.get(&schema_id);
+        if before_schema.map(|schema| (&schema.id, &schema.key, &schema.display_name))
+            != after_schema.map(|schema| (&schema.id, &schema.key, &schema.display_name))
+        {
+            changes.schemas.insert(schema_id.clone());
+        }
         let field_ids = before_schema
             .into_iter()
             .flat_map(|schema| schema.fields.keys())
@@ -728,6 +740,9 @@ fn full_oracle_schema_changes(
             if before_definition == after_definition {
                 continue;
             }
+            changes
+                .schema_fields
+                .insert((schema_id.clone(), field_id.clone()));
             let semantic_definition_changed = match (before_definition, after_definition) {
                 (Some(before), Some(after)) => {
                     before.id != after.id

@@ -15,8 +15,8 @@ use tachiko_formula_engine::{
 
 use super::{
     AddressIndex, AddressIndexError, CalculatedField, Diagnostic, Document, EntityId,
-    EntityInspection, Expression, FieldAddress, FieldRef, SemanticSubject, ValidationReport,
-    ValidationRole, Value, WorkspaceError,
+    EntityInspection, Expression, FieldAddress, FieldId, FieldRef, SchemaId, SemanticSubject,
+    ValidationReport, ValidationRole, Value, WorkspaceError,
     formula_operations::{FormulaCalculationOutcome, calculation_dependencies, calculation_for},
     invalid_document,
     patch_lifecycle::{
@@ -482,6 +482,10 @@ pub struct ResidentProjectionInvalidation {
     pub document_scope: DocumentScopeId,
     pub base_revision: SemanticRevision,
     pub resulting_revision: SemanticRevision,
+    /// Schema presentation targets, independent of resident entities.
+    pub schemas: Vec<SchemaId>,
+    /// Schema-field presentation targets in stable (`SchemaId`, `FieldId`) order.
+    pub schema_fields: Vec<(SchemaId, FieldId)>,
     pub entities: Vec<EntityId>,
     pub fields: Vec<FieldRef>,
     pub affected_calculations: Vec<FieldRef>,
@@ -695,6 +699,8 @@ fn projection_invalidation(
             document_scope,
             base_revision,
             resulting_revision,
+            schemas: changes.schemas.into_iter().collect(),
+            schema_fields: changes.schema_fields.into_iter().collect(),
             entities: changes.entities.into_iter().collect(),
             fields: changes.fields.into_iter().collect(),
             affected_calculations: affected_calculations.into_iter().collect(),
@@ -705,6 +711,8 @@ fn projection_invalidation(
 
 #[derive(Default)]
 struct ProjectionChanges {
+    schemas: BTreeSet<SchemaId>,
+    schema_fields: BTreeSet<(SchemaId, FieldId)>,
     entities: BTreeSet<EntityId>,
     fields: BTreeSet<FieldRef>,
     calculation_roots: BTreeSet<FieldRef>,
@@ -801,6 +809,11 @@ fn collect_schema_projection_changes(
         {
             changes.address_index_changed = true;
         }
+        if before_schema.map(|schema| (&schema.id, &schema.key, &schema.display_name))
+            != after_schema.map(|schema| (&schema.id, &schema.key, &schema.display_name))
+        {
+            changes.schemas.insert(schema_id.clone());
+        }
         let field_ids = before_schema
             .into_iter()
             .flat_map(|schema| schema.fields.keys())
@@ -818,6 +831,9 @@ fn collect_schema_projection_changes(
             if before_definition == after_definition {
                 continue;
             }
+            changes
+                .schema_fields
+                .insert((schema_id.clone(), field_id.clone()));
             let address_definition_changed = match (before_definition, after_definition) {
                 (Some(before), Some(after)) => before.id != after.id || before.key != after.key,
                 (Some(_), None) | (None, Some(_)) => true,
@@ -928,6 +944,89 @@ mod tests {
         fn now(&mut self) -> TrustedInstant {
             TrustedInstant::new(1)
         }
+    }
+
+    fn assert_empty_table_name_invalidation(schema_name: bool) {
+        let mut before = Document::empty("document", "Names");
+        let field = tachiko_semantic_core::FieldDefinition {
+            id: "f".into(),
+            key: "item".into(),
+            display_name: None,
+            field_type: tachiko_semantic_core::FieldType::Text,
+            required: false,
+            constraint: tachiko_semantic_core::FieldConstraint::None,
+        };
+        let schema = tachiko_semantic_core::Schema {
+            id: "s".into(),
+            key: "table".into(),
+            display_name: None,
+            fields: BTreeMap::from([(field.id.clone(), field)]),
+        };
+        before.schemas.insert(schema.id.clone(), schema);
+        let mut after = before.clone();
+        let schema = after.schemas.get_mut("s").unwrap();
+        if schema_name {
+            schema.display_name = Some("Table Name".into());
+        } else {
+            schema.fields.get_mut("f").unwrap().display_name = Some("Item Name".into());
+        }
+        let mut session = ResidentWorkspaceSession::new("occurrence".into(), before.clone());
+        let mut time = FixedTime;
+        let snapshot = session.export_snapshot();
+        let mut publication = session.publication_authority(&mut time);
+        publication
+            .publish_if_current(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                after,
+                |_| Some(()),
+            )
+            .unwrap();
+        let actual = publication.projection_invalidation.as_ref().unwrap();
+        // Compare against the full no-change invalidation, including any independent
+        // schema targets: entity-only lists cannot distinguish these empty tables.
+        let mut control = ResidentWorkspaceSession::new("occurrence".into(), before.clone());
+        let (unchanged, _) = projection_invalidation(
+            &before,
+            &mut control.retained,
+            &before,
+            actual.document_scope.clone(),
+            actual.base_revision.clone(),
+            actual.resulting_revision.clone(),
+        );
+        assert_ne!(
+            actual, &unchanged,
+            "label-only publication must invalidate presentation"
+        );
+        assert_eq!(
+            actual.schemas,
+            if schema_name {
+                vec!["s".into()]
+            } else {
+                vec![]
+            }
+        );
+        assert_eq!(
+            actual.schema_fields,
+            if schema_name {
+                vec![]
+            } else {
+                vec![("s".into(), "f".into())]
+            }
+        );
+        assert_eq!(actual.entities, []);
+        assert_eq!(actual.fields, []);
+        assert_eq!(actual.affected_calculations, []);
+    }
+
+    #[test]
+    fn empty_table_column_name_invalidates_presentation() {
+        assert_empty_table_name_invalidation(false);
+    }
+
+    #[test]
+    fn schema_label_only_invalidates_presentation() {
+        assert_empty_table_name_invalidation(true);
     }
 
     #[test]
