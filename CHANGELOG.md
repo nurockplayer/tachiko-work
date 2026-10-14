@@ -4,13 +4,6 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
-### Fixed
-
-- CLI directory read commands and both validation entrypoints now accept exact
-  canonical `.roproj/v3` trees, including portable package unpack output, through
-  the existing strict storage reader. Canonical v1 reads remain supported;
-  other versions and invalid trees are refused without modifying the source.
-
 ### Added
 
 - First-public portable package/v1 now carries exactly canonical `.roproj/v3`,
@@ -146,6 +139,16 @@ All notable changes to Tachiko Work are documented in this file.
   this does not establish full Excel compatibility or a portable project format.
 
 ### Fixed
+
+- CLI directory read commands and both validation entrypoints now accept exact
+  canonical `.roproj/v3` trees, including portable package unpack output, through
+  the existing strict storage reader. Canonical v1 reads remain supported;
+  other versions and invalid trees are refused without modifying the source.
+
+- V1 semantic patch batches that change saved grouped-summary definitions
+  together with any other command now reject before publication, preventing
+  omitted ordinary change evidence and skipped per-change admission.
+  Definition-only batches retain their existing lifecycle.
 
 - CSV/XLSX exports of imported work and native Budget work explicitly disclose
   omitted saved grouped-summary definitions with one aggregate fidelity warning,
