@@ -120,13 +120,21 @@ smallest free positive integer suffix (starting at 1) in the document's schema
 key namespace or the owning schema's field key namespace, respectively.
 Occupied keys are skipped. Stable ID allocation remains separate.
 
+If an ASCII-derived key is already occupied in its namespace, the derivation
+falls back to the same `table_N`/`column_N` allocation. A label that is valid
+and unique under section 4 is never refused because of a key collision, and
+the label itself is never altered. For example, adding `item` beside an
+existing `Item` (key `item`) stores display name `item` with the smallest free
+`column_N` key. Allocation is decided once at creation; a later rename or
+deletion never re-derives or reassigns an existing key.
+
 | Input name after trimming | Stored display name | Key result |
 | --- | --- | --- |
 | `My Expenses` | `My Expenses` | `table_1` if free, otherwise the smallest free `table_N` |
 | `Item Name` | `Item Name` | smallest free `column_N` in its table |
 | `項目` | `項目` | smallest free `column_N` in its table |
 | `Amount_USD` | `Amount_USD` | `amount_usd` |
-| `Item` / `item` | two distinct admitted labels | both derive candidate `item`; see the bounded open question below |
+| `Item`, then `item` in the same table | two distinct admitted labels | first `item`; second falls back to the smallest free `column_N` |
 
 Key uniqueness remains an independent invariant; label uniqueness does not
 waive it. A display rename changes neither stable ID nor allocated key. CJK
@@ -236,10 +244,9 @@ consumer work. Documentary consistency, links, and diff checks validate this
 PR; executable acceptance belongs to the implementation slice. The Work lead
 owns independent review and integration.
 
-## Bounded open question
+## Resolved handoff question
 
-The frozen decisions do not choose how to resolve a collision of an
-ASCII-derived key with an existing key (for example `Item` and `item` both
-derive `item` despite distinct valid labels). The implementation handoff needs
-the lead's bounded disposition on refusal versus allocation in that case.
-This ADR does not invent a suffix rule or silently fold display-name equality.
+The ASCII-derived-key collision (for example `Item` and `item`) is resolved by
+the Work lead's disposition on #525: allocation fallback, as specified in
+section 5. Refusal was rejected because it would refuse a valid, unique label
+for an internal addressing reason the user cannot see.

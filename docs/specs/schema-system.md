@@ -78,9 +78,9 @@ columns within their Schema, including nameless key fallbacks. `Item` and
 
 ASCII identifier names retain current lowercase key derivation; other names
 allocate the smallest free positive `table_N`/`column_N` suffix in the schema
-key/owning-field key namespace. The ASCII-derived-key collision question in
-ADR-0043 remains for the lead's implementation handoff. Key uniqueness is
-independent of label uniqueness.
+key/owning-field key namespace. An ASCII-derived key that is already occupied falls back to the same
+allocation (ADR-0043 section 5); a valid unique label is never refused for a key
+collision. Key uniqueness is independent of label uniqueness.
 
 A user-facing column rename edits only the label through revision-checked
 publication with inverse history. It leaves IDs, keys, bound relationships,

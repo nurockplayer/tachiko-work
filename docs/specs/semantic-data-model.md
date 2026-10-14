@@ -68,7 +68,7 @@ are unique by exact comparison within the Document for tables and within each
 Schema for columns. Shared Rust validation enforces this, including merge
 admission. `Item` and `item` are distinct; `My Expenses`, `Item Name`, and
 `項目` are valid names. Key derivation/allocation is separately governed by
-ADR-0043, including its unresolved ASCII-derived-key collision question.
+ADR-0043, including allocation fallback when an ASCII-derived key is occupied.
 
 User-facing column rename edits only the optional label, preserving ID, key,
 address, values, bound formulas, and constraints; revision checks and inverse
