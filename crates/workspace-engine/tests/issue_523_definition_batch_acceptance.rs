@@ -365,6 +365,9 @@ fn assert_refused_without_mutation(label: &str, (outcome, changed): (Outcome, bo
     assert!(!changed, "{label}: document was installed");
     match outcome {
         Outcome::Refused(PatchLifecycleError::CommandRejected { .. }) => {}
+        // Existing disclosure-safe masking: an actor without Query over the
+        // affected subjects learns only that disclosure was denied.
+        Outcome::Refused(PatchLifecycleError::DisclosureDenied) if label == "narrow-query" => {}
         Outcome::Refused(other) => {
             panic!("{label}: refusal must be a command rejection: {other:?}")
         }
