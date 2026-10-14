@@ -144,8 +144,8 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 | #18 Japan enterprise / gradual Excel migration | Accepted product direction with Hypotheses | Japan as a priority research environment and gradual migration are accepted; individual pain-point claims require user evidence. |
 | #275 Excel interoperability first-class product requirement | Resolved by this authority revision when merged: Product Constitution + amended ADR-0027 + Design Principles | Established spreadsheet workflows, especially Microsoft Excel, are a first-class product interoperability target without making Excel/OOXML semantic authority. Historical Tachiko implementation accidents receive no permanent compatibility protection by default; migration or supersession is preferred when they obstruct an Accepted interoperability requirement, subject to user-data and durable-contract protection. Exact XLSX/VBA/chart/pivot coverage remains separately owned by #256 and later specification work. |
 | #19 canonical docs / ADR reconciliation | Completed reconciliation task | Closed after establishing authority precedence, ADR numbering, and canonical reconciliation rules. |
-| #45 machine-readable semantic delta | Resolved by ADR-0030 and `semantic-diff-spec.md`; ADR-0041/#391 add the constraint-aware v2 logical extension | Accepts deterministic same-Document direct-state evidence over typed stable IDs, a closed logical vocabulary and semantic order, and fail-closed compatibility without introducing mutation, history, provenance, or concrete wire authority. V1 remains frozen; v2 is docs-only authority and production DTO/code remains separately owned. |
-| #46 deterministic semantic merge/conflict protocol | Resolved by ADR-0031 and `conflict-resolution.md`; ADR-0041/#391 add the constraint-aware v2 logical extension | Accepts frozen `tachiko.semantic-conflict/v1`: typed stable target + direct facet, three closed structural conflict kinds, canonical base/left/right facts, logical composite identity, deterministic order, parent-child suppression, and separation from validation/calculation failure. ADR-0041/#391 define the docs-only v2 constraint facet; v2 remains unimplemented and does not alter v1. #223 realizes the v1 logical production merge/workspace boundary without stabilizing codec/wire/SDK shapes. |
+| #45 machine-readable semantic delta | Resolved by ADR-0030 and `semantic-diff-spec.md`; ADR-0041/#391 add the constraint-aware v2 logical extension | Accepts deterministic same-Document direct-state evidence over typed stable IDs, a closed logical vocabulary and semantic order, and fail-closed compatibility without introducing mutation, history, provenance, or concrete wire authority. V1 remains frozen; #450 implements the v2 constraint fact in process, public DTO/transport remains separately owned, and ADR-0043's display-name fact is pending #529. |
+| #46 deterministic semantic merge/conflict protocol | Resolved by ADR-0031 and `conflict-resolution.md`; ADR-0041/#391 add the constraint-aware v2 logical extension | Accepts frozen `tachiko.semantic-conflict/v1`: typed stable target + direct facet, three closed structural conflict kinds, canonical base/left/right facts, logical composite identity, deterministic order, parent-child suppression, and separation from validation/calculation failure. ADR-0041/#391 define the v2 constraint facet, which #451 implements as an explicitly selected in-process Rust merge preview without altering v1; public transport/application adoption remains separately owned, and ADR-0043's display-name facet is pending #529. #223 realizes the v1 logical production merge/workspace boundary without stabilizing codec/wire/SDK shapes. |
 | #48 command/operation/transaction/semantic-event taxonomy | Resolved by ADR-0032 and `semantic-api.md` | Keeps operation/transaction non-normative, defines Execute attempt versus publication, `NoChange`, context-scoped revision occurrence identity, attempt-level retry, one optional retained semantic-transition/event concept, receipt separation, and identity/version boundaries without authorizing production DTOs or history mechanics. |
 | #49 snapshot-first semantic history, checkpoints, replay, and compaction | Resolved by ADR-0033, `operation-log-model.md`, and `event-sourcing-model.md` | Accepts explicit snapshot-only, retained-evidence, and verified-tail guarantees; immutable checkpoints and bounded segments; deterministic replay input and snapshot-equality verification; truthful compaction/retention/recovery; forward-only undo; logical commitment scopes; many-to-many optional Git association; and fail-closed version boundaries without authorizing production DTOs, codecs, storage, engines, adapters, transaction infrastructure, or new format versions. |
 | #32 formula reasoning, scenario query, and formula proposal | Resolved by amended ADR-0020 and `semantic-api.md` | Accepts logical structured formula reasoning, exact-snapshot read-only scenarios, and a typed formula-update Command reusing SemanticPatch and ADR-0026; #144 implements the first provider-neutral workspace/CLI slice while exact Rust/wire/catalogue shapes remain Provisional. |
@@ -218,11 +218,13 @@ Issue `#40` is a completed implementation/evidence task that consumed ADR-0015, 
 - #39: Hypothesis; explicitly future/post-1.0 unless evidence changes priority.
 - #42: Epic/index only; not decision authority.
 - #45: resolved by ADR-0030 and `semantic-diff-spec.md`, with ADR-0041/#391
-  adding the docs-only constraint-aware v2 logical extension; v1 remains frozen
-  and production DTO/code requires a separately Ready implementation issue.
+  adding the constraint-aware v2 logical extension, implemented in process by
+  #450; v1 remains frozen, public DTO/transport requires separately Ready work,
+  and ADR-0043's display-name fact is pending #529.
 - #46: resolved by ADR-0031 and `conflict-resolution.md`; ADR-0041/#391 add
-  the docs-only constraint-aware v2 logical facet while v1 remains frozen and
-  v2 unimplemented. #223 realizes the v1 logical production merge/workspace
+  the constraint-aware v2 logical facet, implemented as an in-process preview
+  by #451 (ADR-0043's display-name facet pending #529), while v1 remains
+  frozen. #223 realizes the v1 logical production merge/workspace
   boundary, while codec/wire/SDK stabilization requires separately Ready work.
 - #48: resolved by ADR-0032 and `semantic-api.md`; production revision/event
   DTOs and history mechanics require separately Ready implementation work.
@@ -309,10 +311,13 @@ by #144. `#33` is resolved by the bounded Analysis Query amendment and normative
 Semantic API specification, with the first provider-neutral workspace/CLI slice
 implemented by #150.
 `#45` is resolved by ADR-0030 / `semantic-diff-spec.md`, with ADR-0041/#391
-adding the docs-only constraint-aware v2 logical extension; v1 remains frozen
-and production delta DTO/code remains separately owned. `#46` is resolved by
-ADR-0031 / `conflict-resolution.md`, with ADR-0041/#391 adding a docs-only
-constraint-aware v2 logical facet while v1 remains frozen and v2 unimplemented;
+adding the constraint-aware v2 logical extension, implemented in process by
+#450; v1 remains frozen, public delta DTO/transport remains separately owned,
+and ADR-0043's display-name fact is pending #529. `#46` is resolved by
+ADR-0031 / `conflict-resolution.md`, with ADR-0041/#391 adding a
+constraint-aware v2 logical facet implemented as an in-process preview by #451
+(public adoption separately owned; ADR-0043's display-name facet pending #529)
+while v1 remains frozen;
 #223 realizes the v1 logical production merge/workspace boundary while
 codec/wire/SDK stabilization remains separately owned. `#48` is resolved by ADR-0032 / `semantic-api.md` without authorizing a
 production DTO or history mechanism. None of these implementation states changes
