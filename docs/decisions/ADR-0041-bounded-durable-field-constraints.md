@@ -15,6 +15,22 @@ and package-v2 forward-references below. First-public package/v1 now carries
 exact canonical roproj/v3; older sources require existing explicit migration.
 The historical body and editable-directory/semantic decisions remain intact.
 
+Amended by: [ADR-0043](ADR-0043-native-display-names-separate-from-keys.md)
+only for native display names and the explicit pre-release supersession of the
+v3 member shape/incompatible-version rule and logical v2 evidence vocabularies.
+Schema order becomes `id`, `key`, optional `display_name`, `fields`;
+FieldDefinition order becomes `id`, `key`, optional `display_name`,
+`field_type`, `required`, `constraint`. Absence is omission, never null; the
+five existing field members remain required. No v4 or down-conversion is added,
+and older binaries refuse name-bearing documents. Delta v2 appends Schema
+`schema_display_name_changed` at rank 3 and schema-field
+`schema_field_display_name_changed` at rank 6. Conflict v2 appends
+`display_name` at Schema rank 2 and schema-field rank 5. Complete subject facts
+include optional names. Frozen logical v1 remains unchanged and refuses
+name-bearing state. Constraint meaning, all existing ranks, the nineteen paths,
+and #452's runtime constraint-admission refusal are unchanged. The historical
+sections below are read subject to this bounded amendment.
+
 ## Decision
 
 Tachiko Work admits exactly two durable schema-field constraints for the Driver

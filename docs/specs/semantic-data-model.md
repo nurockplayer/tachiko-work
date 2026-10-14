@@ -49,6 +49,34 @@ rename leaves the stable ID unchanged. Deterministic runtime indexes resolve
 human keys before an operation stores or executes a bound relationship; those
 indexes are derived state and are not persisted.
 
+### Native display-name amendment — ADR-0043
+
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+adds optional durable `display_name` to Schema (native table) and
+FieldDefinition (native column). This Accepted target is pending separate
+Guarded implementation under #525; the aggregate above describes the prior
+implemented shape. Effective name is `display_name` when present, otherwise
+key; `Document.title` remains independent. Canonical absence omits the member,
+never null. Labels are reviewable direct semantic facts, not relationship
+targets or a frontend-owned label store.
+
+Authoring trims leading/trailing Unicode whitespace, preserves the remaining
+scalar sequence exactly, and requires a nonempty single-line name without
+control characters or line separators, at most 4,096 UTF-8 bytes after trimming.
+No normalization, case folding, or width folding is applied. Effective names
+are unique by exact comparison within the Document for tables and within each
+Schema for columns. Shared Rust validation enforces this, including merge
+admission. `Item` and `item` are distinct; `My Expenses`, `Item Name`, and
+`項目` are valid names. Key derivation/allocation is separately governed by
+ADR-0043, including its unresolved ASCII-derived-key collision question.
+
+User-facing column rename edits only the optional label, preserving ID, key,
+address, values, bound formulas, and constraints; revision checks and inverse
+history apply. Explicit low-level key rename remains separate. Table rename,
+CSV/XLSX label promotion, formula syntax changes, and #452 constraint admission
+are outside the first slice. CollectionSummary and projected columns expose
+effective `display_name: string`; IDs/keys/addresses continue to target actions.
+
 The closed scalar profile currently includes finite `Number`, `Text`,
 `Boolean`, and date-only `Date` values. The M07 `Date` addition is the explicit
 semantic transition accepted by [Issue #266](https://github.com/nurockplayer/tachiko-work/issues/266)

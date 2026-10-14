@@ -2,6 +2,12 @@
 
 Decision state: Accepted target under [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md).
 
+Native display-name amendment: [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+supersedes the unreleased v3 Schema/FieldDefinition shape and incompatible-version
+rule only as specified below. Name support remains pending separate Guarded
+implementation under #525; existing implementation statements describe the
+pre-amendment codec.
+
 Implementation state: The storage codec, exact canonical-tree admission,
 semantic-core validation, and explicit v1/v2 conversion are implemented by #449.
 Native read, publish, and migration are implemented for canonical directories.
@@ -21,11 +27,15 @@ Common JSON rules, Stable ID tokens, Entity JSONL record, Value, Bound
 Expression, definitions, decode/conversion/validation contract, and normative
 byte rules in the accepted [v2 specification](roproj-format-v2.md), at the
 ADR-0041 decision boundary. This incorporation is a fixed normative snapshot;
-future edits to v2 do not alter v3. An incompatible change requires v4.
+future edits to v2 do not alter v3. Except for the explicit pre-release
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+supersession below, an incompatible change requires a new representation
+version and Accepted authority. ADR-0043 selects no v4 or down-conversion.
 
-V3's only DTO changes are: manifest version `3`; the five-member
-`FieldDefinition`; the added `date` FieldType; the added `date` Value; and the
-constraint union below. All v2 members, tags, requiredness, ordering,
+V3's only DTO changes are: manifest version `3`; FieldDefinition's five
+required members plus optional `display_name`; optional Schema `display_name`;
+the added `date` FieldType; the added `date` Value; and the constraint union
+below. All other v2 members, tags, requiredness, ordering,
 unknown-member rejection, ID ordering, formula rules, definition rules, and
 canonical JSON/JSONL bytes remain exactly as incorporated. No extension member,
 nullable member, sidecar, or alternate alias exists.
@@ -53,9 +63,11 @@ unsupported, or non-lexical version fails closed.
 ## Schema and field definition
 
 `schemas.json` is the v2 array of Schema records, ordered by stable Schema ID.
-A Schema has fixed member order `id`, `key`, `fields`; fields are ordered by
-stable Field ID. V3's complete FieldDefinition has fixed member order
-`id`, `key`, `field_type`, `required`, `constraint`:
+A Schema has fixed member order `id`, `key`, `display_name` when present,
+`fields`; fields are ordered by stable Field ID. V3's complete FieldDefinition
+has fixed member order `id`, `key`, `display_name` when present, `field_type`,
+`required`, `constraint`. This placement is normative under
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md):
 
 ```json
 {
@@ -67,8 +79,53 @@ stable Field ID. V3's complete FieldDefinition has fixed member order
 }
 ```
 
-All five members are required, non-null, and emitted, including `required:false`
-and `{"type":"none"}`. Field IDs are unique within the owning schema.
+All five existing field members are required, non-null, and emitted, including
+`required:false` and `{"type":"none"}`. Schema `id`, `key`, and `fields`
+remain required. Field IDs are unique within the owning schema.
+
+### Native display names — ADR-0043 amendment
+
+Both Schema and FieldDefinition admit optional `display_name` as a string.
+Canonical absence MUST omit the member entirely; `null`, another type,
+unknown members, and duplicate members fail closed. A present member MUST
+occur immediately after `key` in canonical bytes. The example above is the
+unchanged nameless form. This named schema example shows both member orders:
+
+```json
+{
+  "id": "schema-expenses",
+  "key": "table_1",
+  "display_name": "My Expenses",
+  "fields": [
+    {
+      "id": "field-item",
+      "key": "column_1",
+      "display_name": "Item Name",
+      "field_type": {"type": "text"},
+      "required": true,
+      "constraint": {"type": "none"}
+    }
+  ]
+}
+```
+
+Authoring trims leading/trailing Unicode whitespace; stored names MUST already
+be trimmed, nonempty, free of control characters and line separators, and at
+most 4,096 UTF-8 bytes before JSON escaping. Decoding MUST reject invalid
+spelling rather than trim or repair it. Preserve the remaining Unicode scalar
+sequence exactly, without normalization, case folding, or width folding.
+Effective name is `display_name` when present, otherwise `key`. Effective
+schema names MUST be unique within the Document and effective field names
+within their Schema by exact comparison after trimming, under shared Rust
+validation. `Item` and `item` are distinct; `" 項目 "` authors as `"項目"`.
+Document title, keys, IDs, values, formulas, constraints, and definitions are
+unchanged. Display names never identify paths or relationship targets.
+
+The one replacement strict reader accepts valid nameless v3 bytes. Older
+binaries refuse name-bearing trees and packages; no compatibility with those
+binaries is claimed. Existing valid nameless fixtures MUST remain byte-identical.
+The separate #525 implementation MUST add an independent named fixture with
+exact bytes and round-trip evidence; this authority PR creates no fixture.
 
 ### FieldType
 
@@ -155,7 +212,8 @@ and SHA-256 first-hex-nibble entity placement are in
 ## Decode, migration, and semantic admission
 
 A v3 reader dispatches from the manifest, rejects unsupported/unknown structure,
-decodes the exact ordered nineteen-file tree, checks constraint pairing and
+decodes the exact ordered nineteen-file tree, checks display-name spelling and
+effective-name uniqueness, checks constraint pairing and
 parameter limits, checks Date syntax/range, and runs the shared semantic-core
 declaration, relationship, direct-value, and formula-structure oracle. It never
 sorts or repairs malformed input. Complete formula evaluation and calculated
@@ -165,7 +223,8 @@ storage-validated semantic state and the native host writes a complete canonical
 candidate atomically to an absent destination.
 
 Explicit v2→v3 migration preserves stable IDs, keys, types, requiredness, values,
-formulas, definitions, and document meaning, adding `none` to every field. It
+formulas, definitions, and document meaning, adding `none` to every field and
+leaving `display_name` absent (key fallback, with no inferred label). It
 must decode, admit, convert, validate, canonicalize, and prepare the complete
 candidate before publication. V1 uses the existing explicit v1→v2 edge first.
 [ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md) separately redefines first-public portable-package/v1 over
@@ -176,10 +235,20 @@ projects held in the private `TWDPROJ2` host envelope
 conversion/export; ordinary private read/save does not silently change format.
 The private-project conversion path remains separately owned application work.
 
+Under [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md),
+named native projects explicitly select revised v3. Matching canonical-tree,
+existing v3 opaque-project transfer, and package exports MUST preserve names.
+Older representation writers MUST refuse name-bearing semantic state rather
+than strip names. No down-conversion or automatic upgrade is authorized.
+
 ## Explicitly outside v3
 
 This contract does not alter `.roproj/v1`, `.roproj/v2`, direct-ro/v2,
-the separately governed [portable-package/v1](portable-package-v1.md) under
-[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md), or frozen semantic delta/conflict v1. It does not define
+or frozen semantic delta/conflict v1. The separately governed
+[portable-package/v1](portable-package-v1.md) under
+[ADR-0042](../decisions/ADR-0042-first-public-portable-package-over-roproj-v3.md)
+consumes the revised v3 payload under the explicit
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+amendment, without changing its container rules. This contract does not define
 portable-package/v2, a public API/SDK/transport, a ConstraintId, a generic
 constraint DSL, UI enforcement, automatic upgrades, or implementation status.

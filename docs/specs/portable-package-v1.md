@@ -24,6 +24,28 @@ Decision issue: [#488](https://github.com/nurockplayer/tachiko-work/issues/488)
 
 ## Scope and version ownership
 
+### Native display-name payload amendment — ADR-0043
+
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+supersedes this unreleased profile's v3 Schema/FieldDefinition payload shape
+to include optional `display_name`. The sole current writer and strict reader
+use [the revised v3 DTOs](roproj-format-v3.md#schema-and-field-definition):
+canonical omission when absent, never null. Names survive exact-tree
+pack/unpack/fresh reopen. No package version change, v4, dual profile, or
+down-conversion is selected. Older binaries refuse name-bearing packages;
+Sheet rollback past the name-capable Work re-pin cannot reopen them.
+Name support remains pending #525 implementation; #519 evidence predates it.
+
+All twenty entries, nineteen payload paths, manifest members/order, hash
+domains/algorithm, container primitives, and bounds remain unchanged. Named
+`schemas.json` changes its leaf, payload root, affected CRCs, and ZIP bytes.
+Existing valid nameless current-profile fixtures MUST remain byte-identical,
+including hashes/CRCs/repack bytes. #525's separate implementation MUST add a
+new independent static named fixture, with exact schema/package bytes and
+fresh-reopen/repack evidence. This does not revive historical v1-over-v1
+vectors. CORE attachment-loss disclosure below remains required; native name
+support does not promote private CSV/XLSX labels to canonical names.
+
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
 This is the first PUBLIC v1: exactly one canonical `.roproj/v3` tree in a
 thin CORE package, with no package-owned semantic DTO or extension area.
@@ -438,7 +460,8 @@ no legacy package migration or compatibility obligation is imposed.
 
 Conformance MUST cover deterministic pack; exact nineteen-file unpack;
 pack→unpack→pack and pack→unpack→fresh reopen with Date, saved definitions,
-and both non-`none` constraints; all empty shards and empty definitions;
+and both non-`none` constraints; ADR-0043 native names in their separate
+implementation evidence; all empty shards and empty definitions;
 strict manifest-first rejection of unknown profiles, package/payload versions
 (including payload v1), missing/duplicate/unknown members and entries;
 CRC corruption and recomputed-CRC/stale-root corruption; inner-manifest

@@ -392,6 +392,35 @@ validation and formula finalization; an invalid candidate is a validation or
 calculation failure, never an invented conflict. V2 remains a logical contract
 only and does not stabilize a wire, SDK, or Rust DTO.
 
+## Native display-name v2 amendment — ADR-0043
+
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+explicitly supersedes the pre-release v2 direct-facet vocabulary with these
+additions. Frozen v1 is unchanged and MUST refuse name-bearing state rather
+than lose names. #451's implementation predates this amendment; #525
+realization is separate Guarded work.
+
+| Subject rank | Subject | Logical target | Added facet and rank |
+| ---: | --- | --- | --- |
+| 1 | Schema | `SchemaId` | `display_name = 2` |
+| 2 | Schema field | `(SchemaId, FieldId)` | `display_name = 5` |
+
+The facet's base/left/right facts are optional stored names: explicit logical
+absence or the exact admitted Unicode string. Absence and a present string
+equal to the key fallback are distinct facts. Complete schema/field subject
+payloads include their optional names. All existing ranks, including field
+constraint rank 4, structural kinds, logical identity, stable-ID ordering,
+same-Document input admission, and parent suppression remain.
+
+Unequal concurrent label edits on one continuing stable target emit one
+`display_name` / `concurrent_change` conflict. Equal edits and independent
+key/label edits follow ordinary three-way laws. Delete/modify and concurrent
+addition evidence carries names in the complete subject fact, suppressing
+redundant child conflicts. Unsupported facts/facets fail closed. A structurally
+merged cross-object effective-name collision is a shared validation failure,
+not a new structural conflict kind, and blocks publication. No wire/SDK
+encoding or resolver mutation mechanism is selected.
+
 ## Human-readable projection
 
 A client may render a conflict using current keys or localized prose, for
