@@ -317,6 +317,29 @@ new migration edge is selected.
 
 ## `.roproj/v3` bounded constraint pipeline
 
+### Native display-name pre-release exception — ADR-0043
+
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+supersedes only the unreleased v3 Schema/FieldDefinition shape and its
+package/v1 payload binding, without v4 or down-conversion. This is the narrow
+exception to ADR-0017 historical-DTO immutability; all other version-owned DTO,
+manifest-first, closed-world, Unicode-preserving, and explicit-migration laws
+remain. Schema order is `id`, `key`, optional `display_name`, `fields`;
+FieldDefinition order is `id`, `key`, optional `display_name`, `field_type`,
+`required`, `constraint`. Absence is omission, never null. Exact details are in
+[the v3 DTO specification](roproj-format-v3.md#schema-and-field-definition).
+
+One replacement current writer/strict reader is selected. Valid nameless v3
+documents keep key fallback and byte-identical canonical/packaged fixtures.
+Older binaries refuse name-bearing documents and packages. There is no new
+migration edge for this pre-release amendment; explicit v1/v2 migration leaves
+names absent rather than inferring labels. Named native projects explicitly
+select revised v3, and canonical-tree, existing v3 opaque-project transfer,
+and portable exports preserve names. Writers for older representations MUST
+refuse name-bearing state rather than silently discard it. #529 implementation
+is separate Guarded work and requires an independent named fixture. #452
+constraint admission remains separately owned and its runtime refusal stays.
+
 ADR-0041 accepts `.roproj/v3` as the next closed editable representation. It
 keeps the exact nineteen-file v2 tree and keyed-grouped-sum definitions, adds
 one required non-null constraint facet to every FieldDefinition, and admits the

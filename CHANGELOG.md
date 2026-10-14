@@ -177,6 +177,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Changed
 
+- [ADR-0043](docs/decisions/ADR-0043-native-display-names-separate-from-keys.md)
+  accepts native table/column display names separate from IDs and keys, with
+  exact Unicode comparison and label-only column rename. It supersedes the
+  unreleased v3/package-v1 definition without v4 or down-conversion; older
+  binaries refuse name-bearing documents. This is authority only: native implementation
+  follows separately under #529, and Sheet consumer work is separate.
+
 - ADR-0042 redefines first-public `tachiko.portable-package/v1` as a
   deterministic ZIP32 envelope over exact canonical `.roproj/v3` (Date, saved
   definitions, and constraints), superseding the unreleased developmental

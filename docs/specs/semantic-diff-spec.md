@@ -211,6 +211,34 @@ contract string; it adds no public wire or application opt-in. The frozen
 Provisional `diff()` surface retains #448's fail-closed constraint refusal.
 Application comparison/publication opt-in remains scoped to #454.
 
+## Native display-name v2 amendment — ADR-0043
+
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+explicitly supersedes the current pre-release v2 closed vocabulary with these
+additional direct facts. Frozen v1 is unchanged and MUST refuse name-bearing
+state rather than drop its meaning. #450's implementation predates this
+amendment; #529 realization is separate Guarded work.
+
+| Subject rank | Change rank | Change kind | Required direct payload |
+| ---: | ---: | --- | --- |
+| 1 | 3 | `schema_display_name_changed` | `before` and `after` optional stored name |
+| 2 | 6 | `schema_field_display_name_changed` | `before` and `after` optional stored name |
+
+For a continuing subject, `before` and `after` are PRESENT typed optional-name
+facts whose value is "no stored name" or the exact admitted Unicode string.
+Outer fact absence is reserved for a missing Schema/FieldDefinition subject,
+never an existing nameless subject. "No stored name" and a stored string equal
+to key fallback are distinct values. The display-name change facet covers set
+(no stored name to string), clear (string to no stored name), and change (one
+stored string to another); an unchanged optional-name value emits no name fact.
+Complete schema/field create/delete payloads include optional names;
+parent suppression and stable-target ordering still apply. All existing v2
+ranks, including constraint change rank 5, stay fixed. A label-only rename
+emits its own fact, never an empty delta, key-change fact, whole-definition
+replacement, or delete/create pair. Names do not identify subjects. Unsupported
+contracts/facts fail closed. This logical amendment selects no public wire/SDK
+shape and changes no mutation, approval, or history authority.
+
 ## Human-readable projection
 
 Traditional diff:

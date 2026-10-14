@@ -60,6 +60,35 @@ These current declarations are the concrete basis for schema/type/reference
 validation. Stable identity and relationship semantics remain governed by
 ADR-0015; formula meaning remains governed by ADR-0018.
 
+## Native display-name amendment — ADR-0043
+
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+adds optional `display_name` to Schema and FieldDefinition as durable direct
+semantic state. It is distinct from mutable SchemaKey/FieldKey and stable IDs;
+effective name is the optional name or key fallback. Absence is canonically
+omitted, never null. Implementation remains separate Guarded work under #529.
+
+Authoring trims leading/trailing whitespace from the frozen ADR-0043 section 3 set (Unicode `White_Space`; U+FEFF is not trimmed) and otherwise preserves
+exact spelling. A name must be nonempty, contain no forbidden scalar (General_Category `Cc`, `Zl` or `Zp`; ADR-0043 section 3),
+and be at most 4,096 UTF-8 bytes after trimming. No normalization, case folding,
+width folding, or transliteration applies. Shared Rust authority validates
+effective names by exact comparison: tables unique within their Document,
+columns within their Schema, including nameless key fallbacks. `Item` and
+`item` are distinct labels; `" 項目 "` and `"項目"` collide after trimming.
+
+ASCII identifier names retain current lowercase key derivation; other names
+allocate the smallest free positive `table_N`/`column_N` suffix in the schema
+key/owning-field key namespace. An ASCII-derived key that is already occupied falls back to the same
+allocation (ADR-0043 section 5); a valid unique label is never refused for a key
+collision. Key uniqueness is independent of label uniqueness.
+
+A user-facing column rename edits only the label through revision-checked
+publication with inverse history. It leaves IDs, keys, bound relationships,
+stored values, formulas, and constraints unchanged. This is not a type/value
+migration. Explicit low-level key rename remains separately available under
+ADR-0015. Table rename is deferred. #452's constraint admission refusal and
+the separate CSV/XLSX canonical-label promotion/formula-syntax boundaries stay.
+
 ## Progressive semantic strengthening
 
 ADR-0021 accepts explicit strengthening from weaker semantic content toward

@@ -25,6 +25,21 @@ Related authority: [ADR-0003](ADR-0003-ro-and-roproj-representation.md),
 
 ## Context
 
+### Pre-release payload amendment — ADR-0043
+
+[ADR-0043](ADR-0043-native-display-names-separate-from-keys.md) explicitly
+supersedes the unreleased v3 Schema/FieldDefinition shape bound by this package
+profile: optional `display_name`, omitted when absent and never null. The
+current package/v1 strict reader/writer uses that revised v3 definition; no v4,
+new package profile, dual reader/writer, or down-conversion is selected. Older
+binaries refuse name-bearing packages. The nineteen payload paths, twenty ZIP
+entries, manifest, hash domains/algorithm, container rules, bounds, and CORE
+attachment disclosure remain unchanged. Named payload bytes change their leaf,
+root, CRCs, and ZIP bytes. Existing valid nameless current-profile vectors must
+stay byte-identical; #529's separate Guarded implementation must add an
+independent named fixture. ADR-0042's retirement of developmental v1-over-v1
+vectors is unchanged. The sections below are read subject to this amendment.
+
 Tachiko has not released a product and has no users. ADR-0025's package/v1
 binding to `.roproj/v1` was never a released product contract. Maintaining two
 package versions solely for pre-release history would preserve obsolete

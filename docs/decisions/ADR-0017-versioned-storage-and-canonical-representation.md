@@ -6,6 +6,20 @@ Accepted
 
 Decision issues: #25, #37, #38, #96
 
+## Narrow pre-release amendment — ADR-0043
+
+[ADR-0043](ADR-0043-native-display-names-separate-from-keys.md) supersedes only
+the unreleased `.roproj/v3` Schema/FieldDefinition member sets and their
+package/v1 payload binding to add optional, canonically omitted `display_name`.
+For this explicit decision only, the historical-DTO immutability rule in §1
+does not require another representation version. One current writer and one
+strict reader remain; no v4, dual profile, down-conversion, or new migration
+edge is selected. Older binaries refuse name-bearing documents. New readers
+accept valid nameless documents with key fallback. Closed-world admission,
+version-owned DTOs, Unicode-preserving canonical storage, and the remaining
+migration/versioning laws are unchanged. This is not permission to revise a
+released contract in place.
+
 ## Context
 
 Tachiko Work already has three Accepted boundaries that constrain persistence:
