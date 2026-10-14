@@ -17,11 +17,13 @@ fn document(field_type: FieldType, constraint: FieldConstraint, value: Option<Va
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields: BTreeMap::from([(
                 "field".into(),
                 FieldDefinition {
                     id: "field".into(),
                     key: "value".into(),
+                    display_name: None,
                     field_type,
                     required: false,
                     constraint,

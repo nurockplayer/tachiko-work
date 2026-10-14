@@ -90,6 +90,7 @@ fn fixture() -> Document {
             FieldDefinition {
                 id: id.into(),
                 key: id.into(),
+                display_name: None,
                 field_type,
                 required: false,
                 constraint,
@@ -102,6 +103,7 @@ fn fixture() -> Document {
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields,
         },
     );
@@ -147,6 +149,7 @@ fn add_definition_binding_schemas(document: &mut Document) {
     let text_field = |id: &str| FieldDefinition {
         id: id.into(),
         key: id.into(),
+        display_name: None,
         field_type: FieldType::Text,
         required: true,
         constraint: FieldConstraint::None,
@@ -154,6 +157,7 @@ fn add_definition_binding_schemas(document: &mut Document) {
     let number_field = |id: &str| FieldDefinition {
         id: id.into(),
         key: id.into(),
+        display_name: None,
         field_type: FieldType::Number,
         required: true,
         constraint: FieldConstraint::None,
@@ -163,6 +167,7 @@ fn add_definition_binding_schemas(document: &mut Document) {
         Schema {
             id: "orders-schema".into(),
             key: "orders".into(),
+            display_name: None,
             fields: BTreeMap::from([
                 ("orders-key".into(), text_field("orders-key")),
                 ("orders-quantity".into(), number_field("orders-quantity")),
@@ -174,6 +179,7 @@ fn add_definition_binding_schemas(document: &mut Document) {
         Schema {
             id: "products-schema".into(),
             key: "products".into(),
+            display_name: None,
             fields: BTreeMap::from([
                 ("products-key".into(), text_field("products-key")),
                 ("products-category".into(), text_field("products-category")),

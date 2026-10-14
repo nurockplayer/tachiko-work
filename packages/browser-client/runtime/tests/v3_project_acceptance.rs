@@ -412,6 +412,7 @@ fn fixture_document(
     let schema = Schema {
         id: schema_id.clone(),
         key: SchemaKey::from("sheet_1"),
+        display_name: None,
         fields: fields
             .iter()
             .zip(field_types)
@@ -423,6 +424,7 @@ fn fixture_document(
                     FieldDefinition {
                         id,
                         key: FieldKey::from(format!("column_{}", index + 1)),
+                        display_name: None,
                         field_type,
                         required: false,
                         constraint: FieldConstraint::None,
@@ -516,6 +518,7 @@ fn assert_opened_fixture(opened: &OpenedProjection, expected: &Document) {
     let collection = CollectionSummary {
         id: schema.id.to_string(),
         key: "sheet_1".into(),
+        display_name: "sheet_1".into(),
         entity_count: 2,
     };
     assert_eq!(opened.bootstrap.title, "Imported workbook");
@@ -1124,6 +1127,7 @@ fn independent_opened_projection(
     let collection = CollectionSummary {
         id: SCHEMA_ID.to_owned(),
         key: "sheet_1".to_owned(),
+        display_name: "sheet_1".to_owned(),
         entity_count: 2,
     };
     let columns = [
@@ -1138,6 +1142,7 @@ fn independent_opened_projection(
     .map(|(index, (key, field_type))| ColumnProjection {
         id: FIELD_IDS[index].to_owned(),
         key: key.to_owned(),
+        display_name: key.to_owned(),
         field_type: field_type.to_owned(),
         dropdown_options: None,
     })
@@ -2161,11 +2166,13 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
         let schema = Schema {
             id: schema_id.clone(),
             key: SchemaKey::from("reset"),
+            display_name: None,
             fields: BTreeMap::from([(
                 field_id.clone(),
                 FieldDefinition {
                     id: field_id,
                     key: FieldKey::from("value"),
+                    display_name: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: FieldConstraint::None,
@@ -2185,6 +2192,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
             collections: vec![CollectionSummary {
                 id: new_schema_id.into(),
                 key: "reset".into(),
+                display_name: "reset".into(),
                 entity_count: 0
             }],
             keyed_grouped_sum_definition_ids: vec![],
@@ -2199,11 +2207,13 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
             collection: CollectionSummary {
                 id: new_schema_id.into(),
                 key: "reset".into(),
+                display_name: "reset".into(),
                 entity_count: 0
             },
             columns: vec![ColumnProjection {
                 id: new_field_id.into(),
                 key: "value".into(),
+                display_name: "value".into(),
                 field_type: "text".into(),
                 dropdown_options: None
             }],

@@ -147,11 +147,13 @@ fn chain_document(cycle: bool) -> Document {
             Schema {
                 id: schema_id,
                 key: SchemaKey::from("oracle_chain"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     value_field.clone(),
                     FieldDefinition {
                         id: value_field,
                         key: FieldKey::from("value"),
+                        display_name: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,

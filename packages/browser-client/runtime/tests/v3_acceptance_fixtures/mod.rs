@@ -42,6 +42,7 @@ pub fn constrained_v3_document(field_index: usize) -> Document {
     let schema = Schema {
         id: schema_id.clone(),
         key: SchemaKey::from("sheet_1"),
+        display_name: None,
         fields: FIELD_IDS
             .iter()
             .zip(definitions)
@@ -63,6 +64,7 @@ pub fn constrained_v3_document(field_index: usize) -> Document {
                     FieldDefinition {
                         id,
                         key: FieldKey::from(format!("column_{}", index + 1)),
+                        display_name: None,
                         field_type,
                         required: false,
                         constraint,
@@ -147,11 +149,13 @@ pub fn nondefault_constrained_v3_document(field_index: usize) -> Document {
         Schema {
             id,
             key: SchemaKey::from("zz_unused"),
+            display_name: None,
             fields: BTreeMap::from([(
                 field_id.clone(),
                 FieldDefinition {
                     id: field_id,
                     key: FieldKey::from("unused"),
+                    display_name: None,
                     field_type,
                     required: false,
                     constraint,

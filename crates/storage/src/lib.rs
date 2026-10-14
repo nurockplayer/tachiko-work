@@ -120,6 +120,8 @@ pub enum FormatError {
     InvalidDocument { diagnostics: Vec<Diagnostic> },
     #[error("this frozen representation does not support durable field constraints")]
     UnsupportedFieldConstraint,
+    #[error("this frozen representation does not support durable display names")]
+    UnsupportedDisplayName,
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
     #[error(
@@ -152,6 +154,7 @@ pub enum FormatError {
 /// profile, or a representation error if conversion or canonical encoding
 /// fails.
 pub fn to_canonical_string(document: &Document) -> Result<String, FormatError> {
+    reject_display_names(document)?;
     reject_field_constraints(document)?;
     check_document(document)?;
     let dto = DocumentV2::from_semantic(document).map_err(map_v2_encode_error)?;
@@ -495,6 +498,13 @@ fn check_document(document: &Document) -> Result<(), FormatError> {
     } else {
         Err(FormatError::InvalidDocument { diagnostics })
     }
+}
+
+pub(crate) fn reject_display_names(document: &Document) -> Result<(), FormatError> {
+    if document.has_display_names() {
+        return Err(FormatError::UnsupportedDisplayName);
+    }
+    Ok(())
 }
 
 pub(crate) fn reject_field_constraints(document: &Document) -> Result<(), FormatError> {

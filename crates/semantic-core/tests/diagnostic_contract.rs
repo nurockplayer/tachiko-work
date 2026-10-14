@@ -15,6 +15,7 @@ fn duplicate_schema_keys(key: &str) -> Document {
             Schema {
                 id: SchemaId::from(id),
                 key: SchemaKey::from(key),
+                display_name: None,
                 fields: BTreeMap::new(),
             },
         );
@@ -135,6 +136,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
             FieldDefinition {
                 id: "declared-field".into(),
                 key: FieldKey::from("duplicate-field"),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -145,6 +147,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
             FieldDefinition {
                 id: "declared-field".into(),
                 key: FieldKey::from("duplicate-field"),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -158,6 +161,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
             Schema {
                 id: "declared-schema".into(),
                 key: SchemaKey::from("duplicate-schema"),
+                display_name: None,
                 fields: duplicate_fields,
             },
         ),
@@ -166,6 +170,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
             Schema {
                 id: "declared-schema".into(),
                 key: SchemaKey::from("duplicate-schema"),
+                display_name: None,
                 fields: BTreeMap::new(),
             },
         ),

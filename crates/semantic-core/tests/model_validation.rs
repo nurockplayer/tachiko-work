@@ -13,6 +13,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> (FieldId, FieldDefi
         FieldDefinition {
             id,
             key,
+            display_name: None,
             field_type,
             required,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -24,6 +25,7 @@ fn valid_document() -> Document {
     let weapon_schema = Schema {
         id: SchemaId::from("weapon"),
         key: SchemaKey::from("weapon"),
+        display_name: None,
         fields: BTreeMap::from([
             field("damage", FieldType::Number, true),
             field("name", FieldType::Text, true),
@@ -132,6 +134,7 @@ fn reference_to_wrong_schema_is_rejected() {
         Schema {
             id: SchemaId::from("character"),
             key: SchemaKey::from("character"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );

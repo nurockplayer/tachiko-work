@@ -1,0 +1,27 @@
+{
+  "length": 3949,
+  "sha256": "03efa81d593f145045556b655f348c5232f2f3f6728d3395a144b529dc55d7da",
+  "payload_root_sha256": "2c10bd691a958b266fa51b5fb3cd357d926c3495eb50a6e79006e94b94c55c2b",
+  "crcs": {
+    "package.json": "c5ce78b6",
+    "payload/manifest.json": "272d3734",
+    "payload/schemas.json": "1ea18ce5",
+    "payload/definitions.json": "7068d244",
+    "payload/entities/0.jsonl": "00000000",
+    "payload/entities/1.jsonl": "00000000",
+    "payload/entities/2.jsonl": "00000000",
+    "payload/entities/3.jsonl": "00000000",
+    "payload/entities/4.jsonl": "00000000",
+    "payload/entities/5.jsonl": "00000000",
+    "payload/entities/6.jsonl": "00000000",
+    "payload/entities/7.jsonl": "00000000",
+    "payload/entities/8.jsonl": "00000000",
+    "payload/entities/9.jsonl": "00000000",
+    "payload/entities/a.jsonl": "00000000",
+    "payload/entities/b.jsonl": "00000000",
+    "payload/entities/c.jsonl": "00000000",
+    "payload/entities/d.jsonl": "00000000",
+    "payload/entities/e.jsonl": "00000000",
+    "payload/entities/f.jsonl": "00000000"
+  }
+}

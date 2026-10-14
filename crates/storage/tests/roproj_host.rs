@@ -1063,12 +1063,14 @@ fn bounded_document() -> Document {
                 Schema {
                     id: "schema-a".into(),
                     key: SchemaKey::from("record"),
+                    display_name: None,
                     fields: BTreeMap::from([
                         (
                             FieldId::from("field-a"),
                             FieldDefinition {
                                 id: "field-a".into(),
                                 key: FieldKey::from("amount"),
+                                display_name: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -1079,6 +1081,7 @@ fn bounded_document() -> Document {
                             FieldDefinition {
                                 id: "field-z".into(),
                                 key: FieldKey::from("label"),
+                                display_name: None,
                                 field_type: FieldType::Text,
                                 required: false,
                                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -1092,6 +1095,7 @@ fn bounded_document() -> Document {
                 Schema {
                     id: "schema-z".into(),
                     key: SchemaKey::from("unused"),
+                    display_name: None,
                     fields: BTreeMap::new(),
                 },
             ),
@@ -1138,12 +1142,14 @@ fn numeric_bridge_document() -> Document {
             Schema {
                 id: "schema-numeric".into(),
                 key: SchemaKey::from("numeric"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         FieldId::from("field-round"),
                         FieldDefinition {
                             id: "field-round".into(),
                             key: FieldKey::from("round"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -1154,6 +1160,7 @@ fn numeric_bridge_document() -> Document {
                         FieldDefinition {
                             id: "field-subnormal".into(),
                             key: FieldKey::from("subnormal"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,

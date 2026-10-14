@@ -39,6 +39,7 @@ pub fn document() -> Document {
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("product_gaps"),
+                display_name: None,
                 fields: fields(),
             },
         )]),
@@ -94,6 +95,7 @@ fn field(id: &str, key: &str, field_type: FieldType) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(key),
+        display_name: None,
         field_type,
         required: true,
         constraint: tachiko_workspace_engine::FieldConstraint::None,

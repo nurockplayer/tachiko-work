@@ -45,11 +45,13 @@ fn large_document() -> Document {
     let schema = Schema {
         id: schema_id.clone(),
         key: SchemaKey::from("record"),
+        display_name: None,
         fields: BTreeMap::from([(
             field_id.clone(),
             FieldDefinition {
                 id: field_id.clone(),
                 key: FieldKey::from("payload"),
+                display_name: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,

@@ -41,7 +41,7 @@ function transport() {
 function table(collection: string): TableProjection {
   return {
     revision: "resident/0",
-    collection: { id: collection, key: collection, entity_count: 0 },
+    collection: { id: collection, key: collection, display_name: collection, entity_count: 0 },
     columns: [],
     rows: [],
   };

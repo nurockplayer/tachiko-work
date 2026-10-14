@@ -17,6 +17,7 @@ fn fixture(dependent: bool) -> DesignerRuntime {
         Schema {
             id: schema.clone(),
             key: SchemaKey::from("items"),
+            display_name: None,
             fields: [
                 ("name", FieldType::Text),
                 ("first", FieldType::Text),
@@ -34,6 +35,7 @@ fn fixture(dependent: bool) -> DesignerRuntime {
                     FieldDefinition {
                         id,
                         key: FieldKey::from(name),
+                        display_name: None,
                         field_type,
                         required: name != "missing" && name != "converted",
                         constraint: tachiko_workspace_engine::FieldConstraint::None,

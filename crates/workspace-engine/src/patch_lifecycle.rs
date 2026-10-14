@@ -340,6 +340,12 @@ pub enum SemanticCommand {
         field: FieldId,
         key: FieldKey,
     },
+    /// Set or clear only the durable name of a continuing stable field.
+    SetSchemaFieldDisplayName {
+        schema: SchemaId,
+        field: FieldId,
+        display_name: Option<String>,
+    },
     /// Replace the complete durable constraint facet of one stable field.
     SetFieldConstraint {
         schema: SchemaId,
@@ -1118,6 +1124,30 @@ impl PatchLifecycle {
             policy_meaning,
             EvidenceProfile::V2,
         )
+    }
+
+    /// Create a request-local v2 registry using this registry's current trusted
+    /// principal, grant and policy state. No proposal, Approval or receipt is
+    /// copied or reinterpreted. The synchronous caller must finish the request
+    /// before changing the source registry's authorization state.
+    #[must_use]
+    pub fn fork_for_v2_request(&self) -> Self {
+        Self {
+            authorization_domain: self.authorization_domain.clone(),
+            document_scope: self.document_scope.clone(),
+            document: self.document.clone(),
+            semantic_api_contract: self.semantic_api_contract.clone(),
+            evidence_profile: EvidenceProfile::V2,
+            principals: self.principals.clone(),
+            grants: self.grants.clone(),
+            proposals: BTreeMap::new(),
+            approvals: BTreeMap::new(),
+            execution_receipts: Vec::new(),
+            execution_receipts_v2: Vec::new(),
+            policy_meanings: self.policy_meanings.clone(),
+            effective_policy: self.effective_policy.clone(),
+            policy_selection: self.policy_selection,
+        }
     }
 
     fn new_with_profile(
@@ -2448,6 +2478,7 @@ impl PatchLifecycle {
                     SemanticCommand::AppendSchemaField { .. }
                     | SemanticCommand::RemoveSchemaField { .. }
                     | SemanticCommand::RenameSchemaField { .. }
+                    | SemanticCommand::SetSchemaFieldDisplayName { .. }
                     | SemanticCommand::SetFieldConstraint { .. } => {
                         OperationFamily::SchemaFieldMutation
                     }
@@ -3085,6 +3116,30 @@ impl PatchLifecycle {
                 SemanticCommand::RenameSchemaField { schema, field, key } => {
                     self.plan_rename_schema_field(&mut candidate, schema, field, key, &mut writes)?;
                 }
+                SemanticCommand::SetSchemaFieldDisplayName {
+                    schema,
+                    field,
+                    display_name,
+                } => {
+                    let definition = candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        })?
+                        .fields
+                        .get_mut(field)
+                        .ok_or_else(|| WorkspaceError::MissingSchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        })?;
+                    definition.display_name.clone_from(display_name);
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_field_scope(schema, field),
+                    });
+                }
                 SemanticCommand::SetFieldConstraint {
                     schema,
                     field,
@@ -3358,7 +3413,7 @@ impl PatchLifecycle {
             })?;
 
         // Formula impact remains derived evidence. Run the frozen formula/diff
-        // projection over constraint-free snapshots; constraints do not change
+        // projection over snapshots without v2-only facets; names and constraints do not change
         // formula values, and both real snapshots have already passed complete
         // validation above. Direct v2 evidence is always produced separately.
         let formula_projection =
@@ -3482,7 +3537,8 @@ impl PatchLifecycle {
             }
             SemanticCommand::AppendSchemaField { .. }
             | SemanticCommand::RemoveSchemaField { .. }
-            | SemanticCommand::RenameSchemaField { .. } => {
+            | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetSchemaFieldDisplayName { .. } => {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
                 Ok(())
             }
@@ -4368,8 +4424,10 @@ fn constraint_affected_values(
 fn without_constraints(document: &Document) -> Document {
     let mut document = document.clone();
     for schema in document.schemas.values_mut() {
+        schema.display_name = None;
         for field in schema.fields.values_mut() {
             field.constraint = FieldConstraint::None;
+            field.display_name = None;
         }
     }
     document
@@ -4613,6 +4671,7 @@ mod tests {
         let definition = FieldDefinition {
             id: FieldId::from(field),
             key: FieldKey::from(field),
+            display_name: None,
             field_type: FieldType::Number,
             required: true,
             constraint: FieldConstraint::None,
@@ -4638,11 +4697,13 @@ mod tests {
                 schema: Schema {
                     id: SchemaId::from(schema_id),
                     key: SchemaKey::from(schema_id),
+                    display_name: None,
                     fields: BTreeMap::from([(
                         FieldId::from("field"),
                         FieldDefinition {
                             id: FieldId::from("field"),
                             key: FieldKey::from("field"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: FieldConstraint::None,
@@ -4738,12 +4799,14 @@ mod tests {
             Schema {
                 id: orders.clone(),
                 key: SchemaKey::from("orders"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         FieldId::from("order-key"),
                         FieldDefinition {
                             id: FieldId::from("order-key"),
                             key: FieldKey::from("product_key"),
+                            display_name: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -4754,6 +4817,7 @@ mod tests {
                         FieldDefinition {
                             id: FieldId::from("quantity"),
                             key: FieldKey::from("quantity"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -4767,12 +4831,14 @@ mod tests {
             Schema {
                 id: products.clone(),
                 key: SchemaKey::from("products"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         FieldId::from("product-key"),
                         FieldDefinition {
                             id: FieldId::from("product-key"),
                             key: FieldKey::from("product_key"),
+                            display_name: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -4783,6 +4849,7 @@ mod tests {
                         FieldDefinition {
                             id: FieldId::from("category"),
                             key: FieldKey::from("category"),
+                            display_name: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -4793,6 +4860,7 @@ mod tests {
                         FieldDefinition {
                             id: FieldId::from("price"),
                             key: FieldKey::from("price"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5375,6 +5443,7 @@ mod tests {
                 FieldDefinition {
                     id,
                     key: FieldKey::from(field),
+                    display_name: None,
                     field_type: FieldType::Number,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,

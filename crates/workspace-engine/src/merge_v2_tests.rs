@@ -11,6 +11,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
     FieldDefinition {
         id: id.into(),
         key: id.into(),
+        display_name: None,
         field_type,
         required: false,
         constraint: FieldConstraint::None,
@@ -24,6 +25,7 @@ fn document_with_keyed_sum() -> Document {
         Schema {
             id: "orders".into(),
             key: "orders".into(),
+            display_name: None,
             fields: BTreeMap::from([
                 ("sku".into(), field("sku", FieldType::Text)),
                 ("quantity".into(), field("quantity", FieldType::Number)),
@@ -35,6 +37,7 @@ fn document_with_keyed_sum() -> Document {
         Schema {
             id: "products".into(),
             key: "products".into(),
+            display_name: None,
             fields: BTreeMap::from([
                 ("sku".into(), field("sku", FieldType::Text)),
                 ("category".into(), field("category", FieldType::Text)),

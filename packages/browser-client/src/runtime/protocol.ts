@@ -8,6 +8,7 @@ export type FieldTarget = {
 export type CollectionSummary = {
   id: string;
   key: string;
+  display_name: string;
   entity_count: number;
 };
 
@@ -36,10 +37,15 @@ export type CalculationProjection =
   | { status: "failure"; code: string; message: string }
   | { status: "unavailable" };
 
+export type SemanticSubjectProjection = { kind: string; value: string | Record<string, string> };
+
 export type DiagnosticProjection = {
   code: string;
   message: string;
   path: string;
+  subjects?: SemanticSubjectProjection[];
+  related_subjects?: SemanticSubjectProjection[];
+  facts?: Array<{name: string; value: string}>;
 };
 
 export type FieldProjection = {
@@ -57,7 +63,7 @@ export type TableProjection = {
   native_table_profile?: boolean;
   revision: string;
   collection: CollectionSummary;
-  columns: Array<{ id: string; key: string; field_type: string; dropdown_options?: string[] }>;
+  columns: Array<{ id: string; key: string; display_name: string; field_type: string; dropdown_options?: string[] }>;
   rows: Array<{ id: string; key: string; fields: FieldProjection[] }>;
 };
 
@@ -100,7 +106,7 @@ export type ProjectExport = {
   bytes: ArrayBuffer;
 };
 
-/** Opaque canonical-v1 path/byte entries from the Rust storage codec. */
+/** Opaque canonical-v3 path/byte entries from the Rust storage codec. */
 export type CanonicalProjectFile = { path: string; bytes: ArrayBuffer };
 
 export type CanonicalTreeExport = {
@@ -141,11 +147,19 @@ export type DuplicateCollectionProjection = {
   collection: CollectionSummary;
 };
 
+export type NameFailure = {
+  reason: string;
+  inputs: Array<{kind: "table"} | {kind: "column"; index: number; schema: string | null}>;
+  subjects: SemanticSubjectProjection[];
+  effective_name: string | null;
+};
+
 export type FailureProjection = {
   code: string;
   message: string;
   current_revision: string;
   diagnostics: DiagnosticProjection[];
+  name_failures?: NameFailure[];
 };
 
 export type TrackerCommand =

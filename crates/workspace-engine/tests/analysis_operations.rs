@@ -30,6 +30,7 @@ fn number_field(id: &str, required: bool) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type: FieldType::Number,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -40,6 +41,7 @@ fn text_field(id: &str, required: bool) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type: FieldType::Text,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -85,6 +87,7 @@ fn analysis_document() -> Document {
             Schema {
                 id: SchemaId::from("weapons"),
                 key: SchemaKey::from("weapons"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (FieldId::from("category"), text_field("category", true)),
                     (FieldId::from("tier"), number_field("tier", false)),
@@ -122,6 +125,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
         Schema {
             id: SchemaId::from("categories"),
             key: SchemaKey::from("categories"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );
@@ -130,6 +134,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
         Schema {
             id: SchemaId::from("characters"),
             key: SchemaKey::from("characters"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );
@@ -138,6 +143,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
         FieldDefinition {
             id: FieldId::from("category_ref"),
             key: FieldKey::from("category_ref"),
+            display_name: None,
             field_type: FieldType::Reference {
                 schema: SchemaId::from("categories"),
             },
@@ -168,6 +174,7 @@ fn date_analysis_document() -> Document {
         FieldDefinition {
             id: FieldId::from("published"),
             key: FieldKey::from("published"),
+            display_name: None,
             field_type: FieldType::Date,
             required: true,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -888,6 +895,7 @@ fn authorized_target_domain_and_type_errors_remain_structured() {
         Schema {
             id: SchemaId::from("characters"),
             key: SchemaKey::from("characters"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );

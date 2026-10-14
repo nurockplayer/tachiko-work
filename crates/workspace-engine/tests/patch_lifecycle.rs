@@ -28,6 +28,7 @@ fn optional_slot_document(field_type: tachiko_workspace_engine::FieldType) -> Do
         tachiko_workspace_engine::FieldDefinition {
             id: "optional".into(),
             key: "optional".into(),
+            display_name: None,
             field_type,
             required: false,
             constraint: tachiko_workspace_engine::FieldConstraint::None,

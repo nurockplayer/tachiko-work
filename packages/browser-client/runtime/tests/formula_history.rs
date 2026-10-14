@@ -126,12 +126,14 @@ fn fixture() -> DesignerRuntime {
         Schema {
             id: schema.clone(),
             key: SchemaKey::from("items"),
+            display_name: None,
             fields: BTreeMap::from([
                 (
                     field.clone(),
                     FieldDefinition {
                         id: field.clone(),
                         key: FieldKey::from("n"),
+                        display_name: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -142,6 +144,7 @@ fn fixture() -> DesignerRuntime {
                     FieldDefinition {
                         id: source.clone(),
                         key: FieldKey::from("source"),
+                        display_name: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -152,6 +155,7 @@ fn fixture() -> DesignerRuntime {
                     FieldDefinition {
                         id: dependent.clone(),
                         key: FieldKey::from("dependent"),
+                        display_name: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -162,6 +166,7 @@ fn fixture() -> DesignerRuntime {
                     FieldDefinition {
                         id: label.clone(),
                         key: FieldKey::from("label"),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,

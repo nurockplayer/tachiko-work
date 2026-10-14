@@ -18,6 +18,7 @@ fn formula_constraint_document(with_failed_formula: bool) -> Document {
             FieldDefinition {
                 id: "formula".into(),
                 key: "formula".into(),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::NumberInclusiveRange {
@@ -31,6 +32,7 @@ fn formula_constraint_document(with_failed_formula: bool) -> Document {
             FieldDefinition {
                 id: "stored".into(),
                 key: "stored".into(),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::NumberInclusiveRange {
@@ -53,6 +55,7 @@ fn formula_constraint_document(with_failed_formula: bool) -> Document {
             FieldDefinition {
                 id: "broken".into(),
                 key: "broken".into(),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::None,
@@ -68,6 +71,7 @@ fn formula_constraint_document(with_failed_formula: bool) -> Document {
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields,
         },
     );

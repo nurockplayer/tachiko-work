@@ -28,6 +28,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: id.into(),
+        display_name: None,
         field_type,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -53,6 +54,7 @@ fn reference(entity: &str, field: &str) -> Expression {
     Expression::Reference(FieldRef::new(entity, field))
 }
 
+#[allow(clippy::too_many_lines)] // Keep the complete bounded capability fixture together.
 fn document() -> Document {
     let source_schema = SchemaId::from("source");
     let target_schema = SchemaId::from("target");
@@ -65,6 +67,7 @@ fn document() -> Document {
                 Schema {
                     id: source_schema.clone(),
                     key: SchemaKey::from("source"),
+                    display_name: None,
                     fields: BTreeMap::from([
                         (FieldId::from("amount"), field("amount", FieldType::Number)),
                         (FieldId::from("label"), field("label", FieldType::Text)),
@@ -94,6 +97,7 @@ fn document() -> Document {
                 Schema {
                     id: target_schema,
                     key: SchemaKey::from("target"),
+                    display_name: None,
                     fields: BTreeMap::from([(
                         FieldId::from("name"),
                         field("name", FieldType::Text),

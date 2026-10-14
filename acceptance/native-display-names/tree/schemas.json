@@ -1,0 +1,45 @@
+[
+  {
+    "id": "native_table_schema_0002_00000000-0000-4000-8000-000000000529",
+    "key": "table_1",
+    "display_name": "My Expenses",
+    "fields": [
+      {
+        "id": "native_table_field_0003_00000000-0000-4000-8000-000000000529",
+        "key": "column_1",
+        "display_name": "項目",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true,
+        "constraint": {
+          "type": "none"
+        }
+      },
+      {
+        "id": "native_table_field_0004_00000000-0000-4000-8000-000000000529",
+        "key": "column_2",
+        "display_name": "Item Name",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true,
+        "constraint": {
+          "type": "none"
+        }
+      },
+      {
+        "id": "native_table_field_0005_00000000-0000-4000-8000-000000000529",
+        "key": "column_3",
+        "display_name": "column_1",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true,
+        "constraint": {
+          "type": "none"
+        }
+      }
+    ]
+  }
+]

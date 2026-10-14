@@ -439,6 +439,7 @@ fn reference_document() -> Document {
                 Schema {
                     id: target_schema.clone(),
                     key: SchemaKey::from("target"),
+                    display_name: None,
                     fields: BTreeMap::new(),
                 },
             ),
@@ -447,11 +448,13 @@ fn reference_document() -> Document {
                 Schema {
                     id: owner_schema.clone(),
                     key: SchemaKey::from("owner"),
+                    display_name: None,
                     fields: BTreeMap::from([(
                         reference_field.clone(),
                         FieldDefinition {
                             id: reference_field.clone(),
                             key: FieldKey::from("reference"),
+                            display_name: None,
                             field_type: FieldType::Reference {
                                 schema: target_schema.clone(),
                             },

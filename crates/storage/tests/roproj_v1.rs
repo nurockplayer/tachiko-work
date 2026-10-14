@@ -103,6 +103,7 @@ fn frozen_roproj_v1_rejects_date_instead_of_widening_the_contract() {
             Schema {
                 id: SchemaId::from("schema-date"),
                 key: SchemaKey::from("date"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     FieldId::from("day"),
                     field("day", "day", FieldType::Date, true),
@@ -884,6 +885,7 @@ fn character_document() -> Document {
             Schema {
                 id: SchemaId::from("schema-character"),
                 key: SchemaKey::from("character"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         FieldId::from("field-active"),
@@ -1034,6 +1036,7 @@ fn full_shape_document() -> Document {
             Schema {
                 id: SchemaId::from("schema-record"),
                 key: SchemaKey::from("record"),
+                display_name: None,
                 fields,
             },
         )]),
@@ -1154,6 +1157,7 @@ fn field(id: &str, key: &str, field_type: FieldType, required: bool) -> FieldDef
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(key),
+        display_name: None,
         field_type,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,

@@ -214,6 +214,7 @@ fn edit_parses_each_scalar_type_from_the_schema() {
             FieldDefinition {
                 id: FieldId::from("enabled"),
                 key: FieldKey::from("enabled"),
+                display_name: None,
                 field_type: FieldType::Boolean,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -271,6 +272,7 @@ fn edit_refuses_formula_invalid_values_and_broken_references() {
             FieldDefinition {
                 id: FieldId::from("enabled"),
                 key: FieldKey::from("enabled"),
+                display_name: None,
                 field_type: FieldType::Boolean,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,

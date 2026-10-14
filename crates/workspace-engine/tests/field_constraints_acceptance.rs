@@ -17,11 +17,13 @@ fn document(field_type: FieldType, constraint: FieldConstraint, value: Option<Va
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields: BTreeMap::from([(
                 "field".into(),
                 FieldDefinition {
                     id: "field".into(),
                     key: "value".into(),
+                    display_name: None,
                     field_type,
                     required: false,
                     constraint,
@@ -83,6 +85,7 @@ fn any_failed_formula_suppresses_all_dependent_formula_range_checks() {
         FieldDefinition {
             id: "broken".into(),
             key: "broken".into(),
+            display_name: None,
             field_type: FieldType::Number,
             required: true,
             constraint: FieldConstraint::None,

@@ -15,6 +15,7 @@ fn balance_document(damage: f64) -> Document {
             Schema {
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (FieldId::from("damage"), number_field("damage", true)),
                     (
@@ -63,6 +64,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -264,6 +266,7 @@ fn schema_addition_and_removal_preserve_typed_definitions() {
     let armor = Schema {
         id: SchemaId::from("armor"),
         key: SchemaKey::from("armor"),
+        display_name: None,
         fields: BTreeMap::from([(FieldId::from("defense"), number_field("defense", false))]),
     };
     after.schemas.insert(SchemaId::from("armor"), armor.clone());
@@ -297,6 +300,7 @@ fn schema_field_changes_preserve_typed_definitions_and_order() {
         Schema {
             id: SchemaId::from("metadata"),
             key: SchemaKey::from("metadata"),
+            display_name: None,
             fields: BTreeMap::from([
                 (FieldId::from("legacy"), text_field("legacy", false)),
                 (FieldId::from("mode"), text_field("mode", false)),

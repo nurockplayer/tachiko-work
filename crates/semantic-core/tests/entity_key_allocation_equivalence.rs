@@ -14,6 +14,7 @@ fn fixture() -> Document {
             Schema {
                 id: id.into(),
                 key: id.into(),
+                display_name: None,
                 fields: BTreeMap::new(),
             },
         );

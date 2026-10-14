@@ -22,12 +22,14 @@ fn keyed_grouped_sum_document() -> Document {
         Schema {
             id: orders.clone(),
             key: SchemaKey::from("orders"),
+            display_name: None,
             fields: BTreeMap::from([
                 (
                     FieldId::from("order-key"),
                     FieldDefinition {
                         id: FieldId::from("order-key"),
                         key: FieldKey::from("product_key"),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -38,6 +40,7 @@ fn keyed_grouped_sum_document() -> Document {
                     FieldDefinition {
                         id: FieldId::from("quantity"),
                         key: FieldKey::from("quantity"),
+                        display_name: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -51,12 +54,14 @@ fn keyed_grouped_sum_document() -> Document {
         Schema {
             id: products.clone(),
             key: SchemaKey::from("products"),
+            display_name: None,
             fields: BTreeMap::from([
                 (
                     FieldId::from("product-key"),
                     FieldDefinition {
                         id: FieldId::from("product-key"),
                         key: FieldKey::from("product_key"),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -67,6 +72,7 @@ fn keyed_grouped_sum_document() -> Document {
                     FieldDefinition {
                         id: FieldId::from("category"),
                         key: FieldKey::from("category"),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -77,6 +83,7 @@ fn keyed_grouped_sum_document() -> Document {
                     FieldDefinition {
                         id: FieldId::from("price"),
                         key: FieldKey::from("price"),
+                        display_name: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -158,6 +165,7 @@ fn fixture() -> Document {
             FieldDefinition {
                 id: FieldId::from(field),
                 key: FieldKey::from(field),
+                display_name: None,
                 field_type: FieldType::Number,
                 required,
                 constraint: FieldConstraint::None,

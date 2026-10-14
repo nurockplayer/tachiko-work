@@ -35,11 +35,13 @@ fn document(value: f64) -> Document {
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields: BTreeMap::from([(
                 "field".into(),
                 FieldDefinition {
                     id: "field".into(),
                     key: "value".into(),
+                    display_name: None,
                     field_type: FieldType::Number,
                     required: true,
                     constraint: FieldConstraint::None,
@@ -57,6 +59,82 @@ fn document(value: f64) -> Document {
         },
     );
     doc
+}
+
+#[test]
+fn display_name_edit_preserves_constraints_and_bound_formula_results() {
+    let mut original = document(3.0);
+    original
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("field")
+        .unwrap()
+        .constraint = range(0.0, 10.0);
+    original.entities.get_mut("entity").unwrap().fields.insert(
+        "field".into(),
+        Value::Formula(Expression::Number(Number::new(3.0).unwrap())),
+    );
+    let calculations = tachiko_workspace_engine::calculate_fields(&original).unwrap();
+    let mut lifecycle = setup(true, true, true);
+    let mut host = Host::new(original.clone());
+    for (index, name) in [Some("Price 🧾".to_owned()), None].into_iter().enumerate() {
+        let revision = host.revision.as_str().to_owned();
+        let command = SemanticCommand::SetSchemaFieldDisplayName {
+            schema: "schema".into(),
+            field: "field".into(),
+            display_name: name.clone(),
+        };
+        let id = propose(
+            &mut lifecycle,
+            &host.document,
+            &revision,
+            &format!("label-{index}"),
+            SemanticPatchBody::command(command),
+        )
+        .unwrap();
+        let preview = lifecycle
+            .preview_v2(
+                &scope(),
+                &host.document,
+                &host.revision,
+                &id,
+                &"editor".into(),
+                TrustedInstant::new(10),
+            )
+            .unwrap();
+        assert!(matches!(
+            preview.delta.facts(),
+            [CanonicalDirectFact::SchemaFieldDisplayNameChanged { .. }]
+        ));
+        let receipt = lifecycle
+            .execute_v2(
+                &id,
+                None,
+                &"editor".into(),
+                &mut host,
+                TrustedInstant::new(10),
+            )
+            .unwrap();
+        assert_eq!(receipt.delta().unwrap(), &preview.delta);
+        let mut expected = original.clone();
+        expected
+            .schemas
+            .get_mut("schema")
+            .unwrap()
+            .fields
+            .get_mut("field")
+            .unwrap()
+            .display_name = name;
+        assert_eq!(host.document, expected);
+        assert_eq!(
+            tachiko_workspace_engine::calculate_fields(&host.document).unwrap(),
+            calculations
+        );
+    }
+    assert_eq!(host.document, original);
+    assert_eq!(host.revision, rev("r3"));
 }
 
 fn scope() -> DocumentScopeId {
@@ -762,6 +840,7 @@ fn constraint_review_requires_query_for_stored_formula_dependencies() {
         FieldDefinition {
             id: "secret".into(),
             key: "secret".into(),
+            display_name: None,
             field_type: FieldType::Number,
             required: false,
             constraint: FieldConstraint::None,
@@ -859,6 +938,7 @@ fn constraint_review_requires_query_for_transitive_formula_dependencies() {
         FieldDefinition {
             id: "middle".into(),
             key: "middle".into(),
+            display_name: None,
             field_type: FieldType::Number,
             required: false,
             constraint: FieldConstraint::None,
@@ -869,6 +949,7 @@ fn constraint_review_requires_query_for_transitive_formula_dependencies() {
         FieldDefinition {
             id: "secret".into(),
             key: "secret".into(),
+            display_name: None,
             field_type: FieldType::Number,
             required: false,
             constraint: FieldConstraint::None,
@@ -1012,6 +1093,7 @@ fn formula_impact_requires_query_for_unchanged_calculation_operand() {
             FieldDefinition {
                 id: field.into(),
                 key: field.into(),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: FieldConstraint::None,

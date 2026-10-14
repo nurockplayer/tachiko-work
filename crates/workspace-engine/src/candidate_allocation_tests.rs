@@ -30,6 +30,7 @@ fn fixture() -> Document {
             FieldDefinition {
                 id: id.into(),
                 key: id.into(),
+                display_name: None,
                 field_type,
                 required,
                 constraint: FieldConstraint::None,
@@ -42,6 +43,7 @@ fn fixture() -> Document {
         Schema {
             id: "s".into(),
             key: "s".into(),
+            display_name: None,
             fields,
         },
     );

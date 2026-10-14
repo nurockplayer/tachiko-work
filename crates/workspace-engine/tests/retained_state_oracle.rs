@@ -1112,6 +1112,7 @@ fn oracle_document() -> Document {
                 FieldDefinition {
                     id: FieldId::from(id),
                     key: FieldKey::from(id),
+                    display_name: None,
                     field_type: FieldType::Number,
                     required: false,
                     constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -1164,6 +1165,7 @@ fn oracle_document() -> Document {
             Schema {
                 id: SchemaId::from("metrics"),
                 key: SchemaKey::from("metrics"),
+                display_name: None,
                 fields,
             },
         )]),

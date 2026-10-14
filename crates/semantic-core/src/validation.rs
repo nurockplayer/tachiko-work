@@ -13,6 +13,11 @@ impl DiagnosticCode {
     pub const INVALID_KEY: Self = Self::new("core.invalid_key");
     pub const DUPLICATE_KEY: Self = Self::new("core.duplicate_key");
     pub const EMPTY_TITLE: Self = Self::new("core.empty_title");
+    pub const EMPTY_DISPLAY_NAME: Self = Self::new("core.empty_display_name");
+    pub const DISPLAY_NAME_TOO_LONG: Self = Self::new("core.display_name_too_long");
+    pub const FORBIDDEN_DISPLAY_NAME_SCALAR: Self = Self::new("core.forbidden_display_name_scalar");
+    pub const UNTRIMMED_DISPLAY_NAME: Self = Self::new("core.untrimmed_display_name");
+    pub const DUPLICATE_DISPLAY_NAME: Self = Self::new("core.duplicate_display_name");
     pub const KEY_MISMATCH: Self = Self::new("core.key_mismatch");
     pub const MISSING_SCHEMA: Self = Self::new("core.missing_schema");
     pub const MISSING_REQUIRED_FIELD: Self = Self::new("core.missing_required_field");
@@ -157,10 +162,92 @@ fn validate_document_internal(
     validate_schema_keys(document, &mut diagnostics);
     validate_entity_keys(document, &mut diagnostics);
     validate_schemas(document, &mut diagnostics);
+    validate_names(document, &mut diagnostics);
     validate_entities(document, include_formula_references, &mut diagnostics);
 
     diagnostics.sort();
     diagnostics
+}
+
+fn admitted_effective_name<'a>(
+    stored: Option<&'a str>,
+    key: &'a str,
+    subject: &SemanticSubject,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<&'a str> {
+    let Some(name) = stored else {
+        return is_valid_identifier(key).then_some(key);
+    };
+    let failures = crate::display_name_failures(name);
+    for failure in &failures {
+        let code = match failure {
+            crate::DisplayNameFailure::Empty => DiagnosticCode::EMPTY_DISPLAY_NAME,
+            crate::DisplayNameFailure::TooLong => DiagnosticCode::DISPLAY_NAME_TOO_LONG,
+            crate::DisplayNameFailure::ForbiddenScalar => {
+                DiagnosticCode::FORBIDDEN_DISPLAY_NAME_SCALAR
+            }
+            crate::DisplayNameFailure::Untrimmed => DiagnosticCode::UNTRIMMED_DISPLAY_NAME,
+        };
+        diagnostics.push(
+            core_diagnostic(
+                "display_name",
+                code,
+                failure.reason(),
+                vec![subject.clone()],
+            )
+            .with_fact(DiagnosticFact::new("reason", failure.reason())),
+        );
+    }
+    failures.is_empty().then_some(name)
+}
+
+fn duplicate_names(names: BTreeMap<&str, Vec<SemanticSubject>>, diagnostics: &mut Vec<Diagnostic>) {
+    for (name, subjects) in names {
+        if subjects.len() > 1 {
+            diagnostics.push(
+                core_diagnostic(
+                    "display_name",
+                    DiagnosticCode::DUPLICATE_DISPLAY_NAME,
+                    "effective names must be unique in their owning namespace",
+                    subjects.clone(),
+                )
+                .with_related_subjects(subjects)
+                .with_fact(DiagnosticFact::new("effective_name", name)),
+            );
+        }
+    }
+}
+
+fn validate_names(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
+    let mut tables: BTreeMap<&str, Vec<SemanticSubject>> = BTreeMap::new();
+    for (schema_id, schema) in &document.schemas {
+        let subject = SemanticSubject::Schema(schema_id.clone());
+        if let Some(name) = admitted_effective_name(
+            schema.display_name.as_deref(),
+            schema.key.as_str(),
+            &subject,
+            diagnostics,
+        ) {
+            tables.entry(name).or_default().push(subject);
+        }
+        let mut columns: BTreeMap<&str, Vec<SemanticSubject>> = BTreeMap::new();
+        for (field_id, field) in &schema.fields {
+            let subject = SemanticSubject::SchemaField {
+                schema: schema_id.clone(),
+                field: field_id.clone(),
+            };
+            if let Some(name) = admitted_effective_name(
+                field.display_name.as_deref(),
+                field.key.as_str(),
+                &subject,
+                diagnostics,
+            ) {
+                columns.entry(name).or_default().push(subject);
+            }
+        }
+        duplicate_names(columns, diagnostics);
+    }
+    duplicate_names(tables, diagnostics);
 }
 
 fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
@@ -1285,12 +1372,14 @@ mod issue_175_research {
                 Schema {
                     id: SchemaId::from("schema-declared-id"),
                     key: "Invalid Schema Key".into(),
+                    display_name: None,
                     fields: BTreeMap::from([
                         (
                             FieldId::from("name"),
                             FieldDefinition {
                                 id: FieldId::from("name"),
                                 key: "name".into(),
+                                display_name: None,
                                 field_type: FieldType::Text,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1301,6 +1390,7 @@ mod issue_175_research {
                             FieldDefinition {
                                 id: FieldId::from("different-amount-id"),
                                 key: "Invalid Amount Key".into(),
+                                display_name: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1311,6 +1401,7 @@ mod issue_175_research {
                             FieldDefinition {
                                 id: FieldId::from("calc"),
                                 key: "calc".into(),
+                                display_name: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1391,11 +1482,13 @@ mod issue_175_research {
                 Schema {
                     id: SchemaId::from("schema"),
                     key: "items".into(),
+                    display_name: None,
                     fields: BTreeMap::from([(
                         FieldId::from("name"),
                         FieldDefinition {
                             id: FieldId::from("name"),
                             key: "name".into(),
+                            display_name: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint,

@@ -210,6 +210,7 @@ fn synthetic_document(entity_count: usize) -> Document {
             FieldDefinition {
                 id: label.clone(),
                 key: FieldKey::from("label"),
+                display_name: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -261,6 +262,7 @@ fn synthetic_document(entity_count: usize) -> Document {
             Schema {
                 id: schema_id,
                 key: SchemaKey::from("retained_records"),
+                display_name: None,
                 fields,
             },
         )]),
@@ -312,6 +314,7 @@ fn oracle_chain_document(entity_count: usize, cycle: bool) -> Document {
             Schema {
                 id: schema_id,
                 key: SchemaKey::from("oracle_chain"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     value_field.clone(),
                     number_field(&value_field, "value"),
@@ -327,6 +330,7 @@ fn number_field(id: &FieldId, key: &str) -> FieldDefinition {
     FieldDefinition {
         id: id.clone(),
         key: FieldKey::from(key),
+        display_name: None,
         field_type: FieldType::Number,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,

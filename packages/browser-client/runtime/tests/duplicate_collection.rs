@@ -63,7 +63,8 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
             name: "October Summary".into(),
         })
         .unwrap();
-    let copy = table(&mut runtime, "october-summary");
+    let copy = table(&mut runtime, "table_1");
+    assert_eq!(copy.collection.display_name, "October Summary");
     assert_ne!(source.collection.id, copy.collection.id);
     assert_eq!(source.rows.len(), copy.rows.len());
     assert!(
@@ -80,7 +81,7 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
     );
     let copied_remaining = field(&copy, "remaining");
     let copied_source = copied_remaining.formula.as_ref().unwrap().source.clone();
-    assert!(copied_source.contains("october-summary"));
+    assert!(copied_source.contains("table_1"));
     assert!(copied_source.contains("utilities"));
     assert_eq!(
         copied_remaining
@@ -131,7 +132,7 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
     assert!(
         runtime
             .handle(DesignerRequest::QueryTable {
-                collection: "october-summary".into(),
+                collection: "table_1".into(),
             })
             .is_err()
     );
@@ -140,10 +141,7 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
             expected_revision: "resident/7".into(),
         })
         .unwrap();
-    assert_eq!(
-        table(&mut runtime, "october-summary").rows.len(),
-        copy.rows.len()
-    );
+    assert_eq!(table(&mut runtime, "table_1").rows.len(), copy.rows.len());
 }
 
 #[test]
@@ -172,7 +170,8 @@ fn duplicate_collection_does_not_reuse_identities_after_undo() {
             name: "January Summary".into(),
         })
         .unwrap();
-    let first = table(&mut runtime, "january-summary");
+    let first = table(&mut runtime, "table_1");
+    assert_eq!(first.collection.display_name, "January Summary");
     runtime
         .handle(DesignerRequest::Undo {
             expected_revision: "resident/1".into(),
@@ -185,7 +184,8 @@ fn duplicate_collection_does_not_reuse_identities_after_undo() {
             name: "February Summary".into(),
         })
         .unwrap();
-    let second = table(&mut runtime, "february-summary");
+    let second = table(&mut runtime, "table_1");
+    assert_eq!(second.collection.display_name, "February Summary");
     assert_ne!(first.collection.id, second.collection.id);
     assert!(
         first

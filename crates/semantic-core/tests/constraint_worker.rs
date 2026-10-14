@@ -21,11 +21,13 @@ fn constrained_document(
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields: BTreeMap::from([(
                 "field".into(),
                 FieldDefinition {
                     id: "field".into(),
                     key: "value".into(),
+                    display_name: None,
                     field_type,
                     required: false,
                     constraint,
@@ -68,6 +70,7 @@ fn field_constraint_serde_rejects_missing_null_unknown_and_extra_members() {
     let original = serde_json::to_value(FieldDefinition {
         id: FieldId::from("f"),
         key: FieldKey::from("f"),
+        display_name: None,
         field_type: FieldType::Text,
         required: false,
         constraint: FieldConstraint::None,

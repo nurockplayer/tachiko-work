@@ -24,11 +24,13 @@ fn mixed_document() -> Document {
         Schema {
             id: SchemaId::from("notes"),
             key: SchemaKey::from("notes"),
+            display_name: None,
             fields: BTreeMap::from([(
                 FieldId::from("text"),
                 FieldDefinition {
                     id: FieldId::from("text"),
                     key: FieldKey::from("text"),
+                    display_name: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,

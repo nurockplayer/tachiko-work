@@ -30,11 +30,13 @@ fn document() -> Document {
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields: BTreeMap::from([(
                 "amount".into(),
                 FieldDefinition {
                     id: "amount".into(),
                     key: "amount".into(),
+                    display_name: None,
                     field_type: FieldType::Number,
                     required: false,
                     constraint: FieldConstraint::None,
@@ -61,6 +63,7 @@ fn document_with_keyed_definition() -> Document {
         FieldDefinition {
             id: "label".into(),
             key: "label".into(),
+            display_name: None,
             field_type: FieldType::Text,
             required: false,
             constraint: FieldConstraint::None,
@@ -147,6 +150,7 @@ fn conflicted(base: &Document, left: &Document, right: &Document) -> Vec<MergeCo
 fn field_subject(document: &Document) -> SchemaFieldSubjectV2 {
     let field = &document.schemas["schema"].fields["amount"];
     SchemaFieldSubjectV2 {
+        display_name: None,
         key: field.key.clone(),
         field_type: field.field_type.clone(),
         required: field.required,
@@ -271,6 +275,7 @@ fn schema_delete_modify_conflict_carries_constraint_and_suppresses_descendants()
         assert_eq!(
             fact,
             &Fact::Present(MergeValue::SchemaSubject(SchemaSubjectV2 {
+                display_name: None,
                 key: "items".into(),
                 fields: BTreeMap::from([("amount".into(), field_subject(source))]),
             }))

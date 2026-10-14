@@ -53,6 +53,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
             FieldDefinition {
                 id: id.clone(),
                 key: FieldKey::from(key),
+                display_name: None,
                 field_type,
                 required: all_fields_required,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -69,6 +70,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("inventory"),
+                display_name: None,
                 fields,
             },
         )]),

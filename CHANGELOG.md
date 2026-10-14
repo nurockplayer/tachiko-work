@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Native tables and columns retain case and Unicode display names separately
+  from stable IDs and keys. Column rename changes the label with undo/redo;
+  projections expose the effective name. Named projects use canonical v3 and
+  portable-package/v1; older writers refuse names and older binaries cannot
+  reopen named documents. Existing nameless v3/package goldens stay unchanged.
+
 - First-public portable package/v1 now carries exactly canonical `.roproj/v3`,
   preserving Date, saved grouped-sum definitions, constraints and empty shards.
   CLI pack/unpack/compare and browser portable export/open/verify share this

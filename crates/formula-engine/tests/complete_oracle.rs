@@ -14,6 +14,7 @@ fn field(id: &str, field_type: FieldType, value: Value) -> (FieldDefinition, Val
         FieldDefinition {
             id: FieldId::from(id),
             key: FieldKey::from(id),
+            display_name: None,
             field_type,
             required: true,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -39,6 +40,7 @@ fn document(fields: Vec<(&str, FieldType, Value)>) -> Document {
             Schema {
                 id: SchemaId::from("schema-stable"),
                 key: SchemaKey::from("schema"),
+                display_name: None,
                 fields: definitions,
             },
         )]),
@@ -497,6 +499,7 @@ fn generated_reference_document(targets: &[usize]) -> Document {
             Schema {
                 id: SchemaId::from("schema-stable"),
                 key: SchemaKey::from("schema"),
+                display_name: None,
                 fields: definitions,
             },
         )]),
@@ -517,6 +520,7 @@ fn number_field(id: &str) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type: FieldType::Number,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -654,6 +658,7 @@ fn compatibility_projection_of_a_long_failed_chain_is_stack_safe() {
             Schema {
                 id: SchemaId::from("schema-stable"),
                 key: SchemaKey::from("schema"),
+                display_name: None,
                 fields: definitions,
             },
         )]),

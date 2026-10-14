@@ -20,11 +20,13 @@ fn human_tracker_key_does_not_claim_stock_profile_or_block_generic_scalar_edit()
         Schema {
             id: schema_id.clone(),
             key: SchemaKey::from("tracker"),
+            display_name: None,
             fields: BTreeMap::from([(
                 field_id.clone(),
                 FieldDefinition {
                     id: field_id.clone(),
                     key: FieldKey::from("description"),
+                    display_name: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,

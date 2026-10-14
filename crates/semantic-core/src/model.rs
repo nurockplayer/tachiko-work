@@ -373,6 +373,12 @@ impl Document {
 pub struct Schema {
     pub id: SchemaId,
     pub key: SchemaKey,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "stored_display_name"
+    )]
+    pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, FieldDefinition>,
 }
 
@@ -381,9 +387,48 @@ pub struct Schema {
 pub struct FieldDefinition {
     pub id: FieldId,
     pub key: FieldKey,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "stored_display_name"
+    )]
+    pub display_name: Option<String>,
     pub field_type: FieldType,
     pub required: bool,
     pub constraint: FieldConstraint,
+}
+
+fn stored_display_name<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
+}
+
+impl Schema {
+    #[must_use]
+    pub fn effective_name(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(self.key.as_str())
+    }
+}
+
+impl FieldDefinition {
+    #[must_use]
+    pub fn effective_name(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(self.key.as_str())
+    }
+}
+
+impl Document {
+    #[must_use]
+    pub fn has_display_names(&self) -> bool {
+        self.schemas.values().any(|schema| {
+            schema.display_name.is_some()
+                || schema
+                    .fields
+                    .values()
+                    .any(|field| field.display_name.is_some())
+        })
+    }
 }
 
 /// Closed durable constraint declaration owned by a schema field.

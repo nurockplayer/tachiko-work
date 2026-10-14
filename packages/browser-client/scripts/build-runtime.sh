@@ -8,7 +8,7 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 runtime_manifest="${script_dir}/../runtime/Cargo.toml"
-runtime_artifact="${script_dir}/../runtime/target/wasm32-unknown-unknown/release/tachiko_designer_runtime.wasm"
+runtime_artifact="${CARGO_TARGET_DIR:-${script_dir}/../runtime/target}/wasm32-unknown-unknown/release/tachiko_designer_runtime.wasm"
 output_dir="$1"
 if [[ "${output_dir}" != /* ]]; then
   output_dir="${PWD}/${output_dir}"

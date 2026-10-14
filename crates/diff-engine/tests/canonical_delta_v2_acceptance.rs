@@ -30,6 +30,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
     FieldDefinition {
         id: id.into(),
         key: id.into(),
+        display_name: None,
         field_type,
         required: false,
         constraint: FieldConstraint::None,
@@ -39,6 +40,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
 fn field_payload(definition: &FieldDefinition) -> FieldDefinitionPayload {
     FieldDefinitionPayload {
         key: definition.key.clone(),
+        display_name: None,
         field_type: definition.field_type.clone(),
         required: definition.required,
         constraint: definition.constraint.clone(),
@@ -48,6 +50,7 @@ fn field_payload(definition: &FieldDefinition) -> FieldDefinitionPayload {
 fn schema_payload(schema: &Schema) -> SchemaDefinitionPayload {
     SchemaDefinitionPayload {
         key: schema.key.clone(),
+        display_name: None,
         fields: schema
             .fields
             .iter()
@@ -73,6 +76,7 @@ fn document() -> Document {
             Schema {
                 id: "schema".into(),
                 key: "table".into(),
+                display_name: None,
                 fields: BTreeMap::from([
                     ("amount".into(), field("amount", FieldType::Number)),
                     ("label".into(), field("label", FieldType::Text)),

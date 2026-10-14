@@ -1,0 +1,9 @@
+{
+  "occurrence_id": "00000000-0000-4000-8000-000000000529",
+  "name": "My Expenses",
+  "columns": [
+    { "name": "項目", "field_type": "text" },
+    { "name": "Item Name", "field_type": "text" },
+    { "name": "column_1", "field_type": "text" }
+  ]
+}

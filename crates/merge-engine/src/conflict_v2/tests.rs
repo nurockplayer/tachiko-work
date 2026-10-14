@@ -15,6 +15,7 @@ fn number_field(id: &str) -> FieldDefinition {
     FieldDefinition {
         id: id.into(),
         key: id.into(),
+        display_name: None,
         field_type: FieldType::Number,
         required: false,
         constraint: FieldConstraint::None,
@@ -25,6 +26,7 @@ fn basic_document() -> Document {
     let schema = Schema {
         id: "schema".into(),
         key: "items".into(),
+        display_name: None,
         fields: BTreeMap::from([("value".into(), number_field("value"))]),
     };
     let entity = Entity {
@@ -194,6 +196,7 @@ fn schema_qualified_value_transition_preserves_unmaterialized_evidence() {
             Schema {
                 id: id.into(),
                 key: id.into(),
+                display_name: None,
                 fields: BTreeMap::from([("f".into(), number_field("f"))]),
             },
         );

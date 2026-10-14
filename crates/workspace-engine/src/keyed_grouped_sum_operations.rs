@@ -400,6 +400,7 @@ mod tests {
             FieldDefinition {
                 id,
                 key,
+                display_name: None,
                 field_type,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -414,6 +415,7 @@ mod tests {
             Schema {
                 id: SchemaId::from(ORDERS),
                 key: SchemaKey::from("orders"),
+                display_name: None,
                 fields: BTreeMap::from([
                     field(ORDER_KEY, FieldType::Text),
                     field(QUANTITY, FieldType::Number),
@@ -425,6 +427,7 @@ mod tests {
             Schema {
                 id: SchemaId::from(PRODUCTS),
                 key: SchemaKey::from("products"),
+                display_name: None,
                 fields: BTreeMap::from([
                     field(PRODUCT_KEY, FieldType::Text),
                     field(CATEGORY, FieldType::Text),

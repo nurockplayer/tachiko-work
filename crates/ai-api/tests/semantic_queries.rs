@@ -21,6 +21,7 @@ fn balance_document(damage: f64) -> Document {
                 Schema {
                     id: SchemaId::from("character"),
                     key: SchemaKey::from("character"),
+                    display_name: None,
                     fields: BTreeMap::from([(FieldId::from("name"), text_field("name"))]),
                 },
             ),
@@ -29,6 +30,7 @@ fn balance_document(damage: f64) -> Document {
                 Schema {
                     id: SchemaId::from("weapon"),
                     key: SchemaKey::from("weapon"),
+                    display_name: None,
                     fields: BTreeMap::from([
                         (FieldId::from("name"), text_field("name")),
                         (FieldId::from("damage"), number_field("damage")),
@@ -83,6 +85,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type,
         required: true,
         constraint: tachiko_workspace_engine::FieldConstraint::None,

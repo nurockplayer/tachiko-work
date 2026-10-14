@@ -18,11 +18,13 @@ fn number_document(number: Number) -> Document {
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("schema"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     field_id.clone(),
                     FieldDefinition {
                         id: field_id.clone(),
                         key: FieldKey::from("number"),
+                        display_name: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

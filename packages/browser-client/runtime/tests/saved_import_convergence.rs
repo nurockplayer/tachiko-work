@@ -27,6 +27,7 @@ fn native_document(rows: usize) -> Document {
     let schema = Schema {
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
+        display_name: None,
         fields: ["a", "b", "c"]
             .into_iter()
             .map(|key| {
@@ -36,6 +37,7 @@ fn native_document(rows: usize) -> Document {
                     FieldDefinition {
                         id,
                         key: FieldKey::from(key),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: FieldConstraint::None,
@@ -452,6 +454,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
         collection: CollectionSummary {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
+            display_name: schema.key.to_string(),
             entity_count: entities.len(),
         },
         columns: schema
@@ -460,6 +463,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
             .map(|field| ColumnProjection {
                 id: field.id.to_string(),
                 key: field.key.to_string(),
+                display_name: field.key.to_string(),
                 field_type: "text".to_owned(),
                 dropdown_options: None,
             })
