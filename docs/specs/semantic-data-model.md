@@ -62,7 +62,7 @@ targets or a frontend-owned label store.
 
 Authoring trims leading/trailing Unicode whitespace, preserves the remaining
 scalar sequence exactly, and requires a nonempty single-line name without
-control characters or line separators, at most 4,096 UTF-8 bytes after trimming.
+forbidden scalars (General_Category `Cc`, `Zl` or `Zp`; ADR-0043 section 3), at most 4,096 UTF-8 bytes after trimming.
 No normalization, case folding, or width folding is applied. Effective names
 are unique by exact comparison within the Document for tables and within each
 Schema for columns. Shared Rust validation enforces this, including merge

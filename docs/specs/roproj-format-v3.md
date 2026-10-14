@@ -110,7 +110,7 @@ unchanged nameless form. This named schema example shows both member orders:
 ```
 
 Authoring trims leading/trailing Unicode whitespace; stored names MUST already
-be trimmed, nonempty, free of control characters and line separators, and at
+be trimmed, nonempty, free of forbidden scalars (General_Category `Cc`, `Zl` or `Zp`; ADR-0043 section 3), and at
 most 4,096 UTF-8 bytes before JSON escaping. Decoding MUST reject invalid
 spelling rather than trim or repair it. Preserve the remaining Unicode scalar
 sequence exactly, without normalization, case folding, or width folding.

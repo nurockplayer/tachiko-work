@@ -88,8 +88,12 @@ extension bag, or sidecar is added. Stable-ID collection order is unchanged.
 ### 3. Validate spelling without normalization
 
 Authoring trims leading/trailing Unicode whitespace. The resulting name must
-be nonempty, contain no control characters or line separators, and occupy at
-most 4,096 UTF-8 bytes after trimming, before JSON escaping. Store the remaining
+be nonempty, contain no forbidden scalar, and occupy at most 4,096 UTF-8 bytes
+after trimming, before JSON escaping. A forbidden scalar is exactly any Unicode
+scalar whose General_Category is `Cc` (control, including U+0085), `Zl` (line
+separator, U+2028) or `Zp` (paragraph separator, U+2029). The same predicate
+applies at authoring and when decoding stored names. Format characters (`Cf`)
+and other whitespace inside the name are not forbidden by this rule. Store the remaining
 Unicode scalar sequence exactly as typed: no NFC/NFKC, case folding, width
 folding, transliteration, or locale-dependent transformation.
 
@@ -105,7 +109,7 @@ framework:
 
 - **Stage 0 — admission / representation prerequisites:** newly authored names
   fail admission for an empty result after trimming, more than 4,096 UTF-8 bytes
-  after trimming, or a control/line-separator character in the trimmed result.
+  after trimming, or a forbidden scalar (section 3) in the trimmed result.
   These are distinct logical failure reasons. A representation reader also
   rejects an untrimmed stored name under its existing representation-local
   error precedence; it never trims stored data to admit it. A pre-candidate
