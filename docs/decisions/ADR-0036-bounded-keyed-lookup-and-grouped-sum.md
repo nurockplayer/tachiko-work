@@ -19,6 +19,18 @@ Related authority: [ADR-0015](ADR-0015-stable-semantic-identity.md),
 
 ## Context
 
+### Saved-definition evidence amendment — ADR-0044
+
+[ADR-0044](ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
+supplies §5's separately Accepted versioned delta extension: complete saved
+definition create/delete/change facts in `tachiko.semantic-delta/v2`, targeted
+by the existing definition ID at subject rank 5. It changes no definition,
+evaluation, authorization, or persistence meaning. Frozen delta/conflict v1
+refusals remain; no v1 definition facts exist to copy. Definition-changing
+conflict v2 remains fail-closed by lead decision (future direction: one atomic definition facet). The #531
+implementation child owns realization; historical §5 is read subject to this
+bounded delta amendment.
+
 The Driver journey in [#293](https://github.com/nurockplayer/tachiko-work/issues/293)
 needs one two-table computation: resolve an order's Text product key, multiply
 the matched price by quantity, and sum amounts by product category. Existing
