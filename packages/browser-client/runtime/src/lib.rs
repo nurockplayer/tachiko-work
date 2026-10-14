@@ -707,7 +707,7 @@ pub enum DesignerError {
     InvalidTrackerOperation { message: String },
     #[error("table creation rejected: {message}")]
     InvalidTableOperation { message: String },
-    #[error("native name admission rejected: {failures:?}")]
+    #[error("native name admission rejected: {}", name_admission::failure_message(.failures))]
     NameAdmission { failures: Vec<NameFailure> },
 }
 

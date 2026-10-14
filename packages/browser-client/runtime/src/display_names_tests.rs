@@ -1,7 +1,7 @@
 use super::{
     BTreeMap, BTreeSet, DesignerError, DesignerRequest, DesignerRuntime, Entity, Expression,
     FieldId, FieldRef, GrantId, NewTableColumnInput, Number, Value, allocate_key, encode_roproj_v3,
-    name_admission, open_portable_ro, open_project,
+    name_admission, open_portable_ro, open_project, process_wire_request,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000529";
@@ -48,6 +48,31 @@ fn distinct_case_names_do_not_collide_when_their_derived_keys_do() {
             .map(|field| field.key.as_str())
             .collect::<Vec<_>>(),
         ["item", "column_1"]
+    );
+}
+
+#[test]
+fn case_width_and_canonically_equivalent_spellings_stay_distinct() {
+    let names = ["Item", "item", "Ｉtem", "é", "e\u{301}", "🧾"];
+    let runtime = DesignerRuntime::new_table(OCCURRENCE, "Names", &columns(&names)).unwrap();
+    let projection = runtime.query_table("names").unwrap();
+    assert_eq!(
+        projection
+            .columns
+            .iter()
+            .map(|column| column.display_name.as_str())
+            .collect::<Vec<_>>(),
+        names
+    );
+    assert_eq!(
+        projection
+            .columns
+            .iter()
+            .map(|column| column.key.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "item", "column_1", "column_2", "column_3", "column_4", "column_5"
+        ]
     );
 }
 
@@ -129,7 +154,9 @@ fn authoring_trims_frozen_whitespace_keeps_feff_and_checks_utf8_bounds() {
         "\u{feff}Item\u{feff}".into(),
         "MixedCase".into(),
     ] {
-        let runtime = DesignerRuntime::new_table(OCCURRENCE, "Names", &columns(&[&name])).unwrap();
+        let authored = format!(" {name} ");
+        let runtime =
+            DesignerRuntime::new_table(OCCURRENCE, "Names", &columns(&[&authored])).unwrap();
         assert_eq!(
             runtime.query_table("names").unwrap().columns[0].display_name,
             name
@@ -489,4 +516,56 @@ fn oversized_named_projection_refuses_atomically() {
     assert_eq!(runtime.session.export_snapshot(), before);
     assert!(runtime.undo.is_empty());
     assert!(runtime.redo.is_empty());
+}
+
+#[test]
+fn accumulated_name_failure_reply_is_bounded_and_retains_every_input() {
+    let inputs = (0..8)
+        .flat_map(|group| {
+            let name = format!("g{group}{}", "\"".repeat(1550));
+            [
+                NewTableColumnInput {
+                    name: name.clone(),
+                    field_type: "text".into(),
+                },
+                NewTableColumnInput {
+                    name,
+                    field_type: "text".into(),
+                },
+            ]
+        })
+        .collect::<Vec<_>>();
+    let request = serde_json::json!({"type": "new_table", "occurrence_id": OCCURRENCE, "name": "Names", "columns": inputs});
+    let input = serde_json::to_vec(&request).unwrap();
+    assert!(input.len() < super::MAX_PROJECTION_BYTES);
+    let mut resident = Some(DesignerRuntime::tracker(OCCURRENCE).unwrap());
+    let before = resident.as_ref().unwrap().session.export_snapshot();
+    let bytes = process_wire_request(&mut resident, &input);
+    assert!(
+        bytes.len() <= super::MAX_PROJECTION_BYTES,
+        "reply grew to {} bytes",
+        bytes.len()
+    );
+    let super::DesignerWireReply::Error { error } = serde_json::from_slice(&bytes).unwrap() else {
+        panic!("duplicate groups refuse before candidate creation");
+    };
+    assert_eq!(error.code, "invalid_table_operation");
+    assert_eq!(error.name_failures.len(), 8);
+    for (group, finding) in error.name_failures.iter().enumerate() {
+        assert_eq!(finding.reason, "duplicate_display_name");
+        assert_eq!(
+            finding.inputs,
+            [
+                name_admission::NameInput::Column {
+                    index: group * 2,
+                    schema: None
+                },
+                name_admission::NameInput::Column {
+                    index: group * 2 + 1,
+                    schema: None
+                }
+            ]
+        );
+    }
+    assert_eq!(resident.as_ref().unwrap().session.export_snapshot(), before);
 }

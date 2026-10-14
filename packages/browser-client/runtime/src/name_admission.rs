@@ -22,6 +22,27 @@ pub struct NameFailure {
     pub effective_name: Option<String>,
 }
 
+pub(super) fn failure_message(failures: &[NameFailure]) -> String {
+    // Detailed input/subject/name evidence lives once in name_failures. Repeating
+    // escaped labels in presentation would overflow an otherwise bounded reply.
+    failures
+        .iter()
+        .map(|failure| match failure.reason.as_str() {
+            "empty_display_name" => "a table or column needs a name",
+            "display_name_too_long" => "names must fit within 4,096 UTF-8 bytes",
+            "forbidden_display_name_scalar" => {
+                "names cannot contain controls or line/paragraph separators"
+            }
+            "duplicate_display_name" => "effective table or column names must be unique",
+            "untrimmed_display_name" => "stored names must already be trimmed",
+            _ => "a name could not be admitted",
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 pub(super) fn check_name<'a>(
     input: &'a str,
     locator: Option<&NameInput>,
