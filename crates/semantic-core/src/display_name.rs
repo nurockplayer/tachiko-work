@@ -34,20 +34,23 @@ pub fn trim_display_name(input: &str) -> &str {
     input.trim_matches(is_display_name_whitespace)
 }
 
-/// Check an already-trimmed name, accumulating independent spelling failures.
+/// Check canonical name spelling, accumulating independent failures.
+/// Empty/length checks use the frozen trim result; untrimmed input is still
+/// rejected rather than repaired. Authoring adapters trim before calling this.
 #[must_use]
 pub fn display_name_failures(name: &str) -> Vec<DisplayNameFailure> {
     let mut failures = Vec::new();
-    if name.is_empty() {
+    let trimmed = trim_display_name(name);
+    if trimmed.is_empty() {
         failures.push(DisplayNameFailure::Empty);
     }
-    if name.len() > MAX_DISPLAY_NAME_BYTES {
+    if trimmed.len() > MAX_DISPLAY_NAME_BYTES {
         failures.push(DisplayNameFailure::TooLong);
     }
     if name.chars().any(|scalar| matches!(scalar, '\u{0000}'..='\u{001f}' | '\u{007f}'..='\u{009f}' | '\u{2028}' | '\u{2029}')) {
         failures.push(DisplayNameFailure::ForbiddenScalar);
     }
-    if trim_display_name(name) != name {
+    if trimmed != name {
         failures.push(DisplayNameFailure::Untrimmed);
     }
     failures

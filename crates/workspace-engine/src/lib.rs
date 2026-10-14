@@ -464,8 +464,22 @@ pub enum RuntimeValue {
     Reference { reference: String },
 }
 
+/// Stage-0 evidence for one supplied name in an ordered semantic request.
+///
+/// Engine commands already carry allocated stable IDs. `command_index` is the
+/// zero-based request position; subjects come directly from the supplied target
+/// or definition, never from labels or fabricated admission identities.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandNameFailure {
+    pub command_index: usize,
+    pub subject: SemanticSubject,
+    pub reason: &'static str,
+}
+
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
+    #[error("display-name spelling admission failed: {failures:?}")]
+    NameAdmission { failures: Vec<CommandNameFailure> },
     #[error("semantic address lookup failed: {0}")]
     Address(#[from] AddressIndexError),
     #[error("entity key '{entity}' does not exist")]

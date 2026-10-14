@@ -67,6 +67,14 @@ fn frozen_spelling_and_byte_bound() {
     );
     assert_eq!(display_name_failures(""), [DisplayNameFailure::Empty]);
     assert_eq!(
+        display_name_failures(" \u{3000} "),
+        [DisplayNameFailure::Empty, DisplayNameFailure::Untrimmed]
+    );
+    assert_eq!(
+        display_name_failures(&(" ".to_owned() + &"🧾".repeat(1024) + " ")),
+        [DisplayNameFailure::Untrimmed]
+    );
+    assert_eq!(
         display_name_failures(" Item "),
         [DisplayNameFailure::Untrimmed]
     );

@@ -34,6 +34,10 @@ use super::{
 #[path = "candidate_allocation_tests.rs"]
 mod candidate_allocation_tests;
 
+#[cfg(test)]
+#[path = "name_admission_tests.rs"]
+mod name_admission_tests;
+
 macro_rules! opaque_text_id {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -3035,6 +3039,7 @@ impl PatchLifecycle {
         document: &Document,
         body: &SemanticPatchBody,
     ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
+        admit_command_names(body)?;
         let mut candidate = document.clone();
         let mut writes = BTreeSet::new();
         for command in body.commands() {
@@ -4668,6 +4673,82 @@ fn proposal_is_terminal(proposal: &ProposalRecord) -> bool {
                 | PatchLifecycleState::Conflict
         )
     })
+}
+
+/// Admit the complete supplied request before cloning or changing a candidate.
+/// Later writes/removals cannot hide an earlier spelling failure. Uniqueness
+/// remains a declaration invariant of the final candidate, not this scan.
+fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
+    let mut failures = Vec::new();
+    for (command_index, command) in body.commands().iter().enumerate() {
+        let mut check = |name: Option<&str>, subject: super::SemanticSubject| {
+            if let Some(name) = name {
+                for failure in super::display_name_failures(name) {
+                    failures.push(super::CommandNameFailure {
+                        command_index,
+                        subject: subject.clone(),
+                        reason: failure.reason(),
+                    });
+                }
+            }
+        };
+        match command {
+            SemanticCommand::AppendCollection { schema, .. } => {
+                check(
+                    schema.display_name.as_deref(),
+                    super::SemanticSubject::Schema(schema.id.clone()),
+                );
+                for field in schema.fields.values() {
+                    check(
+                        field.display_name.as_deref(),
+                        super::SemanticSubject::SchemaField {
+                            schema: schema.id.clone(),
+                            field: field.id.clone(),
+                        },
+                    );
+                }
+            }
+            SemanticCommand::AppendSchemaField { schema, field, .. }
+            | SemanticCommand::RemoveSchemaField { schema, field, .. } => {
+                check(
+                    field.display_name.as_deref(),
+                    super::SemanticSubject::SchemaField {
+                        schema: schema.clone(),
+                        field: field.id.clone(),
+                    },
+                );
+            }
+            SemanticCommand::SetSchemaFieldDisplayName {
+                schema,
+                field,
+                display_name,
+            } => {
+                check(
+                    display_name.as_deref(),
+                    super::SemanticSubject::SchemaField {
+                        schema: schema.clone(),
+                        field: field.clone(),
+                    },
+                );
+            }
+            SemanticCommand::RemoveCollection { .. }
+            | SemanticCommand::AppendEntity { .. }
+            | SemanticCommand::RemoveEntity { .. }
+            | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetFieldConstraint { .. }
+            | SemanticCommand::SetFieldValue { .. }
+            | SemanticCommand::UnsetField { .. }
+            | SemanticCommand::FormulaUpdate(_)
+            | SemanticCommand::FormulaInverseRestore(_)
+            | SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+            | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {}
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkspaceError::NameAdmission { failures })
+    }
 }
 
 #[cfg(test)]
