@@ -133,6 +133,7 @@ fn field(id: &str) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type: FieldType::Number,
         required: true,
         constraint: FieldConstraint::None,
@@ -151,6 +152,7 @@ fn formula_document(input: Number, expression: Expression) -> Document {
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("numbers"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (FieldId::from("input-stable"), field("input-stable")),
                     (FieldId::from("output-stable"), field("output-stable")),
@@ -218,11 +220,13 @@ fn date_document(value: Date) -> Document {
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("dates"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     field_id.clone(),
                     FieldDefinition {
                         id: field_id.clone(),
                         key: FieldKey::from("value"),
+                        display_name: None,
                         field_type: FieldType::Date,
                         required: true,
                         constraint: FieldConstraint::None,
@@ -581,6 +585,7 @@ fn complete_oracle_record() -> Record {
         FieldDefinition {
             id: FieldId::from("text-target"),
             key: FieldKey::from("text-target"),
+            display_name: None,
             field_type: FieldType::Text,
             required: true,
             constraint: FieldConstraint::None,
@@ -629,6 +634,7 @@ fn complete_oracle_record() -> Record {
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("oracle-schema"),
+                display_name: None,
                 fields: definitions,
             },
         )]),
@@ -993,6 +999,7 @@ fn oracle_document() -> Document {
         FieldDefinition {
             id: "text".into(),
             key: "text".into(),
+            display_name: None,
             field_type: FieldType::Text,
             required: true,
             constraint: FieldConstraint::None,
@@ -1066,6 +1073,7 @@ fn oracle_document() -> Document {
             Schema {
                 id: "schema".into(),
                 key: "schema".into(),
+                display_name: None,
                 fields: definitions,
             },
         )]),
@@ -1111,6 +1119,7 @@ fn validation_accumulation_record() -> Record {
         FieldDefinition {
             id: "reference-target".into(),
             key: "reference-target".into(),
+            display_name: None,
             field_type: FieldType::Reference {
                 schema: "missing-target-schema".into(),
             },
@@ -1334,6 +1343,7 @@ fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
             Schema {
                 id: "schema".into(),
                 key: "schema".into(),
+                display_name: None,
                 fields: definitions,
             },
         )]),
@@ -1493,6 +1503,7 @@ fn analysis_text_field(id: &str, required: bool) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type: FieldType::Text,
         required,
         constraint: FieldConstraint::None,
@@ -1503,6 +1514,7 @@ fn analysis_number_field(id: &str, required: bool) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type: FieldType::Number,
         required,
         constraint: FieldConstraint::None,
@@ -1556,6 +1568,7 @@ fn analysis_document() -> Document {
             Schema {
                 id: schema,
                 key: SchemaKey::from("analysis-weapons"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         FieldId::from("category"),
@@ -2780,11 +2793,13 @@ fn constraint_text_literal_record() -> Record {
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields: BTreeMap::from([(
                 "text".into(),
                 FieldDefinition {
                     id: "text".into(),
                     key: "text".into(),
+                    display_name: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: FieldConstraint::TextLiteralSet {

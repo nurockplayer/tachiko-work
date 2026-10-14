@@ -30,14 +30,15 @@ test("#529 exported kit creates named native tables and reopens every carrier in
     const tree = await client.exportCanonicalTree(redone.revision);
     const opaque = await client.exportProjectV3(redone.revision);
     const portable = await client.exportPortableRo(redone.revision);
+    const portableExpected = Array.from(new Uint8Array(portable.bytes));
     await client.close();
     const reopened = [];
     for (const kind of ["tree", "opaque", "portable", "golden"] as const) {
       const fresh = kit.createExperimentalDesignerClient();
       try {
-        const projection = kind === "tree" ? await fresh.openCanonicalTree(tree.files) : kind === "opaque" ? await fresh.openProject(opaque.bytes) : await fresh.openPortableRo(kind === "golden" ? new Uint8Array(golden).buffer : portable.bytes);
+        const projection = kind === "tree" ? await fresh.openCanonicalTree(tree.files.map(file => ({...file, bytes: file.bytes.slice(0)}))) : kind === "opaque" ? await fresh.openProject(opaque.bytes.slice(0)) : await fresh.openPortableRo(kind === "golden" ? new Uint8Array(golden).buffer : portable.bytes.slice(0));
         const repacked = await fresh.exportPortableRo("resident/0");
-        const expected = kind === "golden" ? golden : Array.from(new Uint8Array(portable.bytes));
+        const expected = kind === "golden" ? golden : portableExpected;
         reopened.push({kind, revision: projection.table.revision, collection: projection.table.collection.display_name, keys: projection.table.columns.map(column => column.key), names: projection.table.columns.map(column => column.display_name), exactRepack: JSON.stringify(Array.from(new Uint8Array(repacked.bytes))) === JSON.stringify(expected)});
       } finally { await fresh.close(); }
     }
@@ -59,7 +60,7 @@ test("#529 exported kit creates named native tables and reopens every carrier in
     {kind: "golden", revision: "resident/0", collection: "My Expenses", keys: ["column_1", "column_2", "column_3"], names: ["項目", "Item Name", "column_1"], exactRepack: true},
   ]);
   expect(workers).toHaveLength(5);
-  expect(workers.every(url => url.endsWith("/vendor/tachiko/experimental-client.worker.js"))).toBe(true);
+  expect(workers.every(url => new URL(url).pathname === "/vendor/tachiko/experimental-client.worker.js")).toBe(true);
 });
 
 test("#515 actual kit module Worker matches native field explanations", async ({ page }) => {
