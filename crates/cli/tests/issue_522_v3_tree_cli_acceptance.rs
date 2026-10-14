@@ -145,7 +145,7 @@ fn ac2_cli_unpack_output_validates_and_reads_back_independent_contents() {
 #[test]
 fn ac3_invalid_v3_trees_are_refused_without_mutation() {
     let base = fixture_files();
-    let mut cases: Vec<(&str, Vec<(String, Vec<u8>)>)> = Vec::new();
+    let mut cases = Vec::new();
     let replace = |path: &str, bytes: Vec<u8>| {
         let mut files = base.clone();
         files.iter_mut().find(|(p, _)| p == path).unwrap().1 = bytes;

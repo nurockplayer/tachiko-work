@@ -11,7 +11,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tachiko_storage::{
     FormatError, canonicalize_roproj, compare_verified_package_with_roproj, decode_roproj_v1,
-    decode_roproj_v3, load, load_roproj, materialize_roproj, publish_canonicalized_roproj,
+    decode_roproj_v3, load, load_roproj_v1_or_v3, materialize_roproj, publish_canonicalized_roproj,
     publish_portable_package_from_roproj, publish_unpacked_roproj, read_portable_package,
     read_portable_package_source, to_canonical_string,
 };
@@ -116,7 +116,7 @@ pub enum CommandError {
 
 fn load_read_source(path: &Path) -> Result<Document, CommandError> {
     if path.is_dir() {
-        Ok(load_roproj(path)?)
+        Ok(load_roproj_v1_or_v3(path)?)
     } else {
         Ok(load(path)?)
     }
@@ -169,7 +169,7 @@ pub fn materialize_roproject(input: &Path, output: &Path) -> Result<String, Comm
 }
 
 pub fn validate_roproject(path: &Path) -> Result<String, CommandError> {
-    let document = load_roproj(path)?;
+    let document = load_roproj_v1_or_v3(path)?;
     validate_semantics(&document)?;
     Ok(format!("valid {}\n", path.display()))
 }

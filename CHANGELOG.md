@@ -4,6 +4,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- CLI directory read commands and both validation entrypoints now accept exact
+  canonical `.roproj/v3` trees, including portable package unpack output, through
+  the existing strict storage reader. Canonical v1 reads remain supported;
+  other versions and invalid trees are refused without modifying the source.
+
 ### Added
 
 - First-public portable package/v1 now carries exactly canonical `.roproj/v3`,
