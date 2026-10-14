@@ -428,6 +428,29 @@ merged cross-object effective-name collision is a shared validation failure,
 not a new structural conflict kind, and blocks publication. No wire/SDK
 encoding or resolver mutation mechanism is selected.
 
+## Saved-definition boundary — ADR-0044
+
+[ADR-0044](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
+adds complete saved-definition delta v2 facts; it does not add conflict targets,
+facets, or definition-specific three-way laws. The inspected v1 contract/code
+has no saved-definition conflict facets to mirror. A future extension, if needed, uses
+one atomic complete-definition `subject` facet; independently reconciled role
+bindings are rejected ([lead decision](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md#lead-decisions-on-the-intake-questions)).
+That extension still needs its own authority amendment.
+
+Frozen conflict v1 remains unchanged. Conflict v2 continues to refuse the whole
+base/left/right request if saved-definition maps differ, including one-sided
+changes, equal concurrent additions, and matching deletions. It must return
+neither partial conflicts nor a candidate with silently omitted or selected
+definitions. Equal unchanged definition maps remain subject to input and
+candidate binding/role validation and existing complete semantic/formula
+finalization. Adding delta evidence does not by itself authorize merge support.
+No conflict rank, identity, PRESENT/absent rule, structural kind, or parent
+suppression rule changes here. The #531 implementation child realizes the
+accepted delta/publication extension; any definition-conflict extension needs
+its own authority amendment before implementation is Ready. #452 constraint
+admission remains out of scope.
+
 ## Human-readable projection
 
 A client may render a conflict using current keys or localized prose, for
@@ -466,7 +489,9 @@ the in-process workspace preview. The workspace boundary admits the exact v2
 selector and same-Document inputs, validates keyed grouped-sum bindings by
 input role, delegates structural reconciliation to merge-engine, and performs
 candidate validation, formula/projection preflight, and canonical v2 delta
-finalization. Changed keyed-definition maps remain a whole-request refusal.
+finalization. Changed keyed-definition maps remain a whole-request refusal;
+ADR-0044 adds delta facts and keeps this conflict refusal by lead decision; any
+future atomic complete-definition facet needs its own authority amendment.
 
 Issue [#47](https://github.com/nurockplayer/tachiko-work/issues/47) retains
 cross-version migration work.

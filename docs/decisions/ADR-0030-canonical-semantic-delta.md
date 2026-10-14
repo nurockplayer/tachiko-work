@@ -15,6 +15,17 @@ Related authority: [ADR-0015](ADR-0015-stable-semantic-identity.md),
 
 ## Context
 
+### Saved-definition v2 amendment — ADR-0044
+
+[ADR-0044](ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
+amends only this ADR's current pre-release delta v2 successor. It appends
+KeyedGroupedSumDefinitionId targets at subject rank 5, with complete-definition
+create/delete/change facts at change ranks 0/1/2 and explicit PRESENT/absent
+meaning. The payload is ADR-0036/0037's existing seven stable role bindings;
+in-place changes retain identity. Prior ranks and evidence/order laws remain.
+V1 has no definition facts and its definition-change refusal remains frozen.
+The #531 implementation child owns realization; this is authority only.
+
 ### Native display-name amendment — ADR-0043
 
 [ADR-0043](ADR-0043-native-display-names-separate-from-keys.md) amends this
