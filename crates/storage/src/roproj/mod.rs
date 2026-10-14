@@ -4,9 +4,9 @@ pub(crate) mod v2;
 pub(crate) mod v3;
 
 pub use host::{
-    canonicalize_roproj, load_roproj, materialize_roproj, migrate_roproj_to_v3,
-    publish_canonicalized_roproj, publish_roproj, publish_roproj_v3, read_canonical_roproj,
-    read_canonical_roproj_v3,
+    canonicalize_roproj, load_roproj, load_roproj_v1_or_v3, materialize_roproj,
+    migrate_roproj_to_v3, publish_canonicalized_roproj, publish_roproj, publish_roproj_v3,
+    read_canonical_roproj, read_canonical_roproj_v3,
 };
 #[cfg(feature = "issue-175-research")]
 pub use v1::issue_175_admit_a0_a1;
