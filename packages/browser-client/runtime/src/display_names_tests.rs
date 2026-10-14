@@ -670,9 +670,14 @@ fn empty_table_name_publication_wire_invalidates_presentation() {
         .rename_column("resident/0", "orders", &table.columns[0].id, "Item Name")
         .unwrap();
     let wire = serde_json::to_value(publication).unwrap();
+    assert_eq!(wire["schema_fields"].as_array().unwrap().len(), 1);
     assert_eq!(
-        wire["schema_fields"],
-        serde_json::json!([{ "schema": table.collection.id, "field": table.columns[0].id }])
+        wire["schema_fields"][0]["schema"].as_str(),
+        Some(table.collection.id.as_str())
+    );
+    assert_eq!(
+        wire["schema_fields"][0]["field"].as_str(),
+        Some(table.columns[0].id.as_str())
     );
     // Table rename authoring is deferred. Exercise its trusted engine publication
     // and the same wire conversion used by every current runtime command.
@@ -692,9 +697,25 @@ fn empty_table_name_publication_wire_invalidates_presentation() {
         .projection_invalidation_for(&scope, snapshot.revision(), &revision)
         .unwrap();
     let wire = serde_json::to_value(super::PublicationProjection::from(invalidation)).unwrap();
-    assert_eq!(wire["schemas"], serde_json::json!([table.collection.id]));
-    assert_eq!(wire["schema_fields"], serde_json::json!([]));
-    assert_eq!(wire["entities"], serde_json::json!([]));
-    assert_eq!(wire["fields"], serde_json::json!([]));
-    assert_eq!(wire["affected_calculations"], serde_json::json!([]));
+    assert_eq!(wire["schemas"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        wire["schemas"][0].as_str(),
+        Some(table.collection.id.as_str())
+    );
+    assert_eq!(
+        wire["schema_fields"].as_array().unwrap(),
+        &Vec::<serde_json::Value>::new()
+    );
+    assert_eq!(
+        wire["entities"].as_array().unwrap(),
+        &Vec::<serde_json::Value>::new()
+    );
+    assert_eq!(
+        wire["fields"].as_array().unwrap(),
+        &Vec::<serde_json::Value>::new()
+    );
+    assert_eq!(
+        wire["affected_calculations"].as_array().unwrap(),
+        &Vec::<serde_json::Value>::new()
+    );
 }
