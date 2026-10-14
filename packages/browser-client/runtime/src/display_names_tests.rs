@@ -535,7 +535,11 @@ fn accumulated_name_failure_reply_is_bounded_and_retains_every_input() {
             ]
         })
         .collect::<Vec<_>>();
-    let request = serde_json::json!({"type": "new_table", "occurrence_id": OCCURRENCE, "name": "Names", "columns": inputs});
+    let request = DesignerRequest::NewTable {
+        occurrence_id: OCCURRENCE.to_owned(),
+        name: "Names".to_owned(),
+        columns: inputs,
+    };
     let input = serde_json::to_vec(&request).unwrap();
     assert!(input.len() < super::MAX_PROJECTION_BYTES);
     let mut resident = Some(DesignerRuntime::tracker(OCCURRENCE).unwrap());
