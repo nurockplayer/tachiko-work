@@ -181,8 +181,8 @@ All notable changes to Tachiko Work are documented in this file.
   accepts native table/column display names separate from IDs and keys, with
   exact Unicode comparison and label-only column rename. It supersedes the
   unreleased v3/package-v1 definition without v4 or down-conversion; older
-  binaries refuse name-bearing documents. This is authority only: #525 native
-  implementation is a separate Guarded PR, and Sheet consumer work is separate.
+  binaries refuse name-bearing documents. This is authority only: native implementation
+  follows separately under #529, and Sheet consumer work is separate.
 
 - ADR-0042 redefines first-public `tachiko.portable-package/v1` as a
   deterministic ZIP32 envelope over exact canonical `.roproj/v3` (Date, saved
