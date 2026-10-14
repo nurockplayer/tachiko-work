@@ -41,7 +41,7 @@ and optional-name facts, admission, equality, and ordering laws remain.
 Existing nameless v1 definition command behavior is preserved, while v2 gains
 complete direct evidence for named and already admitted constrained occurrences.
 Frozen v1 stays unchanged; definition-changing conflict v2 remains refused
-pending the lead's separate facet choice. No constraint admission (#452),
+by lead decision (future direction: one atomic definition facet). No constraint admission (#452),
 representation, or migration boundary changes. Realization belongs to the #531
 implementation child, not this authority PR.
 

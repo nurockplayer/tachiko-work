@@ -292,7 +292,7 @@ definition commands like nameless v1 occurrences, with complete direct evidence.
 The v1 definition-only empty receipt projection is not a v1 definition delta.
 Constraint admission (#452), general command/batch gates, mutation/approval,
 storage, and public wire/SDK authority remain unchanged. Definition-changing
-conflict v2 stays refused pending the lead's separate facet choice.
+conflict v2 stays refused by lead decision; any future extension uses one atomic complete-definition facet.
 
 ## Human-readable projection
 

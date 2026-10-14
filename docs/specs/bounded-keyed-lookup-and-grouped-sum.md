@@ -178,7 +178,7 @@ and `services = 10`, with no other group.
 | Delta v1 boundary | Create, update, or delete the definition, then request `tachiko.semantic-delta/v1` | Unsupported; it emits neither a partial delta that omits the definition nor a fabricated v1 fact. |
 | Merge/conflict v1 boundary | Base/left/right differ by definition create, delete, or in-place durable-meaning update, then request semantic merge/conflict v1 | Unsupported whole request; it does not omit, silently merge, or invent a partial definition conflict. |
 | Delta v2 target under ADR-0044 | Create, in-place update, or delete an admitted saved definition, then request v2 | One complete definition fact at subject rank 5 and create/delete/change rank 0/1/2; equal definitions emit nothing. Realization belongs to the #531 implementation child. |
-| Merge/conflict v2 boundary | Base/left/right definition maps differ, then request v2 | Unsupported whole request pending the lead's separate facet decision; delta v2 support does not silently enable merge. |
+| Merge/conflict v2 boundary | Base/left/right definition maps differ, then request v2 | Unsupported whole request by lead decision (future direction: one atomic definition facet); delta v2 support does not silently enable merge. |
 | Export disclosure | Export base values only and to a hypothetical live-preserving target | Values are evaluated/lossy and source-revision-bound; live claim is rejected unless every admitted semantic is encoded. |
 
 ## Deferred extensions and decomposition

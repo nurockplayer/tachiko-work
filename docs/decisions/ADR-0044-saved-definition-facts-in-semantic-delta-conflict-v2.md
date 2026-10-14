@@ -12,7 +12,7 @@ current pre-release logical delta v2 vocabulary;
 successor; and [ADR-0036](ADR-0036-bounded-keyed-lookup-and-grouped-sum.md)
 only for its requirement for future definition-delta authority. Frozen delta
 and conflict v1 remain unchanged. ADR-0031's conflict vocabulary is not widened
-by this decision; the unresolved definition-conflict choice is recorded below.
+by this decision; definition-changing conflict-v2 merges stay refused by lead decision (below).
 
 Specified by: [Semantic Diff Specification](../specs/semantic-diff-spec.md),
 [Conflict Resolution Specification](../specs/conflict-resolution.md), and
