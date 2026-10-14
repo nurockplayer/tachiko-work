@@ -31,6 +31,20 @@ name-bearing state. Constraint meaning, all existing ranks, the nineteen paths,
 and #452's runtime constraint-admission refusal are unchanged. The historical
 sections below are read subject to this bounded amendment.
 
+### Saved-definition v2 amendment — ADR-0044
+
+[ADR-0044](ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
+explicitly amends the pre-release delta v2 vocabulary below with the existing
+KeyedGroupedSumDefinitionId subject at rank 5 and complete-definition
+create/delete/change facts at ranks 0/1/2. All earlier targets/ranks, constraint
+and optional-name facts, admission, equality, and ordering laws remain.
+Existing nameless v1 definition command behavior is preserved, while v2 gains
+complete direct evidence for named and already admitted constrained occurrences.
+Frozen v1 stays unchanged; definition-changing conflict v2 remains refused
+pending the lead's separate facet choice. No constraint admission (#452),
+representation, or migration boundary changes. Realization belongs to the #531
+implementation child, not this authority PR.
+
 ## Decision
 
 Tachiko Work admits exactly two durable schema-field constraints for the Driver

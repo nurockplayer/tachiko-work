@@ -17,11 +17,17 @@ implemented Provisional baseline rather than the protocol DTO.
 
 Authority: [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md) for
 v1 and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
-for the docs-only v2 extension.
+for the constraint extension, as amended by
+[ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
+for names and [ADR-0044](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
+for saved-definition facts. ADR-0044 realization is owned by the #531
+implementation child; existing engines still refuse definition-changing deltas.
 
 Decision issues: [#45](https://github.com/nurockplayer/tachiko-work/issues/45)
 for v1 and [#391](https://github.com/nurockplayer/tachiko-work/issues/391) for
-the v2 extension.
+the constraint extension; [#525](https://github.com/nurockplayer/tachiko-work/issues/525)
+for names and [#531](https://github.com/nurockplayer/tachiko-work/issues/531)
+for saved-definition evidence.
 
 ## Problem
 
@@ -239,6 +245,55 @@ replacement, or delete/create pair. Names do not identify subjects. Unsupported
 contracts/facts fail closed. This logical amendment selects no public wire/SDK
 shape and changes no mutation, approval, or history authority.
 
+## Saved-definition v2 amendment — ADR-0044
+
+[ADR-0044](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
+appends one typed target family, KeyedGroupedSumDefinitionId scoped by the
+continuing DocumentId, at subject rank 5 after stored entity fields. All prior
+subject/change ranks, name/constraint facts, same-Document admission, direct
+equality, and ordering laws remain fixed. Frozen v1 has no definition facts and
+continues to refuse definition changes.
+
+| Subject rank | Change rank | Change kind | Required direct payload |
+| ---: | ---: | --- | --- |
+| 5 | 0 | `keyed_grouped_sum_definition_created` | complete typed `after` definition |
+| 5 | 1 | `keyed_grouped_sum_definition_deleted` | complete typed `before` definition |
+| 5 | 2 | `keyed_grouped_sum_definition_changed` | complete typed `before` and `after` definitions |
+
+The payload is exactly ADR-0036/0037's Orders (schema, lookup-key field,
+quantity field) and Products (schema, key field, category field, price field)
+typed stable bindings. The fixed operation belongs to the sole family, not a
+mutable parameter. The target carries the ID; evaluated groups, caches,
+diagnostics, dependency/currentness evidence, names, and provenance are absent
+from definition payloads. Equality compares all seven role bindings exactly.
+
+Compare the union of definition IDs: create is absent/PRESENT, delete is
+PRESENT/absent, change has two unequal PRESENT complete payloads, and equal
+payloads emit nothing. Outer absence means only a missing definition subject,
+consistent with ADR-0043's PRESENT optional-name treatment of existing nameless
+schemas/fields. No optional bindings or definition names are introduced.
+In-place edits emit one atomic definition change, with no per-binding child
+facts. Different-ID replacement emits deletion plus creation. Bound-subject
+key/name edits alone emit no definition fact. Definitions are document-owned;
+schema/entity parent suppression does not suppress their separate facts.
+
+Fact identity is `(contract, DocumentId, typed target, change kind, canonical
+before fact, canonical after fact)`; the target/kind coordinate is unique
+within one delta. Sort by `(5, KeyedGroupedSumDefinitionId, change rank)` using
+the existing exact Unicode scalar ID order. Bindings, keys, labels, paths,
+insertion order, and evaluated output never order facts. All inputs must pass
+existing admission, definition-ID/binding/role validation, and semantic/formula
+gates. Unsupported facts or required meaning fail the whole request, never
+return partial or empty evidence for a definition change.
+
+The #531 implementation child owns engine and publication realization.
+Named and already admitted constrained v2 occurrences then support the existing
+definition commands like nameless v1 occurrences, with complete direct evidence.
+The v1 definition-only empty receipt projection is not a v1 definition delta.
+Constraint admission (#452), general command/batch gates, mutation/approval,
+storage, and public wire/SDK authority remain unchanged. Definition-changing
+conflict v2 stays refused pending the lead's separate facet choice.
+
 ## Human-readable projection
 
 Traditional diff:
@@ -296,6 +351,12 @@ comparison, deterministic ID iteration, stable rename continuity, and a
 distinction between stored change and formula impact. The separately selected
 `canonical_delta` in-process API implements the v2 logical facts; neither Rust
 surface is a public wire DTO or transport contract.
+
+Saved-definition facts under ADR-0044 are Accepted target authority, not
+implemented behavior. The #531 implementation child owns their realization;
+current v1/v2 definition-change refusals must not be described as delivered
+support. V1 remains frozen and its definition-only publication bypass remains
+distinct from canonical delta evidence.
 
 Tracking issue: concrete public DTO or transport mapping remains future queued
 work. Application opt-in is scoped to [#454](https://github.com/nurockplayer/tachiko-work/issues/454).

@@ -9,6 +9,30 @@ implementation authority; implementation requires a separately Ready child of
 
 Decision issue: [#320](https://github.com/nurockplayer/tachiko-work/issues/320)
 
+## Saved-definition evidence amendment — ADR-0044
+
+[ADR-0044](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
+supplies the versioned delta authority previously deferred below. Delta v2
+adds the existing typed KeyedGroupedSumDefinitionId target at subject rank 5
+and complete definition create/delete/change facts at ranks 0/1/2. Payloads
+contain exactly the existing seven role bindings; creation is absent/PRESENT,
+deletion PRESENT/absent, and change two unequal PRESENT complete definitions.
+Equal definitions emit no fact; in-place changes retain identity; different-ID
+replacement emits deletion plus creation. Existing Unicode scalar ID order,
+direct-state equality, and fail-closed admission remain. Evaluated results and
+caches never enter those facts. The [semantic diff specification](semantic-diff-spec.md#saved-definition-v2-amendment--adr-0044)
+owns the full vocabulary and ordering.
+
+This changes no lookup, reduction, capability, approval, validation, or storage
+meaning. Named and already admitted constrained v2 occurrences gain the existing
+definition command behavior with complete evidence after realization by the
+#531 implementation child; #452 constraint admission remains excluded.
+Historical v1 refusal text and fixtures below remain frozen v1 authority.
+Conflict v2 also keeps its whole-request definition-change refusal pending the
+lead's separate conflict-facet choice; ADR-0044 does not invent facets absent
+from v1. Its [Questions for the lead](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md#questions-for-the-lead)
+record that boundary. This authority PR claims no implementation completion.
+
 ## Contract
 
 `KeyedGroupedSumDefinition` is a stable-ID-bound saved live definition for only:
@@ -71,8 +95,9 @@ identity—is unsupported by that v1 contract: a requested v1 diff fails and
 never omits the definition change or returns a partial delta. That does not
 block current-snapshot publication, because delta and retained semantic
 transitions are optional derived evidence rather than mutation authority. A
-future versioned delta/direct-target/order/conflict contract is separately Ready
-work before any diff or retained-transition support exists.
+versioned delta/direct-target/order contract is now Accepted by ADR-0044 for v2;
+diff/retained-transition realization belongs to the #531 implementation child.
+That does not widen v1 or select definition-conflict facets.
 
 Current semantic merge/conflict v1 also cannot represent this definition. If a
 three-way base/left/right comparison creates, deletes, or changes the durable
@@ -152,7 +177,9 @@ and `services = 10`, with no other group.
 | Result profile | Use a duplicate population, diagnostics, or category groups whose complete projection exceeds the applicable finite result profile | Structured `result-too-large` Unavailable outcome; no partial IDs, diagnostics, groups, truncation, sample, or implicit pagination. |
 | Result-profile change | Retain a Complete or `result-too-large` outcome, then change only the trusted deterministic finite result profile | Retained output becomes non-current; re-evaluation uses the active profile and cannot bypass its bound. |
 | Delta v1 boundary | Create, update, or delete the definition, then request `tachiko.semantic-delta/v1` | Unsupported; it emits neither a partial delta that omits the definition nor a fabricated v1 fact. |
-| Merge/conflict v1 boundary | Base/left/right differ by definition create, delete, or in-place durable-meaning update, then request current semantic merge/conflict | Unsupported whole request; it does not omit, silently merge, or invent a partial definition conflict. |
+| Merge/conflict v1 boundary | Base/left/right differ by definition create, delete, or in-place durable-meaning update, then request semantic merge/conflict v1 | Unsupported whole request; it does not omit, silently merge, or invent a partial definition conflict. |
+| Delta v2 target under ADR-0044 | Create, in-place update, or delete an admitted saved definition, then request v2 | One complete definition fact at subject rank 5 and create/delete/change rank 0/1/2; equal definitions emit nothing. Realization belongs to the #531 implementation child. |
+| Merge/conflict v2 boundary | Base/left/right definition maps differ, then request v2 | Unsupported whole request pending the lead's separate facet decision; delta v2 support does not silently enable merge. |
 | Export disclosure | Export base values only and to a hypothetical live-preserving target | Values are evaluated/lossy and source-revision-bound; live claim is rejected unless every admitted semantic is encoded. |
 
 ## Deferred extensions and decomposition
