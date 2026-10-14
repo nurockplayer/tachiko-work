@@ -73,7 +73,7 @@ fn project_bytes(runtime: &mut Option<DesignerRuntime>, expected_revision: &str)
     runtime
         .as_ref()
         .expect("the tested occurrence is open")
-        .export_project(expected_revision)
+        .export_project_v3(expected_revision)
         .expect("the current occurrence must export canonically")
         .bytes
 }

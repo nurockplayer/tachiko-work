@@ -44,7 +44,7 @@ fn content(table: &TableProjection) -> Value {
 fn exported(runtime: Option<&DesignerRuntime>, revision: &str) -> Vec<u8> {
     runtime
         .expect("open fixture")
-        .export_project(revision)
+        .export_project_v3(revision)
         .expect("current canonical export")
         .bytes
 }

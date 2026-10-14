@@ -106,7 +106,7 @@ export type ProjectExport = {
   bytes: ArrayBuffer;
 };
 
-/** Opaque canonical-v3 path/byte entries from the Rust storage codec. */
+/** Opaque canonical path/byte entries from Rust; named/v3 occurrences use v3. */
 export type CanonicalProjectFile = { path: string; bytes: ArrayBuffer };
 
 export type CanonicalTreeExport = {

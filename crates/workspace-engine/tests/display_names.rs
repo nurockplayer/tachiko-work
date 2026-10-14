@@ -36,6 +36,47 @@ fn field(document: &mut Document) -> &mut FieldDefinition {
 }
 
 #[test]
+fn storing_a_name_equal_to_key_fallback_is_still_a_direct_fact() {
+    let base = base();
+    let mut after = base.clone();
+    field(&mut after).display_name = Some("item".into());
+    let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &base, &after).unwrap();
+    assert!(
+        matches!(delta.facts(), [CanonicalDirectFact::SchemaFieldDisplayNameChanged { before: None, after: Some(name), .. }] if name == "item")
+    );
+}
+
+#[test]
+fn schema_names_have_their_own_present_conflict_facet_and_equal_clears_merge() {
+    let mut base = base();
+    let mut left = base.clone();
+    let mut right = base.clone();
+    left.schemas.get_mut("s").unwrap().display_name = Some("My Expenses".into());
+    right.schemas.get_mut("s").unwrap().display_name = Some("経費".into());
+    let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &base, &left).unwrap();
+    assert!(matches!(
+        delta.facts(),
+        [CanonicalDirectFact::SchemaDisplayNameChanged { .. }]
+    ));
+    let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, &left, &right) else {
+        panic!("unequal schema labels conflict");
+    };
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].facet(), ConflictFacetV2::DisplayName);
+    assert_eq!(
+        conflicts[0].base(),
+        &ConflictFactV2::Present(MergeValueV2::DisplayName(None))
+    );
+    base.schemas.get_mut("s").unwrap().display_name = Some("Table".into());
+    left.schemas.get_mut("s").unwrap().display_name = None;
+    right.schemas.get_mut("s").unwrap().display_name = None;
+    let MergeOutcomeV2::Merged(candidate) = merge_v2(&base, &left, &right) else {
+        panic!("equal clears merge");
+    };
+    assert_eq!(candidate.schemas["s"].display_name, None);
+}
+
+#[test]
 fn label_only_delta_has_present_optional_values_and_complete_payloads() {
     let base = base();
     let mut after = base.clone();

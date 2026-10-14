@@ -2166,13 +2166,13 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
         let schema = Schema {
             id: schema_id.clone(),
             key: SchemaKey::from("reset"),
-            display_name: None,
+            display_name: Some("reset".to_owned()),
             fields: BTreeMap::from([(
                 field_id.clone(),
                 FieldDefinition {
                     id: field_id,
                     key: FieldKey::from("value"),
-                    display_name: None,
+                    display_name: Some("value".to_owned()),
                     field_type: FieldType::Text,
                     required: true,
                     constraint: FieldConstraint::None,
@@ -2227,9 +2227,16 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
     let new_saved = new_slot
         .as_ref()
         .unwrap()
-        .export_project("resident/0")
-        .expect("New clears v3 marker");
-    assert_eq!(saved_format_version(&new_saved.bytes), 1);
+        .export_project_v3("resident/0")
+        .expect("New explicitly selects the named v3 profile");
+    assert_eq!(saved_format_version(&new_saved.bytes), 3);
+    assert!(
+        new_slot
+            .as_ref()
+            .unwrap()
+            .export_project("resident/0")
+            .is_err()
+    );
     assert_eq!(saved_document(&new_saved.bytes), expected_new_document);
     for undo in [true, false] {
         let error = if undo {
