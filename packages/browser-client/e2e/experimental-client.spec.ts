@@ -280,6 +280,7 @@ test("#533 named cross-table summary survives edit, history and fresh Worker sav
     await client.trackerCommand({type: "redo", expected_revision: afterUndo.revision});
     const afterRedo = await client.queryKeyedGroupedSum(definition.id);
     const saved = await client.exportProjectV3(afterRedo.revision);
+    const savedBytes = Array.from(new Uint8Array(saved.bytes));
     const tree = await client.exportCanonicalTree(afterRedo.revision);
     const treeBytes = tree.files.map(file => ({path: file.path, bytes: Array.from(new Uint8Array(file.bytes))}));
     await client.close();
@@ -291,7 +292,7 @@ test("#533 named cross-table summary survives edit, history and fresh Worker sav
       const repacked = await fresh.exportProjectV3("resident/0");
       const reopenedTree = await fresh.exportCanonicalTree("resident/0");
       const canonicalBytesEqual = JSON.stringify(reopenedTree.files.map(file => ({path: file.path, bytes: Array.from(new Uint8Array(file.bytes))}))) === JSON.stringify(treeBytes);
-      const opaqueBytesEqual = JSON.stringify(Array.from(new Uint8Array(saved.bytes))) === JSON.stringify(Array.from(new Uint8Array(repacked.bytes)));
+      const opaqueBytesEqual = JSON.stringify(savedBytes) === JSON.stringify(Array.from(new Uint8Array(repacked.bytes)));
       return {
         tableName: opened.table.collection.display_name, columns: columns.map(column => column.display_name),
         crossTable: definition.orders_schema !== definition.products_schema,
