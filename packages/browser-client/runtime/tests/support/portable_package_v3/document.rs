@@ -36,6 +36,7 @@ pub fn document() -> Document {
     let schema = Schema {
         id: schema_id.clone(),
         key: SchemaKey::from("sheet_1"),
+        display_name: None,
         fields: FIELD_IDS
             .iter()
             .zip(definitions)
@@ -57,6 +58,7 @@ pub fn document() -> Document {
                     FieldDefinition {
                         id,
                         key: FieldKey::from(format!("column_{}", index + 1)),
+                        display_name: None,
                         field_type,
                         required: false,
                         constraint,

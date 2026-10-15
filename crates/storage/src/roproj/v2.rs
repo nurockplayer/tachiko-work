@@ -364,6 +364,7 @@ impl DefinitionV2 {
 /// Returns [`FormatError::InvalidDocument`] when semantic validation fails or
 /// [`FormatError::Json`] when canonical JSON string encoding fails.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV2, FormatError> {
+    super::super::reject_display_names(document)?;
     super::super::reject_field_constraints(document)?;
     super::super::check_document(document)?;
     validate_semantic_expression_limits(document)?;
@@ -803,6 +804,7 @@ impl SchemaV2 {
         Ok(Schema {
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
+            display_name: None,
             fields,
         })
     }
@@ -819,6 +821,7 @@ impl SchemaV2 {
         Ok(Schema {
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
+            display_name: None,
             fields,
         })
     }
@@ -829,6 +832,7 @@ impl FieldDefinitionV2 {
         Ok(FieldDefinition {
             id: FieldId::from(self.id),
             key: FieldKey::from(self.key),
+            display_name: None,
             field_type: self.field_type.into_semantic()?,
             required: self.required,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -1668,11 +1672,13 @@ mod tests {
             Schema {
                 id: SchemaId::from("schema"),
                 key: SchemaKey::from("items"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     FieldId::from("field"),
                     FieldDefinition {
                         id: FieldId::from("field"),
                         key: FieldKey::from("name"),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: false,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

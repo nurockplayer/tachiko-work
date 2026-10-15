@@ -42,12 +42,14 @@ fn document() -> Document {
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("weapon"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         damage_id.clone(),
                         FieldDefinition {
                             id: damage_id.clone(),
                             key: FieldKey::from("damage"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -58,6 +60,7 @@ fn document() -> Document {
                         FieldDefinition {
                             id: dps_id.clone(),
                             key: FieldKey::from("dps"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,

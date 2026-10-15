@@ -22,11 +22,13 @@ fn date_document(value: &str) -> Document {
             Schema {
                 id: SchemaId::from("event"),
                 key: "event".into(),
+                display_name: None,
                 fields: BTreeMap::from([(
                     field_id.clone(),
                     FieldDefinition {
                         id: field_id,
                         key: "published".into(),
+                        display_name: None,
                         field_type: FieldType::Date,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

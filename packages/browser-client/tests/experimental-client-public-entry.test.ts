@@ -48,7 +48,7 @@ describe("public canonical-entry preflight", () => {
   it.each([
     ["duplicate", () => { const value = entries(); value[17] = value[0]!; return value; }],
     ["unsafe path", () => { const value = entries(); value[0] = {path: "../manifest.json", bytes: new ArrayBuffer(0)}; return value; }],
-    ["over file count", () => [...entries(), {path: "entities/extra.jsonl", bytes: new ArrayBuffer(0)}]],
+    ["over file count", () => [...entries(), {path: "definitions.json", bytes: new ArrayBuffer(0)}, {path: "entities/extra.jsonl", bytes: new ArrayBuffer(0)}]],
     ["over transfer size", () => { const value = entries(); value[17] = {path: "entities/f.jsonl", bytes: new ArrayBuffer(64 * 1024 * 1024)}; return value; }],
   ])("rejects %s before dispatch and leaves the resident occurrence unchanged", async (_name, makeEntries) => {
     let resident = "resident/0";

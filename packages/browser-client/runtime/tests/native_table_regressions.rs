@@ -53,6 +53,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
             FieldDefinition {
                 id: id.clone(),
                 key: FieldKey::from(key),
+                display_name: None,
                 field_type,
                 required: all_fields_required,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -69,6 +70,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("inventory"),
+                display_name: None,
                 fields,
             },
         )]),
@@ -143,7 +145,7 @@ fn native_table_profile_requires_complete_typed_rows_without_publication() {
     let initial = table(&mut runtime, "inventory");
     assert_eq!(initial.native_table_profile, Some(true));
     let before = runtime
-        .export_project(&initial.revision)
+        .export_project_v3(&initial.revision)
         .expect("the initial Inventory must export")
         .bytes;
 
@@ -161,7 +163,7 @@ fn native_table_profile_requires_complete_typed_rows_without_publication() {
     );
     assert_eq!(
         runtime
-            .export_project(&initial.revision)
+            .export_project_v3(&initial.revision)
             .expect("rejected paste must keep the initial revision exportable")
             .bytes,
         before,
@@ -175,7 +177,7 @@ fn row_paste_rejects_non_native_collections_before_row_construction() {
     let initial = table(&mut runtime, "weapons");
     assert_ne!(initial.native_table_profile, Some(true));
     let before = runtime
-        .export_project(&initial.revision)
+        .export_project_v3(&initial.revision)
         .expect("Moonfall must export before the rejected request")
         .bytes;
 
@@ -190,7 +192,7 @@ fn row_paste_rejects_non_native_collections_before_row_construction() {
     assert!(result.is_err(), "non-native row paste must be refused");
     assert_eq!(
         runtime
-            .export_project(&initial.revision)
+            .export_project_v3(&initial.revision)
             .expect("rejected paste must preserve the Moonfall export")
             .bytes,
         before,
@@ -205,7 +207,7 @@ fn scalar_row_authoring_survives_respelled_opaque_ids_and_reopen() {
     assert_eq!(initial.native_table_profile, Some(true));
     let initial_row = initial.rows[0].id.clone();
     let bytes = runtime
-        .export_project(&initial.revision)
+        .export_project_v3(&initial.revision)
         .expect("the respelled document must export")
         .bytes;
 

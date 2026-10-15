@@ -317,6 +317,7 @@ fn native_required_mixed_document(rows: usize, text_width: usize) -> Document {
     let schema = Schema {
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
+        display_name: None,
         fields: [("text", FieldType::Text), ("number", FieldType::Number)]
             .into_iter()
             .map(|(key, field_type)| {
@@ -326,6 +327,7 @@ fn native_required_mixed_document(rows: usize, text_width: usize) -> Document {
                     FieldDefinition {
                         id,
                         key: FieldKey::from(key),
+                        display_name: None,
                         field_type,
                         required: true,
                         constraint: FieldConstraint::None,

@@ -5,7 +5,7 @@ import { projectTransferFromFiles } from "../src/host/project-transfer.ts";
 describe("Designer directory transfer admission", () => {
   it("rejects a noncanonical file count before reading any contents", async () => {
     const read = vi.fn(async () => new ArrayBuffer(0));
-    const entries = Array.from({ length: 19 }, (_, index) => ({
+    const entries = Array.from({ length: 20 }, (_, index) => ({
       name: `file-${String(index)}`,
       size: 0,
       webkitRelativePath: `project.roproj/file-${String(index)}`,
@@ -18,7 +18,7 @@ describe("Designer directory transfer admission", () => {
     } as unknown as FileList;
 
     await expect(projectTransferFromFiles(files)).rejects.toThrow(
-      "A canonical .roproj/v1 directory must contain exactly 18 files.",
+      "A canonical .roproj directory must contain exactly 18 or 19 files.",
     );
     expect(read).not.toHaveBeenCalled();
   });

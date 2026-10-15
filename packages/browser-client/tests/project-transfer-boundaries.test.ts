@@ -47,7 +47,7 @@ describe("Designer directory transfer boundaries", () => {
 
   it("rejects a missing entry before reading any file", async () => {
     const selected = entries().slice(0, 17);
-    await expect(projectTransferFromFiles(fileList(selected))).rejects.toThrow("exactly 18 files");
+    await expect(projectTransferFromFiles(fileList(selected))).rejects.toThrow("exactly 18 or 19 files");
     for (const file of selected) expect(file.arrayBuffer).not.toHaveBeenCalled();
   });
 

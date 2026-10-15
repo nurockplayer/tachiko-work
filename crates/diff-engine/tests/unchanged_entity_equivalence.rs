@@ -22,6 +22,7 @@ fn definition(id: &str, field_type: FieldType) -> FieldDefinition {
     FieldDefinition {
         id: id.into(),
         key: id.into(),
+        display_name: None,
         field_type,
         required: false,
         constraint: FieldConstraint::None,
@@ -45,6 +46,7 @@ fn fixture() -> Document {
         Schema {
             id: "s".into(),
             key: "meters".into(),
+            display_name: None,
             fields: [
                 definition("extra", FieldType::Text),
                 definition("f", FieldType::Number),
@@ -209,11 +211,13 @@ fn additions_removals_keys_text_and_references_keep_exact_order() {
     let removed = Schema {
         id: "old".into(),
         key: "old".into(),
+        display_name: None,
         fields: BTreeMap::new(),
     };
     let added = Schema {
         id: "new".into(),
         key: "new".into(),
+        display_name: None,
         fields: BTreeMap::new(),
     };
     before.schemas.insert("old".into(), removed.clone());

@@ -565,6 +565,7 @@ fn keyed_definition_document() -> Document {
         Schema {
             id: id.into(),
             key: id.into(),
+            display_name: None,
             fields: fields
                 .iter()
                 .map(|(field_id, field_type)| {
@@ -573,6 +574,7 @@ fn keyed_definition_document() -> Document {
                         FieldDefinition {
                             id: (*field_id).into(),
                             key: (*field_id).into(),
+                            display_name: None,
                             field_type: field_type.clone(),
                             required: true,
                             constraint: FieldConstraint::None,
@@ -1270,6 +1272,7 @@ fn constraint_review_requires_transitive_formula_dependency_query() {
             FieldDefinition {
                 id: field.into(),
                 key: field.into(),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -1411,11 +1414,13 @@ fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
         Schema {
             id: "items".into(),
             key: "items".into(),
+            display_name: None,
             fields: [(
                 "label".into(),
                 FieldDefinition {
                     id: "label".into(),
                     key: "label".into(),
+                    display_name: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: FieldConstraint::None,

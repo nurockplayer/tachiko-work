@@ -210,6 +210,8 @@ struct DocumentIdentityV3 {
 struct SchemaV3 {
     id: String,
     key: String,
+    #[serde(default, deserialize_with = "optional_name")]
+    display_name: Option<String>,
     fields: Vec<FieldDefinitionV3>,
 }
 
@@ -218,9 +220,22 @@ struct SchemaV3 {
 struct FieldDefinitionV3 {
     id: String,
     key: String,
+    #[serde(default, deserialize_with = "optional_name")]
+    display_name: Option<String>,
     field_type: FieldTypeV3,
     required: bool,
     constraint: ConstraintV3,
+}
+
+fn optional_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    let failures = tachiko_semantic_core::display_name_failures(&name);
+    if !failures.is_empty() {
+        return Err(serde::de::Error::custom(format!(
+            "invalid stored display_name: {failures:?}"
+        )));
+    }
+    Ok(Some(name))
 }
 
 #[derive(Deserialize)]
@@ -743,6 +758,7 @@ impl SchemaV3 {
         Ok(Schema {
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
+            display_name: self.display_name,
             fields,
         })
     }
@@ -753,6 +769,7 @@ impl FieldDefinitionV3 {
         Ok(FieldDefinition {
             id: FieldId::from(self.id),
             key: FieldKey::from(self.key),
+            display_name: self.display_name,
             field_type: self.field_type.into_semantic()?,
             required: self.required,
             constraint: self.constraint.into_semantic()?,
@@ -985,6 +1002,7 @@ impl SchemaV3 {
         Ok(Self {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
+            display_name: schema.display_name.clone(),
             fields,
         })
     }
@@ -995,6 +1013,7 @@ impl FieldDefinitionV3 {
         Ok(Self {
             id: field.id.to_string(),
             key: field.key.to_string(),
+            display_name: field.display_name.clone(),
             field_type: FieldTypeV3::from_semantic(&field.field_type),
             required: field.required,
             constraint: ConstraintV3::from_semantic(&field.constraint)?,
@@ -1268,6 +1287,9 @@ fn write_schema(output: &mut String, schema: &SchemaV3, indent: usize) -> Result
     output.push_str("{\n");
     pretty_member_string(output, indent + 1, "id", &schema.id, true)?;
     pretty_member_string(output, indent + 1, "key", &schema.key, true)?;
+    if let Some(name) = &schema.display_name {
+        pretty_member_string(output, indent + 1, "display_name", name, true)?;
+    }
     pretty_member_prefix(output, indent + 1, "fields")?;
     if schema.fields.is_empty() {
         output.push_str("[]\n");
@@ -1297,6 +1319,9 @@ fn write_field_definition(
     output.push_str("{\n");
     pretty_member_string(output, indent + 1, "id", &field.id, true)?;
     pretty_member_string(output, indent + 1, "key", &field.key, true)?;
+    if let Some(name) = &field.display_name {
+        pretty_member_string(output, indent + 1, "display_name", name, true)?;
+    }
     pretty_member_prefix(output, indent + 1, "field_type")?;
     write_field_type(output, &field.field_type, indent + 1)?;
     output.push_str(",\n");

@@ -19,6 +19,7 @@ fn balance_document(damage: f64, attack_interval: f64) -> Document {
             Schema {
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (FieldId::from("damage"), number_field("damage")),
                     (
@@ -62,6 +63,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -127,6 +129,7 @@ fn with_marker_schema(mut document: Document) -> Document {
         Schema {
             id: SchemaId::from("marker"),
             key: SchemaKey::from("marker"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );
@@ -285,6 +288,7 @@ fn one_sided_schema_addition_merges() {
         Schema {
             id: SchemaId::from("armor"),
             key: SchemaKey::from("armor"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );
@@ -305,6 +309,7 @@ fn identical_two_sided_schema_addition_merges() {
         Schema {
             id: SchemaId::from("armor"),
             key: SchemaKey::from("armor"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );
@@ -325,6 +330,7 @@ fn independent_schema_additions_merge() {
         Schema {
             id: SchemaId::from("armor"),
             key: SchemaKey::from("armor"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );
@@ -334,6 +340,7 @@ fn independent_schema_additions_merge() {
         Schema {
             id: SchemaId::from("potion"),
             key: SchemaKey::from("potion"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );

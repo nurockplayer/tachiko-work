@@ -214,6 +214,7 @@ impl SchemaV2 {
         Schema {
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
+            display_name: None,
             fields: self
                 .fields
                 .into_iter()
@@ -257,6 +258,7 @@ impl FieldDefinitionV2 {
         FieldDefinition {
             id: FieldId::from(self.id),
             key: FieldKey::from(self.key),
+            display_name: None,
             field_type: self.field_type.into_semantic(),
             required: self.required,
             constraint: tachiko_semantic_core::FieldConstraint::None,

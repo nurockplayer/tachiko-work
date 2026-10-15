@@ -6,8 +6,11 @@ use std::{
 };
 
 use serde::{Serialize, Serializer, ser::Error as _};
-use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, canonical_delta, diff};
-pub use tachiko_diff_engine::{CanonicalSemanticDelta, DiffError, SemanticChange, SemanticDiff};
+use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, diff};
+pub use tachiko_diff_engine::{
+    CanonicalDirectFact, CanonicalSemanticDelta, DiffError, SemanticChange, SemanticDiff,
+    canonical_delta,
+};
 #[cfg(feature = "issue-175-research")]
 pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
 use tachiko_formula_engine::{
@@ -36,11 +39,12 @@ use tachiko_semantic_core::{
 };
 pub use tachiko_semantic_core::{
     Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
-    DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
-    FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
-    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
-    KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticSubject,
-    StableDiagnosticObservation, Value,
+    DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity, EntityId, EntityKey,
+    Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
+    Schema, SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
+    display_name_failures, trim_display_name,
 };
 use thiserror::Error;
 
@@ -296,6 +300,7 @@ pub struct DocumentInspection {
 pub struct SchemaInspection {
     pub id: SchemaId,
     pub key: SchemaKey,
+    pub display_name: Option<String>,
     pub fields: Vec<FieldDefinition>,
 }
 
@@ -324,6 +329,13 @@ impl Serialize for SchemaInspection {
     where
         S: Serializer,
     {
+        if self.display_name.is_some()
+            || self.fields.iter().any(|field| field.display_name.is_some())
+        {
+            return Err(S::Error::custom(
+                "the frozen schema inspection transport cannot represent display names",
+            ));
+        }
         let fields = self
             .fields
             .iter()
@@ -452,8 +464,22 @@ pub enum RuntimeValue {
     Reference { reference: String },
 }
 
+/// Stage-0 evidence for one supplied name in an ordered semantic request.
+///
+/// Engine commands already carry allocated stable IDs. `command_index` is the
+/// zero-based request position; subjects come directly from the supplied target
+/// or definition, never from labels or fabricated admission identities.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandNameFailure {
+    pub command_index: usize,
+    pub subject: SemanticSubject,
+    pub reason: &'static str,
+}
+
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
+    #[error("display-name spelling admission failed: {failures:?}")]
+    NameAdmission { failures: Vec<CommandNameFailure> },
     #[error("semantic address lookup failed: {0}")]
     Address(#[from] AddressIndexError),
     #[error("entity key '{entity}' does not exist")]
@@ -559,6 +585,8 @@ pub enum WorkspaceError {
     UnsupportedKeyedGroupedSumDefinitionMerge,
     #[error("semantic-conflict/v1 does not support durable field constraint changes")]
     UnsupportedFieldConstraintMerge,
+    #[error("the selected frozen representation cannot represent display names")]
+    UnsupportedDisplayNameRepresentation,
     #[error("unsupported semantic conflict contract '{contract}'")]
     UnsupportedSemanticConflictContract { contract: String },
     #[error("{role} keyed grouped-sum definitions are invalid: {source}")]
@@ -703,6 +731,7 @@ pub fn inspect_document(
         .map(|schema| SchemaInspection {
             id: schema.id.clone(),
             key: schema.key.clone(),
+            display_name: schema.display_name.clone(),
             fields: schema.fields.values().cloned().collect(),
         })
         .collect();
@@ -991,6 +1020,9 @@ pub fn merge_documents(
         MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange => {
             Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
         }
+        MergeOutcome::UnsupportedDisplayName => {
+            Err(WorkspaceError::UnsupportedDisplayNameRepresentation)
+        }
         MergeOutcome::UnsupportedFieldConstraintChange => {
             Err(WorkspaceError::UnsupportedFieldConstraintMerge)
         }
@@ -1079,6 +1111,9 @@ fn require_merge_keyed_definitions(
 ///
 /// Returns a semantic lookup or calculation failure.
 pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceError> {
+    if document.has_display_names() {
+        return Err(WorkspaceError::UnsupportedDisplayNameRepresentation);
+    }
     let calculation = require_validated_calculation(document)?;
     let mut entities = BTreeMap::new();
 
@@ -2726,6 +2761,7 @@ fn game_balance_schemas(
                 FieldDefinition {
                     id: field_id,
                     key: FieldKey::from(field_key),
+                    display_name: None,
                     field_type,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -2737,6 +2773,7 @@ fn game_balance_schemas(
             Schema {
                 id: schema_id,
                 key: SchemaKey::from(schema_key),
+                display_name: None,
                 fields: definitions,
             },
         );

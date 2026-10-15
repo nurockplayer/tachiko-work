@@ -21,11 +21,13 @@ fn text_schema(id: &str) -> Schema {
     Schema {
         id: id.into(),
         key: "schema".into(),
+        display_name: None,
         fields: BTreeMap::from([(
             "f".into(),
             FieldDefinition {
                 id: "f".into(),
                 key: "f".into(),
+                display_name: None,
                 field_type: FieldType::Text,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -68,6 +70,7 @@ fn numeric_or_text_schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
     Schema {
         id: id.into(),
         key: id.into(),
+        display_name: None,
         fields: fields
             .iter()
             .map(|(field_id, field_type)| {
@@ -76,6 +79,7 @@ fn numeric_or_text_schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
                     FieldDefinition {
                         id: (*field_id).into(),
                         key: (*field_id).into(),
+                        display_name: None,
                         field_type: field_type.clone(),
                         required: false,
                         constraint: FieldConstraint::None,
@@ -140,11 +144,13 @@ fn calculation_failure_is_reported_for_the_failing_side() {
     let schema = Schema {
         id: "s".into(),
         key: "s".into(),
+        display_name: None,
         fields: BTreeMap::from([(
             "n".into(),
             FieldDefinition {
                 id: "n".into(),
                 key: "n".into(),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: FieldConstraint::None,

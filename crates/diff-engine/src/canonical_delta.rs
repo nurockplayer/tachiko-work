@@ -54,6 +54,7 @@ pub enum CanonicalDeltaError {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SchemaDefinitionPayload {
     pub key: SchemaKey,
+    pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, FieldDefinitionPayload>,
 }
 
@@ -61,6 +62,7 @@ pub struct SchemaDefinitionPayload {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldDefinitionPayload {
     pub key: FieldKey,
+    pub display_name: Option<String>,
     pub field_type: FieldType,
     pub required: bool,
     pub constraint: FieldConstraint,
@@ -94,6 +96,17 @@ pub enum CanonicalDirectFact {
         schema: SchemaId,
         before: SchemaKey,
         after: SchemaKey,
+    },
+    SchemaDisplayNameChanged {
+        schema: SchemaId,
+        before: Option<String>,
+        after: Option<String>,
+    },
+    SchemaFieldDisplayNameChanged {
+        schema: SchemaId,
+        field: FieldId,
+        before: Option<String>,
+        after: Option<String>,
     },
     SchemaFieldCreated {
         schema: SchemaId,
@@ -176,6 +189,10 @@ impl CanonicalDirectFact {
             F::SchemaCreated { schema, .. } => (1, vec![schema.as_str()], 0),
             F::SchemaDeleted { schema, .. } => (1, vec![schema.as_str()], 1),
             F::SchemaKeyChanged { schema, .. } => (1, vec![schema.as_str()], 2),
+            F::SchemaDisplayNameChanged { schema, .. } => (1, vec![schema.as_str()], 3),
+            F::SchemaFieldDisplayNameChanged { schema, field, .. } => {
+                (2, vec![schema.as_str(), field.as_str()], 6)
+            }
             F::SchemaFieldCreated { schema, field, .. } => {
                 (2, vec![schema.as_str(), field.as_str()], 0)
             }
@@ -314,6 +331,7 @@ fn admit_input(document: &Document, side: DeltaInputSide) -> Result<(), Canonica
 fn schema_payload(schema: &tachiko_semantic_core::Schema) -> SchemaDefinitionPayload {
     SchemaDefinitionPayload {
         key: schema.key.clone(),
+        display_name: schema.display_name.clone(),
         fields: schema
             .fields
             .iter()
@@ -325,6 +343,7 @@ fn schema_payload(schema: &tachiko_semantic_core::Schema) -> SchemaDefinitionPay
 fn field_payload(field: &FieldDefinition) -> FieldDefinitionPayload {
     FieldDefinitionPayload {
         key: field.key.clone(),
+        display_name: field.display_name.clone(),
         field_type: field.field_type.clone(),
         required: field.required,
         constraint: field.constraint.clone(),
@@ -405,6 +424,13 @@ fn compare_schema(
             after: after.key.clone(),
         });
     }
+    if before.display_name != after.display_name {
+        facts.push(F::SchemaDisplayNameChanged {
+            schema: id.clone(),
+            before: before.display_name.clone(),
+            after: after.display_name.clone(),
+        });
+    }
     let fields = before
         .fields
         .keys()
@@ -429,6 +455,14 @@ fn compare_schema(
                         field: field_id.clone(),
                         before: old.key.clone(),
                         after: new.key.clone(),
+                    });
+                }
+                if old.display_name != new.display_name {
+                    facts.push(F::SchemaFieldDisplayNameChanged {
+                        schema: id.clone(),
+                        field: field_id.clone(),
+                        before: old.display_name.clone(),
+                        after: new.display_name.clone(),
                     });
                 }
                 if old.field_type != new.field_type {

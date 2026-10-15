@@ -7,6 +7,62 @@ const PRODUCT_GAPS_PROJECT = fileURLToPath(
   new URL("../../../dogfood/product-gaps.roproj", import.meta.url),
 );
 
+test("#529 exported kit creates named native tables and reopens every carrier in a fresh Worker", async ({ page }) => {
+  const golden = Array.from(await readFile(fileURLToPath(new URL("../../../acceptance/native-display-names/named.ro", import.meta.url))));
+  const workers: string[] = [];
+  page.on("worker", worker => workers.push(worker.url()));
+  await page.goto("/");
+  const evidence = await page.evaluate(async golden => {
+    const entry = "/vendor/tachiko/experimental-client.js";
+    const kit = await import(entry) as typeof import("../src/experimental-client.ts");
+    const client = kit.createExperimentalDesignerClient();
+    if (!client.newTable || !client.trackerCommand) throw new Error("Native naming capabilities missing");
+    const opened = await client.newTable("My Expenses", [{name: "Item Name", field_type: "text"}, {name: "項目", field_type: "text"}]);
+    const columns = opened.table.columns.map(column => ({id: column.id, key: column.key, display_name: column.display_name}));
+    const renamed = await client.trackerCommand({type: "rename_column", expected_revision: "resident/0", collection: "table_1", field: columns[0]!.id, name: "Receipt 🧾"});
+    const after = await client.queryTable("table_1");
+    await client.trackerCommand({type: "undo", expected_revision: renamed.resulting_revision});
+    const undone = await client.queryTable("table_1");
+    await client.trackerCommand({type: "redo", expected_revision: undone.revision});
+    const redone = await client.queryTable("table_1");
+    let refusal = "";
+    try { await client.exportProject(redone.revision); } catch (error) { refusal = (error as InstanceType<typeof kit.DesignerRuntimeError>).failure.code; }
+    const tree = await client.exportCanonicalTree(redone.revision);
+    const opaque = await client.exportProjectV3(redone.revision);
+    const portable = await client.exportPortableRo(redone.revision);
+    const portableExpected = Array.from(new Uint8Array(portable.bytes));
+    await client.close();
+    const reopened = [];
+    for (const kind of ["tree", "opaque", "portable", "golden"] as const) {
+      const fresh = kit.createExperimentalDesignerClient();
+      try {
+        const projection = kind === "tree" ? await fresh.openCanonicalTree(tree.files.map(file => ({...file, bytes: file.bytes.slice(0)}))) : kind === "opaque" ? await fresh.openProject(opaque.bytes.slice(0)) : await fresh.openPortableRo(kind === "golden" ? new Uint8Array(golden).buffer : portable.bytes.slice(0));
+        const repacked = await fresh.exportPortableRo("resident/0");
+        const expected = kind === "golden" ? golden : portableExpected;
+        reopened.push({kind, revision: projection.table.revision, collection: projection.table.collection.display_name, keys: projection.table.columns.map(column => column.key), names: projection.table.columns.map(column => column.display_name), exactRepack: JSON.stringify(Array.from(new Uint8Array(repacked.bytes))) === JSON.stringify(expected)});
+      } finally { await fresh.close(); }
+    }
+    return {collection: opened.table.collection, columns, after: after.columns, undone: undone.columns, redone: redone.columns, paths: tree.files.map(file => file.path), refusal, reopened};
+  }, golden);
+  expect(evidence.collection.key).toBe("table_1");
+  expect(evidence.collection.display_name).toBe("My Expenses");
+  expect(evidence.columns.map(column => column.key)).toEqual(["column_1", "column_2"]);
+  expect(evidence.columns.map(column => column.display_name)).toEqual(["Item Name", "項目"]);
+  expect(evidence.after.map(column => column.id)).toEqual(evidence.columns.map(column => column.id));
+  expect(evidence.after.map(column => column.key)).toEqual(["column_1", "column_2"]);
+  expect(evidence.after.map(column => column.display_name)).toEqual(["Receipt 🧾", "項目"]);
+  expect(evidence.undone.map(column => column.display_name)).toEqual(["Item Name", "項目"]);
+  expect(evidence.redone).toEqual(evidence.after);
+  expect(evidence.paths).toHaveLength(19);
+  expect(evidence.refusal).toBe("unsupported_project");
+  expect(evidence.reopened).toEqual([
+    ...["tree", "opaque", "portable"].map(kind => ({kind, revision: "resident/0", collection: "My Expenses", keys: ["column_1", "column_2"], names: ["Receipt 🧾", "項目"], exactRepack: true})),
+    {kind: "golden", revision: "resident/0", collection: "My Expenses", keys: ["column_1", "column_2", "column_3"], names: ["項目", "Item Name", "column_1"], exactRepack: true},
+  ]);
+  expect(workers).toHaveLength(5);
+  expect(workers.every(url => new URL(url).pathname === "/vendor/tachiko/experimental-client.worker.js")).toBe(true);
+});
+
 test("#515 actual kit module Worker matches native field explanations", async ({ page }) => {
   const capturePath = process.env.TACHIKO_FIELD_EXPLANATION_CAPTURE;
   if (!capturePath) throw new Error("Run the native worker_parity_capture case first; see SEED-515.md");

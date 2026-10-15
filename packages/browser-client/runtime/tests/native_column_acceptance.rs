@@ -93,7 +93,7 @@ fn content(table: &TableProjection) -> Value {
 fn exported(runtime: Option<&DesignerRuntime>, revision: &str) -> Vec<u8> {
     runtime
         .expect("open fixture")
-        .export_project(revision)
+        .export_project_v3(revision)
         .expect("current canonical export")
         .bytes
 }
@@ -270,17 +270,10 @@ fn rename_and_remove_preserve_stable_identity_and_forward_history() {
         }),
     );
     let renamed = table(&mut runtime, &before.collection.id);
-    let mut expected_rows = before.rows.clone();
-    for row in &mut expected_rows {
-        for projection in &mut row.fields {
-            if projection.target.field == *field {
-                projection.address = format!("{}.renamed", row.key);
-            }
-        }
-    }
-    assert_eq!(renamed.rows, expected_rows);
+    assert_eq!(renamed.rows, before.rows);
     assert_eq!(renamed.columns[1].id, *field);
-    assert_eq!(renamed.columns[1].key, "renamed");
+    assert_eq!(renamed.columns[1].key, before.columns[1].key);
+    assert_eq!(renamed.columns[1].display_name, "renamed");
     publish(
         &mut runtime,
         &json!({"type":"undo","expected_revision":renamed.revision}),

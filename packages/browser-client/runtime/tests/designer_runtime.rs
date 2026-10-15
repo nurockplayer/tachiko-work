@@ -53,11 +53,13 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
             Schema {
                 id: areas.clone(),
                 key: SchemaKey::from("areas"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     label.clone(),
                     FieldDefinition {
                         id: label.clone(),
                         key: FieldKey::from("label"),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -70,12 +72,14 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
             Schema {
                 id: product_gaps.clone(),
                 key: SchemaKey::from("product_gaps"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         title.clone(),
                         FieldDefinition {
                             id: title.clone(),
                             key: FieldKey::from("title"),
+                            display_name: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -86,6 +90,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                         FieldDefinition {
                             id: confirmed.clone(),
                             key: FieldKey::from("confirmed"),
+                            display_name: None,
                             field_type: FieldType::Boolean,
                             required: true,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -99,11 +104,13 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
             Schema {
                 id: roadmap_notes.clone(),
                 key: SchemaKey::from("roadmap_notes"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     title.clone(),
                     FieldDefinition {
                         id: title.clone(),
                         key: FieldKey::from("title"),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -195,11 +202,13 @@ fn date_document() -> Document {
             Schema {
                 id: SchemaId::from("events"),
                 key: SchemaKey::from("events"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     FieldId::from("published"),
                     FieldDefinition {
                         id: FieldId::from("published"),
                         key: FieldKey::from("published"),
+                        display_name: None,
                         field_type: FieldType::Date,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -348,6 +357,7 @@ fn admission_rejects_any_collection_that_cannot_be_rendered() {
             FieldDefinition {
                 id: FieldId::from(key.as_str()),
                 key: FieldKey::from(key.as_str()),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -380,6 +390,7 @@ fn admission_rejects_an_unbounded_collection_catalog() {
             Schema {
                 id: SchemaId::from(id.as_str()),
                 key: SchemaKey::from(key.as_str()),
+                display_name: None,
                 fields: BTreeMap::default(),
             },
         );
@@ -450,6 +461,7 @@ fn admission_bounds_aggregate_profile_strings_before_projection_construction() {
             FieldDefinition {
                 id: field_id,
                 key: FieldKey::from(format!("aggregate_profile_{index}")),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -529,6 +541,7 @@ fn admission_bounds_aggregate_collection_text_before_validation_and_projection()
                 FieldDefinition {
                     id: field_id.clone(),
                     key: FieldKey::from(format!("aggregate_text_{index}")),
+                    display_name: None,
                     field_type: FieldType::Text,
                     required: false,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -583,6 +596,7 @@ fn admission_bounds_the_complete_cross_collection_post_edit_refresh() {
             FieldDefinition {
                 id: source_id.clone(),
                 key: source_key,
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -607,6 +621,7 @@ fn admission_bounds_the_complete_cross_collection_post_edit_refresh() {
                     key: FieldKey::from(format!(
                         "refresh_formula_{collection_index}_{formula_index}"
                     )),
+                    display_name: None,
                     field_type: FieldType::Number,
                     required: false,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -839,6 +854,7 @@ fn admission_rejects_an_unbounded_worst_case_publication_projection() {
             FieldDefinition {
                 id: FieldId::from(id.as_str()),
                 key: FieldKey::from(key.as_str()),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,

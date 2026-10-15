@@ -10,6 +10,7 @@ fn balance_document() -> Document {
     let schema = Schema {
         id: SchemaId::from("weapon"),
         key: SchemaKey::from("weapon"),
+        display_name: None,
         fields: BTreeMap::from([
             (FieldId::from("damage"), number_field("damage")),
             (
@@ -23,6 +24,7 @@ fn balance_document() -> Document {
                 FieldDefinition {
                     id: FieldId::from("name"),
                     key: FieldKey::from("name"),
+                    display_name: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -68,6 +70,7 @@ fn number_field(id: &str) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
+        display_name: None,
         field_type: FieldType::Number,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -386,6 +389,7 @@ fn long_acyclic_dependency_chains_are_stack_safe() {
             Schema {
                 id: SchemaId::from("chain"),
                 key: SchemaKey::from("chain"),
+                display_name: None,
                 fields: definitions,
             },
         )]),
@@ -528,6 +532,7 @@ fn generated_dags_match_an_independent_oracle_and_survive_key_renames() {
                 Schema {
                     id: SchemaId::from("schema"),
                     key: SchemaKey::from("numbers"),
+                    display_name: None,
                     fields: definitions,
                 },
             )]),

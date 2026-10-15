@@ -1,6 +1,6 @@
 const PROJECT_BUNDLE_MAGIC = new TextEncoder().encode("TWDPROJ1");
 const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
-const CANONICAL_PROJECT_FILE_COUNT = 18;
+const CANONICAL_PROJECT_FILE_COUNTS = [18, 19];
 const MAX_PROJECT_TRANSFER_FILES = 1_024;
 
 type HostProjectFile = {
@@ -18,8 +18,8 @@ export type CanonicalProjectTransferEntry = {
 /// Rust storage remains the sole authority for the canonical tree and meaning.
 export async function projectTransferFromFiles(files: FileList): Promise<ArrayBuffer> {
   if (files.length === 0) throw new Error("No project directory was selected.");
-  if (files.length !== CANONICAL_PROJECT_FILE_COUNT) {
-    throw new Error("A canonical .roproj/v1 directory must contain exactly 18 files.");
+  if (!CANONICAL_PROJECT_FILE_COUNTS.includes(files.length)) {
+    throw new Error("A canonical .roproj directory must contain exactly 18 or 19 files.");
   }
   const first = files.item(0);
   if (first === null) throw new Error("No project directory was selected.");
@@ -106,8 +106,8 @@ export function projectTransferToEntries(input: ArrayBuffer): CanonicalProjectTr
   }
   const view = new DataView(input);
   const count = view.getUint32(PROJECT_BUNDLE_MAGIC.byteLength, true);
-  if (count !== CANONICAL_PROJECT_FILE_COUNT) {
-    throw new Error("The canonical project transfer must contain exactly 18 files.");
+  if (!CANONICAL_PROJECT_FILE_COUNTS.includes(count)) {
+    throw new Error("The canonical project transfer must contain exactly 18 or 19 files.");
   }
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const entries: CanonicalProjectTransferEntry[] = [];

@@ -151,7 +151,14 @@ fn overview_rejects_duplicate_human_keys_as_an_invalid_document() {
                 .iter()
                 .map(|diagnostic| diagnostic.code)
                 .collect::<Vec<_>>(),
-            [DiagnosticCode::DUPLICATE_KEY],
+            if category == "entity keys" {
+                vec![DiagnosticCode::DUPLICATE_KEY]
+            } else {
+                vec![
+                    DiagnosticCode::DUPLICATE_DISPLAY_NAME,
+                    DiagnosticCode::DUPLICATE_KEY,
+                ]
+            },
             "{category}"
         );
     }

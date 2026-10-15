@@ -17,6 +17,7 @@ fn document() -> Document {
             Schema {
                 id: "schema".into(),
                 key: SchemaKey::from("schema"),
+                display_name: None,
                 fields: BTreeMap::new(),
             },
         )]),
@@ -39,6 +40,7 @@ fn define(document: &mut Document, field: &str, field_type: FieldType, required:
         FieldDefinition {
             id: FieldId::from(field),
             key: FieldKey::from(field),
+            display_name: None,
             field_type,
             required,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -178,6 +180,7 @@ fn swapped_schema_ids_preserve_both_directional_mismatches() {
             Schema {
                 id: "schema-b".into(),
                 key: "schema-a".into(),
+                display_name: None,
                 fields: BTreeMap::new(),
             },
         ),
@@ -186,6 +189,7 @@ fn swapped_schema_ids_preserve_both_directional_mismatches() {
             Schema {
                 id: "schema-a".into(),
                 key: "schema-b".into(),
+                display_name: None,
                 fields: BTreeMap::new(),
             },
         ),
@@ -247,6 +251,7 @@ fn swapped_schema_field_ids_preserve_both_directional_mismatches() {
             FieldDefinition {
                 id: "field-b".into(),
                 key: "field-a".into(),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -257,6 +262,7 @@ fn swapped_schema_field_ids_preserve_both_directional_mismatches() {
             FieldDefinition {
                 id: "field-a".into(),
                 key: "field-b".into(),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_semantic_core::FieldConstraint::None,

@@ -454,6 +454,7 @@ pub fn synthetic_document(entity_count: usize) -> Result<Document, SpikeError> {
         Schema {
             id: schema_id.clone(),
             key: SchemaKey::from("synthetic_records"),
+            display_name: None,
             fields,
         },
     )]);
@@ -525,6 +526,7 @@ fn synthetic_fields(
             FieldDefinition {
                 id: base_field.clone(),
                 key: FieldKey::from("base"),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::None,
@@ -535,6 +537,7 @@ fn synthetic_fields(
             FieldDefinition {
                 id: multiplier_field.clone(),
                 key: FieldKey::from("multiplier"),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::None,
@@ -545,6 +548,7 @@ fn synthetic_fields(
             FieldDefinition {
                 id: computed_field.clone(),
                 key: FieldKey::from("computed"),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::None,
@@ -555,6 +559,7 @@ fn synthetic_fields(
             FieldDefinition {
                 id: label_field.clone(),
                 key: FieldKey::from("label"),
+                display_name: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: FieldConstraint::None,

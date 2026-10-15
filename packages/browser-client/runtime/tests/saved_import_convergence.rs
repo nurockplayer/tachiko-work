@@ -27,6 +27,7 @@ fn native_document(rows: usize) -> Document {
     let schema = Schema {
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
+        display_name: None,
         fields: ["a", "b", "c"]
             .into_iter()
             .map(|key| {
@@ -36,6 +37,7 @@ fn native_document(rows: usize) -> Document {
                     FieldDefinition {
                         id,
                         key: FieldKey::from(key),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: FieldConstraint::None,
@@ -376,7 +378,9 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         // candidate runtime's result.
         let expected = expected_native_table(&original, "resident/0");
         let expected_bytes = serde_json::to_vec(&expected).unwrap();
-        assert_eq!(expected_bytes.len(), 73_213);
+        // ADR-0043 adds 22 bytes for collection fallback plus 3 x 19
+        // bytes for the column fallback names in this literal projection.
+        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19);
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
 
@@ -452,6 +456,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
         collection: CollectionSummary {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
+            display_name: schema.key.to_string(),
             entity_count: entities.len(),
         },
         columns: schema
@@ -460,6 +465,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
             .map(|field| ColumnProjection {
                 id: field.id.to_string(),
                 key: field.key.to_string(),
+                display_name: field.key.to_string(),
                 field_type: "text".to_owned(),
                 dropdown_options: None,
             })

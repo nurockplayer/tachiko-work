@@ -10,11 +10,13 @@ fn document(constraint: FieldConstraint) -> Document {
         Schema {
             id: "schema".into(),
             key: "items".into(),
+            display_name: None,
             fields: BTreeMap::from([(
                 "field".into(),
                 FieldDefinition {
                     id: "field".into(),
                     key: "status".into(),
+                    display_name: None,
                     field_type: FieldType::Text,
                     required: false,
                     constraint,

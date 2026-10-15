@@ -41,7 +41,7 @@ function transport() {
 function table(collection: string): TableProjection {
   return {
     revision: "resident/0",
-    collection: { id: collection, key: collection, entity_count: 0 },
+    collection: { id: collection, key: collection, display_name: collection, entity_count: 0 },
     columns: [],
     rows: [],
   };
@@ -80,8 +80,16 @@ describe("Designer Worker request lifecycle", () => {
     worker.reply({id: worker.request(0).id, status: "ok", response: {type: "field_explanation", payload: explanation}});
     await expect(result).resolves.toEqual(explanation);
 
+    // Schema-only publication is a presentation event even with no rows.
+    // This transport fixture checks forwarding; real engine/WASM generation is
+    // covered by the native naming and exported-kit regression suites.
+    const publication = {base_revision: "resident/3", resulting_revision: "resident/4", schemas: ["orders"], schema_fields: [], entities: [], fields: [], affected_calculations: []};
+    const published = worker.client.trackerCommand({type: "undo", expected_revision: "resident/3"});
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "published", payload: publication}});
+    await expect(published).resolves.toEqual(publication);
+
     const stale = worker.client.explainField("resident/2", target);
-    worker.reply({id: worker.request(1).id, status: "error", error: {code: "stale_revision", message: "Stale query", current_revision: "resident/3", diagnostics: []}});
+    worker.reply({id: worker.request(2).id, status: "error", error: {code: "stale_revision", message: "Stale query", current_revision: "resident/3", diagnostics: []}});
     await expect(stale).rejects.toMatchObject({failure: {code: "stale_revision", current_revision: "resident/3"}});
   });
 

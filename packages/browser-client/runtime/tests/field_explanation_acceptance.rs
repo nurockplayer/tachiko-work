@@ -36,6 +36,7 @@ fn document(fields: Vec<(&str, &str, FieldType, Value)>) -> Document {
         Schema {
             id: schema.clone(),
             key: SchemaKey::from("weapons"),
+            display_name: None,
             fields: fields
                 .iter()
                 .map(|(id, key, field_type, _)| {
@@ -45,6 +46,7 @@ fn document(fields: Vec<(&str, &str, FieldType, Value)>) -> Document {
                         FieldDefinition {
                             id,
                             key: FieldKey::from(*key),
+                            display_name: None,
                             field_type: field_type.clone(),
                             required: true,
                             constraint: FieldConstraint::None,

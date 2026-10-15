@@ -21,6 +21,7 @@ fn fixture() -> DesignerRuntime {
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from(id),
+                display_name: None,
                 fields: ["a", "b", "c", "d"]
                     .into_iter()
                     .map(|name| {
@@ -30,6 +31,7 @@ fn fixture() -> DesignerRuntime {
                             FieldDefinition {
                                 id: field,
                                 key: FieldKey::from(name),
+                                display_name: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -282,11 +284,13 @@ fn formula_capacity_fixture() -> DesignerRuntime {
         Schema {
             id: schema.clone(),
             key: SchemaKey::from("items"),
+            display_name: None,
             fields: BTreeMap::from([(
                 field_id.clone(),
                 FieldDefinition {
                     id: field_id.clone(),
                     key: FieldKey::from("n"),
+                    display_name: None,
                     field_type: FieldType::Number,
                     required: true,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,

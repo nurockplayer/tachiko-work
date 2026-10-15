@@ -34,6 +34,10 @@ use super::{
 #[path = "candidate_allocation_tests.rs"]
 mod candidate_allocation_tests;
 
+#[cfg(test)]
+#[path = "name_admission_tests.rs"]
+mod name_admission_tests;
+
 macro_rules! opaque_text_id {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -339,6 +343,12 @@ pub enum SemanticCommand {
         schema: SchemaId,
         field: FieldId,
         key: FieldKey,
+    },
+    /// Set or clear only the durable name of a continuing stable field.
+    SetSchemaFieldDisplayName {
+        schema: SchemaId,
+        field: FieldId,
+        display_name: Option<String>,
     },
     /// Replace the complete durable constraint facet of one stable field.
     SetFieldConstraint {
@@ -1118,6 +1128,38 @@ impl PatchLifecycle {
             policy_meaning,
             EvidenceProfile::V2,
         )
+    }
+
+    /// Whether proposals in this registry bind the v2 evidence vocabulary.
+    /// Entry-point selection must follow the registry, even when a publication
+    /// removes the last fact that required v2.
+    #[must_use]
+    pub fn uses_v2_evidence(&self) -> bool {
+        self.evidence_profile == EvidenceProfile::V2
+    }
+
+    /// Create a request-local v2 registry using this registry's current trusted
+    /// principal, grant and policy state. No proposal, Approval or receipt is
+    /// copied or reinterpreted. The synchronous caller must finish the request
+    /// before changing the source registry's authorization state.
+    #[must_use]
+    pub fn fork_for_v2_request(&self) -> Self {
+        Self {
+            authorization_domain: self.authorization_domain.clone(),
+            document_scope: self.document_scope.clone(),
+            document: self.document.clone(),
+            semantic_api_contract: self.semantic_api_contract.clone(),
+            evidence_profile: EvidenceProfile::V2,
+            principals: self.principals.clone(),
+            grants: self.grants.clone(),
+            proposals: BTreeMap::new(),
+            approvals: BTreeMap::new(),
+            execution_receipts: Vec::new(),
+            execution_receipts_v2: Vec::new(),
+            policy_meanings: self.policy_meanings.clone(),
+            effective_policy: self.effective_policy.clone(),
+            policy_selection: self.policy_selection,
+        }
     }
 
     fn new_with_profile(
@@ -2448,6 +2490,7 @@ impl PatchLifecycle {
                     SemanticCommand::AppendSchemaField { .. }
                     | SemanticCommand::RemoveSchemaField { .. }
                     | SemanticCommand::RenameSchemaField { .. }
+                    | SemanticCommand::SetSchemaFieldDisplayName { .. }
                     | SemanticCommand::SetFieldConstraint { .. } => {
                         OperationFamily::SchemaFieldMutation
                     }
@@ -2996,6 +3039,7 @@ impl PatchLifecycle {
         document: &Document,
         body: &SemanticPatchBody,
     ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
+        admit_command_names(body)?;
         let mut candidate = document.clone();
         let mut writes = BTreeSet::new();
         for command in body.commands() {
@@ -3084,6 +3128,30 @@ impl PatchLifecycle {
                 }
                 SemanticCommand::RenameSchemaField { schema, field, key } => {
                     self.plan_rename_schema_field(&mut candidate, schema, field, key, &mut writes)?;
+                }
+                SemanticCommand::SetSchemaFieldDisplayName {
+                    schema,
+                    field,
+                    display_name,
+                } => {
+                    let definition = candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        })?
+                        .fields
+                        .get_mut(field)
+                        .ok_or_else(|| WorkspaceError::MissingSchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        })?;
+                    definition.display_name.clone_from(display_name);
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_field_scope(schema, field),
+                    });
                 }
                 SemanticCommand::SetFieldConstraint {
                     schema,
@@ -3254,6 +3322,13 @@ impl PatchLifecycle {
                 )),
             });
         }
+        if base.has_display_names() || candidate.has_display_names() {
+            return Err(PatchLifecycleError::CommandRejected {
+                source: Box::new(WorkspaceError::Diff(
+                    super::DiffError::UnsupportedDisplayName,
+                )),
+            });
+        }
         // V1 has no evidence vocabulary for saved grouped-summary definition
         // changes, and formulas cannot read definitions. Only definition-only
         // batches may use an empty projection; mixed batches must be rejected
@@ -3358,7 +3433,7 @@ impl PatchLifecycle {
             })?;
 
         // Formula impact remains derived evidence. Run the frozen formula/diff
-        // projection over constraint-free snapshots; constraints do not change
+        // projection over snapshots without v2-only facets; names and constraints do not change
         // formula values, and both real snapshots have already passed complete
         // validation above. Direct v2 evidence is always produced separately.
         let formula_projection =
@@ -3482,7 +3557,8 @@ impl PatchLifecycle {
             }
             SemanticCommand::AppendSchemaField { .. }
             | SemanticCommand::RemoveSchemaField { .. }
-            | SemanticCommand::RenameSchemaField { .. } => {
+            | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetSchemaFieldDisplayName { .. } => {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
                 Ok(())
             }
@@ -4368,8 +4444,10 @@ fn constraint_affected_values(
 fn without_constraints(document: &Document) -> Document {
     let mut document = document.clone();
     for schema in document.schemas.values_mut() {
+        schema.display_name = None;
         for field in schema.fields.values_mut() {
             field.constraint = FieldConstraint::None;
+            field.display_name = None;
         }
     }
     document
@@ -4597,6 +4675,82 @@ fn proposal_is_terminal(proposal: &ProposalRecord) -> bool {
     })
 }
 
+/// Admit the complete supplied request before cloning or changing a candidate.
+/// Later writes/removals cannot hide an earlier spelling failure. Uniqueness
+/// remains a declaration invariant of the final candidate, not this scan.
+fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
+    let mut failures = Vec::new();
+    for (command_index, command) in body.commands().iter().enumerate() {
+        let mut check = |name: Option<&str>, subject: super::SemanticSubject| {
+            if let Some(name) = name {
+                for failure in super::display_name_failures(name) {
+                    failures.push(super::CommandNameFailure {
+                        command_index,
+                        subject: subject.clone(),
+                        reason: failure.reason(),
+                    });
+                }
+            }
+        };
+        match command {
+            SemanticCommand::AppendCollection { schema, .. } => {
+                check(
+                    schema.display_name.as_deref(),
+                    super::SemanticSubject::Schema(schema.id.clone()),
+                );
+                for field in schema.fields.values() {
+                    check(
+                        field.display_name.as_deref(),
+                        super::SemanticSubject::SchemaField {
+                            schema: schema.id.clone(),
+                            field: field.id.clone(),
+                        },
+                    );
+                }
+            }
+            SemanticCommand::AppendSchemaField { schema, field, .. }
+            | SemanticCommand::RemoveSchemaField { schema, field, .. } => {
+                check(
+                    field.display_name.as_deref(),
+                    super::SemanticSubject::SchemaField {
+                        schema: schema.clone(),
+                        field: field.id.clone(),
+                    },
+                );
+            }
+            SemanticCommand::SetSchemaFieldDisplayName {
+                schema,
+                field,
+                display_name,
+            } => {
+                check(
+                    display_name.as_deref(),
+                    super::SemanticSubject::SchemaField {
+                        schema: schema.clone(),
+                        field: field.clone(),
+                    },
+                );
+            }
+            SemanticCommand::RemoveCollection { .. }
+            | SemanticCommand::AppendEntity { .. }
+            | SemanticCommand::RemoveEntity { .. }
+            | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetFieldConstraint { .. }
+            | SemanticCommand::SetFieldValue { .. }
+            | SemanticCommand::UnsetField { .. }
+            | SemanticCommand::FormulaUpdate(_)
+            | SemanticCommand::FormulaInverseRestore(_)
+            | SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+            | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {}
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkspaceError::NameAdmission { failures })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::keyed_grouped_sum_operations::{
@@ -4613,6 +4767,7 @@ mod tests {
         let definition = FieldDefinition {
             id: FieldId::from(field),
             key: FieldKey::from(field),
+            display_name: None,
             field_type: FieldType::Number,
             required: true,
             constraint: FieldConstraint::None,
@@ -4638,11 +4793,13 @@ mod tests {
                 schema: Schema {
                     id: SchemaId::from(schema_id),
                     key: SchemaKey::from(schema_id),
+                    display_name: None,
                     fields: BTreeMap::from([(
                         FieldId::from("field"),
                         FieldDefinition {
                             id: FieldId::from("field"),
                             key: FieldKey::from("field"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: FieldConstraint::None,
@@ -4738,12 +4895,14 @@ mod tests {
             Schema {
                 id: orders.clone(),
                 key: SchemaKey::from("orders"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         FieldId::from("order-key"),
                         FieldDefinition {
                             id: FieldId::from("order-key"),
                             key: FieldKey::from("product_key"),
+                            display_name: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -4754,6 +4913,7 @@ mod tests {
                         FieldDefinition {
                             id: FieldId::from("quantity"),
                             key: FieldKey::from("quantity"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -4767,12 +4927,14 @@ mod tests {
             Schema {
                 id: products.clone(),
                 key: SchemaKey::from("products"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (
                         FieldId::from("product-key"),
                         FieldDefinition {
                             id: FieldId::from("product-key"),
                             key: FieldKey::from("product_key"),
+                            display_name: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -4783,6 +4945,7 @@ mod tests {
                         FieldDefinition {
                             id: FieldId::from("category"),
                             key: FieldKey::from("category"),
+                            display_name: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -4793,6 +4956,7 @@ mod tests {
                         FieldDefinition {
                             id: FieldId::from("price"),
                             key: FieldKey::from("price"),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5375,6 +5539,7 @@ mod tests {
                 FieldDefinition {
                     id,
                     key: FieldKey::from(field),
+                    display_name: None,
                     field_type: FieldType::Number,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,

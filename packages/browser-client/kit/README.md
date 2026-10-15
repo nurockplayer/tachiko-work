@@ -50,6 +50,12 @@ await client.closeProject();
 await client.close();
 ```
 
+Publication replies include `schemas` and `schema_fields` (stable schema ID or
+`{schema, field}` ID pairs) for presentation invalidation, independently of
+`entities`, `fields`, and `affected_calculations`. Refresh affected collection
+or column labels even when the table has no rows. Names never replace IDs as
+targets; label-only changes do not invalidate calculations.
+
 `projectTransferFromFiles` packages browser-selected path/byte records only;
 the Rust runtime remains the sole parser and authority for `.roproj` meaning.
 The frontend may retain disposable revision-keyed projections and ordinary UI

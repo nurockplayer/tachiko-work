@@ -15,6 +15,7 @@ fn definition(id: &str, field_type: FieldType, required: bool) -> (FieldId, Fiel
         FieldDefinition {
             id: id.into(),
             key: id.into(),
+            display_name: None,
             field_type,
             required,
             constraint: FieldConstraint::None,
@@ -29,6 +30,7 @@ fn fixture() -> Document {
         Schema {
             id: "s".into(),
             key: "scalar".into(),
+            display_name: None,
             fields: BTreeMap::from([
                 definition("bool", FieldType::Boolean, true),
                 definition("date", FieldType::Date, true),
@@ -45,6 +47,7 @@ fn fixture() -> Document {
         Schema {
             id: "other".into(),
             key: "other".into(),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );

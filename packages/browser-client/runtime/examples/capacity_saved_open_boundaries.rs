@@ -25,6 +25,7 @@ fn document(rows: usize) -> Document {
     let schema = Schema {
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
+        display_name: None,
         fields: ["a", "b", "c"]
             .into_iter()
             .map(|key| {
@@ -34,6 +35,7 @@ fn document(rows: usize) -> Document {
                     FieldDefinition {
                         id,
                         key: FieldKey::from(key),
+                        display_name: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: FieldConstraint::None,
@@ -508,6 +510,7 @@ fn ineligible() {
         Schema {
             id: SchemaId::from("other"),
             key: SchemaKey::from("other"),
+            display_name: None,
             fields: BTreeMap::new(),
         },
     );

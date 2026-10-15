@@ -139,10 +139,9 @@ impl DesignerRuntime {
             ),
             self.clock.tick(),
         )?;
-        lifecycle.preview(
-            snapshot.document_scope(),
-            snapshot.document(),
-            snapshot.revision(),
+        super::designer_preview(
+            &mut lifecycle,
+            &snapshot,
             &proposal_id,
             &self.principal,
             self.clock.tick(),
@@ -1010,6 +1009,7 @@ fn build_import_sheet(
     let mut schema = Schema {
         id: schema_id.clone(),
         key: SchemaKey::from(format!("sheet_{}", index + 1)),
+        display_name: None,
         fields: BTreeMap::new(),
     };
     let mut sheet = InteropSheetMetadata {
@@ -1036,6 +1036,7 @@ fn build_import_sheet(
             FieldDefinition {
                 id: id.clone(),
                 key: FieldKey::from(format!("column_{}", column + 1)),
+                display_name: None,
                 field_type: kind.field_type(),
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,

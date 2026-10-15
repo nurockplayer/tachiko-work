@@ -2165,6 +2165,7 @@ fn mixed_document(entity_count: usize, text_char_count: usize) -> Document {
             Schema {
                 id: schema_id,
                 key: SchemaKey::from("records"),
+                display_name: None,
                 fields,
             },
         )]),
@@ -2216,6 +2217,7 @@ fn dependency_chain_document(entity_count: usize, cycle: bool) -> Document {
             Schema {
                 id: schema_id,
                 key: SchemaKey::from("chain"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     value_field.clone(),
                     field(&value_field, "value", FieldType::Number),
@@ -2534,6 +2536,7 @@ fn single_schema_document(
             Schema {
                 id: schema_id,
                 key: SchemaKey::from(schema_key),
+                display_name: None,
                 fields,
             },
         )]),
@@ -2546,6 +2549,7 @@ fn field(id: &FieldId, key: &str, field_type: FieldType) -> FieldDefinition {
     FieldDefinition {
         id: id.clone(),
         key: FieldKey::from(key),
+        display_name: None,
         field_type,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -2583,6 +2587,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
             Schema {
                 id: cold_schema_id.clone(),
                 key: SchemaKey::from("late_cold"),
+                display_name: None,
                 fields: BTreeMap::from([(base.clone(), field(&base, "base", FieldType::Number))]),
             },
         ),
@@ -2591,6 +2596,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
             Schema {
                 id: hot_schema_id.clone(),
                 key: SchemaKey::from("late_hot"),
+                display_name: None,
                 fields: BTreeMap::from([
                     (base.clone(), field(&base, "base", FieldType::Number)),
                     (
@@ -3399,6 +3405,7 @@ fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
             Schema {
                 id: schema_id.clone(),
                 key: SchemaKey::from("formula_poll"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     field_id.clone(),
                     field(&field_id, "computed", FieldType::Number),

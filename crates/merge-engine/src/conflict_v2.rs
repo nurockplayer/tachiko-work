@@ -26,6 +26,7 @@ pub enum ConflictFacetV2 {
     Schema,
     StoredValue,
     Constraint,
+    DisplayName,
 }
 
 impl ConflictFacetV2 {
@@ -46,9 +47,11 @@ impl ConflictFacetV2 {
                 Self::Key,
             ) => Some(1),
             (ConflictTarget::SchemaField { .. }, Self::FieldType)
-            | (ConflictTarget::Entity(_), Self::Schema) => Some(2),
+            | (ConflictTarget::Entity(_), Self::Schema)
+            | (ConflictTarget::Schema(_), Self::DisplayName) => Some(2),
             (ConflictTarget::SchemaField { .. }, Self::Requiredness) => Some(3),
             (ConflictTarget::SchemaField { .. }, Self::Constraint) => Some(4),
+            (ConflictTarget::SchemaField { .. }, Self::DisplayName) => Some(5),
             _ => None,
         }
     }
@@ -94,6 +97,7 @@ impl std::error::Error for UnsupportedTargetFacetV2 {}
 #[derive(Clone, Debug, PartialEq)]
 pub struct SchemaSubjectV2 {
     pub key: SchemaKey,
+    pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, SchemaFieldSubjectV2>,
 }
 
@@ -101,6 +105,7 @@ impl From<&Schema> for SchemaSubjectV2 {
     fn from(schema: &Schema) -> Self {
         Self {
             key: schema.key.clone(),
+            display_name: schema.display_name.clone(),
             fields: schema
                 .fields
                 .iter()
@@ -114,6 +119,7 @@ impl From<&Schema> for SchemaSubjectV2 {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SchemaFieldSubjectV2 {
     pub key: FieldKey,
+    pub display_name: Option<String>,
     pub field_type: FieldType,
     pub required: bool,
     pub constraint: FieldConstraint,
@@ -123,6 +129,7 @@ impl From<&FieldDefinition> for SchemaFieldSubjectV2 {
     fn from(field: &FieldDefinition) -> Self {
         Self {
             key: field.key.clone(),
+            display_name: field.display_name.clone(),
             field_type: field.field_type.clone(),
             required: field.required,
             constraint: field.constraint.clone(),
@@ -145,6 +152,7 @@ pub enum MergeValueV2 {
     Required(bool),
     FieldValue(Value),
     Constraint(FieldConstraint),
+    DisplayName(Option<String>),
 }
 
 /// Explicit v2 absence/presence evidence.
@@ -277,6 +285,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
         MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange => {
             return MergeOutcomeV2::UnsupportedKeyedGroupedSumDefinitionChange;
         }
+        MergeOutcome::UnsupportedDisplayName => unreachable!("v2 strips names before invoking v1"),
         MergeOutcome::UnsupportedFieldConstraintChange => {
             unreachable!("v2 merge removes constraints before invoking frozen v1")
         }
@@ -284,6 +293,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
 
     add_complete_subject_conflicts(base, left, right, &mut conflicts);
     add_constraint_conflicts(base, left, right, &mut conflicts);
+    add_name_conflicts(base, left, right, &mut conflicts);
     conflicts.sort_by(|left, right| {
         left.target
             .canonical_cmp(&right.target)
@@ -302,6 +312,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
 
     let mut candidate = candidate.expect("v1 conflict-free result must retain a candidate");
     apply_selected_constraints(base, left, right, &mut candidate);
+    apply_selected_names(base, left, right, &mut candidate);
     MergeOutcomeV2::Merged(candidate)
 }
 
@@ -311,8 +322,10 @@ mod tests;
 fn without_constraints(document: &Document) -> Document {
     let mut document = document.clone();
     for schema in document.schemas.values_mut() {
+        schema.display_name = None;
         for field in schema.fields.values_mut() {
             field.constraint = FieldConstraint::None;
+            field.display_name = None;
         }
     }
     document
@@ -585,6 +598,104 @@ fn apply_selected_constraints(
                     }
                 }
             }
+        }
+    }
+}
+
+fn name_conflict(
+    document: &DocumentId,
+    target: ConflictTarget,
+    base: Option<&str>,
+    left: Option<&str>,
+    right: Option<&str>,
+    conflicts: &mut Vec<MergeConflictV2>,
+) {
+    if choose(&base, &left, &right).is_none() {
+        conflicts.push(MergeConflictV2::new(
+            document,
+            target,
+            ConflictFacetV2::DisplayName,
+            Some(MergeValueV2::DisplayName(base.map(str::to_owned))),
+            Some(MergeValueV2::DisplayName(left.map(str::to_owned))),
+            Some(MergeValueV2::DisplayName(right.map(str::to_owned))),
+        ));
+    }
+}
+
+fn add_name_conflicts(
+    base: &Document,
+    left: &Document,
+    right: &Document,
+    conflicts: &mut Vec<MergeConflictV2>,
+) {
+    for (schema_id, b) in &base.schemas {
+        let (Some(l), Some(r)) = (left.schemas.get(schema_id), right.schemas.get(schema_id)) else {
+            continue;
+        };
+        name_conflict(
+            &base.id,
+            ConflictTarget::Schema(schema_id.clone()),
+            b.display_name.as_deref(),
+            l.display_name.as_deref(),
+            r.display_name.as_deref(),
+            conflicts,
+        );
+        for (field_id, b) in &b.fields {
+            let (Some(l), Some(r)) = (l.fields.get(field_id), r.fields.get(field_id)) else {
+                continue;
+            };
+            name_conflict(
+                &base.id,
+                ConflictTarget::SchemaField {
+                    schema: schema_id.clone(),
+                    field: field_id.clone(),
+                },
+                b.display_name.as_deref(),
+                l.display_name.as_deref(),
+                r.display_name.as_deref(),
+                conflicts,
+            );
+        }
+    }
+}
+
+fn selected_name<T: PartialEq>(
+    base: Option<&T>,
+    left: Option<&T>,
+    right: Option<&T>,
+    name: impl Fn(&T) -> Option<&str>,
+) -> Option<String> {
+    match (base, left, right) {
+        (Some(b), Some(l), Some(r)) => choose(&name(b), &name(l), &name(r))
+            .expect("conflict-free name")
+            .map(str::to_owned),
+        (b, l, r) => choose(&b, &l, &r)
+            .expect("subject conflict already emitted")
+            .and_then(name)
+            .map(str::to_owned),
+    }
+}
+
+fn apply_selected_names(
+    base: &Document,
+    left: &Document,
+    right: &Document,
+    candidate: &mut MergeCandidate,
+) {
+    for (schema_id, schema) in &mut candidate.document.schemas {
+        let (b, l, r) = (
+            base.schemas.get(schema_id),
+            left.schemas.get(schema_id),
+            right.schemas.get(schema_id),
+        );
+        schema.display_name = selected_name(b, l, r, |schema| schema.display_name.as_deref());
+        for (field_id, field) in &mut schema.fields {
+            field.display_name = selected_name(
+                b.and_then(|s| s.fields.get(field_id)),
+                l.and_then(|s| s.fields.get(field_id)),
+                r.and_then(|s| s.fields.get(field_id)),
+                |field| field.display_name.as_deref(),
+            );
         }
     }
 }

@@ -3,6 +3,12 @@
 //! This crate is app-local composition code. Its DTOs and WASM ABI are
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
+#[cfg(test)]
+mod display_names_tests;
+
+mod name_admission;
+use name_admission::{NameFailure, allocate_key, author_column_name, author_table_names};
+
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     mem::{size_of, size_of_val},
@@ -30,9 +36,13 @@ use tachiko_workspace_engine::{
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
         PatchLifecycleError, PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId,
         ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
-        SemanticPatchBody, SemanticRevision, SemanticScope, TrustedInstant,
+        SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticRevision,
+        SemanticScope, TrustedInstant,
     },
-    resident_session::{ResidentSnapshot, ResidentWorkspaceSession, TrustedPublicationTimeSource},
+    resident_session::{
+        ResidentProjectionInvalidation, ResidentSnapshot, ResidentWorkspaceSession,
+        TrustedPublicationTimeSource,
+    },
     validate,
 };
 use thiserror::Error;
@@ -248,6 +258,7 @@ pub struct BootstrapProjection {
 pub struct CollectionSummary {
     pub id: String,
     pub key: String,
+    pub display_name: String,
     pub entity_count: usize,
 }
 
@@ -284,6 +295,7 @@ pub struct NewTableColumnInput {
 pub struct ColumnProjection {
     pub id: String,
     pub key: String,
+    pub display_name: String,
     pub field_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dropdown_options: Option<Vec<String>>,
@@ -498,6 +510,18 @@ pub struct DiagnosticProjection {
     pub code: String,
     pub message: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subjects: Vec<tachiko_workspace_engine::SemanticSubject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_subjects: Vec<tachiko_workspace_engine::SemanticSubject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub facts: Vec<DiagnosticFactProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DiagnosticFactProjection {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -506,6 +530,8 @@ pub struct FailureProjection {
     pub message: String,
     pub current_revision: String,
     pub diagnostics: Vec<DiagnosticProjection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub name_failures: Vec<NameFailure>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -594,9 +620,50 @@ pub struct KeyedGroupedSumPublishedProjection {
 pub struct PublicationProjection {
     pub base_revision: String,
     pub resulting_revision: String,
+    pub schemas: Vec<String>,
+    pub schema_fields: Vec<SchemaFieldTarget>,
     pub entities: Vec<String>,
     pub fields: Vec<FieldTarget>,
     pub affected_calculations: Vec<FieldTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SchemaFieldTarget {
+    pub schema: String,
+    pub field: String,
+}
+
+impl From<&ResidentProjectionInvalidation> for PublicationProjection {
+    fn from(invalidation: &ResidentProjectionInvalidation) -> Self {
+        Self {
+            base_revision: invalidation.base_revision.as_str().to_owned(),
+            resulting_revision: invalidation.resulting_revision.as_str().to_owned(),
+            schemas: invalidation
+                .schemas
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            schema_fields: invalidation
+                .schema_fields
+                .iter()
+                .map(|(schema, field)| SchemaFieldTarget {
+                    schema: schema.to_string(),
+                    field: field.to_string(),
+                })
+                .collect(),
+            entities: invalidation
+                .entities
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            fields: invalidation.fields.iter().map(field_target).collect(),
+            affected_calculations: invalidation
+                .affected_calculations
+                .iter()
+                .map(field_target)
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -684,6 +751,8 @@ pub enum DesignerError {
     InvalidTrackerOperation { message: String },
     #[error("table creation rejected: {message}")]
     InvalidTableOperation { message: String },
+    #[error("native name admission rejected: {}", name_admission::failure_message(.failures))]
+    NameAdmission { failures: Vec<NameFailure> },
 }
 
 impl DesignerError {
@@ -706,7 +775,9 @@ impl DesignerError {
                 ("edit_rejected", Vec::new())
             }
             Self::InvalidTrackerOperation { .. } => ("invalid_tracker_operation", Vec::new()),
-            Self::InvalidTableOperation { .. } => ("invalid_table_operation", Vec::new()),
+            Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
+                ("invalid_table_operation", Vec::new())
+            }
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
             Self::UnsupportedScalarEdit { .. } => ("unsupported_edit", Vec::new()),
@@ -730,6 +801,10 @@ impl DesignerError {
             message: self.to_string(),
             current_revision: current_revision.to_owned(),
             diagnostics,
+            name_failures: match self {
+                Self::NameAdmission { failures } => failures.clone(),
+                _ => Vec::new(),
+            },
         }
     }
 }
@@ -783,6 +858,7 @@ struct CollectionSpec {
 struct ColumnSpec {
     id: FieldId,
     key: String,
+    display_name: String,
     field_type: FieldType,
     required: bool,
 }
@@ -1334,7 +1410,8 @@ impl DesignerRuntime {
         })
     }
 
-    /// Export the exact current snapshot as the complete canonical v1 tree.
+    /// Export named/v3 occurrences as the complete canonical v3 tree.
+    /// Existing nameless legacy occurrences retain their canonical v1 export.
     ///
     /// The returned bytes use the app-private host/WASM transfer record. The
     /// bridge decodes that record only into opaque path/byte entries; callers
@@ -1349,10 +1426,17 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<CanonicalTreeExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        let tree = encode_v1_tree(snapshot.document())?;
+        let bytes = if self.opened_from_v3 || snapshot.document().has_display_names() {
+            ensure_v3_capabilities(snapshot.document())?;
+            ensure_document_profile(snapshot.document(), false)?;
+            let tree = encode_roproj_v3(snapshot.document())?;
+            encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?
+        } else {
+            encode_project_bundle_v1(&encode_v1_tree(snapshot.document())?)?
+        };
         Ok(CanonicalTreeExport {
             revision: snapshot.revision().as_str().to_owned(),
-            bytes: encode_project_bundle_v1(&tree)?,
+            bytes,
         })
     }
 
@@ -1469,6 +1553,7 @@ impl DesignerRuntime {
                 .map(|column| ColumnProjection {
                     id: column.id.to_string(),
                     key: column.key.clone(),
+                    display_name: column.display_name.clone(),
                     field_type: field_type_name(&column.field_type).to_owned(),
                     dropdown_options: (column.field_type == FieldType::Boolean)
                         .then(|| vec!["true".to_owned(), "false".to_owned()]),
@@ -1678,14 +1763,13 @@ impl DesignerRuntime {
         if schema.fields.len() >= MAX_TABLE_FIELDS {
             return Err(table_error("column capacity is exhausted"));
         }
-        let key = native_column_lifecycle_key(name)?;
-        if schema
+        let name = author_column_name(name, schema, None)?;
+        let occupied = schema
             .fields
             .values()
-            .any(|field| field.key.as_str() == key)
-        {
-            return Err(table_error("duplicate column names are not allowed"));
-        }
+            .map(|field| field.key.to_string())
+            .collect();
+        let key = allocate_key(&name, "column", &occupied)?;
         if initializers.len() != entities.len() {
             return Err(table_error(
                 "every existing row needs exactly one initializer",
@@ -1718,6 +1802,7 @@ impl DesignerRuntime {
         let field = FieldDefinition {
             id: id.clone(),
             key: FieldKey::from(key),
+            display_name: Some(name),
             field_type: kind,
             required: true,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -1743,7 +1828,7 @@ impl DesignerRuntime {
         name: &str,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
-        let (schema_id, _) = self.native_column_schema(collection)?;
+        let schema_id = SchemaId::from(self.collection_spec(collection)?.summary.id.clone());
         let field_id = FieldId::from(field.to_owned());
         let snapshot = self.session.export_snapshot();
         let schema = snapshot
@@ -1761,16 +1846,16 @@ impl DesignerRuntime {
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
-        let key = FieldKey::from(native_column_lifecycle_key(name)?);
-        let forward = vec![SemanticCommand::RenameSchemaField {
+        let name = author_column_name(name, schema, Some(&field_id))?;
+        let forward = vec![SemanticCommand::SetSchemaFieldDisplayName {
             schema: schema_id.clone(),
             field: field_id.clone(),
-            key,
+            display_name: Some(name),
         }];
-        let inverse = vec![SemanticCommand::RenameSchemaField {
+        let inverse = vec![SemanticCommand::SetSchemaFieldDisplayName {
             schema: schema_id,
             field: field_id,
-            key: old.key.clone(),
+            display_name: old.display_name.clone(),
         }];
         self.record_edit(expected, forward, inverse)
     }
@@ -1840,7 +1925,6 @@ impl DesignerRuntime {
         name: &str,
     ) -> Result<DuplicateCollectionProjection, DesignerError> {
         self.check_revision(expected_revision)?;
-        let target_key = duplicate_collection_key(name)?;
         let snapshot = self.session.export_snapshot();
         let document = snapshot.document();
         let source_spec = self.collection_specs.get(collection).ok_or_else(|| {
@@ -1851,13 +1935,37 @@ impl DesignerRuntime {
         if document.schemas.len() >= MAX_COLLECTIONS {
             return Err(table_error("collection capacity is exhausted"));
         }
-        if document
+        let mut failures = Vec::new();
+        let name = name_admission::check_name(
+            name,
+            Some(&name_admission::NameInput::Table),
+            &[],
+            &mut failures,
+        );
+        if let Some(name) = name {
+            let subjects = document
+                .schemas
+                .values()
+                .filter(|schema| schema.effective_name() == name)
+                .map(|schema| tachiko_workspace_engine::SemanticSubject::Schema(schema.id.clone()))
+                .collect::<Vec<_>>();
+            if !subjects.is_empty() {
+                failures.push(NameFailure {
+                    reason: "duplicate_display_name".into(),
+                    inputs: vec![name_admission::NameInput::Table],
+                    subjects,
+                    effective_name: Some(name.to_owned()),
+                });
+            }
+        }
+        name_admission::refuse(failures)?;
+        let name = name.expect("table name admitted");
+        let occupied = document
             .schemas
             .values()
-            .any(|schema| schema.key.as_str() == target_key)
-        {
-            return Err(table_error("collection name already exists"));
-        }
+            .map(|schema| schema.key.to_string())
+            .collect();
+        let target_key = allocate_key(name, "table", &occupied)?;
         if document
             .entities
             .len()
@@ -1921,6 +2029,7 @@ impl DesignerRuntime {
         let schema = Schema {
             id: schema_id.clone(),
             key: SchemaKey::from(target_key.clone()),
+            display_name: Some(name.to_owned()),
             fields,
         };
         let mut entities = Vec::with_capacity(source_spec.entities.len());
@@ -2073,10 +2182,9 @@ impl DesignerRuntime {
             ),
             self.clock.tick(),
         )?;
-        let preview = lifecycle.preview(
-            snapshot.document_scope(),
-            snapshot.document(),
-            snapshot.revision(),
+        let proposal = designer_preview(
+            &mut lifecycle,
+            &snapshot,
             &proposal_id,
             &self.principal,
             self.clock.tick(),
@@ -2085,7 +2193,7 @@ impl DesignerRuntime {
         // The full open-time profile must pass before publication, including
         // formula count, aggregate strings and every bounded projection.
         let SemanticPatchBody::Command(SemanticCommand::FormulaUpdate(command)) =
-            preview.proposal.exact_change().body()
+            proposal.exact_change().body()
         else {
             return Err(tracker_error(
                 "formula proposal did not contain one admitted formula command",
@@ -2113,47 +2221,29 @@ impl DesignerRuntime {
             Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
         }
         let execute_now = self.clock.tick();
-        let (receipt, invalidation) = {
+        let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
-            let receipt = lifecycle.execute(
+            let receipt = designer_execute(
+                &mut lifecycle,
                 &proposal_id,
-                None,
                 &self.principal,
                 &mut publication,
                 execute_now,
             )?;
-            let invalidation = publication
+            publication
                 .projection_invalidation_for(
                     snapshot.document_scope(),
                     &receipt.base_revision,
                     &receipt.resulting_revision,
                 )
                 .ok_or(DesignerError::MissingInvalidation)?
-                .clone();
-            (receipt, invalidation)
+                .clone()
         };
         self.refresh_structure();
         if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
             self.formula_sources = sources;
         }
-        Ok((
-            PublicationProjection {
-                base_revision: receipt.base_revision.as_str().to_owned(),
-                resulting_revision: receipt.resulting_revision.as_str().to_owned(),
-                entities: invalidation
-                    .entities
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                fields: invalidation.fields.iter().map(field_target).collect(),
-                affected_calculations: invalidation
-                    .affected_calculations
-                    .iter()
-                    .map(field_target)
-                    .collect(),
-            },
-            forward,
-        ))
+        Ok((PublicationProjection::from(&invalidation), forward))
     }
 
     fn restore_formula_inverse(
@@ -2182,10 +2272,9 @@ impl DesignerRuntime {
             ),
             self.clock.tick(),
         )?;
-        lifecycle.preview(
-            snapshot.document_scope(),
-            snapshot.document(),
-            snapshot.revision(),
+        designer_preview(
+            &mut lifecycle,
+            &snapshot,
             &proposal_id,
             &self.principal,
             self.clock.tick(),
@@ -2203,44 +2292,29 @@ impl DesignerRuntime {
             Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
         }
         let execute_now = self.clock.tick();
-        let (receipt, invalidation) = {
+        let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
-            let receipt = lifecycle.execute(
+            let receipt = designer_execute(
+                &mut lifecycle,
                 &proposal_id,
-                None,
                 &self.principal,
                 &mut publication,
                 execute_now,
             )?;
-            let invalidation = publication
+            publication
                 .projection_invalidation_for(
                     snapshot.document_scope(),
                     &receipt.base_revision,
                     &receipt.resulting_revision,
                 )
                 .ok_or(DesignerError::MissingInvalidation)?
-                .clone();
-            (receipt, invalidation)
+                .clone()
         };
         self.refresh_structure();
         if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
             self.formula_sources = sources;
         }
-        Ok(PublicationProjection {
-            base_revision: receipt.base_revision.as_str().to_owned(),
-            resulting_revision: receipt.resulting_revision.as_str().to_owned(),
-            entities: invalidation
-                .entities
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-            fields: invalidation.fields.iter().map(field_target).collect(),
-            affected_calculations: invalidation
-                .affected_calculations
-                .iter()
-                .map(field_target)
-                .collect(),
-        })
+        Ok(PublicationProjection::from(&invalidation))
     }
 
     /// Resolve private copy gestures once against the exact canonical snapshot.
@@ -2432,6 +2506,19 @@ impl DesignerRuntime {
                         .ok_or_else(|| table_error("column is unavailable"))?
                         .key = key.clone();
                 }
+                SemanticCommand::SetSchemaFieldDisplayName {
+                    schema,
+                    field,
+                    display_name,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .and_then(|schema| schema.fields.get_mut(field))
+                        .ok_or_else(|| table_error("column is unavailable"))?
+                        .display_name
+                        .clone_from(display_name);
+                }
                 SemanticCommand::UnsetField { field } => {
                     if let Some(entity) = candidate.entities.get_mut(&field.entity) {
                         entity.fields.remove(&field.field);
@@ -2500,11 +2587,27 @@ impl DesignerRuntime {
             });
         // Capacity Text human requests own their proposal evidence for this
         // one call. Other command families retain the existing lifecycle.
-        let mut local_lifecycle = if capacity_text_edit {
-            Some(designer_lifecycle(
+        let naming_transition = snapshot.document().has_display_names()
+            || commands.iter().any(|command| match command {
+                SemanticCommand::SetSchemaFieldDisplayName { .. } => true,
+                SemanticCommand::AppendSchemaField { field, .. } => field.display_name.is_some(),
+                SemanticCommand::AppendCollection { schema, .. } => {
+                    schema.display_name.is_some()
+                        || schema
+                            .fields
+                            .values()
+                            .any(|field| field.display_name.is_some())
+                }
+                _ => false,
+            });
+        let mut local_lifecycle = if naming_transition {
+            Some(self.lifecycle.fork_for_v2_request())
+        } else if capacity_text_edit {
+            Some(designer_lifecycle_profile(
                 snapshot.document_scope(),
                 snapshot.document(),
                 &self.principal,
+                naming_transition,
             )?)
         } else {
             None
@@ -2524,33 +2627,31 @@ impl DesignerRuntime {
             ),
             self.clock.tick(),
         )?;
-        lifecycle.preview(
-            snapshot.document_scope(),
-            snapshot.document(),
-            snapshot.revision(),
+        designer_preview(
+            lifecycle,
+            &snapshot,
             &proposal_id,
             &self.principal,
             self.clock.tick(),
         )?;
         let execute_now = self.clock.tick();
-        let (receipt, invalidation) = {
+        let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
-            let receipt = lifecycle.execute(
+            let receipt = designer_execute(
+                lifecycle,
                 &proposal_id,
-                None,
                 &self.principal,
                 &mut publication,
                 execute_now,
             )?;
-            let invalidation = publication
+            publication
                 .projection_invalidation_for(
                     snapshot.document_scope(),
                     &receipt.base_revision,
                     &receipt.resulting_revision,
                 )
                 .ok_or(DesignerError::MissingInvalidation)?
-                .clone();
-            (receipt, invalidation)
+                .clone()
         };
         if !capacity_text_edit {
             self.refresh_structure();
@@ -2558,21 +2659,7 @@ impl DesignerRuntime {
                 self.formula_sources = sources;
             }
         }
-        Ok(PublicationProjection {
-            base_revision: receipt.base_revision.as_str().to_owned(),
-            resulting_revision: receipt.resulting_revision.as_str().to_owned(),
-            entities: invalidation
-                .entities
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-            fields: invalidation.fields.iter().map(field_target).collect(),
-            affected_calculations: invalidation
-                .affected_calculations
-                .iter()
-                .map(field_target)
-                .collect(),
-        })
+        Ok(PublicationProjection::from(&invalidation))
     }
 
     fn preflight_capacity_scalar(
@@ -2636,6 +2723,7 @@ impl DesignerRuntime {
         let schema = Schema {
             id: SchemaId::from("tracker"),
             key: SchemaKey::from("tracker"),
+            display_name: None,
             fields: [
                 ("task", FieldType::Text),
                 ("estimate", FieldType::Number),
@@ -2649,6 +2737,7 @@ impl DesignerRuntime {
                     FieldDefinition {
                         id,
                         key: FieldKey::from(key),
+                        display_name: None,
                         field_type,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -2675,26 +2764,19 @@ impl DesignerRuntime {
         name: &str,
         columns: &[NewTableColumnInput],
     ) -> Result<Self, DesignerError> {
-        if name.trim().is_empty() || name.len() > MAX_PROFILE_STRING_BYTES {
-            return Err(table_error("table name must be nonempty bounded text"));
-        }
         if columns.is_empty() || columns.len() > MAX_TABLE_FIELDS {
             return Err(table_error("table must declare 1..32 columns"));
         }
-        let schema_key = native_table_key(name, "table name")?;
+        let (name, names) = author_table_names(name, columns)?;
+        let schema_key = allocate_key(name, "table", &BTreeSet::new())?;
         let mut ids = NewTableIds::new(occurrence_id);
         let document_id = ids.generate(SemanticIdKind::Document);
         let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
         let mut fields = BTreeMap::new();
         let mut seen_keys = BTreeSet::new();
-        for column in columns {
-            if column.name.trim().is_empty() || column.name.len() > MAX_PROFILE_STRING_BYTES {
-                return Err(table_error("column names must be nonempty bounded text"));
-            }
-            let key = native_table_key(&column.name, "column name")?;
-            if !seen_keys.insert(key.clone()) {
-                return Err(table_error("duplicate column names are not allowed"));
-            }
+        for (column, name) in columns.iter().zip(names) {
+            let key = allocate_key(name, "column", &seen_keys)?;
+            seen_keys.insert(key.clone());
             let field_type = native_table_field_type(&column.field_type)?;
             let id = FieldId::from(ids.generate(SemanticIdKind::Field));
             fields.insert(
@@ -2702,6 +2784,7 @@ impl DesignerRuntime {
                 FieldDefinition {
                     id,
                     key: FieldKey::from(key),
+                    display_name: Some(name.to_owned()),
                     field_type,
                     required: true,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -2711,16 +2794,19 @@ impl DesignerRuntime {
         let schema = Schema {
             id: schema_id.clone(),
             key: SchemaKey::from(schema_key),
+            display_name: Some(name.to_owned()),
             fields,
         };
         let document = Document {
             id: document_id.into(),
-            title: name.trim().to_owned(),
+            title: name.to_owned(),
             schemas: BTreeMap::from([(schema_id, schema)]),
             entities: BTreeMap::new(),
             keyed_grouped_sum_definitions: BTreeMap::new(),
         };
-        Self::from_document(document, occurrence_id)
+        let mut runtime = Self::from_document(document, occurrence_id)?;
+        runtime.opened_from_v3 = true;
+        Ok(runtime)
     }
 
     /// Create a small two-collection monthly budget for the bounded Driver slice.
@@ -3673,6 +3759,7 @@ fn budget_schema<const COUNT: usize>(
     Schema {
         id,
         key: SchemaKey::from(key),
+        display_name: None,
         fields: fields
             .into_iter()
             .map(|(key, field_type)| {
@@ -3682,6 +3769,7 @@ fn budget_schema<const COUNT: usize>(
                     FieldDefinition {
                         id,
                         key: FieldKey::from(key),
+                        display_name: None,
                         field_type,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -4102,6 +4190,7 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                         message: "No Designer project is open.".to_owned(),
                         current_revision: "unavailable".to_owned(),
                         diagnostics: Vec::new(),
+                        name_failures: Vec::new(),
                     },
                 }
             }
@@ -4115,6 +4204,7 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                     |runtime| runtime.current_revision().to_owned(),
                 ),
                 diagnostics: Vec::new(),
+                name_failures: Vec::new(),
             },
         },
     };
@@ -4149,6 +4239,7 @@ fn request_too_large_reply(runtime: Option<&DesignerRuntime>) -> Vec<u8> {
                 |runtime| runtime.current_revision().to_owned(),
             ),
             diagnostics: Vec::new(),
+            name_failures: Vec::new(),
         },
     })
 }
@@ -4340,6 +4431,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
             let summary = CollectionSummary {
                 id: schema.id.to_string(),
                 key: schema.key.to_string(),
+                display_name: schema.effective_name().to_owned(),
                 entity_count: entities.len(),
             };
             (
@@ -4374,6 +4466,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                     .map(|field| ColumnSpec {
                         id: field.id.clone(),
                         key: field.key.to_string(),
+                        display_name: field.effective_name().to_owned(),
                         field_type: field.field_type.clone(),
                         required: field.required,
                     })
@@ -4561,10 +4654,16 @@ fn ensure_capacity_document_identities(document: &Document) -> Result<(), Design
         add("schema map identity", id.as_str(), 256)?;
         add("schema identity", schema.id.as_str(), 256)?;
         add("schema key", schema.key.as_str(), 256)?;
+        if let Some(name) = &schema.display_name {
+            add("schema display name", name, MAX_PROFILE_STRING_BYTES)?;
+        }
         for (id, field) in &schema.fields {
             add("field map identity", id.as_str(), 256)?;
             add("field identity", field.id.as_str(), 256)?;
             add("field key", field.key.as_str(), 256)?;
+            if let Some(name) = &field.display_name {
+                add("field display name", name, MAX_PROFILE_STRING_BYTES)?;
+            }
         }
     }
     for (id, entity) in &document.entities {
@@ -4616,6 +4715,9 @@ fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(
             schema.id.as_str(),
         )?;
         ensure_profile_string(&mut profile_string_bytes, "schema key", schema.key.as_str())?;
+        if let Some(name) = &schema.display_name {
+            ensure_profile_string(&mut profile_string_bytes, "schema display name", name)?;
+        }
         if schema.fields.len() > MAX_TABLE_FIELDS {
             return Err(DesignerError::UnsupportedProject {
                 message: DesignerError::CollectionTooLarge {
@@ -4636,6 +4738,9 @@ fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(
                 field.id.as_str(),
             )?;
             ensure_profile_string(&mut profile_string_bytes, "field key", field.key.as_str())?;
+            if let Some(name) = &field.display_name {
+                ensure_profile_string(&mut profile_string_bytes, "field display name", name)?;
+            }
             if let FieldType::Reference { schema } = &field.field_type {
                 ensure_profile_string(
                     &mut profile_string_bytes,
@@ -4895,6 +5000,19 @@ fn ensure_static_profile(
     let publication = PublicationProjection {
         base_revision: "resident/18446744073709551615".to_owned(),
         resulting_revision: "resident/18446744073709551615".to_owned(),
+        schemas: collection_specs
+            .values()
+            .map(|spec| spec.summary.id.clone())
+            .collect(),
+        schema_fields: collection_specs
+            .values()
+            .flat_map(|spec| {
+                spec.columns.iter().map(|column| SchemaFieldTarget {
+                    schema: spec.summary.id.clone(),
+                    field: column.id.to_string(),
+                })
+            })
+            .collect(),
         entities,
         fields: fields.clone(),
         affected_calculations: if native_tracker || text_capacity {
@@ -4940,13 +5058,91 @@ fn formula_sources(document: &Document) -> Result<BTreeMap<FieldRef, String>, De
         .collect()
 }
 
+fn designer_preview(
+    lifecycle: &mut PatchLifecycle,
+    snapshot: &ResidentSnapshot,
+    proposal: &ProposalId,
+    principal: &PrincipalId,
+    now: TrustedInstant,
+) -> Result<SemanticPatch, DesignerError> {
+    if lifecycle.uses_v2_evidence() {
+        Ok(lifecycle
+            .preview_v2(
+                snapshot.document_scope(),
+                snapshot.document(),
+                snapshot.revision(),
+                proposal,
+                principal,
+                now,
+            )?
+            .proposal)
+    } else {
+        Ok(lifecycle
+            .preview(
+                snapshot.document_scope(),
+                snapshot.document(),
+                snapshot.revision(),
+                proposal,
+                principal,
+                now,
+            )?
+            .proposal)
+    }
+}
+
+struct DesignerReceipt {
+    base_revision: SemanticRevision,
+    resulting_revision: SemanticRevision,
+}
+
+fn designer_execute(
+    lifecycle: &mut PatchLifecycle,
+    proposal: &ProposalId,
+    principal: &PrincipalId,
+    publication: &mut impl SemanticPublicationAuthority,
+    now: TrustedInstant,
+) -> Result<DesignerReceipt, DesignerError> {
+    if lifecycle.uses_v2_evidence() {
+        let receipt = lifecycle.execute_v2(proposal, None, principal, publication, now)?;
+        Ok(DesignerReceipt {
+            base_revision: receipt.base_revision,
+            resulting_revision: receipt.resulting_revision,
+        })
+    } else {
+        let receipt = lifecycle.execute(proposal, None, principal, publication, now)?;
+        Ok(DesignerReceipt {
+            base_revision: receipt.base_revision,
+            resulting_revision: receipt.resulting_revision,
+        })
+    }
+}
+
 fn designer_lifecycle(
     document_scope: &DocumentScopeId,
     document: &Document,
     principal: &PrincipalId,
 ) -> Result<PatchLifecycle, DesignerError> {
+    designer_lifecycle_profile(
+        document_scope,
+        document,
+        principal,
+        document.has_display_names(),
+    )
+}
+
+fn designer_lifecycle_profile(
+    document_scope: &DocumentScopeId,
+    document: &Document,
+    principal: &PrincipalId,
+    names: bool,
+) -> Result<PatchLifecycle, DesignerError> {
     let authority = PrincipalId::from("designer-host-authority");
-    let mut lifecycle = PatchLifecycle::new(
+    let constructor = if names {
+        PatchLifecycle::new_v2
+    } else {
+        PatchLifecycle::new
+    };
+    let mut lifecycle = constructor(
         AuthorizationDomainId::from("designer-local-domain"),
         document_scope.clone(),
         document.id.clone(),
@@ -5075,6 +5271,7 @@ fn add_moonfall_boolean_fixture(document: &mut Document) -> Result<(), DesignerE
         FieldDefinition {
             id: field.clone(),
             key: FieldKey::from("enabled"),
+            display_name: None,
             field_type: FieldType::Boolean,
             required: true,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -5098,6 +5295,16 @@ fn diagnostic_projection(
         code: diagnostic.code.as_str().to_owned(),
         message: diagnostic.message.clone(),
         path: diagnostic.path.to_string(),
+        subjects: diagnostic.subjects.clone(),
+        related_subjects: diagnostic.related_subjects.clone(),
+        facts: diagnostic
+            .facts
+            .iter()
+            .map(|fact| DiagnosticFactProjection {
+                name: fact.name.to_owned(),
+                value: fact.value.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -5427,25 +5634,6 @@ fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
     }
 }
 
-fn native_column_lifecycle_key(label: &str) -> Result<String, DesignerError> {
-    native_table_key(label, "column name")
-}
-
-fn duplicate_collection_key(label: &str) -> Result<String, DesignerError> {
-    let normalized = label
-        .trim()
-        .chars()
-        .map(|character| {
-            if character.is_whitespace() {
-                '-'
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    native_table_key(&normalized, "collection name")
-}
-
 fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
     match input.to_ascii_lowercase().as_str() {
         "text" => Ok(FieldType::Text),
@@ -5510,9 +5698,26 @@ fn parse_column_initializer(
 }
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    impl DesignerRuntime {
+        fn export_test_project(
+            &self,
+            revision: &str,
+        ) -> Result<super::ProjectExport, DesignerError> {
+            if self.opened_from_v3
+                || self
+                    .session
+                    .export_snapshot()
+                    .document()
+                    .has_display_names()
+            {
+                self.export_project_v3(revision)
+            } else {
+                self.export_project(revision)
+            }
+        }
+    }
 
-    use tachiko_workspace_engine::{SemanticChange, compare_documents};
+    use std::collections::BTreeMap;
 
     use super::{
         AuthorizationAction, ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime,
@@ -5671,7 +5876,7 @@ mod tests {
         let mut refused = false;
         for target in targets {
             let revision = runtime.current_revision().to_owned();
-            let before = runtime.export_project(&revision).unwrap().bytes;
+            let before = runtime.export_test_project(&revision).unwrap().bytes;
             let result = runtime.edit_cells(
                 &revision,
                 &[super::CellEdit {
@@ -5684,7 +5889,10 @@ mod tests {
             assert!(!runtime.text_capacity);
             if result.is_err() {
                 assert_eq!(runtime.current_revision(), revision);
-                assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+                assert_eq!(
+                    runtime.export_test_project(&revision).unwrap().bytes,
+                    before
+                );
                 runtime.query_table("orders").unwrap();
                 refused = true;
                 break;
@@ -5762,7 +5970,7 @@ mod tests {
                 .keyed_grouped_sum_definition_ids,
             [] as [String; 0]
         );
-        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let before = runtime.export_test_project("resident/0").unwrap().bytes;
         let target = runtime.query_table("orders").unwrap().rows[0].fields[0]
             .target
             .clone();
@@ -5810,7 +6018,10 @@ mod tests {
                 );
             }
             assert_eq!(runtime.current_revision(), "resident/0");
-            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert_eq!(
+                runtime.export_test_project("resident/0").unwrap().bytes,
+                before
+            );
             assert!(runtime.undo.is_empty());
             assert!(runtime.redo.is_empty());
         }
@@ -5823,7 +6034,10 @@ mod tests {
         for redo in [false, true] {
             assert!(runtime.history_edit("resident/0", redo).is_err());
         }
-        assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+        assert_eq!(
+            runtime.export_test_project("resident/0").unwrap().bytes,
+            before
+        );
     }
 
     #[test]
@@ -6026,7 +6240,7 @@ mod tests {
             .flat_map(|row| row.fields.iter().map(|field| field.target.clone()))
             .collect::<Vec<_>>();
         runtime.query_fields("resident/0", &targets).unwrap();
-        let saved = runtime.export_project("resident/0").unwrap();
+        let saved = runtime.export_test_project("resident/0").unwrap();
         let mut destination = None;
         let reopened = super::open_project(
             &mut destination,
@@ -6038,7 +6252,7 @@ mod tests {
         let reopened = destination.unwrap();
         assert!(reopened.text_capacity);
         assert_eq!(
-            reopened.export_project("resident/0").unwrap().bytes,
+            reopened.export_test_project("resident/0").unwrap().bytes,
             saved.bytes
         );
         let mut metadata_destination = None;
@@ -6081,7 +6295,7 @@ mod tests {
                 true,
             )
             .unwrap();
-            let before = runtime.export_project("resident/0").unwrap().bytes;
+            let before = runtime.export_test_project("resident/0").unwrap().bytes;
             let entities = runtime.collection_specs["orders"]
                 .entities
                 .iter()
@@ -6112,7 +6326,10 @@ mod tests {
                 DesignerError::InvalidTrackerOperation { .. }
             ));
             assert_eq!(runtime.current_revision(), "resident/0");
-            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert_eq!(
+                runtime.export_test_project("resident/0").unwrap().bytes,
+                before
+            );
             assert!(runtime.undo.is_empty());
             assert!(runtime.redo.is_empty());
             assert!(runtime.pending_cleanup.is_none());
@@ -6173,7 +6390,7 @@ mod tests {
             runtime.session.export_snapshot().document().clone(),
             [
                 runtime.export_canonical_tree(&revision).unwrap().bytes,
-                runtime.export_project(&revision).unwrap().bytes,
+                runtime.export_test_project(&revision).unwrap().bytes,
             ],
         )
     }
@@ -6327,6 +6544,16 @@ mod tests {
                 .collect::<Vec<_>>(),
         )
         .unwrap();
+        // Historical controls exercise absent-name fallback and legacy writers.
+        let mut document = runtime.session.export_snapshot().into_document();
+        for schema in document.schemas.values_mut() {
+            schema.display_name = None;
+            for field in schema.fields.values_mut() {
+                field.display_name = None;
+            }
+        }
+        runtime = DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+            .unwrap();
         let start = runtime.collection_specs["orders"].columns[0].id.to_string();
         runtime
             .paste_cells(
@@ -6478,16 +6705,21 @@ mod tests {
             .unwrap();
         let added_id = native_column_ids(&runtime)["status"].clone();
         let after_add = runtime.session.export_snapshot().document().clone();
-        let add_changes = compare_documents(&before_add, &after_add).unwrap();
-        assert!(add_changes.changes().iter().any(|change| matches!(
+        let add_changes = tachiko_workspace_engine::canonical_delta(
+            "tachiko.semantic-delta/v2",
+            &before_add,
+            &after_add,
+        )
+        .unwrap();
+        assert!(add_changes.facts().iter().any(|change| matches!(
             change,
-            SemanticChange::SchemaFieldAdded { field, definition, .. }
+            tachiko_workspace_engine::CanonicalDirectFact::SchemaFieldCreated { field, definition, .. }
                 if field == &added_id && definition.key.as_str() == "status"
         )));
-        assert!(add_changes.changes().iter().any(|change| matches!(
+        assert!(add_changes.facts().iter().any(|change| matches!(
             change,
-            SemanticChange::FieldAdded { field, value: Value::Text(value) }
-                if field.field == added_id && value == "open"
+            tachiko_workspace_engine::CanonicalDirectFact::EntityFieldValueCreated { field, after: Value::Text(value), .. }
+                if *field == added_id && value == "open"
         )));
 
         let before_rename = after_add.clone();
@@ -6500,11 +6732,16 @@ mod tests {
             )
             .unwrap();
         let after_rename = runtime.session.export_snapshot().document().clone();
-        let rename_changes = compare_documents(&before_rename, &after_rename).unwrap();
-        assert!(rename_changes.changes().iter().any(|change| matches!(
+        let rename_changes = tachiko_workspace_engine::canonical_delta(
+            "tachiko.semantic-delta/v2",
+            &before_rename,
+            &after_rename,
+        )
+        .unwrap();
+        assert!(rename_changes.facts().iter().any(|change| matches!(
             change,
-            SemanticChange::FieldKeyChanged { field, before, after, .. }
-                if field == &added_id && before.as_str() == "status" && after.as_str() == "current_status"
+            tachiko_workspace_engine::CanonicalDirectFact::SchemaFieldDisplayNameChanged { field, before, after, .. }
+                if field == &added_id && before.as_deref() == Some("Status") && after.as_deref() == Some("Current_status")
         )));
 
         let revision = runtime.current_revision().to_owned();
@@ -6512,16 +6749,21 @@ mod tests {
             .remove_column(&revision, "orders", added_id.as_str())
             .unwrap();
         let after_remove = runtime.session.export_snapshot().document().clone();
-        let remove_changes = compare_documents(&after_rename, &after_remove).unwrap();
-        assert!(remove_changes.changes().iter().any(|change| matches!(
+        let remove_changes = tachiko_workspace_engine::canonical_delta(
+            "tachiko.semantic-delta/v2",
+            &after_rename,
+            &after_remove,
+        )
+        .unwrap();
+        assert!(remove_changes.facts().iter().any(|change| matches!(
             change,
-            SemanticChange::SchemaFieldRemoved { field, definition, .. }
-                if field == &added_id && definition.key.as_str() == "current_status"
+            tachiko_workspace_engine::CanonicalDirectFact::SchemaFieldDeleted { field, definition, .. }
+                if field == &added_id && definition.key.as_str() == "status" && definition.display_name.as_deref() == Some("Current_status")
         )));
-        assert!(remove_changes.changes().iter().any(|change| matches!(
+        assert!(remove_changes.facts().iter().any(|change| matches!(
             change,
-            SemanticChange::FieldRemoved { field, value: Value::Text(value) }
-                if field.field == added_id && value == "open"
+            tachiko_workspace_engine::CanonicalDirectFact::EntityFieldValueCleared { field, before: Value::Text(value), .. }
+                if *field == added_id && value == "open"
         )));
     }
 
@@ -6550,7 +6792,7 @@ mod tests {
         );
         assert_eq!(last_available.proposal_serial, u64::MAX);
         let revision = last_available.current_revision().to_owned();
-        let before = last_available.export_project(&revision).unwrap().bytes;
+        let before = last_available.export_test_project(&revision).unwrap().bytes;
         let undo_count = last_available.undo.len();
         let redo_count = last_available.redo.len();
         let error = last_available
@@ -6574,7 +6816,7 @@ mod tests {
         ));
         assert_eq!(last_available.current_revision(), revision);
         assert_eq!(
-            last_available.export_project(&revision).unwrap().bytes,
+            last_available.export_test_project(&revision).unwrap().bytes,
             before
         );
         assert_eq!(last_available.undo.len(), undo_count);
@@ -6623,7 +6865,10 @@ mod tests {
         expected_revision: &str,
         field: &str,
     ) {
-        let before = runtime.export_project(expected_revision).unwrap().bytes;
+        let before = runtime
+            .export_test_project(expected_revision)
+            .unwrap()
+            .bytes;
         let undo_count = runtime.undo.len();
         let redo_count = runtime.redo.len();
         let error = runtime
@@ -6635,7 +6880,10 @@ mod tests {
         ));
         assert_eq!(runtime.current_revision(), expected_revision);
         assert_eq!(
-            runtime.export_project(expected_revision).unwrap().bytes,
+            runtime
+                .export_test_project(expected_revision)
+                .unwrap()
+                .bytes,
             before
         );
         assert_eq!(runtime.undo.len(), undo_count);
@@ -6727,17 +6975,35 @@ mod tests {
             ],
             &["P-100", "P-100", "hardware", "3"],
         );
+        // Preserve the historical nameless-command dependency control. Native
+        // authoring now stores names; frozen v1 definition-only evidence cannot
+        // operate on name-bearing state (ADR-0043 section 7).
+        let schema_id =
+            super::SchemaId::from(runtime.collection_specs["orders"].summary.id.clone());
+        let field = FieldDefinition {
+            id: "legacy-quantity-field".into(),
+            key: "quantity".into(),
+            display_name: None,
+            field_type: FieldType::Number,
+            required: true,
+            constraint: tachiko_workspace_engine::FieldConstraint::None,
+        };
+        let values = BTreeMap::from([(
+            runtime.collection_specs["orders"].entities[0].clone(),
+            Value::Number(super::Number::new(2.0).unwrap()),
+        )]);
         let publication = runtime
-            .add_column(
+            .record_edit(
                 "resident/1",
-                "orders",
-                "Quantity",
-                "number",
-                &[ColumnInitializer {
-                    entity: runtime.collection_specs["orders"].entities[0].to_string(),
-                    input: ScalarEditInput::Number {
-                        input: "2".to_owned(),
-                    },
+                vec![SemanticCommand::AppendSchemaField {
+                    schema: schema_id.clone(),
+                    field: field.clone(),
+                    values: values.clone(),
+                }],
+                vec![SemanticCommand::RemoveSchemaField {
+                    schema: schema_id,
+                    field,
+                    values,
                 }],
             )
             .unwrap();
@@ -6749,7 +7015,7 @@ mod tests {
             )
             .unwrap();
         let revision = runtime.current_revision().to_owned();
-        let before = runtime.export_project(&revision).unwrap().bytes;
+        let before = runtime.export_test_project(&revision).unwrap().bytes;
         let undo_count = runtime.undo.len();
         let error = runtime.history_edit(&revision, false).unwrap_err();
         assert!(matches!(
@@ -6757,7 +7023,10 @@ mod tests {
             DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
         ));
         assert_eq!(runtime.current_revision(), revision);
-        assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+        assert_eq!(
+            runtime.export_test_project(&revision).unwrap().bytes,
+            before
+        );
         assert_eq!(runtime.undo.len(), undo_count);
         assert!(runtime.redo.is_empty());
     }
@@ -6779,6 +7048,7 @@ mod tests {
                         field: FieldDefinition {
                             id: FieldId::from(format!("bad-{}", runtime.proposal_serial)),
                             key: FieldKey::from(format!("bad_{}", runtime.proposal_serial)),
+                            display_name: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -6794,7 +7064,7 @@ mod tests {
             assert_eq!(runtime.current_revision(), "resident/1");
         }
 
-        let before = runtime.export_project("resident/1").unwrap().bytes;
+        let before = runtime.export_test_project("resident/1").unwrap().bytes;
         grant_schema_field_authority_except(&mut runtime, MutationClass::Schema);
         let error = runtime
             .add_column(
@@ -6810,7 +7080,10 @@ mod tests {
             DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })
         ));
         assert_eq!(runtime.current_revision(), "resident/1");
-        assert_eq!(runtime.export_project("resident/1").unwrap().bytes, before);
+        assert_eq!(
+            runtime.export_test_project("resident/1").unwrap().bytes,
+            before
+        );
 
         let mut removal_runtime = native_column_runtime(&[("Value", "number")], &["1"]);
         removal_runtime
@@ -6824,7 +7097,10 @@ mod tests {
             .unwrap();
         let removable = native_column_ids(&removal_runtime)["removable"].clone();
         let revision = removal_runtime.current_revision().to_owned();
-        let before = removal_runtime.export_project(&revision).unwrap().bytes;
+        let before = removal_runtime
+            .export_test_project(&revision)
+            .unwrap()
+            .bytes;
         grant_schema_field_authority_except(&mut removal_runtime, MutationClass::Destructive);
         let error = removal_runtime
             .remove_column(&revision, "orders", removable.as_str())
@@ -6835,7 +7111,10 @@ mod tests {
         ));
         assert_eq!(removal_runtime.current_revision(), revision);
         assert_eq!(
-            removal_runtime.export_project(&revision).unwrap().bytes,
+            removal_runtime
+                .export_test_project(&revision)
+                .unwrap()
+                .bytes,
             before
         );
     }
@@ -6852,7 +7131,7 @@ mod tests {
         )
         .unwrap();
         runtime.row_serial = usize::MAX - super::MAX_TOTAL_ENTITIES - super::MAX_TABLE_ROWS + 1;
-        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let before = runtime.export_test_project("resident/0").unwrap().bytes;
         let initializers = row_initializers(&runtime);
         let error = runtime
             .insert_row("resident/0", "orders", &initializers)
@@ -6863,7 +7142,10 @@ mod tests {
                 if message == "row identity allocation is exhausted"
         ));
         assert_eq!(runtime.current_revision(), "resident/0");
-        assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+        assert_eq!(
+            runtime.export_test_project("resident/0").unwrap().bytes,
+            before
+        );
         assert!(runtime.undo.is_empty());
         assert!(runtime.redo.is_empty());
     }
@@ -6877,7 +7159,7 @@ mod tests {
             .insert_row(&expected, "orders", &initializers)
             .unwrap();
         let revision = runtime.current_revision().to_owned();
-        let before = runtime.export_project(&revision).unwrap().bytes;
+        let before = runtime.export_test_project(&revision).unwrap().bytes;
         let undo_count = runtime.undo.len();
         let redo_count = runtime.redo.len();
 
@@ -6889,7 +7171,10 @@ mod tests {
 
         assert!(matches!(error, DesignerError::Lifecycle(_)));
         assert_eq!(runtime.current_revision(), revision);
-        assert_eq!(runtime.export_project(&revision).unwrap().bytes, before);
+        assert_eq!(
+            runtime.export_test_project(&revision).unwrap().bytes,
+            before
+        );
         assert_eq!(runtime.undo.len(), undo_count);
         assert_eq!(runtime.redo.len(), redo_count);
     }
@@ -6931,13 +7216,16 @@ mod tests {
             .get_mut("orders")
             .unwrap()
             .native_table_rows = true;
-        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let before = runtime.export_test_project("resident/0").unwrap().bytes;
         let error = runtime
             .remove_table_rows("resident/0", "orders", &[entity.to_string()])
             .unwrap_err();
         assert!(matches!(error, DesignerError::Lifecycle(_)));
         assert_eq!(runtime.current_revision(), "resident/0");
-        assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+        assert_eq!(
+            runtime.export_test_project("resident/0").unwrap().bytes,
+            before
+        );
         assert!(runtime.undo.is_empty());
         assert!(runtime.redo.is_empty());
     }
@@ -6945,7 +7233,10 @@ mod tests {
     #[test]
     fn native_row_commands_require_append_and_remove_authority() {
         let mut insert_runtime = native_column_runtime(&[("Value", "number")], &["1"]);
-        let before = insert_runtime.export_project("resident/1").unwrap().bytes;
+        let before = insert_runtime
+            .export_test_project("resident/1")
+            .unwrap()
+            .bytes;
         insert_runtime
             .lifecycle
             .revoke_grant(&GrantId::from("designer-number-edit"))
@@ -6959,13 +7250,19 @@ mod tests {
             DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })
         ));
         assert_eq!(
-            insert_runtime.export_project("resident/1").unwrap().bytes,
+            insert_runtime
+                .export_test_project("resident/1")
+                .unwrap()
+                .bytes,
             before
         );
 
         let mut remove_runtime = native_column_runtime(&[("Value", "number")], &["1"]);
         let entity = remove_runtime.collection_specs["orders"].entities[0].to_string();
-        let before = remove_runtime.export_project("resident/1").unwrap().bytes;
+        let before = remove_runtime
+            .export_test_project("resident/1")
+            .unwrap()
+            .bytes;
         remove_runtime
             .lifecycle
             .revoke_grant(&GrantId::from("designer-number-edit"))
@@ -6978,13 +7275,16 @@ mod tests {
             DesignerError::Lifecycle(PatchLifecycleError::InsufficientCapability { .. })
         ));
         assert_eq!(
-            remove_runtime.export_project("resident/1").unwrap().bytes,
+            remove_runtime
+                .export_test_project("resident/1")
+                .unwrap()
+                .bytes,
             before
         );
     }
 
     fn assert_duplicate_rejected_without_publication(runtime: &mut DesignerRuntime) {
-        let before = runtime.export_project("resident/0").unwrap();
+        let before = runtime.export_test_project("resident/0").unwrap();
         let error = runtime
             .handle(DesignerRequest::DuplicateCollection {
                 expected_revision: "resident/0".to_owned(),
@@ -6998,7 +7298,7 @@ mod tests {
         ));
         assert_eq!(runtime.current_revision(), "resident/0");
         assert_eq!(
-            runtime.export_project("resident/0").unwrap().bytes,
+            runtime.export_test_project("resident/0").unwrap().bytes,
             before.bytes
         );
     }
@@ -7034,7 +7334,7 @@ mod tests {
         let mut runtime =
             DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
                 .unwrap();
-        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let before = runtime.export_test_project("resident/0").unwrap().bytes;
         for serial in 1..=32 {
             let error = runtime
                 .update_formula("resident/0", &"r32.planned".into(), "3")
@@ -7049,7 +7349,10 @@ mod tests {
                     )))
                     .is_err()
             );
-            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert_eq!(
+                runtime.export_test_project("resident/0").unwrap().bytes,
+                before
+            );
         }
         let result = runtime
             .update_formula("resident/0", &"r00.planned".into(), "1201")
@@ -7084,7 +7387,7 @@ mod tests {
             destination: "utilities.actual".into(),
         };
         let pending = runtime.preview_cleanup("resident/0", &operation).unwrap();
-        let before = runtime.export_project("resident/0").unwrap().bytes;
+        let before = runtime.export_test_project("resident/0").unwrap().bytes;
         runtime.proposal_serial = u64::MAX - 1;
         let last = runtime.next_proposal_id().unwrap();
         assert_ne!(last.as_str(), pending.preview_id);
@@ -7112,7 +7415,10 @@ mod tests {
                 runtime.pending_cleanup.as_ref().unwrap().preview_id,
                 pending.preview_id
             );
-            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert_eq!(
+                runtime.export_test_project("resident/0").unwrap().bytes,
+                before
+            );
             assert!(runtime.undo.is_empty());
             assert!(runtime.redo.is_empty());
         }
@@ -7172,7 +7478,7 @@ mod tests {
                 })
                 .unwrap();
         }
-        let before = runtime.export_project("resident/31").unwrap();
+        let before = runtime.export_test_project("resident/31").unwrap();
         let error = runtime
             .handle(DesignerRequest::DuplicateCollection {
                 expected_revision: "resident/31".to_owned(),
@@ -7183,7 +7489,7 @@ mod tests {
         assert!(matches!(error, DesignerError::InvalidTableOperation { .. }));
         assert_eq!(runtime.current_revision(), "resident/31");
         assert_eq!(
-            runtime.export_project("resident/31").unwrap().bytes,
+            runtime.export_test_project("resident/31").unwrap().bytes,
             before.bytes
         );
     }

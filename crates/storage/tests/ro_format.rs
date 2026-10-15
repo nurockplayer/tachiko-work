@@ -23,6 +23,7 @@ fn document_with_order(reverse: bool) -> Document {
             FieldDefinition {
                 id: FieldId::from("damage"),
                 key: FieldKey::from("damage"),
+                display_name: None,
                 field_type: FieldType::Number,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -33,6 +34,7 @@ fn document_with_order(reverse: bool) -> Document {
             FieldDefinition {
                 id: FieldId::from("name"),
                 key: FieldKey::from("name"),
+                display_name: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -66,6 +68,7 @@ fn document_with_order(reverse: bool) -> Document {
             Schema {
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
+                display_name: None,
                 fields,
             },
         )]),
@@ -230,11 +233,13 @@ fn invalid_v2_relationship_cannot_be_serialized() {
             Schema {
                 id: SchemaId::from("source"),
                 key: SchemaKey::from("source"),
+                display_name: None,
                 fields: BTreeMap::from([(
                     FieldId::from("target"),
                     FieldDefinition {
                         id: FieldId::from("target"),
                         key: FieldKey::from("target"),
+                        display_name: None,
                         field_type: FieldType::Reference {
                             schema: SchemaId::from("missing"),
                         },
