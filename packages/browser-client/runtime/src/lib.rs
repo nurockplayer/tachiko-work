@@ -1246,9 +1246,23 @@ impl DesignerRuntime {
                 price_field: FieldId::from(input.product_price_field),
             },
         };
-        self.publish_commands(
+        let snapshot = self.session.export_snapshot();
+        let inverse = snapshot
+            .document()
+            .keyed_grouped_sum_definitions
+            .get(&definition.id)
+            .map_or_else(
+                || SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                    definition: definition.id.clone(),
+                },
+                |previous| SemanticCommand::UpsertKeyedGroupedSumDefinition {
+                    definition: previous.clone(),
+                },
+            );
+        self.record_edit(
             expected_revision,
             vec![SemanticCommand::UpsertKeyedGroupedSumDefinition { definition }],
+            vec![inverse],
         )
     }
 
@@ -5195,6 +5209,10 @@ fn designer_lifecycle_profile(
                 OperationFamily::KeyedGroupedSumDefinition,
                 MutationClass::Structure,
             ),
+            (
+                OperationFamily::KeyedGroupedSumDefinition,
+                MutationClass::Destructive,
+            ),
         ]
         .into_iter()
         .flat_map(|(family, class)| {
@@ -6704,6 +6722,369 @@ mod tests {
         );
     }
 
+    fn definition_history_runtime(named: bool) -> DesignerRuntime {
+        let runtime = native_column_runtime(
+            &[
+                ("lookup", "text"),
+                ("quantity", "number"),
+                ("product_key", "text"),
+                ("category", "text"),
+                ("price", "number"),
+            ],
+            &["P-100", "2", "P-100", "hardware", "3"],
+        );
+        let mut document = runtime.session.export_snapshot().into_document();
+        if named {
+            document.schemas.values_mut().next().unwrap().display_name = Some("My Expenses".into());
+        }
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap()
+    }
+
+    fn definition_history_edit_quantity(runtime: &mut DesignerRuntime, input: &str) {
+        let ids = native_column_ids(runtime);
+        let target = super::FieldTarget {
+            entity: runtime.collection_specs["orders"].entities[0].to_string(),
+            field: ids["quantity"].to_string(),
+        };
+        let expected = runtime.current_revision().to_owned();
+        runtime
+            .edit_scalar(
+                &expected,
+                &target,
+                &ScalarEditInput::Number {
+                    input: input.into(),
+                },
+            )
+            .unwrap();
+    }
+
+    fn definition_history_create(runtime: &mut DesignerRuntime) {
+        let ids = native_column_ids(runtime);
+        let input = keyed_definition(runtime, &ids["quantity"]);
+        let expected = runtime.current_revision().to_owned();
+        runtime.create_keyed_grouped_sum(&expected, input).unwrap();
+    }
+
+    // Replay the recorded history command through the trusted lifecycle so its
+    // actual receipt can be inspected (publish_commands keeps named receipts local).
+    fn definition_history_evidence(
+        runtime: &DesignerRuntime,
+        redo: bool,
+        expected: tachiko_workspace_engine::CanonicalDirectFact,
+    ) {
+        let entry = if redo {
+            runtime.redo.last()
+        } else {
+            runtime.undo.last()
+        }
+        .unwrap();
+        let action = if redo { &entry.forward } else { &entry.inverse };
+        let HistoryAction::Commands(commands) = action else {
+            panic!("expected definition command");
+        };
+        let mut replay = DesignerRuntime::from_document(
+            runtime.session.export_snapshot().into_document(),
+            "00000000-0000-4000-8000-000000000001",
+        )
+        .unwrap();
+        let snapshot = replay.session.export_snapshot();
+        let proposal = replay.next_proposal_id().unwrap();
+        replay
+            .lifecycle
+            .propose(
+                snapshot.document_scope(),
+                snapshot.document(),
+                snapshot.revision(),
+                super::ProposalRequest::new(
+                    proposal.clone(),
+                    snapshot.revision().clone(),
+                    super::SemanticPatchBody::atomic_batch(commands.clone()).unwrap(),
+                    replay.principal.clone(),
+                ),
+                replay.clock.tick(),
+            )
+            .unwrap();
+        super::designer_preview(
+            &mut replay.lifecycle,
+            &snapshot,
+            &proposal,
+            &replay.principal,
+            replay.clock.tick(),
+        )
+        .unwrap();
+        let now = replay.clock.tick();
+        let mut publication = replay.session.publication_authority(&mut replay.clock);
+        super::designer_execute(
+            &mut replay.lifecycle,
+            &proposal,
+            &replay.principal,
+            &mut publication,
+            now,
+        )
+        .unwrap();
+        if replay.lifecycle.uses_v2_evidence() {
+            assert_eq!(
+                replay
+                    .lifecycle
+                    .execution_receipts_v2()
+                    .last()
+                    .unwrap()
+                    .delta()
+                    .unwrap()
+                    .facts(),
+                &[expected]
+            );
+            assert_eq!(replay.lifecycle.execution_receipts(), []);
+        } else {
+            assert_eq!(
+                replay
+                    .lifecycle
+                    .execution_receipts()
+                    .last()
+                    .unwrap()
+                    .semantic_changes,
+                []
+            );
+            assert_eq!(replay.lifecycle.execution_receipts_v2(), []);
+        }
+    }
+
+    fn definition_history_creation(named: bool) {
+        let mut runtime = definition_history_runtime(named);
+        definition_history_edit_quantity(&mut runtime, "4");
+        let before = runtime.session.export_snapshot().into_document();
+        definition_history_create(&mut runtime);
+        let created = runtime.session.export_snapshot().into_document();
+        let definition = &created.keyed_grouped_sum_definitions[&"orders-summary".into()];
+        definition_history_evidence(
+            &runtime,
+            false,
+            tachiko_workspace_engine::CanonicalDirectFact::KeyedGroupedSumDefinitionDeleted {
+                definition: definition.id.clone(),
+                before: definition.into(),
+            },
+        );
+        native_history(&mut runtime, false);
+        assert_eq!(runtime.session.export_snapshot().document(), &before);
+        assert_eq!((runtime.undo.len(), runtime.redo.len()), (1, 1));
+        definition_history_evidence(
+            &runtime,
+            true,
+            tachiko_workspace_engine::CanonicalDirectFact::KeyedGroupedSumDefinitionCreated {
+                definition: definition.id.clone(),
+                after: definition.into(),
+            },
+        );
+        native_history(&mut runtime, true);
+        assert_eq!(runtime.session.export_snapshot().document(), &created);
+        assert_eq!(
+            runtime
+                .query_keyed_grouped_sum(&"orders-summary".into())
+                .unwrap()
+                .groups[0]
+                .value,
+            12.0
+        );
+        native_history(&mut runtime, false);
+        native_history(&mut runtime, false);
+        assert_eq!(
+            runtime
+                .session
+                .export_snapshot()
+                .document()
+                .entities
+                .values()
+                .next()
+                .unwrap()
+                .fields[&native_column_ids(&runtime)["quantity"]],
+            Value::Number(super::Number::new(2.0).unwrap())
+        );
+        assert_eq!(runtime.lifecycle.uses_v2_evidence(), named);
+        if !named {
+            assert_eq!(runtime.lifecycle.execution_receipts_v2(), []);
+            assert_eq!(runtime.lifecycle.execution_receipts().len(), 6);
+        }
+    }
+
+    #[test]
+    fn definition_history_nameless_creation() {
+        definition_history_creation(false);
+    }
+
+    #[test]
+    fn definition_history_named_creation() {
+        definition_history_creation(true);
+    }
+
+    fn definition_history_rebind(named: bool) {
+        let mut runtime = definition_history_runtime(named);
+        definition_history_create(&mut runtime);
+        let before = runtime.session.export_snapshot().into_document();
+        let ids = native_column_ids(&runtime);
+        let mut input = keyed_definition(&runtime, &ids["price"]);
+        input.order_lookup_key_field = ids["product_key"].to_string();
+        input.product_key_field = ids["lookup"].to_string();
+        input.product_category_field = ids["product_key"].to_string();
+        input.product_price_field = ids["quantity"].to_string();
+        let expected = runtime.current_revision().to_owned();
+        runtime.create_keyed_grouped_sum(&expected, input).unwrap();
+        let changed = runtime.session.export_snapshot().into_document();
+        definition_history_evidence(
+            &runtime,
+            false,
+            tachiko_workspace_engine::CanonicalDirectFact::KeyedGroupedSumDefinitionChanged {
+                definition: "orders-summary".into(),
+                before: (&changed.keyed_grouped_sum_definitions[&"orders-summary".into()]).into(),
+                after: (&before.keyed_grouped_sum_definitions[&"orders-summary".into()]).into(),
+            },
+        );
+        native_history(&mut runtime, false);
+        assert_eq!(runtime.session.export_snapshot().document(), &before);
+        assert_eq!((runtime.undo.len(), runtime.redo.len()), (1, 1));
+        native_history(&mut runtime, true);
+        assert_eq!(runtime.session.export_snapshot().document(), &changed);
+    }
+
+    #[test]
+    fn definition_history_nameless_rebind() {
+        definition_history_rebind(false);
+    }
+
+    #[test]
+    fn definition_history_named_rebind() {
+        definition_history_rebind(true);
+    }
+
+    fn definition_history_clears_redo(named: bool) {
+        for rebind in [false, true] {
+            let mut runtime = definition_history_runtime(named);
+            if rebind {
+                definition_history_create(&mut runtime);
+            }
+            definition_history_edit_quantity(&mut runtime, "4");
+            native_history(&mut runtime, false);
+            assert_eq!(runtime.redo.len(), 1);
+            let ids = native_column_ids(&runtime);
+            let input = keyed_definition(&runtime, &ids[if rebind { "price" } else { "quantity" }]);
+            let expected = runtime.current_revision().to_owned();
+            runtime.create_keyed_grouped_sum(&expected, input).unwrap();
+            assert!(runtime.redo.is_empty());
+            assert_eq!(runtime.undo.len(), 1 + usize::from(rebind));
+            let expected = runtime.current_revision().to_owned();
+            assert!(runtime.history_edit(&expected, true).is_err());
+        }
+    }
+
+    #[test]
+    fn definition_history_nameless_clears_redo() {
+        definition_history_clears_redo(false);
+    }
+
+    #[test]
+    fn definition_history_named_clears_redo() {
+        definition_history_clears_redo(true);
+    }
+
+    fn definition_history_commands(
+        entries: &[super::HistoryEntry],
+    ) -> Vec<(Vec<SemanticCommand>, Vec<SemanticCommand>)> {
+        entries
+            .iter()
+            .map(|entry| match (&entry.forward, &entry.inverse) {
+                (HistoryAction::Commands(forward), HistoryAction::Commands(inverse)) => {
+                    (forward.clone(), inverse.clone())
+                }
+                _ => panic!("fixture uses only command history"),
+            })
+            .collect()
+    }
+
+    fn definition_history_refusal(named: bool) {
+        let mut runtime = definition_history_runtime(named);
+        definition_history_create(&mut runtime);
+        definition_history_edit_quantity(&mut runtime, "4");
+        definition_history_edit_quantity(&mut runtime, "6");
+        native_history(&mut runtime, false);
+        let before = runtime.session.export_snapshot().into_document();
+        let revision = runtime.current_revision().to_owned();
+        let undo = definition_history_commands(&runtime.undo);
+        let redo = definition_history_commands(&runtime.redo);
+        assert_ne!(undo, []);
+        assert_eq!(redo.len(), 1);
+        for refusal in [
+            "stale",
+            "no-change",
+            "unknown-field",
+            "invalid-type",
+            "empty-id",
+            "denied",
+        ] {
+            let ids = native_column_ids(&runtime);
+            let mut input = keyed_definition(&runtime, &ids["quantity"]);
+            let expected = if refusal == "stale" {
+                "resident/0"
+            } else {
+                &revision
+            };
+            match refusal {
+                "unknown-field" => input.order_quantity_field = "missing".into(),
+                "invalid-type" => input.order_quantity_field = ids["lookup"].to_string(),
+                "empty-id" => input.id.clear(),
+                "denied" => {
+                    input.order_quantity_field = ids["price"].to_string();
+                    runtime.principal = PrincipalId::from("unknown-principal");
+                }
+                _ => {}
+            }
+            assert!(
+                runtime.create_keyed_grouped_sum(expected, input).is_err(),
+                "{refusal}"
+            );
+            assert_eq!(runtime.current_revision(), revision);
+            assert_eq!(runtime.session.export_snapshot().document(), &before);
+            assert_eq!(definition_history_commands(&runtime.undo), undo);
+            assert_eq!(definition_history_commands(&runtime.redo), redo);
+        }
+    }
+
+    #[test]
+    fn definition_history_nameless_refusal() {
+        definition_history_refusal(false);
+    }
+
+    #[test]
+    fn definition_history_named_refusal() {
+        definition_history_refusal(true);
+    }
+
+    #[test]
+    fn definition_history_unknown_inverse_preserves_both_stacks() {
+        for named in [false, true] {
+            let mut runtime = definition_history_runtime(named);
+            definition_history_create(&mut runtime);
+            definition_history_edit_quantity(&mut runtime, "4");
+            native_history(&mut runtime, false);
+            runtime.undo.last_mut().unwrap().inverse =
+                HistoryAction::Commands(vec![SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                    definition: "unknown-summary".into(),
+                }]);
+            let revision = runtime.current_revision().to_owned();
+            let before = runtime.session.export_snapshot().into_document();
+            let undo = definition_history_commands(&runtime.undo);
+            let redo = definition_history_commands(&runtime.redo);
+            assert!(matches!(
+                runtime.history_edit(&revision, false),
+                Err(DesignerError::Lifecycle(
+                    PatchLifecycleError::CommandRejected { .. }
+                ))
+            ));
+            assert_eq!(runtime.current_revision(), revision);
+            assert_eq!(runtime.session.export_snapshot().document(), &before);
+            assert_eq!(definition_history_commands(&runtime.undo), undo);
+            assert_eq!(definition_history_commands(&runtime.redo), redo);
+        }
+    }
+
     fn native_column_ids(runtime: &DesignerRuntime) -> BTreeMap<String, FieldId> {
         runtime.collection_specs["orders"]
             .columns
@@ -7145,12 +7526,17 @@ mod tests {
             )
             .unwrap();
         let quantity = native_column_ids(&runtime)["quantity"].clone();
+        let column_inverse = runtime.undo.last().unwrap().inverse.clone();
         runtime
             .create_keyed_grouped_sum(
                 &publication.resulting_revision,
                 keyed_definition(&runtime, &quantity),
             )
             .unwrap();
+        // Exercise a failed column inverse against a live dependent definition.
+        // Ordinary Undo now removes the summary first, so inject the older
+        // inverse as in the failed-row-inverse control below.
+        runtime.undo.last_mut().unwrap().inverse = column_inverse;
         let revision = runtime.current_revision().to_owned();
         let before = runtime.export_test_project(&revision).unwrap().bytes;
         let undo_count = runtime.undo.len();

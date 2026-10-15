@@ -265,6 +265,12 @@ test("#533 named cross-table summary survives edit, history and fresh Worker sav
       product_key_field: products.columns[0]!.id, product_category_field: products.columns[1]!.id, product_price_field: products.columns[2]!.id,
     };
     const created = await client.createKeyedGroupedSum((await client.observeOccurrence()).revision, definition);
+    await client.trackerCommand({type: "undo", expected_revision: created.publication.resulting_revision});
+    const afterCreationUndoIds = (await client.bootstrap()).keyed_grouped_sum_definition_ids;
+    const productsAfterCreationUndo = await client.queryTable(products.collection.key);
+    const priceAfterCreationUndo = productsAfterCreationUndo.rows[0]!.fields.find(field => field.target.field === products.columns[2]!.id)!.stored;
+    await client.trackerCommand({type: "redo", expected_revision: productsAfterCreationUndo.revision});
+    const afterCreationRedo = await client.queryKeyedGroupedSum(definition.id);
     const orders = await client.queryTable(ordersKey);
     const quantity = orders.rows[0]!.fields.find(field => field.target.field === columns[2]!.id)!.target;
     const edited = await client.editNumber(orders.revision, quantity, "4");
@@ -289,7 +295,8 @@ test("#533 named cross-table summary survives edit, history and fresh Worker sav
       return {
         tableName: opened.table.collection.display_name, columns: columns.map(column => column.display_name),
         crossTable: definition.orders_schema !== definition.products_schema,
-        created: created.result.groups, afterEdit: afterEdit.groups, afterUndo: afterUndo.groups, afterRedo: afterRedo.groups,
+        created: created.result.groups, afterCreationUndoIds, priceAfterCreationUndo, afterCreationRedo: afterCreationRedo.groups,
+        afterEdit: afterEdit.groups, afterUndo: afterUndo.groups, afterRedo: afterRedo.groups,
         reopenedRevision: reopened.table.revision, summary, ids: (await fresh.bootstrap()).keyed_grouped_sum_definition_ids, canonicalBytesEqual, opaqueBytesEqual,
       };
     } finally {await fresh.close();}
@@ -299,6 +306,7 @@ test("#533 named cross-table summary survives edit, history and fresh Worker sav
   expect(evidence).toEqual({
     tableName: "My Expenses", columns: ["Item Name", "項目", "Amount"], crossTable: true,
     created: [{category: "hardware", value: 6}],
+    afterCreationUndoIds: [], priceAfterCreationUndo: {kind: "number", value: 3}, afterCreationRedo: [{category: "hardware", value: 6}],
     afterEdit: [{category: "hardware", value: 12}], afterUndo: [{category: "hardware", value: 6}], afterRedo: [{category: "hardware", value: 12}],
     reopenedRevision: "resident/0", summary: {definition_id: "expenses-summary", revision: "resident/0", groups: [{category: "hardware", value: 12}], diagnostics: []},
     ids: ["expenses-summary"], canonicalBytesEqual: true, opaqueBytesEqual: true,

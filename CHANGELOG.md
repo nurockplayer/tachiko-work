@@ -12,6 +12,8 @@ All notable changes to Tachiko Work are documented in this file.
   on named and already admitted constrained occurrences with full publication
   evidence. Frozen v1 and definition-changing conflict v2 remain fail-closed;
   browser constraint admission under #452 is unchanged.
+  Browser summary creation and rebinding now record one Undo/Redo action,
+  restore complete saved bindings and clear redo only after publication.
 
 - Native tables and columns retain case and Unicode display names separately
   from stable IDs and keys. Column rename changes the label with undo/redo;
