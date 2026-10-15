@@ -13,9 +13,9 @@ function paths(version: number): string[] {
   return Array.from(declaration[1]!.matchAll(/"([^"]+)"/g), match => match[1]!);
 }
 
-function file(path: string, body = ""): File {
+function file(path: string, body = "", root = "project.roproj"): File {
   const result = new File([body], path.split("/").at(-1)!);
-  Object.defineProperty(result, "webkitRelativePath", { value: `project.roproj/${path}` });
+  Object.defineProperty(result, "webkitRelativePath", { value: `${root}/${path}` });
   return result;
 }
 
@@ -33,6 +33,33 @@ function shuffle<T>(input: T[], seed: number): T[] {
   }
   return output;
 }
+
+describe("Work directory roots", () => {
+  const expected = paths(3);
+  const fixture = expected.map(path => ({ path, body: readFileSync(resolve(
+    "../../docs/research/fixtures/issue-519-portable-package-v1-v3/input.roproj", path,
+  ), "utf8") }));
+  const files = (root: string) => fixture.map(({ path, body }) => file(path, body, root));
+
+  it("accepts a backslash in the discarded root of a canonical v3 directory", async () => {
+    const transfer = await projectTransferFromFiles(selection(files("Forecast\\Final.roproj")));
+    expect(projectTransferToEntries(transfer).map(entry => entry.path)).toEqual(expected);
+    const canonical = await projectTransferFromFiles(selection(files("project.roproj")));
+    expect(new Uint8Array(transfer)).toEqual(new Uint8Array(canonical));
+  });
+
+  it("refuses a backslash in a relative path below the discarded root", async () => {
+    const selected = files("Forecast\\Final.roproj");
+    selected[3] = file("entities\\0.jsonl", "", "Forecast\\Final.roproj");
+    await expect(projectTransferFromFiles(selection(selected))).rejects.toThrow("one safe project directory");
+  });
+
+  it("refuses an empty root component", async () => {
+    await expect(projectTransferFromFiles(selection(files("")))).rejects.toThrow(
+      "Select the complete .roproj directory",
+    );
+  });
+});
 
 describe("Work directory ordering", () => {
   it("uses a generated copy of the Rust storage path authority", () => {

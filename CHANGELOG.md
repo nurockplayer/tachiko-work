@@ -6,6 +6,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Browser kit folder selection accepts `.roproj` root folder names containing
+  backslashes while still refusing backslashes in serialized relative paths.
+
 - Browser kit folder selection packages complete `.roproj` directories in
   storage-owned canonical order regardless of browser enumeration order.
   Unknown, duplicate, missing and unsafe paths are refused before packaging;
