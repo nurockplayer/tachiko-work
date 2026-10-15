@@ -152,7 +152,18 @@ jobs:
           evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
           mkdir -p "${evidence}/rectangle/native"
           TACHIKO_RECTANGULAR_EVIDENCE="${evidence}/rectangle/native" \
+            TACHIKO_V3_CI_EVIDENCE_ROOT="${RUNNER_TEMP}/date-definition-save-v3" \
             bash scripts/release-check.sh 2>&1 | tee "${evidence}/release-check.log"
+
+      - name: Preserve v3 native and Worker acceptance diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: date-definition-save-v3-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/date-definition-save-v3/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0
 
       - name: Preserve native acceptance log and immediate release failure diagnostics
         if: ${{ !cancelled() && steps.full-release.outcome != 'skipped' }}

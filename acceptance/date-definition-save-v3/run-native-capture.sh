@@ -32,7 +32,25 @@ candidate_head="$(git -C "${repo_root}" rev-parse --verify 'HEAD^{commit}')"
 }
 run_id="$(node --input-type=module -e 'process.stdout.write(crypto.randomUUID())')"
 short_head="${candidate_head:0:12}"
-capture_dir="$(mktemp -d "/tmp/tachiko-v3-capture-${short_head}.XXXXXX")"
+diagnostic_root="${TACHIKO_V3_ACCEPTANCE_DIAGNOSTIC_ROOT:-}"
+if [[ -n "${diagnostic_root}" ]]; then
+  [[ "${diagnostic_root}" == /* && ! -e "${diagnostic_root}" && ! -L "${diagnostic_root}" ]] || {
+    echo "NOTRUN_DIAGNOSTIC_ROOT: expected a fresh absolute directory outside the source checkout" >&2
+    exit 77
+  }
+  diagnostic_parent="$(cd -- "$(dirname -- "${diagnostic_root}")" && pwd -P)"
+  diagnostic_root="${diagnostic_parent}/$(basename -- "${diagnostic_root}")"
+  case "${diagnostic_root}/" in "${repo_root}/"*)
+    echo "NOTRUN_DIAGNOSTIC_ROOT: diagnostics must be outside the source checkout" >&2
+    exit 77 ;;
+  esac
+  mkdir -- "${diagnostic_root}"
+  capture_dir="$(mktemp -d "${diagnostic_root}/capture.XXXXXX")"
+  log_path="${diagnostic_root}/native.log"
+else
+  capture_dir="$(mktemp -d "/tmp/tachiko-v3-capture-${short_head}.XXXXXX")"
+  log_path="/tmp/tachiko-v3-native-${short_head}-${run_id}.log"
+fi
 target_dir="/tmp/tachiko-v3-cargo-target-${short_head}-${run_id}"
 [[ ! -e "${target_dir}" ]] || {
   echo "NOTRUN_CARGO_TARGET_EXISTS: refusing stale target directory ${target_dir}" >&2
@@ -57,7 +75,6 @@ writeFileSync(`${dir}/capture-lease.json`, JSON.stringify({
 }), { flag: "wx", mode: 0o600 });
 NODE
 
-log_path="/tmp/tachiko-v3-native-${short_head}-${run_id}.log"
 if ! cargo test --manifest-path "${runtime_manifest}" --locked \
   --test v3_project_acceptance -- --test-threads=1 >"${log_path}" 2>&1; then
   cat "${log_path}" >&2
