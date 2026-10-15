@@ -490,11 +490,12 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     for (const name of ["exportProjectV3", "openProject", "inspectProject", "exportProject", "newTable", "importSpreadsheet", "observeOccurrence", "closeProject", "trackerCommand", "editNumber", "editDate", "editText", "queryTable", "queryKeyedGroupedSum"]) {
       if (typeof client[name] !== "function") throw new Error(`NOTRUN_MISSING_METHOD: Worker capability '${name}' is absent`);
     }
-    const expectCode = async (operation: () => Promise<unknown>, code: string, revision: string): Promise<void> => {
+    const expectCode = async (operation: () => Promise<unknown>, code: string, revision: string, message?: string): Promise<void> => {
       try { await operation(); } catch (error) {
         if (!(error instanceof module.DesignerRuntimeError)) throw new Error(`Expected typed ${code}; got ${String(error)}`);
         if (error.failure.code !== code) throw new Error(`Expected typed ${code}; got ${error.failure.code}`);
         if (error.failure.current_revision !== revision) throw new Error(`Typed ${code} reported ${error.failure.current_revision}, expected ${revision}`);
+        if (message !== undefined && !error.message.includes(message)) throw new Error(`Typed ${code} omitted expected message: ${error.message}`);
         return;
       }
       throw new Error(`Expected typed ${code} refusal but operation succeeded`);
@@ -1056,18 +1057,27 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     };
     equal(newOpen, newExpected, "New did not produce the literal native table document");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${newUuid}/${newDocument}`, revision: "resident/0" }, "New scope/document identity changed");
-    const newSaved = await client.exportProject("resident/0");
+    const originMessage = "This occurrence was opened from .roproj/v3; use explicit v3 export.";
+    await expectCode(() => client.exportProject("resident/0"), "unsupported_project", "resident/0", originMessage);
+    const newSaved = await client.exportProjectV3("resident/0");
+    if (newSaved.revision !== "resident/0") throw new Error("New explicit v3 export changed the revision");
     const newEntries = decodeEntries(new Uint8Array(newSaved.bytes));
     const newManifest = JSON.parse(new TextDecoder().decode(newEntries.find(([path]) => path === "manifest.json")![1]));
-    if (newManifest.format_version !== 1 || newManifest.document.id !== newDocument || newManifest.document.title !== "reset") throw new Error("New encoded document identity/title/origin changed");
+    equal(newManifest, { format: "tachiko.roproj", format_version: 3, document: { id: newDocument, title: "reset" } }, "New encoded document identity/title/origin changed");
     const newSchemas = JSON.parse(new TextDecoder().decode(newEntries.find(([path]) => path === "schemas.json")![1]));
-    equal(newSchemas, [{ id: newSchema, key: "reset", fields: [{ id: newField, key: "value", field_type: { type: "text" }, required: true }] }], "New encoded schema/field flags changed");
+    equal(newSchemas, [{ id: newSchema, key: "reset", display_name: "reset", fields: [{ id: newField, key: "value", display_name: "value", field_type: { type: "text" }, required: true, constraint: { type: "none" } }] }], "New encoded schema/field flags changed");
+    equal(JSON.parse(new TextDecoder().decode(newEntries.find(([path]) => path === "definitions.json")![1])), [], "New retained the replaced definition catalogue");
     if (newEntries.some(([path]) => path.startsWith("entities/") && newEntries.find(([candidate]) => candidate === path)![1].length !== 0)) throw new Error("New created an unexpected entity");
     for (const type of ["undo", "redo"] as const) {
       const before = await residentState("reset");
       await expectCode(() => client.trackerCommand({ type, expected_revision: "resident/0" }), "invalid_tracker_operation", "resident/0");
       await unchanged(before, `New empty ${type}`, "reset");
     }
+    const newReopenUuid = "00000000-0000-4000-8000-000000000019";
+    const newReopened = await withUuid(newReopenUuid, () => client.openProject(newSaved.bytes.slice(0)));
+    equal(newReopened, newExpected, "New explicit v3 export did not reopen with its full projection");
+    equal(await residentState("reset"), { occurrence: { scope: `designer-occurrence/${newReopenUuid}/${newDocument}`, revision: "resident/0" }, ...newExpected }, "New v3 reopen changed identity/display names");
+    await expectCode(() => client.exportProject("resident/0"), "unsupported_project", "resident/0", originMessage);
 
     // Import uses the immutable CSV (whose first event_date is September 26) and a fresh marked replacement.
     await establishMarkedHistory("00000000-0000-4000-8000-000000000018");
@@ -1090,11 +1100,34 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     await expectCode(() => client.exportProject(closeSource.bootstrap.revision), "unsupported_project", closeSource.bootstrap.revision);
     await client.closeProject();
     await expectClosed();
-    const afterClose: any = await withUuid<any>("00000000-0000-4000-8000-000000000011", () => client.newTable("after_close", [{ name: "value", field_type: "text" }]));
-    const afterCloseSaved = await client.exportProject("resident/0");
+    const afterCloseUuid = "00000000-0000-4000-8000-000000000011";
+    const afterClose: any = await withUuid<any>(afterCloseUuid, () => client.newTable("after_close", [{ name: "value", field_type: "text" }]));
+    const afterCloseDocument = `native_table_document_0001_${afterCloseUuid}`;
+    const afterCloseSchema = `native_table_schema_0002_${afterCloseUuid}`;
+    const afterCloseField = `native_table_field_0003_${afterCloseUuid}`;
+    const afterCloseExpected = {
+      bootstrap: { title: "after_close", revision: "resident/0", default_collection: "after_close", collections: [{ id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", field_type: "text" }], rows: [] },
+    };
+    equal(afterClose, afterCloseExpected, "Close/New did not install the fresh native table");
+    equal(await client.observeOccurrence(), { scope: `designer-occurrence/${afterCloseUuid}/${afterCloseDocument}`, revision: "resident/0" }, "Close/New retained the previous occurrence identity");
+    await expectCode(() => client.exportProject("resident/0"), "unsupported_project", "resident/0", originMessage);
+    const afterCloseSaved = await client.exportProjectV3("resident/0");
     const afterCloseEntries = decodeEntries(new Uint8Array(afterCloseSaved.bytes));
     const afterCloseManifest = JSON.parse(new TextDecoder().decode(afterCloseEntries.find(([path]) => path === "manifest.json")![1]));
-    if (afterCloseSaved.revision !== "resident/0" || afterCloseManifest.format_version !== 1) throw new Error("Close/New did not reset ordinary v1 export at resident/0");
+    if (afterCloseSaved.revision !== "resident/0" || afterCloseManifest.format_version !== 3) throw new Error("Close/New did not explicitly export v3 at resident/0");
+    equal(afterCloseManifest, { format: "tachiko.roproj", format_version: 3, document: { id: afterCloseDocument, title: "after_close" } }, "Close/New encoded document identity/title/origin changed");
+    const afterCloseSchemas = JSON.parse(new TextDecoder().decode(afterCloseEntries.find(([path]) => path === "schemas.json")![1]));
+    equal(afterCloseSchemas, [{ id: afterCloseSchema, key: "after_close", display_name: "after_close", fields: [{ id: afterCloseField, key: "value", display_name: "value", field_type: { type: "text" }, required: true, constraint: { type: "none" } }] }], "Close/New encoded schema/field flags changed");
+    equal(JSON.parse(new TextDecoder().decode(afterCloseEntries.find(([path]) => path === "definitions.json")![1])), [], "Close/New retained the closed definition catalogue");
+    if (afterCloseEntries.some(([path, body]) => path.startsWith("entities/") && body.length !== 0)) throw new Error("Close/New created an unexpected entity");
+    await client.closeProject();
+    await expectClosed();
+    const afterCloseReopenUuid = "00000000-0000-4000-8000-000000000020";
+    const afterCloseReopened = await withUuid(afterCloseReopenUuid, () => client.openProject(afterCloseSaved.bytes.slice(0)));
+    equal(afterCloseReopened, afterCloseExpected, "Close/New explicit v3 export did not reopen with its full projection");
+    equal(await residentState("after_close"), { occurrence: { scope: `designer-occurrence/${afterCloseReopenUuid}/${afterCloseDocument}`, revision: "resident/0" }, ...afterCloseExpected }, "Close/New v3 reopen changed identity/display names");
+    await expectCode(() => client.exportProject("resident/0"), "unsupported_project", "resident/0", originMessage);
     await client.closeProject();
     await expectClosed();
     await client.close();
