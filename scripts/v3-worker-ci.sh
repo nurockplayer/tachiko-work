@@ -25,6 +25,37 @@ finish() {
   exit "${status}"
 }
 trap finish EXIT
+
+node --input-type=module - "${repo_root}" <<'NODE'
+import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
+const root = process.argv[2];
+const manifest = 'acceptance/date-definition-save-v3/SEED.SHA256SUMS';
+const entries = readFileSync(join(root, manifest), 'utf8').trimEnd().split('\n');
+let failed = false;
+for (const [index, line] of entries.entries()) {
+  const entry = /^([a-f0-9]{64}) [ *](.+)$/.exec(line);
+  if (!entry) {
+    console.error(`v3-worker-ci: invalid seed manifest entry: ${manifest}:${index + 1}`);
+    failed = true;
+    continue;
+  }
+  const [, expected, path] = entry;
+  try {
+    const actual = createHash('sha256').update(readFileSync(join(root, path))).digest('hex');
+    if (actual !== expected) {
+      console.error(`v3-worker-ci: seed checksum mismatch: ${path}`);
+      failed = true;
+    }
+  } catch (error) {
+    console.error(`v3-worker-ci: cannot verify seed path: ${path}: ${error.message}`);
+    failed = true;
+  }
+}
+if (failed) process.exit(1);
+NODE
+
 TACHIKO_V3_ACCEPTANCE_DIAGNOSTIC_ROOT="${evidence}/native" \
   bash "${repo_root}/acceptance/date-definition-save-v3/run-native-capture.sh" \
   2>&1 | tee "${evidence}/native-runner.log"

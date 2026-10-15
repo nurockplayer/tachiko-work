@@ -24,6 +24,17 @@ expect_status() {
 fixture="${scratch}/source"
 mkdir -p "${fixture}/scripts" "${fixture}/acceptance/date-definition-save-v3" "${fixture}/bin"
 cp "${repo_root}/scripts/v3-worker-ci.sh" "${fixture}/scripts/"
+node --input-type=module - "${fixture}" <<'NODE'
+import {createHash} from 'node:crypto';
+import {readFileSync, writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+const root = process.argv[2];
+const paths = ['seed.txt', 'other-seed.txt'];
+for (const path of paths) writeFileSync(join(root, path), 'seed\n');
+writeFileSync(join(root, 'acceptance/date-definition-save-v3/SEED.SHA256SUMS'), paths.map(path =>
+  `${createHash('sha256').update(readFileSync(join(root, path))).digest('hex')}  ${path}\n`
+).join(''));
+NODE
 cat >"${fixture}/acceptance/date-definition-save-v3/run-native-capture.sh" <<'NATIVE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -50,9 +61,16 @@ exit "${MOCK_WORKER_STATUS:-0}"
 WORKER
 export MOCK_EVENTS="${scratch}/events"
 orchestrator="${fixture}/scripts/v3-worker-ci.sh"
+# A clean manifest passes even when the caller is outside the fixture checkout.
 expect_status 0 "${BASH}" "${orchestrator}" "${scratch}/success"
 [[ "$(<"${MOCK_EVENTS}")" == $'native\nworker' ]] || fail 'native/Worker order changed'
 [[ -f "${scratch}/success/timing.txt" ]] || fail 'missing timing receipt'
+: >"${MOCK_EVENTS}"
+printf 'mutated\n' >"${fixture}/other-seed.txt"
+expect_status 1 "${BASH}" "${orchestrator}" "${scratch}/seed-mismatch"
+rg -q 'seed checksum mismatch: other-seed.txt' "${scratch}/last.log" || fail 'missing mismatched seed path'
+[[ ! -s "${MOCK_EVENTS}" && ! -e "${scratch}/seed-mismatch/native" ]] || fail 'native capture ran before seed verification'
+printf 'seed\n' >"${fixture}/other-seed.txt"
 for status in 1 77; do
   : >"${MOCK_EVENTS}"
   expect_status "${status}" env MOCK_NATIVE_STATUS="${status}" "${BASH}" "${orchestrator}" "${scratch}/native-${status}"
