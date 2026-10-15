@@ -25,12 +25,12 @@ owns the full vocabulary and ordering.
 
 This changes no lookup, reduction, capability, approval, validation, or storage
 meaning. Named and already admitted constrained v2 occurrences gain the existing
-definition command behavior with complete evidence after realization by the
-#531 implementation child; #452 constraint admission remains excluded.
+definition command behavior with complete evidence in [#533](https://github.com/nurockplayer/tachiko-work/issues/533);
+#452 constraint admission remains excluded.
 Historical v1 refusal text and fixtures below remain frozen v1 authority.
 Conflict v2 keeps its whole-request definition-change refusal; ADR-0044 adds
 no conflict facets, and its [lead decisions](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md#lead-decisions-on-the-intake-questions)
-select an atomic complete-definition facet for any future extension. This authority PR claims no implementation completion.
+select an atomic complete-definition facet for any future extension.
 
 ## Contract
 
@@ -177,7 +177,7 @@ and `services = 10`, with no other group.
 | Result-profile change | Retain a Complete or `result-too-large` outcome, then change only the trusted deterministic finite result profile | Retained output becomes non-current; re-evaluation uses the active profile and cannot bypass its bound. |
 | Delta v1 boundary | Create, update, or delete the definition, then request `tachiko.semantic-delta/v1` | Unsupported; it emits neither a partial delta that omits the definition nor a fabricated v1 fact. |
 | Merge/conflict v1 boundary | Base/left/right differ by definition create, delete, or in-place durable-meaning update, then request semantic merge/conflict v1 | Unsupported whole request; it does not omit, silently merge, or invent a partial definition conflict. |
-| Delta v2 target under ADR-0044 | Create, in-place update, or delete an admitted saved definition, then request v2 | One complete definition fact at subject rank 5 and create/delete/change rank 0/1/2; equal definitions emit nothing. Realization belongs to the #531 implementation child. |
+| Delta v2 target under ADR-0044 | Create, in-place update, or delete an admitted saved definition, then request v2 | One complete definition fact at subject rank 5 and create/delete/change rank 0/1/2; equal definitions emit nothing. Implemented in-process by #533. |
 | Merge/conflict v2 boundary | Base/left/right definition maps differ, then request v2 | Unsupported whole request by lead decision (future direction: one atomic definition facet); delta v2 support does not silently enable merge. |
 | Export disclosure | Export base values only and to a hypothetical live-preserving target | Values are evaluated/lossy and source-revision-bound; live claim is rejected unless every admitted semantic is encoded. |
 

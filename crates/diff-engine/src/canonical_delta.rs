@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use tachiko_formula_engine::{CalculationError, calculate};
 use tachiko_semantic_core::{
     Diagnostic, Document, DocumentId, EntityId, FieldConstraint, FieldDefinition, FieldId,
-    FieldKey, FieldType, KeyedGroupedSumDefinitionError, SchemaId, SchemaKey, Value,
-    validate_complete_formula_constraints, validate_document_core,
+    FieldKey, FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    SchemaId, SchemaKey, Value, validate_complete_formula_constraints, validate_document_core,
     validate_keyed_grouped_sum_definitions,
 };
 use thiserror::Error;
@@ -46,8 +47,6 @@ pub enum CanonicalDeltaError {
     BeforeCalculation(#[source] CalculationError),
     #[error("could not calculate the after document: {0}")]
     AfterCalculation(#[source] CalculationError),
-    #[error("canonical semantic delta does not support keyed grouped-sum definition changes")]
-    UnsupportedKeyedGroupedSumDefinitionChange,
 }
 
 /// Complete immutable payload for a schema definition, excluding its target ID.
@@ -74,6 +73,23 @@ pub struct EntityDefinitionPayload {
     pub key: tachiko_semantic_core::EntityKey,
     pub schema: SchemaId,
     pub fields: BTreeMap<FieldId, Value>,
+}
+
+/// Complete direct meaning of one saved definition, excluding its typed target ID.
+/// Presence is represented by the fact variant, never by an optional binding or result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeyedGroupedSumDefinitionPayload {
+    pub orders: KeyedGroupedSumOrdersBinding,
+    pub products: KeyedGroupedSumProductsBinding,
+}
+
+impl From<&KeyedGroupedSumDefinition> for KeyedGroupedSumDefinitionPayload {
+    fn from(definition: &KeyedGroupedSumDefinition) -> Self {
+        Self {
+            orders: definition.orders.clone(),
+            products: definition.products.clone(),
+        }
+    }
 }
 
 /// Closed v2 vocabulary of direct semantic facts.
@@ -179,12 +195,34 @@ pub enum CanonicalDirectFact {
         field: FieldId,
         before: Value,
     },
+    KeyedGroupedSumDefinitionCreated {
+        definition: KeyedGroupedSumDefinitionId,
+        after: KeyedGroupedSumDefinitionPayload,
+    },
+    KeyedGroupedSumDefinitionDeleted {
+        definition: KeyedGroupedSumDefinitionId,
+        before: KeyedGroupedSumDefinitionPayload,
+    },
+    KeyedGroupedSumDefinitionChanged {
+        definition: KeyedGroupedSumDefinitionId,
+        before: KeyedGroupedSumDefinitionPayload,
+        after: KeyedGroupedSumDefinitionPayload,
+    },
 }
 
 impl CanonicalDirectFact {
     fn ordering_key(&self) -> (u8, Vec<&str>, u8) {
         use CanonicalDirectFact as F;
         match self {
+            F::KeyedGroupedSumDefinitionCreated { definition, .. } => {
+                (5, vec![definition.as_str()], 0)
+            }
+            F::KeyedGroupedSumDefinitionDeleted { definition, .. } => {
+                (5, vec![definition.as_str()], 1)
+            }
+            F::KeyedGroupedSumDefinitionChanged { definition, .. } => {
+                (5, vec![definition.as_str()], 2)
+            }
             F::DocumentTitleChanged { document, .. } => (0, vec![document.as_str()], 0),
             F::SchemaCreated { schema, .. } => (1, vec![schema.as_str()], 0),
             F::SchemaDeleted { schema, .. } => (1, vec![schema.as_str()], 1),
@@ -265,7 +303,7 @@ impl CanonicalSemanticDelta {
 ///
 /// # Errors
 /// Returns an explicit refusal if the selector, document scope, either input,
-/// either complete calculation, or keyed grouped-sum change is unsupported.
+/// complete calculation, or saved-definition binding validation fails.
 pub fn canonical_delta(
     contract: &str,
     before: &Document,
@@ -295,9 +333,6 @@ pub fn canonical_delta(
             return Err(CanonicalDeltaError::InvalidInput { side, diagnostics });
         }
     }
-    if before.keyed_grouped_sum_definitions != after.keyed_grouped_sum_definitions {
-        return Err(CanonicalDeltaError::UnsupportedKeyedGroupedSumDefinitionChange);
-    }
     validate_keyed_grouped_sum_definitions(before).map_err(|source| {
         CanonicalDeltaError::InvalidKeyedGroupedSumDefinitions {
             side: DeltaInputSide::Before,
@@ -312,6 +347,7 @@ pub fn canonical_delta(
     })?;
     let mut facts = Vec::new();
     compare_direct_state(before, after, &mut facts);
+    compare_saved_definitions(before, after, &mut facts);
     facts.sort_by(|left, right| left.ordering_key().cmp(&right.ordering_key()));
     Ok(CanonicalSemanticDelta {
         document_id: before.id.clone(),
@@ -406,6 +442,42 @@ fn compare_direct_state(before: &Document, after: &Document, facts: &mut Vec<Can
             }),
             (Some(old), Some(new)) => compare_entity(entity_id, old, new, facts),
             (None, None) => unreachable!(),
+        }
+    }
+}
+
+fn compare_saved_definitions(
+    before: &Document,
+    after: &Document,
+    facts: &mut Vec<CanonicalDirectFact>,
+) {
+    use CanonicalDirectFact as F;
+    let ids = before
+        .keyed_grouped_sum_definitions
+        .keys()
+        .chain(after.keyed_grouped_sum_definitions.keys())
+        .collect::<std::collections::BTreeSet<_>>();
+    for id in ids {
+        match (
+            before.keyed_grouped_sum_definitions.get(id),
+            after.keyed_grouped_sum_definitions.get(id),
+        ) {
+            (None, Some(new)) => facts.push(F::KeyedGroupedSumDefinitionCreated {
+                definition: id.clone(),
+                after: new.into(),
+            }),
+            (Some(old), None) => facts.push(F::KeyedGroupedSumDefinitionDeleted {
+                definition: id.clone(),
+                before: old.into(),
+            }),
+            (Some(old), Some(new)) if old != new => {
+                facts.push(F::KeyedGroupedSumDefinitionChanged {
+                    definition: id.clone(),
+                    before: old.into(),
+                    after: new.into(),
+                });
+            }
+            _ => {}
         }
     }
 }

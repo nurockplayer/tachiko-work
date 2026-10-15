@@ -13,8 +13,8 @@ mod canonical_delta;
 
 pub use canonical_delta::{
     CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact, CanonicalSemanticDelta,
-    DeltaInputSide, EntityDefinitionPayload, FieldDefinitionPayload, SchemaDefinitionPayload,
-    canonical_delta,
+    DeltaInputSide, EntityDefinitionPayload, FieldDefinitionPayload,
+    KeyedGroupedSumDefinitionPayload, SchemaDefinitionPayload, canonical_delta,
 };
 
 #[derive(Clone, Debug, PartialEq)]

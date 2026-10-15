@@ -6567,6 +6567,143 @@ mod tests {
         runtime
     }
 
+    #[test]
+    #[allow(clippy::too_many_lines)] // One real runtime occurrence crosses both name transitions and history.
+    fn saved_definitions_survive_named_nameless_transitions_and_history() {
+        let mut runtime = native_column_runtime(
+            &[
+                ("lookup", "text"),
+                ("quantity", "number"),
+                ("product_key", "text"),
+                ("category", "text"),
+                ("price", "number"),
+            ],
+            &["P-100", "2", "P-100", "hardware", "3"],
+        );
+        let ids = native_column_ids(&runtime);
+        let input = keyed_definition(&runtime, &ids["quantity"]);
+        let expected = runtime.current_revision().to_owned();
+        runtime.create_keyed_grouped_sum(&expected, input).unwrap();
+        let definitions = runtime
+            .session
+            .export_snapshot()
+            .document()
+            .keyed_grouped_sum_definitions
+            .clone();
+        assert_eq!(
+            runtime
+                .query_keyed_grouped_sum(&"orders-summary".into())
+                .unwrap()
+                .groups[0]
+                .value,
+            6.0
+        );
+        // Add the only stored name to an unbound column, then remove that column.
+        // Both transitions retain the saved definition. Reopen the named state
+        // to exercise its retained v2 lifecycle through removal of the last name.
+        let initializers = text_initializers(&runtime, "unused");
+        let expected = runtime.current_revision().to_owned();
+        runtime
+            .add_column(&expected, "orders", "項目", "text", &initializers)
+            .unwrap();
+        runtime = DesignerRuntime::from_document(
+            runtime.session.export_snapshot().into_document(),
+            "00000000-0000-4000-8000-000000000000",
+        )
+        .unwrap();
+        assert!(runtime.lifecycle.uses_v2_evidence());
+        let named_field = runtime.collection_specs["orders"]
+            .columns
+            .iter()
+            .find(|column| column.display_name == "項目")
+            .unwrap()
+            .id
+            .to_string();
+        let expected = runtime.current_revision().to_owned();
+        runtime
+            .remove_column(&expected, "orders", &named_field)
+            .unwrap();
+        assert!(runtime.lifecycle.uses_v2_evidence());
+        assert!(
+            runtime
+                .session
+                .export_snapshot()
+                .document()
+                .schemas
+                .values()
+                .all(|schema| schema.display_name.is_none()
+                    && schema
+                        .fields
+                        .values()
+                        .all(|field| field.display_name.is_none()))
+        );
+        native_history(&mut runtime, false);
+        native_history(&mut runtime, true);
+        let entity = runtime.collection_specs["orders"].entities[0].to_string();
+        let expected = runtime.current_revision().to_owned();
+        runtime
+            .edit_scalar(
+                &expected,
+                &super::FieldTarget {
+                    entity,
+                    field: ids["quantity"].to_string(),
+                },
+                &ScalarEditInput::Number { input: "4".into() },
+            )
+            .unwrap();
+        assert_eq!(
+            runtime
+                .query_keyed_grouped_sum(&"orders-summary".into())
+                .unwrap()
+                .groups[0]
+                .value,
+            12.0
+        );
+        native_history(&mut runtime, false);
+        assert_eq!(
+            runtime
+                .query_keyed_grouped_sum(&"orders-summary".into())
+                .unwrap()
+                .groups[0]
+                .value,
+            6.0
+        );
+        native_history(&mut runtime, true);
+        assert_eq!(
+            runtime
+                .query_keyed_grouped_sum(&"orders-summary".into())
+                .unwrap()
+                .groups[0]
+                .value,
+            12.0
+        );
+        assert_eq!(
+            runtime
+                .session
+                .export_snapshot()
+                .document()
+                .keyed_grouped_sum_definitions,
+            definitions
+        );
+        let receipts = runtime.lifecycle.execution_receipts_v2();
+        assert_ne!(receipts, []);
+        assert!(
+            receipts
+                .iter()
+                .all(|receipt| receipt
+                    .delta()
+                    .unwrap()
+                    .facts()
+                    .iter()
+                    .all(|fact| !matches!(
+                        fact,
+                        tachiko_workspace_engine::CanonicalDirectFact::KeyedGroupedSumDefinitionChanged { .. }
+                            | tachiko_workspace_engine::CanonicalDirectFact::KeyedGroupedSumDefinitionCreated { .. }
+                            | tachiko_workspace_engine::CanonicalDirectFact::KeyedGroupedSumDefinitionDeleted { .. }
+                    )))
+        );
+    }
+
     fn native_column_ids(runtime: &DesignerRuntime) -> BTreeMap<String, FieldId> {
         runtime.collection_specs["orders"]
             .columns

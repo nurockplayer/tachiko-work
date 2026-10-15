@@ -1,11 +1,11 @@
 mod common;
 
 use common::game_balance_document;
-use tachiko_diff_engine::{CanonicalDeltaError, CanonicalDirectFact};
+use tachiko_diff_engine::CanonicalDirectFact;
 use tachiko_workspace_engine::{
     Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldRef, FieldType,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
-    KeyedGroupedSumProductsBinding, Number, Schema, Value, WorkspaceError,
+    KeyedGroupedSumProductsBinding, Number, Schema, Value,
     patch_lifecycle::{
         ApprovalId, ApprovalRequest, AuthorizationAction, AuthorizationDomainId,
         AuthorizationPolicyVersion, DisclosureRequirement, DocumentScopeId, Grant, GrantId,
@@ -839,7 +839,7 @@ fn frozen_v1_rejects_keyed_definition_edit_on_constrained_document() {
 }
 
 #[test]
-fn v2_keyed_definition_change_refuses_with_canonical_delta_error() {
+fn v2_keyed_definition_change_is_admitted() {
     let document = keyed_definition_document();
     let mut lifecycle = lifecycle(true);
     grant(
@@ -862,7 +862,7 @@ fn v2_keyed_definition_change_refuses_with_canonical_delta_error() {
             ),
         ],
     );
-    let error = propose_body(
+    let _proposal = propose_body(
         &mut lifecycle,
         &document,
         "remove-summary",
@@ -870,18 +870,7 @@ fn v2_keyed_definition_change_refuses_with_canonical_delta_error() {
             definition: "summary".into(),
         }),
     )
-    .unwrap_err();
-
-    let PatchLifecycleError::CommandRejected { source } = error else {
-        panic!("expected the typed canonical-delta refusal");
-    };
-    let WorkspaceError::CanonicalDelta(source) = *source else {
-        panic!("keyed-definition change must be refused by canonical delta");
-    };
-    assert!(matches!(
-        *source,
-        CanonicalDeltaError::UnsupportedKeyedGroupedSumDefinitionChange
-    ));
+    .unwrap();
     assert_eq!(lifecycle.execution_receipts_v2(), []);
 }
 

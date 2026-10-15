@@ -6,6 +6,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Accepted ADR-0044 defines complete saved grouped-sum definition facts in
+  semantic delta v2. The in-process engine now emits stable-ID create, change
+  and delete facts with complete role bindings, restoring definition commands
+  on named and already admitted constrained occurrences with full publication
+  evidence. Frozen v1 and definition-changing conflict v2 remain fail-closed;
+  browser constraint admission under #452 is unchanged.
+
 - Native tables and columns retain case and Unicode display names separately
   from stable IDs and keys. Column rename changes the label with undo/redo;
   projections expose the effective name and invalidate table/column labels even

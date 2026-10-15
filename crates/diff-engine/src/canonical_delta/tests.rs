@@ -217,7 +217,7 @@ fn same_field_text_transition_compares_schema_qualified_targets() {
 }
 
 #[test]
-fn keyed_grouped_sum_definition_change_refuses_the_whole_delta() {
+fn invalid_created_definition_refuses_the_whole_delta() {
     let before = Document::empty("doc", "title");
     let mut after = before.clone();
     after.keyed_grouped_sum_definitions.insert(
@@ -239,7 +239,10 @@ fn keyed_grouped_sum_definition_change_refuses_the_whole_delta() {
     );
     assert!(matches!(
         canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after),
-        Err(CanonicalDeltaError::UnsupportedKeyedGroupedSumDefinitionChange)
+        Err(CanonicalDeltaError::InvalidKeyedGroupedSumDefinitions {
+            side: DeltaInputSide::After,
+            ..
+        })
     ));
 }
 
@@ -305,4 +308,75 @@ fn equal_keyed_definition_invalidated_by_schema_edit_is_rejected_on_after_side()
             },
         }) if schema == SchemaId::from("orders") && field == FieldId::from("lookup")
     ));
+}
+
+#[test]
+fn saved_definition_ranks_append_without_moving_names_or_constraints() {
+    let payload = super::KeyedGroupedSumDefinitionPayload::from(&keyed_definition());
+    for (fact, rank) in [
+        (
+            Fact::KeyedGroupedSumDefinitionCreated {
+                definition: "summary".into(),
+                after: payload.clone(),
+            },
+            0,
+        ),
+        (
+            Fact::KeyedGroupedSumDefinitionDeleted {
+                definition: "summary".into(),
+                before: payload.clone(),
+            },
+            1,
+        ),
+        (
+            Fact::KeyedGroupedSumDefinitionChanged {
+                definition: "summary".into(),
+                before: payload.clone(),
+                after: payload,
+            },
+            2,
+        ),
+    ] {
+        assert_eq!(fact.ordering_key(), (5, vec!["summary"], rank));
+    }
+    assert_eq!(
+        Fact::SchemaDisplayNameChanged {
+            schema: "s".into(),
+            before: None,
+            after: Some("Name".into())
+        }
+        .ordering_key(),
+        (1, vec!["s"], 3)
+    );
+    assert_eq!(
+        Fact::SchemaFieldConstraintChanged {
+            schema: "s".into(),
+            field: "f".into(),
+            before: FieldConstraint::None,
+            after: FieldConstraint::None
+        }
+        .ordering_key(),
+        (2, vec!["s", "f"], 5)
+    );
+    assert_eq!(
+        Fact::SchemaFieldDisplayNameChanged {
+            schema: "s".into(),
+            field: "f".into(),
+            before: None,
+            after: Some("Name".into())
+        }
+        .ordering_key(),
+        (2, vec!["s", "f"], 6)
+    );
+    assert_eq!(
+        Fact::EntityFieldValueCreated {
+            entity: "e".into(),
+            schema: "s".into(),
+            field: "f".into(),
+            after: Value::Text("x".into())
+        }
+        .ordering_key()
+        .0,
+        4
+    );
 }
