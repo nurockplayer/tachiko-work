@@ -178,7 +178,7 @@ function encodeTransfer(transferred: readonly HostProjectFile[], total: number):
 
 function rootDirectory(file: File): string {
   const [root, ...relative] = file.webkitRelativePath.split("/");
-  if (root === undefined || !isSafeRelativePath(root) || relative.length === 0) {
+  if (root === undefined || root.length === 0 || relative.length === 0) {
     throw new Error("Select the complete .roproj directory, not individual files.");
   }
   return root;
