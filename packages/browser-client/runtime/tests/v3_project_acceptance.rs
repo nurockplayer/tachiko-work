@@ -863,8 +863,8 @@ fn roundtrip(date: bool, definition: bool) {
     );
     assert_legacy_origin(&mut runtime, &expected, expected_legacy);
 
-    // Successful selected export at U=[Date/Text], R=[quantity] must leave
-    // the legacy origin, revision, projection, and both history entries intact.
+    // Successful selected export at U=[Date/Text, definition?], R=[quantity]
+    // must leave the legacy origin, revision, projection, and history intact.
     let initial_save = selected_v3_export(&runtime, &format!("resident/{legacy_export_revision}"))
         .expect("selected v3 export accepts the mixed semantic fixture");
     assert_eq!(
@@ -907,6 +907,29 @@ fn roundtrip(date: bool, definition: bool) {
         &format!("resident/{}", legacy_export_revision + 2),
     );
     assert_legacy_origin(&mut runtime, &expected, expected_legacy);
+    let saved_definition = if definition {
+        let revision = runtime.observe_occurrence().revision;
+        runtime
+            .handle(DesignerRequest::Undo {
+                expected_revision: revision,
+            })
+            .expect("successful selected export preserves definition Undo");
+        let saved = expected
+            .keyed_grouped_sum_definitions
+            .remove(&DEFINITION.into())
+            .unwrap();
+        assert_live_fixture(
+            &mut runtime,
+            &expected,
+            ORIGINAL,
+            &format!("resident/{}", legacy_export_revision + 3),
+        );
+        Some(saved)
+    } else {
+        None
+    };
+    let definition_offset = usize::from(definition);
+    let without_definition_legacy = if date { Some(2) } else { Some(1) };
     let legacy_undo_a = runtime.observe_occurrence().revision;
     runtime
         .handle(DesignerRequest::Undo {
@@ -918,9 +941,12 @@ fn roundtrip(date: bool, definition: bool) {
         &mut runtime,
         &expected,
         ORIGINAL,
-        &format!("resident/{}", legacy_export_revision + 3),
+        &format!(
+            "resident/{}",
+            legacy_export_revision + 3 + definition_offset
+        ),
     );
-    assert_legacy_origin(&mut runtime, &expected, expected_legacy);
+    assert_legacy_origin(&mut runtime, &expected, without_definition_legacy);
     let legacy_redo_a = runtime.observe_occurrence().revision;
     runtime
         .handle(DesignerRequest::Redo {
@@ -932,8 +958,29 @@ fn roundtrip(date: bool, definition: bool) {
         &mut runtime,
         &expected,
         ORIGINAL,
-        &format!("resident/{}", legacy_export_revision + 4),
+        &format!(
+            "resident/{}",
+            legacy_export_revision + 4 + definition_offset
+        ),
     );
+    assert_legacy_origin(&mut runtime, &expected, without_definition_legacy);
+    if let Some(saved) = saved_definition {
+        let revision = runtime.observe_occurrence().revision;
+        runtime
+            .handle(DesignerRequest::Redo {
+                expected_revision: revision,
+            })
+            .expect("successful selected export preserves complete definition Redo");
+        expected
+            .keyed_grouped_sum_definitions
+            .insert(saved.id.clone(), saved);
+        assert_live_fixture(
+            &mut runtime,
+            &expected,
+            ORIGINAL,
+            &format!("resident/{}", legacy_export_revision + 6),
+        );
+    }
     assert_legacy_origin(&mut runtime, &expected, expected_legacy);
 
     let profile = match (date, definition) {
