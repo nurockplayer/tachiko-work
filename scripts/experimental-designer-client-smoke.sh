@@ -167,5 +167,9 @@ pnpm --dir "${repo_root}/packages/browser-client" exec playwright test \
 # identity captured before export; a manifest cannot vouch for itself.
 bash "${acceptance_runner}" "${vendor_dir}" "${source_commit}"
 
+if [[ -n "${TACHIKO_V3_CI_EVIDENCE_ROOT:-}" ]]; then
+  bash "${repo_root}/scripts/v3-worker-ci.sh" "${TACHIKO_V3_CI_EVIDENCE_ROOT}"
+fi
+
 smoke_completed=1
 echo "experimental Designer client smoke passed"

@@ -100,7 +100,7 @@ run_smoke() {
   local tmpdir="${SMOKE_TMPDIR:-$root/tmp}"
   local playwright_status="${SMOKE_PLAYWRIGHT_STATUS:-0}"
   set +e
-  RUN_OUTPUT="$(cd "$root" && FIXTURE_ROOT="$root" TMPDIR="$tmpdir" PATH="$root/bin" SMOKE_DIFF_STATUS="$diff_status" SMOKE_PLAYWRIGHT_STATUS="$playwright_status" /bin/bash "$root/scripts/experimental-designer-client-smoke.sh" 2>&1)"
+  RUN_OUTPUT="$(cd "$root" && TACHIKO_V3_CI_EVIDENCE_ROOT= FIXTURE_ROOT="$root" TMPDIR="$tmpdir" PATH="$root/bin" SMOKE_DIFF_STATUS="$diff_status" SMOKE_PLAYWRIGHT_STATUS="$playwright_status" /bin/bash "$root/scripts/experimental-designer-client-smoke.sh" 2>&1)"
   RUN_STATUS=$?
   set -e
 }

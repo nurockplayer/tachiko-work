@@ -67,6 +67,23 @@ export TACHIKO_V3_ACCEPTANCE_CAPTURE_DIR="${capture_dir}"
 export TACHIKO_V3_ACCEPTANCE_CANDIDATE_HEAD="${candidate_head}"
 export TACHIKO_V3_ACCEPTANCE_RUN_ID="${run_id}"
 export TACHIKO_V3_ACCEPTANCE_KIT_ID="${kit_id}"
+playwright_output="${TACHIKO_V3_ACCEPTANCE_PLAYWRIGHT_OUTPUT_DIR:-}"
+playwright_args=(--config playwright.v3-acceptance.config.ts --reporter=list)
+if [[ -n "${playwright_output}" ]]; then
+  [[ "${playwright_output}" == /* && ! -e "${playwright_output}" && ! -L "${playwright_output}" ]] || {
+    echo "NOTRUN_PLAYWRIGHT_OUTPUT: expected a fresh absolute output directory" >&2
+    exit 77
+  }
+  output_parent="$(cd -- "$(dirname -- "${playwright_output}")" && pwd -P)"
+  playwright_output="${output_parent}/$(basename -- "${playwright_output}")"
+  physical_capture="$(cd -- "${capture_dir}" && pwd -P)"
+  case "${playwright_output}/" in "${repo_root}/"*|"${physical_capture}/"*)
+    echo "NOTRUN_PLAYWRIGHT_OUTPUT: output must be outside the source checkout and capture inventory" >&2
+    exit 77 ;;
+  esac
+  mkdir -- "${playwright_output}"
+  playwright_args+=(--output "${playwright_output}")
+fi
 typecheck_log="/tmp/tachiko-v3-worker-typecheck-${candidate_head:0:12}-${run_id}.log"
 if ! pnpm --dir "${package_dir}" exec tsc --ignoreConfig --noEmit \
   --target ES2024 --module ESNext --moduleResolution Bundler \
@@ -80,7 +97,7 @@ if ! pnpm --dir "${package_dir}" exec tsc --ignoreConfig --noEmit \
   exit 77
 fi
 if ! pnpm --dir "${package_dir}" exec playwright test \
-  --config playwright.v3-acceptance.config.ts --reporter=list >"${log_path}" 2>&1; then
+  "${playwright_args[@]}" >"${log_path}" 2>&1; then
   cat "${log_path}" >&2
   if rg -q 'NOTRUN_MISSING_METHOD|error TS[0-9]+|Cannot find module|is not assignable to type|does not satisfy the constraint' "${log_path}"; then
     echo "NOTRUN_WORKER_METHOD_OR_BUILD_SEAM: Worker capability or test build is unavailable; no behavior result was recorded" >&2

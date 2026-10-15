@@ -83,7 +83,7 @@ exit \$scan_result
 EOF_RG
   chmod +x "$root/bin/rg"
   set +e
-  output="$(PATH="$root/bin" /bin/bash "$root/scripts/experimental-designer-client-smoke.sh" 2>&1)"
+  output="$(TACHIKO_V3_CI_EVIDENCE_ROOT= PATH="$root/bin" /bin/bash "$root/scripts/experimental-designer-client-smoke.sh" 2>&1)"
   scan_result=$?
   set -e
   rm -rf -- "$root"
