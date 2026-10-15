@@ -328,7 +328,7 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
           await assertLegacyGuard(client, state);
         }
 
-        // Establish U=[Date/Text], R=[quantity] before successful selected export.
+        // Establish U=[Date/Text, definition?], R=[quantity] before successful selected export.
         const base = profile.definition ? 2 : 1;
         const quantityEdit = await client.editNumber(state.revision, { entity: ids.rows[0], field: ids.fields[2] }, "6");
         equal(quantityEdit.resulting_revision, `resident/${base + 1}`, "quantity edit revision changed");
@@ -351,22 +351,34 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
         await assertCurrent(client, state);
         await assertLegacyGuard(client, state);
 
-        // The successful export above must retain A and B. Replay the real
-        // history before close, then install the captured q4 bytes fresh.
+        // The successful export above must retain A, definition?, and B. Replay
+        // the real history before close, then install the captured q4 bytes fresh.
         let op = await client.trackerCommand({ type: "redo", expected_revision: state.revision });
         state = { ...state, quantity: 6, revision: `resident/${base + 3}` };
         equal(op.resulting_revision, state.revision, "Redo B revision changed"); await assertCurrent(client, state); await assertLegacyGuard(client, state);
         op = await client.trackerCommand({ type: "undo", expected_revision: state.revision });
         state = { ...state, quantity: 4, revision: `resident/${base + 4}` };
         equal(op.resulting_revision, state.revision, "Undo B revision changed"); await assertCurrent(client, state); await assertLegacyGuard(client, state);
+        if (profile.definition) {
+          op = await client.trackerCommand({ type: "undo", expected_revision: state.revision });
+          state = { ...state, definition: false, catalogue: [], revision: `resident/${base + 5}` };
+          equal(op.resulting_revision, state.revision, "Undo definition revision changed"); await assertCurrent(client, state); await assertLegacyGuard(client, state);
+        }
+        const definitionOffset = Number(profile.definition);
         op = await client.trackerCommand({ type: "undo", expected_revision: state.revision });
-        state = { ...state, dateValue: "2026-09-26", revision: `resident/${base + 5}` };
+        state = { ...state, dateValue: "2026-09-26", revision: `resident/${base + 5 + definitionOffset}` };
         equal(op.resulting_revision, state.revision, "Undo A revision changed"); await assertCurrent(client, state); await assertLegacyGuard(client, state);
         op = await client.trackerCommand({ type: "redo", expected_revision: state.revision });
-        state = { ...state, dateValue: "2026-09-28", revision: `resident/${base + 6}` };
+        state = { ...state, dateValue: "2026-09-28", revision: `resident/${base + 6 + definitionOffset}` };
         equal(op.resulting_revision, state.revision, "Redo A revision changed"); await assertCurrent(client, state); await assertLegacyGuard(client, state);
+        if (profile.definition) {
+          op = await client.trackerCommand({ type: "redo", expected_revision: state.revision });
+          state = { ...state, definition: true, catalogue: [DEFINITION_ID], revision: `resident/${base + 8}` };
+          equal(op.resulting_revision, state.revision, "Redo definition revision changed"); await assertCurrent(client, state); await assertLegacyGuard(client, state);
+          await assertSummary(client, state.revision, 800);
+        }
         op = await client.trackerCommand({ type: "redo", expected_revision: state.revision });
-        state = { ...state, quantity: 6, revision: `resident/${base + 7}` };
+        state = { ...state, quantity: 6, revision: `resident/${base + 7 + 2 * definitionOffset}` };
         equal(op.resulting_revision, state.revision, "Redo B revision changed"); await assertCurrent(client, state); await assertLegacyGuard(client, state);
 
         await client.closeProject();
