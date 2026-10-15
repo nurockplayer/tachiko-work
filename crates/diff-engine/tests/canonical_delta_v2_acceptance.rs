@@ -724,3 +724,37 @@ fn independent_field_type_requiredness_key_and_constraint_changes_share_one_targ
         ]
     );
 }
+
+#[test]
+fn saved_definition_create_change_delete_are_supported_by_v2() {
+    let absent = document();
+    let mut present = absent.clone();
+    present
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), valid_keyed_definition());
+    let mut changed = present.clone();
+    changed
+        .keyed_grouped_sum_definitions
+        .get_mut(&"summary".into())
+        .unwrap()
+        .products
+        .category_field = "label".into();
+    // A different schema binding with the same field IDs is still a definition edit.
+    let mut second = changed.schemas["schema"].clone();
+    second.id = "second".into();
+    second.key = "second".into();
+    changed.schemas.insert("second".into(), second);
+    changed
+        .keyed_grouped_sum_definitions
+        .get_mut(&"summary".into())
+        .unwrap()
+        .products
+        .schema = "second".into();
+    for (before, after) in [
+        (&absent, &present),
+        (&present, &changed),
+        (&present, &absent),
+    ] {
+        assert_ne!(facts(before, after), []);
+    }
+}

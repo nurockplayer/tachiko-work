@@ -20,8 +20,8 @@ v1 and [ADR-0041](../decisions/ADR-0041-bounded-durable-field-constraints.md)
 for the constraint extension, as amended by
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
 for names and [ADR-0044](../decisions/ADR-0044-saved-definition-facts-in-semantic-delta-conflict-v2.md)
-for saved-definition facts. ADR-0044 realization is owned by the #531
-implementation child; existing engines still refuse definition-changing deltas.
+for saved-definition facts, realized in-process by [#533](https://github.com/nurockplayer/tachiko-work/issues/533).
+Frozen v1 continues to refuse definition-changing deltas.
 
 Decision issues: [#45](https://github.com/nurockplayer/tachiko-work/issues/45)
 for v1 and [#391](https://github.com/nurockplayer/tachiko-work/issues/391) for
@@ -286,8 +286,8 @@ existing admission, definition-ID/binding/role validation, and semantic/formula
 gates. Unsupported facts or required meaning fail the whole request, never
 return partial or empty evidence for a definition change.
 
-The #531 implementation child owns engine and publication realization.
-Named and already admitted constrained v2 occurrences then support the existing
+Issue #533 implements engine and publication realization in-process.
+Named and already admitted constrained v2 occurrences support the existing
 definition commands like nameless v1 occurrences, with complete direct evidence.
 The v1 definition-only empty receipt projection is not a v1 definition delta.
 Constraint admission (#452), general command/batch gates, mutation/approval,
@@ -352,11 +352,11 @@ distinction between stored change and formula impact. The separately selected
 `canonical_delta` in-process API implements the v2 logical facts; neither Rust
 surface is a public wire DTO or transport contract.
 
-Saved-definition facts under ADR-0044 are Accepted target authority, not
-implemented behavior. The #531 implementation child owns their realization;
-current v1/v2 definition-change refusals must not be described as delivered
-support. V1 remains frozen and its definition-only publication bypass remains
-distinct from canonical delta evidence.
+Saved-definition facts under ADR-0044 are implemented in-process by #533,
+including complete v2 publication evidence for the existing definition commands
+on named and already admitted constrained occurrences. V1 remains frozen and
+its definition-only publication bypass remains distinct from canonical delta
+evidence. Definition-changing conflict v2 still refuses the whole request.
 
 Tracking issue: concrete public DTO or transport mapping remains future queued
 work. Application opt-in is scoped to [#454](https://github.com/nurockplayer/tachiko-work/issues/454).

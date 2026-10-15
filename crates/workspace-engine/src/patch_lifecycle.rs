@@ -3433,15 +3433,16 @@ impl PatchLifecycle {
             })?;
 
         // Formula impact remains derived evidence. Run the frozen formula/diff
-        // projection over snapshots without v2-only facets; names and constraints do not change
-        // formula values, and both real snapshots have already passed complete
+        // projection over snapshots without names, constraints, or saved definitions.
+        // Formulas cannot read definitions; both real snapshots passed complete
         // validation above. Direct v2 evidence is always produced separately.
-        let formula_projection =
-            super::diff(&without_constraints(base), &without_constraints(&candidate)).map_err(
-                |source| PatchLifecycleError::CommandRejected {
-                    source: Box::new(source.into()),
-                },
-            )?;
+        let formula_projection = super::diff(
+            &formula_projection_document(base),
+            &formula_projection_document(&candidate),
+        )
+        .map_err(|source| PatchLifecycleError::CommandRejected {
+            source: Box::new(source.into()),
+        })?;
         let formula_changes = formula_projection.changes().to_vec();
         let formula_impacts = formula_impacts(&formula_changes);
         let disclosure_requirements =
@@ -4441,8 +4442,10 @@ fn constraint_affected_values(
         .collect()
 }
 
-fn without_constraints(document: &Document) -> Document {
+// Used only for derived formula impacts after complete v2 admission, never direct evidence.
+fn formula_projection_document(document: &Document) -> Document {
     let mut document = document.clone();
+    document.keyed_grouped_sum_definitions.clear();
     for schema in document.schemas.values_mut() {
         schema.display_name = None;
         for field in schema.fields.values_mut() {

@@ -511,11 +511,11 @@ fn ac4_ordinary_evidence_and_disclosure_are_unchanged() {
 }
 
 #[test]
-fn ac5_v2_still_refuses_definition_changes() {
+fn ac5_v2_admits_complete_definition_changes() {
     let d = fixture();
     for commands in [vec![upsert(&d, true)], vec![price(), upsert(&d, true)]] {
         let mut l = setup(true, false);
-        let session =
+        let mut session =
             ResidentWorkspaceSession::new(DocumentScopeId::from("document-occurrence"), d.clone());
         let snap = session.export_snapshot();
         let result = l.propose(
@@ -530,17 +530,48 @@ fn ac5_v2_still_refuses_definition_changes() {
             ),
             TrustedInstant::new(1),
         );
-        assert!(
-            format!("{result:?}").contains("UnsupportedKeyedGroupedSumDefinitionChange"),
-            "{result:?}"
-        );
+        assert!(result.is_ok(), "{result:?}");
         assert_eq!(session.export_snapshot(), snap);
+        let preview = l
+            .preview_v2(
+                snap.document_scope(),
+                snap.document(),
+                snap.revision(),
+                &"v2".into(),
+                &"editor".into(),
+                TrustedInstant::new(2),
+            )
+            .unwrap();
+        assert!(preview.delta.facts().iter().any(|fact| matches!(
+            fact,
+            tachiko_workspace_engine::CanonicalDirectFact::KeyedGroupedSumDefinitionChanged { .. }
+        )));
+        let receipt = l
+            .execute_v2(
+                &"v2".into(),
+                None,
+                &"editor".into(),
+                &mut session.publication_authority(&mut Clock),
+                TrustedInstant::new(3),
+            )
+            .unwrap();
+        assert_eq!(receipt.delta().unwrap(), &preview.delta);
+        assert_eq!(
+            receipt.delta().unwrap(),
+            &tachiko_workspace_engine::canonical_delta(
+                "tachiko.semantic-delta/v2",
+                snap.document(),
+                session.export_snapshot().document()
+            )
+            .unwrap()
+        );
     }
 }
 
-// ADR-0043: frozen v1 must refuse names before the definition-only shortcut,
-// including re-evaluation at preview and execution after nameless admission.
-fn named_definition_refusal(phase: &str, operation: &str) {
+// ADR-0044: the #530 named-state refusal scenarios now succeed under v2.
+// Frozen-v1 name admission is checked separately below.
+#[allow(clippy::too_many_lines)] // Exercise both evidence profiles at each lifecycle phase.
+fn named_definition_case(phase: &str, operation: &str, v2: bool) {
     for schema_name in [false, true] {
         let mut base = fixture();
         let command = match operation {
@@ -568,7 +599,7 @@ fn named_definition_refusal(phase: &str, operation: &str) {
                 .unwrap()
                 .display_name = Some("Price Name".into());
         }
-        let mut lifecycle = setup(false, false);
+        let mut lifecycle = setup(v2, false);
         let mut session =
             ResidentWorkspaceSession::new("document-occurrence".into(), named.clone());
         let snapshot = session.export_snapshot();
@@ -576,7 +607,11 @@ fn named_definition_refusal(phase: &str, operation: &str) {
         let editor = PrincipalId::from("editor");
         let admitted = lifecycle.propose(
             snapshot.document_scope(),
-            if phase == "proposal" { &named } else { &base },
+            if v2 || phase == "proposal" {
+                &named
+            } else {
+                &base
+            },
             snapshot.revision(),
             ProposalRequest::new(
                 proposal.clone(),
@@ -586,9 +621,22 @@ fn named_definition_refusal(phase: &str, operation: &str) {
             ),
             TrustedInstant::new(1),
         );
-        let result = match phase {
-            "proposal" => admitted.map(|_| ()),
-            "preview" => {
+        let result = match (phase, v2) {
+            ("proposal", _) => admitted.map(|_| ()),
+            ("preview", true) => {
+                admitted.unwrap();
+                lifecycle
+                    .preview_v2(
+                        snapshot.document_scope(),
+                        &named,
+                        snapshot.revision(),
+                        &proposal,
+                        &editor,
+                        TrustedInstant::new(2),
+                    )
+                    .map(|_| ())
+            }
+            ("preview", false) => {
                 admitted.unwrap();
                 lifecycle
                     .preview(
@@ -601,7 +649,19 @@ fn named_definition_refusal(phase: &str, operation: &str) {
                     )
                     .map(|_| ())
             }
-            "execution" => {
+            ("execution", true) => {
+                admitted.unwrap();
+                lifecycle
+                    .execute_v2(
+                        &proposal,
+                        None,
+                        &editor,
+                        &mut session.publication_authority(&mut Clock),
+                        TrustedInstant::new(3),
+                    )
+                    .map(|_| ())
+            }
+            ("execution", false) => {
                 admitted.unwrap();
                 lifecycle
                     .execute(
@@ -616,54 +676,370 @@ fn named_definition_refusal(phase: &str, operation: &str) {
             _ => unreachable!(),
         };
         assert!(
-            format!("{result:?}").contains("UnsupportedDisplayName"),
+            if v2 {
+                result.is_ok()
+            } else {
+                format!("{result:?}").contains("UnsupportedDisplayName")
+            },
             "{phase}/{operation}/schema={schema_name}: {result:?}"
         );
-        assert_eq!(session.export_snapshot(), snapshot);
+        if v2 && phase == "execution" {
+            assert_ne!(session.export_snapshot(), snapshot);
+        } else {
+            assert_eq!(session.export_snapshot(), snapshot);
+        }
     }
 }
 
 #[test]
-fn named_definition_create_proposal_refuses_v1() {
-    named_definition_refusal("proposal", "create");
+fn named_definition_create_proposal_succeeds_v2() {
+    named_definition_case("proposal", "create", true);
 }
 
 #[test]
-fn named_definition_change_proposal_refuses_v1() {
-    named_definition_refusal("proposal", "change");
+fn named_definition_change_proposal_succeeds_v2() {
+    named_definition_case("proposal", "change", true);
 }
 
 #[test]
-fn named_definition_delete_proposal_refuses_v1() {
-    named_definition_refusal("proposal", "delete");
+fn named_definition_delete_proposal_succeeds_v2() {
+    named_definition_case("proposal", "delete", true);
 }
 
 #[test]
-fn named_definition_create_preview_refuses_v1() {
-    named_definition_refusal("preview", "create");
+fn named_definition_create_preview_succeeds_v2() {
+    named_definition_case("preview", "create", true);
 }
 
 #[test]
-fn named_definition_change_preview_refuses_v1() {
-    named_definition_refusal("preview", "change");
+fn named_definition_change_preview_succeeds_v2() {
+    named_definition_case("preview", "change", true);
 }
 
 #[test]
-fn named_definition_delete_preview_refuses_v1() {
-    named_definition_refusal("preview", "delete");
+fn named_definition_delete_preview_succeeds_v2() {
+    named_definition_case("preview", "delete", true);
 }
 
 #[test]
-fn named_definition_create_execution_refuses_v1() {
-    named_definition_refusal("execution", "create");
+fn named_definition_create_execution_succeeds_v2() {
+    named_definition_case("execution", "create", true);
 }
 
 #[test]
-fn named_definition_change_execution_refuses_v1() {
-    named_definition_refusal("execution", "change");
+fn named_definition_change_execution_succeeds_v2() {
+    named_definition_case("execution", "change", true);
 }
 
 #[test]
-fn named_definition_delete_execution_refuses_v1() {
-    named_definition_refusal("execution", "delete");
+fn named_definition_delete_execution_succeeds_v2() {
+    named_definition_case("execution", "delete", true);
+}
+
+// #533 restores the supported commands with complete evidence; frozen-v1
+// name admission is still separately enforced before its empty shortcut.
+#[test]
+fn frozen_v1_named_definition_commands_still_refuse() {
+    for phase in ["proposal", "preview", "execution"] {
+        for operation in ["create", "change", "delete"] {
+            named_definition_case(phase, operation, false);
+        }
+    }
+}
+
+fn publish_v2(
+    lifecycle: &mut PatchLifecycle,
+    session: &mut ResidentWorkspaceSession,
+    id: &str,
+    command: SemanticCommand,
+    delegated: bool,
+) -> PatchPreviewV2 {
+    let snap = session.export_snapshot();
+    let id = ProposalId::from(id);
+    let actor = PrincipalId::from(if delegated { "agent" } else { "editor" });
+    lifecycle
+        .propose(
+            snap.document_scope(),
+            snap.document(),
+            snap.revision(),
+            ProposalRequest::new(
+                id.clone(),
+                snap.revision().clone(),
+                SemanticPatchBody::command(command),
+                actor.clone(),
+            ),
+            TrustedInstant::new(1),
+        )
+        .unwrap();
+    let preview = lifecycle
+        .preview_v2(
+            snap.document_scope(),
+            snap.document(),
+            snap.revision(),
+            &id,
+            &actor,
+            TrustedInstant::new(2),
+        )
+        .unwrap();
+    let approval = delegated.then(|| {
+        lifecycle
+            .preview_v2(
+                snap.document_scope(),
+                snap.document(),
+                snap.revision(),
+                &id,
+                &"editor".into(),
+                TrustedInstant::new(3),
+            )
+            .unwrap();
+        lifecycle
+            .approve(
+                snap.document_scope(),
+                snap.document(),
+                snap.revision(),
+                ApprovalRequest::new(
+                    ApprovalId::from(format!("approval-{id:?}")),
+                    id.clone(),
+                    "editor".into(),
+                    actor.clone(),
+                    TrustedInstant::new(100),
+                ),
+                TrustedInstant::new(4),
+            )
+            .unwrap()
+    });
+    let receipt = lifecycle
+        .execute_v2(
+            &id,
+            approval.as_ref().map(Approval::id),
+            &actor,
+            &mut session.publication_authority(&mut Clock),
+            TrustedInstant::new(5),
+        )
+        .unwrap();
+    assert!(receipt.verified);
+    assert_eq!(receipt.delta().unwrap(), &preview.delta);
+    assert_eq!(
+        receipt.delta().unwrap(),
+        &tachiko_workspace_engine::canonical_delta(
+            "tachiko.semantic-delta/v2",
+            snap.document(),
+            session.export_snapshot().document()
+        )
+        .unwrap()
+    );
+    preview
+}
+
+#[test]
+fn named_nameless_and_admitted_constrained_definition_lifecycles_match() {
+    use tachiko_workspace_engine::CanonicalDirectFact as F;
+    for kind in ["nameless", "named", "constrained"] {
+        for delegated in [false, true] {
+            let mut d = fixture();
+            if kind == "named" {
+                d.schemas.get_mut("products").unwrap().display_name = Some("My Expenses".into());
+            }
+            if kind == "constrained" {
+                d.schemas
+                    .get_mut("orders")
+                    .unwrap()
+                    .fields
+                    .get_mut("quantity")
+                    .unwrap()
+                    .constraint = FieldConstraint::NumberInclusiveRange {
+                    min: Number::new(0.0).unwrap(),
+                    max: Number::new(10.0).unwrap(),
+                };
+            }
+            let create = upsert(&d, false);
+            let change = upsert(&d, true);
+            d.keyed_grouped_sum_definitions.clear();
+            let mut session = ResidentWorkspaceSession::new("document-occurrence".into(), d);
+            let mut lifecycle = setup(true, false);
+            let created = publish_v2(&mut lifecycle, &mut session, "create", create, delegated);
+            assert!(matches!(
+                created.delta.facts(),
+                [F::KeyedGroupedSumDefinitionCreated { .. }]
+            ));
+            let changed = publish_v2(&mut lifecycle, &mut session, "change", change, delegated);
+            assert!(matches!(
+                changed.delta.facts(),
+                [F::KeyedGroupedSumDefinitionChanged { .. }]
+            ));
+            let edited = publish_v2(&mut lifecycle, &mut session, "edit", price(), delegated);
+            assert!(matches!(
+                edited.delta.facts(),
+                [F::EntityFieldValueChanged { .. }]
+            ));
+            assert_eq!(edited.formula_impacts.len(), 1); // derived = price + 1 stays visible.
+            let removed = publish_v2(
+                &mut lifecycle,
+                &mut session,
+                "remove",
+                SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                    definition: "summary".into(),
+                },
+                delegated,
+            );
+            assert!(matches!(
+                removed.delta.facts(),
+                [F::KeyedGroupedSumDefinitionDeleted { .. }]
+            ));
+            assert!(
+                session
+                    .export_snapshot()
+                    .document()
+                    .keyed_grouped_sum_definitions
+                    .is_empty()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One occurrence proves refusals preserve state and Approval boundaries.
+fn v2_definition_invalid_unauthorized_approval_and_stale_refusals_remain_atomic() {
+    let mut d = fixture();
+    d.schemas.get_mut("products").unwrap().display_name = Some("Products".into());
+    let mut session = ResidentWorkspaceSession::new("document-occurrence".into(), d.clone());
+    let mut lifecycle = setup(true, false);
+    lifecycle
+        .register_principal("stranger".into(), PrincipalKind::Human)
+        .unwrap();
+    let snap = session.export_snapshot();
+    for (label, actor, command) in [
+        ("unauthorized", "stranger", upsert(&d, true)),
+        ("invalid", "editor", {
+            let mut definition = d.keyed_grouped_sum_definitions[&"summary".into()].clone();
+            definition.products.price_field = "category".into();
+            SemanticCommand::UpsertKeyedGroupedSumDefinition { definition }
+        }),
+    ] {
+        let result = lifecycle.propose(
+            snap.document_scope(),
+            snap.document(),
+            snap.revision(),
+            ProposalRequest::new(
+                label.into(),
+                snap.revision().clone(),
+                SemanticPatchBody::command(command),
+                actor.into(),
+            ),
+            TrustedInstant::new(1),
+        );
+        assert!(result.is_err(), "{label}");
+        assert_eq!(session.export_snapshot(), snap);
+        assert_eq!(lifecycle.execution_receipts_v2(), []);
+    }
+    let id = ProposalId::from("delegated");
+    lifecycle
+        .propose(
+            snap.document_scope(),
+            snap.document(),
+            snap.revision(),
+            ProposalRequest::new(
+                id.clone(),
+                snap.revision().clone(),
+                SemanticPatchBody::command(upsert(&d, true)),
+                "agent".into(),
+            ),
+            TrustedInstant::new(1),
+        )
+        .unwrap();
+    lifecycle
+        .preview_v2(
+            snap.document_scope(),
+            snap.document(),
+            snap.revision(),
+            &id,
+            &"agent".into(),
+            TrustedInstant::new(2),
+        )
+        .unwrap();
+    let result = lifecycle.execute_v2(
+        &id,
+        None,
+        &"agent".into(),
+        &mut session.publication_authority(&mut Clock),
+        TrustedInstant::new(3),
+    );
+    assert!(
+        matches!(result, Err(PatchLifecycleError::AuthorizationDenied)),
+        "{result:?}"
+    );
+    assert_eq!(session.export_snapshot(), snap);
+    lifecycle
+        .preview_v2(
+            snap.document_scope(),
+            snap.document(),
+            snap.revision(),
+            &id,
+            &"editor".into(),
+            TrustedInstant::new(3),
+        )
+        .unwrap();
+    let approval = lifecycle
+        .approve(
+            snap.document_scope(),
+            snap.document(),
+            snap.revision(),
+            ApprovalRequest::new(
+                "stale-approval".into(),
+                id.clone(),
+                "editor".into(),
+                "agent".into(),
+                TrustedInstant::new(100),
+            ),
+            TrustedInstant::new(4),
+        )
+        .unwrap();
+    publish_v2(&mut lifecycle, &mut session, "intervening", price(), false);
+    let current = session.export_snapshot();
+    let result = lifecycle.execute_v2(
+        &id,
+        Some(approval.id()),
+        &"agent".into(),
+        &mut session.publication_authority(&mut Clock),
+        TrustedInstant::new(5),
+    );
+    assert!(matches!(result, Err(PatchLifecycleError::Stale)));
+    assert_eq!(session.export_snapshot(), current);
+    assert_eq!(lifecycle.execution_receipts_v2().len(), 1); // only the intervening edit
+}
+
+#[test]
+fn v2_complete_definition_evidence_does_not_waive_per_command_batch_admission() {
+    let d = fixture();
+    let initialize = SemanticCommand::SetFieldValue {
+        field: FieldRef::new("product", "optional"),
+        value: Value::Number(Number::new(0.0).unwrap()),
+    };
+    let formula = SemanticCommand::SetFieldValue {
+        field: FieldRef::new("product", "optional"),
+        value: Value::Formula(Expression::Reference(FieldRef::new("product", "price"))),
+    };
+    for commands in [
+        vec![initialize.clone(), formula.clone()],
+        vec![initialize, formula, upsert(&d, true)],
+    ] {
+        let mut lifecycle = setup(true, false);
+        let session = ResidentWorkspaceSession::new("document-occurrence".into(), d.clone());
+        let snap = session.export_snapshot();
+        let result = lifecycle.propose(
+            snap.document_scope(),
+            snap.document(),
+            snap.revision(),
+            ProposalRequest::new(
+                "invalid-batch".into(),
+                snap.revision().clone(),
+                SemanticPatchBody::atomic_batch(commands).unwrap(),
+                "editor".into(),
+            ),
+            TrustedInstant::new(1),
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(session.export_snapshot(), snap);
+        assert_eq!(lifecycle.execution_receipts_v2(), []);
+    }
 }

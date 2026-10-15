@@ -240,3 +240,76 @@ test("spreadsheet export discloses saved definitions through the actual Worker",
     expect(exported.ledger).toEqual([...expected, formatFinding]);
   }
 });
+
+test("#533 named cross-table summary survives edit, history and fresh Worker save/reopen", async ({ page }) => {
+  const workers: string[] = [];
+  page.on("worker", worker => workers.push(worker.url()));
+  await page.goto("/");
+  const evidence = await page.evaluate(async () => {
+    const kit = await import("/vendor/tachiko/experimental-client.js" as string) as typeof import("../src/experimental-client.ts");
+    const client = kit.createExperimentalDesignerClient();
+    if (!client.newTable || !client.duplicateCollection || !client.createKeyedGroupedSum || !client.queryKeyedGroupedSum || !client.trackerCommand) throw new Error("Required native table/summary/history capability missing");
+    const opened = await client.newTable("My Expenses", [
+      {name: "Item Name", field_type: "text"}, {name: "項目", field_type: "text"}, {name: "Amount", field_type: "number"},
+    ]);
+    const ordersKey = opened.table.collection.key;
+    const columns = opened.table.columns;
+    await client.trackerCommand({type: "paste_cells", expected_revision: "resident/0", collection: ordersKey, start_entity: null, start_field: columns[0]!.id, rows: [["P-100", "hardware", "2"]]});
+    const duplicated = await client.duplicateCollection((await client.observeOccurrence()).revision, ordersKey, "Products");
+    const products = await client.queryTable(duplicated.collection.key);
+    const productsTarget = products.rows[0]!.fields.find(field => field.target.field === products.columns[2]!.id)!.target;
+    await client.editNumber(products.revision, productsTarget, "3");
+    const definition = {
+      id: "expenses-summary", orders_schema: opened.table.collection.id, products_schema: products.collection.id,
+      order_lookup_key_field: columns[0]!.id, order_quantity_field: columns[2]!.id,
+      product_key_field: products.columns[0]!.id, product_category_field: products.columns[1]!.id, product_price_field: products.columns[2]!.id,
+    };
+    const created = await client.createKeyedGroupedSum((await client.observeOccurrence()).revision, definition);
+    await client.trackerCommand({type: "undo", expected_revision: created.publication.resulting_revision});
+    const afterCreationUndoIds = (await client.bootstrap()).keyed_grouped_sum_definition_ids;
+    const productsAfterCreationUndo = await client.queryTable(products.collection.key);
+    const priceAfterCreationUndo = productsAfterCreationUndo.rows[0]!.fields.find(field => field.target.field === products.columns[2]!.id)!.stored;
+    await client.trackerCommand({type: "redo", expected_revision: productsAfterCreationUndo.revision});
+    const afterCreationRedo = await client.queryKeyedGroupedSum(definition.id);
+    const orders = await client.queryTable(ordersKey);
+    const quantity = orders.rows[0]!.fields.find(field => field.target.field === columns[2]!.id)!.target;
+    const edited = await client.editNumber(orders.revision, quantity, "4");
+    const afterEdit = await client.queryKeyedGroupedSum(definition.id);
+    await client.trackerCommand({type: "undo", expected_revision: edited.resulting_revision});
+    const afterUndo = await client.queryKeyedGroupedSum(definition.id);
+    await client.trackerCommand({type: "redo", expected_revision: afterUndo.revision});
+    const afterRedo = await client.queryKeyedGroupedSum(definition.id);
+    const saved = await client.exportProjectV3(afterRedo.revision);
+    const savedBytes = Array.from(new Uint8Array(saved.bytes));
+    const tree = await client.exportCanonicalTree(afterRedo.revision);
+    const treeBytes = tree.files.map(file => ({path: file.path, bytes: Array.from(new Uint8Array(file.bytes))}));
+    await client.close();
+    const fresh = kit.createExperimentalDesignerClient();
+    try {
+      const reopened = await fresh.openProject(saved.bytes);
+      if (!fresh.queryKeyedGroupedSum) throw new Error("Fresh summary capability missing");
+      const summary = await fresh.queryKeyedGroupedSum(definition.id);
+      const repacked = await fresh.exportProjectV3("resident/0");
+      const reopenedTree = await fresh.exportCanonicalTree("resident/0");
+      const canonicalBytesEqual = JSON.stringify(reopenedTree.files.map(file => ({path: file.path, bytes: Array.from(new Uint8Array(file.bytes))}))) === JSON.stringify(treeBytes);
+      const opaqueBytesEqual = JSON.stringify(savedBytes) === JSON.stringify(Array.from(new Uint8Array(repacked.bytes)));
+      return {
+        tableName: opened.table.collection.display_name, columns: columns.map(column => column.display_name),
+        crossTable: definition.orders_schema !== definition.products_schema,
+        created: created.result.groups, afterCreationUndoIds, priceAfterCreationUndo, afterCreationRedo: afterCreationRedo.groups,
+        afterEdit: afterEdit.groups, afterUndo: afterUndo.groups, afterRedo: afterRedo.groups,
+        reopenedRevision: reopened.table.revision, summary, ids: (await fresh.bootstrap()).keyed_grouped_sum_definition_ids, canonicalBytesEqual, opaqueBytesEqual,
+      };
+    } finally {await fresh.close();}
+  });
+  expect(workers).toHaveLength(2);
+  expect(workers.every(url => url.includes("/vendor/tachiko/experimental-client.worker.js"))).toBe(true);
+  expect(evidence).toEqual({
+    tableName: "My Expenses", columns: ["Item Name", "項目", "Amount"], crossTable: true,
+    created: [{category: "hardware", value: 6}],
+    afterCreationUndoIds: [], priceAfterCreationUndo: {kind: "number", value: 3}, afterCreationRedo: [{category: "hardware", value: 6}],
+    afterEdit: [{category: "hardware", value: 12}], afterUndo: [{category: "hardware", value: 6}], afterRedo: [{category: "hardware", value: 12}],
+    reopenedRevision: "resident/0", summary: {definition_id: "expenses-summary", revision: "resident/0", groups: [{category: "hardware", value: 12}], diagnostics: []},
+    ids: ["expenses-summary"], canonicalBytesEqual: true, opaqueBytesEqual: true,
+  });
+});
