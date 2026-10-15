@@ -49,6 +49,13 @@ for helper in \
 done
 chmod +x "${fixture}/scripts/repository-source.sh" "${fixture}/scripts/package-experimental-designer-client.sh"
 
+# The packager runs the host path-table parity check from the snapshot. Its
+# Rust path authority is outside this hermetic fixture, so stub it like the
+# build tools below; the real check runs in the real exporter and CI.
+cat >"${fixture}/packages/browser-client/scripts/generate-project-paths.mjs" <<'EOF_PATHS'
+if (process.argv.slice(2).join(" ") !== "--check") process.exit(64);
+EOF_PATHS
+
 # The real exporter must invoke this only from its pinned private snapshot. If
 # it instead compiles the live checkout, the test's same-path edits would leak
 # into experimental-client.js and fail the committed-byte assertion below.
