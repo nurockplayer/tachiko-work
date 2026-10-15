@@ -12,7 +12,9 @@ function entry(path: string, bytes = new Uint8Array(0)) {
 }
 
 function entries() {
-  return Array.from({ length: 18 }, (_, index) => entry(`project.roproj/f${String(index).padStart(2, "0")}`));
+  const selected = canonicalEntries();
+  selected[0] = entry("project.roproj/manifest.json", new TextEncoder().encode('{"format_version":1}'));
+  return selected;
 }
 
 function canonicalEntries() {
@@ -29,6 +31,10 @@ function fileList(selected: ReturnType<typeof entry>[]): FileList {
     item: (index: number) => selected[index] ?? null,
     [Symbol.iterator]: () => selected[Symbol.iterator](),
   } as unknown as FileList;
+}
+
+async function opaqueEntries(selected: ReturnType<typeof entry>[]) {
+  return Promise.all(selected.map(async file => ({path: file.webkitRelativePath.slice("project.roproj/".length), bytes: await file.arrayBuffer()})));
 }
 
 describe("Designer directory transfer boundaries", () => {
@@ -72,29 +78,23 @@ describe("Designer directory transfer boundaries", () => {
   });
 
   it("accepts a 65,535-byte UTF-8 path and encodes its byte length without truncation", async () => {
-    const selected = entries();
     const path = "測".repeat(21_845);
-    selected[0] = entry(`project.roproj/${path}`);
-    const output = await projectTransferFromFiles(fileList(selected));
+    const output = projectTransferFromEntries([{ path, bytes: new ArrayBuffer(0) }]);
     expect(new DataView(output).getUint16(12, true)).toBe(65_535);
     expect(new Uint8Array(output, 18, 65_535)).toEqual(new TextEncoder().encode(path));
   });
 
   it("rejects a 65,536-byte UTF-8 path even though its character count fits", async () => {
-    const selected = entries();
-    selected[0] = entry(`project.roproj/${"測".repeat(21_845)}a`);
-    await expect(projectTransferFromFiles(fileList(selected))).rejects.toThrow("path exceeds the private host transfer profile");
-    for (const file of selected) expect(file.arrayBuffer).not.toHaveBeenCalled();
+    expect(() => projectTransferFromEntries([{ path: `${"測".repeat(21_845)}a`, bytes: new ArrayBuffer(0) }])).toThrow("path exceeds the private host transfer profile");
   });
 
   it("accepts exactly 64 MiB including the complete framing overhead", async () => {
-    // Magic/count = 12 bytes; 18 entries each have a 6-byte header + 3-byte path.
-    const overhead = 174;
+    const selected = entries();
+    const overhead = 12 + selected.reduce((sum, file) => sum + 6 + file.webkitRelativePath.slice("project.roproj/".length).length + file.size, 0);
     const payload = new Uint8Array(64 * 1024 * 1024 - overhead);
     payload[0] = 17;
     payload[payload.length - 1] = 29;
-    const selected = entries();
-    selected[17] = entry("project.roproj/f17", payload);
+    selected[17] = entry("project.roproj/entities/f.jsonl", payload);
     const output = new Uint8Array(await projectTransferFromFiles(fileList(selected)));
     expect(output.byteLength).toBe(64 * 1024 * 1024);
     expect(output[overhead]).toBe(17);
@@ -103,9 +103,10 @@ describe("Designer directory transfer boundaries", () => {
 
   it("rejects one byte over the total budget before reading the oversized entry", async () => {
     const selected = entries();
-    const oversized = entry("project.roproj/f17");
+    const oversized = entry("project.roproj/entities/f.jsonl");
     // Metadata-only rejection fixture: it must never allocate/read this payload.
-    oversized.size = 64 * 1024 * 1024 - 174 + 1;
+    const overhead = 12 + selected.reduce((sum, file) => sum + 6 + file.webkitRelativePath.slice("project.roproj/".length).length + file.size, 0);
+    oversized.size = 64 * 1024 * 1024 - overhead + 1;
     oversized.arrayBuffer.mockRejectedValue(new Error("Oversized payload must not be read"));
     selected[17] = oversized;
     await expect(projectTransferFromFiles(fileList(selected))).rejects.toThrow("64 MiB host transfer boundary");
@@ -114,7 +115,7 @@ describe("Designer directory transfer boundaries", () => {
 
   it("propagates a file read failure without reading the remaining entries", async () => {
     const selected = entries();
-    const unreadable = entry("project.roproj/f01");
+    const unreadable = entry("project.roproj/schemas.json");
     const failure = new Error("File read failed");
     unreadable.arrayBuffer.mockRejectedValue(failure);
     selected[1] = unreadable;
@@ -123,7 +124,7 @@ describe("Designer directory transfer boundaries", () => {
   });
 
   it("packs exact little-endian framing, UTF-8 paths and binary contents deterministically", async () => {
-    const selected = entries();
+    const selected = Array.from({ length: 18 }, (_, index) => entry(`project.roproj/f${String(index).padStart(2, "0")}`));
     selected[0] = entry("project.roproj/f00", new Uint8Array([0, 255]));
     selected[17] = entry("project.roproj/あ", new Uint8Array([1, 2, 3]));
     // Fixed private transport vector, not a .roproj parser or semantic oracle.
@@ -138,8 +139,8 @@ describe("Designer directory transfer boundaries", () => {
       "030000000000663136", "030003000000e38182010203",
     ].join("");
     const expected = Uint8Array.from(hex.match(/../g) ?? [], pair => Number.parseInt(pair, 16));
-    expect(new Uint8Array(await projectTransferFromFiles(fileList(selected)))).toEqual(expected);
-    expect(new Uint8Array(await projectTransferFromFiles(fileList(selected)))).toEqual(expected);
+    expect(new Uint8Array(projectTransferFromEntries(await opaqueEntries(selected)))).toEqual(expected);
+    expect(new Uint8Array(projectTransferFromEntries(await opaqueEntries(selected)))).toEqual(expected);
   });
 
   it("packs canonical nested .roproj paths and payload bytes deterministically", async () => {
@@ -167,7 +168,7 @@ describe("Designer directory transfer boundaries", () => {
       "100000000000656e7469746965732f652e6a736f6e6c",
       "100002000000656e7469746965732f662e6a736f6e6cfafb",
     ].join("");
-    const output = new Uint8Array(await projectTransferFromFiles(fileList(selected)));
+    const output = new Uint8Array(projectTransferFromEntries(await opaqueEntries(selected)));
     const actualHex = Array.from(output, byte => byte.toString(16).padStart(2, "0")).join("");
     expect(actualHex).toBe(expectedHex);
 

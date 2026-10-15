@@ -115,6 +115,7 @@ kit_dir="${stage_parent}/kit"
 mkdir "${kit_dir}"
 
 (cd "${producer_dir}" && "${clean_env[@]}" pnpm install --frozen-lockfile --engine-strict)
+"${clean_env[@]}" node "${producer_dir}/scripts/generate-project-paths.mjs" --check
 env "${clean_env[@]:1}" bash "${producer_dir}/scripts/build-runtime.sh" "${kit_dir}"
 (cd "${producer_dir}" && "${clean_env[@]}" pnpm exec tsc \
   --project tsconfig.build.json \

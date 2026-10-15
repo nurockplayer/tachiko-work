@@ -7,6 +7,78 @@ const PRODUCT_GAPS_PROJECT = fileURLToPath(
   new URL("../../../dogfood/product-gaps.roproj", import.meta.url),
 );
 
+for (const [version, directory] of [
+  [1, "dogfood/product-gaps.roproj"],
+  [3, "acceptance/native-display-names/tree"],
+] as const) {
+  test(`#536 exported kit opens a real v${version} directory through shuffled input FileLists`, async ({ page }) => {
+    const rust = await readFile(fileURLToPath(new URL(`../../../crates/storage/src/roproj/v${version}.rs`, import.meta.url)), "utf8");
+    const declaration = rust.match(/pub const ROPROJ_V\d_PATHS: \[&str; \d+\] = \[([\s\S]*?)\];/);
+    if (!declaration) throw new Error("Missing Rust path authority");
+    const paths = Array.from(declaration[1]!.matchAll(/"([^"]+)"/g), match => match[1]!);
+    await page.goto("/");
+    await page.evaluate(() => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.webkitdirectory = true;
+      input.id = "folder-order-regression";
+      document.body.append(input);
+    });
+    await page.locator("#folder-order-regression").setInputFiles(fileURLToPath(new URL(`../../../${directory}`, import.meta.url)));
+    const results = await page.evaluate(async paths => {
+      const entry = "/vendor/tachiko/experimental-client.js";
+      const hostEntry = "/vendor/tachiko/host/project-transfer.js";
+      const kit = await import(entry) as typeof import("../src/experimental-client.ts");
+      const host = await import(hostEntry) as typeof import("../src/host/project-transfer.ts");
+      const input = document.querySelector<HTMLInputElement>("#folder-order-regression")!;
+      const relative = (file: File) => file.webkitRelativePath.split("/").slice(1).join("/");
+      const selected = Array.from(input.files!);
+      const canonical = paths.map(path => {
+        const file = selected.find(file => relative(file) === path);
+        if (!file) throw new Error(`Real directory is missing ${path}`);
+        return file;
+      });
+      const permutations = [selected, canonical, [...canonical].reverse(), [...canonical.slice(7), ...canonical.slice(0, 7)]];
+      for (let seed of [1, 42, 536]) {
+        const shuffled = [...canonical];
+        for (let index = shuffled.length - 1; index > 0; index -= 1) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          const next = seed % (index + 1);
+          [shuffled[index], shuffled[next]] = [shuffled[next]!, shuffled[index]!];
+        }
+        permutations.push(shuffled);
+      }
+      const observations = [];
+      for (const files of permutations) {
+        const list = new DataTransfer();
+        for (const file of files) list.items.add(file);
+        input.files = list.files;
+        const inputPaths = Array.from(input.files).map(relative);
+        const transfer = await host.projectTransferFromFiles(input.files);
+        const entries = host.projectTransferToEntries(transfer);
+        const client = kit.createExperimentalDesignerClient();
+        try {
+          const inspected = await client.inspectProject(transfer.slice(0));
+          const opened = await client.openProject(transfer.slice(0));
+          const exported = await client.exportCanonicalTree(opened.bootstrap.revision);
+          observations.push({ inputPaths, paths: entries.map(file => file.path), inspected, opened,
+            exactBytes: entries.every((file, index) => file.path === exported.files[index]?.path &&
+              JSON.stringify(Array.from(new Uint8Array(file.bytes))) === JSON.stringify(Array.from(new Uint8Array(exported.files[index]!.bytes)))) });
+        } finally { await client.close(); }
+      }
+      return observations;
+    }, paths);
+    expect(results).toHaveLength(7);
+    expect(results.some(result => JSON.stringify(result.inputPaths) !== JSON.stringify(paths))).toBe(true);
+    for (const result of results) {
+      expect(result.paths).toEqual(paths);
+      expect(result.opened).toEqual(results[0]!.opened);
+      expect(result.inspected).toEqual(results[0]!.inspected);
+      expect(result.exactBytes).toBe(true);
+    }
+  });
+}
+
 test("#529 exported kit creates named native tables and reopens every carrier in a fresh Worker", async ({ page }) => {
   const golden = Array.from(await readFile(fileURLToPath(new URL("../../../acceptance/native-display-names/named.ro", import.meta.url))));
   const workers: string[] = [];

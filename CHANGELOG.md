@@ -4,6 +4,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Browser kit folder selection packages complete `.roproj` directories in
+  storage-owned canonical order regardless of browser enumeration order.
+  Unknown, duplicate, missing and unsafe paths are refused before packaging;
+  Rust admission retains strict canonical-byte and v3 transfer-order checks.
+
 ### Added
 
 - Accepted ADR-0044 defines complete saved grouped-sum definition facts in
