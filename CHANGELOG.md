@@ -16,6 +16,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The public browser client's `TrackerCommand` exposes atomic `edit_cells`
+  batches for native and imported tables through the existing worker path,
+  with one publication and one Undo/Redo unit per accepted batch.
+
 - Accepted ADR-0044 defines complete saved grouped-sum definition facts in
   semantic delta v2. The in-process engine now emits stable-ID create, change
   and delete facts with complete role bindings, restoring definition commands

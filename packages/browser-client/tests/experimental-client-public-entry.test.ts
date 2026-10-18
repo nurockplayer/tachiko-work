@@ -5,6 +5,8 @@ import {
   openCanonicalTreeFromEntries,
   type ExperimentalDesignerClient,
 } from "../src/experimental-client.ts";
+import { DesignerRuntimeError } from "../src/runtime/client.ts";
+import type { PublicationProjection, TrackerCommand, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
 
 const canonicalPaths = [
   "manifest.json",
@@ -77,6 +79,57 @@ it("exposes explicitly selected v3 export on the experimental entry", () => {
     expect(client.exportProjectV3).toBeTypeOf("function");
     client.close();
   } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("sends edit_cells through the public client and preserves publication and refusal replies", async () => {
+  let receive: ((event: MessageEvent<WorkerReply>) => void) | undefined;
+  const requests: WorkerRequest[] = [];
+  vi.stubGlobal("Worker", class {
+    addEventListener(type: string, callback: (event: MessageEvent<WorkerReply>) => void) {
+      if (type === "message") receive = callback;
+    }
+    postMessage(request: WorkerRequest) { requests.push(structuredClone(request)); }
+    terminate() {}
+  });
+  const client = createExperimentalDesignerClient();
+  try {
+    const command = {
+      type: "edit_cells",
+      expected_revision: "resident/7",
+      edits: [
+        {target: {entity: "row-1", field: "name"}, input: {kind: "text", value: "updated"}},
+        {target: {entity: "row-2", field: "amount"}, input: {kind: "number", input: "42"}},
+      ],
+    } satisfies TrackerCommand;
+    const publication: PublicationProjection = {
+      base_revision: "resident/7", resulting_revision: "resident/8",
+      schemas: [], schema_fields: [], entities: ["row-1", "row-2"],
+      fields: command.edits.map(edit => edit.target), affected_calculations: [],
+    };
+    const accepted = client.trackerCommand!(command);
+    expect(requests).toEqual([{id: 1, kind: "command", request: command}]);
+    receive!(new MessageEvent<WorkerReply>("message", {
+      data: {id: 1, status: "ok", response: {type: "published", payload: publication}},
+    }));
+    await expect(accepted).resolves.toEqual(publication);
+
+    const invalid: TrackerCommand = {
+      ...command, expected_revision: "resident/8",
+      edits: [...command.edits, command.edits[0]!],
+    };
+    const rejected = client.trackerCommand!(invalid);
+    expect(requests[1]).toEqual({id: 2, kind: "command", request: invalid});
+    const failure = {code: "invalid_tracker_operation", message: "duplicate cell targets are unsupported",
+      current_revision: "resident/8", diagnostics: []};
+    receive!(new MessageEvent<WorkerReply>("message", {
+      data: {id: 2, status: "error", error: failure},
+    }));
+    await expect(rejected).rejects.toBeInstanceOf(DesignerRuntimeError);
+    await expect(rejected).rejects.toMatchObject({failure});
+  } finally {
+    client.close();
     vi.unstubAllGlobals();
   }
 });
