@@ -168,6 +168,7 @@ export type FailureProjection = {
 };
 
 export type TrackerCommand =
+  | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
   | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: string[][] }
   | { type: "append_row"; expected_revision: string; collection: string }
   | { type: "remove_rows"; expected_revision: string; entities: string[] }
