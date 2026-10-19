@@ -6,6 +6,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- The browser kit artifact manifest's exposed client-method inventory now
+  lists every public client method and entry function, adding the previously
+  omitted `exportNativeTablesSpreadsheet`, `openImportedProject`, `newTable`,
+  `duplicateCollection`, `explainField`, `createKeyedGroupedSum` and
+  `queryKeyedGroupedSum`. A browser-client test now keeps the inventory in
+  parity with the actual public surface.
+
 - Native-table worksheet/header names use a bounded fixed-point caseless key
   (up to four uppercase-then-lowercase iterations), so `ß`, `ẞ`, `SS` and `ss`
   consistently collide. Allocation and final writer validation share the key;
