@@ -381,6 +381,11 @@ enum SpreadsheetOperation {
         format: SpreadsheetFormat,
         collection: String,
     },
+    ExportNativeTables {
+        expected_revision: String,
+        collection: String,
+        format: SpreadsheetFormat,
+    },
     ExportNativeTracker {
         expected_revision: String,
         presentation: NativeTrackerExportPresentation,
@@ -512,6 +517,11 @@ fn spreadsheet_operation(
             })?;
             export_spreadsheet(runtime, &expected_revision, &metadata, format, &collection)
         }
+        SpreadsheetOperation::ExportNativeTables {
+            expected_revision,
+            collection,
+            format,
+        } => export_native_tables_spreadsheet(runtime, &expected_revision, &collection, format),
         SpreadsheetOperation::ExportNativeTracker {
             expected_revision,
             presentation,
@@ -539,6 +549,29 @@ fn spreadsheet_operation(
             format,
         ),
     }
+}
+
+fn export_native_tables_spreadsheet(
+    runtime: Option<&DesignerRuntime>,
+    revision: &str,
+    collection: &str,
+    format: SpreadsheetFormat,
+) -> Result<SpreadsheetResult, DesignerError> {
+    let runtime = runtime.ok_or_else(|| DesignerError::InvalidProjectTransfer {
+        message: "No Designer project is open for native tables export.".into(),
+    })?;
+    let (response, bytes) = crate::native_tables_export::encode_native_tables_spreadsheet(
+        runtime,
+        revision,
+        collection,
+        matches!(format, SpreadsheetFormat::Csv),
+    )?;
+    Ok(SpreadsheetResult {
+        text_capacity: runtime.text_capacity,
+        response,
+        candidate: None,
+        export: Some(bytes),
+    })
 }
 
 fn export_native_tracker_spreadsheet(

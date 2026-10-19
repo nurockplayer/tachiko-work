@@ -133,3 +133,37 @@ it("sends edit_cells through the public client and preserves publication and ref
     vi.unstubAllGlobals();
   }
 });
+
+it.each(["csv", "xlsx"] as const)("exports native tables as %s through the public Worker method", async format => {
+  let receive: ((event: MessageEvent<WorkerReply>) => void) | undefined;
+  const requests: WorkerRequest[] = [];
+  vi.stubGlobal("Worker", class {
+    addEventListener(type: string, callback: (event: MessageEvent<WorkerReply>) => void) {
+      if (type === "message") receive = callback;
+    }
+    postMessage(request: WorkerRequest) { requests.push(structuredClone(request)); }
+    terminate() {}
+  });
+  const client = createExperimentalDesignerClient();
+  try {
+    const pending = client.exportNativeTablesSpreadsheet("resident/7", "sales", format);
+    expect(requests).toEqual([{
+      id: 1, kind: "spreadsheet", bytes: new ArrayBuffer(0),
+      operation: {type: "export_native_tables", expected_revision: "resident/7", collection: "sales", format},
+    }]);
+    const result = {revision: "resident/7", bytes: new Uint8Array([1, 2, 3]).buffer,
+      ledger: [{category: "lossy_on_export" as const, code: "native_tables_session_history_excluded", location: "workbook", message: "Session history excluded.", blocking: false}]};
+    receive!(new MessageEvent<WorkerReply>("message", {
+      data: {id: 1, status: "spreadsheet_exported", export: result},
+    }));
+    await expect(pending).resolves.toEqual(result);
+
+    const stale = client.exportNativeTablesSpreadsheet("resident/6", "sales", format);
+    const failure = {code: "stale_revision", message: "Stale revision", current_revision: "resident/7", diagnostics: []};
+    receive!(new MessageEvent<WorkerReply>("message", {data: {id: 2, status: "error", error: failure}}));
+    await expect(stale).rejects.toMatchObject({failure});
+  } finally {
+    client.close();
+    vi.unstubAllGlobals();
+  }
+});

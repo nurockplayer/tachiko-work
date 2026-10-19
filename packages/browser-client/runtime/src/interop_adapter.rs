@@ -12,26 +12,58 @@ pub const MAX_SHEETS: usize = 4;
 pub const MAX_COLUMNS: usize = 16;
 pub const MAX_DATA_ROWS: usize = 64;
 pub const MAX_NATIVE_TRACKER_DATA_ROWS: usize = 128;
+// Outbound-only: matches native admission geometry without widening imports.
+pub const MAX_NATIVE_TABLES_SHEETS: usize = 32;
+pub const MAX_NATIVE_TABLES_COLUMNS: usize = 32;
+pub const MAX_NATIVE_TABLES_DATA_ROWS: usize = 128;
+pub const MAX_NATIVE_TABLES_TOTAL_ROWS: usize = 1_024;
+pub const MAX_NATIVE_TABLES_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_NATIVE_TABLES_EXPANDED_BYTES: usize = 24 * 1024 * 1024;
 pub const MAX_FORMULAS: usize = 32;
 pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
 pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 25_218;
 pub(crate) const MAX_TEXT_CAPACITY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_TEXT_CAPACITY_HEADER_BYTES: usize = 39;
 
-/// Output capacity is explicit so native Tracker can remain a bounded outbound
-/// exception without changing the shared import/export profile.
+/// Native outbound capacities are explicit and do not widen the shared
+/// import/export profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OutputProfile {
     Shared,
     NativeTracker,
+    NativeTables,
     TextCapacity,
 }
 
 impl OutputProfile {
+    const fn max_sheets(self) -> usize {
+        if matches!(self, Self::NativeTables) {
+            MAX_NATIVE_TABLES_SHEETS
+        } else {
+            MAX_SHEETS
+        }
+    }
+
+    const fn max_columns(self) -> usize {
+        if matches!(self, Self::NativeTables) {
+            MAX_NATIVE_TABLES_COLUMNS
+        } else {
+            MAX_COLUMNS
+        }
+    }
+
+    const fn max_output_bytes(self) -> usize {
+        if matches!(self, Self::NativeTables) {
+            MAX_NATIVE_TABLES_OUTPUT_BYTES
+        } else {
+            MAX_SOURCE_BYTES
+        }
+    }
     const fn max_data_rows(self) -> usize {
         match self {
             Self::Shared => MAX_DATA_ROWS,
             Self::NativeTracker => MAX_NATIVE_TRACKER_DATA_ROWS,
+            Self::NativeTables => MAX_NATIVE_TABLES_DATA_ROWS,
             Self::TextCapacity => MAX_TEXT_CAPACITY_ROWS,
         }
     }
@@ -2416,7 +2448,7 @@ pub(crate) fn export_csv_for_profile(
         })?;
     }
     if sheet.columns.is_empty()
-        || sheet.columns.len() > MAX_COLUMNS
+        || sheet.columns.len() > profile.max_columns()
         || sheet.rows.len() > profile.max_data_rows()
         || sheet.rows.iter().any(|r| r.len() != sheet.columns.len())
     {
@@ -2472,12 +2504,16 @@ pub(crate) fn export_csv_for_profile(
         );
         output.push_str("\r\n");
     }
-    if output.len() > MAX_SOURCE_BYTES {
-        return fail("CSV output exceeds 2 MiB");
+    if output.len() > profile.max_output_bytes() {
+        return fail(if profile == OutputProfile::NativeTables {
+            "Native tables CSV output exceeds 8 MiB"
+        } else {
+            "CSV output exceeds 2 MiB"
+        });
     }
     Ok(output.into_bytes())
 }
-fn csv_formula_text(value: &str) -> bool {
+pub(crate) fn csv_formula_text(value: &str) -> bool {
     value
         .trim_start_matches(|c: char| c.is_whitespace() || c.is_control())
         .starts_with(['=', '+', '-', '@'])
@@ -2557,6 +2593,30 @@ pub(crate) fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
     validate_output_for_profile(workbook, output_profile(workbook))
 }
 
+fn validate_output_collection_bounds(
+    workbook: &SourceWorkbook,
+    profile: OutputProfile,
+) -> Result<()> {
+    if workbook.sheets.is_empty() || workbook.sheets.len() > profile.max_sheets() {
+        return fail(if profile == OutputProfile::NativeTables {
+            "Native tables export requires 1..=32 sheets"
+        } else {
+            "Export requires 1..=4 sheets"
+        });
+    }
+    if profile == OutputProfile::NativeTables
+        && workbook
+            .sheets
+            .iter()
+            .map(|sheet| sheet.rows.len())
+            .sum::<usize>()
+            > MAX_NATIVE_TABLES_TOTAL_ROWS
+    {
+        return fail("Native tables export exceeds 1,024 total rows");
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_output_for_profile(
     workbook: &SourceWorkbook,
     profile: OutputProfile,
@@ -2564,9 +2624,7 @@ pub(crate) fn validate_output_for_profile(
     if profile == OutputProfile::TextCapacity {
         validate_text_capacity(workbook)?;
     }
-    if workbook.sheets.is_empty() || workbook.sheets.len() > MAX_SHEETS {
-        return fail("Export requires 1..=4 sheets");
-    }
+    validate_output_collection_bounds(workbook, profile)?;
     if workbook.ledger.iter().any(|f| f.blocking) {
         return fail("Blocking fidelity findings prevent export");
     }
@@ -2591,7 +2649,7 @@ pub(crate) fn validate_output_for_profile(
             return fail("Invalid or duplicate XLSX sheet name");
         }
         if s.columns.is_empty()
-            || s.columns.len() > MAX_COLUMNS
+            || s.columns.len() > profile.max_columns()
             || s.rows.len() > profile.max_data_rows()
         {
             return fail("Export exceeds sheet bounds");
@@ -2899,10 +2957,21 @@ pub(crate) fn export_xlsx_for_profile(
         ""
     };
     parts.insert("[Content_Types].xml".into(),format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>{strings_type}{types}</Types>"));
-    if profile == OutputProfile::TextCapacity
-        && parts.values().map(String::len).sum::<usize>() > MAX_EXPANDED_BYTES
+    let expanded_limit = if profile == OutputProfile::NativeTables {
+        MAX_NATIVE_TABLES_EXPANDED_BYTES
+    } else {
+        MAX_EXPANDED_BYTES
+    };
+    if matches!(
+        profile,
+        OutputProfile::TextCapacity | OutputProfile::NativeTables
+    ) && parts.values().map(String::len).sum::<usize>() > expanded_limit
     {
-        return fail("Text capacity expanded XLSX exceeds 8 MiB");
+        return fail(if profile == OutputProfile::NativeTables {
+            "Native tables expanded XLSX exceeds 24 MiB"
+        } else {
+            "Text capacity expanded XLSX exceeds 8 MiB"
+        });
     }
     let mut output = Cursor::new(Vec::new());
     {
@@ -2927,7 +2996,13 @@ pub(crate) fn export_xlsx_for_profile(
         writer.finish().map_err(|e| InteropError(e.to_string()))?;
     }
     let bytes = output.into_inner();
-    source_bound(&bytes)?;
+    if profile == OutputProfile::NativeTables {
+        if bytes.len() > profile.max_output_bytes() {
+            return fail("Native tables XLSX output exceeds 8 MiB");
+        }
+    } else {
+        source_bound(&bytes)?;
+    }
     Ok(bytes)
 }
 
@@ -3116,5 +3191,106 @@ mod capacity_proof_tests {
             capacity_worksheet(&workbook.sheets[0], &mut count);
             assert_eq!(count.0, output.len(), "{rows}");
         }
+    }
+}
+
+#[cfg(test)]
+mod native_tables_output_tests {
+    use super::*;
+
+    fn sheet(columns: usize, rows: usize) -> SourceSheet {
+        SourceSheet {
+            name: "Table".into(),
+            has_header: true,
+            columns: (0..columns)
+                .map(|index| SourceColumn {
+                    name: format!("c{index}"),
+                    width: None,
+                })
+                .collect(),
+            rows: vec![vec![SourceCell::default(); columns]; rows],
+        }
+    }
+
+    #[test]
+    fn native_tables_writer_refuses_geometry_plus_one_without_widening_shared_profile() {
+        let profile = OutputProfile::NativeTables;
+        let mut workbook = SourceWorkbook {
+            sheets: vec![sheet(32, 128)],
+            ledger: vec![],
+        };
+        assert!(export_csv_for_profile(&workbook.sheets[0], profile).is_ok());
+        assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
+        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_err());
+        for invalid in [sheet(33, 1), sheet(1, 129)] {
+            assert!(export_csv_for_profile(&invalid, profile).is_err());
+            workbook.sheets = vec![invalid];
+            assert!(export_xlsx_for_profile(&workbook, profile).is_err());
+        }
+        workbook.sheets = (0..32)
+            .map(|index| {
+                let mut sheet = sheet(1, 0);
+                sheet.name = format!("s{index}");
+                sheet
+            })
+            .collect();
+        assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
+        workbook.sheets.push(sheet(1, 0));
+        assert!(export_xlsx_for_profile(&workbook, profile).is_err());
+        workbook.sheets = (0..8)
+            .map(|index| {
+                let mut sheet = sheet(1, 128);
+                sheet.name = format!("s{index}");
+                sheet
+            })
+            .collect();
+        assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
+        workbook.sheets.push(sheet(1, 1));
+        assert!(export_xlsx_for_profile(&workbook, profile).is_err());
+    }
+
+    #[test]
+    fn native_tables_csv_exact_encoded_byte_limit_and_plus_one() {
+        let mut sheet = sheet(1, 1);
+        // c0 + CRLF + data + CRLF = data + 6 bytes.
+        sheet.rows[0][0].value = SourceValue::Text {
+            value: "x".repeat(MAX_NATIVE_TABLES_OUTPUT_BYTES - 6),
+        };
+        assert_eq!(
+            export_csv_for_profile(&sheet, OutputProfile::NativeTables)
+                .unwrap()
+                .len(),
+            MAX_NATIVE_TABLES_OUTPUT_BYTES
+        );
+        if let SourceValue::Text { value } = &mut sheet.rows[0][0].value {
+            value.push('x');
+        }
+        assert!(export_csv_for_profile(&sheet, OutputProfile::NativeTables).is_err());
+    }
+
+    #[test]
+    fn native_tables_xlsx_exact_expanded_byte_limit_and_plus_one() {
+        let profile = OutputProfile::NativeTables;
+        let mut workbook = SourceWorkbook {
+            sheets: vec![sheet(1, 1)],
+            ledger: vec![],
+        };
+        workbook.sheets[0].rows[0][0].value = SourceValue::Text {
+            value: String::new(),
+        };
+        let bytes = export_xlsx_for_profile(&workbook, profile).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let overhead: u64 = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().size())
+            .sum();
+        workbook.sheets[0].rows[0][0].value = SourceValue::Text {
+            value: "x"
+                .repeat(MAX_NATIVE_TABLES_EXPANDED_BYTES - usize::try_from(overhead).unwrap()),
+        };
+        assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
+        if let SourceValue::Text { value } = &mut workbook.sheets[0].rows[0][0].value {
+            value.push('x');
+        }
+        assert!(export_xlsx_for_profile(&workbook, profile).is_err());
     }
 }

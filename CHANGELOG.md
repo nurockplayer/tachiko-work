@@ -16,6 +16,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Revision-pinned native scalar tables export to typed XLSX or selected-table
+  CSV through `exportNativeTablesSpreadsheet(expectedRevision, collection,
+  format)`. Rust derives canonical order and values; deterministic name/header
+  mappings and excluded summaries, charts, history and presentation appear in
+  the fidelity ledger. A dedicated outbound profile covers native admission
+  geometry; mixed XLSX documents and over-limit output are refused.
+
 - The public browser client's `TrackerCommand` exposes atomic `edit_cells`
   batches for native and imported tables through the existing worker path,
   with one publication and one Undo/Redo unit per accepted batch.
