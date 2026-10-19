@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import * as entry from "../src/experimental-client.ts";
-import { WorkerDesignerClient } from "../src/runtime/worker-client.ts";
 
 // The packaged kit manifest advertises the exposed client methods and entry
 // functions. Keep that hand-maintained inventory in parity with the actual
@@ -19,15 +18,32 @@ function manifestCapabilities(): string[] {
   return [...block[1].matchAll(/"([A-Za-z0-9]+)"/g)].map((match) => match[1]!);
 }
 
+// Inspect the object the public factory actually returns, walking its whole
+// prototype chain so subclass overrides and additions are covered too.
 function publicSurface(): string[] {
-  const prototype = WorkerDesignerClient.prototype as unknown as Record<string, unknown>;
-  const methods = Object.getOwnPropertyNames(prototype).filter(
-    (name) => name !== "constructor" && typeof prototype[name] === "function",
-  );
-  const functions = Object.entries(entry)
-    .filter(([name, value]) => typeof value === "function" && !/^[A-Z]/.test(name))
-    .map(([name]) => name);
-  return [...new Set([...methods, ...functions])];
+  const original = (globalThis as { Worker?: unknown }).Worker;
+  class StubWorker {
+    addEventListener(): void {}
+    postMessage(): void {}
+    terminate(): void {}
+  }
+  (globalThis as { Worker?: unknown }).Worker = StubWorker;
+  try {
+    const client = entry.createExperimentalDesignerClient();
+    const methods = new Set<string>();
+    for (let prototype = Object.getPrototypeOf(client); prototype && prototype !== Object.prototype; prototype = Object.getPrototypeOf(prototype)) {
+      for (const name of Object.getOwnPropertyNames(prototype)) {
+        if (name !== "constructor" && typeof (prototype as Record<string, unknown>)[name] === "function") methods.add(name);
+      }
+    }
+    client.close();
+    const functions = Object.entries(entry)
+      .filter(([name, value]) => typeof value === "function" && !/^[A-Z]/.test(name))
+      .map(([name]) => name);
+    return [...new Set([...methods, ...functions])];
+  } finally {
+    (globalThis as { Worker?: unknown }).Worker = original;
+  }
 }
 
 describe("kit manifest capabilities", () => {
