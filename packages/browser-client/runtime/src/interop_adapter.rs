@@ -71,8 +71,18 @@ impl OutputProfile {
     }
 }
 
+/// Bound the work while reaching a stable key for multi-step folds such as
+/// capital sharp S: ẞ -> ß -> ss. Native allocation and preflight share this key.
 pub(crate) fn native_tables_caseless_key(name: &str) -> String {
-    name.to_uppercase().to_lowercase()
+    let mut key = name.to_owned();
+    for _ in 0..4 {
+        let next = key.to_uppercase().to_lowercase();
+        if next == key {
+            break;
+        }
+        key = next;
+    }
+    key
 }
 
 /// A private resource exception selected from complete source content.
@@ -3627,8 +3637,9 @@ mod native_tables_output_tests {
         FidelityCategory, MAX_NATIVE_TABLES_EXPANDED_BYTES, MAX_NATIVE_TABLES_OUTPUT_BYTES,
         NativeTablesCheck, OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue,
         SourceWorkbook, date_from_serial, export_csv_for_profile, export_xlsx_for_profile,
-        import_xlsx, native_tables_compatibility, native_tables_trim_worksheet_name,
-        validate_native_tables_csv, validate_native_tables_xlsx,
+        import_xlsx, native_tables_caseless_key, native_tables_compatibility,
+        native_tables_trim_worksheet_name, validate_native_tables_csv, validate_native_tables_xlsx,
+        validate_output_for_profile,
     };
     use std::collections::BTreeSet;
     use std::io::{Cursor, Read, Write};
@@ -4310,20 +4321,74 @@ mod native_tables_output_tests {
     }
 
     #[test]
+    fn native_tables_caseless_key_is_a_bounded_fixed_point_and_idempotent() {
+        for (source, expected) in [
+            ("ß", "ss"),
+            ("ẞ", "ss"),
+            ("SS", "ss"),
+            ("ss", "ss"),
+            ("Straẞe", "strasse"),
+            ("σ", "σ"),
+            ("ς", "σ"),
+            ("Σ", "σ"),
+            ("İ", "i\u{307}"),
+            ("I", "i"),
+            ("ı", "i"),
+            ("i", "i"),
+            ("Sales", "sales"),
+            ("ΟΣ", "ος"),
+            ("ΣΟΣ", "σος"),
+            ("ﬀ", "ff"),
+        ] {
+            let key = native_tables_caseless_key(source);
+            assert_eq!(key, expected, "{source}");
+            assert_eq!(native_tables_caseless_key(&key), key, "{source}");
+            assert_eq!(key.to_uppercase().to_lowercase(), key, "{source}");
+        }
+        // Validate the four-step cap against every scalar in the toolchain's
+        // Unicode tables, plus contextual multi-character Greek cases above.
+        for scalar in (0..=0x10_ffff).filter_map(char::from_u32) {
+            let key = native_tables_caseless_key(&scalar.to_string());
+            assert_eq!(native_tables_caseless_key(&key), key, "{scalar:?}");
+            assert_eq!(key.to_uppercase().to_lowercase(), key, "{scalar:?}");
+        }
+    }
+
+    #[test]
     fn native_tables_writer_enforces_caseless_names_without_changing_shared_profile() {
-        let mut workbook = SourceWorkbook {
-            sheets: vec![sheet(2, 0)],
-            ledger: vec![],
-        };
-        workbook.sheets[0].columns[0].name = "σ".into();
-        workbook.sheets[0].columns[1].name = "ς".into();
-        assert!(export_xlsx_for_profile(&workbook, OutputProfile::NativeTables).is_err());
-        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
-        workbook.sheets = vec![sheet(1, 0), sheet(1, 0)];
-        workbook.sheets[0].name = "σ".into();
-        workbook.sheets[1].name = "ς".into();
-        assert!(export_xlsx_for_profile(&workbook, OutputProfile::NativeTables).is_err());
-        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
+        for (first, second, shared_sheets_accepted) in
+            [("σ", "ς", true), ("ß", "ẞ", false), ("ẞ", "ß", false)]
+        {
+            let mut workbook = SourceWorkbook {
+                sheets: vec![sheet(2, 0)],
+                ledger: vec![],
+            };
+            workbook.sheets[0].columns[0].name = first.into();
+            workbook.sheets[0].columns[1].name = second.into();
+            let finding = validate_native_tables_xlsx(&workbook).unwrap_err();
+            assert_eq!(finding.code, "native_tables_xlsx_name");
+            assert!(finding.blocking);
+            assert!(finding.location.ends_with("/header/column 2"));
+            assert!(validate_output_for_profile(&workbook, OutputProfile::NativeTables).is_err());
+            assert!(export_xlsx_for_profile(&workbook, OutputProfile::NativeTables).is_err());
+            // Other profiles retain their prior header comparison.
+            assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
+            workbook.sheets = vec![sheet(1, 0), sheet(1, 0)];
+            workbook.sheets[0].name = first.into();
+            workbook.sheets[1].name = second.into();
+            let finding = validate_native_tables_xlsx(&workbook).unwrap_err();
+            assert_eq!(finding.code, "native_tables_xlsx_name");
+            assert!(finding.blocking);
+            assert!(finding.location.starts_with("sheet 2 "));
+            assert!(finding.location.ends_with("/sheet-name"));
+            assert!(validate_output_for_profile(&workbook, OutputProfile::NativeTables).is_err());
+            assert!(export_xlsx_for_profile(&workbook, OutputProfile::NativeTables).is_err());
+            // Shared sheet names still compare only with lowercase.
+            assert_eq!(
+                export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok(),
+                shared_sheets_accepted
+            );
+        }
     }
 
     #[test]

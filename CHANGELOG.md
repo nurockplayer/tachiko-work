@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Native-table worksheet/header names use a bounded fixed-point caseless key
+  (up to four uppercase-then-lowercase iterations), so `ß`, `ẞ`, `SS` and `ss`
+  consistently collide. Allocation and final writer validation share the key;
+  deterministic suffixes and source/output ledger mappings preserve identity.
+
 - Native-table exports refuse fields with semantic constraints instead of
   dropping them: XLSX refuses the whole document, CSV the selected collection,
   with a finding naming the collection and field. Native CSV also refuses

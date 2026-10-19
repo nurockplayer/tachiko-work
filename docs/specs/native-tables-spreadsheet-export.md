@@ -58,9 +58,13 @@ apostrophes until neither remains, use `Table` if empty, and take at most **31 U
 an astral character. Repeat boundary normalization after truncation. The
 reserved caseless name `History` is unavailable: allocate `History (2)`, then
 `History (3)`, etc. if necessary, respecting existing suffix collisions.
-Allocate names in canonical order. Compare complete candidate names using
-`to_uppercase()` followed by `to_lowercase()`, without a new dependency. This
-conservative caseless key makes `σ`/`ς`/`Σ` and `ß`/`SS`/`ss` collide. Turkish
+Allocate names in canonical order. Compare complete candidate names using a
+bounded fixed point: start with the full candidate and repeatedly apply
+`to_uppercase()` followed by `to_lowercase()`, stopping when unchanged or after
+**four iterations**, returning the last key. Allocation and final preflight/
+writer validation use this same NativeTables-only helper without a new dependency.
+This conservative caseless key makes `σ`/`ς`/`Σ` and `ß`/`ẞ`/`SS`/`ss` collide:
+`ẞ` first becomes `ß`, then `ss`, which is stable. Turkish
 `I`/`ı`/`i` share a key; `İ` retains its distinct `i` plus combining dot key.
 Over-collision adds a deterministic, ledgered suffix; it never changes data.
 Caseless collisions use ` (2)`,
@@ -71,7 +75,7 @@ ledger finding with the stable schema ID and original/output names.
 
 Headers start with field display names. XLSX refuses XML-illegal characters,
 preserves XML-legal whitespace, uses `Column` for an empty/whitespace-only header,
-and disambiguates with the same uppercase-then-lowercase key and suffix
+and disambiguates with the same bounded fixed-point caseless key and suffix
 allocation. Headers are **never truncated**. Every changed header has a `Converted` finding with schema/field
 identity and original/output names. Worksheet names are internal for CSV; CSV
 has no worksheet-name mapping claim.
@@ -165,7 +169,7 @@ constraints do not restrict CSV.
 | Worksheet name: no leading/trailing apostrophe | [Microsoft worksheet naming][excel-names] | Repeatedly trim boundary whitespace and apostrophes until stable, including boundaries exposed by truncation. `Foo`, `' Foo '`, `'' Foo ''`, and ` ' Foo ' ` collide in canonical order. Empty after normalization becomes `Table`; ledger mappings retain source/output names. |
 | Worksheet name: not blank | [Microsoft worksheet naming][excel-names] | Empty/whitespace-only sources become `Table`; direct unallocated blank output is refused. |
 | Worksheet name: reserved `History`, in any case | [Microsoft worksheet naming][excel-names] | Reserve its caseless key; allocate `History (2)` or next free suffix with a `Converted` mapping. |
-| Worksheet names: caseless uniqueness | [Microsoft Office sheet implementation][excel-sheet] | Uppercase then lowercase; suffix collisions deterministically, with a ledger mapping. Greek, German, Turkish and ASCII cases tested. |
+| Worksheet names: caseless uniqueness | [Microsoft Office sheet implementation][excel-sheet] | Bounded fixed point of uppercase then lowercase: repeat until unchanged, at most four iterations, then use the last key for both allocation and final preflight/writer validation. `ß`/`ẞ` collide in either order; deterministic suffixes and ledger mappings. Greek/Turkish/ASCII/German and key idempotence tested. |
 | Headers: nonempty and unique | [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545), adapter contract (stronger than plain Excel cells) | Empty becomes `Column`; use the same caseless suffix allocator; changed mappings are `Converted`; never truncate. An added suffix exceeding the cell limit is refused. |
 | Text/headers: at most 32,767 UTF-16 units | [Excel limits][excel-limits]; conservative UTF-16 measurement required by the lead disposition | Refuse 32,768; accept 32,767 for ASCII, BMP and astral values and headers. |
 | Text/headers: at most 253 line feeds | [Excel limits][excel-limits] | Refuse 254; preserve all 253 at the boundary. Applies to cells/headers, not allocated worksheet names. |
@@ -261,7 +265,9 @@ session state changes on success or refusal.
   values, stable order, collision chains, geometry limits/+1, mixed documents,
   stale revisions, source/history preservation and ledger coverage; literal
   SpreadsheetML escape/near-miss locations and native-only XLSX Text refusal;
-  deterministic Greek/German/Turkish/ASCII caseless mappings, located subnormal
+  deterministic Greek/German/Turkish/ASCII caseless mappings, including both
+  `ß`/`ẞ` allocation orders as worksheets and headers with source/output ledger
+  mappings, located subnormal
   refusal, full-precision CSV and the bounded XLSX precision warning ledger.
 - `interop_adapter::native_tables_output_tests`: independent outbound geometry,
   encoded CSV byte and expanded XLSX byte limits, including exact/+1 boundaries;
@@ -270,7 +276,9 @@ session state changes on success or refusal.
   +1 across many valid cells, each within the per-cell limit. Direct native
   writer tests additionally enumerate the compatibility inventory, reserved and
   UTF-16 worksheet names, XML characters and whitespace, Date endpoints and
-  1900-system serial fixtures, caseless uniqueness, minimum-normal/adjacent
+  1900-system serial fixtures, caseless uniqueness (including unsuffixed `ß`/`ẞ`
+  rejection in both orders), fixed-point key idempotence across all Unicode
+  scalars and contextual strings, minimum-normal/adjacent
   subnormal boundaries and numeric `0` output for both zero signs, preserving
   the previous behavior of other profiles.
 - `wasm::native_tables_parity_tests`: the actual WASM bridge's request/response

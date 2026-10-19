@@ -7,7 +7,7 @@ use std::io::{Cursor, Read};
 use serde_json::{Value as Json, json};
 use tachiko_designer_runtime::host_bridge::{DesignerHost, HostReply};
 use tachiko_designer_runtime::interop_adapter::{
-    FidelityCategory, ImportOptions, SourceValue, import_csv, import_xlsx,
+    FidelityCategory, ImportOptions, SourceValue, SourceWorkbook, import_csv, import_xlsx,
 };
 use tachiko_designer_runtime::{
     DesignerRequest, DesignerResponse, DesignerRuntime, ImportFieldType, ImportSelection,
@@ -911,11 +911,47 @@ fn native_tables_xlsx_text_limit_has_a_blocking_cell_finding_and_csv_is_unchange
     }
 }
 
+fn assert_caseless_name_ledger(workbook: &SourceWorkbook, labels: &[&str], expected: &[&str]) {
+    for (sheet, (source, output)) in labels.iter().zip(expected).enumerate() {
+        let mapping = workbook
+            .ledger
+            .iter()
+            .find(|finding| {
+                finding.code == "native_tables_worksheet_name"
+                    && finding.location == format!("s{sheet}")
+            })
+            .unwrap();
+        assert_eq!(mapping.category, FidelityCategory::Converted);
+        assert!(!mapping.blocking);
+        assert!(mapping.message.contains(&format!("{source:?}")));
+        assert!(mapping.message.contains(&format!("{output:?}")));
+        for (column, (source, output)) in labels.iter().zip(expected).enumerate() {
+            if source == output {
+                continue;
+            }
+            let mapping = workbook
+                .ledger
+                .iter()
+                .find(|finding| {
+                    finding.code == "native_tables_header_name"
+                        && finding.location == format!("s{sheet}/f{column}")
+                })
+                .unwrap();
+            assert_eq!(mapping.category, FidelityCategory::Converted);
+            assert!(!mapping.blocking);
+            assert!(mapping.message.contains(&format!("{source:?}")));
+            assert!(mapping.message.contains(&format!("{output:?}")));
+        }
+    }
+}
+
 #[test]
 fn native_tables_unicode_caseless_names_and_headers_are_ledgered_deterministically() {
     for (labels, expected) in [
         (vec!["Σ", "ς"], vec!["Σ", "ς (2)"]),
         (vec!["σ", "ς", "Σ"], vec!["σ", "ς (2)", "Σ (3)"]),
+        (vec!["ß", "ẞ"], vec!["ß", "ẞ (2)"]),
+        (vec!["ẞ", "ß"], vec!["ẞ", "ß (2)"]),
         (vec!["ß", "SS", "ss"], vec!["ß", "SS (2)", "ss (3)"]),
         (vec!["İ", "I", "ı", "i"], vec!["İ", "I", "ı (2)", "i (3)"]),
         (
@@ -992,6 +1028,7 @@ fn native_tables_unicode_caseless_names_and_headers_are_ledgered_deterministical
                     || f.code == "native_tables_header_name")
                 .all(|f| f.category == FidelityCategory::Converted && !f.blocking)
         );
+        assert_caseless_name_ledger(&workbook, &labels, &expected);
         let csv = runtime
             .export_native_tables_csv_workbook("resident/0", "s0")
             .unwrap();
