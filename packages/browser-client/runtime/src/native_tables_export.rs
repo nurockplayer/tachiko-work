@@ -2,13 +2,14 @@
 //! presentation participates: the immutable resident snapshot owns every value.
 use std::collections::BTreeSet;
 
-use tachiko_workspace_engine::{Document, FieldType, Value};
+use tachiko_workspace_engine::{Document, FieldConstraint, FieldType, Value};
 
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, NativeTablesCheck, OutputProfile, SourceCell, SourceColumn,
     SourceSheet, SourceWorkbook, csv_formula_text, export_csv_for_profile, export_xlsx_for_profile,
-    native_tables_caseless_key, native_tables_compatibility, native_tables_xlsx_number_findings,
-    validate_native_tables_xlsx, validate_output_for_profile,
+    native_tables_caseless_key, native_tables_compatibility, native_tables_trim_worksheet_name,
+    native_tables_xlsx_number_findings, validate_native_tables_csv, validate_native_tables_xlsx,
+    validate_output_for_profile,
 };
 use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
@@ -64,6 +65,19 @@ fn scalar_mapping(document: &Document, spec: &CollectionSpec) -> bool {
         })
 }
 
+fn unconstrained_fields(document: &Document, spec: &CollectionSpec) -> Result<(), DesignerError> {
+    for field in document.schemas[spec.summary.id.as_str()].fields.values() {
+        if !matches!(field.constraint, FieldConstraint::None) {
+            return Err(refused(
+                "native_tables_field_constraint",
+                &format!("collection {}/field {}", spec.summary.id, field.id),
+                "Field constraints have no native spreadsheet mapping; export refuses rather than silently removing the constraint.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn safe_character(c: char) -> bool {
     c >= ' ' && !matches!(c, '\u{fffe}' | '\u{ffff}')
 }
@@ -82,7 +96,7 @@ fn mapped_name(source: &str, worksheet: bool, used: &mut BTreeSet<String>) -> St
         })
         .collect();
     let cleaned = if worksheet {
-        cleaned.trim().trim_matches('\'')
+        native_tables_trim_worksheet_name(&cleaned)
     } else {
         cleaned.as_str()
     };
@@ -154,6 +168,13 @@ fn project_sheet(
         .columns
         .iter()
         .map(|column| {
+            if csv {
+                native_tables_compatibility(
+                    NativeTablesCheck::CsvText(&column.display_name),
+                    &format!("collection {}/header/field {}", spec.summary.id, column.id),
+                )
+                .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
+            }
             // Test the source too: sanitization must never bypass injection refusal.
             if csv && csv_formula_text(&column.display_name) {
                 return Err(refused(
@@ -271,6 +292,7 @@ impl DesignerRuntime {
                     format!("CSV excludes collection {:?} ({key}); only the requested collection is exported.", spec.summary.display_name)));
                 continue;
             }
+            unconstrained_fields(document, spec)?;
             if !scalar_mapping(document, spec) {
                 return Err(refused(
                     "native_tables_unmapped_collection",
@@ -324,7 +346,10 @@ impl DesignerRuntime {
                 "CSV keeps full binary64 Number precision in shortest round-trip decimal text, including subnormal values. A spreadsheet application may infer types or round values when opening CSV.".into()));
         }
         let mut workbook = SourceWorkbook { sheets, ledger };
-        if !csv {
+        if csv {
+            validate_native_tables_csv(&workbook.sheets[0])
+                .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
+        } else {
             validate_native_tables_xlsx(&workbook)
                 .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
             let precision_findings = native_tables_xlsx_number_findings(&workbook);

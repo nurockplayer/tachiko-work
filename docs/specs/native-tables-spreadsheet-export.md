@@ -33,9 +33,14 @@ applied by the host/WASM operation.
 
 A native mapping requires at least one declared field, each Text, Number,
 Boolean or Gregorian Date, and only directly stored values of those types.
-Absent optional fields are supported. Reference fields, formula values and
-other unmapped collections are refused. This mapping includes scalar stock
-Tracker, imported optional scalar tables, Sales and New table documents;
+Absent optional fields are supported. Every field must have `FieldConstraint::None`:
+`TextLiteralSet`, `NumberInclusiveRange`, and any other non-None constraint have
+no export mapping and are refused, even in an empty collection. The blocking
+`native_tables_field_constraint` finding identifies the stable collection and
+field IDs. XLSX refuses the whole document; CSV checks only the selected
+collection and can exclude constrained collections individually.
+Reference fields, formula values and other unmapped collections are refused.
+This mapping includes scalar stock Tracker, imported optional scalar tables, Sales and New table documents;
 formula-bearing Budget/imported documents retain their existing export route.
 
 ## Output and deterministic names
@@ -48,9 +53,9 @@ output. Empty tables still emit their declared header.
 
 Each worksheet starts with its table display name. Refuse XML-illegal characters
 and literal SpreadsheetML escapes before allocation. Replace XML-legal controls
-and `[]:*?/\` with `_`, trim surrounding whitespace and boundary apostrophes,
-use `Table` if empty, and take at most **31 UTF-16 code units**, never splitting
-an astral character. Trim an apostrophe exposed at the truncated end. The
+and `[]:*?/\` with `_`, repeatedly trim surrounding whitespace and boundary
+apostrophes until neither remains, use `Table` if empty, and take at most **31 UTF-16 code units**, never splitting
+an astral character. Repeat boundary normalization after truncation. The
 reserved caseless name `History` is unavailable: allocate `History (2)`, then
 `History (3)`, etc. if necessary, respecting existing suffix collisions.
 Allocate names in canonical order. Compare complete candidate names using
@@ -131,8 +136,11 @@ values when opening CSV; full precision here describes the file's contents.
 Headers and Text beginning with `=`, `+`, `-` or `@` after leading whitespace or
 controls are refused; no apostrophe prefix is added. Check source headers before
 sanitization as well as the encoded headers. Typed XLSX remains the escape for
-formula-like literal Text. XML-illegal cell Text fails closed rather than being
-silently changed.
+formula-like literal Text. Selected-collection Text and headers with XML-illegal
+characters are refused before CSV sanitization or encoding, with a located
+blocking `native_tables_csv_xml_character` finding. TAB/LF/CR remain legal.
+This shares XLSX's XML-character rule; CSV does not inherit XLSX's escape,
+Text-length, line-feed-count, Date-range or subnormal limits.
 
 XLSX refuses the entire request if any collection lacks the native mapping.
 CSV may export an eligible selected collection from that mixed document.
@@ -147,13 +155,14 @@ all refusals below are blocking `UnsupportedSafeDisabled` findings with a
 worksheet-name/header location or worksheet/row/column location. Precision
 warnings remain non-blocking and bounded. The reader and shared text encoder
 are unchanged. CSV keeps its existing names, lexical values and injection
-refusal; these XLSX constraints do not restrict CSV.
+refusal. CSV Text/headers share the XML-character refusal; the other XLSX-only
+constraints do not restrict CSV.
 
 | Constraint | Source | Our behavior |
 | --- | --- | --- |
-| Worksheet name: 1–31 UTF-16 units | [Microsoft worksheet naming][excel-names]; conservative UTF-16 measurement required by the lead disposition | Rename empty to `Table`; truncate only worksheet names on scalar boundaries, reserving suffix units. `Converted` mapping for every sheet. Test 0/1/31/32 units, including astral characters. |
+| Worksheet name: 1–31 UTF-16 code units | [Microsoft worksheet naming][excel-names]; conservative UTF-16 measurement required by the lead disposition | Rename empty to `Table`; truncate only worksheet names on scalar boundaries, reserving suffix units. `Converted` mapping for every sheet. Test 0/1/31/32 units, including astral characters. |
 | Worksheet name: no `[]:*?/\` | [Microsoft worksheet naming][excel-names] | Replace each forbidden character with `_`, then validate and ledger. |
-| Worksheet name: no leading/trailing apostrophe | [Microsoft worksheet naming][excel-names] | Trim boundary apostrophes/whitespace, including boundaries exposed by truncation; preserve interior apostrophes. Ledger mapping. |
+| Worksheet name: no leading/trailing apostrophe | [Microsoft worksheet naming][excel-names] | Repeatedly trim boundary whitespace and apostrophes until stable, including boundaries exposed by truncation. `Foo`, `' Foo '`, `'' Foo ''`, and ` ' Foo ' ` collide in canonical order. Empty after normalization becomes `Table`; ledger mappings retain source/output names. |
 | Worksheet name: not blank | [Microsoft worksheet naming][excel-names] | Empty/whitespace-only sources become `Table`; direct unallocated blank output is refused. |
 | Worksheet name: reserved `History`, in any case | [Microsoft worksheet naming][excel-names] | Reserve its caseless key; allocate `History (2)` or next free suffix with a `Converted` mapping. |
 | Worksheet names: caseless uniqueness | [Microsoft Office sheet implementation][excel-sheet] | Uppercase then lowercase; suffix collisions deterministically, with a ledger mapping. Greek, German, Turkish and ASCII cases tested. |
@@ -161,7 +170,7 @@ refusal; these XLSX constraints do not restrict CSV.
 | Text/headers: at most 32,767 UTF-16 units | [Excel limits][excel-limits]; conservative UTF-16 measurement required by the lead disposition | Refuse 32,768; accept 32,767 for ASCII, BMP and astral values and headers. |
 | Text/headers: at most 253 line feeds | [Excel limits][excel-limits] | Refuse 254; preserve all 253 at the boundary. Applies to cells/headers, not allocated worksheet names. |
 | Text/headers/names: literal `_x[0-9A-Fa-f]{4}_` | ECMA-376 Part 1 §22.9.2.19 `ST_Xstring`; [lead fidelity disposition](https://github.com/nurockplayer/tachiko-work/pull/546#issuecomment-6262364908) | Refuse source and emitted escapes because consumers decode them; accept near-misses. No encoder/reader changes. |
-| Text/headers/names: XML-legal characters | [XML 1.0 §2.2][xml-characters] | Refuse forbidden controls, U+FFFE/U+FFFF. Rust strings cannot contain surrogates. Accept TAB/LF/CR and other XML-legal scalars, including astral characters. |
+| Text/headers/names: XML-legal characters | [XML 1.0 §2.2][xml-characters] | Refuse forbidden controls, U+FFFE/U+FFFF. CSV applies the same rule to selected Text and original/emitted headers, with a located finding. Rust strings cannot contain surrogates. Accept TAB/LF/CR and other XML-legal scalars, including astral characters. |
 | Text/headers: leading/trailing whitespace | [XML 1.0 §2.10][xml-space] | Inline Text with `xml:space="preserve"`; CR encoded as `&#13;`. Verify exact Work readback and independent-reader spaces/TAB/LF. Worksheet names retain their explicit rename rules. |
 | Numbers: finite | [Microsoft numeric behavior][excel-numbers] | Refuse NaN/infinities with a cell finding; emit finite numeric cells. |
 | Numbers: no nonzero subnormals | [Microsoft numeric behavior][excel-numbers] | Refuse magnitude below `f64::MIN_POSITIVE`; accept both minimum-normal signs. Emit both zero signs as `0`. |
@@ -170,6 +179,7 @@ refusal; these XLSX constraints do not restrict CSV.
 | Dates: Excel's fictitious 1900 leap day | [Microsoft leap-year explanation][excel-leap] | No 1900-02-29. Typed file readback and equivalent numeric fixtures verify Feb 28/Mar 1 map to 59/61, skipping serial 60. |
 | Booleans | [SpreadsheetML Boolean cell type][excel-booleans] | Emit `t="b"` and `0`/`1`; read back false/true as Boolean, not Text or Number. |
 | Grid: Excel 1,048,576 rows / 16,384 columns | [Excel limits][excel-limits] | Native profile is smaller: 128 data rows plus header, 32 columns, 32 sheets and 1,024 total data rows. Exact/+1 tests; refuse excess rather than truncate. |
+| Field constraints: no declared spreadsheet mapping | [Fail-closed fidelity profile](../../packages/browser-client/interop-profile.json), [lead disposition](https://github.com/nurockplayer/tachiko-work/pull/546#issuecomment-6265455373) | Require `FieldConstraint::None`; refuse `TextLiteralSet`, `NumberInclusiveRange` and all other non-None variants at the stable collection/field location. Whole XLSX refuses; only the selected CSV collection is checked, including when empty. |
 | Rectangular missing values | [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545) | Missing optional values emit `Empty` in their original position; empty Text stays typed Text in the source XLSX. |
 | Package/receipt resource bounds | [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545), dedicated bounds below | Refuse above 8 MiB encoded / 24 MiB expanded or the existing receipt limit; exact/+1 byte tests. |
 

@@ -914,6 +914,7 @@ fn native_tables_xlsx_text_limit_has_a_blocking_cell_finding_and_csv_is_unchange
 #[test]
 fn native_tables_unicode_caseless_names_and_headers_are_ledgered_deterministically() {
     for (labels, expected) in [
+        (vec!["Σ", "ς"], vec!["Σ", "ς (2)"]),
         (vec!["σ", "ς", "Σ"], vec!["σ", "ς (2)", "Σ (3)"]),
         (vec!["ß", "SS", "ss"], vec!["ß", "SS (2)", "ss (3)"]),
         (vec!["İ", "I", "ı", "i"], vec!["İ", "I", "ı (2)", "i (3)"]),
@@ -1400,4 +1401,182 @@ fn native_tables_text_and_header_whitespace_survive_typed_readback() {
         imported.sheets[0].rows[0][0].value,
         SourceValue::Text { value: text.into() }
     );
+}
+
+#[test]
+fn native_tables_connector_apostrophe_whitespace_names_collide_and_are_ledgered() {
+    let cases = [
+        ("Foo", "Foo"),
+        ("' Foo '", "Foo (2)"),
+        ("'' Foo ''", "Foo (3)"),
+        ("'' ''", "Table"),
+        ("Table", "Table (2)"),
+    ];
+    let mut document = Document::empty("trim-names", "Names");
+    for (i, (name, _)) in cases.iter().enumerate() {
+        let id = format!("s{i}");
+        add_table(
+            &mut document,
+            &id,
+            &id,
+            name,
+            vec![field("text", FieldType::Text, false)],
+            vec![],
+        );
+    }
+    let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+    let mapped = runtime
+        .export_native_tables_workbook("resident/0", "s0")
+        .unwrap();
+    for (i, (source, expected)) in cases.iter().enumerate() {
+        assert_eq!(mapped.sheets[i].name, *expected);
+        let finding = mapped
+            .ledger
+            .iter()
+            .find(|f| f.code == "native_tables_worksheet_name" && f.location == format!("s{i}"))
+            .unwrap();
+        assert_eq!(finding.category, FidelityCategory::Converted);
+        assert!(!finding.blocking);
+        assert!(finding.message.contains(&format!("{source:?}")));
+        assert!(finding.message.contains(&format!("{expected:?}")));
+    }
+    assert_eq!(
+        runtime
+            .export_native_tables_workbook("resident/0", "s0")
+            .unwrap(),
+        mapped
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "s0", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let bytes = bytes.unwrap();
+    let workbook_xml = xml(&bytes, "xl/workbook.xml");
+    for (_, expected) in cases {
+        assert!(workbook_xml.contains(&format!("name=\"{expected}\"")));
+    }
+}
+
+#[test]
+fn native_tables_connector_csv_refuses_xml_illegal_selected_text_with_location() {
+    for text in [
+        "\u{1}safe",
+        "bad\0text",
+        "bad\u{fffe}text",
+        "bad\u{ffff}text",
+    ] {
+        let document = literal_text_document(text, "cell");
+        let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+        let before = runtime.export_project_v3("resident/0").unwrap().bytes;
+        let error = runtime
+            .export_native_tables_csv_workbook("resident/0", "s")
+            .unwrap_err();
+        let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } = error else {
+            panic!("located finding")
+        };
+        assert_eq!(finding.code, "native_tables_csv_xml_character");
+        assert!(finding.blocking);
+        assert_eq!(finding.category, FidelityCategory::UnsupportedSafeDisabled);
+        assert_eq!(finding.location, "sheet 1 \"Table\"/row 2/column 1");
+        assert_eq!(
+            runtime.export_project_v3("resident/0").unwrap().bytes,
+            before
+        );
+        let mut host = host_for(document);
+        let (reply, bytes) = export(&mut host, "resident/0", "s", "csv");
+        assert_eq!(reply["error"]["diagnostics"][0]["code"], finding.code);
+        assert_eq!(reply["error"]["diagnostics"][0]["path"], finding.location);
+        assert!(bytes.is_none());
+    }
+    let mut document = literal_text_document("\u{1}safe", "cell");
+    add_table(
+        &mut document,
+        "safe",
+        "safe",
+        "Safe",
+        vec![field("text", FieldType::Text, true)],
+        vec![vec![Some(Value::Text("safe\tline\nnext\rfinal".into()))]],
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "safe", "csv");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    assert!(
+        String::from_utf8(bytes.unwrap())
+            .unwrap()
+            .contains("safe\tline\nnext\rfinal")
+    );
+}
+
+#[test]
+fn native_tables_connector_constrained_fields_refuse_selected_csv_and_whole_xlsx() {
+    let cases = [
+        (
+            FieldType::Text,
+            FieldConstraint::TextLiteralSet {
+                values: vec!["allowed".into()],
+            },
+            Value::Text("allowed".into()),
+        ),
+        (
+            FieldType::Number,
+            FieldConstraint::NumberInclusiveRange {
+                min: Number::new(1.0).unwrap(),
+                max: Number::new(10.0).unwrap(),
+            },
+            Value::Number(Number::new(5.0).unwrap()),
+        ),
+    ];
+    for (kind, constraint, value) in cases {
+        for populated in [false, true] {
+            let mut document = Document::empty("constraints", "Constraints");
+            let mut column = field("constrained", kind.clone(), false);
+            column.constraint = constraint.clone();
+            add_table(
+                &mut document,
+                "s",
+                "z-constrained",
+                "Constrained",
+                vec![column],
+                if populated {
+                    vec![vec![Some(value.clone())]]
+                } else {
+                    vec![]
+                },
+            );
+            add_table(
+                &mut document,
+                "safe",
+                "a-safe",
+                "Safe",
+                vec![field("text", FieldType::Text, false)],
+                vec![],
+            );
+            let runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+            let before = serde_json::to_value(runtime.observe_occurrence()).unwrap();
+            let failures = [
+                runtime.export_native_tables_csv_workbook("resident/0", "s"),
+                runtime.export_native_tables_workbook("resident/0", "s"),
+                runtime.export_native_tables_workbook("resident/0", "safe"),
+            ];
+            for result in failures {
+                let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } =
+                    result.unwrap_err()
+                else {
+                    panic!("located finding")
+                };
+                assert_eq!(finding.code, "native_tables_field_constraint");
+                assert!(finding.blocking);
+                assert_eq!(finding.category, FidelityCategory::UnsupportedSafeDisabled);
+                assert_eq!(finding.location, "collection s/field constrained");
+            }
+            let selected = runtime
+                .export_native_tables_csv_workbook("resident/0", "safe")
+                .unwrap();
+            assert_eq!(selected.sheets.len(), 1);
+            assert!(selected.ledger.iter().any(|f| f.code == "native_tables_csv_collection_excluded" && f.location == "s"));
+            assert_eq!(
+                serde_json::to_value(runtime.observe_occurrence()).unwrap(),
+                before
+            );
+        }
+    }
 }

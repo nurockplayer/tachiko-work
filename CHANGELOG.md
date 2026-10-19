@@ -6,6 +6,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Native-table exports refuse fields with semantic constraints instead of
+  dropping them: XLSX refuses the whole document, CSV the selected collection,
+  with a finding naming the collection and field. Native CSV also refuses
+  XML-illegal Text and headers with located findings. Worksheet allocation
+  repeatedly removes boundary whitespace/apostrophes before disambiguation,
+  with regression coverage for quoted `Foo` names and Greek caseless names.
+  The interop profile now states the 31 UTF-16-code-unit worksheet-name limit.
+
 - Native-tables XLSX uses one compatibility policy for name allocation and
   final validation. It renames reserved `History` worksheet names with a
   deterministic ledger mapping, measures the 31-unit name limit in UTF-16,

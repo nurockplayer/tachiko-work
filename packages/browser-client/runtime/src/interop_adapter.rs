@@ -296,6 +296,18 @@ fn st_xstring(value: &str) -> bool {
     })
 }
 
+/// Removing one boundary can expose the other; repeat until both are gone.
+/// Used for native worksheet allocation and CSV's internal worksheet label.
+pub(crate) fn native_tables_trim_worksheet_name(mut name: &str) -> &str {
+    loop {
+        let trimmed = name.trim().trim_matches('\'');
+        if trimmed.len() == name.len() {
+            return trimmed;
+        }
+        name = trimmed;
+    }
+}
+
 /// The native-only compatibility inventory. Allocation and writer preflight
 /// use the same policy; CSV retains its existing lexical/name behavior.
 pub(crate) enum NativeTablesCheck<'a> {
@@ -306,6 +318,7 @@ pub(crate) enum NativeTablesCheck<'a> {
         allocate: bool,
     },
     Cell(&'a SourceValue),
+    CsvText(&'a str),
     Grid {
         sheets: usize,
         columns: usize,
@@ -380,7 +393,7 @@ pub(crate) fn native_tables_compatibility(
                     })
                     .collect();
                 let cleaned = if worksheet {
-                    cleaned.trim_matches(|c: char| c.is_whitespace() || c == '\'')
+                    native_tables_trim_worksheet_name(&cleaned)
                 } else {
                     &cleaned
                 };
@@ -397,14 +410,14 @@ pub(crate) fn native_tables_compatibility(
                     };
                     let prefix = if worksheet {
                         let mut units = 0;
-                        base.chars()
+                        let prefix = base
+                            .chars()
                             .take_while(|c| {
                                 units += c.len_utf16();
                                 units <= 31 - suffix.encode_utf16().count()
                             })
-                            .collect::<String>()
-                            .trim_end_matches('\'')
-                            .to_owned()
+                            .collect::<String>();
+                        native_tables_trim_worksheet_name(&prefix).to_owned()
                     } else {
                         base.to_owned()
                     };
@@ -442,6 +455,14 @@ pub(crate) fn native_tables_compatibility(
                 name: value.into(),
                 ..NativeTablesCompatibility::default()
             });
+        }
+        NativeTablesCheck::CsvText(value) => {
+            if !xml_text_valid(value) {
+                return Err(refuse(
+                    "native_tables_csv_xml_character",
+                    "XML-illegal characters are refused in native CSV Text and headers rather than emitted or changed.",
+                ));
+            }
         }
         NativeTablesCheck::Cell(value) => match value {
             SourceValue::Text { value } => text(value, true)?,
@@ -552,6 +573,32 @@ pub(crate) fn validate_native_tables_xlsx(
                 native_tables_compatibility(
                     NativeTablesCheck::Cell(&cell.value),
                     &native_tables_cell_location(sheet, sheet_index, row, column),
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// CSV applies only the shared XML-character refusal to the selected sheet;
+/// XLSX-specific string lengths, escapes and numeric rules remain separate.
+pub(crate) fn validate_native_tables_csv(
+    sheet: &SourceSheet,
+) -> std::result::Result<(), FidelityFinding> {
+    if sheet.has_header {
+        for (column, header) in sheet.columns.iter().enumerate() {
+            native_tables_compatibility(
+                NativeTablesCheck::CsvText(&header.name),
+                &format!("sheet 1 {:?}/header/column {}", sheet.name, column + 1),
+            )?;
+        }
+    }
+    for (row, cells) in sheet.rows.iter().enumerate() {
+        for (column, cell) in cells.iter().enumerate() {
+            if let SourceValue::Text { value } = &cell.value {
+                native_tables_compatibility(
+                    NativeTablesCheck::CsvText(value),
+                    &native_tables_cell_location(sheet, 0, row, column),
                 )?;
             }
         }
@@ -2782,6 +2829,14 @@ pub(crate) fn export_csv_for_profile(
     sheet: &SourceSheet,
     profile: OutputProfile,
 ) -> Result<Vec<u8>> {
+    if profile == OutputProfile::NativeTables {
+        validate_native_tables_csv(sheet).map_err(|finding| {
+            InteropError(format!(
+                "{} at {}: {}",
+                finding.code, finding.location, finding.message
+            ))
+        })?;
+    }
     if profile == OutputProfile::TextCapacity {
         validate_text_capacity(&SourceWorkbook {
             sheets: vec![sheet.clone()],
@@ -3572,7 +3627,8 @@ mod native_tables_output_tests {
         FidelityCategory, MAX_NATIVE_TABLES_EXPANDED_BYTES, MAX_NATIVE_TABLES_OUTPUT_BYTES,
         NativeTablesCheck, OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue,
         SourceWorkbook, date_from_serial, export_csv_for_profile, export_xlsx_for_profile,
-        import_xlsx, native_tables_compatibility, validate_native_tables_xlsx,
+        import_xlsx, native_tables_compatibility, native_tables_trim_worksheet_name,
+        validate_native_tables_csv, validate_native_tables_xlsx,
     };
     use std::collections::BTreeSet;
     use std::io::{Cursor, Read, Write};
@@ -4158,6 +4214,98 @@ mod native_tables_output_tests {
                 serde_json::to_vec_pretty(&workbook).unwrap(),
             )
             .unwrap();
+        }
+    }
+
+    #[test]
+    fn native_tables_connector_boundary_trim_loops_until_stable() {
+        let mut used = BTreeSet::new();
+        for (source, expected) in [
+            ("Foo", "Foo"),
+            ("' Foo '", "Foo (2)"),
+            ("'' Foo ''", "Foo (3)"),
+            (" ' Foo ' ", "Foo (4)"),
+            (" ' ' '' ", "Table"),
+            ("Table", "Table (2)"),
+        ] {
+            let trimmed = native_tables_trim_worksheet_name(source);
+            assert_eq!(native_tables_trim_worksheet_name(trimmed), trimmed);
+            let allocated = native_tables_compatibility(
+                NativeTablesCheck::Name {
+                    value: source,
+                    worksheet: true,
+                    used: &mut used,
+                    allocate: true,
+                },
+                "sheet-name",
+            )
+            .unwrap()
+            .name;
+            assert_eq!(allocated, expected);
+            assert_eq!(native_tables_trim_worksheet_name(&allocated), allocated);
+        }
+        // UTF-16 truncation can expose a space/apostrophe boundary too.
+        let source = format!("{} ' suffix", "x".repeat(29));
+        assert_eq!(
+            native_tables_compatibility(
+                NativeTablesCheck::Name {
+                    value: &source,
+                    worksheet: true,
+                    used: &mut BTreeSet::new(),
+                    allocate: true,
+                },
+                "sheet-name"
+            )
+            .unwrap()
+            .name,
+            "x".repeat(29)
+        );
+    }
+
+    #[test]
+    fn native_tables_connector_csv_xml_character_findings_cover_cells_and_headers() {
+        for character in ['\0', '\u{1}', '\u{1f}', '\u{fffe}', '\u{ffff}'] {
+            for header in [false, true] {
+                let mut selected = sheet(2, 2);
+                let text = format!("bad{character}text");
+                let suffix = if header {
+                    selected.columns[1].name = text;
+                    "/header/column 2"
+                } else {
+                    selected.rows[1][1].value = SourceValue::Text { value: text };
+                    "/row 3/column 2"
+                };
+                let finding = validate_native_tables_csv(&selected).unwrap_err();
+                assert_eq!(finding.code, "native_tables_csv_xml_character");
+                assert!(finding.blocking);
+                assert_eq!(finding.category, FidelityCategory::UnsupportedSafeDisabled);
+                assert_eq!(finding.location, format!("sheet 1 \"Table\"{suffix}"));
+                let error =
+                    export_csv_for_profile(&selected, OutputProfile::NativeTables).unwrap_err();
+                assert!(error.0.contains(&finding.location));
+                assert!(export_csv_for_profile(&selected, OutputProfile::Shared).is_ok());
+            }
+        }
+        // XML-legal Text stays lexical in CSV; no XLSX escape/length/LF limits.
+        for text in [
+            "safe\tline\nnext\rfinal".into(),
+            "_x000D_".into(),
+            "x".repeat(32_768),
+            "line\n".repeat(254),
+        ] {
+            for header in [false, true] {
+                let mut selected = sheet(1, 1);
+                if header {
+                    selected.columns[0].name = text.clone();
+                } else {
+                    selected.rows[0][0].value = SourceValue::Text {
+                        value: text.clone(),
+                    };
+                }
+                validate_native_tables_csv(&selected).unwrap();
+                let bytes = export_csv_for_profile(&selected, OutputProfile::NativeTables).unwrap();
+                assert!(String::from_utf8(bytes).unwrap().contains(&text));
+            }
         }
     }
 
