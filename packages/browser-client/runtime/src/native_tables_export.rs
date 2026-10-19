@@ -5,10 +5,10 @@ use std::collections::BTreeSet;
 use tachiko_workspace_engine::{Document, FieldType, Value};
 
 use crate::interop_adapter::{
-    FidelityCategory, FidelityFinding, OutputProfile, SourceCell, SourceColumn, SourceSheet,
-    SourceWorkbook, csv_formula_text, export_csv_for_profile, export_xlsx_for_profile,
-    native_tables_caseless_key, native_tables_xlsx_number_findings, validate_native_tables_xlsx,
-    validate_native_tables_xlsx_text, validate_output_for_profile,
+    FidelityCategory, FidelityFinding, NativeTablesCheck, OutputProfile, SourceCell, SourceColumn,
+    SourceSheet, SourceWorkbook, csv_formula_text, export_csv_for_profile, export_xlsx_for_profile,
+    native_tables_caseless_key, native_tables_compatibility, native_tables_xlsx_number_findings,
+    validate_native_tables_xlsx, validate_output_for_profile,
 };
 use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
@@ -121,15 +121,21 @@ fn project_sheet(
     names: &mut BTreeSet<String>,
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<SourceSheet, DesignerError> {
-    if !csv {
-        validate_native_tables_xlsx_text(
-            &spec.summary.display_name,
+    let name = if csv {
+        mapped_name(&spec.summary.display_name, true, names)
+    } else {
+        native_tables_compatibility(
+            NativeTablesCheck::Name {
+                value: &spec.summary.display_name,
+                worksheet: true,
+                used: names,
+                allocate: true,
+            },
             &format!("collection {}/sheet-name", spec.summary.id),
-            false,
         )
-        .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
-    }
-    let name = mapped_name(&spec.summary.display_name, true, names);
+        .map_err(|finding| DesignerError::NativeTablesExport { finding })?
+        .name
+    };
     // CSV has no worksheet name, but keeping this deterministic internal name
     // lets the same rectangular validator check both projections.
     if !csv {
@@ -148,14 +154,6 @@ fn project_sheet(
         .columns
         .iter()
         .map(|column| {
-            if !csv {
-                validate_native_tables_xlsx_text(
-                    &column.display_name,
-                    &format!("collection {}/header/field {}", spec.summary.id, column.id),
-                    true,
-                )
-                .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
-            }
             // Test the source too: sanitization must never bypass injection refusal.
             if csv && csv_formula_text(&column.display_name) {
                 return Err(refused(
@@ -164,7 +162,21 @@ fn project_sheet(
                     "CSV header could be interpreted as a spreadsheet formula; use typed XLSX.",
                 ));
             }
-            let name = mapped_name(&column.display_name, false, &mut headers);
+            let name = if csv {
+                mapped_name(&column.display_name, false, &mut headers)
+            } else {
+                native_tables_compatibility(
+                    NativeTablesCheck::Name {
+                        value: &column.display_name,
+                        worksheet: false,
+                        used: &mut headers,
+                        allocate: true,
+                    },
+                    &format!("collection {}/header/field {}", spec.summary.id, column.id),
+                )
+                .map_err(|finding| DesignerError::NativeTablesExport { finding })?
+                .name
+            };
             if name != column.display_name {
                 ledger.push(finding(
                     FidelityCategory::Converted,

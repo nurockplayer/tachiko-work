@@ -611,7 +611,11 @@ fn native_geometry_exact_bounds_export_without_truncation_and_plus_one_is_refuse
         assert!(bytes.is_none());
         assert_eq!(
             reply["error"]["diagnostics"][0]["code"],
-            "native_tables_output_refused"
+            if format == "xlsx" {
+                "native_tables_xlsx_grid"
+            } else {
+                "native_tables_output_refused"
+            }
         );
     }
     // Admission's complete post-edit refresh cap is stricter than nominal
@@ -1242,4 +1246,158 @@ fn native_tables_xlsx_precision_cap_and_count_are_global_across_worksheets() {
     assert!(!summary.blocking);
     assert!(summary.message.contains("30 Number cells"));
     assert!(summary.message.contains("10 additional locations omitted"));
+}
+
+#[test]
+fn native_tables_reserved_utf16_name_allocation_has_deterministic_ledger() {
+    let mut document = Document::empty("names", "Name inventory");
+    let cases = [
+        ("History (2)".into(), "History (2)".into()),
+        ("History".into(), "History (3)".into()),
+        ("hIsToRy".into(), "hIsToRy (4)".into()),
+        ("😀".repeat(16), "😀".repeat(15)),
+        (
+            format!("{}x", "😀".repeat(16)),
+            format!("{} (2)", "😀".repeat(13)),
+        ),
+    ];
+    for (i, (source, _)) in cases.iter().enumerate() {
+        let id = format!("s{i}");
+        add_table(
+            &mut document,
+            &id,
+            &id,
+            source,
+            vec![field("text", FieldType::Text, false)],
+            vec![],
+        );
+    }
+    let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+    let before = runtime.export_project_v3("resident/0").unwrap().bytes;
+    let workbook = runtime
+        .export_native_tables_workbook("resident/0", "s0")
+        .unwrap();
+    for (index, (source, expected)) in cases.iter().enumerate() {
+        assert_eq!(workbook.sheets[index].name, *expected);
+        let mapping = workbook
+            .ledger
+            .iter()
+            .find(|f| f.code == "native_tables_worksheet_name" && f.location == format!("s{index}"))
+            .unwrap();
+        assert_eq!(mapping.category, FidelityCategory::Converted);
+        assert!(!mapping.blocking);
+        assert!(mapping.message.contains(&format!("{source:?}")));
+        assert!(mapping.message.contains(&format!("{expected:?}")));
+    }
+    assert_eq!(
+        runtime
+            .export_native_tables_workbook("resident/0", "s0")
+            .unwrap(),
+        workbook
+    );
+    assert_eq!(
+        runtime.export_project_v3("resident/0").unwrap().bytes,
+        before
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "s0", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let xml = xml(&bytes.unwrap(), "xl/workbook.xml");
+    for (_, expected) in cases {
+        assert!(xml.contains(&expected));
+    }
+}
+
+#[test]
+fn native_tables_date_and_xml_refusals_are_located_and_leave_resident_unchanged() {
+    for date in ["0001-01-01", "1899-12-31"] {
+        let mut document = Document::empty("dates", "Dates");
+        add_table(
+            &mut document,
+            "s",
+            "s",
+            "Dates",
+            vec![field("date", FieldType::Date, true)],
+            vec![vec![Some(Value::Date(Date::parse(date).unwrap()))]],
+        );
+        let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+        let before = runtime.export_project_v3("resident/0").unwrap().bytes;
+        let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } = runtime
+            .export_native_tables_workbook("resident/0", "s")
+            .unwrap_err()
+        else {
+            panic!("located finding")
+        };
+        assert_eq!(finding.code, "native_tables_xlsx_date_range");
+        assert!(finding.blocking);
+        assert_eq!(finding.location, "sheet 1 \"Dates\"/row 2/column 1");
+        assert_eq!(
+            runtime.export_project_v3("resident/0").unwrap().bytes,
+            before
+        );
+        let mut host = host_for(document);
+        let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
+        assert_eq!(reply["error"]["diagnostics"][0]["code"], finding.code);
+        assert_eq!(reply["error"]["diagnostics"][0]["path"], finding.location);
+        assert!(bytes.is_none());
+        let (reply, bytes) = export(&mut host, "resident/0", "s", "csv");
+        assert_eq!(reply["status"], "ok", "{reply}");
+        assert!(String::from_utf8(bytes.unwrap()).unwrap().contains(date));
+    }
+    for text in ["bad\u{1f}character", "bad\0character"] {
+        let document = literal_text_document(text, "cell");
+        let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+        let before = runtime.export_project_v3("resident/0").unwrap().bytes;
+        let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } = runtime
+            .export_native_tables_workbook("resident/0", "s")
+            .unwrap_err()
+        else {
+            panic!("located finding")
+        };
+        assert_eq!(finding.code, "native_tables_xlsx_xml_character");
+        assert!(finding.blocking);
+        assert!(finding.location.contains("row 2/column 1"));
+        assert_eq!(
+            runtime.export_project_v3("resident/0").unwrap().bytes,
+            before
+        );
+        let mut host = host_for(document);
+        let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
+        assert_eq!(reply["error"]["diagnostics"][0]["code"], finding.code);
+        assert_eq!(reply["error"]["diagnostics"][0]["path"], finding.location);
+        assert!(bytes.is_none());
+    }
+}
+
+#[test]
+fn native_tables_text_and_header_whitespace_survive_typed_readback() {
+    let text = " \t leading\r\ntrailing \t ";
+    let header = "Header 漢😀";
+    let mut document = literal_text_document(text, "cell");
+    document
+        .schemas
+        .get_mut(&SchemaId::from("s"))
+        .unwrap()
+        .fields
+        .get_mut("text")
+        .unwrap()
+        .display_name = Some(header.into());
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let bytes = bytes.unwrap();
+    let sheet_xml = xml(&bytes, "xl/worksheets/sheet1.xml");
+    assert_eq!(sheet_xml.matches("xml:space=\"preserve\"").count(), 2);
+    assert!(sheet_xml.contains("&#13;"));
+    let imported = import_xlsx(&bytes).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|f| f.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    assert_eq!(imported.sheets[0].columns[0].name, header);
+    assert_eq!(
+        imported.sheets[0].rows[0][0].value,
+        SourceValue::Text { value: text.into() }
+    );
 }

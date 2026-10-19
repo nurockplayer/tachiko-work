@@ -6,6 +6,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Native-tables XLSX uses one compatibility policy for name allocation and
+  final validation. It renames reserved `History` worksheet names with a
+  deterministic ledger mapping, measures the 31-unit name limit in UTF-16,
+  refuses XML-illegal characters, more than 253 line feeds per cell, and Dates
+  outside Excel's 1900-01-01 through 9999-12-31 range with located findings, and preserves legal Text/header
+  whitespace. A sourced constraint inventory, table-driven boundary tests and
+  independent LibreOffice readback cover the scalar Excel surface. Other
+  profiles and CSV retain their existing behavior.
+
 - Native-tables exports disambiguate worksheet names and headers with an
   uppercase-then-lowercase Unicode comparison key. Native XLSX refuses
   subnormal Numbers that Excel would turn into zero, normalizes signed zero,

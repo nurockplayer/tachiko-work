@@ -46,31 +46,40 @@ canonical field order (including its fixed stock Tracker field order); rows
 follow canonical entity identity order. View sorting and filtering do not affect
 output. Empty tables still emit their declared header.
 
-Each worksheet starts with its table display name. Replace controls, XML-invalid
-characters and `[]:*?/\` with `_`, trim surrounding whitespace and boundary
-apostrophes, use `Table` if empty, and take at most 31 Unicode scalar characters
-without splitting UTF-8. Trim an apostrophe exposed at the truncated end.
+Each worksheet starts with its table display name. Refuse XML-illegal characters
+and literal SpreadsheetML escapes before allocation. Replace XML-legal controls
+and `[]:*?/\` with `_`, trim surrounding whitespace and boundary apostrophes,
+use `Table` if empty, and take at most **31 UTF-16 code units**, never splitting
+an astral character. Trim an apostrophe exposed at the truncated end. The
+reserved caseless name `History` is unavailable: allocate `History (2)`, then
+`History (3)`, etc. if necessary, respecting existing suffix collisions.
 Allocate names in canonical order. Compare complete candidate names using
 `to_uppercase()` followed by `to_lowercase()`, without a new dependency. This
 conservative caseless key makes `σ`/`ς`/`Σ` and `ß`/`SS`/`ss` collide. Turkish
 `I`/`ı`/`i` share a key; `İ` retains its distinct `i` plus combining dot key.
 Over-collision adds a deterministic, ledgered suffix; it never changes data.
 Caseless collisions use ` (2)`,
-` (3)`, etc.; reserve suffix space inside the 31-character limit, and test the
+` (3)`, etc.; reserve suffix space inside the 31-unit limit, and test the
 complete candidate against all previously allocated names, including names
 which already contain suffix text. Every worksheet mapping has a `Converted`
 ledger finding with the stable schema ID and original/output names.
 
-Headers start with field display names. Replace controls/XML-invalid characters
-with `_`, use `Column` for an empty/whitespace-only header, and disambiguate
-with the same uppercase-then-lowercase key and suffix allocation. Headers are **never
-truncated**. Every changed header has a `Converted` finding with schema/field
+Headers start with field display names. XLSX refuses XML-illegal characters,
+preserves XML-legal whitespace, uses `Column` for an empty/whitespace-only header,
+and disambiguates with the same uppercase-then-lowercase key and suffix
+allocation. Headers are **never truncated**. Every changed header has a `Converted` finding with schema/field
 identity and original/output names. Worksheet names are internal for CSV; CSV
 has no worksheet-name mapping claim.
 
 Cells use the existing typed XLSX writer: inline Text, finite numeric Number,
-Boolean, and Gregorian Date with `yyyy-mm-dd`. No formulas or execution-capable
-parts are produced by this operation. Absent optional fields map to `Empty`,
+Boolean, and ISO-typed Gregorian Date (`t="d"`) with `yyyy-mm-dd`. Dates must be
+within **1900-01-01..9999-12-31**, Excel's supported 1900-system range; otherwise
+`native_tables_xlsx_date_range` blocks export at the worksheet/row/column.
+The existing ISO Date encoding avoids inventing a fictitious 1900-02-29 and
+retains correct pre-March-1900 Dates in LibreOffice as well as the Work reader.
+Equivalent Excel serials are 1 for 1900-01-01, 59 for 1900-02-28, 61 for
+1900-03-01 and 2,958,465 for 9999-12-31. Serial 60 has no Gregorian Date.
+No formulas or execution-capable parts are produced by this operation. Absent optional fields map to `Empty`,
 not zero or false, preserving every rectangular position. Empty Text remains
 Text in XLSX.
 
@@ -127,6 +136,63 @@ silently changed.
 
 XLSX refuses the entire request if any collection lacks the native mapping.
 CSV may export an eligible selected collection from that mixed document.
+
+## Excel compatibility inventory
+
+This is the complete compatibility inventory for this operation's scalar-only
+XLSX surface, not a claim to implement Excel's other features. The single
+`native_tables_compatibility` policy is used by source-name allocation and
+final workbook/writer preflight. It checks original labels and emitted labels;
+all refusals below are blocking `UnsupportedSafeDisabled` findings with a
+worksheet-name/header location or worksheet/row/column location. Precision
+warnings remain non-blocking and bounded. The reader and shared text encoder
+are unchanged. CSV keeps its existing names, lexical values and injection
+refusal; these XLSX constraints do not restrict CSV.
+
+| Constraint | Source | Our behavior |
+| --- | --- | --- |
+| Worksheet name: 1–31 UTF-16 units | [Microsoft worksheet naming][excel-names]; conservative UTF-16 measurement required by the lead disposition | Rename empty to `Table`; truncate only worksheet names on scalar boundaries, reserving suffix units. `Converted` mapping for every sheet. Test 0/1/31/32 units, including astral characters. |
+| Worksheet name: no `[]:*?/\` | [Microsoft worksheet naming][excel-names] | Replace each forbidden character with `_`, then validate and ledger. |
+| Worksheet name: no leading/trailing apostrophe | [Microsoft worksheet naming][excel-names] | Trim boundary apostrophes/whitespace, including boundaries exposed by truncation; preserve interior apostrophes. Ledger mapping. |
+| Worksheet name: not blank | [Microsoft worksheet naming][excel-names] | Empty/whitespace-only sources become `Table`; direct unallocated blank output is refused. |
+| Worksheet name: reserved `History`, in any case | [Microsoft worksheet naming][excel-names] | Reserve its caseless key; allocate `History (2)` or next free suffix with a `Converted` mapping. |
+| Worksheet names: caseless uniqueness | [Microsoft Office sheet implementation][excel-sheet] | Uppercase then lowercase; suffix collisions deterministically, with a ledger mapping. Greek, German, Turkish and ASCII cases tested. |
+| Headers: nonempty and unique | [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545), adapter contract (stronger than plain Excel cells) | Empty becomes `Column`; use the same caseless suffix allocator; changed mappings are `Converted`; never truncate. An added suffix exceeding the cell limit is refused. |
+| Text/headers: at most 32,767 UTF-16 units | [Excel limits][excel-limits]; conservative UTF-16 measurement required by the lead disposition | Refuse 32,768; accept 32,767 for ASCII, BMP and astral values and headers. |
+| Text/headers: at most 253 line feeds | [Excel limits][excel-limits] | Refuse 254; preserve all 253 at the boundary. Applies to cells/headers, not allocated worksheet names. |
+| Text/headers/names: literal `_x[0-9A-Fa-f]{4}_` | ECMA-376 Part 1 §22.9.2.19 `ST_Xstring`; [lead fidelity disposition](https://github.com/nurockplayer/tachiko-work/pull/546#issuecomment-6262364908) | Refuse source and emitted escapes because consumers decode them; accept near-misses. No encoder/reader changes. |
+| Text/headers/names: XML-legal characters | [XML 1.0 §2.2][xml-characters] | Refuse forbidden controls, U+FFFE/U+FFFF. Rust strings cannot contain surrogates. Accept TAB/LF/CR and other XML-legal scalars, including astral characters. |
+| Text/headers: leading/trailing whitespace | [XML 1.0 §2.10][xml-space] | Inline Text with `xml:space="preserve"`; CR encoded as `&#13;`. Verify exact Work readback and independent-reader spaces/TAB/LF. Worksheet names retain their explicit rename rules. |
+| Numbers: finite | [Microsoft numeric behavior][excel-numbers] | Refuse NaN/infinities with a cell finding; emit finite numeric cells. |
+| Numbers: no nonzero subnormals | [Microsoft numeric behavior][excel-numbers] | Refuse magnitude below `f64::MIN_POSITIVE`; accept both minimum-normal signs. Emit both zero signs as `0`. |
+| Numbers: precision above 15 significant decimal digits | [Excel limits][excel-limits] | Export the shortest round-trip value unchanged; `LossyOnExport` at first 20 locations plus total count. CSV ledger states full precision. |
+| Dates: 1900-01-01..9999-12-31 (1900 system) | [Excel limits][excel-limits] | Refuse outside range or invalid Gregorian dates; accept endpoints; typed ISO Dates with `yyyy-mm-dd`. |
+| Dates: Excel's fictitious 1900 leap day | [Microsoft leap-year explanation][excel-leap] | No 1900-02-29. Typed file readback and equivalent numeric fixtures verify Feb 28/Mar 1 map to 59/61, skipping serial 60. |
+| Booleans | [SpreadsheetML Boolean cell type][excel-booleans] | Emit `t="b"` and `0`/`1`; read back false/true as Boolean, not Text or Number. |
+| Grid: Excel 1,048,576 rows / 16,384 columns | [Excel limits][excel-limits] | Native profile is smaller: 128 data rows plus header, 32 columns, 32 sheets and 1,024 total data rows. Exact/+1 tests; refuse excess rather than truncate. |
+| Rectangular missing values | [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545) | Missing optional values emit `Empty` in their original position; empty Text stays typed Text in the source XLSX. |
+| Package/receipt resource bounds | [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545), dedicated bounds below | Refuse above 8 MiB encoded / 24 MiB expanded or the existing receipt limit; exact/+1 byte tests. |
+
+[excel-names]: https://support.microsoft.com/en-gb/excel/rename-a-worksheet
+[excel-sheet]: https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/ebf12ea5-2bb4-4af5-ab26-563f22d3f895
+[excel-limits]: https://support.microsoft.com/en-us/excel/excel-specifications-and-limits
+[excel-numbers]: https://learn.microsoft.com/en-us/troubleshoot/microsoft-365-apps/excel/floating-point-arithmetic-inaccurate-result
+[excel-leap]: https://learn.microsoft.com/en-us/troubleshoot/microsoft-365-apps/excel/wrongly-assumes-1900-is-leap-year
+[excel-booleans]: https://learn.microsoft.com/en-us/office/open-xml/spreadsheet/how-to-retrieve-the-values-of-cells-in-a-spreadsheet
+[xml-characters]: https://www.w3.org/TR/REC-xml/#charsets
+[xml-space]: https://www.w3.org/TR/REC-xml/#sec-white-space
+
+The independent torture workbook includes maximum-length ASCII/BMP/astral
+Text and headers, XML-legal scalar boundaries, whitespace, escape near-misses,
+minimum-normal Numbers, both Boolean values, Date endpoints and the leap-bug
+boundary, allocated reserved/Unicode names, and the native grid boundaries.
+Set `TACHIKO_NATIVE_TABLES_TORTURE_EVIDENCE` when running its unit test to write
+both XLSX and the expected source projection JSON. LibreOffice ODS readback
+checks typed values and names independently of Work's importer. External
+applications may round Numbers already covered by the precision ledger, and
+may collapse empty Text to an empty cell. Those limitations are not represented
+as exact-value preservation claims. Direct writer tests cover labels rejected
+by resident admission (for example untrimmed/control-bearing display names).
 
 ## Dedicated outbound bounds
 
@@ -192,7 +258,9 @@ session state changes on success or refusal.
   Text/header lengths of 32,767 and 32,768 UTF-16 units for ASCII, multi-byte BMP
   and astral characters. The expanded-XLSX fixture reaches exactly 24 MiB and
   +1 across many valid cells, each within the per-cell limit. Direct native
-  writer tests additionally check caseless uniqueness, minimum-normal/adjacent
+  writer tests additionally enumerate the compatibility inventory, reserved and
+  UTF-16 worksheet names, XML characters and whitespace, Date endpoints and
+  1900-system serial fixtures, caseless uniqueness, minimum-normal/adjacent
   subnormal boundaries and numeric `0` output for both zero signs, preserving
   the previous behavior of other profiles.
 - `wasm::native_tables_parity_tests`: the actual WASM bridge's request/response
