@@ -1780,9 +1780,9 @@ fn install_checked_field_value(
     Ok(())
 }
 
-/// Build the narrow inverse candidate for removing one optional stored value.
+/// Build the explicit clear candidate for one optional stored value.
 ///
-/// This is an app-private history operation. It preserves the distinction
+/// This authoring and history operation preserves the distinction
 /// between an optional field that was absent and one that contained a scalar,
 /// while keeping required fields and formula structure under the shared
 /// validation boundary.
@@ -1798,15 +1798,13 @@ pub(crate) fn unset_field_candidate(
                 entity: field.entity.clone(),
             })?;
     let definition = field_definition(document, field)?;
-    if !entity.fields.contains_key(&field.field) {
-        return Err(WorkspaceError::NoChange {
-            field: field.clone(),
-        });
-    }
     if definition.required {
         return Err(WorkspaceError::MissingField {
             field: field.clone(),
         });
+    }
+    if !entity.fields.contains_key(&field.field) {
+        return Ok(document.clone());
     }
     preflight_formula_structures(document)?;
     let mut candidate = document.clone();

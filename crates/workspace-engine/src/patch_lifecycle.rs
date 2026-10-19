@@ -326,13 +326,13 @@ pub enum SemanticCommand {
     RemoveEntity {
         entity: EntityId,
     },
-    /// Add one required scalar field and its complete existing-entity values.
+    /// Add one scalar field, with complete values when required or sparse values for optional Text/Number.
     AppendSchemaField {
         schema: SchemaId,
         field: FieldDefinition,
         values: BTreeMap<EntityId, Value>,
     },
-    /// Remove one required scalar field and its existing stored values.
+    /// Remove one scalar field and its exact sparse existing stored values.
     RemoveSchemaField {
         schema: SchemaId,
         field: FieldDefinition,
@@ -350,6 +350,12 @@ pub enum SemanticCommand {
         field: FieldId,
         display_name: Option<String>,
     },
+    /// Change requiredness without filling or coercing any values (ADR-0045).
+    SetSchemaFieldRequiredness {
+        schema: SchemaId,
+        field: FieldId,
+        required: bool,
+    },
     /// Replace the complete durable constraint facet of one stable field.
     SetFieldConstraint {
         schema: SchemaId,
@@ -362,7 +368,7 @@ pub enum SemanticCommand {
     },
     /// Remove one stored value from an optional declared field.
     ///
-    /// This app-private inverse keeps missing-field semantics distinct from a
+    /// Explicit authoring and inverse operations keep absence distinct from a
     /// scalar placeholder while still using the normal lifecycle.
     UnsetField {
         field: FieldRef,
@@ -2491,6 +2497,7 @@ impl PatchLifecycle {
                     | SemanticCommand::RemoveSchemaField { .. }
                     | SemanticCommand::RenameSchemaField { .. }
                     | SemanticCommand::SetSchemaFieldDisplayName { .. }
+                    | SemanticCommand::SetSchemaFieldRequiredness { .. }
                     | SemanticCommand::SetFieldConstraint { .. } => {
                         OperationFamily::SchemaFieldMutation
                     }
@@ -2770,7 +2777,8 @@ impl PatchLifecycle {
         if !matches!(
             field.field_type,
             FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
-        ) || !field.required
+        ) || (!field.required
+            && !matches!(field.field_type, FieldType::Text | FieldType::Number))
         {
             return Err(WorkspaceError::TypeMismatch {
                 field: FieldRef::new("schema", field.id.clone()),
@@ -2783,6 +2791,11 @@ impl PatchLifecycle {
                 .ok_or_else(|| WorkspaceError::MissingSchema {
                     schema: schema_id.clone(),
                 })?;
+        if !field.required && !has_native_scalar_shape(candidate, schema) {
+            return Err(WorkspaceError::TypeMismatch {
+                field: FieldRef::new("schema", field.id.clone()),
+            });
+        }
         if !base.schemas.contains_key(schema_id) || schema.fields.contains_key(&field.id) {
             return Err(WorkspaceError::GeneratedIdCollision {
                 kind: super::SemanticIdKind::Field,
@@ -2805,7 +2818,9 @@ impl PatchLifecycle {
             .filter(|entity| entity.schema == *schema_id)
             .map(|entity| entity.id.clone())
             .collect::<BTreeSet<_>>();
-        if values.keys().cloned().collect::<BTreeSet<_>>() != entities {
+        if (field.required && values.keys().cloned().collect::<BTreeSet<_>>() != entities)
+            || values.keys().any(|id| !entities.contains(id))
+        {
             return Err(WorkspaceError::MissingEntityId {
                 entity: entities
                     .iter()
@@ -2887,7 +2902,7 @@ impl PatchLifecycle {
             .filter(|entity| entity.schema == *schema_id)
             .map(|entity| entity.id.clone())
             .collect::<BTreeSet<_>>();
-        if values.keys().cloned().collect::<BTreeSet<_>>() != entities
+        if values.keys().any(|id| !entities.contains(id))
             || entities.iter().any(|id| {
                 candidate
                     .entities
@@ -3147,6 +3162,52 @@ impl PatchLifecycle {
                             field: field.clone(),
                         })?;
                     definition.display_name.clone_from(display_name);
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_field_scope(schema, field),
+                    });
+                }
+                SemanticCommand::SetSchemaFieldRequiredness {
+                    schema,
+                    field,
+                    required,
+                } => {
+                    let record = candidate.schemas.get(schema).ok_or_else(|| {
+                        WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        }
+                    })?;
+                    let definition = record.fields.get(field).ok_or_else(|| {
+                        WorkspaceError::MissingSchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        }
+                    })?;
+                    if !matches!(definition.field_type, FieldType::Text | FieldType::Number)
+                        || !has_native_scalar_shape(&candidate, record)
+                    {
+                        return Err(WorkspaceError::TypeMismatch {
+                            field: FieldRef::new("schema", field.clone()),
+                        });
+                    }
+                    if *required {
+                        if let Some(entity) = candidate.entities.values().find(|entity| {
+                            entity.schema == *schema && !entity.fields.contains_key(field)
+                        }) {
+                            return Err(WorkspaceError::MissingField {
+                                field: FieldRef::new(entity.id.clone(), field.clone()),
+                            });
+                        }
+                    }
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .expect("checked schema")
+                        .fields
+                        .get_mut(field)
+                        .expect("checked field")
+                        .required = *required;
                     writes.insert(AssociatedWriteRequirement {
                         family: OperationFamily::SchemaFieldMutation,
                         mutation_class: MutationClass::Schema,
@@ -3559,7 +3620,8 @@ impl PatchLifecycle {
             SemanticCommand::AppendSchemaField { .. }
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. }
-            | SemanticCommand::SetSchemaFieldDisplayName { .. } => {
+            | SemanticCommand::SetSchemaFieldDisplayName { .. }
+            | SemanticCommand::SetSchemaFieldRequiredness { .. } => {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
                 Ok(())
             }
@@ -3703,6 +3765,14 @@ impl PatchLifecycle {
             | SemanticChange::SchemaFieldRemoved { .. }
             | SemanticChange::EntityAdded { .. }
             | SemanticChange::EntityRemoved { .. } => Ok(()),
+            SemanticChange::SchemaFieldChanged { schema, field, .. }
+                if body.commands().iter().any(|command| matches!(command,
+                    SemanticCommand::SetSchemaFieldRequiredness { schema: command_schema, field: command_field, .. }
+                    if command_schema == schema && command_field == field
+                )) => {
+                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
+                Ok(())
+            }
             SemanticChange::FieldKeyChanged { schema, field, .. }
                 if body.commands().iter().any(|command| matches!(command,
                     SemanticCommand::RenameSchemaField { schema: command_schema, field: command_field, .. }
@@ -4266,6 +4336,38 @@ fn command_families_for_field(
         .collect()
 }
 
+/// Structural authoring admission only; no identity-prefix or import provenance inference.
+fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool {
+    !schema.fields.is_empty()
+        && schema.fields.values().all(|field| {
+            matches!(
+                field.field_type,
+                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            ) && (field.required || matches!(field.field_type, FieldType::Text | FieldType::Number))
+        })
+        && document
+            .entities
+            .values()
+            .filter(|entity| entity.schema == schema.id)
+            .all(|entity| {
+                entity
+                    .fields
+                    .keys()
+                    .all(|id| schema.fields.contains_key(id))
+                    && schema.fields.iter().all(|(id, field)| {
+                        entity.fields.get(id).map_or(!field.required, |value| {
+                            matches!(
+                                (&field.field_type, value),
+                                (FieldType::Text, Value::Text(_))
+                                    | (FieldType::Number, Value::Number(_))
+                                    | (FieldType::Boolean, Value::Boolean(_))
+                                    | (FieldType::Date, Value::Date(_))
+                            )
+                        })
+                    })
+            })
+}
+
 fn classify_field_transition(
     existing: Option<&Value>,
     replacement: &Value,
@@ -4739,6 +4841,7 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
             | SemanticCommand::RemoveEntity { .. }
             | SemanticCommand::RenameSchemaField { .. }
             | SemanticCommand::SetFieldConstraint { .. }
+            | SemanticCommand::SetSchemaFieldRequiredness { .. }
             | SemanticCommand::SetFieldValue { .. }
             | SemanticCommand::UnsetField { .. }
             | SemanticCommand::FormulaUpdate(_)
