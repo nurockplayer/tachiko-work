@@ -7,8 +7,8 @@ The durable-schema-versus-runtime-policy boundary is Accepted under
 [ADR-0021](../decisions/ADR-0021-progressive-semantic-strengthening.md) accepts
 progressive semantic strengthening and mixed-strength content without weakening
 the current strongly typed Entity contract. ADR-0040 accepts only bounded
-native-table required-scalar field evolution; its command and DTO shapes remain
-Provisional. ADR-0041 accepts exactly two durable field-constraint variants and
+native-table required-scalar field evolution, amended by ADR-0045 for optional
+native Text/Number fields; their command and DTO shapes remain Provisional. ADR-0041 accepts exactly two durable field-constraint variants and
 their closed v3 declaration meaning. #448 implements the closed core model and
 core/resident validation; constraint command/API/wire mechanics, UI, and v3
 storage remain unimplemented. Richer future schema vocabulary remains
@@ -183,6 +183,19 @@ presentation order does not establish semantic identity. These operations add
 no implicit default, null, coercion, dependency repair, storage-version change,
 or general migration contract. Exact command and DTO spellings remain
 Provisional.
+
+[ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md)
+extends this exception for native scalar tables and `Text`/`Number` fields
+only. Such a field may be declared **optional** at table creation or when added;
+an optional addition needs no initializer, and supplied initializers set only
+the named entities. Native scalar admission accepts optional Text/Number fields
+alongside required scalar fields: an absent optional entry is valid and every
+present entry keeps its exact scalar type. One field's requiredness may change
+in either direction: relaxation introduces no missing-required-field failure,
+and strengthening rejects unless every entity already holds a value. Blank is
+the omitted value, distinct from empty Text, `0`, and `false`; no default,
+null placeholder, or coercion is introduced. Existing documents, including
+imported optional Date/Boolean fields, are not reclassified.
 
 ## Future schema vocabulary
 

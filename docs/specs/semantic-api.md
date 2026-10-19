@@ -24,8 +24,9 @@ The M04 logical formula-reasoning Query, read-only scenario Query, typed
 formula-update Command, and bounded semantic analysis Query semantics are
 Accepted by ADR-0020's Issue #32 and Issue #33 amendments.
 ADR-0040 accepts the bounded native-table required-scalar field-evolution
-meaning; its command, DTO, authorization, diagnostics, and session-history
-shapes remain Provisional.
+meaning, amended by ADR-0045 for optional native Text/Number fields; their
+command, DTO, authorization, diagnostics, and session-history shapes remain
+Provisional.
 ADR-0041 accepts the bounded durable field-constraint meaning and the related
 v3/delta-v2/conflict-v2 logical authority; it adds no production constraint
 runtime or Semantic API DTO.
@@ -374,6 +375,17 @@ other Accepted durable definition that depends on that field. They preserve
 every surviving semantic identity, publish atomically through the same
 Propose/Execute and gate laws, and never infer a default, null, coercion, or
 dependency repair.
+
+[ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md)
+extends this family for native scalar tables and Text/Number fields only:
+declare an optional field (at table creation or as an added field, with no
+initializer required); insert a row omitting optional fields; set a value even
+where the entity currently has none; explicitly clear an optional value (blank =
+omitted, distinct from empty Text, `0`, and `false`); and change requiredness in
+either direction, where strengthening rejects unless every entity already holds
+a value. Clearing a required field, or clearing a value whose consuming formula
+then fails final calculation, rejects the whole candidate. Already-blank clears
+change nothing; an all-unchanged operation is `NoChange`.
 
 The operation names, Rust and transport DTO spellings, authorization footprint,
 diagnostic codes, and history representation remain Provisional. A Driver

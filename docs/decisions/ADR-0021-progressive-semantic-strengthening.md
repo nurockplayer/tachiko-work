@@ -120,6 +120,9 @@ ADR-0040 narrowly admits required scalar-field addition with explicit values
 for every existing entity, and dependency-safe removal of an unreferenced
 field. All other schema-evolution families remain Deferred; this does not
 create a general migration engine or a storage-format migration.
+ADR-0045 additionally admits optional native Text/Number fields, explicit
+value clears, and requiredness changes for native scalar tables, under the
+same exclusions.
 
 ### 10. Import and progressive strengthening share principles, not necessarily one engine
 
