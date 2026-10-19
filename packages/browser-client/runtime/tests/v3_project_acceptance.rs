@@ -1187,6 +1187,7 @@ fn independent_opened_projection(
     .into_iter()
     .enumerate()
     .map(|(index, (key, field_type))| ColumnProjection {
+        required: false,
         id: FIELD_IDS[index].to_owned(),
         key: key.to_owned(),
         display_name: key.to_owned(),
@@ -1216,6 +1217,7 @@ fn independent_opened_projection(
     let rows = source_rows
         .into_iter()
         .map(|(row_id, row_key, values)| RowProjection {
+            blank_fields: Vec::new(),
             id: row_id.to_owned(),
             key: row_key.to_owned(),
             fields: values
@@ -1235,6 +1237,7 @@ fn independent_opened_projection(
                         _ => unreachable!(),
                     };
                     FieldProjection {
+                        blank: false,
                         target: FieldTarget {
                             entity: row_id.to_owned(),
                             field: FIELD_IDS[index].to_owned(),
@@ -2001,6 +2004,7 @@ fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() 
                         occurrence_id: FRESH.into(),
                         name: "rejected".into(),
                         columns: vec![tachiko_designer_runtime::NewTableColumnInput {
+                            required: true,
                             name: "value".into(),
                             field_type: "not-a-type".into(),
                         }],
@@ -2196,6 +2200,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
             occurrence_id: "00000000-0000-4000-8000-000000000006".into(),
             name: "reset".into(),
             columns: vec![tachiko_designer_runtime::NewTableColumnInput {
+                required: true,
                 name: "value".into(),
                 field_type: "text".into(),
             }],
@@ -2258,6 +2263,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 entity_count: 0
             },
             columns: vec![ColumnProjection {
+                required: true,
                 id: new_field_id.into(),
                 key: "value".into(),
                 display_name: "value".into(),

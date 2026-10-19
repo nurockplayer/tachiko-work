@@ -179,6 +179,7 @@ fn real_import_keeps_the_unedited_26_date_and_new_occurrence_identities() {
                 occurrence_id: occurrence.into(),
                 name: "rejected".into(),
                 columns: vec![NewTableColumnInput {
+                    required: true,
                     name: "value".into(),
                     field_type: "not-a-type".into(),
                 }],

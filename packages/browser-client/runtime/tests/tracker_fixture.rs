@@ -44,7 +44,12 @@ fn operational_tracker_fixture_is_canonical_admitted_and_matches_driver_paste() 
             collection: "tracker".to_owned(),
             start_entity: None,
             start_field: "task".to_owned(),
-            rows: source,
+            rows: {
+                let rows: Vec<Vec<String>> = source;
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(Into::into).collect())
+                    .collect()
+            },
         })
         .unwrap()
     else {

@@ -29,10 +29,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         collection: "tracker".to_owned(),
         start_entity: None,
         start_field: "task".to_owned(),
-        rows: ROWS
-            .lines()
-            .map(|row| row.split('\t').map(str::to_owned).collect())
-            .collect(),
+        rows: {
+            let rows: Vec<Vec<String>> = ROWS
+                .lines()
+                .map(|row| row.split('\t').map(str::to_owned).collect())
+                .collect();
+            rows.into_iter()
+                .map(|row| row.into_iter().map(Into::into).collect())
+                .collect()
+        },
     })?;
     let DesignerResponse::Published(publication) = response else {
         return Err(io::Error::other("paste did not publish").into());

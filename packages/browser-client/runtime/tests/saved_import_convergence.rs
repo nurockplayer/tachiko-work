@@ -380,7 +380,9 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         let expected_bytes = serde_json::to_vec(&expected).unwrap();
         // ADR-0043 adds 22 bytes for collection fallback plus 3 x 19
         // bytes for the column fallback names in this literal projection.
-        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19);
+        // ADR-0045 adds 3 x 16 bytes for explicit column requiredness;
+        // default false blank flags and empty blank-field lists stay omitted.
+        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19 + 3 * 16);
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
 
@@ -463,6 +465,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
             .fields
             .values()
             .map(|field| ColumnProjection {
+                required: true,
                 id: field.id.to_string(),
                 key: field.key.to_string(),
                 display_name: field.key.to_string(),
@@ -473,6 +476,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
         rows: entities
             .into_iter()
             .map(|entity| RowProjection {
+                blank_fields: Vec::new(),
                 id: entity.id.to_string(),
                 key: entity.key.to_string(),
                 fields: schema
@@ -484,6 +488,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                             panic!("the fixed native table fixture contains only Text values")
                         };
                         FieldProjection {
+                            blank: false,
                             target: FieldTarget {
                                 entity: entity.id.to_string(),
                                 field: definition.id.to_string(),

@@ -483,6 +483,7 @@ fn append_value_command(
 
 fn input_value(input: &ScalarEditInput) -> Result<Value, DesignerError> {
     match input {
+        ScalarEditInput::Clear => Err(tracker_error("cleanup fill requires a typed stored value")),
         ScalarEditInput::Text { value } => Ok(Value::Text(value.clone())),
         ScalarEditInput::Number { input } => {
             convert_value(&Value::Text(input.clone()), &FieldType::Number)

@@ -4,6 +4,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Rust semantic commands and the Designer runtime admit optional native Text/Number
+  columns, sparse row initialization, explicit atomic set/clear edits and pastes,
+  and revision-pinned requiredness changes with exact presence-preserving Undo/Redo.
+  Table projections expose requiredness and blank cells. Blank remains distinct
+  from empty Text; storage formats, capacity limits, and public TypeScript APIs
+  are unchanged.
+
 ### Fixed
 
 - The browser kit artifact manifest's exposed client-method inventory now
