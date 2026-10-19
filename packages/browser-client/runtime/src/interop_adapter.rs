@@ -20,6 +20,7 @@ pub const MAX_NATIVE_TABLES_TOTAL_ROWS: usize = 1_024;
 pub const MAX_NATIVE_TABLES_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_NATIVE_TABLES_EXPANDED_BYTES: usize = 24 * 1024 * 1024;
 pub const MAX_NATIVE_TABLES_XLSX_TEXT_UNITS: usize = 32_767;
+const MAX_NATIVE_TABLES_PRECISION_LOCATIONS: usize = 20;
 pub const MAX_FORMULAS: usize = 32;
 pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
 pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 25_218;
@@ -68,6 +69,10 @@ impl OutputProfile {
             Self::TextCapacity => MAX_TEXT_CAPACITY_ROWS,
         }
     }
+}
+
+pub(crate) fn native_tables_caseless_key(name: &str) -> String {
+    name.to_uppercase().to_lowercase()
 }
 
 /// A private resource exception selected from complete source content.
@@ -337,21 +342,97 @@ pub(crate) fn validate_native_tables_xlsx(
         }
         for (row, cells) in sheet.rows.iter().enumerate() {
             for (column, cell) in cells.iter().enumerate() {
-                if let SourceValue::Text { value } = &cell.value {
-                    validate_native_tables_xlsx_text(
-                        value,
-                        &format!(
-                            "{location}/row {}/column {}",
-                            row + 1 + usize::from(sheet.has_header),
-                            column + 1,
-                        ),
-                        true,
-                    )?;
+                let cell_location = native_tables_cell_location(sheet, sheet_index, row, column);
+                match &cell.value {
+                    SourceValue::Text { value } => {
+                        validate_native_tables_xlsx_text(value, &cell_location, true)?;
+                    }
+                    SourceValue::Number { value }
+                        if value.is_finite()
+                            && *value != 0.0
+                            && value.abs() < f64::MIN_POSITIVE =>
+                    {
+                        return Err(FidelityFinding {
+                            category: FidelityCategory::UnsupportedSafeDisabled,
+                            code: "native_tables_xlsx_subnormal_number".into(),
+                            location: cell_location,
+                            message: "Excel cannot retain non-zero subnormal Numbers; native XLSX refuses rather than changing the value to zero.".into(),
+                            blocking: true,
+                        });
+                    }
+                    _ => {}
                 }
             }
         }
     }
     Ok(())
+}
+
+fn native_tables_cell_location(
+    sheet: &SourceSheet,
+    index: usize,
+    row: usize,
+    column: usize,
+) -> String {
+    format!(
+        "sheet {} {:?}/row {}/column {}",
+        index + 1,
+        sheet.name,
+        row + 1 + usize::from(sheet.has_header),
+        column + 1
+    )
+}
+
+/// Display uses the shortest round-trip decimal. Ignore the sign, decimal
+/// point, exponent and insignificant leading/trailing zeros when counting.
+fn native_tables_significant_digits(value: f64) -> usize {
+    let decimal = value.to_string();
+    let digits: String = decimal
+        .split(['e', 'E'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    digits.trim_matches('0').len()
+}
+
+pub(crate) fn native_tables_xlsx_number_findings(
+    workbook: &SourceWorkbook,
+) -> Vec<FidelityFinding> {
+    let mut findings = Vec::new();
+    let mut count = 0usize;
+    for (sheet_index, sheet) in workbook.sheets.iter().enumerate() {
+        for (row, cells) in sheet.rows.iter().enumerate() {
+            for (column, cell) in cells.iter().enumerate() {
+                if let SourceValue::Number { value } = cell.value {
+                    if value.is_finite() && native_tables_significant_digits(value) > 15 {
+                        count += 1;
+                        if findings.len() < MAX_NATIVE_TABLES_PRECISION_LOCATIONS {
+                            findings.push(FidelityFinding {
+                                category: FidelityCategory::LossyOnExport,
+                                code: "native_tables_xlsx_precision_loss".into(),
+                                location: native_tables_cell_location(sheet, sheet_index, row, column),
+                                message: format!("Number {value} needs more than 15 significant decimal digits; Excel may round it to 15 significant decimal digits. The exported value is not rounded; CSV keeps full precision."),
+                                blocking: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if count > 0 {
+        let shown = findings.len();
+        findings.push(FidelityFinding {
+            category: FidelityCategory::LossyOnExport,
+            code: "native_tables_xlsx_precision_count".into(),
+            location: "workbook".into(),
+            message: format!("{count} Number cells need more than 15 significant decimal digits; showing the first {shown} locations; {} additional locations omitted. Excel may round these values; CSV keeps full precision.", count - shown),
+            blocking: false,
+        });
+    }
+    findings
 }
 
 trait CapacityXmlSink: std::fmt::Write {
@@ -2681,6 +2762,24 @@ fn validate_output_collection_bounds(
     Ok(())
 }
 
+fn output_headers_unique(columns: &[SourceColumn], profile: OutputProfile) -> bool {
+    if profile == OutputProfile::NativeTables {
+        columns
+            .iter()
+            .map(|c| native_tables_caseless_key(&c.name))
+            .collect::<BTreeSet<_>>()
+            .len()
+            == columns.len()
+    } else {
+        columns
+            .iter()
+            .map(|c| &c.name)
+            .collect::<BTreeSet<_>>()
+            .len()
+            == columns.len()
+    }
+}
+
 pub(crate) fn validate_output_for_profile(
     workbook: &SourceWorkbook,
     profile: OutputProfile,
@@ -2700,16 +2799,16 @@ pub(crate) fn validate_output_for_profile(
         }
         if s.has_header
             && (s.columns.iter().any(|c| c.name.is_empty())
-                || s.columns
-                    .iter()
-                    .map(|c| &c.name)
-                    .collect::<BTreeSet<_>>()
-                    .len()
-                    != s.columns.len())
+                || !output_headers_unique(&s.columns, profile))
         {
             return fail("XLSX export headers must be nonempty and unique");
         }
-        if !valid_worksheet_name(&s.name) || !names.insert(s.name.to_lowercase()) {
+        let name_key = if profile == OutputProfile::NativeTables {
+            native_tables_caseless_key(&s.name)
+        } else {
+            s.name.to_lowercase()
+        };
+        if !valid_worksheet_name(&s.name) || !names.insert(name_key) {
             return fail("Invalid or duplicate XLSX sheet name");
         }
         if s.columns.is_empty()
@@ -2992,6 +3091,11 @@ pub(crate) fn export_xlsx_for_profile(
                                 escape(value)
                             ),
                         ),
+                        SourceValue::Number { value }
+                            if profile == OutputProfile::NativeTables && *value == 0.0 =>
+                        {
+                            ("n", format!("{formula}<v>0</v>"))
+                        }
                         SourceValue::Number { value } => ("n", format!("{formula}<v>{value}</v>")),
                         SourceValue::Boolean { value } => {
                             ("b", format!("{formula}<v>{}</v>", u8::from(*value)))
@@ -3273,7 +3377,7 @@ mod native_tables_output_tests {
         OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
         export_csv_for_profile, export_xlsx_for_profile, validate_native_tables_xlsx,
     };
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
     use zip::ZipArchive;
 
     fn sheet(columns: usize, rows: usize) -> SourceSheet {
@@ -3287,6 +3391,70 @@ mod native_tables_output_tests {
                 })
                 .collect(),
             rows: vec![vec![SourceCell::default(); columns]; rows],
+        }
+    }
+
+    #[test]
+    fn native_tables_writer_enforces_caseless_names_without_changing_shared_profile() {
+        let mut workbook = SourceWorkbook {
+            sheets: vec![sheet(2, 0)],
+            ledger: vec![],
+        };
+        workbook.sheets[0].columns[0].name = "σ".into();
+        workbook.sheets[0].columns[1].name = "ς".into();
+        assert!(export_xlsx_for_profile(&workbook, OutputProfile::NativeTables).is_err());
+        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
+        workbook.sheets = vec![sheet(1, 0), sheet(1, 0)];
+        workbook.sheets[0].name = "σ".into();
+        workbook.sheets[1].name = "ς".into();
+        assert!(export_xlsx_for_profile(&workbook, OutputProfile::NativeTables).is_err());
+        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
+    }
+
+    #[test]
+    fn native_tables_writer_refuses_subnormal_numbers_and_normalizes_signed_zero_only() {
+        let below = f64::from_bits(f64::MIN_POSITIVE.to_bits() - 1);
+        for value in [
+            f64::MIN_POSITIVE,
+            below,
+            -f64::MIN_POSITIVE,
+            -below,
+            0.0,
+            -0.0,
+        ] {
+            let mut workbook = SourceWorkbook {
+                sheets: vec![sheet(1, 1)],
+                ledger: vec![],
+            };
+            workbook.sheets[0].rows[0][0].value = SourceValue::Number { value };
+            let native = export_xlsx_for_profile(&workbook, OutputProfile::NativeTables);
+            if value != 0.0 && value.abs() < f64::MIN_POSITIVE {
+                assert!(native.is_err());
+                let finding = validate_native_tables_xlsx(&workbook).unwrap_err();
+                assert!(finding.blocking);
+                assert_eq!(finding.code, "native_tables_xlsx_subnormal_number");
+            } else {
+                let bytes = native.unwrap();
+                if value == 0.0 {
+                    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+                    let mut xml = String::new();
+                    archive
+                        .by_name("xl/worksheets/sheet1.xml")
+                        .unwrap()
+                        .read_to_string(&mut xml)
+                        .unwrap();
+                    assert!(xml.contains("<v>0</v>"));
+                    assert!(!xml.contains("<v>-0</v>"));
+                }
+            }
+            assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
+            let csv =
+                export_csv_for_profile(&workbook.sheets[0], OutputProfile::NativeTables).unwrap();
+            assert!(
+                String::from_utf8(csv)
+                    .unwrap()
+                    .ends_with(&format!("{value}\r\n"))
+            );
         }
     }
 

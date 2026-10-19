@@ -50,7 +50,12 @@ Each worksheet starts with its table display name. Replace controls, XML-invalid
 characters and `[]:*?/\` with `_`, trim surrounding whitespace and boundary
 apostrophes, use `Table` if empty, and take at most 31 Unicode scalar characters
 without splitting UTF-8. Trim an apostrophe exposed at the truncated end.
-Allocate names in canonical order. Case-insensitive collisions use ` (2)`,
+Allocate names in canonical order. Compare complete candidate names using
+`to_uppercase()` followed by `to_lowercase()`, without a new dependency. This
+conservative caseless key makes `σ`/`ς`/`Σ` and `ß`/`SS`/`ss` collide. Turkish
+`I`/`ı`/`i` share a key; `İ` retains its distinct `i` plus combining dot key.
+Over-collision adds a deterministic, ledgered suffix; it never changes data.
+Caseless collisions use ` (2)`,
 ` (3)`, etc.; reserve suffix space inside the 31-character limit, and test the
 complete candidate against all previously allocated names, including names
 which already contain suffix text. Every worksheet mapping has a `Converted`
@@ -58,7 +63,7 @@ ledger finding with the stable schema ID and original/output names.
 
 Headers start with field display names. Replace controls/XML-invalid characters
 with `_`, use `Column` for an empty/whitespace-only header, and disambiguate
-case-insensitively with the same suffix allocation. Headers are **never
+with the same uppercase-then-lowercase key and suffix allocation. Headers are **never
 truncated**. Every changed header has a `Converted` finding with schema/field
 identity and original/output names. Worksheet names are internal for CSV; CSV
 has no worksheet-name mapping claim.
@@ -68,6 +73,25 @@ Boolean, and Gregorian Date with `yyyy-mm-dd`. No formulas or execution-capable
 parts are produced by this operation. Absent optional fields map to `Empty`,
 not zero or false, preserving every rectangular position. Empty Text remains
 Text in XLSX.
+
+Native-tables XLSX refuses finite, non-zero subnormal Numbers with
+`abs(value) < f64::MIN_POSITIVE`: Excel cannot retain them and would change them
+to zero. The blocking finding identifies the worksheet, row and column.
+`f64::MIN_POSITIVE` and its negative counterpart are accepted. Both `0.0` and
+`-0.0` are emitted as numeric `0`. These rules do not change other XLSX profiles.
+
+Numbers whose shortest round-trip decimal needs more than **15 significant
+decimal digits** are exported unchanged, with a non-blocking `LossyOnExport`
+finding stating that Excel may round them to 15 digits. Count digits in the
+decimal significand, excluding sign, decimal point, exponent and insignificant
+leading/trailing zeros. Thus `0.30000000000000004` and `1234567890123456` have a
+finding, while `0.1`, `123456789012345` and powers such as `1e20` do not.
+
+For these precision warnings, emit at most the first **20 cell locations** in
+canonical worksheet/row/column order, followed by one count finding whenever
+any cell is affected. The count states the total affected cells, the number of
+locations shown and the number omitted. This cap applies across the entire
+workbook. No value is rounded or dropped to satisfy the ledger cap.
 
 Native-tables XLSX refuses literal SpreadsheetML escape sequences matching
 `_x[0-9A-Fa-f]{4}_` in Text cell values, headers and worksheet names. Hex digits
@@ -91,6 +115,10 @@ CSV exports only the requested collection using scalar lexical values and the
 existing UTF-8/RFC4180 writer. Every other collection has an individual exclusion
 finding, including any unmapped collection. Typing and formatting losses and
 CSV's inability to distinguish missing values from empty Text are explicit.
+Its ledger also states that CSV retains full binary64 Number precision through
+shortest round-trip decimal text, including subnormals. The CSV numeric writer
+is unchanged. A spreadsheet application may still infer types or round those
+values when opening CSV; full precision here describes the file's contents.
 Headers and Text beginning with `=`, `+`, `-` or `@` after leading whitespace or
 controls are refused; no apostrophe prefix is added. Check source headers before
 sanitization as well as the encoded headers. Typed XLSX remains the escape for
@@ -156,12 +184,17 @@ session state changes on success or refusal.
   explicit CSV reimport, independent ZIP/XML structure assertions, empty/missing
   values, stable order, collision chains, geometry limits/+1, mixed documents,
   stale revisions, source/history preservation and ledger coverage; literal
-  SpreadsheetML escape/near-miss locations and native-only XLSX Text refusal.
+  SpreadsheetML escape/near-miss locations and native-only XLSX Text refusal;
+  deterministic Greek/German/Turkish/ASCII caseless mappings, located subnormal
+  refusal, full-precision CSV and the bounded XLSX precision warning ledger.
 - `interop_adapter::native_tables_output_tests`: independent outbound geometry,
   encoded CSV byte and expanded XLSX byte limits, including exact/+1 boundaries;
   Text/header lengths of 32,767 and 32,768 UTF-16 units for ASCII, multi-byte BMP
   and astral characters. The expanded-XLSX fixture reaches exactly 24 MiB and
-  +1 across many valid cells, each within the per-cell limit.
+  +1 across many valid cells, each within the per-cell limit. Direct native
+  writer tests additionally check caseless uniqueness, minimum-normal/adjacent
+  subnormal boundaries and numeric `0` output for both zero signs, preserving
+  the previous behavior of other profiles.
 - `wasm::native_tables_parity_tests`: the actual WASM bridge's request/response
   logic executed natively, compared byte-for-byte with host receipts, bytes,
   findings and refusals. It never dereferences WASM pointer offsets; this is

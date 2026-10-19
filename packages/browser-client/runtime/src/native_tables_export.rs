@@ -7,7 +7,8 @@ use tachiko_workspace_engine::{Document, FieldType, Value};
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, OutputProfile, SourceCell, SourceColumn, SourceSheet,
     SourceWorkbook, csv_formula_text, export_csv_for_profile, export_xlsx_for_profile,
-    validate_native_tables_xlsx, validate_native_tables_xlsx_text, validate_output_for_profile,
+    native_tables_caseless_key, native_tables_xlsx_number_findings, validate_native_tables_xlsx,
+    validate_native_tables_xlsx_text, validate_output_for_profile,
 };
 use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
@@ -106,7 +107,7 @@ fn mapped_name(source: &str, worksheet: bool, used: &mut BTreeSet<String>) -> St
             base.to_owned()
         };
         let candidate = format!("{prefix}{suffix}");
-        if used.insert(candidate.to_lowercase()) {
+        if used.insert(native_tables_caseless_key(&candidate)) {
             return candidate;
         }
     }
@@ -307,11 +308,15 @@ impl DesignerRuntime {
         if csv {
             ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_csv_values_only", collection,
                 "CSV exports scalar lexical values only: typing and formatting are lost, and missing values cannot be distinguished from empty Text. Formula-leading Text or headers are refused; use typed XLSX.".into()));
+            ledger.push(finding(FidelityCategory::NativeEquivalent, "native_tables_csv_number_precision", collection,
+                "CSV keeps full binary64 Number precision in shortest round-trip decimal text, including subnormal values. A spreadsheet application may infer types or round values when opening CSV.".into()));
         }
-        let workbook = SourceWorkbook { sheets, ledger };
+        let mut workbook = SourceWorkbook { sheets, ledger };
         if !csv {
             validate_native_tables_xlsx(&workbook)
                 .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
+            let precision_findings = native_tables_xlsx_number_findings(&workbook);
+            workbook.ledger.extend(precision_findings);
         }
         validate_output_for_profile(&workbook, OutputProfile::NativeTables)
             .map_err(|error| refused("native_tables_output_refused", "workbook", error.0))?;

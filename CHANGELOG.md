@@ -6,6 +6,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Native-tables exports disambiguate worksheet names and headers with an
+  uppercase-then-lowercase Unicode comparison key. Native XLSX refuses
+  subnormal Numbers that Excel would turn into zero, normalizes signed zero,
+  and discloses possible Excel rounding above 15 significant decimal digits
+  using at most 20 located findings plus a total count. CSV keeps full Number
+  precision and explicitly records that fact in its ledger.
+
 - Native-tables XLSX export refuses literal SpreadsheetML `_xHHHH_` escape
   sequences in Text, headers and worksheet names, and Text cells or headers
   above Excel's 32,767 UTF-16-code-unit limit. Blocking findings identify the

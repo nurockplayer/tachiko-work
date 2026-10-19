@@ -906,3 +906,340 @@ fn native_tables_xlsx_text_limit_has_a_blocking_cell_finding_and_csv_is_unchange
         );
     }
 }
+
+#[test]
+fn native_tables_unicode_caseless_names_and_headers_are_ledgered_deterministically() {
+    for (labels, expected) in [
+        (vec!["σ", "ς", "Σ"], vec!["σ", "ς (2)", "Σ (3)"]),
+        (vec!["ß", "SS", "ss"], vec!["ß", "SS (2)", "ss (3)"]),
+        (vec!["İ", "I", "ı", "i"], vec!["İ", "I", "ı (2)", "i (3)"]),
+        (
+            vec!["Sales", "sales", "SALES"],
+            vec!["Sales", "sales (2)", "SALES (3)"],
+        ),
+    ] {
+        let mut document = Document::empty("caseless", "Caseless names");
+        for (index, label) in labels.iter().enumerate() {
+            let columns = labels
+                .iter()
+                .enumerate()
+                .map(|(i, label)| {
+                    let mut column = field(&format!("f{i}"), FieldType::Text, true);
+                    column.display_name = Some((*label).into());
+                    column
+                })
+                .collect();
+            add_table(
+                &mut document,
+                &format!("s{index}"),
+                &format!("s{index}"),
+                label,
+                columns,
+                vec![],
+            );
+        }
+        let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+        let workbook = runtime
+            .export_native_tables_workbook("resident/0", "s0")
+            .unwrap();
+        assert_eq!(
+            workbook,
+            runtime
+                .export_native_tables_workbook("resident/0", "s0")
+                .unwrap()
+        );
+        assert_eq!(
+            workbook
+                .sheets
+                .iter()
+                .map(|sheet| sheet.name.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for sheet in &workbook.sheets {
+            assert_eq!(
+                sheet
+                    .columns
+                    .iter()
+                    .map(|column| column.name.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+        let changed_headers = labels
+            .iter()
+            .zip(&expected)
+            .filter(|(source, output)| source != output)
+            .count();
+        assert_eq!(
+            workbook
+                .ledger
+                .iter()
+                .filter(|f| f.code == "native_tables_header_name")
+                .count(),
+            changed_headers * labels.len()
+        );
+        assert!(
+            workbook
+                .ledger
+                .iter()
+                .filter(|f| f.code == "native_tables_worksheet_name"
+                    || f.code == "native_tables_header_name")
+                .all(|f| f.category == FidelityCategory::Converted && !f.blocking)
+        );
+        let csv = runtime
+            .export_native_tables_csv_workbook("resident/0", "s0")
+            .unwrap();
+        assert_eq!(csv.sheets[0].columns, workbook.sheets[0].columns);
+        let mut host = host_for(document);
+        let (_, first) = export(&mut host, "resident/0", "s0", "xlsx");
+        let (_, second) = export(&mut host, "resident/0", "s0", "xlsx");
+        assert!(first.is_some());
+        assert_eq!(first, second);
+    }
+}
+
+fn native_number_document(values: &[f64]) -> Document {
+    let mut document = Document::empty("numbers", "Numbers");
+    add_table(
+        &mut document,
+        "s",
+        "s",
+        "Numbers",
+        vec![field("n", FieldType::Number, true)],
+        values
+            .iter()
+            .map(|value| vec![Some(Value::Number(Number::new(*value).unwrap()))])
+            .collect(),
+    );
+    document
+}
+
+#[test]
+fn native_tables_xlsx_subnormal_refusals_are_located_and_csv_retains_the_value() {
+    let below = f64::from_bits(f64::MIN_POSITIVE.to_bits() - 1);
+    for value in [
+        below,
+        f64::MIN_POSITIVE,
+        -f64::MIN_POSITIVE,
+        -below,
+        0.0,
+        -0.0,
+    ] {
+        let document = native_number_document(&[value]);
+        let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+        let workbook = runtime.export_native_tables_workbook("resident/0", "s");
+        let accepted = value == 0.0 || value.abs() >= f64::MIN_POSITIVE;
+        if accepted {
+            assert!(workbook.is_ok());
+        } else {
+            let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } =
+                workbook.unwrap_err()
+            else {
+                panic!("blocking finding")
+            };
+            assert!(finding.blocking);
+            assert_eq!(finding.category, FidelityCategory::UnsupportedSafeDisabled);
+            assert_eq!(finding.code, "native_tables_xlsx_subnormal_number");
+            for coordinate in ["sheet 1", "row 2", "column 1"] {
+                assert!(finding.location.contains(coordinate));
+            }
+        }
+        let mut host = host_for(document);
+        let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
+        if accepted {
+            assert_eq!(reply["status"], "ok", "{reply}");
+            if value == 0.0 {
+                assert!(xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml").contains("<v>0</v>"));
+            }
+        } else {
+            assert_eq!(
+                reply["error"]["diagnostics"][0]["code"],
+                "native_tables_xlsx_subnormal_number"
+            );
+            assert!(bytes.is_none());
+        }
+        let (reply, bytes) = export(&mut host, "resident/0", "s", "csv");
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let expected = if value == 0.0 {
+            "0".into()
+        } else {
+            value.to_string()
+        };
+        assert!(
+            String::from_utf8(bytes.unwrap())
+                .unwrap()
+                .ends_with(&format!("{expected}\r\n"))
+        );
+        assert_finding(
+            &reply,
+            "native_tables_csv_number_precision",
+            "native_equivalent",
+        );
+    }
+}
+
+#[test]
+fn native_tables_xlsx_precision_findings_follow_shortest_significant_digits() {
+    for (value, warn) in [
+        (0.300_000_000_000_000_04, true),
+        (0.1, false),
+        (123_456_789_012_345.0, false),
+        (1_234_567_890_123_456.0, true),
+        (-0.300_000_000_000_000_04, true),
+        (-0.1, false),
+        (1e20, false),
+        (1e-20, false),
+        (1.234_567_890_123_456_7e-50, true),
+    ] {
+        let runtime =
+            DesignerRuntime::from_document(native_number_document(&[value]), OCCURRENCE).unwrap();
+        let workbook = runtime
+            .export_native_tables_workbook("resident/0", "s")
+            .unwrap();
+        let warnings: Vec<_> = workbook
+            .ledger
+            .iter()
+            .filter(|f| f.code == "native_tables_xlsx_precision_loss")
+            .collect();
+        assert_eq!(warnings.len(), usize::from(warn), "{value}");
+        assert_eq!(
+            workbook
+                .ledger
+                .iter()
+                .filter(|f| f.code == "native_tables_xlsx_precision_count")
+                .count(),
+            usize::from(warn)
+        );
+        for finding in warnings {
+            assert_eq!(finding.category, FidelityCategory::LossyOnExport);
+            assert!(!finding.blocking);
+            for coordinate in ["sheet 1", "row 2", "column 1"] {
+                assert!(finding.location.contains(coordinate));
+            }
+            assert!(finding.message.contains("15 significant decimal digits"));
+        }
+        let SourceValue::Number { value: actual } = workbook.sheets[0].rows[0][0].value else {
+            panic!("Number")
+        };
+        assert_eq!(actual.to_bits(), value.to_bits());
+    }
+}
+
+#[test]
+fn native_tables_xlsx_precision_ledger_caps_locations_and_counts_every_affected_cell() {
+    for count in [20, 21, 25] {
+        let mut host = host_for(native_number_document(&vec![
+            0.300_000_000_000_000_04;
+            count
+        ]));
+        let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
+        assert_eq!(reply["status"], "ok", "{reply}");
+        assert_eq!(
+            xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml")
+                .matches("<v>0.30000000000000004</v>")
+                .count(),
+            count
+        );
+        let ledger = reply["response"]["payload"]["ledger"].as_array().unwrap();
+        let warnings: Vec<_> = ledger
+            .iter()
+            .filter(|f| f["code"] == "native_tables_xlsx_precision_loss")
+            .collect();
+        assert_eq!(warnings.len(), 20);
+        for (index, finding) in warnings.iter().enumerate() {
+            assert_eq!(finding["category"], "lossy_on_export");
+            assert_eq!(finding["blocking"], false);
+            assert!(
+                finding["location"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&format!("/row {}/column 1", index + 2))
+            );
+        }
+        let summaries: Vec<_> = ledger
+            .iter()
+            .filter(|f| f["code"] == "native_tables_xlsx_precision_count")
+            .collect();
+        assert_eq!(summaries.len(), 1);
+        assert!(
+            summaries[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{count} Number cells"))
+        );
+        assert!(
+            summaries[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{} additional locations omitted", count - 20))
+        );
+        let (again, _) = export(&mut host, "resident/0", "s", "xlsx");
+        assert_eq!(reply, again);
+        let (reply, bytes) = export(&mut host, "resident/0", "s", "csv");
+        assert_finding(
+            &reply,
+            "native_tables_csv_number_precision",
+            "native_equivalent",
+        );
+        assert_eq!(
+            String::from_utf8(bytes.unwrap())
+                .unwrap()
+                .matches("0.30000000000000004")
+                .count(),
+            count
+        );
+        assert!(
+            !reply["response"]["payload"]["ledger"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["code"] == "native_tables_xlsx_precision_loss")
+        );
+    }
+}
+
+#[test]
+fn native_tables_xlsx_precision_cap_and_count_are_global_across_worksheets() {
+    let values = vec![0.300_000_000_000_000_04; 15];
+    let mut document = native_number_document(&values);
+    add_table(
+        &mut document,
+        "t",
+        "t",
+        "More Numbers",
+        vec![field("n", FieldType::Number, true)],
+        values
+            .iter()
+            .map(|value| vec![Some(Value::Number(Number::new(*value).unwrap()))])
+            .collect(),
+    );
+    let runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+    let workbook = runtime
+        .export_native_tables_workbook("resident/0", "s")
+        .unwrap();
+    let warnings: Vec<_> = workbook
+        .ledger
+        .iter()
+        .filter(|f| f.code == "native_tables_xlsx_precision_loss")
+        .collect();
+    assert_eq!(warnings.len(), 20);
+    for (index, finding) in warnings.iter().enumerate() {
+        let (sheet, row) = if index < 15 {
+            (1, index + 2)
+        } else {
+            (2, index - 15 + 2)
+        };
+        assert!(finding.location.starts_with(&format!("sheet {sheet} ")));
+        assert!(finding.location.contains(&format!("/row {row}/column 1")));
+    }
+    let summary = workbook
+        .ledger
+        .iter()
+        .find(|f| f.code == "native_tables_xlsx_precision_count")
+        .unwrap();
+    assert_eq!(summary.category, FidelityCategory::LossyOnExport);
+    assert!(!summary.blocking);
+    assert!(summary.message.contains("30 Number cells"));
+    assert!(summary.message.contains("10 additional locations omitted"));
+}
