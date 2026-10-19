@@ -290,6 +290,118 @@ fn sole_required_field_removal_keeps_its_existing_append_inverse() {
     round_trip(&mut lifecycle(), &mut session, vec![remove], vec![append]);
 }
 
+fn non_native_optional_document(kind: FieldType, value: &Value, sparse: bool) -> Document {
+    let mut base = document();
+    for field in base.schemas.get_mut("s").unwrap().fields.values_mut() {
+        field.required = false;
+    }
+    base.schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("amount")
+        .unwrap()
+        .field_type = kind;
+    for entity in base.entities.values_mut() {
+        entity.fields.insert("amount".into(), value.clone());
+    }
+    if sparse {
+        base.entities.get_mut("b").unwrap().fields.clear();
+    }
+    assert!(validation_report(&base).is_valid());
+    base
+}
+
+fn assert_optional_field_type_refusal(
+    result: Result<CanonicalSemanticDelta, PatchLifecycleError>,
+    target: &str,
+) {
+    let Err(PatchLifecycleError::CommandRejected { source }) = result else {
+        panic!("expected optional field admission refusal: {result:?}")
+    };
+    assert!(
+        matches!(source.as_ref(), WorkspaceError::TypeMismatch { field }
+            if field == &FieldRef::new("schema", target)),
+        "unexpected refusal: {source:?}"
+    );
+}
+
+#[test]
+fn non_native_optional_removal_refuses_like_its_append_inverse_without_publication() {
+    for (kind, value) in [
+        (FieldType::Boolean, Value::Boolean(false)),
+        (FieldType::Date, Value::Date("2026-10-20".parse().unwrap())),
+    ] {
+        for sparse in [false, true] {
+            let base = non_native_optional_document(kind.clone(), &value, sparse);
+            for target in ["label", "amount"] {
+                let (remove, append) = field_removal_pair(&base, target);
+                let mut restoration_base = base.clone();
+                restoration_base
+                    .schemas
+                    .get_mut("s")
+                    .unwrap()
+                    .fields
+                    .remove(target);
+                for entity in restoration_base.entities.values_mut() {
+                    entity.fields.remove(target);
+                }
+                let mut inverse_session =
+                    ResidentWorkspaceSession::new("scope".into(), restoration_base.clone());
+                assert_optional_field_type_refusal(
+                    apply(&mut lifecycle(), &mut inverse_session, vec![append]),
+                    target,
+                );
+                assert_eq!(
+                    inverse_session.export_snapshot().document(),
+                    &restoration_base
+                );
+                assert_eq!(inverse_session.revision().as_str(), "resident/0");
+
+                let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+                assert_optional_field_type_refusal(
+                    apply(&mut lifecycle(), &mut session, vec![remove.clone()]),
+                    target,
+                );
+                assert_eq!(session.export_snapshot().document(), &base);
+                assert_eq!(session.revision().as_str(), "resident/0");
+                // A valid prefix must not publish when the removal is refused.
+                let prefix = SemanticCommand::SetSchemaFieldDisplayName {
+                    schema: "s".into(),
+                    field: if target == "label" { "amount" } else { "label" }.into(),
+                    display_name: Some("Changed".into()),
+                };
+                assert_optional_field_type_refusal(
+                    apply(&mut lifecycle(), &mut session, vec![prefix, remove]),
+                    target,
+                );
+                assert_eq!(session.export_snapshot().document(), &base);
+                assert_eq!(session.revision().as_str(), "resident/0");
+            }
+        }
+    }
+}
+
+#[test]
+fn required_field_removal_from_non_native_schema_keeps_its_append_inverse() {
+    for (kind, value) in [
+        (FieldType::Boolean, Value::Boolean(false)),
+        (FieldType::Date, Value::Date("2026-10-20".parse().unwrap())),
+    ] {
+        let mut base = non_native_optional_document(kind, &value, false);
+        base.schemas
+            .get_mut("s")
+            .unwrap()
+            .fields
+            .get_mut("label")
+            .unwrap()
+            .required = true;
+        let (remove, append) = field_removal_pair(&base, "label");
+        let mut session = ResidentWorkspaceSession::new("scope".into(), base);
+        round_trip(&mut lifecycle(), &mut session, vec![remove], vec![append]);
+    }
+}
+
 #[test]
 fn optional_append_still_checks_values_and_the_complete_resulting_shape() {
     let base = sole_field_document("label", false, true);

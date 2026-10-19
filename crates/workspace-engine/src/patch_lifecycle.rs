@@ -2892,6 +2892,15 @@ impl PatchLifecycle {
                 field: FieldRef::new("schema", field.id.clone()),
             });
         }
+        // The inverse optional append must admit this exact restored shape.
+        if !field.required
+            && (!matches!(field.field_type, FieldType::Text | FieldType::Number)
+                || !has_native_scalar_shape(candidate, schema))
+        {
+            return Err(WorkspaceError::TypeMismatch {
+                field: FieldRef::new("schema", field.id.clone()),
+            });
+        }
         if !matches!(
             field.field_type,
             FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
