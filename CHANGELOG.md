@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- The browser kit artifact manifest's exposed client-method inventory now
+  lists `exportNativeTablesSpreadsheet`, matching the client surface added
+  for native table CSV/XLSX export.
+
 - Native-table worksheet/header names use a bounded fixed-point caseless key
   (up to four uppercase-then-lowercase iterations), so `ß`, `ẞ`, `SS` and `ss`
   consistently collide. Allocation and final writer validation share the key;
