@@ -1,6 +1,6 @@
 # ADR-0040: Bounded native-table field evolution
 
-**Status:** Accepted
+**Status:** Accepted; amended by [ADR-0045](ADR-0045-optional-native-text-and-number-fields.md) for optional native Text/Number fields only.
 
 **Decision issue:** #392
 
