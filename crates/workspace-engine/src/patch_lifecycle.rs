@@ -2791,11 +2791,6 @@ impl PatchLifecycle {
                 .ok_or_else(|| WorkspaceError::MissingSchema {
                     schema: schema_id.clone(),
                 })?;
-        if !field.required && !has_native_scalar_shape(candidate, schema) {
-            return Err(WorkspaceError::TypeMismatch {
-                field: FieldRef::new("schema", field.id.clone()),
-            });
-        }
         if !base.schemas.contains_key(schema_id) || schema.fields.contains_key(&field.id) {
             return Err(WorkspaceError::GeneratedIdCollision {
                 kind: super::SemanticIdKind::Field,
@@ -2855,6 +2850,15 @@ impl PatchLifecycle {
                 .expect("checked entity")
                 .fields
                 .insert(field.id.clone(), value.clone());
+        }
+        // Check the post-append shape so the exact inverse of removing a sole
+        // optional field can restore it from an empty schema. Failed admission
+        // discards this private candidate without publishing a prefix.
+        let schema = candidate.schemas.get(schema_id).expect("checked schema");
+        if !field.required && !has_native_scalar_shape(candidate, schema) {
+            return Err(WorkspaceError::TypeMismatch {
+                field: FieldRef::new("schema", field.id.clone()),
+            });
         }
         let scope = self.schema_field_scope(schema_id, &field.id);
         for mutation_class in [MutationClass::Structure, MutationClass::Schema] {

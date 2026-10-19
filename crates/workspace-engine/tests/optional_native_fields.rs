@@ -107,6 +107,8 @@ fn lifecycle() -> PatchLifecycle {
     for family in [
         OperationFamily::SchemaFieldMutation,
         OperationFamily::SetFieldValue,
+        OperationFamily::AppendEntity,
+        OperationFamily::RemoveEntity,
     ] {
         requirements.push(GrantRequirement::query(family, scope.clone()));
         for action in [AuthorizationAction::Propose, AuthorizationAction::Execute] {
@@ -174,6 +176,219 @@ fn apply(
         &V2ReceiptEvidence::Disclosed(preview.delta.clone())
     );
     Ok(preview.delta)
+}
+
+fn sole_field_document(field: &str, required: bool, blank: bool) -> Document {
+    let mut doc = document();
+    let schema = doc.schemas.get_mut("s").unwrap();
+    schema.fields.retain(|id, _| id.as_str() == field);
+    schema.fields.get_mut(field).unwrap().required = required;
+    for entity in doc.entities.values_mut() {
+        entity.fields.retain(|id, _| id.as_str() == field);
+    }
+    if blank {
+        doc.entities.get_mut("b").unwrap().fields.remove(field);
+    }
+    doc
+}
+
+fn field_removal_pair(doc: &Document, field: &str) -> (SemanticCommand, SemanticCommand) {
+    let definition = doc
+        .schemas
+        .get("s")
+        .unwrap()
+        .fields
+        .get(field)
+        .unwrap()
+        .clone();
+    let values: BTreeMap<_, _> = doc
+        .entities
+        .values()
+        .filter_map(|entity| {
+            entity
+                .fields
+                .get(field)
+                .map(|value| (entity.id.clone(), value.clone()))
+        })
+        .collect();
+    (
+        SemanticCommand::RemoveSchemaField {
+            schema: "s".into(),
+            field: definition.clone(),
+            values: values.clone(),
+        },
+        SemanticCommand::AppendSchemaField {
+            schema: "s".into(),
+            field: definition,
+            values,
+        },
+    )
+}
+
+fn round_trip(
+    lifecycle: &mut PatchLifecycle,
+    session: &mut ResidentWorkspaceSession,
+    forward: Vec<SemanticCommand>,
+    inverse: Vec<SemanticCommand>,
+) {
+    let before = session.export_snapshot().into_document();
+    let revision = session.revision().clone();
+    apply(lifecycle, session, forward.clone()).unwrap();
+    let after = session.export_snapshot().into_document();
+    assert_ne!(before, after);
+    assert_ne!(session.revision(), &revision);
+    let forward_revision = session.revision().clone();
+    apply(lifecycle, session, inverse.clone()).unwrap();
+    assert_eq!(session.export_snapshot().document(), &before);
+    assert_ne!(session.revision(), &revision);
+    assert_ne!(session.revision(), &forward_revision);
+    apply(lifecycle, session, forward).unwrap();
+    assert_eq!(session.export_snapshot().document(), &after);
+    apply(lifecycle, session, inverse).unwrap();
+    assert_eq!(session.export_snapshot().document(), &before);
+}
+
+#[test]
+fn sole_optional_field_removal_has_an_exact_sparse_append_inverse() {
+    for field in ["label", "amount"] {
+        let base = sole_field_document(field, false, true);
+        let (remove, append) = field_removal_pair(&base, field);
+        let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+        let mut lifecycle = lifecycle();
+        apply(&mut lifecycle, &mut session, vec![remove.clone()]).unwrap();
+        let empty = session.export_snapshot();
+        assert!(empty.document().schemas.get("s").unwrap().fields.is_empty());
+        assert!(
+            empty
+                .document()
+                .entities
+                .values()
+                .all(|e| e.fields.is_empty())
+        );
+        apply(&mut lifecycle, &mut session, vec![append.clone()]).unwrap();
+        assert_eq!(session.export_snapshot().document(), &base);
+        round_trip(&mut lifecycle, &mut session, vec![remove], vec![append]);
+        // A fully blank entity also restores through ordinary append admission.
+        let entity = base.entities.get("b").unwrap().clone();
+        assert!(entity.fields.is_empty());
+        round_trip(
+            &mut lifecycle,
+            &mut session,
+            vec![SemanticCommand::RemoveEntity {
+                entity: entity.id.clone(),
+            }],
+            vec![SemanticCommand::AppendEntity { entity }],
+        );
+    }
+}
+
+#[test]
+fn sole_required_field_removal_keeps_its_existing_append_inverse() {
+    let base = sole_field_document("label", true, false);
+    let (remove, append) = field_removal_pair(&base, "label");
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base);
+    round_trip(&mut lifecycle(), &mut session, vec![remove], vec![append]);
+}
+
+#[test]
+fn optional_append_still_checks_values_and_the_complete_resulting_shape() {
+    let base = sole_field_document("label", false, true);
+    let (remove, mut append) = field_removal_pair(&base, "label");
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base);
+    apply(&mut lifecycle(), &mut session, vec![remove]).unwrap();
+    let empty = session.export_snapshot().into_document();
+    let SemanticCommand::AppendSchemaField { values, .. } = &mut append else {
+        unreachable!()
+    };
+    values.insert("a".into(), number(1.0));
+    assert!(apply(&mut lifecycle(), &mut session, vec![append.clone()]).is_err());
+    assert_eq!(session.export_snapshot().document(), &empty);
+    assert_eq!(session.revision().as_str(), "resident/1");
+
+    let mut imported = sole_field_document("amount", false, false);
+    imported
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("amount")
+        .unwrap()
+        .field_type = FieldType::Boolean;
+    for entity in imported.entities.values_mut() {
+        entity.fields.insert("amount".into(), Value::Boolean(false));
+    }
+    let SemanticCommand::AppendSchemaField { values, .. } = &mut append else {
+        unreachable!()
+    };
+    values.clear();
+    let mut session = ResidentWorkspaceSession::new("scope".into(), imported.clone());
+    assert!(apply(&mut lifecycle(), &mut session, vec![append]).is_err());
+    assert_eq!(session.export_snapshot().document(), &imported);
+    assert_eq!(session.revision().as_str(), "resident/0");
+}
+
+#[test]
+fn optional_inverse_pairs_restore_blanks_and_requiredness_exactly() {
+    let base = document();
+    let mut lifecycle = lifecycle();
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base);
+    round_trip(
+        &mut lifecycle,
+        &mut session,
+        vec![required(false)],
+        vec![required(true)],
+    );
+    apply(&mut lifecycle, &mut session, vec![required(false)]).unwrap();
+    round_trip(
+        &mut lifecycle,
+        &mut session,
+        vec![required(true)],
+        vec![required(false)],
+    );
+    let set = SemanticCommand::set_field_value(FieldRef::new("a", "amount"), number(2.0));
+    round_trip(
+        &mut lifecycle,
+        &mut session,
+        vec![clear()],
+        vec![set.clone()],
+    );
+    apply(&mut lifecycle, &mut session, vec![clear()]).unwrap();
+    round_trip(&mut lifecycle, &mut session, vec![set], vec![clear()]);
+    let sparse = session.export_snapshot().into_document();
+    let (remove, append) = field_removal_pair(&sparse, "amount");
+    round_trip(&mut lifecycle, &mut session, vec![remove], vec![append]);
+    for id in ["a", "b"] {
+        let entity = sparse.entities.get(id).unwrap().clone();
+        round_trip(
+            &mut lifecycle,
+            &mut session,
+            vec![SemanticCommand::RemoveEntity {
+                entity: entity.id.clone(),
+            }],
+            vec![SemanticCommand::AppendEntity { entity }],
+        );
+    }
+}
+
+#[test]
+fn sole_field_remove_append_round_trips_after_relaxation_and_clear() {
+    let base = sole_field_document("amount", true, false);
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut lifecycle = lifecycle();
+    apply(&mut lifecycle, &mut session, vec![required(false), clear()]).unwrap();
+    let sparse = session.export_snapshot().into_document();
+    let (remove, append) = field_removal_pair(&sparse, "amount");
+    round_trip(&mut lifecycle, &mut session, vec![remove], vec![append]);
+    apply(
+        &mut lifecycle,
+        &mut session,
+        vec![
+            SemanticCommand::set_field_value(FieldRef::new("a", "amount"), number(2.0)),
+            required(true),
+        ],
+    )
+    .unwrap();
+    assert_eq!(session.export_snapshot().document(), &base);
 }
 
 #[test]
