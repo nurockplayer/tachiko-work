@@ -15,7 +15,9 @@ validation stages. [ADR-0040](../decisions/ADR-0040-bounded-native-table-field-e
 adds only bounded required-scalar field addition and dependency-safe field
 removal; its operation-specific dependency precondition runs before unchanged
 staged final validation, and it does not add durable constraint vocabulary or a
-validation stage. ADR-0041 accepts declaration/value/formula-result constraint
+validation stage. [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md)
+admits optional native Text/Number fields, explicit clears, and requiredness
+changes within the same unchanged stages. ADR-0041 accepts declaration/value/formula-result constraint
 gates within these existing stages. #448 implements declaration and direct
 value checks plus complete-success formula-result checks in the core/resident
 paths without adding a validation stage or selecting a public runtime/API.
@@ -149,9 +151,12 @@ is not replaced by a null or default. Formula-valued Number results are checked
 under Stage 5 only after successful complete calculation.
 
 Before final validation, an ADR-0040 field-evolution candidate performs its
-operation-specific preconditions: an addition supplies a direct stored
+operation-specific preconditions: an addition of a required field supplies a direct stored
 `Text`, `Number`, `Boolean`, or `Date` value of the exact new field type for
-every existing entity, never a Formula or Reference initializer; a removal
+every existing entity, never a Formula or Reference initializer (under ADR-0045
+an optional native Text or Number addition needs no initializer, and supplied
+initializers set only the named entities); a requiredness strengthening finds a
+value for the field in every entity; a removal
 finds no surviving formula, reference, or other Accepted durable definition
 dependent on the removed `FieldId`. A failed precondition rejects the entire
 candidate without publication. The unchanged staged final validation then
