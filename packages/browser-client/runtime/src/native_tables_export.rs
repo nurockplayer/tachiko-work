@@ -7,7 +7,7 @@ use tachiko_workspace_engine::{Document, FieldType, Value};
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, OutputProfile, SourceCell, SourceColumn, SourceSheet,
     SourceWorkbook, csv_formula_text, export_csv_for_profile, export_xlsx_for_profile,
-    validate_output_for_profile,
+    validate_native_tables_xlsx, validate_native_tables_xlsx_text, validate_output_for_profile,
 };
 use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
@@ -120,6 +120,14 @@ fn project_sheet(
     names: &mut BTreeSet<String>,
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<SourceSheet, DesignerError> {
+    if !csv {
+        validate_native_tables_xlsx_text(
+            &spec.summary.display_name,
+            &format!("collection {}/sheet-name", spec.summary.id),
+            false,
+        )
+        .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
+    }
     let name = mapped_name(&spec.summary.display_name, true, names);
     // CSV has no worksheet name, but keeping this deterministic internal name
     // lets the same rectangular validator check both projections.
@@ -139,6 +147,14 @@ fn project_sheet(
         .columns
         .iter()
         .map(|column| {
+            if !csv {
+                validate_native_tables_xlsx_text(
+                    &column.display_name,
+                    &format!("collection {}/header/field {}", spec.summary.id, column.id),
+                    true,
+                )
+                .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
+            }
             // Test the source too: sanitization must never bypass injection refusal.
             if csv && csv_formula_text(&column.display_name) {
                 return Err(refused(
@@ -293,6 +309,10 @@ impl DesignerRuntime {
                 "CSV exports scalar lexical values only: typing and formatting are lost, and missing values cannot be distinguished from empty Text. Formula-leading Text or headers are refused; use typed XLSX.".into()));
         }
         let workbook = SourceWorkbook { sheets, ledger };
+        if !csv {
+            validate_native_tables_xlsx(&workbook)
+                .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
+        }
         validate_output_for_profile(&workbook, OutputProfile::NativeTables)
             .map_err(|error| refused("native_tables_output_refused", "workbook", error.0))?;
         Ok(workbook)

@@ -19,6 +19,7 @@ pub const MAX_NATIVE_TABLES_DATA_ROWS: usize = 128;
 pub const MAX_NATIVE_TABLES_TOTAL_ROWS: usize = 1_024;
 pub const MAX_NATIVE_TABLES_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_NATIVE_TABLES_EXPANDED_BYTES: usize = 24 * 1024 * 1024;
+pub const MAX_NATIVE_TABLES_XLSX_TEXT_UNITS: usize = 32_767;
 pub const MAX_FORMULAS: usize = 32;
 pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
 pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 25_218;
@@ -288,6 +289,69 @@ fn st_xstring(value: &str) -> bool {
             && token[2..6].iter().all(u8::is_ascii_hexdigit)
             && token[6] == b'_'
     })
+}
+
+/// Native XLSX refuses Text that Excel would reinterpret or cannot retain.
+/// CSV and other output profiles do not use this admission policy.
+pub(crate) fn validate_native_tables_xlsx_text(
+    value: &str,
+    location: &str,
+    cell_text: bool,
+) -> std::result::Result<(), FidelityFinding> {
+    let (code, message) = if st_xstring(value) {
+        (
+            "native_tables_xlsx_escape_sequence",
+            "Literal SpreadsheetML _xHHHH_ escape sequences are refused because Excel decodes them and would change the source Text.",
+        )
+    } else if cell_text && value.encode_utf16().count() > MAX_NATIVE_TABLES_XLSX_TEXT_UNITS {
+        (
+            "native_tables_xlsx_text_limit",
+            "Text exceeds Excel's limit of 32,767 UTF-16 code units; native XLSX refuses rather than truncates it.",
+        )
+    } else {
+        return Ok(());
+    };
+    Err(FidelityFinding {
+        category: FidelityCategory::UnsupportedSafeDisabled,
+        code: code.into(),
+        location: location.into(),
+        message: message.into(),
+        blocking: true,
+    })
+}
+
+pub(crate) fn validate_native_tables_xlsx(
+    workbook: &SourceWorkbook,
+) -> std::result::Result<(), FidelityFinding> {
+    for (sheet_index, sheet) in workbook.sheets.iter().enumerate() {
+        let location = format!("sheet {} {:?}", sheet_index + 1, sheet.name);
+        validate_native_tables_xlsx_text(&sheet.name, &format!("{location}/sheet-name"), false)?;
+        if sheet.has_header {
+            for (column, header) in sheet.columns.iter().enumerate() {
+                validate_native_tables_xlsx_text(
+                    &header.name,
+                    &format!("{location}/header/column {}", column + 1),
+                    true,
+                )?;
+            }
+        }
+        for (row, cells) in sheet.rows.iter().enumerate() {
+            for (column, cell) in cells.iter().enumerate() {
+                if let SourceValue::Text { value } = &cell.value {
+                    validate_native_tables_xlsx_text(
+                        value,
+                        &format!(
+                            "{location}/row {}/column {}",
+                            row + 1 + usize::from(sheet.has_header),
+                            column + 1,
+                        ),
+                        true,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 trait CapacityXmlSink: std::fmt::Write {
@@ -2763,6 +2827,14 @@ pub(crate) fn export_xlsx_for_profile(
     workbook: &SourceWorkbook,
     profile: OutputProfile,
 ) -> Result<Vec<u8>> {
+    if profile == OutputProfile::NativeTables {
+        validate_native_tables_xlsx(workbook).map_err(|finding| {
+            InteropError(format!(
+                "{} at {}: {}",
+                finding.code, finding.location, finding.message
+            ))
+        })?;
+    }
     validate_output_for_profile(workbook, profile)?;
     let mut style_keys = vec![
         serde_json::to_string(&CellStyle::default()).map_err(|e| InteropError(e.to_string()))?,
@@ -3197,9 +3269,9 @@ mod capacity_proof_tests {
 #[cfg(test)]
 mod native_tables_output_tests {
     use super::{
-        MAX_NATIVE_TABLES_EXPANDED_BYTES, MAX_NATIVE_TABLES_OUTPUT_BYTES, OutputProfile,
-        SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook, export_csv_for_profile,
-        export_xlsx_for_profile,
+        FidelityCategory, MAX_NATIVE_TABLES_EXPANDED_BYTES, MAX_NATIVE_TABLES_OUTPUT_BYTES,
+        OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
+        export_csv_for_profile, export_xlsx_for_profile, validate_native_tables_xlsx,
     };
     use std::io::Cursor;
     use zip::ZipArchive;
@@ -3274,29 +3346,102 @@ mod native_tables_output_tests {
         assert!(export_csv_for_profile(&sheet, OutputProfile::NativeTables).is_err());
     }
 
+    fn native_tables_text_with_units(character: char, units: usize) -> String {
+        let mut value = character.to_string().repeat(units / character.len_utf16());
+        if units % character.len_utf16() != 0 {
+            value.push('a');
+        }
+        assert_eq!(value.encode_utf16().count(), units);
+        value
+    }
+
+    #[test]
+    fn native_tables_xlsx_utf16_boundary_for_values_and_headers() {
+        for character in ['x', '漢', '😀'] {
+            for header in [false, true] {
+                for units in [32_767, 32_768] {
+                    let mut workbook = SourceWorkbook {
+                        sheets: vec![sheet(1, 1)],
+                        ledger: vec![],
+                    };
+                    let value = native_tables_text_with_units(character, units);
+                    if header {
+                        workbook.sheets[0].columns[0].name = value;
+                    } else {
+                        workbook.sheets[0].rows[0][0].value = SourceValue::Text { value };
+                    }
+                    let result = export_xlsx_for_profile(&workbook, OutputProfile::NativeTables);
+                    if units == 32_767 {
+                        assert!(result.is_ok(), "{character} header={header}: {result:?}");
+                    } else {
+                        let error = result.unwrap_err();
+                        assert!(error.0.contains("32,767 UTF-16"), "{error:?}");
+                        assert!(
+                            error.0.contains(if header { "header" } else { "row 2" }),
+                            "{error:?}"
+                        );
+                        let finding = validate_native_tables_xlsx(&workbook).unwrap_err();
+                        assert!(finding.blocking);
+                        assert_eq!(finding.category, FidelityCategory::UnsupportedSafeDisabled);
+                        assert_eq!(finding.code, "native_tables_xlsx_text_limit");
+                    }
+                    assert!(
+                        export_csv_for_profile(&workbook.sheets[0], OutputProfile::NativeTables)
+                            .is_ok()
+                    );
+                    // The repair must not change any other XLSX output profile.
+                    assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
+                }
+            }
+        }
+    }
+
     #[test]
     fn native_tables_xlsx_exact_expanded_byte_limit_and_plus_one() {
         let profile = OutputProfile::NativeTables;
         let mut workbook = SourceWorkbook {
-            sheets: vec![sheet(1, 1)],
+            sheets: vec![sheet(32, 32)],
             ledger: vec![],
         };
-        workbook.sheets[0].rows[0][0].value = SourceValue::Text {
-            value: String::new(),
-        };
+        for cell in workbook.sheets[0].rows.iter_mut().flatten() {
+            cell.value = SourceValue::Text {
+                value: String::new(),
+            };
+        }
         let bytes = export_xlsx_for_profile(&workbook, profile).unwrap();
         let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
         let overhead: u64 = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().size())
             .sum();
-        workbook.sheets[0].rows[0][0].value = SourceValue::Text {
-            value: "x"
-                .repeat(MAX_NATIVE_TABLES_EXPANDED_BYTES - usize::try_from(overhead).unwrap()),
-        };
-        assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
-        if let SourceValue::Text { value } = &mut workbook.sheets[0].rows[0][0].value {
-            value.push('x');
+        let mut remaining = MAX_NATIVE_TABLES_EXPANDED_BYTES - usize::try_from(overhead).unwrap();
+        for cell in workbook.sheets[0].rows.iter_mut().flatten() {
+            let units = remaining.min(32_767);
+            cell.value = SourceValue::Text {
+                value: "x".repeat(units),
+            };
+            remaining -= units;
         }
-        assert!(export_xlsx_for_profile(&workbook, profile).is_err());
+        assert_eq!(remaining, 0);
+        let bytes = export_xlsx_for_profile(&workbook, profile).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let expanded: u64 = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().size())
+            .sum();
+        assert_eq!(
+            expanded,
+            u64::try_from(MAX_NATIVE_TABLES_EXPANDED_BYTES).unwrap()
+        );
+        let last = workbook.sheets[0]
+            .rows
+            .last_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap();
+        if let SourceValue::Text { value } = &mut last.value {
+            value.push('x');
+            assert!(value.encode_utf16().count() <= 32_767);
+        }
+        let error = export_xlsx_for_profile(&workbook, profile).unwrap_err();
+        assert!(error.0.contains("24 MiB"), "{error:?}");
     }
 }

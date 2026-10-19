@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Native-tables XLSX export refuses literal SpreadsheetML `_xHHHH_` escape
+  sequences in Text, headers and worksheet names, and Text cells or headers
+  above Excel's 32,767 UTF-16-code-unit limit. Blocking findings identify the
+  location so output cannot silently change or truncate the source Text.
+  CSV and other XLSX profiles retain their existing behavior.
+
 - Browser kit folder selection accepts `.roproj` root folder names containing
   backslashes while still refusing backslashes in serialized relative paths.
 

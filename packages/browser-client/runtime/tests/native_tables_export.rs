@@ -764,3 +764,145 @@ fn oversized_mapping_receipt_is_refused_with_a_finding_and_no_bytes() {
         assert!(bytes.is_none());
     }
 }
+
+fn literal_text_document(text: &str, location: &str) -> Document {
+    let mut document = Document::empty("xlsx-text", "XLSX Text");
+    let mut column = field("text", FieldType::Text, true);
+    if location == "header" {
+        column.display_name = Some(text.into());
+    }
+    add_table(
+        &mut document,
+        "s",
+        "s",
+        if location == "sheet-name" {
+            text
+        } else {
+            "Table"
+        },
+        vec![column],
+        vec![vec![Some(Value::Text(
+            if location == "cell" { text } else { "safe" }.into(),
+        ))]],
+    );
+    document
+}
+
+#[test]
+fn native_tables_xlsx_refuses_literal_spreadsheetml_escapes_at_each_location_only() {
+    for text in ["_x000D_", "prefix_xabcd_suffix", "_xABCD_", "_xAbCd_"] {
+        for location in ["cell", "header", "sheet-name"] {
+            let document = literal_text_document(text, location);
+            let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+            let error = runtime
+                .export_native_tables_workbook("resident/0", "s")
+                .unwrap_err();
+            let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } = error
+            else {
+                panic!("native finding")
+            };
+            assert!(finding.blocking);
+            assert_eq!(finding.category, FidelityCategory::UnsupportedSafeDisabled);
+            assert_eq!(finding.code, "native_tables_xlsx_escape_sequence");
+            if location == "cell" {
+                for coordinate in ["sheet 1", "row 2", "column 1"] {
+                    assert!(finding.location.contains(coordinate), "{finding:?}");
+                }
+            } else {
+                assert!(finding.location.contains(location), "{finding:?}");
+            }
+            let mut host = host_for(document);
+            let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
+            assert_eq!(reply["error"]["code"], "native_tables_export_refused");
+            assert_eq!(reply["error"]["diagnostics"][0]["path"], finding.location);
+            assert!(bytes.is_none());
+            let (reply, bytes) = export(&mut host, "resident/0", "s", "csv");
+            assert_eq!(reply["status"], "ok", "{reply}");
+            if location != "sheet-name" {
+                assert!(String::from_utf8(bytes.unwrap()).unwrap().contains(text));
+            }
+        }
+    }
+    // A source sequence must not disappear silently through name truncation.
+    let runtime = DesignerRuntime::from_document(
+        literal_text_document(&format!("{}_x000D_", "s".repeat(31)), "sheet-name"),
+        OCCURRENCE,
+    )
+    .unwrap();
+    assert!(
+        runtime
+            .export_native_tables_workbook("resident/0", "s")
+            .is_err()
+    );
+    // Sanitization can also create a sequence; validate the emitted name too.
+    let runtime =
+        DesignerRuntime::from_document(literal_text_document("_x000D[", "sheet-name"), OCCURRENCE)
+            .unwrap();
+    assert!(
+        runtime
+            .export_native_tables_workbook("resident/0", "s")
+            .is_err()
+    );
+}
+
+#[test]
+fn native_tables_xlsx_exports_escape_near_misses_unchanged() {
+    for text in ["_x00D_", "_x000G_", "_x12345_", "_X000D_"] {
+        for location in ["cell", "header", "sheet-name"] {
+            let mut host = host_for(literal_text_document(text, location));
+            let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
+            assert_eq!(reply["status"], "ok", "{text}: {reply}");
+            let bytes = bytes.unwrap();
+            let path = if location == "sheet-name" {
+                "xl/workbook.xml"
+            } else {
+                "xl/worksheets/sheet1.xml"
+            };
+            assert!(xml(&bytes, path).contains(text));
+        }
+    }
+}
+
+#[test]
+fn native_tables_xlsx_text_limit_has_a_blocking_cell_finding_and_csv_is_unchanged() {
+    for units in [32_767, 32_768] {
+        let mut host = DesignerHost::new();
+        let opened = host.request(
+            &serde_json::to_vec(&json!({"type":"new_tracker", "occurrence_id":OCCURRENCE}))
+                .unwrap(),
+        );
+        assert_eq!(
+            serde_json::from_slice::<Json>(&opened).unwrap()["status"],
+            "ok"
+        );
+        let pasted = host.request(&serde_json::to_vec(&json!({"type":"paste_cells", "expected_revision":"resident/0",
+            "collection":"tracker", "start_entity":null, "start_field":"task", "rows":[["x".repeat(units), "0", "false"]]})).unwrap());
+        assert_eq!(
+            serde_json::from_slice::<Json>(&pasted).unwrap()["status"],
+            "ok"
+        );
+        let (reply, bytes) = export(&mut host, "resident/1", "tracker", "xlsx");
+        if units == 32_767 {
+            assert_eq!(reply["status"], "ok", "{reply}");
+            assert!(bytes.is_some());
+        } else {
+            assert!(bytes.is_none());
+            assert_eq!(
+                reply["error"]["diagnostics"][0]["code"],
+                "native_tables_xlsx_text_limit"
+            );
+            let path = reply["error"]["diagnostics"][0]["path"].as_str().unwrap();
+            for coordinate in ["sheet 1", "row 2", "column 1"] {
+                assert!(path.contains(coordinate), "{reply}");
+            }
+        }
+        let (reply, bytes) = export(&mut host, "resident/1", "tracker", "csv");
+        assert_eq!(reply["status"], "ok", "{reply}");
+        assert!(
+            bytes
+                .unwrap()
+                .windows(units)
+                .any(|value| value == "x".repeat(units).as_bytes())
+        );
+    }
+}

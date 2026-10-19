@@ -69,6 +69,24 @@ parts are produced by this operation. Absent optional fields map to `Empty`,
 not zero or false, preserving every rectangular position. Empty Text remains
 Text in XLSX.
 
+Native-tables XLSX refuses literal SpreadsheetML escape sequences matching
+`_x[0-9A-Fa-f]{4}_` in Text cell values, headers and worksheet names. Hex digits
+may use either case; the literal prefix is `_x`. Excel decodes these sequences,
+so emitting them unchanged would silently alter the source Text. Check source
+table/column display names before mapping and all emitted names and Text after
+mapping: truncation must not hide a source sequence, and sanitization must not
+introduce one. Near-misses such as `_x00D_` and `_x000G_` remain literal and
+exportable. The shared XLSX text encoder and reader are unchanged.
+
+Native-tables XLSX also refuses Text cell values and headers longer than
+**32,767 UTF-16 code units**, Excel's per-cell text limit. ASCII and BMP
+characters each use one unit; an astral character such as 😀 uses two. Headers
+count as cells and are never truncated to fit. Both refusals carry a blocking
+fidelity finding: cell locations name the worksheet, row and column; label
+locations identify the header/field or worksheet name. These checks do not
+apply to CSV or other XLSX output profiles. This preserves truthful fidelity
+instead of producing an apparent success that Excel reinterprets or truncates.
+
 CSV exports only the requested collection using scalar lexical values and the
 existing UTF-8/RFC4180 writer. Every other collection has an individual exclusion
 finding, including any unmapped collection. Typing and formatting losses and
@@ -90,6 +108,7 @@ CSV may export an eligible selected collection from that mixed document.
 | Fields per worksheet | 32 |
 | Data rows per worksheet | 128 |
 | Total data rows | 1,024 |
+| XLSX Text cell or header length | 32,767 UTF-16 code units |
 | Encoded CSV or XLSX bytes | 8,388,608 (8 MiB) |
 | Expanded XLSX XML part bytes | 25,165,824 (24 MiB) |
 
@@ -136,9 +155,13 @@ session state changes on success or refusal.
 - `runtime/tests/native_tables_export.rs`: typed readback via `import_xlsx`,
   explicit CSV reimport, independent ZIP/XML structure assertions, empty/missing
   values, stable order, collision chains, geometry limits/+1, mixed documents,
-  stale revisions, source/history preservation and ledger coverage.
+  stale revisions, source/history preservation and ledger coverage; literal
+  SpreadsheetML escape/near-miss locations and native-only XLSX Text refusal.
 - `interop_adapter::native_tables_output_tests`: independent outbound geometry,
-  encoded CSV byte and expanded XLSX byte limits, including exact/+1 boundaries.
+  encoded CSV byte and expanded XLSX byte limits, including exact/+1 boundaries;
+  Text/header lengths of 32,767 and 32,768 UTF-16 units for ASCII, multi-byte BMP
+  and astral characters. The expanded-XLSX fixture reaches exactly 24 MiB and
+  +1 across many valid cells, each within the per-cell limit.
 - `wasm::native_tables_parity_tests`: the actual WASM bridge's request/response
   logic executed natively, compared byte-for-byte with host receipts, bytes,
   findings and refusals. It never dereferences WASM pointer offsets; this is
