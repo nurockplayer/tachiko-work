@@ -55,6 +55,11 @@ enum SpreadsheetOperation {
         format: SpreadsheetFormat,
         collection: String,
     },
+    ExportNativeTables {
+        expected_revision: String,
+        collection: String,
+        format: SpreadsheetFormat,
+    },
     ExportNativeTracker {
         expected_revision: String,
         presentation: NativeTrackerExportPresentation,
@@ -424,6 +429,11 @@ fn spreadsheet_operation(
             })?;
             export_spreadsheet(runtime, &expected_revision, &metadata, format, &collection)
         }
+        SpreadsheetOperation::ExportNativeTables {
+            expected_revision,
+            collection,
+            format,
+        } => export_native_tables_spreadsheet(runtime, &expected_revision, &collection, format),
         SpreadsheetOperation::ExportNativeTracker {
             expected_revision,
             presentation,
@@ -451,6 +461,29 @@ fn spreadsheet_operation(
             format,
         ),
     }
+}
+
+fn export_native_tables_spreadsheet(
+    runtime: Option<&DesignerRuntime>,
+    revision: &str,
+    collection: &str,
+    format: SpreadsheetFormat,
+) -> Result<SpreadsheetResult, DesignerError> {
+    let runtime = runtime.ok_or_else(|| DesignerError::InvalidProjectTransfer {
+        message: "No Designer project is open for native tables export.".into(),
+    })?;
+    let (response, bytes) = crate::native_tables_export::encode_native_tables_spreadsheet(
+        runtime,
+        revision,
+        collection,
+        matches!(format, SpreadsheetFormat::Csv),
+    )?;
+    Ok(SpreadsheetResult {
+        text_capacity: runtime.text_capacity,
+        response,
+        candidate: None,
+        export: Some(bytes),
+    })
 }
 
 fn export_native_tracker_spreadsheet(
@@ -913,4 +946,90 @@ fn current_revision(runtime: Option<&DesignerRuntime>) -> &str {
 
 fn set_response(reply: &DesignerWireReply) {
     RESPONSE.with(|response| *response.borrow_mut() = encode_reply(reply));
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_tables_parity_tests {
+    use super::{
+        PROJECT, REQUEST, RESPONSE, tachiko_designer_project_close, tachiko_designer_request_run,
+        tachiko_designer_spreadsheet_run,
+    };
+    use crate::host_bridge::DesignerHost;
+    use serde_json::json;
+
+    fn browser_request(request: &[u8]) -> Vec<u8> {
+        REQUEST.with(|slot| *slot.borrow_mut() = request.to_vec());
+        tachiko_designer_request_run();
+        RESPONSE.with(|slot| slot.borrow().clone())
+    }
+
+    #[test]
+    fn native_tables_wasm_host_parity_for_receipts_bytes_ledgers_and_refusals() {
+        tachiko_designer_project_close();
+        let mut host = DesignerHost::new();
+        let new = serde_json::to_vec(&json!({"type":"new_table", "occurrence_id":"00000000-0000-4000-8000-000000000545",
+            "name":"Sales", "columns":[{"name":"Item", "field_type":"text"}, {"name":"Amount", "field_type":"number"}]})).unwrap();
+        let opened = browser_request(&new);
+        assert_eq!(opened, host.request(&new));
+        let opened: serde_json::Value = serde_json::from_slice(&opened).unwrap();
+        let collection = opened["response"]["payload"]["table"]["collection"]["id"]
+            .as_str()
+            .unwrap();
+        let columns = opened["response"]["payload"]["table"]["columns"]
+            .as_array()
+            .unwrap();
+        let text_field = columns
+            .iter()
+            .find(|column| column["key"] == "item")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap();
+        let row: Vec<_> = columns
+            .iter()
+            .map(|column| {
+                if column["key"] == "item" {
+                    "0005 林"
+                } else {
+                    "5"
+                }
+            })
+            .collect();
+        let paste = serde_json::to_vec(
+            &json!({"type":"paste_cells", "expected_revision":"resident/0", "collection":collection,
+            "start_entity":null, "start_field":columns[0]["id"], "rows":[row]}),
+        )
+        .unwrap();
+        let published = browser_request(&paste);
+        assert_eq!(published, host.request(&paste));
+        let published: serde_json::Value = serde_json::from_slice(&published).unwrap();
+        assert_eq!(published["status"], "ok", "{published}");
+        let entity = published["response"]["payload"]["entities"][0]
+            .as_str()
+            .unwrap();
+        let edit = serde_json::to_vec(&json!({"type":"edit_scalar", "expected_revision":"resident/1",
+            "target":{"entity":entity,"field":text_field},"input":{"kind":"text","value":"=literal"}})).unwrap();
+        for current in ["resident/1", "resident/2"] {
+            if current == "resident/2" {
+                assert_eq!(browser_request(&edit), host.request(&edit));
+            }
+            for format in ["csv", "xlsx"] {
+                for (revision, selected) in [
+                    (current, collection),
+                    ("resident/9", collection),
+                    (current, "missing"),
+                ] {
+                    let operation = serde_json::to_vec(&json!({"type":"export_native_tables", "expected_revision":revision, "collection":selected, "format":format})).unwrap();
+                    REQUEST.with(|slot| *slot.borrow_mut() = operation.clone());
+                    PROJECT.with(|slot| slot.borrow_mut().clear());
+                    tachiko_designer_spreadsheet_run();
+                    let native = host.spreadsheet(&operation, &[]);
+                    let browser_reply = RESPONSE.with(|slot| slot.borrow().clone());
+                    assert_eq!(browser_reply, native.reply);
+                    let browser_bytes = PROJECT.with(|slot| slot.borrow().clone());
+                    assert_eq!(browser_bytes, native.bytes.unwrap_or_default());
+                }
+            }
+        }
+        tachiko_designer_project_close();
+    }
 }

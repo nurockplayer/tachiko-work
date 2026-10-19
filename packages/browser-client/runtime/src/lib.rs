@@ -50,6 +50,7 @@ use thiserror::Error;
 pub mod interop_adapter;
 mod interop_document;
 mod interop_number_format;
+mod native_tables_export;
 use interop_document::PendingCleanup;
 pub use interop_document::{
     CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
@@ -59,7 +60,12 @@ pub use interop_document::{
     import_workbook, inspect_imported_project, validate_import_metadata,
 };
 
+// Exercise the browser bridge logic in native unit tests without dereferencing
+// its WASM-only pointer offsets. Production compilation remains WASM-only.
 #[cfg(target_arch = "wasm32")]
+mod wasm;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::cast_possible_truncation)]
 mod wasm;
 
 const MAX_COLLECTIONS: usize = 32;
@@ -72,7 +78,7 @@ const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
 pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 16 * 1024 * 1024;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) const MAX_SPREADSHEET_METADATA_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TEXT_CAPACITY_PROFILE_BYTES: usize = 4 * 1024 * 1024;
 // The stock Tracker's 128 fixed scalar rows carry repeated field projections
@@ -717,6 +723,10 @@ pub enum DesignerError {
     Storage(#[from] FormatError),
     #[error("project transfer is invalid: {message}")]
     InvalidProjectTransfer { message: String },
+    #[error("native tables export refused: {}: {}", .finding.code, .finding.message)]
+    NativeTablesExport {
+        finding: interop_adapter::FidelityFinding,
+    },
     #[error(
         "project transfer exceeds the private {maximum}-byte host boundary (received {actual} bytes)"
     )]
@@ -774,6 +784,17 @@ impl DesignerError {
             Self::Lifecycle(PatchLifecycleError::CommandRejected { .. }) => {
                 ("edit_rejected", Vec::new())
             }
+            Self::NativeTablesExport { finding } => (
+                "native_tables_export_refused",
+                vec![DiagnosticProjection {
+                    code: finding.code.clone(),
+                    message: finding.message.clone(),
+                    path: finding.location.clone(),
+                    subjects: Vec::new(),
+                    related_subjects: Vec::new(),
+                    facts: Vec::new(),
+                }],
+            ),
             Self::InvalidTrackerOperation { .. } => ("invalid_tracker_operation", Vec::new()),
             Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
                 ("invalid_table_operation", Vec::new())

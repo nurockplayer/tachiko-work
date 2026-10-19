@@ -2304,7 +2304,7 @@ fn column_letters(mut index: usize) -> String {
     reversed.into_iter().rev().collect()
 }
 
-fn export_scalar(value: Option<&Value>) -> Result<SourceValue, DesignerError> {
+pub(crate) fn export_scalar(value: Option<&Value>) -> Result<SourceValue, DesignerError> {
     match value {
         None => Ok(SourceValue::Empty),
         Some(Value::Text(value)) => Ok(SourceValue::Text {

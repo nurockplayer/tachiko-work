@@ -30,6 +30,7 @@ export type SpreadsheetOperation =
   | {type: "inspect_project"; metadata: InteropMetadata}
   | {type: "open_project"; occurrence_id: string; metadata: InteropMetadata}
   | {type: "export"; expected_revision: string; metadata: InteropMetadata; format: SpreadsheetFormat; collection: string}
+  | {type: "export_native_tables"; expected_revision: string; collection: string; format: SpreadsheetFormat}
   | {type: "export_native_tracker"; expected_revision: string; presentation: NativeTrackerExportPresentation; format: SpreadsheetFormat}
   | {type: "export_native_budget"; expected_revision: string; presentation: NativeBudgetExportPresentation; format: SpreadsheetFormat};
 export type ScalarInput = {kind: "number"; input: string} | {kind: "text" | "date"; value: string} | {kind: "boolean"; value: boolean};

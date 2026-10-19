@@ -3,6 +3,7 @@ import {
   projectTransferFromFiles,
   type CanonicalProjectTransferEntry,
 } from "./host/project-transfer.ts";
+import type { SpreadsheetExport, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
 import { DesignerRuntimeError, type DesignerClient } from "./runtime/client.ts";
 import { WorkerDesignerClient } from "./runtime/worker-client.ts";
 import type {
@@ -27,6 +28,7 @@ const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
  * and the vendored kit makes that stronger contract explicit for consumers.
  */
 export interface ExperimentalDesignerClient extends DesignerClient {
+  exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
   openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
   exportCanonicalTree(expectedRevision: string): Promise<CanonicalTreeExport>;

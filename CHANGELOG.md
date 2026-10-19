@@ -6,6 +6,41 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Native-table worksheet/header names use a bounded fixed-point caseless key
+  (up to four uppercase-then-lowercase iterations), so `ß`, `ẞ`, `SS` and `ss`
+  consistently collide. Allocation and final writer validation share the key;
+  deterministic suffixes and source/output ledger mappings preserve identity.
+
+- Native-table exports refuse fields with semantic constraints instead of
+  dropping them: XLSX refuses the whole document, CSV the selected collection,
+  with a finding naming the collection and field. Native CSV also refuses
+  XML-illegal Text and headers with located findings. Worksheet allocation
+  repeatedly removes boundary whitespace/apostrophes before disambiguation,
+  with regression coverage for quoted `Foo` names and Greek caseless names.
+  The interop profile now states the 31 UTF-16-code-unit worksheet-name limit.
+
+- Native-tables XLSX uses one compatibility policy for name allocation and
+  final validation. It renames reserved `History` worksheet names with a
+  deterministic ledger mapping, measures the 31-unit name limit in UTF-16,
+  refuses XML-illegal characters, more than 253 line feeds per cell, and Dates
+  outside Excel's 1900-01-01 through 9999-12-31 range with located findings, and preserves legal Text/header
+  whitespace. A sourced constraint inventory, table-driven boundary tests and
+  independent LibreOffice readback cover the scalar Excel surface. Other
+  profiles and CSV retain their existing behavior.
+
+- Native-tables exports disambiguate worksheet names and headers with an
+  uppercase-then-lowercase Unicode comparison key. Native XLSX refuses
+  subnormal Numbers that Excel would turn into zero, normalizes signed zero,
+  and discloses possible Excel rounding above 15 significant decimal digits
+  using at most 20 located findings plus a total count. CSV keeps full Number
+  precision and explicitly records that fact in its ledger.
+
+- Native-tables XLSX export refuses literal SpreadsheetML `_xHHHH_` escape
+  sequences in Text, headers and worksheet names, and Text cells or headers
+  above Excel's 32,767 UTF-16-code-unit limit. Blocking findings identify the
+  location so output cannot silently change or truncate the source Text.
+  CSV and other XLSX profiles retain their existing behavior.
+
 - Browser kit folder selection accepts `.roproj` root folder names containing
   backslashes while still refusing backslashes in serialized relative paths.
 
@@ -15,6 +50,13 @@ All notable changes to Tachiko Work are documented in this file.
   Rust admission retains strict canonical-byte and v3 transfer-order checks.
 
 ### Added
+
+- Revision-pinned native scalar tables export to typed XLSX or selected-table
+  CSV through `exportNativeTablesSpreadsheet(expectedRevision, collection,
+  format)`. Rust derives canonical order and values; deterministic name/header
+  mappings and excluded summaries, charts, history and presentation appear in
+  the fidelity ledger. A dedicated outbound profile covers native admission
+  geometry; mixed XLSX documents and over-limit output are refused.
 
 - The public browser client's `TrackerCommand` exposes atomic `edit_cells`
   batches for native and imported tables through the existing worker path,
