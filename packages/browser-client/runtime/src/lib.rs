@@ -1761,18 +1761,26 @@ impl DesignerRuntime {
                 .session
                 .query_entities(std::slice::from_ref(&target.entity))?;
             let entity = &entities.value()[0];
-            let column = self
+            let (spec, column) = self
                 .collection_specs
                 .values()
                 .find(|spec| spec.summary.id == entity.schema.to_string())
-                .and_then(|spec| spec.columns.iter().find(|column| column.id == target.field))
+                .and_then(|spec| {
+                    spec.columns
+                        .iter()
+                        .find(|column| column.id == target.field)
+                        .map(|column| (spec, column))
+                })
                 .ok_or_else(|| WorkspaceError::MissingField {
                     field: target.clone(),
                 })?;
             if entity.fields.contains(&target.field) {
                 present.push(target.clone());
             } else {
-                blanks.insert(target.clone(), blank_field_projection(entity, column));
+                blanks.insert(
+                    target.clone(),
+                    blank_field_projection(entity, column, spec.native_table_rows),
+                );
             }
         }
         let query = self.session.query_fields(&present)?;
@@ -3679,6 +3687,7 @@ fn blank_field_ids(
 fn blank_field_projection(
     entity: &tachiko_workspace_engine::EntityInspection,
     column: &ColumnSpec,
+    native_table_rows: bool,
 ) -> FieldProjection {
     FieldProjection {
         blank: true,
@@ -3693,8 +3702,8 @@ fn blank_field_projection(
         calculated: None,
         diagnostics: Vec::new(),
         editable_scalar: match column.field_type {
-            FieldType::Text => Some(ScalarKind::Text),
-            FieldType::Number => Some(ScalarKind::Number),
+            FieldType::Text if native_table_rows && !column.required => Some(ScalarKind::Text),
+            FieldType::Number if native_table_rows && !column.required => Some(ScalarKind::Number),
             _ => None,
         },
     }

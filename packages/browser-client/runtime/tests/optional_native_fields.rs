@@ -46,12 +46,20 @@ impl Journey {
 
     fn tree(&mut self) -> Vec<u8> {
         let table = self.table();
-        self.runtime
-            .as_ref()
+        let runtime = self.runtime.as_ref().unwrap();
+        let revision = table["revision"].as_str().unwrap();
+        if table["columns"]
+            .as_array()
             .unwrap()
-            .export_canonical_tree(table["revision"].as_str().unwrap())
-            .unwrap()
-            .bytes
+            .iter()
+            .any(|column| column["field_type"] == "date")
+        {
+            // The legacy canonical-v1 export does not carry Date. Its existing
+            // private v2 project carrier still proves exact snapshot equality.
+            runtime.export_project(revision).unwrap().bytes
+        } else {
+            runtime.export_canonical_tree(revision).unwrap().bytes
+        }
     }
 
     fn mutate(&mut self, mut request: Value) {
@@ -426,5 +434,115 @@ fn imported_capacity_blank_set_clear_reopen_and_history_preserve_absence() {
             .unwrap(),
         )
         .unwrap();
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One import/native capability matrix also supplies native/WASM replay evidence.
+fn blank_editability_matches_native_authoring_for_imported_collections() {
+    use tachiko_designer_runtime::interop_adapter::{ImportOptions, import_csv};
+    use tachiko_designer_runtime::{ImportFieldType, ImportSelection, import_workbook};
+    let input = |kind: &str| match kind {
+        "text" => json!({"kind":"text","value":"changed"}),
+        "number" => json!({"kind":"number","input":"2"}),
+        "boolean" => json!({"kind":"boolean","value":false}),
+        "date" => json!({"kind":"date","value":"2026-10-21"}),
+        _ => panic!("unexpected scalar kind"),
+    };
+    for (kind, field_type, source, native) in [
+        ("boolean", ImportFieldType::Boolean, "true", false),
+        ("date", ImportFieldType::Date, "2026-10-20", false),
+        ("text", ImportFieldType::Text, "anchor", true),
+    ] {
+        let csv = format!("note,amount,other\n,,{source}\npresent,1,\n");
+        let workbook = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
+        let (runtime, imported) = import_workbook(
+            &workbook,
+            &ImportSelection {
+                column_types: vec![vec![
+                    ImportFieldType::Text,
+                    ImportFieldType::Number,
+                    field_type,
+                ]],
+                extra_columns: vec![vec![]],
+            },
+            OCCURRENCE,
+        )
+        .unwrap();
+        let initial = runtime.export_project("resident/0").unwrap().bytes;
+        let mut j = Journey {
+            runtime: Some(runtime),
+            collection: imported.opened.table.collection.key.clone(),
+            ..Journey::default()
+        };
+        let table = j.table();
+        assert_eq!(table["native_table_profile"] == true, native);
+        let columns = table["columns"].as_array().unwrap();
+        assert!(columns.iter().all(|column| column["required"] == false));
+        let mut blanks = Vec::new();
+        for row in table["rows"].as_array().unwrap() {
+            for id in row["blank_fields"].as_array().unwrap() {
+                // Sparse row payloads advertise no capability for absent cells.
+                assert!(
+                    !row["fields"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|field| field["target"]["field"] == *id)
+                );
+                blanks.push(json!({"entity":row["id"],"field":id}));
+            }
+        }
+        assert_eq!(blanks.len(), 3);
+        let query = j.ok(
+            json!({"type":"query_fields","expected_revision":table["revision"],"fields":blanks}),
+        );
+        let fields = query["fields"].as_array().unwrap();
+        let explained = j.ok(json!({"type":"explain_field","expected_revision":table["revision"],"target":fields[0]["target"]}));
+        assert_eq!(explained["value"], fields[0]);
+        for field in fields {
+            assert_eq!(field["blank"], true);
+            let column = columns
+                .iter()
+                .find(|column| column["id"] == field["target"]["field"])
+                .unwrap();
+            let scalar = column["field_type"].as_str().unwrap();
+            let expected = if native { json!(scalar) } else { Value::Null };
+            assert_eq!(field["editable_scalar"], expected, "{kind}: {field}");
+            let set = json!({"type":"edit_scalar","target":field["target"],"input":input(scalar)});
+            let clear = json!({"type":"edit_cells","edits":[{"target":field["target"],"input":{"kind":"clear"}}]});
+            if native {
+                j.round_trip(set);
+                j.round_trip(clear);
+            } else {
+                j.refused(set);
+                j.refused(clear);
+            }
+        }
+        // The converse: present scalar capabilities remain usable even in a
+        // non-native collection. This repair must not suppress those editors.
+        for row in table["rows"].as_array().unwrap() {
+            for field in row["fields"].as_array().unwrap() {
+                let column = columns
+                    .iter()
+                    .find(|column| column["id"] == field["target"]["field"])
+                    .unwrap();
+                let scalar = column["field_type"].as_str().unwrap();
+                assert_eq!(field["editable_scalar"], scalar);
+                j.round_trip(
+                    json!({"type":"edit_scalar","target":field["target"],"input":input(scalar)}),
+                );
+            }
+        }
+        if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
+            std::fs::write(
+                format!("{path}.editability-{kind}"),
+                serde_json::to_vec(
+                    &json!({"project":initial,"occurrence_id":OCCURRENCE,"records":j.transcript}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
     }
 }
