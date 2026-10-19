@@ -3196,7 +3196,13 @@ mod capacity_proof_tests {
 
 #[cfg(test)]
 mod native_tables_output_tests {
-    use super::*;
+    use super::{
+        MAX_NATIVE_TABLES_EXPANDED_BYTES, MAX_NATIVE_TABLES_OUTPUT_BYTES, OutputProfile,
+        SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook, export_csv_for_profile,
+        export_xlsx_for_profile,
+    };
+    use std::io::Cursor;
+    use zip::ZipArchive;
 
     fn sheet(columns: usize, rows: usize) -> SourceSheet {
         SourceSheet {

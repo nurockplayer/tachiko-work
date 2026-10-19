@@ -62,8 +62,10 @@ pub use interop_document::{
 
 // Exercise the browser bridge logic in native unit tests without dereferencing
 // its WASM-only pointer offsets. Production compilation remains WASM-only.
-#[cfg(any(target_arch = "wasm32", test))]
-#[cfg_attr(not(target_arch = "wasm32"), allow(clippy::cast_possible_truncation))]
+#[cfg(target_arch = "wasm32")]
+mod wasm;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::cast_possible_truncation)]
 mod wasm;
 
 const MAX_COLLECTIONS: usize = 32;

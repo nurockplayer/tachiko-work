@@ -950,7 +950,10 @@ fn set_response(reply: &DesignerWireReply) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod native_tables_parity_tests {
-    use super::*;
+    use super::{
+        PROJECT, REQUEST, RESPONSE, tachiko_designer_project_close, tachiko_designer_request_run,
+        tachiko_designer_spreadsheet_run,
+    };
     use crate::host_bridge::DesignerHost;
     use serde_json::json;
 

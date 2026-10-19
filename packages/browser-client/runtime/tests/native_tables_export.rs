@@ -1,4 +1,7 @@
 //! Issue #545: observable native output contract; no client value/name mapping.
+//! These acceptance tests use the native-only host bridge.
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::io::{Cursor, Read};
 
 use serde_json::{Value as Json, json};
