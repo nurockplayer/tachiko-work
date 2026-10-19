@@ -90,7 +90,7 @@ test("#529 exported kit creates named native tables and reopens every carrier in
     const client = kit.createExperimentalDesignerClient();
     if (!client.newTable || !client.trackerCommand) throw new Error("Native naming capabilities missing");
     const opened = await client.newTable("My Expenses", [{name: "Item Name", field_type: "text"}, {name: "項目", field_type: "text"}]);
-    const columns = opened.table.columns.map(column => ({id: column.id, key: column.key, display_name: column.display_name}));
+    const columns = opened.table.columns.map(column => ({id: column.id, key: column.key, display_name: column.display_name, required: (column as typeof column & { required: boolean }).required}));
     const renamed = await client.trackerCommand({type: "rename_column", expected_revision: "resident/0", collection: "table_1", field: columns[0]!.id, name: "Receipt 🧾"});
     const after = await client.queryTable("table_1");
     await client.trackerCommand({type: "undo", expected_revision: renamed.resulting_revision});
@@ -120,6 +120,7 @@ test("#529 exported kit creates named native tables and reopens every carrier in
   expect(evidence.collection.display_name).toBe("My Expenses");
   expect(evidence.columns.map(column => column.key)).toEqual(["column_1", "column_2"]);
   expect(evidence.columns.map(column => column.display_name)).toEqual(["Item Name", "項目"]);
+  expect(evidence.columns.map(column => column.required)).toEqual([true, true]);
   expect(evidence.after.map(column => column.id)).toEqual(evidence.columns.map(column => column.id));
   expect(evidence.after.map(column => column.key)).toEqual(["column_1", "column_2"]);
   expect(evidence.after.map(column => column.display_name)).toEqual(["Receipt 🧾", "項目"]);

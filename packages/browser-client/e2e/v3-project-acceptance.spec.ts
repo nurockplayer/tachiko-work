@@ -178,9 +178,11 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
       }, "complete Bootstrap oracle changed");
       equal(opened.table.revision, input.revision, "table revision changed");
       equal(opened.table.collection, collection, "complete table collection changed");
+      equal(opened.table.native_table_profile, input.date ? undefined : true, "literal native scalar profile changed");
       equal(opened.table.columns, literalIds.fields.map((id: string, i: number) => ({
         id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.date ? "date" : "text"][i],
-      })), "complete literal field identities/keys/types changed");
+        required: false, // Imported schema declarations are optional; every fixture cell is present.
+      })), "complete literal field identities/keys/types/requiredness changed");
       const values = [
         ["PEN", "Stationery", input.quantity, 200, input.dateValue],
         ["NOTE", "Paper", 5, 200, "2026-09-27"],
@@ -523,7 +525,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       const values = [["PEN", "Stationery", input.quantity, 200, input.dateValue], ["NOTE", "Paper", 5, 200, "2026-09-27"]];
       const expected = {
         bootstrap: { title: "Imported workbook", revision: input.revision, default_collection: "sheet_1", collections: [collection], keyed_grouped_sum_definition_ids: input.catalogue },
-        table: { revision: input.revision, collection, columns: fields.map((id, i) => ({ id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.dateType === false ? "text" : "date"][i] })),
+        table: { revision: input.revision, ...(input.dateType === false ? { native_table_profile: true } : {}), collection, columns: fields.map((id, i) => ({ id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.dateType === false ? "text" : "date"][i], required: false })),
           rows: rows.map((id, ri) => ({ id, key: `sheet_1_row_${ri + 1}`, fields: fields.map((field, fi) => {
             const kind = fi < 2 ? "text" : fi < 4 ? "number" : input.dateType === false ? "text" : "date";
             return { target: { entity: id, field }, address: `sheet_1_row_${ri + 1}.column_${fi + 1}`, stored: { kind, value: values[ri]![fi] }, formula: null, calculated: null, diagnostics: [], editable_scalar: kind };
@@ -568,7 +570,8 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const boundaryFieldIds = ["0003", "0004", "0005", "0006", "0007"].map((id) => `${boundaryPrefix}${id}`);
     const boundaryProjection = (revision: string, ids: string[], dateValue = "2026-09-28", quantity = 4): any => {
       const collection = { id: `${boundaryPrefix}0002`, key: "sheet_1", display_name: "sheet_1", entity_count: 2 };
-      const columns = boundaryFieldIds.map((id, i) => ({ id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", "date"][i] }));
+      // Preserve ColumnProjection's declared wire member order for the strict JSON checks below.
+      const columns = boundaryFieldIds.map((id, i) => ({ required: false, id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", "date"][i] }));
       const sourceRows = [
         ["PEN", "Stationery", quantity, 200, dateValue],
         ["NOTE", "Paper", 5, 200, "2026-09-27"],
@@ -1053,7 +1056,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const newField = `native_table_field_0003_${newUuid}`;
     const newExpected = {
       bootstrap: { title: "reset", revision: "resident/0", default_collection: "reset", collections: [{ id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
-      table: { revision: "resident/0", native_table_profile: true, collection: { id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }, columns: [{ id: newField, key: "value", display_name: "value", field_type: "text" }], rows: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }, columns: [{ id: newField, key: "value", display_name: "value", field_type: "text", required: true }], rows: [] },
     };
     equal(newOpen, newExpected, "New did not produce the literal native table document");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${newUuid}/${newDocument}`, revision: "resident/0" }, "New scope/document identity changed");
@@ -1107,7 +1110,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const afterCloseField = `native_table_field_0003_${afterCloseUuid}`;
     const afterCloseExpected = {
       bootstrap: { title: "after_close", revision: "resident/0", default_collection: "after_close", collections: [{ id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
-      table: { revision: "resident/0", native_table_profile: true, collection: { id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", field_type: "text" }], rows: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", field_type: "text", required: true }], rows: [] },
     };
     equal(afterClose, afterCloseExpected, "Close/New did not install the fresh native table");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${afterCloseUuid}/${afterCloseDocument}`, revision: "resident/0" }, "Close/New retained the previous occurrence identity");
