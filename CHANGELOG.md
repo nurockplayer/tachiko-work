@@ -13,6 +13,15 @@ All notable changes to Tachiko Work are documented in this file.
   from empty Text; storage formats, capacity limits, and public TypeScript APIs
   are unchanged.
 
+- Native-table CSV exports add a conditional `lossy_on_export` finding,
+  `native_tables_csv_blank_empty_text`, located at the selected collection, when
+  that collection declares an optional Text field and any exported row has a
+  blank or empty Text value in it, because CSV cannot distinguish the two. XLSX
+  keeps blank cells distinct and does not emit it. The generic
+  `native_tables_csv_values_only` finding now covers only typing and formatting
+  loss. Canonical `.roproj/v3` and portable package round trips and both export
+  formats are qualified to preserve blank optional values exactly.
+
 ### Fixed
 
 - The browser kit artifact manifest's exposed client-method inventory now
