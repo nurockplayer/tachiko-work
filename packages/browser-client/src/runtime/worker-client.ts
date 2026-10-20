@@ -15,6 +15,7 @@ import type {
   FieldBatchProjection,
   FieldExplanationProjection,
   FieldTarget,
+  FieldProjection,
   OpenedProjection,
   OccurrenceProjection,
   PublicationProjection,
@@ -149,6 +150,14 @@ export class WorkerDesignerClient implements DesignerClient {
   /** Return complete entity and schema presentation invalidation from Rust. */
   async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command(request));
+  }
+
+  async clearField(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection> {
+    return expectResponse("published", await this.#command({type: "edit_scalar", expected_revision: expectedRevision, target, input: {kind: "clear"}}));
+  }
+
+  async setColumnRequiredness(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_requiredness", expected_revision: expectedRevision, collection, field, required});
   }
 
   async bootstrap(): Promise<BootstrapProjection> {
@@ -510,5 +519,71 @@ function expectResponse(
   if (response.type !== type) {
     throw new Error(`Expected '${type}' response, received '${response.type}'.`);
   }
+  // Validate the additive optional-field metadata without normalizing the
+  // sparse Rust payload (or fabricating empty Text for absent slots).
+  switch (response.type) {
+    case "table": validateTablePresence(response.payload); break;
+    case "opened": validateTablePresence(response.payload.table); break;
+    case "imported": validateTablePresence(response.payload.opened.table); break;
+    case "fields": response.payload.fields.forEach(validateFieldPresence); break;
+    case "field_explanation":
+      validateFieldPresence(response.payload.value);
+      response.payload.direct_dependencies.forEach(dependency => validateFieldPresence(dependency.value));
+      break;
+    case "cleanup_preview":
+      response.payload.changes.forEach(change => { if (change.before !== null) validateFieldPresence(change.before); });
+      break;
+  }
   return "payload" in response ? response.payload : undefined;
+}
+
+function validateFieldPresence(field: FieldProjection): void {
+  if (field.blank !== undefined && typeof field.blank !== "boolean") {
+    throw new Error("Invalid Worker field blank flag.");
+  }
+  if (field.blank === true && (field.stored !== null || field.formula !== null || field.calculated !== null)) {
+    throw new Error("Invalid Worker blank field payload.");
+  }
+  // Presence is the stored literal/reference or formula definition, independent
+  // of whether calculation succeeded. Absence must be explicit blank:true.
+  if (field.blank !== true && field.stored == null && field.formula == null) {
+    throw new Error("Invalid Worker non-blank field payload.");
+  }
+}
+
+function validateTablePresence(table: TableProjection): void {
+  const columns = new Map(table.columns.map((column, index) => {
+    if (typeof column.required !== "boolean") throw new Error("Invalid Worker column requiredness.");
+    return [column.id, {required: column.required, index}];
+  }));
+  if (columns.size !== table.columns.length) throw new Error("Invalid Worker duplicate column identity.");
+  for (const row of table.rows) {
+    if (row.blank_fields !== undefined && (!Array.isArray(row.blank_fields) ||
+      !row.blank_fields.every(field => typeof field === "string"))) {
+      throw new Error("Invalid Worker row blank_fields.");
+    }
+    // Every Rust table producer partitions all declared columns into present
+    // fields and absent IDs, including capacity tables and opened/imported tables.
+    const covered = new Set<string>();
+    let lastBlankIndex = -1;
+    for (const id of row.blank_fields ?? []) {
+      const column = columns.get(id);
+      if (column === undefined || column.required || column.index <= lastBlankIndex) {
+        throw new Error("Invalid Worker sparse row presence.");
+      }
+      covered.add(id);
+      lastBlankIndex = column.index;
+    }
+    for (const field of row.fields) {
+      validateFieldPresence(field);
+      const id = field.target.field;
+      if (field.blank === true || field.target.entity !== row.id || !columns.has(id) || covered.has(id)) {
+        throw new Error("Invalid Worker sparse row presence.");
+      }
+      covered.add(id);
+    }
+    if (covered.size !== columns.size) {
+      throw new Error("Invalid Worker sparse row presence.");
+    }
+  }
 }

@@ -96,6 +96,53 @@ for (const row of table.rows) {
 `openProject` transfers its input buffer to the Worker. Copy the buffer first if
 your host needs to retain it.
 
+## Optional native Text and Number columns
+
+Under [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md),
+`newTable(name, columns)` accepts `required?: boolean` per column. Omission
+defaults to `true`; only Text and Number may be declared optional. The same
+property is accepted by the `add_column` command through `trackerCommand`.
+An optional added column needs no `initializers`; a supplied subset fills only
+those entities. `insert_row` may omit optional initializers, leaving those slots
+blank. Required initializers remain mandatory; neither path invents defaults.
+
+Use stable IDs and the current revision from projections:
+
+```ts
+await client.clearField(revision, {entity: rowId, field: noteFieldId});
+// A different operation: stores present empty Text, never clears.
+await client.editText(nextRevision, {entity: rowId, field: noteFieldId}, "");
+await client.setColumnRequiredness(latestRevision, collectionKey, noteFieldId, false);
+```
+
+`clearField` encodes `edit_scalar` with exactly `input: {kind: "clear"}`.
+`setColumnRequiredness` encodes `set_column_requiredness` with `collection`,
+`field` and `required`. Both are revision-pinned ordinary publications. Clearing
+a required field refuses. Strengthening (`required: true`) refuses while any
+entity is blank; it never fills or coerces. Ordinary final validation can also
+refuse a clear that breaks a surviving formula. An already-blank clear is
+`no_change`. Rejected/no-change attempts add no history; `undo`/`redo` through
+`trackerCommand` restore exact prior presence and values as forward operations.
+
+`ScalarEditInput` adds `{kind: "clear"}` alongside typed sets. `edit_cells`
+can mix both atomically. `paste_cells.rows` accepts `PasteCellInput[][]`:
+each cell is a raw string or a typed scalar input, including explicit clear.
+Raw `""` in Text means present empty Text; raw `""` in Number refuses.
+For example, `[["", {kind: "clear"}]]` sets empty Text in the starting
+Text column and clears the next optional column. Untargeted cells stay unchanged;
+omitted optional fields of newly pasted rows remain blank.
+
+Table columns always project `required: boolean`. Each row's `fields` array
+contains **only present values**. `blank_fields?: string[]` names absent declared
+FieldIds in column order; omission means `[]`. Join by stable ID rather than
+zipping columns and fields by index. `queryFields` can inspect an absent declared
+slot: its `FieldProjection.blank` is `true` and `stored`, `formula`, and
+`calculated` are null. Omitted `blank` means `false`; empty Text remains a
+present `{kind: "text", value: ""}`. These omission defaults are preserved in
+client replies, not materialized as extra payload members. Worker reply
+validation rejects malformed presence metadata. Optional Date/Boolean authoring,
+blank coercion and skip-blank calculation are outside this surface.
+
 ## Publish one revision-safe edit and observe authority
 
 Targets come from projections and contain stable semantic IDs. Do not construct

@@ -49,6 +49,8 @@ export type DiagnosticProjection = {
 };
 
 export type FieldProjection = {
+  /** Absent stored value; omission means false. Empty Text is present. */
+  blank?: boolean;
   target: FieldTarget;
   address: string;
   stored: StoredValueProjection | null;
@@ -63,8 +65,9 @@ export type TableProjection = {
   native_table_profile?: boolean;
   revision: string;
   collection: CollectionSummary;
-  columns: Array<{ id: string; key: string; display_name: string; field_type: string; dropdown_options?: string[] }>;
-  rows: Array<{ id: string; key: string; fields: FieldProjection[] }>;
+  columns: Array<{ id: string; key: string; display_name: string; field_type: string; required: boolean; dropdown_options?: string[] }>;
+  /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
+  rows: Array<{ id: string; key: string; blank_fields?: string[]; fields: FieldProjection[] }>;
 };
 
 export type FieldBatchProjection = {
@@ -169,23 +172,29 @@ export type FailureProjection = {
 
 export type TrackerCommand =
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
-  | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: string[][] }
+  | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: PasteCellInput[][] }
   | { type: "append_row"; expected_revision: string; collection: string }
   | { type: "remove_rows"; expected_revision: string; entities: string[] }
   | { type: "insert_row"; expected_revision: string; collection: string; initializers: Array<{field: string; input: ScalarEditInput}> }
   | { type: "remove_table_rows"; expected_revision: string; collection: string; entities: string[] }
-  | { type: "add_column"; expected_revision: string; collection: string; name: string; field_type: string; initializers: Array<{entity: string; input: ScalarEditInput}> }
+  | { type: "add_column"; expected_revision: string; collection: string; name: string; field_type: string; required?: boolean; initializers?: Array<{entity: string; input: ScalarEditInput}> }
+  | { type: "set_column_requiredness"; expected_revision: string; collection: string; field: string; required: boolean }
   | { type: "rename_column"; expected_revision: string; collection: string; field: string; name: string }
   | { type: "remove_column"; expected_revision: string; collection: string; field: string }
   | { type: "undo" | "redo"; expected_revision: string };
 
 export type ScalarEditInput =
+  | { kind: "clear" }
   | { kind: "number"; input: string }
   | { kind: "text"; value: string }
   | { kind: "boolean"; value: boolean }
   | { kind: "date"; value: string };
 
-export type NewTableColumnInput = {name: string; field_type: string};
+/** Raw strings parse as the declared scalar type; only an explicit clear removes a value. */
+export type PasteCellInput = string | ScalarEditInput;
+
+/** required defaults to true; optional native authoring admits Text/Number only. */
+export type NewTableColumnInput = {name: string; field_type: string; required?: boolean};
 
 export type FormulaCopy = {
   source: FieldTarget;
