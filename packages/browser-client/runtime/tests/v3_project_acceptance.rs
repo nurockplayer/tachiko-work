@@ -1191,6 +1191,7 @@ fn independent_opened_projection(
         id: FIELD_IDS[index].to_owned(),
         key: key.to_owned(),
         display_name: key.to_owned(),
+        display_name_explicit: None,
         field_type: field_type.to_owned(),
         dropdown_options: None,
     })
@@ -2267,6 +2268,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 id: new_field_id.into(),
                 key: "value".into(),
                 display_name: "value".into(),
+                display_name_explicit: Some(true),
                 field_type: "text".into(),
                 dropdown_options: None
             }],

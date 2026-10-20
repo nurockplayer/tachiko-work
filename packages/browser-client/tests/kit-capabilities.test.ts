@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import * as entry from "../src/experimental-client.ts";
 
 // The packaged kit manifest advertises the exposed client methods and entry
-// functions. Keep that hand-maintained inventory in parity with the actual
+// functions, plus projection feature markers. Keep that inventory in parity with the actual
 // public surface: client instance methods plus exported entry functions
 // (exported classes such as DesignerRuntimeError are types, not capabilities).
 function manifestCapabilities(): string[] {
@@ -50,6 +50,11 @@ describe("kit manifest capabilities", () => {
   it("lists every public client method and entry function exactly once", () => {
     const capabilities = manifestCapabilities();
     expect(new Set(capabilities).size).toBe(capabilities.length);
-    expect([...capabilities].sort()).toEqual([...publicSurface()].sort());
+    expect([...capabilities].sort()).toEqual([...publicSurface(), "columnDisplayNameExplicit"].sort());
+  });
+
+  it("advertises explicit column display-name presence as a projection feature", () => {
+    expect(manifestCapabilities()).toContain("columnDisplayNameExplicit");
+    expect(publicSurface()).not.toContain("columnDisplayNameExplicit");
   });
 });

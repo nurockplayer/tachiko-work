@@ -46,6 +46,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Table columns expose optional `display_name_explicit: true` through the Rust,
+  WASM and public TypeScript client projections, sharing the imported-export
+  presence rule. Clients can retain metadata headers unless a stored display
+  name exists, even for a rename equal to the generated key. The kit advertises
+  `columnDisplayNameExplicit`; Undo and v3/package reopen preserve name presence
+  without changing storage formats or rename semantics.
+
 - The experimental TypeScript client and exported Worker kit expose optional
   Text/Number columns, sparse row initialization, explicit `clearField`, mixed
   typed/raw pastes, and `setColumnRequiredness`. Projections expose requiredness

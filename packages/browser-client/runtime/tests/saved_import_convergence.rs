@@ -469,6 +469,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 id: field.id.to_string(),
                 key: field.key.to_string(),
                 display_name: field.key.to_string(),
+                display_name_explicit: None,
                 field_type: "text".to_owned(),
                 dropdown_options: None,
             })

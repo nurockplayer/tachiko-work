@@ -122,6 +122,7 @@ export type {
   CanonicalTreeExport,
   CalculationProjection,
   CollectionSummary,
+  ColumnProjection,
   DiagnosticProjection,
   FailureProjection,
   FieldBatchProjection,

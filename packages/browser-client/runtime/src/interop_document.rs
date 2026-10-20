@@ -1435,7 +1435,7 @@ fn current_import_metadata(
             .values()
             .filter(|field| !fields.contains(field.id.as_str()))
         {
-            if field.display_name.is_none() {
+            if super::explicit_column_display_name(field).is_none() {
                 return Err(refuse(
                     &format!("{location}/field {}", field.id),
                     "An unmapped field without an explicit display name has no recoverable spreadsheet header.",
@@ -1665,7 +1665,7 @@ fn map_current_headers(
     let mut headers = BTreeSet::new();
     for column in &mut sheet.columns {
         let field = &schema.fields[column.field_id.as_str()];
-        let source = field.display_name.as_deref().unwrap_or(&column.name);
+        let source = super::explicit_column_display_name(field).unwrap_or(&column.name);
         let path = format!("{location}/field {}", field.id);
         let mapped = super::interop_adapter::native_tables_compatibility(
             if csv {

@@ -60,12 +60,23 @@ export type FieldProjection = {
   editable_scalar: "number" | "text" | "boolean" | "date" | null;
 };
 
+export type ColumnProjection = {
+  id: string;
+  key: string;
+  display_name: string;
+  /** True when a stored name exists, even if equal to key. Omission means fallback. */
+  display_name_explicit?: boolean;
+  field_type: string;
+  required: boolean;
+  dropdown_options?: string[];
+};
+
 export type TableProjection = {
   tracker_profile?: boolean;
   native_table_profile?: boolean;
   revision: string;
   collection: CollectionSummary;
-  columns: Array<{ id: string; key: string; display_name: string; field_type: string; required: boolean; dropdown_options?: string[] }>;
+  columns: ColumnProjection[];
   /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
   rows: Array<{ id: string; key: string; blank_fields?: string[]; fields: FieldProjection[] }>;
 };
