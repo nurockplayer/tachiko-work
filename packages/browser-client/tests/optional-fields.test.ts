@@ -72,7 +72,7 @@ describe("public optional-field requests", () => {
 });
 
 describe("Worker presence projections", () => {
-  it.each([undefined, true, false])("passes explicit display-name presence through query/open/import with %s", async explicit => {
+  it.each([undefined, true] as const)("passes explicit display-name presence through query/open/import with %s", async explicit => {
     const {client, requests, reply} = fixture();
     const column = {...table.columns[0]!, display_name: "note"};
     if (explicit !== undefined) Object.assign(column, {display_name_explicit: explicit});
@@ -93,7 +93,7 @@ describe("Worker presence projections", () => {
     client.close();
   });
 
-  it.each([null, "true", 1, {}, []])("rejects malformed display-name presence %j in query/open/import", async display_name_explicit => {
+  it.each([false, null, "true", 1, {}, []])("rejects malformed display-name presence %j in query/open/import", async display_name_explicit => {
     const {client, reply} = fixture();
     const invalid = {...table, columns: [{...table.columns[0], display_name_explicit}]};
     const query = client.queryTable("items");

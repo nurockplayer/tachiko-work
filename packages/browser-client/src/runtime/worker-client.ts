@@ -554,7 +554,7 @@ function validateFieldPresence(field: FieldProjection): void {
 function validateTablePresence(table: TableProjection): void {
   const columns = new Map(table.columns.map((column, index) => {
     if (typeof column.required !== "boolean") throw new Error("Invalid Worker column requiredness.");
-    if (column.display_name_explicit !== undefined && typeof column.display_name_explicit !== "boolean") {
+    if (column.display_name_explicit !== undefined && column.display_name_explicit !== true) {
       throw new Error("Invalid Worker column display_name_explicit.");
     }
     return [column.id, {required: column.required, index}];

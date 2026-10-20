@@ -133,8 +133,9 @@ Text column and clears the next optional column. Untargeted cells stay unchanged
 omitted optional fields of newly pasted rows remain blank.
 
 Table columns (`ColumnProjection`, also exported by the public TS entry) expose
-`display_name_explicit?: boolean`: Rust emits `true` only when a stored display
-name exists and otherwise omits the member. This uses the imported export rule,
+`display_name_explicit?: true`: Rust emits `true` only when a stored display
+name exists and otherwise omits the member; the client rejects any other value,
+including `false`. This uses the imported export rule,
 including a rename whose spelling equals the generated key. With retained import
 metadata, use `column.display_name_explicit === true ? column.display_name :
 metadataColumn.name`; join by stable field ID. A current field absent from

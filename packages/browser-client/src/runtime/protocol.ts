@@ -65,7 +65,7 @@ export type ColumnProjection = {
   key: string;
   display_name: string;
   /** True when a stored name exists, even if equal to key. Omission means fallback. */
-  display_name_explicit?: boolean;
+  display_name_explicit?: true;
   field_type: string;
   required: boolean;
   dropdown_options?: string[];
