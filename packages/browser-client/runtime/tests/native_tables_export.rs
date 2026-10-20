@@ -160,6 +160,152 @@ fn source_values(
 }
 
 #[test]
+fn csv_blank_empty_text_disclosure_is_selected_optional_text_and_value_specific() {
+    for (kind, required, rows, expected) in [
+        (FieldType::Text, false, vec![vec![None]], true),
+        (
+            FieldType::Text,
+            false,
+            vec![vec![Some(Value::Text(String::new()))]],
+            true,
+        ),
+        (
+            FieldType::Text,
+            false,
+            vec![vec![Some(Value::Text("present".into()))]],
+            false,
+        ),
+        (FieldType::Text, false, vec![], false),
+        (
+            FieldType::Text,
+            true,
+            vec![vec![Some(Value::Text(String::new()))]],
+            false,
+        ),
+        (FieldType::Number, false, vec![vec![None]], false),
+    ] {
+        let mut document = Document::empty("csv-disclosure", "CSV disclosure");
+        add_table(
+            &mut document,
+            "selected",
+            "selected",
+            "Selected",
+            vec![field("value", kind, required)],
+            rows,
+        );
+        // An excluded optional Text collection cannot trigger the finding.
+        add_table(
+            &mut document,
+            "other",
+            "other",
+            "Other",
+            vec![field("note", FieldType::Text, false)],
+            vec![vec![None]],
+        );
+        let mut host = host_for(document);
+        for format in ["csv", "xlsx"] {
+            let (reply, bytes) = export(&mut host, "resident/0", "selected", format);
+            assert_eq!(reply["status"], "ok", "{reply}");
+            assert!(bytes.is_some());
+            let findings: Vec<_> = reply["response"]["payload"]["ledger"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|finding| finding["code"] == "native_tables_csv_blank_empty_text")
+                .collect();
+            assert_eq!(
+                findings.len(),
+                usize::from(expected && format == "csv"),
+                "{reply}"
+            );
+            for finding in findings {
+                assert_eq!(finding["category"], "lossy_on_export");
+                assert_eq!(finding["location"], "selected");
+                assert_eq!(finding["blocking"], false);
+            }
+        }
+    }
+}
+
+#[test]
+fn sole_optional_column_keeps_all_blank_rows_and_distinguishes_empty_text_in_xlsx() {
+    let mut document = Document::empty("sole", "Sole optional column");
+    add_table(
+        &mut document,
+        "items",
+        "items",
+        "Items",
+        vec![field("note", FieldType::Text, false)],
+        vec![
+            vec![None],
+            vec![Some(Value::Text(String::new()))],
+            vec![None],
+        ],
+    );
+    let mut host = host_for(document);
+    let (csv_reply, csv) = export(&mut host, "resident/0", "items", "csv");
+    assert_eq!(csv.unwrap(), b"note\r\n\"\"\r\n\"\"\r\n\"\"\r\n");
+    assert_finding(
+        &csv_reply,
+        "native_tables_csv_blank_empty_text",
+        "lossy_on_export",
+    );
+    let (reply, xlsx) = export(&mut host, "resident/0", "items", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let xlsx = xlsx.unwrap();
+    let sheet = xml(&xlsx, "xl/worksheets/sheet1.xml");
+    for address in ["A2", "A4"] {
+        assert!(
+            sheet.contains(&format!("<c r=\"{address}\" s=\"0\" t=\"n\"></c>")),
+            "{sheet}"
+        );
+    }
+    assert!(
+        sheet.contains(
+            "<c r=\"A3\" s=\"0\" t=\"inlineStr\"><is><t xml:space=\"preserve\"></t></is></c>"
+        ),
+        "{sheet}"
+    );
+    let imported = import_xlsx(&xlsx).unwrap();
+    assert_eq!(
+        source_values(&imported.sheets[0]),
+        vec![
+            vec![SourceValue::Empty],
+            vec![SourceValue::Text {
+                value: String::new()
+            }],
+            vec![SourceValue::Empty],
+        ]
+    );
+    let (mut runtime, projection) = import_workbook(
+        &imported,
+        &ImportSelection {
+            column_types: vec![vec![ImportFieldType::Text]],
+            extra_columns: vec![vec![]],
+        },
+        NEXT,
+    )
+    .unwrap();
+    let DesignerResponse::Table(table) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: projection.opened.bootstrap.default_collection,
+        })
+        .unwrap()
+    else {
+        panic!("table")
+    };
+    assert_eq!(table.rows.len(), 3);
+    assert!(!table.columns[0].required);
+    assert_eq!(table.rows[0].blank_fields, [table.columns[0].id.clone()]);
+    assert_eq!(
+        table.rows[0].fields,
+        [] as [tachiko_designer_runtime::FieldProjection; 0]
+    );
+    assert_eq!(table.rows[1].blank_fields, [] as [String; 0]);
+    assert_eq!(table.rows[2].blank_fields, [table.columns[0].id.clone()]);
+}
+
+#[test]
 fn typed_xlsx_roundtrip_rectangular_empty_cells_and_canonical_order() {
     let document = fixture();
     let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
@@ -307,6 +453,22 @@ fn csv_explicit_reimport_preserves_lexical_scalars_and_discloses_missing_empty_a
         panic!("table")
     };
     assert_eq!(table.rows.len(), 3);
+    assert_eq!(
+        table.rows[1].blank_fields,
+        table
+            .columns
+            .iter()
+            .map(|column| column.id.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        table.rows[1].fields.is_empty(),
+        "CSV empty source fields remain absent, including collapsed empty Text"
+    );
+    assert_eq!(
+        table.rows[2].blank_fields,
+        [table.columns[0].id.clone(), table.columns[3].id.clone()]
+    );
     let projected = imported
         .export_native_tables_csv_workbook(
             "resident/0",
@@ -1616,4 +1778,26 @@ fn native_tables_connector_constrained_fields_refuse_selected_csv_and_whole_xlsx
             );
         }
     }
+}
+
+#[test]
+fn xlsx_blank_cells_keep_exact_positions_beside_present_zero_and_false() {
+    let mut host = host_for(fixture());
+    let (reply, bytes) = export(&mut host, "resident/0", "alpha", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let sheet = xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml");
+    for address in ["B3", "C3", "D3", "A4", "D4"] {
+        assert!(
+            sheet.contains(&format!("<c r=\"{address}\" s=\"0\" t=\"n\"></c>")),
+            "{sheet}"
+        );
+    }
+    assert!(
+        sheet.contains("r=\"B4\" s=\"0\" t=\"n\"><v>0</v>"),
+        "{sheet}"
+    );
+    assert!(
+        sheet.contains("r=\"C2\" s=\"0\" t=\"b\"><v>0</v>"),
+        "{sheet}"
+    );
 }

@@ -341,7 +341,23 @@ impl DesignerRuntime {
         }
         if csv {
             ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_csv_values_only", collection,
-                "CSV exports scalar lexical values only: typing and formatting are lost, and missing values cannot be distinguished from empty Text. Formula-leading Text or headers are refused; use typed XLSX.".into()));
+                "CSV exports scalar lexical values only: typing and formatting are lost. Formula-leading Text or headers are refused; use typed XLSX.".into()));
+            // Either state alone is ambiguous on readback. Populated nonempty
+            // Text and empty tables have no value-level loss to disclose.
+            if selected.columns.iter().any(|column| {
+                !column.required
+                    && column.field_type == FieldType::Text
+                    && selected.entities.iter().any(|id| {
+                        match document.entities[id].fields.get(&column.id) {
+                            None => true,
+                            Some(Value::Text(value)) => value.is_empty(),
+                            _ => false,
+                        }
+                    })
+            }) {
+                ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_csv_blank_empty_text", &selected.summary.id,
+                    "CSV cannot distinguish an absent optional Text value from present empty Text; both export as an empty field. Retain the Tachiko source to preserve presence.".into()));
+            }
             ledger.push(finding(FidelityCategory::NativeEquivalent, "native_tables_csv_number_precision", collection,
                 "CSV keeps full binary64 Number precision in shortest round-trip decimal text, including subnormal values. A spreadsheet application may infer types or round values when opening CSV.".into()));
         }
