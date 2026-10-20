@@ -131,8 +131,19 @@ instead of producing an apparent success that Excel reinterprets or truncates.
 
 CSV exports only the requested collection using scalar lexical values and the
 existing UTF-8/RFC4180 writer. Every other collection has an individual exclusion
-finding, including any unmapped collection. Typing and formatting losses and
-CSV's inability to distinguish missing values from empty Text are explicit.
+finding, including any unmapped collection. Typing and formatting losses are
+explicit. Under [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md),
+emit one non-blocking `LossyOnExport` finding with code
+`native_tables_csv_blank_empty_text` at the selected stable schema ID when
+**a declared optional Text field has at least one absent value or present empty
+Text value in the exported rows**. Either state produces an empty CSV field
+and cannot be distinguished on readback; both states need not coexist in the
+snapshot. Retain the Tachiko source to preserve presence. Do not emit this
+finding for XLSX, excluded collections, empty tables, required Text fields,
+optional Number fields, or optional Text fields containing only nonempty Text:
+those cases have no blank/empty-Text value distinction to lose. This conditional
+finding is separate from `native_tables_csv_values_only`, which continues to
+disclose CSV typing and formatting losses on every CSV export.
 Its ledger also states that CSV retains full binary64 Number precision through
 shortest round-trip decimal text, including subnormals. The CSV numeric writer
 is unchanged. A spreadsheet application may still infer types or round those

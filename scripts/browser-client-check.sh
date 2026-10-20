@@ -40,6 +40,8 @@ pnpm --dir "${producer_dir}" lint
 pnpm --dir "${producer_dir}" test
 pnpm --dir "${producer_dir}" build
 node "${repo_root}/scripts/designer-unsafe-surface-check.mjs" "${runtime_root}"
+bash "${repo_root}/scripts/optional-native-fields-parity-check.sh" \
+  "${producer_dir}/.build/designer_runtime.wasm"
 bash "${repo_root}/scripts/export-experimental-designer-client-immutable-source-test.sh"
 bash "${repo_root}/scripts/experimental-designer-client-source-boundary-test.sh"
 bash "${repo_root}/scripts/experimental-designer-client-smoke-lifecycle-test.sh"
