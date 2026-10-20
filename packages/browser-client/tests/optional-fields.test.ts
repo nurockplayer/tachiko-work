@@ -130,6 +130,136 @@ describe("Worker presence projections", () => {
     client.close();
   });
 
+  it.each([false, true])("rejects uncovered columns with required=%s and omitted or empty blank_fields", async required => {
+    const {client, reply} = fixture();
+    for (const row of [{id: "row", key: "row", fields: []}, {id: "row", key: "row", fields: [], blank_fields: []}]) {
+      const pending = client.queryTable("items");
+      reply("table", {...table, columns: [{...table.columns[0], required}], rows: [row]});
+      await expect(pending).rejects.toThrow("sparse row presence");
+    }
+    client.close();
+  });
+
+  it.each([
+    [present, present],
+    [{...present, target: {...target, field: "unknown"}}],
+    [{...present, target: {...target, entity: "other"}}],
+  ])("rejects duplicate, undeclared or wrong-row present targets %j", async (...fields) => {
+    const {client, reply} = fixture();
+    const pending = client.queryTable("items");
+    reply("table", {...table, rows: [{id: "row", key: "row", fields}]});
+    await expect(pending).rejects.toThrow("sparse row presence");
+    client.close();
+  });
+
+  it("rejects duplicate declared identities and a missing column in an otherwise populated row", async () => {
+    const {client, reply} = fixture();
+    const duplicate = client.queryTable("items");
+    reply("table", {...table, columns: [table.columns[0], table.columns[0]]});
+    await expect(duplicate).rejects.toThrow("duplicate column identity");
+    const missing = client.queryTable("items");
+    reply("table", {...table, columns: [...table.columns, {...table.columns[0], id: "amount"}],
+      rows: [{id: "row", key: "row", fields: [present]}]});
+    await expect(missing).rejects.toThrow("sparse row presence");
+    client.close();
+  });
+
+  it.each([undefined, false])("rejects value-less non-blank fields with blank=%s", async blank => {
+    const {client, reply} = fixture();
+    const pending = client.queryFields("resident/0", [target]);
+    reply("fields", {revision: "resident/0", fields: [{...present, stored: null, blank}]});
+    await expect(pending).rejects.toThrow("non-blank field payload");
+    client.close();
+  });
+
+  it("rejects calculated-only or diagnostics-only non-blank fields", async () => {
+    const {client, reply} = fixture();
+    for (const calculated of [null, {status: "value", value: 0}, {status: "failure", code: "division_by_zero", message: "division by zero"}]) {
+      const pending = client.queryFields("resident/0", [target]);
+      reply("fields", {revision: "resident/0", fields: [{...present, stored: null, calculated,
+        diagnostics: [{code: "CALCULATION_FAILED", message: "failed", path: "items.row.note"}]}]});
+      await expect(pending).rejects.toThrow("non-blank field payload");
+    }
+    client.close();
+  });
+
+  it("requires complete coverage in opened/imported replies before installing an import", async () => {
+    const {client, requests, reply} = fixture();
+    const incomplete = {...table, rows: [{id: "row", key: "row", fields: []}]};
+    const opened = client.openImportedProject!(new ArrayBuffer(0), {version: 1, sheets: []});
+    reply("opened", {bootstrap: {}, table: incomplete});
+    await expect(opened).rejects.toThrow("sparse row presence");
+    const imported = client.importSpreadsheet!(new ArrayBuffer(0), "csv", {delimiter: ",", header: true},
+      {column_types: [["text"]], extra_columns: [[]]});
+    reply("imported", {opened: {bootstrap: {}, table: incomplete}, metadata: {version: 1, sheets: []}, ledger: []});
+    await expect(imported).rejects.toThrow("sparse row presence");
+    expect(requests).toHaveLength(2); // No install request follows the malformed preview.
+    client.close();
+  });
+
+  it("accepts imported optional Date/Boolean presence, including blanks and false", async () => {
+    const {client, reply} = fixture();
+    const importedTable: TableProjection = {...table,
+      collection: {...table.collection, entity_count: 2},
+      columns: [
+        {id: "date", key: "date", display_name: "date", field_type: "date", required: false},
+        {id: "flag", key: "flag", display_name: "flag", field_type: "boolean", required: false},
+      ],
+      rows: [
+        {id: "row", key: "row", fields: [], blank_fields: ["date", "flag"]},
+        {id: "second", key: "second", fields: [
+          {...present, target: {entity: "second", field: "date"}, stored: {kind: "date", value: "2026-10-20"}, editable_scalar: "date"},
+          {...present, target: {entity: "second", field: "flag"}, stored: {kind: "boolean", value: false}, editable_scalar: "boolean"},
+        ]},
+      ],
+    };
+    const pending = client.openImportedProject!(new ArrayBuffer(0), {version: 1, sheets: []});
+    reply("opened", {bootstrap: {}, table: importedTable});
+    await expect(pending).resolves.toMatchObject({table: importedTable});
+    const fields = client.queryFields("resident/0", [{entity: "row", field: "date"}, {entity: "row", field: "flag"}]);
+    const absent = ["date", "flag"].map(field => ({...blank, target: {entity: "row", field}, editable_scalar: null}));
+    reply("fields", {revision: "resident/0", fields: absent});
+    await expect(fields).resolves.toEqual({revision: "resident/0", fields: absent});
+    client.close();
+  });
+
+  it.each([
+    {status: "value", value: 0},
+    {status: "failure", code: "division_by_zero", message: "division by zero"},
+    {status: "unavailable"},
+    null,
+  ])("accepts present formula definitions independently of calculation %j", async calculated => {
+    const {client, reply} = fixture();
+    const source = calculated?.status === "value" ? "0" : "1 / 0";
+    const formula = {...present, stored: null, formula: {source}, calculated,
+      editable_scalar: null, diagnostics: calculated?.status === "value" ? [] :
+        [{code: "CALCULATION_FAILED", message: "failed", path: "items.row.note"}]};
+    const pending = client.queryTable("items");
+    const formulaTable = {...table, columns: [{...table.columns[0], required: true}],
+      rows: [{id: "row", key: "row", fields: [formula]}]};
+    reply("table", formulaTable);
+    await expect(pending).resolves.toEqual(formulaTable);
+    const explanation = client.explainField("resident/0", target);
+    const value = {revision: "resident/0", target, value: formula, formula_source: source,
+      direct_dependencies: [{target, value: formula}], downstream_impacts: [], diagnostics: formula.diagnostics};
+    reply("field_explanation", value);
+    await expect(explanation).resolves.toEqual(value);
+    client.close();
+  });
+
+  it("accepts a complete sparse native row without normalizing absence or empty Text", async () => {
+    const {client, reply} = fixture();
+    const sparse: TableProjection = {...table, native_table_profile: true,
+      columns: [{...table.columns[0]!, required: true},
+        {id: "amount", key: "amount", display_name: "amount", field_type: "number", required: false}],
+      rows: [{id: "row", key: "row", fields: [present], blank_fields: ["amount"]}],
+    };
+    const pending = client.queryTable("items");
+    reply("table", sparse);
+    await expect(pending).resolves.toEqual(sparse);
+    client.close();
+  });
+
   it("also validates opened tables and field explanations, including dependencies", async () => {
     const {client, reply} = fixture();
     const opened = client.newTable!("items", [{name: "note", field_type: "text", required: false}]);
