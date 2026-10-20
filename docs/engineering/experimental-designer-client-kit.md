@@ -146,7 +146,7 @@ their keys; built-in Tracker/Budget templates currently have no explicit names.
 The kit manifest's `capabilities` includes `columnDisplayNameExplicit` as a
 projection feature marker (not a callable method). Consumers must detect that
 marker before relying on omission to mean fallback in older kits. The client
-preserves optional boolean values and rejects non-boolean members; Rust emits
+preserves `true` or omission and rejects every other defined value; Rust emits
 only `true` or omission. Storage formats and rename semantics are unchanged.
 
 Table columns always project `required: boolean`. Each row's `fields` array
