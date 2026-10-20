@@ -169,24 +169,46 @@ try {
       return publication;
     }
     function unchanged(before) { assert.deepEqual(snapshot(), before); }
-    await probe("Unicode XML-sensitive metadata header39 and name31 roundtrips", async () => {
+    const sensitiveMetadata = structuredClone(metadata);
+    sensitiveMetadata.sheets[0].name = '雪&"<\'>\n\t\r'.concat("n".repeat(22));
+    const sensitiveHeaders = ["雪&", "<i>", 'url"\''.concat("x".repeat(20))];
+    assert.equal(Array.from(sensitiveMetadata.sheets[0].name).length, 31);
+    for (let c = 0; c < 3; c++) sensitiveMetadata.sheets[0].columns[c].name = sensitiveHeaders[c];
+    const roundtripMetadata = async (format, changed) => {
+      okay(spreadsheet({ ...exportOperation(format), metadata: changed }), "spreadsheet_exported");
+      const bytes = output();
+      if (format === "csv") assert.equal(bytes.indexOf(10) + 1, 39, "exact encoded CSV header row");
+      await writeFile(join(dirname(resultPath), `capacity-metadata.${format}`), bytes, { flag: "wx" });
+      const candidate = okay(importing(bytes, format, { install: false }), "imported");
+      assert.deepEqual(candidate.metadata.sheets[0].columns.map(c => c.name), sensitiveHeaders);
+      if (format === "xlsx") assert.equal(candidate.metadata.sheets[0].name, changed.sheets[0].name);
+      assert.deepEqual(candidate.opened.table.rows.map(row => row.fields.map(field => field.stored)),
+        imported.opened.table.rows.map(row => row.fields.map(field => field.stored)));
+    };
+    await probe("CSV Unicode XML-sensitive header39 ignores worksheet controls", async () => {
       const before = snapshot();
-      const changed = structuredClone(metadata);
-      changed.sheets[0].name = '雪&"<\'>\n\t\r'.concat("n".repeat(22));
-      const names = ["雪&", "<i>", 'url"\''.concat("x".repeat(20))];
-      assert.equal(Array.from(changed.sheets[0].name).length, 31);
-      for (let c = 0; c < 3; c++) changed.sheets[0].columns[c].name = names[c];
-      for (const format of ["csv", "xlsx"]) {
-        okay(spreadsheet({ ...exportOperation(format), metadata: changed }), "spreadsheet_exported");
-        const bytes = output();
-        await writeFile(join(dirname(resultPath), `capacity-metadata.${format}`), bytes, { flag: "wx" });
-        const candidate = okay(importing(bytes, format, { install: false }), "imported");
-        assert.deepEqual(candidate.metadata.sheets[0].columns.map(c => c.name), names);
-        if (format === "xlsx") assert.equal(candidate.metadata.sheets[0].name, changed.sheets[0].name);
-        assert.deepEqual(candidate.opened.table.rows.map(row => row.fields.map(field => field.stored)),
-          imported.opened.table.rows.map(row => row.fields.map(field => field.stored)));
-        unchanged(before);
-      }
+      await roundtripMetadata("csv", sensitiveMetadata);
+      unchanged(before);
+    });
+    await probe("XLSX worksheet controls refuse with located name finding", () => {
+      const before = snapshot();
+      const refusal = spreadsheet({ ...exportOperation("xlsx"), metadata: sensitiveMetadata });
+      error(refusal);
+      assert.equal(refusal.error.code, "imported_spreadsheet_export_refused");
+      assert.equal(refusal.error.current_revision, revision);
+      assert.equal(refusal.error.diagnostics.length, 1);
+      assert.equal(refusal.error.diagnostics[0].code, "native_tables_xlsx_name");
+      assert.match(refusal.error.diagnostics[0].path, /^sheet 1 .*\/sheet-name$/);
+      assert.equal(output().length, 0, "refused XLSX must expose no partial file");
+      unchanged(before);
+    });
+    await probe("XLSX Unicode XML-sensitive header39 and valid name31 roundtrip", async () => {
+      const before = snapshot();
+      const valid = structuredClone(sensitiveMetadata);
+      valid.sheets[0].name = '雪&"<\'>'.concat("n".repeat(25));
+      assert.equal(Array.from(valid.sheets[0].name).length, 31);
+      await roundtripMetadata("xlsx", valid);
+      unchanged(before);
     });
     // Establish both history stacks, then prove each refusal preserves them.
     publish("edit_scalar", { target, input: { kind: "text", value: "history-earlier" } });

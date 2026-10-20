@@ -6,6 +6,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Capacity metadata acceptance now states the imported export name policy:
+  CSV round-trips quoted Unicode/XML-sensitive headers despite an un-emitted
+  worksheet name containing controls; XLSX refuses that name with a located
+  finding and unchanged state. XLSX positive round trips use an Excel-valid
+  Unicode/XML-sensitive name. Promoted Worker probes and independent XML
+  expectations agree; runtime behavior and other capacity assertions are unchanged.
+
 - Imported-metadata export now selects its output scope before reconstruction:
   CSV checks and emits only the selected sheet's scalar values and headers;
   unrelated content and omitted XLSX presentation cannot block it. XLSX uses the

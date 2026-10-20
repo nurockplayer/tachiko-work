@@ -240,3 +240,13 @@ Root-cause qualification inventories all output elements, including formula lite
 selected-sheet CSV scope, quoted/numeric-looking references, closed formula input,
 Boolean scalars, style/format/width boundaries, attribute normalization and bounded
 precision receipts. No TS/e2e fixture or seed format changes are needed.
+
+Capacity acceptance applies the same format distinction to Unicode/XML-sensitive
+metadata. CSV preserves quoted header cell text and does not emit a worksheet
+name, so a control-bearing metadata name does not cause this CSV export to
+refuse. XLSX refuses LF/TAB/CR in worksheet names with `native_tables_xlsx_name`
+at `/sheet-name`, no partial file and unchanged resident state. A separate
+31-character Excel-valid name containing Unicode and XML-sensitive characters
+roundtrips with the same 39-byte header row. Promoted-capacity Worker probes and
+the independent XML oracle require the valid name and retain the negative
+control-name case; they do not claim Excel can retain control-bearing names.
