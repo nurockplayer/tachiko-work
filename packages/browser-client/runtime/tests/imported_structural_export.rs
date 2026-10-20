@@ -472,3 +472,349 @@ fn structural_export_preserves_untouched_formulas_styles_and_workbook_coverage()
     }
     j.capture("formulas");
 }
+
+impl Journey {
+    fn current_export(&mut self, format: &str) -> (Value, Option<Vec<u8>>) {
+        let revision = self.table()["revision"].clone();
+        self.sheet(
+            &json!({"type":"export","expected_revision":revision,"metadata":self.metadata,
+            "format":format,"collection":self.metadata["sheets"][0]["schema_id"]}),
+            &[],
+        )
+    }
+}
+
+fn compatibility_cells(source: &str) {
+    let mut j = Journey::default();
+    let mut errors = Vec::new();
+    // At the boundary, the emoji uses two UTF-16 units and four UTF-8 bytes.
+    for (label, text, refusal) in [
+        (
+            "escape",
+            "literal_x0041_value".into(),
+            Some("escape_sequence"),
+        ),
+        (
+            "escape-cr",
+            "literal_x000D_value".into(),
+            Some("escape_sequence"),
+        ),
+        ("near-miss", "literal_x00D_value".into(), None),
+        ("ascii-exact", "a".repeat(32_767), None),
+        ("ascii-over", "a".repeat(32_768), Some("text_limit")),
+        ("utf16-exact", format!("{}😀", "a".repeat(32_765)), None),
+        (
+            "utf16-over",
+            format!("{}😀", "a".repeat(32_766)),
+            Some("text_limit"),
+        ),
+        ("lf-exact", "a\n".repeat(253), None),
+        ("lf-over", "a\n".repeat(254), Some("line_feeds")),
+        (
+            "xml-illegal",
+            "literal\u{fffe}value".into(),
+            Some("xml_character"),
+        ),
+    ] {
+        j.import(source);
+        let table = j.table();
+        let note = table["columns"][0]["id"].clone();
+        let rows: Vec<_> = table["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].clone())
+            .collect();
+        j.mutate(json!({"type":"remove_table_rows","collection":"sheet_1","entities":rows}));
+        j.mutate(json!({"type":"insert_row","collection":"sheet_1","initializers":[{"field":note,"input":{"kind":"text","value":text}}]}));
+        let before = j.table();
+        for format in ["csv", "xlsx"] {
+            let (reply, bytes) = j.current_export(format);
+            let expected = if format == "xlsx" {
+                refusal
+            } else if label == "xml-illegal" {
+                Some("xml_character")
+            } else {
+                None
+            };
+            if let Some(code) = expected {
+                if reply["status"] != "error" {
+                    errors.push(format!(
+                        "{source}/{label}/{format}: expected {code}, got success"
+                    ));
+                    continue;
+                }
+                assert!(bytes.is_none(), "no partial file");
+                let diagnostic = &reply["error"]["diagnostics"][0];
+                if reply["error"]["code"] != "imported_spreadsheet_export_refused"
+                    || !diagnostic["code"].as_str().unwrap().ends_with(code)
+                    || !diagnostic["path"].as_str().unwrap().contains("/row ")
+                    || !diagnostic["path"].as_str().unwrap().contains("/column 1")
+                {
+                    errors.push(format!(
+                        "{source}/{label}/{format}: unlocated or wrong refusal {reply}"
+                    ));
+                }
+            } else {
+                assert_eq!(reply["status"], "ok", "{source}/{label}/{format}: {reply}");
+                let bytes = bytes.unwrap();
+                let workbook = if format == "csv" {
+                    import_csv(&bytes, &ImportOptions::default()).unwrap()
+                } else {
+                    import_xlsx(&bytes).unwrap()
+                };
+                assert_eq!(
+                    workbook.sheets[0].rows[0][0].value,
+                    SourceValue::Text {
+                        value: text.clone()
+                    }
+                );
+            }
+            assert_eq!(
+                j.table(),
+                before,
+                "export cannot mutate current content or revision"
+            );
+        }
+        j.mutate(json!({"type":"undo"}));
+    }
+    j.capture(&format!("cell-compatibility-{source}"));
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+#[test]
+fn csv_import_every_current_cell_has_format_specific_compatibility() {
+    compatibility_cells("csv");
+}
+#[test]
+fn xlsx_import_every_current_cell_has_format_specific_compatibility() {
+    compatibility_cells("xlsx");
+}
+
+#[test]
+fn foreign_current_fields_entities_and_schema_mappings_are_not_tombstones() {
+    let mut source = import_csv(
+        b"Note,Amount\nfirst,1\nsecond,2\n",
+        &ImportOptions::default(),
+    )
+    .unwrap();
+    let mut other = source.sheets[0].clone();
+    other.name = "Other".into();
+    source.sheets.push(other);
+    let bytes = export_xlsx(&source).unwrap();
+    let mut j = Journey::default();
+    let (reply, _) = j.sheet(&json!({"type":"import","format":"xlsx","csv_options":{"delimiter":",","header":true},"selection":{"column_types":[["text","number"],["text","number"]],"extra_columns":[[],[]]},"occurrence_id":ORIGINAL,"install":true}), &bytes);
+    assert_eq!(reply["status"], "ok", "{reply}");
+    j.metadata = reply["response"]["payload"]["metadata"].clone();
+    let table = j.table();
+    j.mutate(json!({"type":"rename_column","collection":"sheet_1","field":table["columns"][0]["id"],"name":"Renamed"}));
+    let original = j.metadata.clone();
+    let mut errors = Vec::new();
+    for kind in ["field", "entity", "schema"] {
+        j.metadata = original.clone();
+        match kind {
+            "field" => {
+                j.metadata["sheets"][0]["columns"][0]["field_id"] =
+                    original["sheets"][1]["columns"][0]["field_id"].clone();
+            }
+            "entity" => {
+                j.metadata["sheets"][0]["rows"][0]["entity_id"] =
+                    original["sheets"][1]["rows"][0]["entity_id"].clone();
+            }
+            "schema" => {
+                j.metadata["sheets"][0]["schema_id"] = original["sheets"][1]["schema_id"].clone();
+                j.metadata["sheets"][1]["schema_id"] = original["sheets"][0]["schema_id"].clone();
+            }
+            _ => unreachable!(),
+        }
+        for format in ["csv", "xlsx"] {
+            let (reply, bytes) = j.current_export(format);
+            if reply["status"] == "error" {
+                assert!(bytes.is_none());
+                assert_eq!(
+                    reply["error"]["code"],
+                    "imported_spreadsheet_export_refused"
+                );
+                let path = reply["error"]["diagnostics"][0]["path"].as_str().unwrap();
+                assert!(path.contains("collection "), "{reply}");
+                if kind != "schema" {
+                    let id = if kind == "field" {
+                        &original["sheets"][1]["columns"][0]["field_id"]
+                    } else {
+                        &original["sheets"][1]["rows"][0]["entity_id"]
+                    };
+                    assert!(path.contains(id.as_str().unwrap()), "{reply}");
+                }
+            } else {
+                errors.push(format!("foreign {kind}/{format}: succeeded"));
+            }
+        }
+    }
+    // A genuinely absent historical field ID is still a tombstone, not foreign.
+    j.metadata = original.clone();
+    j.metadata["sheets"][0]["columns"][0]["field_id"] = json!("absent-historical-field");
+    for format in ["csv", "xlsx"] {
+        let (reply, bytes) = j.current_export(format);
+        assert_eq!(reply["status"], "ok", "{reply}");
+        assert!(bytes.is_some());
+    }
+    j.capture("foreign-current");
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+#[test]
+fn header_mapping_discloses_requested_spelling_even_when_output_equals_history() {
+    let mut j = Journey::default();
+    let (reply, _) = j.sheet(&json!({"type":"import","format":"csv","csv_options":{"delimiter":",","header":true},"selection":{"column_types":[["text","number"]],"extra_columns":[[]]},"occurrence_id":ORIGINAL,"install":true}), b"Amount,amount (2)\nfirst,1\nsecond,2\n");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    j.metadata = reply["response"]["payload"]["metadata"].clone();
+    let field = j.table()["columns"][1]["id"].clone();
+    j.mutate(json!({"type":"rename_column","collection":"sheet_1","field":field,"name":"amount"}));
+    let mut errors = Vec::new();
+    for format in ["csv", "xlsx"] {
+        let (reply, bytes) = j.current_export(format);
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let bytes = bytes.unwrap();
+        let book = if format == "csv" {
+            import_csv(&bytes, &ImportOptions::default()).unwrap()
+        } else {
+            import_xlsx(&bytes).unwrap()
+        };
+        assert_eq!(book.sheets[0].columns[1].name, "amount (2)");
+        let finding = reply["response"]["payload"]["ledger"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| {
+                f["code"] == "imported_current_header"
+                    && f["location"]
+                        .as_str()
+                        .unwrap()
+                        .contains(field.as_str().unwrap())
+            });
+        if let Some(finding) = finding {
+            assert!(
+                finding["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("\"amount\" exports as \"amount (2)\"")
+            );
+        } else {
+            errors.push(format!(
+                "{format}: missing mapping finding for requested amount -> written amount (2)"
+            ));
+        }
+    }
+    j.capture("header-history-collision");
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+#[test]
+fn untouched_imported_text_is_checked_before_xlsx_encoding() {
+    let mut j = Journey::default();
+    let mut errors = Vec::new();
+    for text in ["literal_x0041_value".to_owned(), "a".repeat(32_768)] {
+        let source = format!("Note,Amount\n{text},1\n");
+        let (reply, _) = j.sheet(&json!({"type":"import","format":"csv","csv_options":{"delimiter":",","header":true},"selection":{"column_types":[["text","number"]],"extra_columns":[[]]},"occurrence_id":ORIGINAL,"install":true}), source.as_bytes());
+        assert_eq!(reply["status"], "ok", "{reply}");
+        j.metadata = reply["response"]["payload"]["metadata"].clone();
+        let (csv, bytes) = j.current_export("csv");
+        assert_eq!(csv["status"], "ok", "{csv}");
+        assert!(bytes.is_some());
+        let (xlsx, bytes) = j.current_export("xlsx");
+        if xlsx["status"] == "error" {
+            assert!(bytes.is_none());
+        } else {
+            errors.push("untouched unrepresentable Text exported as XLSX".to_owned());
+        }
+        let before = j.table();
+        for portable in [false, true] {
+            j.reopen(portable);
+            let reopened = j.table();
+            assert_eq!(reopened["columns"], before["columns"]);
+            assert_eq!(reopened["rows"], before["rows"]);
+            assert_eq!(j.current_export("csv").0["status"], "ok");
+            let (reply, bytes) = j.current_export("xlsx");
+            assert_eq!(reply["status"], "error", "{reply}");
+            assert!(bytes.is_none());
+        }
+    }
+    j.capture("untouched-compatibility");
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[test]
+fn imported_numbers_and_dates_follow_the_shared_cell_policy_without_changing_csv() {
+    let mut j = Journey::default();
+    j.import("csv");
+    let table = j.table();
+    let target = json!({"entity":table["rows"][0]["id"],"field":table["columns"][1]["id"]});
+    for input in ["5e-324", "0.30000000000000004"] {
+        j.mutate(
+            json!({"type":"edit_scalar","target":target,"input":{"kind":"number","input":input}}),
+        );
+        let (csv, bytes) = j.current_export("csv");
+        assert_eq!(csv["status"], "ok", "{csv}");
+        assert!(bytes.is_some());
+        let (xlsx, bytes) = j.current_export("xlsx");
+        if input == "5e-324" {
+            assert_eq!(xlsx["status"], "error", "{xlsx}");
+            assert!(bytes.is_none());
+            assert_eq!(
+                xlsx["error"]["diagnostics"][0]["code"],
+                "native_tables_xlsx_subnormal_number"
+            );
+            assert!(
+                xlsx["error"]["diagnostics"][0]["path"]
+                    .as_str()
+                    .unwrap()
+                    .contains("/row 2/column 2")
+            );
+        } else {
+            assert_eq!(xlsx["status"], "ok", "{xlsx}");
+            let findings = xlsx["response"]["payload"]["ledger"].as_array().unwrap();
+            for code in [
+                "native_tables_xlsx_precision_loss",
+                "native_tables_xlsx_precision_count",
+            ] {
+                assert_eq!(
+                    findings
+                        .iter()
+                        .filter(|finding| finding["code"] == code && finding["blocking"] == false)
+                        .count(),
+                    1
+                );
+            }
+            let book = import_xlsx(&bytes.unwrap()).unwrap();
+            assert_eq!(
+                book.sheets[0].rows[0][1].value,
+                SourceValue::Number {
+                    value: 0.300_000_000_000_000_04
+                }
+            );
+        }
+    }
+    for date in ["1899-12-31", "1900-01-01", "9999-12-31"] {
+        let source = format!("Date\n{date}\n");
+        let (reply, _) = j.sheet(&json!({"type":"import","format":"csv","csv_options":{"delimiter":",","header":true},"selection":{"column_types":[["date"]],"extra_columns":[[]]},"occurrence_id":ORIGINAL,"install":true}), source.as_bytes());
+        assert_eq!(reply["status"], "ok", "{reply}");
+        j.metadata = reply["response"]["payload"]["metadata"].clone();
+        assert_eq!(j.current_export("csv").0["status"], "ok");
+        let (reply, bytes) = j.current_export("xlsx");
+        if date == "1899-12-31" {
+            assert_eq!(reply["status"], "error", "{reply}");
+            assert!(bytes.is_none());
+            assert_eq!(
+                reply["error"]["diagnostics"][0]["code"],
+                "native_tables_xlsx_date_range"
+            );
+        } else {
+            assert_eq!(reply["status"], "ok", "{reply}");
+            assert_eq!(
+                import_xlsx(&bytes.unwrap()).unwrap().sheets[0].rows[0][0].value,
+                SourceValue::Date { value: date.into() }
+            );
+        }
+    }
+    j.capture("scalar-compatibility");
+}

@@ -12,7 +12,8 @@ const names = [
   "sole-true-portable-false", "sole-true-portable-true",
   ...["csv", "xlsx"].flatMap(source =>
     ["rename", "add_blank", "add_fill", "remove", "insert", "insert_blank", "delete"].map(operation => `${source}-${operation}`)),
-  "refusals", "formulas",
+  "refusals", "formulas", "cell-compatibility-csv", "cell-compatibility-xlsx",
+  "foreign-current", "header-history-collision", "untouched-compatibility", "scalar-compatibility",
 ];
 
 async function fixture(t, records) {

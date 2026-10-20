@@ -616,7 +616,7 @@ pub(crate) fn validate_native_tables_csv(
     Ok(())
 }
 
-fn native_tables_cell_location(
+pub(crate) fn native_tables_cell_location(
     sheet: &SourceSheet,
     index: usize,
     row: usize,

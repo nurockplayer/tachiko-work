@@ -1549,6 +1549,16 @@ fn validate_historical_sheet(
     for column in &sheet.columns {
         check_label(&column.field_id).map_err(|error| refuse(&location, &error.to_string()))?;
         check_label(&column.name).map_err(|error| refuse(&location, &error.to_string()))?;
+        if !schema.fields.contains_key(column.field_id.as_str())
+            && document.schemas.values().any(|other| {
+                other.id != schema.id && other.fields.contains_key(column.field_id.as_str())
+            })
+        {
+            return Err(refuse(
+                &format!("{location}/field {}", column.field_id),
+                "Mapped field belongs to another current schema; only absent historical IDs are tombstones.",
+            ));
+        }
         if !fields.insert(column.field_id.clone())
             || !labels.insert(column.name.clone())
             || column
@@ -1563,13 +1573,17 @@ fn validate_historical_sheet(
     }
     for row in &sheet.rows {
         check_label(&row.entity_id).map_err(|error| refuse(&location, &error.to_string()))?;
-        if !entities.insert(row.entity_id.clone())
-            || row.styles.len() != sheet.columns.len()
-            || document
-                .entities
-                .get(row.entity_id.as_str())
-                .is_some_and(|e| e.schema != schema.id)
+        if document
+            .entities
+            .get(row.entity_id.as_str())
+            .is_some_and(|entity| entity.schema != schema.id)
         {
+            return Err(refuse(
+                &format!("{location}/entity {}", row.entity_id),
+                "Mapped entity belongs to another current schema; only absent historical IDs are tombstones.",
+            ));
+        }
+        if !entities.insert(row.entity_id.clone()) || row.styles.len() != sheet.columns.len() {
             return Err(refuse(
                 &location,
                 "Duplicate or foreign row, or invalid source style dimensions.",
@@ -1614,7 +1628,7 @@ fn map_current_headers(
         )
         .map_err(|finding| DesignerError::ImportedSpreadsheetExport { finding })?
         .name;
-        if mapped != column.name {
+        if mapped != source || mapped != column.name {
             ledger.push(FidelityFinding {
                 category: FidelityCategory::Converted,
                 code: "imported_current_header".into(),
@@ -1854,6 +1868,17 @@ impl DesignerRuntime {
         expected_revision: &str,
         metadata: &InteropMetadata,
     ) -> Result<SourceWorkbook, DesignerError> {
+        self.export_imported_workbook(expected_revision, metadata, false)
+    }
+
+    /// Reconcile once, then check every emitted cell for the selected format
+    /// before shared profile validation or encoding can flatten its location.
+    pub(crate) fn export_imported_workbook(
+        &self,
+        expected_revision: &str,
+        metadata: &InteropMetadata,
+        xlsx: bool,
+    ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
         let (metadata, ledger) = current_import_metadata(snapshot.document(), metadata)?;
@@ -1861,17 +1886,33 @@ impl DesignerRuntime {
             validate_capacity_metadata(snapshot.document(), &metadata)
                 .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
         }
+        let profile = if self.text_capacity {
+            OutputProfile::TextCapacity
+        } else {
+            OutputProfile::Shared
+        };
         let mut workbook = self
-            .export_workbook_from_metadata(
+            .rebuild_workbook_from_metadata(
                 expected_revision,
                 snapshot.document(),
                 &metadata,
-                if self.text_capacity {
-                    OutputProfile::TextCapacity
-                } else {
-                    OutputProfile::Shared
-                },
+                profile,
             )
+            .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
+        if xlsx {
+            validate_imported_xlsx_cells(&workbook)?;
+            workbook
+                .ledger
+                .extend(super::interop_adapter::native_tables_xlsx_number_findings(
+                    &workbook,
+                ));
+        } else {
+            for sheet in &workbook.sheets {
+                super::interop_adapter::validate_native_tables_csv(sheet)
+                    .map_err(|finding| DesignerError::ImportedSpreadsheetExport { finding })?;
+            }
+        }
+        let mut workbook = finalize_export_workbook(snapshot.document(), workbook, profile)
             .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
         workbook.ledger.extend(ledger);
         Ok(workbook)
@@ -2001,6 +2042,18 @@ impl DesignerRuntime {
         metadata: &InteropMetadata,
         profile: OutputProfile,
     ) -> Result<SourceWorkbook, DesignerError> {
+        let workbook =
+            self.rebuild_workbook_from_metadata(expected_revision, document, metadata, profile)?;
+        finalize_export_workbook(document, workbook, profile)
+    }
+
+    fn rebuild_workbook_from_metadata(
+        &self,
+        expected_revision: &str,
+        document: &Document,
+        metadata: &InteropMetadata,
+        profile: OutputProfile,
+    ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         // The caller holds the exact immutable snapshot already used for
         // metadata admission. No second owned document is needed here.
@@ -2085,8 +2138,28 @@ impl DesignerRuntime {
             category: FidelityCategory::Converted, code: "bound_formula_absolute_a1".into(), location: "workbook".into(),
             message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(), blocking: false,
         }] };
-        finalize_export_workbook(document, workbook, profile)
+        Ok(workbook)
     }
+}
+
+fn validate_imported_xlsx_cells(workbook: &SourceWorkbook) -> Result<(), DesignerError> {
+    for (sheet_index, sheet) in workbook.sheets.iter().enumerate() {
+        for (row, cells) in sheet.rows.iter().enumerate() {
+            for (column, cell) in cells.iter().enumerate() {
+                super::interop_adapter::native_tables_compatibility(
+                    super::interop_adapter::NativeTablesCheck::Cell(&cell.value),
+                    &super::interop_adapter::native_tables_cell_location(
+                        sheet,
+                        sheet_index,
+                        row,
+                        column,
+                    ),
+                )
+                .map_err(|finding| DesignerError::ImportedSpreadsheetExport { finding })?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn finalize_export_workbook(

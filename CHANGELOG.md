@@ -6,6 +6,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Imported-metadata XLSX exports check every emitted cell against the shared
+  Excel compatibility policy, including untouched Text: refuse literal `_xHHHH_`,
+  XML-illegal characters, Text over 32,767 UTF-16 units or 253 line feeds,
+  nonzero subnormal Numbers and out-of-range Dates; disclose precision above
+  15 digits. Supported cells, formulas and styles stay unchanged, and CSV retains
+  its existing lexical behavior. These checks close previously unfaithful or
+  undisclosed imported-cell output; shared writer/reader and Tracker/Budget work
+  remains under #547. Foreign current field/entity mappings now refuse rather
+  than becoming tombstones, and header mappings disclose requested/output
+  differences even when collision allocation returns to the historical header.
+
 - Imported CSV/XLSX tables that qualify structurally for native authoring now
   export current renamed headers, appended rows/columns and removed structure,
   including blanks, Undo and v3/package reopen with retained import metadata.

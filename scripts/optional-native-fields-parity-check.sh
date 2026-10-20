@@ -52,6 +52,9 @@ for source in csv xlsx; do
   done
 done
 persistence_captures+=("${check_dir}/imported-structure.refusals.json" "${check_dir}/imported-structure.formulas.json")
+for repair in cell-compatibility-csv cell-compatibility-xlsx foreign-current header-history-collision untouched-compatibility scalar-compatibility; do
+  persistence_captures+=("${check_dir}/imported-structure.${repair}.json")
+done
 for capture in "${fields_captures[@]}" "${persistence_captures[@]}"; do
   [[ -s "${capture}" ]] || {
     echo "optional-native-fields-parity-check: missing or empty native capture: ${capture}" >&2

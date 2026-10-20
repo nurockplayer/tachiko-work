@@ -625,7 +625,11 @@ fn export_spreadsheet(
             }
         }
     }
-    let mut workbook = runtime.export_workbook(revision, &export_metadata)?;
+    let mut workbook = runtime.export_imported_workbook(
+        revision,
+        &export_metadata,
+        matches!(format, SpreadsheetFormat::Xlsx),
+    )?;
     for name in inserted_headers {
         workbook.ledger.push(FidelityFinding {
             category: FidelityCategory::Converted,
