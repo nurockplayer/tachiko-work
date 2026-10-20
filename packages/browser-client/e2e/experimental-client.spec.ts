@@ -79,6 +79,130 @@ for (const [version, directory] of [
   });
 }
 
+test("#553 exported kit preserves optional blanks, explicit clears and requiredness through actual Worker history", async ({ page }) => {
+  const workers: string[] = [];
+  page.on("worker", worker => workers.push(worker.url()));
+  await page.goto("/");
+  const evidence = await page.evaluate(async () => {
+    const entry = "/vendor/tachiko/experimental-client.js";
+    const kit = await import(entry) as typeof import("../src/experimental-client.ts");
+    const client = kit.createExperimentalDesignerClient();
+    if (!client.newTable || !client.trackerCommand) throw new Error("Native authoring capabilities missing");
+    const history = client.trackerCommand.bind(client);
+    try {
+      const opened = await client.newTable("items", [
+        {name: "label", field_type: "text"},
+        {name: "note", field_type: "text", required: false},
+        {name: "amount", field_type: "number", required: false},
+      ]);
+      const collection = opened.table.collection.key;
+      const [label, note, amount] = opened.table.columns;
+      if (!label || !note || !amount) throw new Error("Missing declared columns");
+      let revision = opened.table.revision;
+      const stages: Array<{stage: string; snapshot: unknown}> = [];
+      const refusals: Array<{stage: string; code: string}> = [];
+      let roundTrips = 0;
+      const equal = (left: unknown, right: unknown, message: string) => {
+        if (JSON.stringify(left) !== JSON.stringify(right)) throw new Error(message);
+      };
+      const snapshot = async () => {
+        const table = await client.queryTable(collection);
+        equal(table.revision, revision, "Unexpected revision after operation");
+        const targets = table.rows.flatMap(row => table.columns.map(column => ({entity: row.id, field: column.id})));
+        const fields = targets.length ? (await client.queryFields(revision, targets)).fields : [];
+        // Verify sparse table presence against direct field queries at every stage.
+        for (const row of table.rows) {
+          for (const column of table.columns) {
+            const field = fields.find(field => field.target.entity === row.id && field.target.field === column.id);
+            if (!field) throw new Error("Missing field query projection");
+            const blank = (row.blank_fields ?? []).includes(column.id);
+            equal(field.blank ?? false, blank, "Blank metadata disagrees between projections");
+            const present = row.fields.find(field => field.target.field === column.id);
+            if (blank) {
+              equal(present, undefined, "Blank unexpectedly stored in sparse row");
+              equal([field.stored, field.formula, field.calculated], [null, null, null], "Blank carries a value");
+            } else equal(present, field, "Present field query differs from table");
+          }
+        }
+        return {columns: table.columns, rows: table.rows, fields};
+      };
+      const roundTrip = async (stage: string, action: () => Promise<{resulting_revision: string}>) => {
+        const before = await snapshot();
+        revision = (await action()).resulting_revision;
+        const after = await snapshot();
+        revision = (await history({type: "undo", expected_revision: revision})).resulting_revision;
+        equal(await snapshot(), before, `${stage}: Undo changed presence or values`);
+        revision = (await history({type: "redo", expected_revision: revision})).resulting_revision;
+        equal(await snapshot(), after, `${stage}: Redo changed presence or values`);
+        stages.push({stage, snapshot: after});
+        roundTrips += 1;
+      };
+      const refuse = async (stage: string, action: () => Promise<unknown>) => {
+        const before = await snapshot();
+        let code: string | undefined;
+        try { await action(); } catch (error) {
+          if (!(error instanceof kit.DesignerRuntimeError)) throw error;
+          code = error.failure.code;
+          equal(error.failure.current_revision, revision, "Refusal changed revision");
+        }
+        if (!code) throw new Error(`${stage}: expected refusal`);
+        equal(await snapshot(), before, `${stage}: refusal published a prefix`);
+        refusals.push({stage, code});
+      };
+      await roundTrip("insert blanks", () => history({type: "insert_row", expected_revision: revision, collection,
+        initializers: [{field: label.id, input: {kind: "text", value: "first"}}]}));
+      const row = (await client.queryTable(collection)).rows[0]!;
+      const noteTarget = {entity: row.id, field: note.id};
+      const amountTarget = {entity: row.id, field: amount.id};
+      await refuse("strengthen blank", () => client.setColumnRequiredness(revision, collection, note.id, true));
+      await refuse("clear already blank", () => client.clearField(revision, noteTarget));
+      // Neither refusal adds history: the next Undo still removes the inserted row.
+      revision = (await history({type: "undo", expected_revision: revision})).resulting_revision;
+      equal((await snapshot()).rows, [], "Refusal/no-change created history");
+      revision = (await history({type: "redo", expected_revision: revision})).resulting_revision;
+      await roundTrip("fill empty Text", () => client.editText(revision, noteTarget, ""));
+      await roundTrip("clear Text", () => client.clearField(revision, noteTarget));
+      await roundTrip("typed paste", () => history({type: "paste_cells", expected_revision: revision, collection,
+        start_entity: row.id, start_field: note.id, rows: [[{kind: "text", value: ""}, {kind: "number", input: "0"}]]}));
+      await roundTrip("raw empty Text and explicit clear", () => history({type: "paste_cells", expected_revision: revision, collection,
+        start_entity: row.id, start_field: note.id, rows: [["", {kind: "clear"}]]}));
+      await roundTrip("fill Number", () => client.editNumber(revision, amountTarget, "0"));
+      await roundTrip("strengthen Number", () => client.setColumnRequiredness(revision, collection, amount.id, true));
+      await refuse("clear required", () => client.clearField(revision, amountTarget));
+      await roundTrip("relax Number", () => client.setColumnRequiredness(revision, collection, amount.id, false));
+      await roundTrip("clear Number", () => client.clearField(revision, amountTarget));
+      await roundTrip("optional column without initializers", () => history({type: "add_column", expected_revision: revision,
+        collection, name: "extra", field_type: "text", required: false}));
+      return {columns: opened.table.columns, stages, refusals, roundTrips};
+    } finally { await client.close(); }
+  });
+  expect(workers).toHaveLength(1);
+  expect(workers[0]).toContain("/vendor/tachiko/experimental-client.worker.js");
+  expect(evidence.columns.map(column => column.required)).toEqual([true, false, false]);
+  expect(evidence.roundTrips).toBe(10);
+  expect(evidence.refusals.map(refusal => refusal.stage)).toEqual(["strengthen blank", "clear already blank", "clear required"]);
+  expect(evidence.refusals[1]?.code).toBe("no_change");
+  const snapshots = evidence.stages.map(stage => stage.snapshot as {
+    columns: Array<{id: string; required: boolean}>;
+    rows: Array<{blank_fields?: string[]; fields: Array<{stored: unknown}>}>;
+    fields: Array<{blank?: boolean; stored: unknown}>;
+  });
+  const [label, note, amount] = evidence.columns;
+  expect(snapshots[0]?.rows[0]?.blank_fields).toEqual([note!.id, amount!.id]);
+  expect(snapshots[0]?.rows[0]?.fields).toHaveLength(1);
+  expect(snapshots[1]?.fields[1]?.stored).toEqual({kind: "text", value: ""});
+  expect(snapshots[1]?.fields[1]?.blank ?? false).toBe(false);
+  expect(snapshots[2]?.fields[1]).toMatchObject({blank: true, stored: null});
+  expect(snapshots[3]?.fields[2]?.stored).toEqual({kind: "number", value: 0});
+  expect(snapshots[4]?.fields[1]?.stored).toEqual({kind: "text", value: ""});
+  expect(snapshots[4]?.fields[2]).toMatchObject({blank: true, stored: null});
+  expect(snapshots[6]?.columns[2]?.required).toBe(true);
+  expect(snapshots[7]?.columns[2]?.required).toBe(false);
+  expect(snapshots[8]?.rows[0]?.blank_fields).toEqual([amount!.id]);
+  expect(snapshots[9]?.rows[0]?.blank_fields).toEqual([amount!.id, snapshots[9]!.columns[3]!.id]);
+  expect(label?.required).toBe(true);
+});
+
 test("#529 exported kit creates named native tables and reopens every carrier in a fresh Worker", async ({ page }) => {
   const golden = Array.from(await readFile(fileURLToPath(new URL("../../../acceptance/native-display-names/named.ro", import.meta.url))));
   const workers: string[] = [];

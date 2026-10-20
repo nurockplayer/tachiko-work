@@ -39,6 +39,8 @@ export interface DesignerClient {
   newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
   duplicateCollection?(expectedRevision: string, collection: string, name: string): Promise<DuplicateCollectionProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
+  clearField?(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
+  setColumnRequiredness?(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;

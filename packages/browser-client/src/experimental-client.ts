@@ -12,6 +12,8 @@ import type {
   OccurrenceProjection,
   OpenedProjection,
   ProjectExport,
+  FieldTarget,
+  PublicationProjection,
 } from "./runtime/protocol.ts";
 
 export const EXPERIMENTAL_CLIENT_KIT_ID = "tachiko-designer-client-kit/v0-experimental";
@@ -28,6 +30,10 @@ const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
  * and the vendored kit makes that stronger contract explicit for consumers.
  */
 export interface ExperimentalDesignerClient extends DesignerClient {
+  /** Explicit absence for one optional native Text/Number slot. */
+  clearField(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
+  /** Strengthening refuses while any entity lacks a value; never fills or coerces. */
+  setColumnRequiredness(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection>;
   exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
   openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
@@ -123,6 +129,10 @@ export type {
   FieldExplanationProjection,
   FieldProjection,
   FieldTarget,
+  NewTableColumnInput,
+  PasteCellInput,
+  ScalarEditInput,
+  TrackerCommand,
   OpenedProjection,
   OccurrenceProjection,
   ProjectExport,
