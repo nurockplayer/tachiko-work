@@ -713,7 +713,14 @@ fn export_spreadsheet(
             }
         }
     }
-    let mut workbook = runtime.export_workbook(revision, &export_metadata)?;
+    let mut workbook = runtime.export_imported_workbook(
+        revision,
+        &export_metadata,
+        match format {
+            SpreadsheetFormat::Csv => crate::interop_document::ImportedOutput::Csv(collection),
+            SpreadsheetFormat::Xlsx => crate::interop_document::ImportedOutput::Xlsx,
+        },
+    )?;
     for name in inserted_headers {
         workbook.ledger.push(FidelityFinding {
             category: FidelityCategory::Converted,
@@ -725,29 +732,22 @@ fn export_spreadsheet(
     }
     let bytes = match format {
         SpreadsheetFormat::Csv => {
-            let index = metadata
-                .sheets
-                .iter()
-                .position(|sheet| sheet.schema_id == collection)
-                .ok_or_else(|| DesignerError::InvalidProjectTransfer {
-                    message: "CSV export requires a known stable collection ID.".to_owned(),
-                })?;
-            let sheet = workbook.sheets.get(index).ok_or_else(|| {
-                DesignerError::InvalidProjectTransfer {
-                    message: "CSV export collection is unavailable.".to_owned(),
-                }
+            let sheet = &workbook.sheets[0];
+            let bytes = export_csv(sheet).map_err(|error| {
+                crate::interop_document::imported_export_error("workbook", &error.0)
             })?;
-            let bytes = export_csv(sheet).map_err(interop_error)?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,
                 code: "csv_values_only".to_owned(),
                 location: sheet.name.clone(),
-                message: "CSV exports selected-sheet scalar values only. Formula definitions, presentation formatting, and other sheets are not preserved; retain the source project.".to_owned(),
+                message: "CSV exports selected-sheet scalar values only. Blank and present empty Text both become empty CSV fields. Formula definitions, presentation formatting, and other sheets are not preserved; retain the source project.".to_owned(),
                 blocking: false,
             });
             bytes
         }
-        SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(interop_error)?,
+        SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(|error| {
+            crate::interop_document::imported_export_error("workbook", &error.0)
+        })?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {

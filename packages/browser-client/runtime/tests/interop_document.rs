@@ -828,9 +828,7 @@ fn spreadsheet_export_with_saved_definition_keeps_existing_refusals() {
     for invalid in [
         "version",
         "duplicate_row",
-        "missing_row",
         "foreign_schema",
-        "foreign_row",
         "duplicate_field",
         "missing_field",
         "foreign_field",
@@ -845,9 +843,7 @@ fn spreadsheet_export_with_saved_definition_keeps_existing_refusals() {
                 let row = metadata.sheets[0].rows[0].clone();
                 metadata.sheets[0].rows.push(row);
             }
-            "missing_row" => metadata.sheets[0].rows.clear(),
             "foreign_schema" => metadata.sheets[0].schema_id = "foreign".into(),
-            "foreign_row" => metadata.sheets[0].rows[0].entity_id = "foreign".into(),
             "duplicate_field" => {
                 metadata.sheets[0].columns[1].field_id =
                     metadata.sheets[0].columns[0].field_id.clone();
@@ -886,6 +882,31 @@ fn spreadsheet_export_with_saved_definition_keeps_existing_refusals() {
             ledger: expected_summary_export_ledger(true),
         }
     );
+}
+
+#[test]
+fn native_metadata_row_gaps_export_current_values_with_default_presentation() {
+    let (source, selection) = grouped_export_fixture();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    for tombstone in [false, true] {
+        let mut metadata = imported.metadata.clone();
+        if tombstone {
+            metadata.sheets[0].rows[0].entity_id = "deleted-source-slot".into();
+        } else {
+            metadata.sheets[0].rows.clear();
+        }
+        let exported = runtime.export_workbook("resident/0", &metadata).unwrap();
+        // This fixture has default presentation. All authoritative values and
+        // headers survive; unmapped current rows now append just like insertion.
+        assert_eq!(exported.sheets, source.sheets);
+        assert!(
+            exported
+                .ledger
+                .iter()
+                .any(|finding| finding.code == "imported_current_structure"
+                    && finding.location.contains(&metadata.sheets[0].schema_id))
+        );
+    }
 }
 
 #[test]

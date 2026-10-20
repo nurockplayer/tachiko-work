@@ -3,7 +3,7 @@
 Bounded acceptance contract for [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545),
 under Accepted [ADR-0027](../decisions/ADR-0027-open-format-and-interoperability-policy.md).
 This is an outbound adapter over the existing semantic document. It does not
-change semantic types, storage formats, imported-workbook exports, or the
+change semantic types, storage formats, [imported-workbook exports](imported-workbook-spreadsheet-export.md), or the
 separate Tracker/Budget presentation-bound exports.
 
 ## Entry and authority

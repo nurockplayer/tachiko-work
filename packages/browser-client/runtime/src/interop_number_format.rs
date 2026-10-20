@@ -21,6 +21,13 @@ enum Token {
 }
 
 pub(crate) fn classify(pattern: Option<&str>) -> Result<NumberFormatKind, String> {
+    inspect(pattern).map(|(kind, _)| kind)
+}
+
+/// One tokenizer supplies both classification and numeric condition inventory.
+/// Digits in quoted display text, locale IDs and color IDs are not conditions.
+pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<String>), String> {
+    let mut conditions = Vec::new();
     let pattern = pattern.unwrap_or("");
     if pattern.len() > 4096 {
         return Err("Number format exceeds retained-style bound".into());
@@ -54,7 +61,7 @@ pub(crate) fn classify(pattern: Option<&str>) -> Result<NumberFormatKind, String
                 if i == chars.len() {
                     return Err("Incomplete number-format bracket".into());
                 }
-                bracket(&chars[start..i].iter().collect::<String>())?
+                bracket(&chars[start..i].iter().collect::<String>(), &mut conditions)?
             }
             ';' => {
                 if sections.len() == 4 {
@@ -113,7 +120,7 @@ pub(crate) fn classify(pattern: Option<&str>) -> Result<NumberFormatKind, String
         }
         i += 1;
     }
-    uniform_kind(&sections)
+    uniform_kind(&sections).map(|kind| (kind, conditions))
 }
 
 fn literal_end(chars: &[char], mut i: usize) -> Result<usize, String> {
@@ -162,7 +169,7 @@ fn section_kind(tokens: &[Token]) -> NumberFormatKind {
     }
 }
 
-fn bracket(content: &str) -> Result<Option<Token>, String> {
+fn bracket(content: &str, conditions: &mut Vec<String>) -> Result<Option<Token>, String> {
     let lower = content.to_ascii_lowercase();
     if matches!(lower.as_str(), "h" | "hh" | "m" | "mm" | "s" | "ss") {
         return Ok(Some(Token::Elapsed));
@@ -185,9 +192,13 @@ fn bracket(content: &str) -> Result<Option<Token>, String> {
             && value
                 .bytes()
                 .all(|b| b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'.' | b'e'))
-            && value.parse::<f64>().is_ok_and(f64::is_finite)
         {
-            return Ok(None);
+            if let Ok(number) = value.parse::<f64>() {
+                if number.is_finite() {
+                    conditions.push(value.to_owned());
+                    return Ok(None);
+                }
+            }
         }
     }
     if let Some(currency) = content.strip_prefix('$') {

@@ -4,6 +4,46 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Capacity metadata acceptance now states the imported export name policy:
+  CSV round-trips quoted Unicode/XML-sensitive headers despite an un-emitted
+  worksheet name containing controls; XLSX refuses that name with a located
+  finding and unchanged state. XLSX positive round trips use an Excel-valid
+  Unicode/XML-sensitive name. Promoted Worker probes and independent XML
+  expectations agree; runtime behavior and other capacity assertions are unchanged.
+
+- Imported-metadata export now selects its output scope before reconstruction:
+  CSV checks and emits only the selected sheet's scalar values and headers;
+  unrelated content and omitted XLSX presentation cannot block it. XLSX uses the
+  shared native compatibility inventory for every emitted element, including
+  formula numeric literals independently of cached results, reference/worksheet
+  names, number-format conditions, styles and widths. Previously unfaithful
+  worksheet names, subnormal literals/conditions, oversized format codes, excess
+  style resources and widths Excel would quantize now refuse the whole file with
+  located findings. Precision disclosures share one bounded location budget.
+  Number-format attribute whitespace is encoded faithfully; supported untouched
+  cells/formulas/styles retain their semantics and presentation. The imported
+  part of #547 now covers every emitted text surface; general writer escaping,
+  Tracker/Budget and reader work remain open.
+
+- Imported-metadata XLSX exports check every emitted cell against the shared
+  Excel compatibility policy, including untouched Text: refuse literal `_xHHHH_`,
+  XML-illegal characters, Text over 32,767 UTF-16 units or 253 line feeds,
+  nonzero subnormal Numbers and out-of-range Dates; disclose precision above
+  15 digits. Supported cells, formulas and styles stay unchanged, and CSV retains
+  its existing lexical behavior. These checks close previously unfaithful or
+  undisclosed imported-cell output; shared writer/reader and Tracker/Budget work
+  remains under #547. Foreign current field/entity mappings now refuse rather
+  than becoming tombstones, and header mappings disclose requested/output
+  differences even when collision allocation returns to the historical header.
+
+- Imported CSV/XLSX tables that qualify structurally for native authoring now
+  export current renamed headers, appended rows/columns and removed structure,
+  including blanks, Undo and v3/package reopen with retained import metadata.
+  Existing output limits refuse the whole file with located typed findings;
+  surviving cell styles and stable formula references are retained.
+
 ### Added
 
 - The experimental TypeScript client and exported Worker kit expose optional

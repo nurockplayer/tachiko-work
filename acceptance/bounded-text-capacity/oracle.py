@@ -203,7 +203,9 @@ def verify(directory):
         "allowed discriminator retains typed payload validation",
         "metadata request exact 4MiB and limit plus one",
         "encoded CSV header row exact 39 bytes and plus one",
-        "Unicode XML-sensitive metadata header39 and name31 roundtrips",
+        "CSV Unicode XML-sensitive header39 ignores worksheet controls",
+        "XLSX worksheet controls refuse with located name finding",
+        "XLSX Unicode XML-sensitive header39 and valid name31 roundtrip",
         "oversized non-metadata spreadsheet operations",
         "4096 UTF8 Text byte ceiling",
         "aggregate Text exact 1MiB and plus one",
@@ -309,7 +311,7 @@ def verify(directory):
                 with zipfile.ZipFile(small) as archive:
                     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
                     sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
-                    assert sheet.attrib["name"] == "Capacity\tname\n雪&\r"
+                    assert sheet.attrib["name"] == "Capacity name 雪&\"<'>"
             for mode in ["import", "reopen"]:
                 receipt = json.loads((directory / f"worker/{source}-{carrier}-{mode}-receipt.json").read_text())
                 assert (receipt["format"], receipt["carrier"], receipt["mode"], receipt["savedOpenRoute"]) == (source, carrier, mode, "metadata-aware")
@@ -355,7 +357,7 @@ def verify(directory):
     with zipfile.ZipFile(metadata_xlsx) as archive:
         workbook = ET.fromstring(archive.read("xl/workbook.xml"))
         sheet = workbook.find(f"{{{MAIN}}}sheets/{{{MAIN}}}sheet")
-        assert sheet.attrib["name"] == "雪&\"<'>\n\t\r" + "n" * 22
+        assert sheet.attrib["name"] == "雪&\"<'>" + "n" * 25
     for path in files:
         actual = (
             list(csv.reader(io.StringIO(path.read_bytes().decode(), newline="")))

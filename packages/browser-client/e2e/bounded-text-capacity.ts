@@ -10,7 +10,7 @@ import type { ExperimentalDesignerClient } from "../src/experimental-client.ts";
 import type { ImportedProjection, InteropMetadata, SpreadsheetFormat } from "../src/runtime/interop-protocol.ts";
 import { collectRssSample, requireCompleteRss } from "./capacity-rss.ts";
 import type { RssSample } from "./capacity-rss.ts";
-import type { TableProjection } from "../src/runtime/protocol.ts";
+import type { FailureProjection, TableProjection } from "../src/runtime/protocol.ts";
 
 type Manifest = { rows: string[][]; edits: [number, number, string][]; promoted_opened_rows: string[][] };
 const [kitArg, fixtureArg, captureArg] = process.argv.slice(2);
@@ -264,8 +264,25 @@ try {
             check(current.scope !== before.scope, "small fresh occurrence");
             same(current.revision, "resident/0", "small fresh revision");
             if (restart) check(size(reopened) > 65_536, "fresh Worker promoted Opened payload");
+            const invalidMetadata = structuredClone(metadata);
+            invalidMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
+            const beforeRefusalTable = await client.queryTable(collection);
+            const beforeRefusalSaved = await saveCarrier(current.revision);
+            let nameFailure: FailureProjection | undefined;
+            try {
+              await client.exportSpreadsheet!(current.revision, invalidMetadata, "xlsx", invalidMetadata.sheets[0]!.schema_id);
+            } catch (error) {
+              nameFailure = (error as { failure?: FailureProjection }).failure;
+            }
+            check(nameFailure !== undefined, "XLSX worksheet controls must refuse");
+            same(nameFailure!.code, "imported_spreadsheet_export_refused", "typed worksheet-name refusal");
+            same(nameFailure!.diagnostics.map(d => d.code), ["native_tables_xlsx_name"], "located worksheet-name finding");
+            check(nameFailure!.diagnostics[0]!.path.endsWith("/sheet-name"), "worksheet-name diagnostic location");
+            same(await client.observeOccurrence(), current, "name refusal preserves occurrence/revision");
+            same(await client.queryTable(collection), beforeRefusalTable, "name refusal preserves complete table");
+            same(await digest(await saveCarrier(current.revision)), await digest(beforeRefusalSaved), "name refusal preserves saved bytes");
             const smallMetadata = structuredClone(metadata);
-            smallMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
+            smallMetadata.sheets[0]!.name = "Capacity name 雪&\"<'>";
             const exported = await timed(`${recipe}_export_xlsx`, () => client.exportSpreadsheet!(current.revision, smallMetadata, "xlsx", smallMetadata.sheets[0]!.schema_id));
             artifacts.push({ name: `${recipe}-capacity-from-${format}-${carrier}.xlsx`, bytes: new Uint8Array(exported.bytes) });
             const reimported = await timed(`${recipe}_reimport`, () => client.importSpreadsheet!(exported.bytes, "xlsx", options, selection));

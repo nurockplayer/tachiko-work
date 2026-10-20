@@ -1,25 +1,30 @@
 // Replay native host receipts and opaque bytes through the actual wasm32 ABI.
 // Usage: node optional_native_persistence.mjs <designer_runtime.wasm> <capture...>
-// Requires all four sole/portable case combinations emitted by the Rust test.
+// Requires all sole/portable and imported structural case combinations emitted by the Rust test.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
 
 const [wasmPath, ...captures] = process.argv.slice(2);
-assert.ok(wasmPath, "WASM path and all four native capture cases required");
+assert.ok(wasmPath, "WASM path and all native capture cases required");
 const expectedCases = [
   "sole-false-portable-false", "sole-false-portable-true",
   "sole-true-portable-false", "sole-true-portable-true",
-];
+  ...["csv", "xlsx"].flatMap(source =>
+    ["rename", "add_blank", "add_fill", "remove", "insert", "insert_blank", "delete"].map(operation => `${source}-${operation}`)),
+  "refusals", "formulas", "cell-compatibility-csv", "cell-compatibility-xlsx",
+  "foreign-current", "header-history-collision", "untouched-compatibility", "scalar-compatibility",
+  "formula-output-policy", "csv-output-scope", "presentation-output-policy", "style-inventory-policy", "references-headers-policy", "closed-grammar-policy", "boolean-output-policy", "precision-budget-policy",
+].sort();
 const cases = new Map();
 for (const path of captures) {
-  const name = basename(path).match(/(?:^|\.)(sole-(?:false|true)-portable-(?:false|true))\.json$/)?.[1];
+  const name = expectedCases.find(name => basename(path).endsWith(`.${name}.json`) || basename(path) === `${name}.json`);
   assert.ok(name, `${path}: unrecognized native capture case name`);
   assert.ok(!cases.has(name), `${path}: duplicate native capture case ${name}`);
   cases.set(name, path);
 }
-assert.deepEqual([...cases.keys()].sort(), expectedCases, "native capture inventory must include all four expected cases");
+assert.deepEqual([...cases.keys()].sort(), expectedCases, "native capture inventory must include all expected cases");
 const loaded = [];
 for (const [name, path] of cases) {
   const records = JSON.parse(await readFile(path, "utf8"));
@@ -54,6 +59,10 @@ for (const { name, path, records } of loaded) {
     e[`tachiko_designer_${record.operation}`]();
     assert.deepEqual(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(take("response"))),
       record.reply, `${path}: receipt ${index} (${record.operation})`);
+    if (record.operation === "spreadsheet_run" && record.reply.status === "error") {
+      assert.equal(take("project").length, 0,
+        `${path}: refused spreadsheet ${index} must expose no partial output bytes`);
+    }
     if (record.bytes !== null) {
       assert.deepEqual(take("project"), Uint8Array.from(record.bytes),
         `${path}: bytes ${index} (${record.operation})`);

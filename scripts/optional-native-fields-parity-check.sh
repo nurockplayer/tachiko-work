@@ -27,8 +27,9 @@ node --test "${tests_dir}/optional_native_fields.test.mjs" \
 # Never consume inherited capture paths or a previous run's native evidence.
 TACHIKO_OPTIONAL_TRANSCRIPT="${check_dir}/optional-native-fields.json" \
   TACHIKO_OPTIONAL_PERSISTENCE_TRANSCRIPT="${check_dir}/optional-persistence" \
+  TACHIKO_IMPORTED_STRUCTURAL_TRANSCRIPT="${check_dir}/imported-structure" \
   cargo test --manifest-path "${repo_root}/packages/browser-client/runtime/Cargo.toml" \
-  --locked --test optional_native_fields --test optional_native_persistence
+  --locked --test optional_native_fields --test optional_native_persistence --test imported_structural_export
 
 fields_captures=(
   "${check_dir}/optional-native-fields.json"
@@ -44,6 +45,15 @@ for sole in false true; do
   for portable in false true; do
     persistence_captures+=("${check_dir}/optional-persistence.sole-${sole}-portable-${portable}.json")
   done
+done
+for source in csv xlsx; do
+  for operation in rename add_blank add_fill remove insert insert_blank delete; do
+    persistence_captures+=("${check_dir}/imported-structure.${source}-${operation}.json")
+  done
+done
+persistence_captures+=("${check_dir}/imported-structure.refusals.json" "${check_dir}/imported-structure.formulas.json")
+for repair in cell-compatibility-csv cell-compatibility-xlsx foreign-current header-history-collision untouched-compatibility scalar-compatibility formula-output-policy csv-output-scope presentation-output-policy style-inventory-policy references-headers-policy closed-grammar-policy boolean-output-policy precision-budget-policy; do
+  persistence_captures+=("${check_dir}/imported-structure.${repair}.json")
 done
 for capture in "${fields_captures[@]}" "${persistence_captures[@]}"; do
   [[ -s "${capture}" ]] || {
