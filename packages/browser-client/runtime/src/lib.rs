@@ -339,6 +339,10 @@ pub struct ColumnProjection {
     pub id: String,
     pub key: String,
     pub display_name: String,
+    /// Stored display name is present, even when equal to the generated key.
+    /// Omission means the projected name is only the key fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name_explicit: Option<bool>,
     pub field_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dropdown_options: Option<Vec<String>>,
@@ -939,8 +943,15 @@ struct ColumnSpec {
     id: FieldId,
     key: String,
     display_name: String,
+    display_name_explicit: bool,
     field_type: FieldType,
     required: bool,
+}
+
+/// One presence rule for table projections and imported spreadsheet headers.
+/// Comparing the effective name to the key would lose explicit equal-key names.
+fn explicit_column_display_name(field: &FieldDefinition) -> Option<&str> {
+    field.display_name.as_deref()
 }
 
 impl DesignerRuntime {
@@ -1665,6 +1676,7 @@ impl DesignerRuntime {
                     id: column.id.to_string(),
                     key: column.key.clone(),
                     display_name: column.display_name.clone(),
+                    display_name_explicit: column.display_name_explicit.then_some(true),
                     field_type: field_type_name(&column.field_type).to_owned(),
                     dropdown_options: (column.field_type == FieldType::Boolean)
                         .then(|| vec!["true".to_owned(), "false".to_owned()]),
@@ -4825,6 +4837,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                         id: field.id.clone(),
                         key: field.key.to_string(),
                         display_name: field.effective_name().to_owned(),
+                        display_name_explicit: explicit_column_display_name(field).is_some(),
                         field_type: field.field_type.clone(),
                         required: field.required,
                     })

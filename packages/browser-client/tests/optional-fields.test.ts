@@ -72,6 +72,43 @@ describe("public optional-field requests", () => {
 });
 
 describe("Worker presence projections", () => {
+  it.each([undefined, true] as const)("passes explicit display-name presence through query/open/import with %s", async explicit => {
+    const {client, requests, reply} = fixture();
+    const column = {...table.columns[0]!, display_name: "note"};
+    if (explicit !== undefined) Object.assign(column, {display_name_explicit: explicit});
+    const payload: TableProjection = {...table, columns: [column]};
+    const query = client.queryTable("items");
+    reply("table", payload);
+    await expect(query).resolves.toEqual(payload);
+    const open = client.newTable!("items", [{name: "note", field_type: "text"}]);
+    reply("opened", {bootstrap: {}, table: payload});
+    await expect(open).resolves.toEqual({bootstrap: {}, table: payload});
+    const imported = client.importSpreadsheet!(new ArrayBuffer(0), "csv", {delimiter: ",", header: true},
+      {column_types: [["text"]], extra_columns: [[]]});
+    reply("imported", {opened: {bootstrap: {}, table: payload}, metadata: {version: 1, sheets: []}});
+    await vi.waitFor(() => expect(requests.at(-1)).toMatchObject({operation: {install: true}}));
+    reply("imported", {opened: {bootstrap: {}, table: payload}, metadata: {version: 1, sheets: []}});
+    await expect(imported).resolves.toMatchObject({opened: {table: payload}});
+    if (explicit === undefined) expect(payload.columns[0]).not.toHaveProperty("display_name_explicit");
+    client.close();
+  });
+
+  it.each([false, null, "true", 1, {}, []])("rejects malformed display-name presence %j in query/open/import", async display_name_explicit => {
+    const {client, reply} = fixture();
+    const invalid = {...table, columns: [{...table.columns[0], display_name_explicit}]};
+    const query = client.queryTable("items");
+    reply("table", invalid);
+    await expect(query).rejects.toThrow("column display_name_explicit");
+    const open = client.newTable!("items", [{name: "note", field_type: "text"}]);
+    reply("opened", {bootstrap: {}, table: invalid});
+    await expect(open).rejects.toThrow("column display_name_explicit");
+    const imported = client.importSpreadsheet!(new ArrayBuffer(0), "csv", {delimiter: ",", header: true},
+      {column_types: [["text"]], extra_columns: [[]]});
+    reply("imported", {opened: {bootstrap: {}, table: invalid}, metadata: {version: 1, sheets: []}});
+    await expect(imported).rejects.toThrow("column display_name_explicit");
+    client.close();
+  });
+
   it("preserves blank metadata, present empty Text and omitted false/empty defaults without inserting placeholders", async () => {
     const {client, reply} = fixture();
     const pending = client.queryTable("items");

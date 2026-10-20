@@ -190,6 +190,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "editText",
     "clearField",
     "setColumnRequiredness",
+    "columnDisplayNameExplicit",
     "editBoolean",
     "editDate",
     "updateFormula",

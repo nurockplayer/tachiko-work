@@ -22,7 +22,7 @@ portable package gains spreadsheet presentation or a new storage version.
 
 | Change | Metadata export decision |
 | --- | --- |
-| Rename column | An explicit current `display_name` replaces the source header. A surviving imported field with no explicit display name keeps its metadata header, rather than exposing its generated `column_N` key. Undo restores that fallback. |
+| Rename column | An explicit current `display_name` replaces the source header. Table columns expose `display_name_explicit: true` exactly when that stored name exists, including a rename equal to the generated key; omission means fallback. A surviving imported field with no explicit display name keeps its metadata header, rather than exposing its generated `column_N` key. Undo restores that fallback and removes the projection flag. |
 | Add optional column, blank or filled | Append after surviving source columns, in current canonical field order. Read present typed values from the snapshot; absence is Empty. No source width or style is invented. |
 | Remove column | Omit its header, values, width and cell styles. Historical slots remain available for Undo. |
 | Insert row, including blanks | Append after surviving source rows, in current canonical entity order. New cells receive default presentation. |

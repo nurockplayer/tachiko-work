@@ -52,7 +52,7 @@ for source in csv xlsx; do
   done
 done
 persistence_captures+=("${check_dir}/imported-structure.refusals.json" "${check_dir}/imported-structure.formulas.json")
-for repair in cell-compatibility-csv cell-compatibility-xlsx foreign-current header-history-collision untouched-compatibility scalar-compatibility formula-output-policy csv-output-scope presentation-output-policy style-inventory-policy references-headers-policy closed-grammar-policy boolean-output-policy precision-budget-policy; do
+for repair in explicit-name-csv explicit-name-xlsx cell-compatibility-csv cell-compatibility-xlsx foreign-current header-history-collision untouched-compatibility scalar-compatibility formula-output-policy csv-output-scope presentation-output-policy style-inventory-policy references-headers-policy closed-grammar-policy boolean-output-policy precision-budget-policy; do
   persistence_captures+=("${check_dir}/imported-structure.${repair}.json")
 done
 for capture in "${fields_captures[@]}" "${persistence_captures[@]}"; do

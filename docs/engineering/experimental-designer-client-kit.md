@@ -132,6 +132,23 @@ For example, `[["", {kind: "clear"}]]` sets empty Text in the starting
 Text column and clears the next optional column. Untargeted cells stay unchanged;
 omitted optional fields of newly pasted rows remain blank.
 
+Table columns (`ColumnProjection`, also exported by the public TS entry) expose
+`display_name_explicit?: true`: Rust emits `true` only when a stored display
+name exists and otherwise omits the member; the client rejects any other value,
+including `false`. This uses the imported export rule,
+including a rename whose spelling equals the generated key. With retained import
+metadata, use `column.display_name_explicit === true ? column.display_name :
+metadataColumn.name`; join by stable field ID. A current field absent from
+metadata needs an explicit name or metadata export refuses. Undo removes the
+flag when it restores name absence; v3/package reopen preserves stored presence.
+Native `newTable`/`add_column` create explicit names, including names equal to
+their keys; built-in Tracker/Budget templates currently have no explicit names.
+The kit manifest's `capabilities` includes `columnDisplayNameExplicit` as a
+projection feature marker (not a callable method). Consumers must detect that
+marker before relying on omission to mean fallback in older kits. The client
+preserves `true` or omission and rejects every other defined value; Rust emits
+only `true` or omission. Storage formats and rename semantics are unchanged.
+
 Table columns always project `required: boolean`. Each row's `fields` array
 contains **only present values**. `blank_fields?: string[]` names absent declared
 FieldIds in column order; omission means `[]`. Join by stable ID rather than

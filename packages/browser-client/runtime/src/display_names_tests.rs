@@ -19,6 +19,44 @@ fn columns(names: &[&str]) -> Vec<NewTableColumnInput> {
 }
 
 #[test]
+fn native_projection_explicit_names_follow_creation_semantics_and_v3_reopen() {
+    let mut named = DesignerRuntime::new_table(OCCURRENCE, "Names", &columns(&["item"])).unwrap();
+    named
+        .add_column("resident/0", "names", "note", "text", &[])
+        .unwrap();
+    // Native table creation/add stores names, even when their spelling equals
+    // the key. Built-in Tracker/Budget templates currently store no names.
+    for (runtime, expected) in [
+        (named, true),
+        (DesignerRuntime::tracker(OCCURRENCE).unwrap(), false),
+        (DesignerRuntime::budget(OCCURRENCE).unwrap(), false),
+    ] {
+        let snapshot = runtime.session.export_snapshot();
+        let export = runtime
+            .export_project_v3(runtime.current_revision())
+            .unwrap();
+        let mut reopened = None;
+        open_project(&mut reopened, &export.bytes, OCCURRENCE).unwrap();
+        let reopened = reopened.unwrap();
+        for spec in runtime.collection_specs.values() {
+            let table = runtime.query_table(spec.summary.id.as_str()).unwrap();
+            let after = reopened.query_table(spec.summary.id.as_str()).unwrap();
+            assert_eq!(table.columns, after.columns);
+            for column in &table.columns {
+                let stored = &snapshot.document().schemas[spec.summary.id.as_str()].fields
+                    [column.id.as_str()];
+                assert_eq!(stored.display_name.is_some(), expected);
+                let wire = serde_json::to_value(column).unwrap();
+                assert_eq!(
+                    wire.get("display_name_explicit"),
+                    expected.then_some(&serde_json::Value::Bool(true))
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn named_native_creation_allocates_keys_in_request_order() {
     let runtime = DesignerRuntime::new_table(
         OCCURRENCE,

@@ -276,6 +276,73 @@ fn matrix(source: &str, operation: &str) {
 fn csv_rename() {
     matrix("csv", "rename");
 }
+
+fn explicit_display_name_journey(source: &str) {
+    let mut j = Journey::default();
+    j.import(source);
+    let original = j.table();
+    let field = original["columns"][0]["id"].clone();
+    let key = original["columns"][0]["key"].as_str().unwrap();
+    assert!(
+        original["columns"][0]
+            .get("display_name_explicit")
+            .is_none()
+    );
+    j.reopen(false);
+    assert!(
+        j.table()["columns"][0]
+            .get("display_name_explicit")
+            .is_none()
+    );
+
+    for name in ["Current note", key] {
+        j.mutate(json!({"type":"rename_column","collection":"sheet_1","field":field,"name":name}));
+        let renamed = j.table();
+        assert_eq!(renamed["columns"][0]["display_name"], name);
+        assert_eq!(renamed["columns"][0]["display_name_explicit"], true);
+        let mut errors = Vec::new();
+        j.exports(
+            "explicit",
+            &[name, "Amount"],
+            &[
+                vec![json!("first"), json!(1.0)],
+                vec![json!("second"), json!(2.0)],
+            ],
+            &mut errors,
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        j.mutate(json!({"type":"undo"}));
+        let undone = j.table();
+        assert!(undone["columns"][0].get("display_name_explicit").is_none());
+        assert_eq!(undone["columns"][0]["display_name"], key);
+    }
+    j.reopen(false);
+    assert!(
+        j.table()["columns"][0]
+            .get("display_name_explicit")
+            .is_none()
+    );
+    j.mutate(json!({"type":"rename_column","collection":"sheet_1","field":field,"name":key}));
+    j.mutate(json!({"type":"undo"}));
+    j.mutate(json!({"type":"redo"}));
+    for portable in [false, true] {
+        j.reopen(portable);
+        let reopened = j.table();
+        assert_eq!(reopened["columns"][0]["display_name_explicit"], true);
+        assert_eq!(reopened["columns"][0]["display_name"], key);
+    }
+    j.capture(&format!("explicit-name-{source}"));
+}
+
+#[test]
+fn csv_explicit_display_name_presence_survives_history_and_reopen() {
+    explicit_display_name_journey("csv");
+}
+
+#[test]
+fn xlsx_explicit_display_name_presence_survives_history_and_reopen() {
+    explicit_display_name_journey("xlsx");
+}
 #[test]
 fn csv_add_blank() {
     matrix("csv", "add_blank");

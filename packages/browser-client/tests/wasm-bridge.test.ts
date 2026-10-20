@@ -7,12 +7,12 @@ const operation: Extract<SpreadsheetOperation, { type: "export" }> = {
   metadata: { version: 1, sheets: [] },
 };
 
-async function fixture(receiptLength: number, arenaLength: number, responseType = "spreadsheet_exported") {
+async function fixture(receiptLength: number, arenaLength: number, responseType = "spreadsheet_exported", payload?: unknown) {
   const memory = new WebAssembly.Memory({ initial: 66 });
   const responseOffset = 4 * 1024 * 1024 + 8192;
   const outputOffset = responseOffset + 8192;
   const response = new TextEncoder().encode(JSON.stringify({
-    status: "ok", response: { type: responseType, payload: {
+    status: "ok", response: { type: responseType, payload: payload ?? {
       revision: "resident/1", byte_length: receiptLength, ledger: [],
     } },
   }));
@@ -25,6 +25,7 @@ async function fixture(receiptLength: number, arenaLength: number, responseType 
   const exports = {
     memory,
     tachiko_designer_request_reserve: reserve,
+    tachiko_designer_request_run: () => undefined,
     tachiko_designer_project_reserve: () => 4096,
     tachiko_designer_spreadsheet_run: () => undefined,
     tachiko_designer_project_export_v3: selectedExport,
@@ -42,6 +43,17 @@ async function fixture(receiptLength: number, arenaLength: number, responseType 
 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+describe("table WASM projection transport", () => {
+  it.each([false, true])("preserves explicit-name presence without inferring it from spelling (%s)", async explicit => {
+    const column = {id: "field", key: "column_1", display_name: "column_1", field_type: "text", required: false,
+      ...(explicit ? {display_name_explicit: true} : {})};
+    const payload = {revision: "resident/0", collection: {id: "sheet", key: "sheet_1", display_name: "sheet_1", entity_count: 0},
+      columns: [column], rows: []};
+    const {bridge} = await fixture(0, 0, "table", payload);
+    expect(bridge.request({type: "query_table", collection: "sheet"})).toEqual({status: "ok", response: {type: "table", payload}});
+  });
+});
 
 describe("spreadsheet WASM export receipt", () => {
   it.each([[2, 3], [4, 3]])("rejects receipt %i for arena %i before reading bytes and releases it", async (receipt, arena) => {

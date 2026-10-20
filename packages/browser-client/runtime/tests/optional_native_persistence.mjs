@@ -14,6 +14,7 @@ const expectedCases = [
   ...["csv", "xlsx"].flatMap(source =>
     ["rename", "add_blank", "add_fill", "remove", "insert", "insert_blank", "delete"].map(operation => `${source}-${operation}`)),
   "refusals", "formulas", "cell-compatibility-csv", "cell-compatibility-xlsx",
+  "explicit-name-csv", "explicit-name-xlsx",
   "foreign-current", "header-history-collision", "untouched-compatibility", "scalar-compatibility",
   "formula-output-policy", "csv-output-scope", "presentation-output-policy", "style-inventory-policy", "references-headers-policy", "closed-grammar-policy", "boolean-output-policy", "precision-budget-policy",
 ].sort();
