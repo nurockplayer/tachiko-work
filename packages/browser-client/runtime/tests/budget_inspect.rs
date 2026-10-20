@@ -11,11 +11,16 @@ fn candidate_inspection_preserves_resident_revision_bytes_and_both_history_direc
             collection: "tracker".into(),
             start_entity: None,
             start_field: "task".into(),
-            rows: vec![vec![
-                "Unsaved accepted work".into(),
-                "3".into(),
-                "false".into(),
-            ]],
+            rows: {
+                let rows: Vec<Vec<String>> = vec![vec![
+                    "Unsaved accepted work".into(),
+                    "3".into(),
+                    "false".into(),
+                ]];
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(Into::into).collect())
+                    .collect()
+            },
         })
         .unwrap();
     let before = resident.export_project("resident/1").unwrap().bytes;

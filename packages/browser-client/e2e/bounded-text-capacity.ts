@@ -212,6 +212,7 @@ try {
             same(table.rows.length, expectedRows.length, "row count");
             same(table.collection.entity_count, expectedRows.length, "entity count");
             same(table.columns.map((c) => c.field_type), ["text", "text", "text"], "Text schema");
+            same(table.columns.map((c) => (c as typeof c & { required: boolean }).required), [false, false, false], "imported optional declarations");
             const sheet = metadata.sheets[0]!;
             same(sheet.columns.map((column) => column.name), ["account_id", "profile_url", "unix_timestamp"], "header labels");
             same(table.collection.id, sheet.schema_id, "collection identity");
@@ -219,8 +220,10 @@ try {
             same(table.columns.map((c) => c.id), sheet.columns.map((c) => c.field_id), "field identities");
             same(table.rows.map((r) => r.id), sheet.rows.map((r) => r.entity_id), "row identities/order");
             table.rows.forEach((row, r) => {
+              same((row as typeof row & { blank_fields?: string[] }).blank_fields, undefined, "complete fixture row has no blank fields");
               same(row.fields.length, 3, "field count");
               row.fields.forEach((field, c) => {
+                same((field as typeof field & { blank?: boolean }).blank, undefined, "present Text has no blank marker");
                 same(field.target, { entity: row.id, field: table.columns[c]!.id }, "target identity");
                 same(field.stored, { kind: "text", value: expectedRows[r]![c] }, `cell ${r},${c}`);
                 same(field.formula, null, "no formulas"); same(field.diagnostics, [], "no diagnostics");

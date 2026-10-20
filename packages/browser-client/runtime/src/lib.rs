@@ -122,7 +122,16 @@ pub enum DesignerRequest {
         collection: String,
         name: String,
         field_type: String,
+        #[serde(default = "default_required")]
+        required: bool,
+        #[serde(default)]
         initializers: Vec<ColumnInitializer>,
+    },
+    SetColumnRequiredness {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        required: bool,
     },
     RenameColumn {
         expected_revision: String,
@@ -149,7 +158,7 @@ pub enum DesignerRequest {
         collection: String,
         start_entity: Option<String>,
         start_field: String,
-        rows: Vec<Vec<String>>,
+        rows: Vec<Vec<PasteCellInput>>,
     },
     AppendRow {
         expected_revision: String,
@@ -295,10 +304,38 @@ pub struct CellEdit {
 pub struct NewTableColumnInput {
     pub name: String,
     pub field_type: String,
+    #[serde(default = "default_required")]
+    pub required: bool,
+}
+
+const fn default_required() -> bool {
+    true
+}
+
+/// Strings retain their exact typed-paste meaning; clear is always explicit.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum PasteCellInput {
+    Text(String),
+    Typed(ScalarEditInput),
+}
+
+impl From<String> for PasteCellInput {
+    fn from(value: String) -> Self {
+        Self::Text(value)
+    }
+}
+
+impl From<&str> for PasteCellInput {
+    fn from(value: &str) -> Self {
+        Self::Text(value.to_owned())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ColumnProjection {
+    #[serde(default = "default_required")]
+    pub required: bool,
     pub id: String,
     pub key: String,
     pub display_name: String,
@@ -311,11 +348,17 @@ pub struct ColumnProjection {
 pub struct RowProjection {
     pub id: String,
     pub key: String,
+    /// Declared fields without a value, in column presentation order.
+    /// `fields` retains its sparse present-value payload; absence is never a placeholder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blank_fields: Vec<String>,
     pub fields: Vec<FieldProjection>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FieldProjection {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blank: bool,
     pub target: FieldTarget,
     pub address: String,
     pub stored: Option<StoredValueProjection>,
@@ -357,13 +400,14 @@ pub enum ScalarKind {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ScalarEditInput {
+    Clear,
     Number { input: String },
     Text { value: String },
     Boolean { value: bool },
     Date { value: String },
 }
 
-/// One explicit current-entity value required when adding a native scalar column.
+/// One named entity initializer; optional columns may omit any or all entities.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ColumnInitializer {
@@ -371,7 +415,7 @@ pub struct ColumnInitializer {
     pub input: ScalarEditInput,
 }
 
-/// One explicit value required when inserting a native scalar table row.
+/// One named field initializer; omitted optional fields remain absent.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RowInitializer {
@@ -1045,13 +1089,28 @@ impl DesignerRuntime {
                 collection,
                 name,
                 field_type,
+                required,
                 initializers,
-            } => Ok(DesignerResponse::Published(self.add_column(
+            } => Ok(DesignerResponse::Published(
+                self.add_column_with_requiredness(
+                    &expected_revision,
+                    &collection,
+                    &name,
+                    &field_type,
+                    required,
+                    &initializers,
+                )?,
+            )),
+            DesignerRequest::SetColumnRequiredness {
+                expected_revision,
+                collection,
+                field,
+                required,
+            } => Ok(DesignerResponse::Published(self.set_column_requiredness(
                 &expected_revision,
                 &collection,
-                &name,
-                &field_type,
-                &initializers,
+                &field,
+                required,
             )?)),
             DesignerRequest::RenameColumn {
                 expected_revision,
@@ -1094,7 +1153,7 @@ impl DesignerRuntime {
                 start_entity,
                 start_field,
                 rows,
-            } => Ok(DesignerResponse::Published(self.paste_cells(
+            } => Ok(DesignerResponse::Published(self.paste_cell_inputs(
                 &expected_revision,
                 &collection,
                 start_entity.as_deref(),
@@ -1566,6 +1625,7 @@ impl DesignerRuntime {
                 .map(|entity| RowProjection {
                     id: entity.id.to_string(),
                     key: entity.key.to_string(),
+                    blank_fields: blank_field_ids(entity, spec),
                     fields: spec
                         .columns
                         .iter()
@@ -1586,6 +1646,7 @@ impl DesignerRuntime {
                 .columns
                 .iter()
                 .map(|column| ColumnProjection {
+                    required: column.required,
                     id: column.id.to_string(),
                     key: column.key.clone(),
                     display_name: column.display_name.clone(),
@@ -1633,6 +1694,7 @@ impl DesignerRuntime {
             rows.push(RowProjection {
                 id: entity.id.to_string(),
                 key: entity.key.to_string(),
+                blank_fields: blank_field_ids(entity, spec),
                 fields,
             });
         }
@@ -1655,6 +1717,7 @@ impl DesignerRuntime {
                     .unwrap_or_else(|| "Formula source unavailable".to_owned()),
             });
         FieldProjection {
+            blank: false,
             target: field_target(&field.field),
             address: field.presentation_address.to_string(),
             editable_scalar: scalar_kind(field.stored_value.as_ref()),
@@ -1691,13 +1754,49 @@ impl DesignerRuntime {
             .iter()
             .map(FieldTarget::as_field_ref)
             .collect::<Vec<_>>();
-        let query = self.session.query_fields(&requested)?;
+        let mut present = Vec::new();
+        let mut blanks = BTreeMap::new();
+        for target in &requested {
+            let entities = self
+                .session
+                .query_entities(std::slice::from_ref(&target.entity))?;
+            let entity = &entities.value()[0];
+            let (spec, column) = self
+                .collection_specs
+                .values()
+                .find(|spec| spec.summary.id == entity.schema.to_string())
+                .and_then(|spec| {
+                    spec.columns
+                        .iter()
+                        .find(|column| column.id == target.field)
+                        .map(|column| (spec, column))
+                })
+                .ok_or_else(|| WorkspaceError::MissingField {
+                    field: target.clone(),
+                })?;
+            if entity.fields.contains(&target.field) {
+                present.push(target.clone());
+            } else {
+                blanks.insert(
+                    target.clone(),
+                    blank_field_projection(entity, column, spec.native_table_rows),
+                );
+            }
+        }
+        let query = self.session.query_fields(&present)?;
+        let mut fields = query
+            .value()
+            .iter()
+            .map(|field| (field.field.clone(), self.project_field(field)))
+            .chain(blanks)
+            .collect::<BTreeMap<_, _>>();
         let projection = FieldBatchProjection {
             revision: query.revision().as_str().to_owned(),
-            fields: query
-                .value()
-                .iter()
-                .map(|field| self.project_field(field))
+            fields: requested
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .filter_map(|field| fields.remove(&field))
                 .collect(),
         };
         ensure_complete_projection_size("fields", &projection, MAX_PROJECTION_BYTES)?;
@@ -1779,12 +1878,68 @@ impl DesignerRuntime {
         ))
     }
 
+    #[cfg(test)]
     fn add_column(
         &mut self,
         expected: &str,
         collection: &str,
         name: &str,
         field_type: &str,
+        initializers: &[ColumnInitializer],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.add_column_with_requiredness(
+            expected,
+            collection,
+            name,
+            field_type,
+            true,
+            initializers,
+        )
+    }
+
+    fn set_column_requiredness(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        required: bool,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema, _) = self.native_column_schema(collection)?;
+        let snapshot = self.session.export_snapshot();
+        let field = FieldId::from(field.to_owned());
+        let definition = snapshot.document().schemas[&schema]
+            .fields
+            .get(&field)
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        if !matches!(definition.field_type, FieldType::Text | FieldType::Number) {
+            return Err(table_error(
+                "requiredness changes support only Text and Number",
+            ));
+        }
+        if definition.required == required {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        let command = |required| SemanticCommand::SetSchemaFieldRequiredness {
+            schema: schema.clone(),
+            field: field.clone(),
+            required,
+        };
+        self.record_edit(
+            expected,
+            vec![command(required)],
+            vec![command(definition.required)],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // One bounded column declaration, including requiredness.
+    fn add_column_with_requiredness(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        name: &str,
+        field_type: &str,
+        required: bool,
         initializers: &[ColumnInitializer],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
@@ -1805,12 +1960,13 @@ impl DesignerRuntime {
             .map(|field| field.key.to_string())
             .collect();
         let key = allocate_key(&name, "column", &occupied)?;
-        if initializers.len() != entities.len() {
+        if required && initializers.len() != entities.len() {
             return Err(table_error(
                 "every existing row needs exactly one initializer",
             ));
         }
         let kind = native_table_field_type(field_type)?;
+        admit_native_requiredness(&kind, required)?;
         let mut values = BTreeMap::new();
         for initializer in initializers {
             let entity = EntityId::from(initializer.entity.clone());
@@ -1821,7 +1977,7 @@ impl DesignerRuntime {
             }
             values.insert(entity, parse_column_initializer(&kind, &initializer.input)?);
         }
-        if values.len() != entities.len() {
+        if required && values.len() != entities.len() {
             return Err(table_error(
                 "initializers must name each current row exactly once",
             ));
@@ -1839,7 +1995,7 @@ impl DesignerRuntime {
             key: FieldKey::from(key),
             display_name: Some(name),
             field_type: kind,
-            required: true,
+            required,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
         };
         let forward = vec![SemanticCommand::AppendSchemaField {
@@ -1926,14 +2082,14 @@ impl DesignerRuntime {
         }
         let mut values = BTreeMap::new();
         for entity in entities {
-            let value = snapshot
+            if let Some(value) = snapshot
                 .document()
                 .entities
                 .get(&entity)
                 .and_then(|record| record.fields.get(&field_id))
-                .cloned()
-                .ok_or_else(|| table_error("column values are unavailable"))?;
-            values.insert(entity, value);
+            {
+                values.insert(entity, value.clone());
+            }
         }
         let forward = vec![SemanticCommand::RemoveSchemaField {
             schema: schema_id.clone(),
@@ -2554,6 +2710,18 @@ impl DesignerRuntime {
                         .display_name
                         .clone_from(display_name);
                 }
+                SemanticCommand::SetSchemaFieldRequiredness {
+                    schema,
+                    field,
+                    required,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .and_then(|schema| schema.fields.get_mut(field))
+                        .ok_or_else(|| table_error("column is unavailable"))?
+                        .required = *required;
+                }
                 SemanticCommand::UnsetField { field } => {
                     if let Some(entity) = candidate.entities.get_mut(&field.entity) {
                         entity.fields.remove(&field.field);
@@ -2622,9 +2790,11 @@ impl DesignerRuntime {
             });
         // Capacity Text human requests own their proposal evidence for this
         // one call. Other command families retain the existing lifecycle.
-        let naming_transition = snapshot.document().has_display_names()
+        let v2_evidence_transition = snapshot.document().has_display_names()
             || commands.iter().any(|command| match command {
-                SemanticCommand::SetSchemaFieldDisplayName { .. } => true,
+                SemanticCommand::SetSchemaFieldDisplayName { .. }
+                | SemanticCommand::SetSchemaFieldRequiredness { .. }
+                | SemanticCommand::UnsetField { .. } => true,
                 SemanticCommand::AppendSchemaField { field, .. } => field.display_name.is_some(),
                 SemanticCommand::AppendCollection { schema, .. } => {
                     schema.display_name.is_some()
@@ -2635,14 +2805,14 @@ impl DesignerRuntime {
                 }
                 _ => false,
             });
-        let mut local_lifecycle = if naming_transition {
+        let mut local_lifecycle = if v2_evidence_transition {
             Some(self.lifecycle.fork_for_v2_request())
         } else if capacity_text_edit {
             Some(designer_lifecycle_profile(
                 snapshot.document_scope(),
                 snapshot.document(),
                 &self.principal,
-                naming_transition,
+                v2_evidence_transition,
             )?)
         } else {
             None
@@ -2813,6 +2983,7 @@ impl DesignerRuntime {
             let key = allocate_key(name, "column", &seen_keys)?;
             seen_keys.insert(key.clone());
             let field_type = native_table_field_type(&column.field_type)?;
+            admit_native_requiredness(&field_type, column.required)?;
             let id = FieldId::from(ids.generate(SemanticIdKind::Field));
             fields.insert(
                 id.clone(),
@@ -2821,7 +2992,7 @@ impl DesignerRuntime {
                     key: FieldKey::from(key),
                     display_name: Some(name.to_owned()),
                     field_type,
-                    required: true,
+                    required: column.required,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
                 },
             );
@@ -3024,17 +3195,37 @@ impl DesignerRuntime {
             if !seen.insert(field.clone()) {
                 return Err(tracker_error("duplicate cell targets are unsupported"));
             }
-            let projection = if self.text_capacity {
-                Some(
-                    self.session
-                        .query_fields(std::slice::from_ref(&field))
-                        .map_err(|error| match error {
-                            WorkspaceError::MissingField { field } => {
-                                DesignerError::UnsupportedScalarEdit { field }
-                            }
-                            other => other.into(),
-                        })?,
-                )
+            let spec = self
+                .collection_specs
+                .values()
+                .find(|spec| spec.entities.contains(&field.entity))
+                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                    field: field.clone(),
+                })?;
+            let column = spec
+                .columns
+                .iter()
+                .find(|column| column.id == field.field)
+                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                    field: field.clone(),
+                })?;
+            let present = if let Some(snapshot) = &snapshot {
+                snapshot.document().entities[&field.entity]
+                    .fields
+                    .contains_key(&field.field)
+            } else {
+                self.session
+                    .query_entities(std::slice::from_ref(&field.entity))?
+                    .value()[0]
+                    .fields
+                    .contains(&field.field)
+            };
+            if (!present || matches!(edit.input, ScalarEditInput::Clear)) && !spec.native_table_rows
+            {
+                return Err(DesignerError::UnsupportedScalarEdit { field });
+            }
+            let projection = if self.text_capacity && present {
+                Some(self.session.query_fields(std::slice::from_ref(&field))?)
             } else {
                 None
             };
@@ -3048,14 +3239,15 @@ impl DesignerRuntime {
                     .as_ref()
                     .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
                     .and_then(|entity| entity.fields.get(&field.field))
+            };
+            // A formula is not a blank scalar slot.
+            if present && old.is_none() {
+                return Err(DesignerError::UnsupportedScalarEdit { field });
             }
-            .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
-                field: field.clone(),
-            })?;
-            let value = parse_scalar(old, &edit.input, &field)?;
-            if &value != old {
-                forward.push(SemanticCommand::set_field_value(field.clone(), value));
-                inverse.push(SemanticCommand::set_field_value(field, old.clone()));
+            let value = cell_edit_value(column, old, &edit.input, &field)?;
+            if value.as_ref() != old {
+                forward.push(value_command(&field, value.as_ref()));
+                inverse.push(value_command(&field, old));
             }
         }
         self.record_edit(expected, forward, inverse)
@@ -3172,11 +3364,6 @@ impl DesignerRuntime {
         if spec.entities.len() >= MAX_TABLE_ROWS {
             return Err(table_error("row capacity is exhausted"));
         }
-        if initializers.len() != spec.columns.len() {
-            return Err(table_error(
-                "every declared column needs exactly one initializer",
-            ));
-        }
         if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
             return Err(tracker_error("row identity allocation is exhausted"));
         }
@@ -3213,7 +3400,11 @@ impl DesignerRuntime {
                 parse_column_initializer(&column.field_type, &initializer.input)?,
             );
         }
-        if values.len() != spec.columns.len() {
+        if spec
+            .columns
+            .iter()
+            .any(|column| column.required && !values.contains_key(&column.id))
+        {
             return Err(table_error(
                 "initializers must name each declared column exactly once",
             ));
@@ -3280,7 +3471,6 @@ impl DesignerRuntime {
         self.record_edit(expected, forward, inverse)
     }
 
-    #[allow(clippy::too_many_lines)] // One bounded, atomic typed-row admission path.
     fn paste_cells(
         &mut self,
         expected: &str,
@@ -3288,6 +3478,22 @@ impl DesignerRuntime {
         start_entity: Option<&str>,
         start_field: &str,
         rows: &[Vec<String>],
+    ) -> Result<PublicationProjection, DesignerError> {
+        let rows = rows
+            .iter()
+            .map(|row| row.iter().cloned().map(PasteCellInput::Text).collect())
+            .collect::<Vec<_>>();
+        self.paste_cell_inputs(expected, collection, start_entity, start_field, &rows)
+    }
+
+    #[allow(clippy::too_many_lines)] // Validate and publish the rectangular range as one atomic action.
+    fn paste_cell_inputs(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        start_entity: Option<&str>,
+        start_field: &str,
+        rows: &[Vec<PasteCellInput>],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
         let spec = self.collection_spec(collection)?.clone();
@@ -3342,7 +3548,12 @@ impl DesignerRuntime {
                 .entities
                 .get(start + offset)
                 .and_then(|id| document.entities.get(id));
-            if existing.is_none() && !tracker && (column != 0 || row.len() != spec.columns.len()) {
+            if existing.is_none()
+                && !tracker
+                && spec.columns.iter().enumerate().any(|(index, field)| {
+                    field.required && (index < column || index >= column + row.len())
+                })
+            {
                 return Err(table_error(
                     "new native table rows must provide every declared typed column",
                 ));
@@ -3357,23 +3568,24 @@ impl DesignerRuntime {
                 },
                 Ok,
             )?;
-            for (offset, text) in row.iter().enumerate() {
-                let field =
-                    FieldRef::new(entity.id.clone(), spec.columns[column + offset].id.clone());
-                let old = entity
-                    .fields
-                    .get(&field.field)
-                    .ok_or_else(|| tracker_error("tracker row has a missing required value"))?;
-                let input = pasted_scalar_input(old, text)?;
-                let value = parse_scalar(old, &input, &field)?;
-                if existing.is_some() && &value != old {
-                    forward.push(SemanticCommand::set_field_value(
-                        field.clone(),
-                        value.clone(),
-                    ));
-                    inverse.push(SemanticCommand::set_field_value(field.clone(), old.clone()));
+            for (offset, cell) in row.iter().enumerate() {
+                let column = &spec.columns[column + offset];
+                let field = FieldRef::new(entity.id.clone(), column.id.clone());
+                let old = entity.fields.get(&field.field);
+                let input = match cell {
+                    PasteCellInput::Text(text) => pasted_column_input(&column.field_type, text)?,
+                    PasteCellInput::Typed(input) => input.clone(),
+                };
+                let value = cell_edit_value(column, old, &input, &field)?;
+                if existing.is_some() && value.as_ref() != old {
+                    forward.push(value_command(&field, value.as_ref()));
+                    inverse.push(value_command(&field, old));
                 }
-                entity.fields.insert(field.field, value);
+                if let Some(value) = value {
+                    entity.fields.insert(field.field, value);
+                } else {
+                    entity.fields.remove(&field.field);
+                }
             }
             if existing.is_none() {
                 inverse.push(SemanticCommand::RemoveEntity {
@@ -3410,6 +3622,102 @@ impl DesignerRuntime {
     pub fn occurrence_scope(&self) -> &str {
         self.document_scope.as_str()
     }
+}
+
+fn admit_native_requiredness(kind: &FieldType, required: bool) -> Result<(), DesignerError> {
+    if required || matches!(kind, FieldType::Text | FieldType::Number) {
+        Ok(())
+    } else {
+        Err(table_error(
+            "optional native columns support only Text and Number",
+        ))
+    }
+}
+
+fn value_command(field: &FieldRef, value: Option<&Value>) -> SemanticCommand {
+    value.map_or_else(
+        || SemanticCommand::UnsetField {
+            field: field.clone(),
+        },
+        |value| SemanticCommand::set_field_value(field.clone(), value.clone()),
+    )
+}
+
+fn cell_edit_value(
+    column: &ColumnSpec,
+    old: Option<&Value>,
+    input: &ScalarEditInput,
+    field: &FieldRef,
+) -> Result<Option<Value>, DesignerError> {
+    if matches!(input, ScalarEditInput::Clear) {
+        if matches!(old, Some(Value::Formula(_) | Value::Reference(_))) {
+            return Err(DesignerError::UnsupportedScalarEdit {
+                field: field.clone(),
+            });
+        }
+        if column.required || !matches!(column.field_type, FieldType::Text | FieldType::Number) {
+            return Err(table_error(
+                "clear requires an optional Text or Number column",
+            ));
+        }
+        return Ok(None);
+    }
+    if let Some(old) = old {
+        parse_scalar(old, input, field).map(Some)
+    } else if !column.required && matches!(column.field_type, FieldType::Text | FieldType::Number) {
+        parse_column_initializer(&column.field_type, input).map(Some)
+    } else {
+        Err(DesignerError::UnsupportedScalarEdit {
+            field: field.clone(),
+        })
+    }
+}
+
+fn blank_field_ids(
+    entity: &tachiko_workspace_engine::EntityInspection,
+    spec: &CollectionSpec,
+) -> Vec<String> {
+    spec.columns
+        .iter()
+        .filter(|column| !entity.fields.contains(&column.id))
+        .map(|column| column.id.to_string())
+        .collect()
+}
+
+fn blank_field_projection(
+    entity: &tachiko_workspace_engine::EntityInspection,
+    column: &ColumnSpec,
+    native_table_rows: bool,
+) -> FieldProjection {
+    FieldProjection {
+        blank: true,
+        target: field_target(&FieldRef::new(entity.id.clone(), column.id.clone())),
+        address: tachiko_workspace_engine::FieldAddress::new(
+            entity.key.clone(),
+            FieldKey::from(column.key.clone()),
+        )
+        .to_string(),
+        stored: None,
+        formula: None,
+        calculated: None,
+        diagnostics: Vec::new(),
+        editable_scalar: match column.field_type {
+            FieldType::Text if native_table_rows && !column.required => Some(ScalarKind::Text),
+            FieldType::Number if native_table_rows && !column.required => Some(ScalarKind::Number),
+            _ => None,
+        },
+    }
+}
+
+fn pasted_column_input(kind: &FieldType, text: &str) -> Result<ScalarEditInput, DesignerError> {
+    let sample = match kind {
+        FieldType::Text => Value::Text(String::new()),
+        FieldType::Number => Value::Number(Number::new(0.0).expect("finite zero")),
+        FieldType::Boolean => Value::Boolean(false),
+        FieldType::Date => Value::Date(Date::parse("1970-01-01").expect("valid date")),
+        FieldType::Reference { .. } => return Err(table_error("paste type is unsupported")),
+    };
+    pasted_scalar_input(&sample, text)
 }
 
 fn pasted_scalar_input(value: &Value, text: &str) -> Result<ScalarEditInput, DesignerError> {
@@ -5584,6 +5892,9 @@ fn native_table_row(
             allocated.insert(id.clone());
             let mut fields = BTreeMap::new();
             for column in &spec.columns {
+                if !column.required {
+                    continue;
+                }
                 let value = match &column.field_type {
                     FieldType::Text => Value::Text(String::new()),
                     FieldType::Number => Value::Number(Number::new(0.0).expect("zero is finite")),
@@ -5616,7 +5927,7 @@ fn has_scalar_row_authoring_shape(
 ) -> bool {
     (1..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
         && schema.fields.values().all(|field| {
-            field.required
+            (field.required || matches!(field.field_type, FieldType::Text | FieldType::Number))
                 && matches!(
                     field.field_type,
                     FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
@@ -5625,9 +5936,12 @@ fn has_scalar_row_authoring_shape(
         && entities.iter().all(|id| {
             document.entities.get(id).is_some_and(|entity| {
                 entity.schema == schema.id
-                    && entity.fields.len() == schema.fields.len()
+                    && entity
+                        .fields
+                        .keys()
+                        .all(|id| schema.fields.contains_key(id))
                     && schema.fields.iter().all(|(id, field)| {
-                        entity.fields.get(id).is_some_and(|value| {
+                        entity.fields.get(id).map_or(!field.required, |value| {
                             matches!(
                                 (field.field_type.clone(), value),
                                 (FieldType::Text, Value::Text(_))
@@ -5867,6 +6181,7 @@ mod tests {
         );
         assert_eq!(capacity.rows.len(), 12);
         assert_eq!(capacity.rows[2].fields, [] as [super::FieldProjection; 0]);
+        assert_eq!(capacity.rows[2].blank_fields.len(), 3);
 
         // Both routes validate the complete entity request before projecting
         // fields, and neither may change the resident revision on refusal.
@@ -6178,23 +6493,22 @@ mod tests {
         )
         .unwrap();
         let before = runtime.query_table("orders").unwrap().rows;
-        assert!(
-            runtime
-                .edit_cells(
-                    "resident/0",
-                    &[super::CellEdit {
-                        target: target.clone(),
-                        input: ScalarEditInput::Text {
-                            value: "direct".into()
-                        }
-                    }]
-                )
-                .is_err()
-        );
-        assert_eq!(runtime.current_revision(), "resident/0");
+        runtime
+            .edit_cells(
+                "resident/0",
+                &[super::CellEdit {
+                    target: target.clone(),
+                    input: ScalarEditInput::Text {
+                        value: "direct".into(),
+                    },
+                }],
+            )
+            .unwrap();
+        runtime.history_edit("resident/1", false).unwrap();
+        assert_eq!(runtime.query_table("orders").unwrap().rows, before);
         let preview = runtime
             .preview_cleanup(
-                "resident/0",
+                "resident/2",
                 &super::CleanupOperation::Fill {
                     fields: vec![target],
                     input: ScalarEditInput::Text {
@@ -6204,19 +6518,19 @@ mod tests {
             )
             .unwrap();
         runtime
-            .commit_cleanup("resident/0", &preview.preview_id)
+            .commit_cleanup("resident/2", &preview.preview_id)
             .unwrap();
         let filled = runtime.query_table("orders").unwrap().rows;
         assert_ne!(filled, before);
         runtime
             .handle(DesignerRequest::Undo {
-                expected_revision: "resident/1".into(),
+                expected_revision: "resident/3".into(),
             })
             .unwrap();
         assert_eq!(runtime.query_table("orders").unwrap().rows, before);
         runtime
             .handle(DesignerRequest::Redo {
-                expected_revision: "resident/2".into(),
+                expected_revision: "resident/4".into(),
             })
             .unwrap();
         assert_eq!(runtime.query_table("orders").unwrap().rows, filled);
@@ -6577,6 +6891,7 @@ mod tests {
             &columns
                 .iter()
                 .map(|(name, field_type)| NewTableColumnInput {
+                    required: true,
                     name: (*name).to_owned(),
                     field_type: (*field_type).to_owned(),
                 })
@@ -7669,6 +7984,7 @@ mod tests {
             "00000000-0000-4000-8000-000000000000",
             "Orders",
             &[NewTableColumnInput {
+                required: true,
                 name: "Item".to_owned(),
                 field_type: "text".to_owned(),
             }],
@@ -8008,6 +8324,7 @@ mod tests {
             "00000000-0000-4000-8000-000000000000",
             "Source",
             &[super::NewTableColumnInput {
+                required: true,
                 name: "Value".to_owned(),
                 field_type: "number".to_owned(),
             }],

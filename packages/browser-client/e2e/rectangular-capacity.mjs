@@ -55,14 +55,18 @@ try {
               same(table.rows.length, values.length, "all rows");
               same(table.collection.entity_count, values.length, "entity count");
               same(table.columns.map(c => c.field_type), caseValue.kinds, "confirmed types");
+              same(table.columns.map(c => c.required), caseValue.kinds.map(() => false), "imported optional declarations");
               same(metadata.sheets[0].columns.map(c => c.name), caseValue.headers, "headers");
               same(table.columns.map(c => c.id), metadata.sheets[0].columns.map(c => c.field_id), "column identity/order");
               same(table.rows.map(r => r.id), metadata.sheets[0].rows.map(r => r.entity_id), "row identity/order");
               table.rows.forEach((row, r) => {
+                const blanks = table.columns.filter((_, c) => values[r][c] === null).map(column => column.id);
+                same(row.blank_fields, blanks.length === 0 ? undefined : blanks, "exact ordered absent declared fields");
                 const present = table.columns.flatMap((column, c) => values[r][c] === null ? []
                   : [{ target: { entity: row.id, field: column.id }, stored: values[r][c], c }]);
                 same(row.fields.map(field => field.target), present.map(cell => cell.target), "exact ordered present subset");
                 row.fields.forEach((field, index) => {
+                  same(field.blank, undefined, "present scalar has no blank marker");
                   same(field.stored, present[index].stored, `cell ${r},${present[index].c}`);
                   same(field.formula, null, "no formulas"); same(field.diagnostics, [], "no diagnostics");
                 });

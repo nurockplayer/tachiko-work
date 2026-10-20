@@ -50,7 +50,12 @@ fn populate(runtime: &mut DesignerRuntime, count: usize) -> String {
                 collection: "tracker".to_owned(),
                 start_entity: None,
                 start_field: "task".to_owned(),
-                rows: chunk.to_vec(),
+                rows: {
+                    let rows: Vec<Vec<String>> = chunk.to_vec();
+                    rows.into_iter()
+                        .map(|row| row.into_iter().map(Into::into).collect())
+                        .collect()
+                },
             })
             .expect("accepted Tracker row count should publish")
         else {
@@ -86,11 +91,16 @@ fn native_tracker_outbound_profile_covers_every_admitted_row_boundary() {
                 collection: "tracker".to_owned(),
                 start_entity: None,
                 start_field: "task".to_owned(),
-                rows: vec![vec![
-                    "item-129".to_owned(),
-                    "129".to_owned(),
-                    "false".to_owned()
-                ]],
+                rows: {
+                    let rows: Vec<Vec<String>> = vec![vec![
+                        "item-129".to_owned(),
+                        "129".to_owned(),
+                        "false".to_owned(),
+                    ]];
+                    rows.into_iter()
+                        .map(|row| row.into_iter().map(Into::into).collect())
+                        .collect()
+                },
             })
             .is_err()
     );
@@ -98,6 +108,7 @@ fn native_tracker_outbound_profile_covers_every_admitted_row_boundary() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Keep the full 128-row export journey together.
 fn native_tracker_exports_all_128_rows_without_import_provenance_or_mutation() {
     let mut runtime = DesignerRuntime::tracker(OCCURRENCE).unwrap();
     let rows: Vec<Vec<String>> = (1..=128)
@@ -116,7 +127,12 @@ fn native_tracker_exports_all_128_rows_without_import_provenance_or_mutation() {
             collection: "tracker".to_owned(),
             start_entity: None,
             start_field: "task".to_owned(),
-            rows: first.to_vec(),
+            rows: {
+                first
+                    .iter()
+                    .map(|row| row.iter().cloned().map(Into::into).collect())
+                    .collect()
+            },
         })
         .expect("the first bounded stock Tracker batch should be admitted")
     else {
@@ -128,7 +144,12 @@ fn native_tracker_exports_all_128_rows_without_import_provenance_or_mutation() {
             collection: "tracker".to_owned(),
             start_entity: None,
             start_field: "task".to_owned(),
-            rows: second.to_vec(),
+            rows: {
+                second
+                    .iter()
+                    .map(|row| row.iter().cloned().map(Into::into).collect())
+                    .collect()
+            },
         })
         .expect("the second bounded stock Tracker batch should reach 128 rows")
     else {
@@ -203,7 +224,13 @@ fn native_tracker_export_rejects_partial_or_stale_presentation_without_mutation(
             collection: "tracker".to_owned(),
             start_entity: None,
             start_field: "task".to_owned(),
-            rows: vec![vec!["one".to_owned(), "1".to_owned(), "false".to_owned()]],
+            rows: {
+                let rows: Vec<Vec<String>> =
+                    vec![vec!["one".to_owned(), "1".to_owned(), "false".to_owned()]];
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(Into::into).collect())
+                    .collect()
+            },
         })
         .unwrap()
     else {
@@ -244,14 +271,19 @@ fn native_tracker_preserves_scalar_meaning_and_refuses_formula_like_csv_text() {
             collection: "tracker".to_owned(),
             start_entity: None,
             start_field: "task".to_owned(),
-            rows: vec![
-                vec!["=literal".to_owned(), "-1.5".to_owned(), "false".to_owned()],
-                vec![
-                    "000123 \"林\"\tline\nnext".to_owned(),
-                    "0".to_owned(),
-                    "true".to_owned(),
-                ],
-            ],
+            rows: {
+                let rows: Vec<Vec<String>> = vec![
+                    vec!["=literal".to_owned(), "-1.5".to_owned(), "false".to_owned()],
+                    vec![
+                        "000123 \"林\"\tline\nnext".to_owned(),
+                        "0".to_owned(),
+                        "true".to_owned(),
+                    ],
+                ];
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(Into::into).collect())
+                    .collect()
+            },
         })
         .expect("special scalar values should be accepted")
     else {

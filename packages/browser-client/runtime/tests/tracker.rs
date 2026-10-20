@@ -25,7 +25,10 @@ fn paste(
         collection: "tracker".to_owned(),
         start_entity: None,
         start_field: "task".to_owned(),
-        rows,
+        rows: rows
+            .into_iter()
+            .map(|row| row.into_iter().map(Into::into).collect())
+            .collect(),
     })
 }
 #[test]
@@ -280,10 +283,15 @@ fn paste_over_blank_row_skips_unchanged_cells_without_losing_atomic_changes() {
             collection: "tracker".to_owned(),
             start_entity: Some(id.clone()),
             start_field: "task".to_owned(),
-            rows: vec![
-                vec!["Changed".to_owned(), "0".to_owned(), "false".to_owned()],
-                vec!["Appended".to_owned(), "3".to_owned(), "false".to_owned()],
-            ],
+            rows: {
+                let rows: Vec<Vec<String>> = vec![
+                    vec!["Changed".to_owned(), "0".to_owned(), "false".to_owned()],
+                    vec!["Appended".to_owned(), "3".to_owned(), "false".to_owned()],
+                ];
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(Into::into).collect())
+                    .collect()
+            },
         })
         .unwrap();
     let pasted = table(&mut runtime);

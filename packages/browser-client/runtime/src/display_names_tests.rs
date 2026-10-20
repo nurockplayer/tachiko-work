@@ -11,6 +11,7 @@ fn columns(names: &[&str]) -> Vec<NewTableColumnInput> {
     names
         .iter()
         .map(|name| NewTableColumnInput {
+            required: true,
             name: (*name).to_owned(),
             field_type: "text".to_owned(),
         })
@@ -310,10 +311,12 @@ fn nameless_rename_inverse_restores_absence_and_preserves_formula_bindings() {
         "Orders",
         &[
             NewTableColumnInput {
+                required: true,
                 name: "Amount".into(),
                 field_type: "number".into(),
             },
             NewTableColumnInput {
+                required: true,
                 name: "Total".into(),
                 field_type: "number".into(),
             },
@@ -500,6 +503,7 @@ fn name_edits_retain_revoked_authorization_and_fail_without_publication() {
 fn oversized_named_projection_refuses_atomically() {
     let inputs = (0..32)
         .map(|index| NewTableColumnInput {
+            required: true,
             name: format!("{index:02}{}", "\"".repeat(898)),
             field_type: "text".into(),
         })
@@ -526,10 +530,12 @@ fn accumulated_name_failure_reply_is_bounded_and_retains_every_input() {
             let name = format!("g{group}{}", "\"".repeat(1550));
             [
                 NewTableColumnInput {
+                    required: true,
                     name: name.clone(),
                     field_type: "text".into(),
                 },
                 NewTableColumnInput {
+                    required: true,
                     name,
                     field_type: "text".into(),
                 },

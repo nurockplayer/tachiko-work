@@ -78,11 +78,14 @@ try {
             same(metadata.sheets[0].columns.map(c => c.name), fixture.headers, 'source header fidelity');
             same(table.collection.id, metadata.sheets[0].schema_id, 'collection mapping');
             same(table.columns.map(c => c.field_type), ['text', 'text', 'text'], 'Text types');
+            same(table.columns.map(c => c.required), [false, false, false], 'imported optional declarations');
             same(table.columns.map(c => c.id), metadata.sheets[0].columns.map(c => c.field_id), 'column mappings');
             same(table.rows.map(r => r.id), metadata.sheets[0].rows.map(r => r.entity_id), 'all row mappings');
             table.rows.forEach((r, i) => {
+              same(r.blank_fields, undefined, 'complete fixture row has no blank fields');
               same(r.fields.length, 3, 'three fields per row');
               r.fields.forEach((f, j) => {
+              same(f.blank, undefined, 'present Text has no blank marker');
               same(f.target, {entity: r.id, field: table.columns[j].id}, 'stable target');
               same(f.stored, {kind: 'text', value: expected[i][j]}, `cell ${i},${j}`);
               same(f.formula, null, 'no formula'); same(f.diagnostics, [], 'no diagnostics');

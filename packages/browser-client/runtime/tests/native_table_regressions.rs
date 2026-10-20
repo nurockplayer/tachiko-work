@@ -104,18 +104,22 @@ fn inventory() -> DesignerRuntime {
         "Inventory",
         &[
             NewTableColumnInput {
+                required: true,
                 name: "item".to_owned(),
                 field_type: "text".to_owned(),
             },
             NewTableColumnInput {
+                required: true,
                 name: "quantity".to_owned(),
                 field_type: "number".to_owned(),
             },
             NewTableColumnInput {
+                required: true,
                 name: "active".to_owned(),
                 field_type: "boolean".to_owned(),
             },
             NewTableColumnInput {
+                required: true,
                 name: "received".to_owned(),
                 field_type: "date".to_owned(),
             },
@@ -154,7 +158,12 @@ fn native_table_profile_requires_complete_typed_rows_without_publication() {
         collection: initial.collection.id,
         start_entity: None,
         start_field: initial.columns[0].id.clone(),
-        rows: vec![vec!["only the item".to_owned()]],
+        rows: {
+            let rows: Vec<Vec<String>> = vec![vec!["only the item".to_owned()]];
+            rows.into_iter()
+                .map(|row| row.into_iter().map(Into::into).collect())
+                .collect()
+        },
     });
 
     assert!(
@@ -186,7 +195,12 @@ fn row_paste_rejects_non_native_collections_before_row_construction() {
         collection: initial.collection.id,
         start_entity: None,
         start_field: initial.columns[0].id.clone(),
-        rows: vec![vec!["must not append".to_owned()]],
+        rows: {
+            let rows: Vec<Vec<String>> = vec![vec!["must not append".to_owned()]];
+            rows.into_iter()
+                .map(|row| row.into_iter().map(Into::into).collect())
+                .collect()
+        },
     });
 
     assert!(result.is_err(), "non-native row paste must be refused");
@@ -225,19 +239,24 @@ fn scalar_row_authoring_survives_respelled_opaque_ids_and_reopen() {
             collection: reopened_table.collection.id,
             start_entity: None,
             start_field: reopened_table.columns[0].id.clone(),
-            rows: vec![
-                reopened_table
-                    .columns
-                    .iter()
-                    .map(|column| match column.field_type.as_str() {
-                        "text" => "continued".to_owned(),
-                        "number" => "4".to_owned(),
-                        "boolean" => "false".to_owned(),
-                        "date" => "2026-02-01".to_owned(),
-                        other => panic!("scalar-shaped fixture has unsupported {other} column"),
-                    })
-                    .collect(),
-            ],
+            rows: {
+                let rows: Vec<Vec<String>> = vec![
+                    reopened_table
+                        .columns
+                        .iter()
+                        .map(|column| match column.field_type.as_str() {
+                            "text" => "continued".to_owned(),
+                            "number" => "4".to_owned(),
+                            "boolean" => "false".to_owned(),
+                            "date" => "2026-02-01".to_owned(),
+                            other => panic!("scalar-shaped fixture has unsupported {other} column"),
+                        })
+                        .collect(),
+                ];
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(Into::into).collect())
+                    .collect()
+            },
         })
         .expect("reopened scalar-shaped table must allocate a row without parsing persisted IDs");
     let tachiko_designer_runtime::DesignerResponse::Published(publication) = publication else {
@@ -262,12 +281,17 @@ fn legacy_looking_ids_do_not_grant_scalar_row_authoring_without_the_shape() {
         collection: initial.collection.id,
         start_entity: None,
         start_field: initial.columns[0].id.clone(),
-        rows: vec![vec![
-            "must not append".to_owned(),
-            "1".to_owned(),
-            "true".to_owned(),
-            "2026-02-01".to_owned(),
-        ]],
+        rows: {
+            let rows: Vec<Vec<String>> = vec![vec![
+                "must not append".to_owned(),
+                "1".to_owned(),
+                "true".to_owned(),
+                "2026-02-01".to_owned(),
+            ]];
+            rows.into_iter()
+                .map(|row| row.into_iter().map(Into::into).collect())
+                .collect()
+        },
     });
     assert!(
         result.is_err(),
