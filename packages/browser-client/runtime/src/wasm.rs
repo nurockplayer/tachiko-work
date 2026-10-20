@@ -649,17 +649,21 @@ fn export_spreadsheet(
                     message: "CSV export collection is unavailable.".to_owned(),
                 }
             })?;
-            let bytes = export_csv(sheet).map_err(interop_error)?;
+            let bytes = export_csv(sheet).map_err(|error| {
+                crate::interop_document::imported_export_error("workbook", &error.0)
+            })?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,
                 code: "csv_values_only".to_owned(),
                 location: sheet.name.clone(),
-                message: "CSV exports selected-sheet scalar values only. Formula definitions, presentation formatting, and other sheets are not preserved; retain the source project.".to_owned(),
+                message: "CSV exports selected-sheet scalar values only. Blank and present empty Text both become empty CSV fields. Formula definitions, presentation formatting, and other sheets are not preserved; retain the source project.".to_owned(),
                 blocking: false,
             });
             bytes
         }
-        SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(interop_error)?,
+        SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(|error| {
+            crate::interop_document::imported_export_error("workbook", &error.0)
+        })?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {

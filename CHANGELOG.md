@@ -4,6 +4,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Imported CSV/XLSX tables that qualify structurally for native authoring now
+  export current renamed headers, appended rows/columns and removed structure,
+  including blanks, Undo and v3/package reopen with retained import metadata.
+  Existing output limits refuse the whole file with located typed findings;
+  surviving cell styles and stable formula references are retained.
+
 ### Added
 
 - The experimental TypeScript client and exported Worker kit expose optional

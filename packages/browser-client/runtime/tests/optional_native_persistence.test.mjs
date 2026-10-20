@@ -7,8 +7,13 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const script = fileURLToPath(new URL("./optional_native_persistence.mjs", import.meta.url));
-const names = ["sole-false-portable-false", "sole-false-portable-true",
-  "sole-true-portable-false", "sole-true-portable-true"];
+const names = [
+  "sole-false-portable-false", "sole-false-portable-true",
+  "sole-true-portable-false", "sole-true-portable-true",
+  ...["csv", "xlsx"].flatMap(source =>
+    ["rename", "add_blank", "add_fill", "remove", "insert", "insert_blank", "delete"].map(operation => `${source}-${operation}`)),
+  "refusals", "formulas",
+];
 
 async function fixture(t, records) {
   const root = await mkdtemp(join(tmpdir(), "554-parity-negative-"));
@@ -37,7 +42,7 @@ test("empty native captures fail even with an empty WASM module", async t => {
 
 test("missing and duplicate native cases fail the expected inventory", async t => {
   const { wasm, captures } = await fixture(t, [{}]);
-  refuses(wasm, captures.slice(0, 3), /inventory must include all four expected cases/);
+  refuses(wasm, captures.slice(0, 3), /inventory must include all expected cases/);
   refuses(wasm, [captures[0], captures[1], captures[2], captures[0]], /duplicate native capture case/);
 });
 

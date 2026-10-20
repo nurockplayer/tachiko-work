@@ -656,7 +656,23 @@ pub struct InteropSheetMetadata {
 pub struct InteropColumnMetadata {
     pub field_id: String,
     pub name: String,
+    #[serde(default, deserialize_with = "metadata_width")]
     pub width: Option<f64>,
+}
+
+// Internally tagged operations buffer JSON numbers with arbitrary_precision.
+// Decode through Number so both integer and fractional widths survive buffering.
+fn metadata_width<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    Option::<serde_json::Number>::deserialize(deserializer)?
+        .map(|number| {
+            number
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| serde::de::Error::custom("metadata width must be finite"))
+        })
+        .transpose()
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1339,12 +1355,312 @@ fn check_label(label: &str) -> Result<(), DesignerError> {
     Ok(())
 }
 
+/// Reconcile source presentation with current stable identities. Source slots
+/// remain useful for Undo; they never recreate removed fields or entities.
+fn current_import_metadata(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> Result<(InteropMetadata, Vec<FidelityFinding>), DesignerError> {
+    let refuse = |location: &str, message: &str| imported_export_error(location, message);
+    validate_historical_envelope(document, metadata)?;
+    let specs = super::collection_specs(document);
+    let mut result = metadata.clone();
+    let mut ledger = Vec::new();
+    let mut schemas = BTreeSet::new();
+    let mut names = BTreeSet::new();
+    let mut entities = BTreeSet::new();
+    for sheet in &mut result.sheets {
+        let location = format!("collection {}", sheet.schema_id);
+        check_label(&sheet.name).map_err(|error| refuse(&location, &error.to_string()))?;
+        let schema = document
+            .schemas
+            .get(sheet.schema_id.as_str())
+            .ok_or_else(|| refuse(&location, "Mapped schema is unavailable."))?;
+        if !schemas.insert(sheet.schema_id.clone())
+            || !names.insert(sheet.name.to_ascii_lowercase())
+            || sheet.columns.is_empty()
+            || sheet.columns.len() > MAX_COLUMNS
+        {
+            return Err(refuse(
+                &location,
+                "Duplicate worksheet or invalid source column mapping.",
+            ));
+        }
+        let fields = validate_historical_sheet(document, sheet, &mut entities)?;
+        let native = specs
+            .values()
+            .find(|spec| spec.summary.id == sheet.schema_id)
+            .is_some_and(|spec| spec.native_table_rows);
+        if !native
+            && (schema.fields.len() != sheet.columns.len()
+                || schema
+                    .fields
+                    .keys()
+                    .any(|field| !fields.contains(field.as_str()))
+                || document
+                    .entities
+                    .values()
+                    .filter(|entity| entity.schema == schema.id)
+                    .any(|entity| !entities.contains(entity.id.as_str())))
+        {
+            return Err(refuse(
+                &location,
+                "Non-native worksheets require complete current identity mappings.",
+            ));
+        }
+        let source_columns = sheet.columns.clone();
+        // Keep surviving source columns in source order, then append new fields
+        // in the runtime's deterministic current column order.
+        sheet
+            .columns
+            .retain(|column| schema.fields.contains_key(column.field_id.as_str()));
+        for field in schema
+            .fields
+            .values()
+            .filter(|field| !fields.contains(field.id.as_str()))
+        {
+            if field.display_name.is_none() {
+                return Err(refuse(
+                    &format!("{location}/field {}", field.id),
+                    "An unmapped field without an explicit display name has no recoverable spreadsheet header.",
+                ));
+            }
+            sheet.columns.push(InteropColumnMetadata {
+                field_id: field.id.to_string(),
+                name: field.effective_name().to_owned(),
+                width: None,
+            });
+        }
+        if sheet.columns != source_columns
+            || sheet
+                .rows
+                .iter()
+                .any(|row| !document.entities.contains_key(row.entity_id.as_str()))
+            || document
+                .entities
+                .values()
+                .filter(|entity| entity.schema == schema.id)
+                .any(|entity| !entities.contains(entity.id.as_str()))
+        {
+            ledger.push(FidelityFinding { category: FidelityCategory::Converted,
+                code: "imported_current_structure".into(), location: location.clone(),
+                message: "Surviving source columns and rows retain source order and identity-bound presentation. Added columns and rows append in current canonical order with default presentation; removed columns and deleted rows are omitted. Blank optional values are empty cells.".into(), blocking: false });
+        }
+        map_current_headers(schema, sheet, &mut ledger)?;
+        reconcile_import_rows(document, sheet, &source_columns, &entities)?;
+    }
+    validate_exact_import_metadata(document, &result)
+        .map_err(|error| refuse("workbook", &error.to_string()))?;
+    Ok((result, ledger))
+}
+
+fn validate_historical_envelope(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> Result<(), DesignerError> {
+    let refuse = imported_export_error;
+    if metadata.version != 1
+        || metadata.sheets.is_empty()
+        || metadata.sheets.len() > MAX_SHEETS
+        || metadata.sheets.len() != document.schemas.len()
+    {
+        return Err(refuse(
+            "workbook",
+            "Metadata must cover every current worksheet exactly once.",
+        ));
+    }
+    let capacity =
+        super::is_text_capacity_document(document) && document.entities.len() > MAX_DATA_ROWS;
+    super::ensure_projection_size_with_limit(
+        metadata,
+        if capacity {
+            3 * 1024 * 1024
+        } else {
+            super::MAX_PROJECTION_BYTES
+        },
+    )
+    .map_err(|error| refuse("workbook", &error.to_string()))?;
+    Ok(())
+}
+
+fn reconcile_import_rows(
+    document: &Document,
+    sheet: &mut InteropSheetMetadata,
+    source_columns: &[InteropColumnMetadata],
+    entities: &BTreeSet<String>,
+) -> Result<(), DesignerError> {
+    let location = format!("collection {}", sheet.schema_id);
+    let schema = &document.schemas[sheet.schema_id.as_str()];
+    let refuse = imported_export_error;
+    sheet
+        .rows
+        .retain(|row| document.entities.contains_key(row.entity_id.as_str()));
+    for row in &mut sheet.rows {
+        row.styles = sheet
+            .columns
+            .iter()
+            .map(|column| {
+                source_columns
+                    .iter()
+                    .position(|old| old.field_id == column.field_id)
+                    .map_or_else(CellStyle::default, |index| row.styles[index].clone())
+            })
+            .collect();
+    }
+    for entity in document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == schema.id && !entities.contains(entity.id.as_str()))
+    {
+        sheet.rows.push(InteropRowMetadata {
+            entity_id: entity.id.to_string(),
+            styles: vec![CellStyle::default(); sheet.columns.len()],
+        });
+    }
+    let capacity =
+        super::is_text_capacity_document(document) && document.entities.len() > MAX_DATA_ROWS;
+    if sheet.columns.is_empty()
+        || sheet.columns.len() > MAX_COLUMNS
+        || sheet.rows.len()
+            > if capacity {
+                super::interop_adapter::MAX_TEXT_CAPACITY_ROWS
+            } else {
+                MAX_DATA_ROWS
+            }
+    {
+        return Err(refuse(
+            &location,
+            "Current rows or columns exceed the existing metadata export profile; nothing is truncated.",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_historical_sheet(
+    document: &Document,
+    sheet: &InteropSheetMetadata,
+    entities: &mut BTreeSet<String>,
+) -> Result<BTreeSet<String>, DesignerError> {
+    let location = format!("collection {}", sheet.schema_id);
+    let refuse = imported_export_error;
+    let schema = &document.schemas[sheet.schema_id.as_str()];
+    let mut fields = BTreeSet::new();
+    let mut labels = BTreeSet::new();
+    for column in &sheet.columns {
+        check_label(&column.field_id).map_err(|error| refuse(&location, &error.to_string()))?;
+        check_label(&column.name).map_err(|error| refuse(&location, &error.to_string()))?;
+        if !fields.insert(column.field_id.clone())
+            || !labels.insert(column.name.clone())
+            || column
+                .width
+                .is_some_and(|w| !w.is_finite() || w <= 0.0 || w > 255.0)
+        {
+            return Err(refuse(
+                &location,
+                "Duplicate source field, header or invalid width.",
+            ));
+        }
+    }
+    for row in &sheet.rows {
+        check_label(&row.entity_id).map_err(|error| refuse(&location, &error.to_string()))?;
+        if !entities.insert(row.entity_id.clone())
+            || row.styles.len() != sheet.columns.len()
+            || document
+                .entities
+                .get(row.entity_id.as_str())
+                .is_some_and(|e| e.schema != schema.id)
+        {
+            return Err(refuse(
+                &location,
+                "Duplicate or foreign row, or invalid source style dimensions.",
+            ));
+        }
+        for style in &row.styles {
+            for text in [&style.number_format, &style.fill, &style.alignment]
+                .into_iter()
+                .flatten()
+            {
+                if text.len() > MAX_PROFILE_STRING_BYTES || text.contains('\0') {
+                    return Err(refuse(
+                        &location,
+                        "Source style exceeds the bounded profile.",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(fields)
+}
+
+fn map_current_headers(
+    schema: &tachiko_workspace_engine::Schema,
+    sheet: &mut InteropSheetMetadata,
+    ledger: &mut Vec<FidelityFinding>,
+) -> Result<(), DesignerError> {
+    let location = format!("collection {}", sheet.schema_id);
+    let mut headers = BTreeSet::new();
+    for column in &mut sheet.columns {
+        let field = &schema.fields[column.field_id.as_str()];
+        let source = field.display_name.as_deref().unwrap_or(&column.name);
+        let path = format!("{location}/field {}", field.id);
+        let mapped = super::interop_adapter::native_tables_compatibility(
+            super::interop_adapter::NativeTablesCheck::Name {
+                value: source,
+                worksheet: false,
+                used: &mut headers,
+                allocate: true,
+            },
+            &path,
+        )
+        .map_err(|finding| DesignerError::ImportedSpreadsheetExport { finding })?
+        .name;
+        if mapped != column.name {
+            ledger.push(FidelityFinding {
+                category: FidelityCategory::Converted,
+                code: "imported_current_header".into(),
+                location: path,
+                message: format!(
+                    "Current header {source:?} exports as {mapped:?}; the source header was {:?}.",
+                    column.name
+                ),
+                blocking: false,
+            });
+        }
+        column.name = mapped;
+    }
+    Ok(())
+}
+
+pub(crate) fn imported_export_error(location: &str, message: &str) -> DesignerError {
+    DesignerError::ImportedSpreadsheetExport {
+        finding: FidelityFinding {
+            category: FidelityCategory::UnsupportedSafeDisabled,
+            code: "imported_spreadsheet_unrepresentable".into(),
+            location: location.into(),
+            message: message.into(),
+            blocking: true,
+        },
+    }
+}
+
+/// Admit historical import metadata against current content without requiring
+/// deleted slots to be removed from the host's presentation record.
+///
+/// # Errors
+/// Rejects invalid mappings or current content outside the metadata output profile.
+pub fn validate_import_metadata(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> Result<(), DesignerError> {
+    current_import_metadata(document, metadata).map(|_| ())
+}
+
 /// Check private source presentation mappings against exact canonical identity.
 /// Deleted source rows may remain as source metadata; they never recreate data.
 ///
 /// # Errors
 /// Rejects duplicate, foreign, unbounded, or incomplete schema/field/row maps.
-pub fn validate_import_metadata(
+fn validate_exact_import_metadata(
     document: &Document,
     metadata: &InteropMetadata,
 ) -> Result<(), DesignerError> {
@@ -1540,20 +1856,25 @@ impl DesignerRuntime {
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
-        validate_import_metadata(snapshot.document(), metadata)?;
+        let (metadata, ledger) = current_import_metadata(snapshot.document(), metadata)?;
         if self.text_capacity {
-            validate_capacity_metadata(snapshot.document(), metadata)?;
+            validate_capacity_metadata(snapshot.document(), &metadata)
+                .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
         }
-        self.export_workbook_from_metadata(
-            expected_revision,
-            snapshot.document(),
-            metadata,
-            if self.text_capacity {
-                OutputProfile::TextCapacity
-            } else {
-                OutputProfile::Shared
-            },
-        )
+        let mut workbook = self
+            .export_workbook_from_metadata(
+                expected_revision,
+                snapshot.document(),
+                &metadata,
+                if self.text_capacity {
+                    OutputProfile::TextCapacity
+                } else {
+                    OutputProfile::Shared
+                },
+            )
+            .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
+        workbook.ledger.extend(ledger);
+        Ok(workbook)
     }
 
     /// Export the one stock Tracker profile without fabricating import provenance.

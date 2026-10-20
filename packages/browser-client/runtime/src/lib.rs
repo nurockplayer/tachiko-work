@@ -767,6 +767,10 @@ pub enum DesignerError {
     Storage(#[from] FormatError),
     #[error("project transfer is invalid: {message}")]
     InvalidProjectTransfer { message: String },
+    #[error("imported spreadsheet export refused: {}: {}", .finding.code, .finding.message)]
+    ImportedSpreadsheetExport {
+        finding: interop_adapter::FidelityFinding,
+    },
     #[error("native tables export refused: {}: {}", .finding.code, .finding.message)]
     NativeTablesExport {
         finding: interop_adapter::FidelityFinding,
@@ -830,6 +834,17 @@ impl DesignerError {
             }
             Self::NativeTablesExport { finding } => (
                 "native_tables_export_refused",
+                vec![DiagnosticProjection {
+                    code: finding.code.clone(),
+                    message: finding.message.clone(),
+                    path: finding.location.clone(),
+                    subjects: Vec::new(),
+                    related_subjects: Vec::new(),
+                    facts: Vec::new(),
+                }],
+            ),
+            Self::ImportedSpreadsheetExport { finding } => (
+                "imported_spreadsheet_export_refused",
                 vec![DiagnosticProjection {
                     code: finding.code.clone(),
                     message: finding.message.clone(),

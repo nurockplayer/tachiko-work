@@ -65,10 +65,14 @@ Native scalar table admission (today: every field required, every row
 complete) is extended: a native scalar table may declare **optional Text and
 Number fields alongside required scalar fields**. An absent optional entry is
 valid; every present entry keeps its direct scalar type requirement. This
-decision grants **new authoring authority** for Text/Number only. It does not
-invalidate or reclassify existing documents: imported tables keep the optional
-fields their import already creates (including Date and Boolean), and their
-classification stays structural.
+decision grants **new authoring authority** for Text/Number only. Classification
+is structural: an imported table qualifies for native authoring
+when every field is scalar and its optional fields are Text/Number; imports with
+optional Date/Boolean remain non-native. “Does not invalidate” means no stored
+field or value changes, including the optional declarations import already
+creates. Import origin is not an authoring exception. See [#557](https://github.com/nurockplayer/tachiko-work/issues/557)
+and the [imported-workbook export contract](../specs/imported-workbook-spreadsheet-export.md)
+for current-content export or located whole-file refusal after structural edits.
 
 ### Admitted native-table operations
 
