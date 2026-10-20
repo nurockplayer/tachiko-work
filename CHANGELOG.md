@@ -6,6 +6,20 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Imported-metadata export now selects its output scope before reconstruction:
+  CSV checks and emits only the selected sheet's scalar values and headers;
+  unrelated content and omitted XLSX presentation cannot block it. XLSX uses the
+  shared native compatibility inventory for every emitted element, including
+  formula numeric literals independently of cached results, reference/worksheet
+  names, number-format conditions, styles and widths. Previously unfaithful
+  worksheet names, subnormal literals/conditions, oversized format codes, excess
+  style resources and widths Excel would quantize now refuse the whole file with
+  located findings. Precision disclosures share one bounded location budget.
+  Number-format attribute whitespace is encoded faithfully; supported untouched
+  cells/formulas/styles retain their semantics and presentation. The imported
+  part of #547 now covers every emitted text surface; general writer escaping,
+  Tracker/Budget and reader work remain open.
+
 - Imported-metadata XLSX exports check every emitted cell against the shared
   Excel compatibility policy, including untouched Text: refuse literal `_xHHHH_`,
   XML-illegal characters, Text over 32,767 UTF-16 units or 253 line feeds,

@@ -628,7 +628,10 @@ fn export_spreadsheet(
     let mut workbook = runtime.export_imported_workbook(
         revision,
         &export_metadata,
-        matches!(format, SpreadsheetFormat::Xlsx),
+        match format {
+            SpreadsheetFormat::Csv => crate::interop_document::ImportedOutput::Csv(collection),
+            SpreadsheetFormat::Xlsx => crate::interop_document::ImportedOutput::Xlsx,
+        },
     )?;
     for name in inserted_headers {
         workbook.ledger.push(FidelityFinding {
@@ -641,18 +644,7 @@ fn export_spreadsheet(
     }
     let bytes = match format {
         SpreadsheetFormat::Csv => {
-            let index = metadata
-                .sheets
-                .iter()
-                .position(|sheet| sheet.schema_id == collection)
-                .ok_or_else(|| DesignerError::InvalidProjectTransfer {
-                    message: "CSV export requires a known stable collection ID.".to_owned(),
-                })?;
-            let sheet = workbook.sheets.get(index).ok_or_else(|| {
-                DesignerError::InvalidProjectTransfer {
-                    message: "CSV export collection is unavailable.".to_owned(),
-                }
-            })?;
+            let sheet = &workbook.sheets[0];
             let bytes = export_csv(sheet).map_err(|error| {
                 crate::interop_document::imported_export_error("workbook", &error.0)
             })?;

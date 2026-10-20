@@ -318,8 +318,8 @@ pub(crate) fn native_tables_trim_worksheet_name(mut name: &str) -> &str {
     }
 }
 
-/// The native-only compatibility inventory. Allocation and writer preflight
-/// use the same policy; CSV retains its existing lexical/name behavior.
+/// The shared native/imported output compatibility inventory. Every source-
+/// controlled wire element has a check; CSV checks only emitted lexical data.
 pub(crate) enum NativeTablesCheck<'a> {
     Name {
         value: &'a str,
@@ -328,7 +328,18 @@ pub(crate) enum NativeTablesCheck<'a> {
         allocate: bool,
     },
     Cell(&'a SourceValue),
+    Decimal(&'a str),
+    Formula(&'a str),
+    Style(&'a SourceCell),
+    Width(Option<f64>),
+    Styles(usize),
     CsvText(&'a str),
+    CsvCell(&'a SourceValue),
+    CsvHeader {
+        value: &'a str,
+        used: &'a mut BTreeSet<String>,
+        emitted: bool,
+    },
     Grid {
         sheets: usize,
         columns: usize,
@@ -473,6 +484,158 @@ pub(crate) fn native_tables_compatibility(
                     "XML-illegal characters are refused in native CSV Text and headers rather than emitted or changed.",
                 ));
             }
+            if csv_formula_text(value) {
+                return Err(refuse(
+                    "native_tables_csv_formula_text",
+                    "CSV Text/header could activate a spreadsheet formula; export typed XLSX to retain literal Text.",
+                ));
+            }
+        }
+        NativeTablesCheck::CsvCell(value) => match value {
+            SourceValue::Text { value } => {
+                native_tables_compatibility(NativeTablesCheck::CsvText(value), location)?;
+            }
+            SourceValue::Number { value } if !value.is_finite() => {
+                return Err(refuse(
+                    "native_tables_csv_nonfinite_number",
+                    "CSV Number must be finite.",
+                ));
+            }
+            SourceValue::Date { value }
+                if tachiko_workspace_engine::Date::parse(value).is_err() =>
+            {
+                return Err(refuse(
+                    "native_tables_csv_date",
+                    "CSV Date must be a valid Gregorian date.",
+                ));
+            }
+            _ => {}
+        },
+        NativeTablesCheck::CsvHeader {
+            value,
+            used,
+            emitted,
+        } => {
+            if emitted {
+                native_tables_compatibility(NativeTablesCheck::CsvText(value), location)?;
+            }
+            let base = if value.trim().is_empty() {
+                "Column"
+            } else {
+                value
+            };
+            for serial in 1.. {
+                let candidate = if serial == 1 {
+                    base.to_owned()
+                } else {
+                    format!("{base} ({serial})")
+                };
+                if used.insert(native_tables_caseless_key(&candidate)) {
+                    return Ok(NativeTablesCompatibility {
+                        name: candidate,
+                        ..NativeTablesCompatibility::default()
+                    });
+                }
+            }
+            unreachable!("bounded header allocation cannot exhaust suffixes");
+        }
+        NativeTablesCheck::Decimal(decimal) => {
+            let value = decimal.parse::<f64>().map_err(|_| {
+                refuse(
+                    "native_tables_xlsx_nonfinite_number",
+                    "Numeric literal must be a finite decimal Number.",
+                )
+            })?;
+            // Retained format conditions keep lexical evidence. Parsing to f64
+            // must not conceal nonzero underflow or extra significant digits.
+            let mantissa = decimal.split(['e', 'E']).next().unwrap_or_default();
+            if value == 0.0 && mantissa.bytes().any(|b| b.is_ascii_digit() && b != b'0') {
+                return Err(refuse(
+                    "native_tables_xlsx_subnormal_number",
+                    "Nonzero numeric literal underflows binary64/Excel; the literal is refused rather than changed to zero.",
+                ));
+            }
+            let mut checked = native_tables_compatibility(
+                NativeTablesCheck::Cell(&SourceValue::Number { value }),
+                location,
+            )?;
+            checked.precision_loss |= significant_decimal_digits(decimal) > 15;
+            return Ok(checked);
+        }
+        NativeTablesCheck::Formula(formula) => {
+            return compatible_formula(formula, location);
+        }
+        NativeTablesCheck::Width(width) => {
+            if width.is_some_and(|w| {
+                !w.is_finite() || w <= 0.0 || w > 255.0 || (w * 256.0).fract() != 0.0
+            }) {
+                return Err(refuse(
+                    "native_tables_xlsx_width",
+                    "Column width must be finite, in (0, 255], and an exact multiple of Excel's 1/256 character unit; it is never silently rounded.",
+                ));
+            }
+        }
+        NativeTablesCheck::Styles(count) => {
+            // The writer allocates a custom number format, font, fill and
+            // border per style. Stay below Excel's 200..250 format and 256
+            // fill limits, including the generated default style.
+            if count > 200 {
+                return Err(refuse(
+                    "native_tables_xlsx_style_limit",
+                    "XLSX output permits at most 200 distinct styles including the default; no styles are merged or dropped.",
+                ));
+            }
+        }
+        NativeTablesCheck::Style(cell) => {
+            let style = &cell.style;
+            if let Some(format) = &style.number_format {
+                text(format, false).map_err(|mut finding| {
+                    finding.location = format!("{location}/number-format");
+                    finding
+                })?;
+            }
+            if style
+                .number_format
+                .as_ref()
+                .is_some_and(|format| format.encode_utf16().count() >= 255)
+            {
+                let mut finding = refuse(
+                    "native_tables_xlsx_format_limit",
+                    "Office number-format codes must contain fewer than 255 UTF-16 code units; no format is truncated.",
+                );
+                finding.location = format!("{location}/number-format");
+                return Err(finding);
+            }
+            let (kind, conditions) =
+                crate::interop_number_format::inspect(style.number_format.as_deref())
+                    .map_err(|message| refuse("native_tables_xlsx_style", &message))?;
+            let mut precision_loss = false;
+            for (index, value) in conditions.into_iter().enumerate() {
+                precision_loss |= native_tables_compatibility(
+                    NativeTablesCheck::Decimal(&value),
+                    &format!("{location}/number-format/condition {}", index + 1),
+                )?
+                .precision_loss;
+            }
+            if ((cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. }))
+                && kind != NumberFormatKind::Number)
+                || style
+                    .alignment
+                    .as_ref()
+                    .is_some_and(|a| !["left", "center", "right", "general"].contains(&a.as_str()))
+                || style.fill.as_ref().is_some_and(|fill| {
+                    ![6, 8].contains(&fill.len()) || !fill.bytes().all(|b| b.is_ascii_hexdigit())
+                })
+            {
+                return Err(refuse(
+                    "native_tables_xlsx_style",
+                    "Unsupported number format, alignment or RGB fill; the cell style cannot be retained faithfully.",
+                ));
+            }
+            return Ok(NativeTablesCompatibility {
+                precision_loss,
+                ..NativeTablesCompatibility::default()
+            });
         }
         NativeTablesCheck::Cell(value) => match value {
             SourceValue::Text { value } => text(value, true)?,
@@ -527,25 +690,106 @@ pub(crate) fn native_tables_compatibility(
     Ok(NativeTablesCompatibility::default())
 }
 
+/// Inventory the closed formula wire grammar, independently of its cached
+/// result. Quoted worksheet references are names, never strings or numbers.
+/// A future serializer token outside this grammar refuses until it is governed.
+fn compatible_formula(
+    formula: &str,
+    location: &str,
+) -> std::result::Result<NativeTablesCompatibility, FidelityFinding> {
+    let refuse = || FidelityFinding {
+        category: FidelityCategory::UnsupportedSafeDisabled,
+        code: "native_tables_xlsx_formula".into(),
+        location: location.into(),
+        message: "Formula is outside the bounded numeric/reference/MIN/MAX output grammar.".into(),
+        blocking: true,
+    };
+    if formula.len() > 4096 || !xml_text_valid(formula) {
+        return Err(refuse());
+    }
+    let mut remaining = formula;
+    let mut precision_loss = false;
+    let mut literal = 0;
+    while !remaining.is_empty() {
+        if remaining.starts_with('\'') {
+            let mut name = String::new();
+            remaining = &remaining[1..];
+            loop {
+                let c = remaining.chars().next().ok_or_else(refuse)?;
+                remaining = &remaining[c.len_utf8()..];
+                if c == '\'' {
+                    if remaining.starts_with('\'') {
+                        remaining = &remaining[1..];
+                        name.push('\'');
+                    } else {
+                        break;
+                    }
+                } else {
+                    name.push(c);
+                }
+            }
+            native_tables_compatibility(
+                NativeTablesCheck::Name {
+                    value: &name,
+                    worksheet: true,
+                    used: &mut BTreeSet::new(),
+                    allocate: false,
+                },
+                &format!("{location}/reference/sheet-name"),
+            )?;
+            remaining = remaining.strip_prefix("!$").ok_or_else(refuse)?;
+            let columns = remaining.bytes().take_while(u8::is_ascii_uppercase).count();
+            if columns == 0 {
+                return Err(refuse());
+            }
+            remaining = remaining[columns..].strip_prefix('$').ok_or_else(refuse)?;
+            let rows = remaining.bytes().take_while(u8::is_ascii_digit).count();
+            if rows == 0 {
+                return Err(refuse());
+            }
+            remaining = &remaining[rows..];
+        } else if remaining.starts_with("MIN(") || remaining.starts_with("MAX(") {
+            remaining = &remaining[4..];
+        } else if remaining.starts_with(['(', ')', '+', '-', '*', '/', ',']) {
+            remaining = &remaining[1..];
+        } else {
+            let mut end = remaining
+                .bytes()
+                .take_while(|b| b.is_ascii_digit() || *b == b'.')
+                .count();
+            if end == 0 {
+                return Err(refuse());
+            }
+            if matches!(remaining.as_bytes().get(end), Some(b'e' | b'E')) {
+                end += 1;
+                if matches!(remaining.as_bytes().get(end), Some(b'+' | b'-')) {
+                    end += 1;
+                }
+                end += remaining[end..]
+                    .bytes()
+                    .take_while(u8::is_ascii_digit)
+                    .count();
+            }
+            literal += 1;
+            precision_loss |= native_tables_compatibility(
+                NativeTablesCheck::Decimal(&remaining[..end]),
+                &format!("{location}/literal {literal}"),
+            )?
+            .precision_loss;
+            remaining = &remaining[end..];
+        }
+    }
+    Ok(NativeTablesCompatibility {
+        precision_loss,
+        ..NativeTablesCompatibility::default()
+    })
+}
+
 pub(crate) fn validate_native_tables_xlsx(
     workbook: &SourceWorkbook,
 ) -> std::result::Result<(), FidelityFinding> {
-    let mut names = BTreeSet::new();
     let total_rows = workbook.sheets.iter().map(|s| s.rows.len()).sum();
-    // Check an empty workbook as well as every located sheet.
-    if workbook.sheets.is_empty() {
-        native_tables_compatibility(
-            NativeTablesCheck::Grid {
-                sheets: 0,
-                columns: 0,
-                rows: 0,
-                total_rows,
-            },
-            "workbook",
-        )?;
-    }
-    for (sheet_index, sheet) in workbook.sheets.iter().enumerate() {
-        let location = format!("sheet {} {:?}", sheet_index + 1, sheet.name);
+    for (index, sheet) in workbook.sheets.iter().enumerate() {
         native_tables_compatibility(
             NativeTablesCheck::Grid {
                 sheets: workbook.sheets.len(),
@@ -553,8 +797,32 @@ pub(crate) fn validate_native_tables_xlsx(
                 rows: sheet.rows.len(),
                 total_rows,
             },
-            &location,
+            &format!("sheet {} {:?}", index + 1, sheet.name),
         )?;
+    }
+    if workbook.sheets.is_empty() {
+        native_tables_compatibility(
+            NativeTablesCheck::Grid {
+                sheets: 0,
+                columns: 0,
+                rows: 0,
+                total_rows: 0,
+            },
+            "workbook",
+        )?;
+    }
+    validate_xlsx_compatibility(workbook)
+}
+
+/// All source-controlled XLSX byte surfaces, independent of grid profile.
+/// Both native tables and imported metadata use this same preflight.
+pub(crate) fn validate_xlsx_compatibility(
+    workbook: &SourceWorkbook,
+) -> std::result::Result<(), FidelityFinding> {
+    let mut names = BTreeSet::new();
+    let mut styles = vec![CellStyle::default()];
+    for (sheet_index, sheet) in workbook.sheets.iter().enumerate() {
+        let location = format!("sheet {} {:?}", sheet_index + 1, sheet.name);
         native_tables_compatibility(
             NativeTablesCheck::Name {
                 value: &sheet.name,
@@ -565,8 +833,13 @@ pub(crate) fn validate_native_tables_xlsx(
             &format!("{location}/sheet-name"),
         )?;
         let mut headers = BTreeSet::new();
-        if sheet.has_header {
-            for (column, header) in sheet.columns.iter().enumerate() {
+        for (column, header) in sheet.columns.iter().enumerate() {
+            let location = format!("{location}/column {}", column + 1);
+            native_tables_compatibility(
+                NativeTablesCheck::Width(header.width),
+                &format!("{location}/width"),
+            )?;
+            if sheet.has_header {
                 native_tables_compatibility(
                     NativeTablesCheck::Name {
                         value: &header.name,
@@ -574,15 +847,36 @@ pub(crate) fn validate_native_tables_xlsx(
                         used: &mut headers,
                         allocate: false,
                     },
-                    &format!("{location}/header/column {}", column + 1),
+                    &format!(
+                        "sheet {} {:?}/header/column {}",
+                        sheet_index + 1,
+                        sheet.name,
+                        column + 1
+                    ),
                 )?;
             }
         }
         for (row, cells) in sheet.rows.iter().enumerate() {
             for (column, cell) in cells.iter().enumerate() {
+                let location = native_tables_cell_location(sheet, sheet_index, row, column);
+                native_tables_compatibility(NativeTablesCheck::Cell(&cell.value), &location)?;
+                if let Some(formula) = &cell.formula {
+                    native_tables_compatibility(
+                        NativeTablesCheck::Formula(formula),
+                        &format!("{location}/formula"),
+                    )?;
+                }
                 native_tables_compatibility(
-                    NativeTablesCheck::Cell(&cell.value),
-                    &native_tables_cell_location(sheet, sheet_index, row, column),
+                    NativeTablesCheck::Style(cell),
+                    &format!("{location}/style"),
+                )?;
+                let style = output_style(cell);
+                if !styles.contains(&style) {
+                    styles.push(style);
+                }
+                native_tables_compatibility(
+                    NativeTablesCheck::Styles(styles.len()),
+                    &format!("{location}/style"),
                 )?;
             }
         }
@@ -605,12 +899,10 @@ pub(crate) fn validate_native_tables_csv(
     }
     for (row, cells) in sheet.rows.iter().enumerate() {
         for (column, cell) in cells.iter().enumerate() {
-            if let SourceValue::Text { value } = &cell.value {
-                native_tables_compatibility(
-                    NativeTablesCheck::CsvText(value),
-                    &native_tables_cell_location(sheet, 0, row, column),
-                )?;
-            }
+            native_tables_compatibility(
+                NativeTablesCheck::CsvCell(&cell.value),
+                &native_tables_cell_location(sheet, 0, row, column),
+            )?;
         }
     }
     Ok(())
@@ -634,7 +926,10 @@ pub(crate) fn native_tables_cell_location(
 /// Display uses the shortest round-trip decimal. Ignore the sign, decimal
 /// point, exponent and insignificant leading/trailing zeros when counting.
 fn native_tables_significant_digits(value: f64) -> usize {
-    let decimal = value.to_string();
+    significant_decimal_digits(&value.to_string())
+}
+
+fn significant_decimal_digits(decimal: &str) -> usize {
     let digits: String = decimal
         .split(['e', 'E'])
         .next()
@@ -650,6 +945,7 @@ pub(crate) fn native_tables_xlsx_number_findings(
 ) -> Vec<FidelityFinding> {
     let mut findings = Vec::new();
     let mut count = 0usize;
+    let mut presentation_count = 0usize;
     for (sheet_index, sheet) in workbook.sheets.iter().enumerate() {
         for (row, cells) in sheet.rows.iter().enumerate() {
             for (column, cell) in cells.iter().enumerate() {
@@ -672,16 +968,55 @@ pub(crate) fn native_tables_xlsx_number_findings(
                         }
                     }
                 }
+                if let Some(formula) = &cell.formula {
+                    let location = format!(
+                        "{}/formula",
+                        native_tables_cell_location(sheet, sheet_index, row, column)
+                    );
+                    if native_tables_compatibility(NativeTablesCheck::Formula(formula), &location)
+                        .is_ok_and(|check| check.precision_loss)
+                    {
+                        count += 1;
+                        presentation_count += 1;
+                        if findings.len() < MAX_NATIVE_TABLES_PRECISION_LOCATIONS {
+                            findings.push(FidelityFinding { category: FidelityCategory::LossyOnExport,
+                                code: "native_tables_xlsx_precision_loss".into(), location,
+                                message: "Formula contains numeric literals needing more than 15 significant decimal digits; Excel may round them on recalculation. The exported literals are not rounded; CSV emits the authoritative calculated scalar.".into(), blocking: false });
+                        }
+                    }
+                }
+                if native_tables_compatibility(NativeTablesCheck::Style(cell), "style")
+                    .is_ok_and(|checked| checked.precision_loss)
+                {
+                    count += 1;
+                    presentation_count += 1;
+                    if findings.len() < MAX_NATIVE_TABLES_PRECISION_LOCATIONS {
+                        findings.push(FidelityFinding { category: FidelityCategory::LossyOnExport,
+                            code: "native_tables_xlsx_precision_loss".into(),
+                            location: format!("{}/style/number-format", native_tables_cell_location(sheet, sheet_index, row, column)),
+                            message: "Number-format conditions need more than 15 significant decimal digits; Excel may round them. The exported format code is not rounded; CSV omits formatting.".into(), blocking: false });
+                    }
+                }
             }
         }
     }
     if count > 0 {
         let shown = findings.len();
+        let elements = if presentation_count == 0 {
+            "Number cells"
+        } else {
+            "Number cells, formulas or number formats"
+        };
+        let consequence = if presentation_count == 0 {
+            "Excel may round these values; CSV keeps full precision."
+        } else {
+            "Excel may round these values or literals; CSV keeps full scalar precision and omits formula definitions and formatting."
+        };
         findings.push(FidelityFinding {
             category: FidelityCategory::LossyOnExport,
             code: "native_tables_xlsx_precision_count".into(),
             location: "workbook".into(),
-            message: format!("{count} Number cells need more than 15 significant decimal digits; showing the first {shown} locations; {} additional locations omitted. Excel may round these values; CSV keeps full precision.", count - shown),
+            message: format!("{count} {elements} need more than 15 significant decimal digits; showing the first {shown} locations; {} additional locations omitted. {consequence}", count - shown),
             blocking: false,
         });
     }
@@ -3234,7 +3569,7 @@ pub(crate) fn export_xlsx_for_profile(
         fmts.push_str(&format!(
             "<numFmt numFmtId=\"{}\" formatCode=\"{}\"/>",
             164 + i,
-            escape(fmt)
+            capacity_attribute(fmt)
         ));
         xfs.push_str(&format!("<xf numFmtId=\"{}\" fontId=\"{i}\" fillId=\"{}\" borderId=\"{i}\" xfId=\"0\" applyNumberFormat=\"1\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"{}\" wrapText=\"{}\"/></xf>",164+i,i+2,escape(style.alignment.as_deref().unwrap_or("general")),u8::from(style.wrap)));
     }

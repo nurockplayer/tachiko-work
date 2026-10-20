@@ -15,6 +15,7 @@ const expectedCases = [
     ["rename", "add_blank", "add_fill", "remove", "insert", "insert_blank", "delete"].map(operation => `${source}-${operation}`)),
   "refusals", "formulas", "cell-compatibility-csv", "cell-compatibility-xlsx",
   "foreign-current", "header-history-collision", "untouched-compatibility", "scalar-compatibility",
+  "formula-output-policy", "csv-output-scope", "presentation-output-policy", "style-inventory-policy", "references-headers-policy", "closed-grammar-policy", "boolean-output-policy", "precision-budget-policy",
 ].sort();
 const cases = new Map();
 for (const path of captures) {

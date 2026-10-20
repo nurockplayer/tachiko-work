@@ -1355,14 +1355,27 @@ fn check_label(label: &str) -> Result<(), DesignerError> {
     Ok(())
 }
 
+/// File output scope is selected before reconstruction; the neutral projection
+/// remains available for source/save closure without claiming Excel fidelity.
+#[derive(Clone, Copy)]
+pub(crate) enum ImportedOutput<'a> {
+    Projection,
+    Csv(&'a str),
+    Xlsx,
+}
+
 /// Reconcile source presentation with current stable identities. Source slots
 /// remain useful for Undo; they never recreate removed fields or entities.
 fn current_import_metadata(
     document: &Document,
     metadata: &InteropMetadata,
+    output: ImportedOutput<'_>,
 ) -> Result<(InteropMetadata, Vec<FidelityFinding>), DesignerError> {
     let refuse = |location: &str, message: &str| imported_export_error(location, message);
     validate_historical_envelope(document, metadata)?;
+    if matches!(output, ImportedOutput::Projection) {
+        validate_neutral_source_presentation(metadata)?;
+    }
     let specs = super::collection_specs(document);
     let mut result = metadata.clone();
     let mut ledger = Vec::new();
@@ -1408,6 +1421,9 @@ fn current_import_metadata(
                 "Non-native worksheets require complete current identity mappings.",
             ));
         }
+        if matches!(output, ImportedOutput::Csv(collection) if collection != sheet.schema_id) {
+            continue;
+        }
         let source_columns = sheet.columns.clone();
         // Keep surviving source columns in source order, then append new fields
         // in the runtime's deterministic current column order.
@@ -1446,12 +1462,66 @@ fn current_import_metadata(
                 code: "imported_current_structure".into(), location: location.clone(),
                 message: "Surviving source columns and rows retain source order and identity-bound presentation. Added columns and rows append in current canonical order with default presentation; removed columns and deleted rows are omitted. Blank optional values are empty cells.".into(), blocking: false });
         }
-        map_current_headers(schema, sheet, &mut ledger)?;
+        map_current_headers(
+            schema,
+            sheet,
+            &mut ledger,
+            matches!(output, ImportedOutput::Csv(_)),
+        )?;
         reconcile_import_rows(document, sheet, &source_columns, &entities)?;
     }
-    validate_exact_import_metadata(document, &result)
-        .map_err(|error| refuse("workbook", &error.to_string()))?;
-    Ok((result, ledger))
+    Ok((scope_import_metadata(document, result, output)?, ledger))
+}
+
+fn scope_import_metadata(
+    document: &Document,
+    mut result: InteropMetadata,
+    output: ImportedOutput<'_>,
+) -> Result<InteropMetadata, DesignerError> {
+    let refuse = imported_export_error;
+    match output {
+        ImportedOutput::Projection => validate_exact_import_metadata(document, &result)
+            .map_err(|error| refuse("workbook", &error.to_string()))?,
+        ImportedOutput::Csv(collection) => {
+            result.sheets.retain(|sheet| sheet.schema_id == collection);
+            if result.sheets.is_empty() {
+                return Err(refuse(
+                    "workbook",
+                    "CSV export requires a known stable collection ID.",
+                ));
+            }
+        }
+        ImportedOutput::Xlsx => {}
+    }
+    Ok(result)
+}
+
+// Saved/source closure retains its historical admission rules, including unused
+// historical presentation. File exports instead check only emitted presentation.
+fn validate_neutral_source_presentation(metadata: &InteropMetadata) -> Result<(), DesignerError> {
+    for sheet in &metadata.sheets {
+        let location = format!("collection {}", sheet.schema_id);
+        if sheet.columns.iter().any(|column| {
+            column
+                .width
+                .is_some_and(|w| !w.is_finite() || w <= 0.0 || w > 255.0)
+        }) {
+            return Err(imported_export_error(&location, "Invalid source width."));
+        }
+        for style in sheet.rows.iter().flat_map(|row| &row.styles) {
+            if [&style.number_format, &style.fill, &style.alignment]
+                .into_iter()
+                .flatten()
+                .any(|text| text.len() > MAX_PROFILE_STRING_BYTES || text.contains('\0'))
+            {
+                return Err(imported_export_error(
+                    &location,
+                    "Source style exceeds the bounded profile.",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_historical_envelope(
@@ -1559,16 +1629,8 @@ fn validate_historical_sheet(
                 "Mapped field belongs to another current schema; only absent historical IDs are tombstones.",
             ));
         }
-        if !fields.insert(column.field_id.clone())
-            || !labels.insert(column.name.clone())
-            || column
-                .width
-                .is_some_and(|w| !w.is_finite() || w <= 0.0 || w > 255.0)
-        {
-            return Err(refuse(
-                &location,
-                "Duplicate source field, header or invalid width.",
-            ));
+        if !fields.insert(column.field_id.clone()) || !labels.insert(column.name.clone()) {
+            return Err(refuse(&location, "Duplicate source field or header."));
         }
     }
     for row in &sheet.rows {
@@ -1589,19 +1651,6 @@ fn validate_historical_sheet(
                 "Duplicate or foreign row, or invalid source style dimensions.",
             ));
         }
-        for style in &row.styles {
-            for text in [&style.number_format, &style.fill, &style.alignment]
-                .into_iter()
-                .flatten()
-            {
-                if text.len() > MAX_PROFILE_STRING_BYTES || text.contains('\0') {
-                    return Err(refuse(
-                        &location,
-                        "Source style exceeds the bounded profile.",
-                    ));
-                }
-            }
-        }
     }
     Ok(fields)
 }
@@ -1610,6 +1659,7 @@ fn map_current_headers(
     schema: &tachiko_workspace_engine::Schema,
     sheet: &mut InteropSheetMetadata,
     ledger: &mut Vec<FidelityFinding>,
+    csv: bool,
 ) -> Result<(), DesignerError> {
     let location = format!("collection {}", sheet.schema_id);
     let mut headers = BTreeSet::new();
@@ -1618,17 +1668,25 @@ fn map_current_headers(
         let source = field.display_name.as_deref().unwrap_or(&column.name);
         let path = format!("{location}/field {}", field.id);
         let mapped = super::interop_adapter::native_tables_compatibility(
-            super::interop_adapter::NativeTablesCheck::Name {
-                value: source,
-                worksheet: false,
-                used: &mut headers,
-                allocate: true,
+            if csv {
+                super::interop_adapter::NativeTablesCheck::CsvHeader {
+                    value: source,
+                    used: &mut headers,
+                    emitted: sheet.has_header,
+                }
+            } else {
+                super::interop_adapter::NativeTablesCheck::Name {
+                    value: source,
+                    worksheet: false,
+                    used: &mut headers,
+                    allocate: true,
+                }
             },
             &path,
         )
         .map_err(|finding| DesignerError::ImportedSpreadsheetExport { finding })?
         .name;
-        if mapped != source || mapped != column.name {
+        if (!csv || sheet.has_header) && (mapped != source || mapped != column.name) {
             ledger.push(FidelityFinding {
                 category: FidelityCategory::Converted,
                 code: "imported_current_header".into(),
@@ -1666,7 +1724,7 @@ pub fn validate_import_metadata(
     document: &Document,
     metadata: &InteropMetadata,
 ) -> Result<(), DesignerError> {
-    current_import_metadata(document, metadata).map(|_| ())
+    current_import_metadata(document, metadata, ImportedOutput::Projection).map(|_| ())
 }
 
 /// Check private source presentation mappings against exact canonical identity.
@@ -1868,7 +1926,7 @@ impl DesignerRuntime {
         expected_revision: &str,
         metadata: &InteropMetadata,
     ) -> Result<SourceWorkbook, DesignerError> {
-        self.export_imported_workbook(expected_revision, metadata, false)
+        self.export_imported_workbook(expected_revision, metadata, ImportedOutput::Projection)
     }
 
     /// Reconcile once, then check every emitted cell for the selected format
@@ -1877,11 +1935,11 @@ impl DesignerRuntime {
         &self,
         expected_revision: &str,
         metadata: &InteropMetadata,
-        xlsx: bool,
+        output: ImportedOutput<'_>,
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
-        let (metadata, ledger) = current_import_metadata(snapshot.document(), metadata)?;
+        let (metadata, ledger) = current_import_metadata(snapshot.document(), metadata, output)?;
         if self.text_capacity {
             validate_capacity_metadata(snapshot.document(), &metadata)
                 .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
@@ -1897,23 +1955,41 @@ impl DesignerRuntime {
                 snapshot.document(),
                 &metadata,
                 profile,
+                matches!(output, ImportedOutput::Csv(_)),
             )
             .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
-        if xlsx {
-            validate_imported_xlsx_cells(&workbook)?;
-            workbook
-                .ledger
-                .extend(super::interop_adapter::native_tables_xlsx_number_findings(
-                    &workbook,
-                ));
-        } else {
-            for sheet in &workbook.sheets {
-                super::interop_adapter::validate_native_tables_csv(sheet)
+        match output {
+            ImportedOutput::Xlsx => {
+                super::interop_adapter::validate_xlsx_compatibility(&workbook)
+                    .map_err(|finding| DesignerError::ImportedSpreadsheetExport { finding })?;
+                workbook
+                    .ledger
+                    .extend(super::interop_adapter::native_tables_xlsx_number_findings(
+                        &workbook,
+                    ));
+            }
+            ImportedOutput::Csv(_) => {
+                if profile == OutputProfile::Shared && workbook.sheets[0].rows.len() > MAX_DATA_ROWS
+                {
+                    return Err(imported_export_error(
+                        "workbook",
+                        "CSV output exceeds the existing 64-row profile.",
+                    ));
+                }
+                super::interop_adapter::validate_native_tables_csv(&workbook.sheets[0])
                     .map_err(|finding| DesignerError::ImportedSpreadsheetExport { finding })?;
             }
+            ImportedOutput::Projection => {}
         }
-        let mut workbook = finalize_export_workbook(snapshot.document(), workbook, profile)
-            .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
+        let mut workbook = if matches!(output, ImportedOutput::Csv(_)) {
+            // Formula definitions, worksheet labels, widths and styles never
+            // enter CSV bytes. Do not run an XLSX validator on them.
+            append_saved_export_findings(snapshot.document(), &mut workbook);
+            workbook
+        } else {
+            finalize_export_workbook(snapshot.document(), workbook, profile)
+                .map_err(|error| imported_export_error("workbook", &error.to_string()))?
+        };
         workbook.ledger.extend(ledger);
         Ok(workbook)
     }
@@ -2042,8 +2118,13 @@ impl DesignerRuntime {
         metadata: &InteropMetadata,
         profile: OutputProfile,
     ) -> Result<SourceWorkbook, DesignerError> {
-        let workbook =
-            self.rebuild_workbook_from_metadata(expected_revision, document, metadata, profile)?;
+        let workbook = self.rebuild_workbook_from_metadata(
+            expected_revision,
+            document,
+            metadata,
+            profile,
+            false,
+        )?;
         finalize_export_workbook(document, workbook, profile)
     }
 
@@ -2053,6 +2134,7 @@ impl DesignerRuntime {
         document: &Document,
         metadata: &InteropMetadata,
         profile: OutputProfile,
+        values_only: bool,
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         // The caller holds the exact immutable snapshot already used for
@@ -2063,7 +2145,7 @@ impl DesignerRuntime {
         for sheet in metadata
             .sheets
             .iter()
-            .filter(|_| profile != OutputProfile::TextCapacity)
+            .filter(|_| profile != OutputProfile::TextCapacity && !values_only)
         {
             let present = sheet.rows.iter().filter(|row| {
                 document
@@ -2102,20 +2184,31 @@ impl DesignerRuntime {
                         let projection =
                             self.query_fields(expected_revision, &[field_target(&target)])?;
                         let number = projection.fields[0].calculated.as_ref().and_then(super::CalculationProjection::number).ok_or_else(|| tracker_error("formula export requires a complete authoritative Number result"))?;
-                        let formula = export_expression(expression, &addresses)?;
-                        if formula.len() > MAX_PROFILE_STRING_BYTES {
+                        let formula = if values_only {
+                            None
+                        } else {
+                            Some(export_expression(expression, &addresses)?)
+                        };
+                        if formula
+                            .as_ref()
+                            .is_some_and(|formula| formula.len() > MAX_PROFILE_STRING_BYTES)
+                        {
                             return Err(tracker_error(
                                 "export formula exceeds the bounded reimport authoring profile",
                             ));
                         }
-                        (SourceValue::Number { value: number }, Some(formula))
+                        (SourceValue::Number { value: number }, formula)
                     } else {
                         (export_scalar(value)?, None)
                     };
                     cells.push(SourceCell {
                         value,
                         formula,
-                        style: row.styles[column].clone(),
+                        style: if values_only {
+                            CellStyle::default()
+                        } else {
+                            row.styles[column].clone()
+                        },
                     });
                 }
                 rows.push(cells);
@@ -2128,7 +2221,7 @@ impl DesignerRuntime {
                     .iter()
                     .map(|column| SourceColumn {
                         name: column.name.clone(),
-                        width: column.width,
+                        width: if values_only { None } else { column.width },
                     })
                     .collect(),
                 rows,
@@ -2142,31 +2235,18 @@ impl DesignerRuntime {
     }
 }
 
-fn validate_imported_xlsx_cells(workbook: &SourceWorkbook) -> Result<(), DesignerError> {
-    for (sheet_index, sheet) in workbook.sheets.iter().enumerate() {
-        for (row, cells) in sheet.rows.iter().enumerate() {
-            for (column, cell) in cells.iter().enumerate() {
-                super::interop_adapter::native_tables_compatibility(
-                    super::interop_adapter::NativeTablesCheck::Cell(&cell.value),
-                    &super::interop_adapter::native_tables_cell_location(
-                        sheet,
-                        sheet_index,
-                        row,
-                        column,
-                    ),
-                )
-                .map_err(|finding| DesignerError::ImportedSpreadsheetExport { finding })?;
-            }
-        }
-    }
-    Ok(())
-}
-
 fn finalize_export_workbook(
     document: &Document,
     mut workbook: SourceWorkbook,
     profile: OutputProfile,
 ) -> Result<SourceWorkbook, DesignerError> {
+    append_saved_export_findings(document, &mut workbook);
+    super::interop_adapter::validate_output_for_profile(&workbook, profile)
+        .map_err(|error| tracker_error(&error.0))?;
+    Ok(workbook)
+}
+
+fn append_saved_export_findings(document: &Document, workbook: &mut SourceWorkbook) {
     if !document.keyed_grouped_sum_definitions.is_empty() {
         workbook.ledger.push(FidelityFinding {
             category: FidelityCategory::LossyOnExport,
@@ -2176,9 +2256,6 @@ fn finalize_export_workbook(
             blocking: false,
         });
     }
-    super::interop_adapter::validate_output_for_profile(&workbook, profile)
-        .map_err(|error| tracker_error(&error.0))?;
-    Ok(workbook)
 }
 
 fn native_budget_active_csv_mapping<'a>(
