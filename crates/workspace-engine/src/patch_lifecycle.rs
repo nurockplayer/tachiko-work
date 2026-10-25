@@ -406,6 +406,10 @@ impl SemanticCommand {
         Self::FormulaInverseRestore(FormulaInverseRestoreCommand::new(field, value))
     }
 
+    /// Host-history only: the expression must be one the host read from an
+    /// admitted document formula that its own clear removed. No wire decoder
+    /// produces this command, and the candidate still passes full document
+    /// validation, but the engine cannot prove that provenance by itself.
     #[must_use]
     pub fn formula_restore(field: FieldRef, expression: Expression) -> Self {
         Self::FormulaRestore(FormulaRestoreCommand::new(field, expression))

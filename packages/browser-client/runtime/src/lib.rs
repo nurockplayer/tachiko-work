@@ -2319,7 +2319,7 @@ impl DesignerRuntime {
         let dependent_cells = dependent_formula_cells(
             snapshot.document(),
             |reference| reference.field == field_id && entities.contains(&reference.entity),
-            |_, removed| *removed == field_id,
+            |entity, removed| *removed == field_id && entities.contains(entity),
         );
         if dependent_cells > 0 {
             return Err(DesignerError::FormulaDependencyInUse {
@@ -3853,8 +3853,9 @@ impl DesignerRuntime {
                 };
                 let value = cell_edit_value(column, old, &input, &field)?;
                 if existing.is_some() && value.as_ref() != old {
-                    forward.push(value_command(&field, value.as_ref()));
-                    inverse.push(value_command(&field, old));
+                    let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
+                    forward.push(command);
+                    inverse.extend(undo);
                 }
                 if let Some(value) = value {
                     entity.fields.insert(field.field, value);

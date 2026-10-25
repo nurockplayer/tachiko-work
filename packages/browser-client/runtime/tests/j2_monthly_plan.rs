@@ -12,11 +12,11 @@ use std::collections::BTreeMap;
 use tachiko_designer_runtime::{
     CalculationProjection, ColumnProjection, DesignerRequest, DesignerResponse, DesignerRuntime,
     DuplicateCollectionProjection, FieldProjection, FieldTarget, NewTableColumnInput,
-    RowInitializer, ScalarEditInput, StoredValueProjection, TableProjection,
+    PasteCellInput, RowInitializer, ScalarEditInput, StoredValueProjection, TableProjection,
 };
 use tachiko_workspace_engine::{
-    Document, Entity, EntityId, EntityKey, FieldConstraint, FieldDefinition, FieldId, FieldKey,
-    FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition, FieldId,
+    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000600";
@@ -1000,4 +1000,140 @@ fn saved_formula_table_reopens_with_authoring_intact() {
     let plan = table(&mut reopened, "plan");
     assert!(plan.rows.iter().any(|row| row.key == "row_0001"));
     assert_eq!(plan.native_table_profile, Some(true));
+}
+
+fn undo(runtime: &mut DesignerRuntime, expected: &str) -> String {
+    published(
+        runtime,
+        DesignerRequest::Undo {
+            expected_revision: expected.to_owned(),
+        },
+    )
+}
+
+#[test]
+fn paste_over_a_formula_cell_uses_the_same_edit_and_history_rules() {
+    let mut runtime = optional_formula_plan();
+    let plan = table(&mut runtime, "plan");
+    let row = plan.rows[0].clone();
+    let reserve = table_column(&plan, "reserve").id.clone();
+    let formula = format!("([{}.expense] * 2)", row.key);
+    let paste = |runtime: &mut DesignerRuntime, expected: &str, cell: PasteCellInput| {
+        published(
+            runtime,
+            DesignerRequest::PasteCells {
+                expected_revision: expected.to_owned(),
+                collection: "plan".to_owned(),
+                start_entity: Some(row.id.clone()),
+                start_field: reserve.clone(),
+                rows: vec![vec![cell]],
+            },
+        )
+    };
+
+    // A pasted clear removes the formula; Undo reinstalls the exact source.
+    assert_eq!(
+        paste(
+            &mut runtime,
+            "resident/2",
+            PasteCellInput::Typed(ScalarEditInput::Clear)
+        ),
+        "resident/3"
+    );
+    let cleared = table(&mut runtime, "plan");
+    assert!(cleared.rows[0].blank_fields.contains(&reserve));
+    assert_eq!(undo(&mut runtime, "resident/3"), "resident/4");
+    let restored = table(&mut runtime, "plan");
+    assert_eq!(source(projected(&restored, &row.key, "reserve")), formula);
+    assert_eq!(
+        number(projected(&restored, &row.key, "reserve")),
+        Some(20.0)
+    );
+
+    // A pasted scalar replaces the formula; Undo brings the source back.
+    assert_eq!(
+        paste(
+            &mut runtime,
+            "resident/4",
+            PasteCellInput::Text("7".to_owned())
+        ),
+        "resident/5"
+    );
+    let replaced = table(&mut runtime, "plan");
+    let scalar = projected(&replaced, &row.key, "reserve");
+    assert_eq!(
+        scalar.stored,
+        Some(StoredValueProjection::Number { value: 7.0 })
+    );
+    assert!(scalar.formula.is_none());
+    assert_eq!(undo(&mut runtime, "resident/5"), "resident/6");
+    let restored = table(&mut runtime, "plan");
+    assert_eq!(source(projected(&restored, &row.key, "reserve")), formula);
+}
+
+/// Two native tables that share a field ID: `b.amount` is a formula over
+/// `a.amount`. Field IDs are schema-scoped, so the removal check must not
+/// mistake B's retained formula cell for a cell of the removed column.
+fn shared_field_id_document() -> Document {
+    let a = SchemaId::from("a");
+    let b = SchemaId::from("b");
+    let schema = |id: &SchemaId, fields: Vec<(FieldId, FieldDefinition)>| {
+        (
+            id.clone(),
+            Schema {
+                id: id.clone(),
+                key: SchemaKey::from(id.as_str()),
+                display_name: None,
+                fields: fields.into_iter().collect(),
+            },
+        )
+    };
+    let mut document = Document::empty("shared_field_id", "Shared field ID");
+    document.schemas = BTreeMap::from([
+        schema(
+            &a,
+            vec![
+                column("label", "Label", FieldType::Text),
+                column("amount", "Amount", FieldType::Number),
+            ],
+        ),
+        schema(&b, vec![column("amount", "Amount", FieldType::Number)]),
+    ]);
+    document.entities = BTreeMap::from([
+        entity(
+            "a_row",
+            &a,
+            BTreeMap::from([
+                (FieldId::from("label"), Value::Text("first".to_owned())),
+                (FieldId::from("amount"), count(3.0)),
+            ]),
+        ),
+        entity(
+            "b_row",
+            &b,
+            BTreeMap::from([(
+                FieldId::from("amount"),
+                Value::Formula(Expression::Reference(FieldRef::new("a_row", "amount"))),
+            )]),
+        ),
+    ]);
+    document
+}
+
+#[test]
+fn column_removal_counts_dependents_in_tables_that_share_the_field_id() {
+    let mut runtime = DesignerRuntime::from_document(shared_field_id_document(), OCCURRENCE)
+        .expect("the shared-field-id document is admissible");
+    assert_eq!(table(&mut runtime, "a").native_table_profile, Some(true));
+    let error = runtime
+        .handle(DesignerRequest::RemoveColumn {
+            expected_revision: "resident/0".to_owned(),
+            collection: "a".to_owned(),
+            field: "amount".to_owned(),
+        })
+        .expect_err("a column another table's formula reads must stay");
+    let failure = error.failure_projection("resident/0");
+    assert_eq!(failure.code, "formula_dependency_in_use");
+    assert_eq!(failure.diagnostics[0].facts[0].value, "1");
+    assert_eq!(runtime.observe_occurrence().revision, "resident/0");
 }
