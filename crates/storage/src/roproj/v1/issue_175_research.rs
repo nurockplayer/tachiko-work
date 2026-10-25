@@ -615,7 +615,9 @@ fn validate_semantic_expression_limits_cancellable(
                         stack.push((right, depth + 1));
                         stack.push((left, depth + 1));
                     }
-                    Expression::Number(_) | Expression::Reference(_) => {}
+                    Expression::Number(_)
+                    | Expression::Reference(_)
+                    | Expression::SameRowReference(_) => {}
                 }
             }
         }

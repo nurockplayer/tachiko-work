@@ -2187,7 +2187,7 @@ impl DesignerRuntime {
                         let formula = if values_only {
                             None
                         } else {
-                            Some(export_expression(expression, &addresses)?)
+                            Some(export_expression(expression, &target, &addresses)?)
                         };
                         if formula
                             .as_ref()
@@ -2797,27 +2797,32 @@ pub(crate) fn export_scalar(value: Option<&Value>) -> Result<SourceValue, Design
 
 fn export_expression(
     expression: &Expression,
+    owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
 ) -> Result<String, DesignerError> {
     match expression {
         Expression::Number(number) => Ok(number.get().to_string()),
+        Expression::SameRowReference(field) => addresses
+            .get(&FieldRef::new(owner.entity.clone(), field.clone()))
+            .cloned()
+            .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::Reference(reference) => addresses
             .get(reference)
             .cloned()
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
-        Expression::Add { left, right } => export_binary(left, "+", right, addresses),
-        Expression::Subtract { left, right } => export_binary(left, "-", right, addresses),
-        Expression::Multiply { left, right } => export_binary(left, "*", right, addresses),
-        Expression::Divide { left, right } => export_binary(left, "/", right, addresses),
+        Expression::Add { left, right } => export_binary(left, "+", right, owner, addresses),
+        Expression::Subtract { left, right } => export_binary(left, "-", right, owner, addresses),
+        Expression::Multiply { left, right } => export_binary(left, "*", right, owner, addresses),
+        Expression::Divide { left, right } => export_binary(left, "/", right, owner, addresses),
         Expression::Minimum { left, right } => Ok(format!(
             "MIN({},{})",
-            export_expression(left, addresses)?,
-            export_expression(right, addresses)?
+            export_expression(left, owner, addresses)?,
+            export_expression(right, owner, addresses)?
         )),
         Expression::Maximum { left, right } => Ok(format!(
             "MAX({},{})",
-            export_expression(left, addresses)?,
-            export_expression(right, addresses)?
+            export_expression(left, owner, addresses)?,
+            export_expression(right, owner, addresses)?
         )),
     }
 }
@@ -2825,12 +2830,13 @@ fn export_binary(
     left: &Expression,
     operator: &str,
     right: &Expression,
+    owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
 ) -> Result<String, DesignerError> {
     Ok(format!(
         "({}{}{})",
-        export_expression(left, addresses)?,
+        export_expression(left, owner, addresses)?,
         operator,
-        export_expression(right, addresses)?
+        export_expression(right, owner, addresses)?
     ))
 }

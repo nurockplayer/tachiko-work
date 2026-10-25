@@ -338,6 +338,125 @@ fn saved_v3_formulas_reopen_and_recompute_without_stored_results() {
     assert_eq!(number(cell(&recomputed, "Tools", "reserve")), Some(1_000.0));
 }
 
+/// The same-row shorthand: each formula means "this row's expense", so one
+/// authored source can be copied and duplicated without per-row rewrites.
+const SAME_ROW_RESERVE: &str = "[.expense] * [settings.rate]";
+const SAME_ROW_SOURCE: &str = "([.expense] * [settings.rate])";
+
+#[test]
+fn same_row_reserve_shorthand_survives_copy_duplicate_and_v3_reopen() {
+    let mut runtime = open_fixture();
+    assert_eq!(
+        update(&mut runtime, "resident/0", "rent.reserve", SAME_ROW_RESERVE),
+        "resident/1"
+    );
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(source(cell(&plan, "Rent", "reserve")), SAME_ROW_SOURCE);
+    assert_eq!(number(cell(&plan, "Rent", "reserve")), Some(8_000.0));
+
+    // copyFormula accepts the shorthand unchanged: no per-row address rewrite.
+    assert_eq!(
+        copy(
+            &mut runtime,
+            "resident/1",
+            "rent.reserve",
+            &["ads.reserve", "tools.reserve"],
+            &[]
+        ),
+        "resident/2"
+    );
+    let plan = table(&mut runtime, "plan");
+    for (item, expected) in [("Rent", 8_000.0), ("Ads", 3_000.0), ("Tools", 1_000.0)] {
+        assert_eq!(
+            source(cell(&plan, item, "reserve")),
+            SAME_ROW_SOURCE,
+            "{item}"
+        );
+        assert_eq!(
+            number(cell(&plan, item, "reserve")),
+            Some(expected),
+            "{item}"
+        );
+    }
+
+    // duplicateCollection keeps the shorthand pointing at the copy's own rows.
+    let duplicated = duplicate(&mut runtime, "resident/2", "plan", "Plan copy");
+    let copy_key = duplicated.collection.key.clone();
+    let copy_table = table(&mut runtime, &copy_key);
+    for item in ["Rent", "Ads", "Tools"] {
+        assert_eq!(
+            source(cell(&copy_table, item, "reserve")),
+            SAME_ROW_SOURCE,
+            "{item}"
+        );
+    }
+    assert_eq!(number(cell(&copy_table, "Ads", "reserve")), Some(3_000.0));
+
+    let copy_ads_expense = cell(&copy_table, "Ads", "expense").target.clone();
+    assert_eq!(
+        edit(&mut runtime, "resident/3", copy_ads_expense, "35000"),
+        "resident/4"
+    );
+    let copy_after = table(&mut runtime, &copy_key);
+    assert_eq!(number(cell(&copy_after, "Ads", "reserve")), Some(3_500.0));
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(number(cell(&plan, "Ads", "reserve")), Some(3_000.0));
+
+    // v3 keeps the field identity only; reopening resolves it per owner row.
+    let saved = runtime
+        .export_project_v3("resident/4")
+        .expect("same-row sources export as v3");
+    let mut reopened = None;
+    tachiko_designer_runtime::open_project(&mut reopened, &saved.bytes, RESAVED)
+        .expect("the saved same-row project reopens");
+    let mut reopened = reopened.expect("a successful open installs the occurrence");
+    assert_eq!(
+        edit(&mut reopened, "resident/0", "rent.expense".into(), "90000"),
+        "resident/1"
+    );
+    let recomputed = table(&mut reopened, "plan");
+    for (item, expected) in [("Rent", 9_000.0), ("Ads", 3_000.0), ("Tools", 1_000.0)] {
+        assert_eq!(
+            source(cell(&recomputed, item, "reserve")),
+            SAME_ROW_SOURCE,
+            "{item}"
+        );
+        assert_eq!(
+            number(cell(&recomputed, item, "reserve")),
+            Some(expected),
+            "{item}"
+        );
+    }
+}
+
+#[test]
+fn same_row_refusals_keep_their_typed_codes_and_change_nothing() {
+    let mut runtime = open_fixture();
+    for (formula, expected_code) in [
+        ("[.reserve]", "formula_cycle"),
+        ("[.missing]", "formula_unknown_reference"),
+        ("[.item]", "formula_type_mismatch"),
+    ] {
+        let error = runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: "resident/0".to_owned(),
+                target: "rent.reserve".into(),
+                source: formula.to_owned(),
+            })
+            .expect_err("the shorthand refusal is typed");
+        let failure = error.failure_projection("resident/0");
+        assert_eq!(failure.code, expected_code, "{formula}");
+        assert!(!failure.message.is_empty(), "{formula}");
+    }
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(plan.revision, "resident/0");
+    assert_eq!(
+        cell(&plan, "Rent", "reserve").stored,
+        Some(StoredValueProjection::Number { value: 0.0 })
+    );
+    assert_eq!(cell(&plan, "Rent", "reserve").formula, None);
+}
+
 #[test]
 fn duplicate_collection_rewrites_intra_refs_and_keeps_the_shared_rate() {
     let mut runtime = open_fixture();

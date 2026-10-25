@@ -1127,7 +1127,7 @@ fn balanced_add_json(nodes: usize) -> String {
 
 fn expression_depth(expression: &Expression) -> usize {
     match expression {
-        Expression::Number(_) | Expression::Reference(_) => 1,
+        Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => 1,
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }
@@ -1141,7 +1141,7 @@ fn expression_depth(expression: &Expression) -> usize {
 
 fn expression_node_count(expression: &Expression) -> usize {
     match expression {
-        Expression::Number(_) | Expression::Reference(_) => 1,
+        Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => 1,
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }

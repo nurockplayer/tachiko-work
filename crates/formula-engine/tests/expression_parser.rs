@@ -269,7 +269,8 @@ fn diagnostics_report_stable_byte_positions_and_messages() {
 fn references_require_exact_valid_identifier_components_without_whitespace() {
     for input in [
         "[weapon]",
-        "[.damage]",
+        "[.]",
+        "[.damage.extra]",
         "[weapon.]",
         "[weapon .damage]",
         "[weapon.damage ]",
@@ -284,6 +285,7 @@ fn references_require_exact_valid_identifier_components_without_whitespace() {
         "[0.1]",
         "[weapon-2.damage_per-hit]",
         "[weapon_2.damage-avg]",
+        "[.damage]",
     ] {
         assert!(
             parse_expression(input).is_ok(),

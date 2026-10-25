@@ -4893,7 +4893,9 @@ fn map_copy_references(
     visit: &mut impl FnMut(&mut FieldRef) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
-        Expression::Number(_) => Ok(()),
+        // A relative copy keeps `[.field]` unchanged: the destination row is
+        // the formula's owner, so no per-row rewrite exists.
+        Expression::Number(_) | Expression::SameRowReference(_) => Ok(()),
         Expression::Reference(reference) => visit(reference),
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
@@ -4948,6 +4950,15 @@ fn map_duplicate_expression(
                     ))
                 })?;
             }
+            Ok(())
+        }
+        Expression::SameRowReference(field) => {
+            // The copy has its own field IDs; the reference follows its row.
+            *field = fields.get(field).cloned().ok_or_else(|| {
+                table_error(&format!(
+                    "internal same-row formula field '{field}' has no copied field"
+                ))
+            })?;
             Ok(())
         }
         Expression::Add { left, right }
@@ -5453,6 +5464,13 @@ fn ensure_formula_reference_profile(
                     profile_string_bytes,
                     "formula reference field identity",
                     reference.field.as_str(),
+                )?;
+            }
+            Expression::SameRowReference(field) => {
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula same-row field identity",
+                    field.as_str(),
                 )?;
             }
             Expression::Add { left, right }
