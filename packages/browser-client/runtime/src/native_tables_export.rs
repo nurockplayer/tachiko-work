@@ -1,8 +1,8 @@
 //! Outbound scalar projection for native tables. No import provenance or client
 //! presentation participates: the immutable resident snapshot owns every value.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_workspace_engine::{Document, FieldConstraint, FieldType, Value};
+use tachiko_workspace_engine::{Document, FieldRef, FieldType, Value};
 
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, NativeTablesCheck, OutputProfile, SourceCell, SourceColumn,
@@ -57,25 +57,137 @@ fn scalar_mapping(document: &Document, spec: &CollectionSpec) -> bool {
                 .all(|column| match entity.fields.get(&column.id) {
                     None => !column.required,
                     Some(Value::Text(_)) => column.field_type == FieldType::Text,
-                    Some(Value::Number(_)) => column.field_type == FieldType::Number,
+                    // Formula cells export their current computed Number; the
+                    // definition itself stays in the Tachiko source.
+                    Some(Value::Number(_) | Value::Formula(_)) => {
+                        column.field_type == FieldType::Number
+                    }
                     Some(Value::Boolean(_)) => column.field_type == FieldType::Boolean,
                     Some(Value::Date(_)) => column.field_type == FieldType::Date,
-                    Some(Value::Reference(_) | Value::Formula(_)) => false,
+                    Some(Value::Reference(_)) => false,
                 })
         })
 }
 
-fn unconstrained_fields(document: &Document, spec: &CollectionSpec) -> Result<(), DesignerError> {
+/// Disclose every constrained field whose rule has no native spreadsheet
+/// mapping. Values still export; nothing validates them after the transfer.
+fn constraint_findings(
+    document: &Document,
+    spec: &CollectionSpec,
+    ledger: &mut Vec<FidelityFinding>,
+) {
     for field in document.schemas[spec.summary.id.as_str()].fields.values() {
-        if !matches!(field.constraint, FieldConstraint::None) {
-            return Err(refused(
-                "native_tables_field_constraint",
-                &format!("collection {}/field {}", spec.summary.id, field.id),
-                "Field constraints have no native spreadsheet mapping; export refuses rather than silently removing the constraint.",
-            ));
+        let requirement = match &field.constraint {
+            tachiko_workspace_engine::FieldConstraint::None => continue,
+            tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } => {
+                format!("allowed values: {}", values.join(", "))
+            }
+            tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange { min, max } => {
+                format!("allowed range: {} to {}", min.get(), max.get())
+            }
+        };
+        ledger.push(finding(
+            FidelityCategory::LossyOnExport,
+            "native_tables_field_constraint_excluded",
+            &format!("collection {}/field {}", spec.summary.id, field.id),
+            format!(
+                "Field constraint ({requirement}) has no native spreadsheet mapping; its values export unchanged and the spreadsheet does not validate them."
+            ),
+        ));
+    }
+}
+
+/// Workbook-wide exclusions that no native spreadsheet mapping carries.
+fn exclusion_findings(ledger: &mut Vec<FidelityFinding>) {
+    for (code, message) in [
+        (
+            "native_tables_grouped_sum_definitions_excluded",
+            "Keyed-grouped-sum definitions are excluded; retain the Tachiko source to preserve bindings.",
+        ),
+        (
+            "native_tables_grouped_sum_results_excluded",
+            "Keyed-grouped-sum calculated results are excluded; no calculated snapshots are emitted.",
+        ),
+        (
+            "native_tables_reports_charts_excluded",
+            "Reports and charts are excluded; this export contains native source tables only.",
+        ),
+        (
+            "native_tables_session_history_excluded",
+            "Session Undo/Redo history is excluded.",
+        ),
+        (
+            "native_tables_sheet_presentation_excluded",
+            "Sheet presentation, view sorting/filtering and per-cell formatting are excluded; Dates use yyyy-mm-dd.",
+        ),
+    ] {
+        ledger.push(finding(
+            FidelityCategory::LossyOnExport,
+            code,
+            "workbook",
+            message.into(),
+        ));
+    }
+}
+
+/// Disclose derived state that the spreadsheet cannot carry: constrained
+/// rules and formula definitions stay in the Tachiko source.
+fn collection_findings(
+    document: &Document,
+    spec: &CollectionSpec,
+    ledger: &mut Vec<FidelityFinding>,
+) {
+    constraint_findings(document, spec, ledger);
+    if spec.entities.iter().any(|id| {
+        spec.columns.iter().any(|column| {
+            matches!(
+                document.entities[id].fields.get(&column.id),
+                Some(Value::Formula(_))
+            )
+        })
+    }) {
+        ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_values_only", &spec.summary.id,
+            "Formula cells export their current computed Number values; formula definitions are not written to the spreadsheet. Retain the Tachiko source to keep the formulas.".into()));
+    }
+}
+
+/// Current calculated Number for every formula cell in the selected collection.
+/// The resident snapshot is authoritative; no stored or cached result is read.
+fn computed_formula_values(
+    runtime: &DesignerRuntime,
+    revision: &str,
+    document: &Document,
+    spec: &CollectionSpec,
+) -> Result<BTreeMap<FieldRef, crate::CalculationProjection>, DesignerError> {
+    let targets = spec
+        .entities
+        .iter()
+        .flat_map(|entity| {
+            spec.columns.iter().filter_map(|column| {
+                match document.entities[entity].fields.get(&column.id) {
+                    Some(Value::Formula(_)) => {
+                        Some(FieldRef::new(entity.clone(), column.id.clone()))
+                    }
+                    _ => None,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut values = BTreeMap::new();
+    for chunk in targets.chunks(crate::MAX_FIELD_QUERY_TARGETS) {
+        let fields = chunk.iter().map(crate::field_target).collect::<Vec<_>>();
+        let projection = runtime.query_fields(revision, &fields)?;
+        for field in projection.fields {
+            let target = FieldRef::new(field.target.entity, field.target.field);
+            values.insert(
+                target,
+                field
+                    .calculated
+                    .unwrap_or(crate::CalculationProjection::Unavailable),
+            );
         }
     }
-    Ok(())
+    Ok(values)
 }
 
 fn safe_character(c: char) -> bool {
@@ -128,7 +240,55 @@ fn mapped_name(source: &str, worksheet: bool, used: &mut BTreeSet<String>) -> St
     unreachable!("the finite export profile cannot exhaust name suffixes")
 }
 
+/// Project one stored scalar or one formula's current computed Number. A
+/// formula without a current result refuses instead of writing a blank.
+fn projected_cell(
+    document: &Document,
+    spec: &CollectionSpec,
+    entity: &tachiko_workspace_engine::EntityId,
+    column: &crate::ColumnSpec,
+    computed: &BTreeMap<FieldRef, crate::CalculationProjection>,
+) -> Result<SourceCell, DesignerError> {
+    let stored = document.entities[entity].fields.get(&column.id);
+    if !matches!(stored, Some(Value::Formula(_))) {
+        return crate::interop_document::export_scalar(stored).map(|value| SourceCell {
+            value,
+            ..SourceCell::default()
+        });
+    }
+    let target = FieldRef::new(entity.clone(), column.id.clone());
+    let location = format!(
+        "collection {}/field {}/row {entity}",
+        spec.summary.id, column.id
+    );
+    let value = match computed.get(&target) {
+        Some(crate::CalculationProjection::Value { value }) => *value,
+        Some(crate::CalculationProjection::Failure { code, message }) => {
+            return Err(refused(
+                "native_tables_formula_value_unavailable",
+                &location,
+                format!(
+                    "Formula cell has no current Number result ({code}: {message}); export refuses rather than writing a blank or a stale value."
+                ),
+            ));
+        }
+        Some(crate::CalculationProjection::Unavailable) | None => {
+            return Err(refused(
+                "native_tables_formula_value_unavailable",
+                &location,
+                "Formula cell has no current Number result; export refuses rather than writing a blank or a stale value.",
+            ));
+        }
+    };
+    Ok(SourceCell {
+        value: crate::interop_adapter::SourceValue::Number { value },
+        ..SourceCell::default()
+    })
+}
+
 fn project_sheet(
+    runtime: &DesignerRuntime,
+    revision: &str,
     document: &Document,
     spec: &CollectionSpec,
     csv: bool,
@@ -212,21 +372,14 @@ fn project_sheet(
             Ok(SourceColumn { name, width: None })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let computed = computed_formula_values(runtime, revision, document, spec)?;
     let rows = spec
         .entities
         .iter()
         .map(|id| {
             spec.columns
                 .iter()
-                .map(|column| {
-                    crate::interop_document::export_scalar(
-                        document.entities[id].fields.get(&column.id),
-                    )
-                    .map(|value| SourceCell {
-                        value,
-                        ..SourceCell::default()
-                    })
-                })
+                .map(|column| projected_cell(document, spec, id, column, &computed))
                 .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -243,8 +396,9 @@ impl DesignerRuntime {
     /// Fields and rows use the runtime's canonical stable-identity order.
     ///
     /// # Errors
-    /// Refuses stale revisions, unknown active collections, mixed documents and
-    /// output bounds. Formula/reference collections have no native mapping.
+    /// Refuses stale revisions, unknown active collections, mixed documents,
+    /// formula cells without a current Number and output bounds. Reference
+    /// collections have no native mapping.
     pub fn export_native_tables_workbook(
         &self,
         expected_revision: &str,
@@ -292,7 +446,6 @@ impl DesignerRuntime {
                     format!("CSV excludes collection {:?} ({key}); only the requested collection is exported.", spec.summary.display_name)));
                 continue;
             }
-            unconstrained_fields(document, spec)?;
             if !scalar_mapping(document, spec) {
                 return Err(refused(
                     "native_tables_unmapped_collection",
@@ -302,39 +455,20 @@ impl DesignerRuntime {
                     ),
                 ));
             }
+            collection_findings(document, spec, &mut ledger);
             // Canonical specs are Rust-derived; the client supplies no names,
             // identity mapping, row order or values.
-            sheets.push(project_sheet(document, spec, csv, &mut names, &mut ledger)?);
+            sheets.push(project_sheet(
+                self,
+                expected_revision,
+                document,
+                spec,
+                csv,
+                &mut names,
+                &mut ledger,
+            )?);
         }
-        for (code, message) in [
-            (
-                "native_tables_grouped_sum_definitions_excluded",
-                "Keyed-grouped-sum definitions are excluded; retain the Tachiko source to preserve bindings.",
-            ),
-            (
-                "native_tables_grouped_sum_results_excluded",
-                "Keyed-grouped-sum calculated results are excluded; no calculated snapshots are emitted.",
-            ),
-            (
-                "native_tables_reports_charts_excluded",
-                "Reports and charts are excluded; this export contains native source tables only.",
-            ),
-            (
-                "native_tables_session_history_excluded",
-                "Session Undo/Redo history is excluded.",
-            ),
-            (
-                "native_tables_sheet_presentation_excluded",
-                "Sheet presentation, view sorting/filtering and per-cell formatting are excluded; Dates use yyyy-mm-dd.",
-            ),
-        ] {
-            ledger.push(finding(
-                FidelityCategory::LossyOnExport,
-                code,
-                "workbook",
-                message.into(),
-            ));
-        }
+        exclusion_findings(&mut ledger);
         for id in document.keyed_grouped_sum_definitions.keys() {
             ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_saved_grouped_sum_excluded", id.as_str(),
                 format!("Saved keyed-grouped-sum definition {id} and its calculated results are excluded.")));

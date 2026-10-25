@@ -106,43 +106,45 @@ fn ac2_runtime_control_fixture_runtime_admission() {
 }
 
 #[test]
-fn ac2_constrained_golden_verifies_but_open_refuses_capability_without_mutation() {
+fn ac2_constrained_golden_verifies_and_admits_with_declarations() {
     let tree = CanonicalRoProjectV3::try_from_files(bytes::input_files()).unwrap();
     assert_eq!(tree, encode_roproj_v3(&fixture::document()).unwrap());
-    let (mut runtime, _) = prepared_control();
-    let occurrence = runtime.observe_occurrence();
-    let saved = runtime.export_project_v3(&occurrence.revision).unwrap();
-    let projected = table(&mut runtime);
-    let computed = summary(&mut runtime);
-    let mut slot = Some(runtime);
-    let native_error = open_project(&mut slot, &transfer(&bytes::input_files()), FRESH)
-        .expect_err("constrained v3 input must retain the existing capability refusal");
+    let (runtime, _) = prepared_control();
+    let control_occurrence = runtime.observe_occurrence();
+    let mut native_slot = Some(runtime);
+    // The native v3 tree now admits constrained fields instead of refusing them.
+    open_project(&mut native_slot, &transfer(&bytes::input_files()), FRESH)
+        .expect("constrained v3 input must admit");
     let golden = bytes::vector("golden");
-    let verification = verify_portable_ro(&golden);
-    let result = open_portable_ro(&mut slot, &golden, FRESH);
+    verify_portable_ro(&golden).expect("storage-valid constrained golden must verify");
+    let mut slot = None;
+    open_portable_ro(&mut slot, &golden, FRESH).expect("constrained package must admit");
     let resident = slot
         .as_mut()
-        .expect("constrained open refusal cannot clear the resident");
-    assert_eq!(resident.observe_occurrence(), occurrence);
+        .expect("successful admission must retain the resident");
+    assert_ne!(resident.observe_occurrence(), control_occurrence);
+    let DesignerResponse::Table(projection) = table(resident) else {
+        panic!("expected the admitted constrained table");
+    };
+    let columns = serde_json::to_value(&projection.columns).unwrap();
     assert_eq!(
-        resident.export_project_v3(&occurrence.revision).unwrap(),
-        saved
+        columns[1]["constraint"],
+        json!({"kind": "text_literal_set", "values": ["Paper", "Stationery"]})
     );
-    assert_eq!(table(resident), projected);
-    assert_eq!(summary(resident), computed);
-    for error in [
-        native_error,
-        result.expect_err("constrained package must refuse runtime admission"),
-    ] {
-        let DesignerError::UnsupportedProject { message } = error else {
-            panic!("expected constraint capability refusal, found {error:?}");
-        };
-        assert_eq!(
-            message,
-            "Designer v3 admission supports only unconstrained fields."
-        );
-    }
-    verification.expect("storage-valid constrained golden must verify without runtime admission");
+    assert_eq!(
+        columns[1]["dropdown_options"],
+        json!(["Paper", "Stationery"])
+    );
+    assert_eq!(
+        columns[2]["constraint"],
+        json!({"kind": "number_inclusive_range", "min": 0.0, "max": 10.0})
+    );
+    // Re-exporting the admitted document reproduces the constrained .ro package.
+    let revision = resident.observe_occurrence().revision;
+    assert_eq!(
+        resident.export_portable_ro(&revision).unwrap().bytes,
+        golden
+    );
 }
 
 #[test]

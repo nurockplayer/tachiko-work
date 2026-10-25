@@ -127,6 +127,29 @@ when both its entity and its field belong to the copied collection, so a
 duplicated plan reads its own rows but keeps reading the original shared
 settings row.
 
+A same-row shorthand names a field on the formula's own row, so one source can
+be copied without per-row rewriting:
+
+```ts
+await client.updateFormula(revision, rentReserve, "[.expense] * [settings.rate]");
+// rentReserve.formula.source === "([.expense] * [settings.rate])", value 8000
+await client.copyFormula(nextRevision, {
+  source: rentReserve,
+  destinations: [adsReserve, toolsReserve],
+  fixed_references: [],
+  relative_rows: true,
+  relative_columns: false,
+});
+// ads/tools keep the same source and calculate 3000/1000.
+// duplicateCollection keeps it too: a copied plan reads the copy's rows.
+```
+
+The shorthand stores only the field identity; the owner row is resolved by the
+formula itself, in memory and after a v3 save/reopen. A missing field refuses as
+`formula_unknown_reference`, a non-Number field as `formula_type_mismatch`, and
+referring to the formula's own field (`[.reserve]` inside `reserve`) as
+`formula_cycle`.
+
 See the
 [formula authoring reference](https://github.com/nurockplayer/tachiko-work/blob/main/docs/engineering/formula-authoring-reference.md).
 ADR-0014 and the formula engine specification remain the language authority.

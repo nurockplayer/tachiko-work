@@ -934,37 +934,42 @@ impl ValueV1 {
                 );
             }
             Value::Reference(entity) => Self::Reference(entity.to_string()),
-            Value::Formula(expression) => Self::Formula(ExpressionV1::from_semantic(expression)),
+            Value::Formula(expression) => Self::Formula(ExpressionV1::from_semantic(expression)?),
         })
     }
 }
 
 impl ExpressionV1 {
-    fn from_semantic(expression: &Expression) -> Self {
-        match expression {
+    fn from_semantic(expression: &Expression) -> Result<Self, FormatError> {
+        Ok(match expression {
             Expression::Number(number) => Self::Number(NumberV1(number.get())),
             Expression::Reference(reference) => {
                 Self::Reference(FieldRefV1::from_semantic(reference))
             }
+            Expression::SameRowReference(_) => {
+                return invalid_representation(
+                    "same-row references are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
+                );
+            }
             Expression::Add { left, right } => {
-                Self::Add(BinaryArgumentsV1::from_semantic(left, right))
+                Self::Add(BinaryArgumentsV1::from_semantic(left, right)?)
             }
             Expression::Subtract { left, right } => {
-                Self::Subtract(BinaryArgumentsV1::from_semantic(left, right))
+                Self::Subtract(BinaryArgumentsV1::from_semantic(left, right)?)
             }
             Expression::Multiply { left, right } => {
-                Self::Multiply(BinaryArgumentsV1::from_semantic(left, right))
+                Self::Multiply(BinaryArgumentsV1::from_semantic(left, right)?)
             }
             Expression::Divide { left, right } => {
-                Self::Divide(BinaryArgumentsV1::from_semantic(left, right))
+                Self::Divide(BinaryArgumentsV1::from_semantic(left, right)?)
             }
             Expression::Minimum { left, right } => {
-                Self::Minimum(BinaryArgumentsV1::from_semantic(left, right))
+                Self::Minimum(BinaryArgumentsV1::from_semantic(left, right)?)
             }
             Expression::Maximum { left, right } => {
-                Self::Maximum(BinaryArgumentsV1::from_semantic(left, right))
+                Self::Maximum(BinaryArgumentsV1::from_semantic(left, right)?)
             }
-        }
+        })
     }
 }
 
@@ -978,11 +983,11 @@ impl FieldRefV1 {
 }
 
 impl BinaryArgumentsV1 {
-    fn from_semantic(left: &Expression, right: &Expression) -> Self {
-        Self {
-            left: Box::new(ExpressionV1::from_semantic(left)),
-            right: Box::new(ExpressionV1::from_semantic(right)),
-        }
+    fn from_semantic(left: &Expression, right: &Expression) -> Result<Self, FormatError> {
+        Ok(Self {
+            left: Box::new(ExpressionV1::from_semantic(left)?),
+            right: Box::new(ExpressionV1::from_semantic(right)?),
+        })
     }
 }
 
@@ -1326,7 +1331,9 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                         stack.push((right, depth + 1));
                         stack.push((left, depth + 1));
                     }
-                    Expression::Number(_) | Expression::Reference(_) => {}
+                    Expression::Number(_)
+                    | Expression::Reference(_)
+                    | Expression::SameRowReference(_) => {}
                 }
             }
         }

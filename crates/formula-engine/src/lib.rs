@@ -53,86 +53,112 @@ pub enum CanonicalAuthoringProjectionError {
 /// bound expression.
 pub fn bind_expression(
     document: &Document,
+    owner: &FieldRef,
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
     validate_unbound_expression_structure(expression)?;
     let index = AddressIndex::build(document).map_err(|source| FormulaBindError::Index {
         source: Box::new(source),
     })?;
-    bind_node(document, &index, expression)
+    bind_node(document, &index, owner, expression)
+}
+
+/// Resolve one human address to a numeric stable target.
+fn bind_numeric_reference(
+    document: &Document,
+    index: &AddressIndex,
+    address: &FieldAddress,
+) -> Result<FieldRef, FormulaBindError> {
+    let reference =
+        index
+            .resolve_field(document, address)
+            .map_err(|source| FormulaBindError::Address {
+                address: address.clone(),
+                source: Box::new(source),
+            })?;
+    let entity =
+        document
+            .entities
+            .get(&reference.entity)
+            .ok_or_else(|| FormulaBindError::Index {
+                source: Box::new(AddressIndexError::MissingBoundEntity {
+                    entity: reference.entity.clone(),
+                }),
+            })?;
+    let schema = document
+        .schemas
+        .get(&entity.schema)
+        .ok_or_else(|| FormulaBindError::Index {
+            source: Box::new(AddressIndexError::MissingBoundSchema {
+                schema: entity.schema.clone(),
+            }),
+        })?;
+    let definition =
+        schema
+            .fields
+            .get(&reference.field)
+            .ok_or_else(|| FormulaBindError::Index {
+                source: Box::new(AddressIndexError::MissingBoundField {
+                    entity: reference.entity.clone(),
+                    field: reference.field.clone(),
+                }),
+            })?;
+    if definition.field_type != FieldType::Number {
+        return Err(FormulaBindError::NonNumericTarget {
+            address: address.clone(),
+            reference,
+        });
+    }
+    Ok(reference)
 }
 
 fn bind_node(
     document: &Document,
     index: &AddressIndex,
+    owner: &FieldRef,
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
     Ok(match expression {
         UnboundExpression::Number(number) => Expression::Number(*number),
         UnboundExpression::Reference(address) => {
-            let reference = index.resolve_field(document, address).map_err(|source| {
-                FormulaBindError::Address {
-                    address: address.clone(),
-                    source: Box::new(source),
-                }
-            })?;
-            let entity = document.entities.get(&reference.entity).ok_or_else(|| {
-                FormulaBindError::Index {
-                    source: Box::new(AddressIndexError::MissingBoundEntity {
-                        entity: reference.entity.clone(),
-                    }),
-                }
-            })?;
-            let schema =
+            Expression::Reference(bind_numeric_reference(document, index, address)?)
+        }
+        UnboundExpression::SameRowReference(field) => {
+            let entity =
                 document
-                    .schemas
-                    .get(&entity.schema)
+                    .entities
+                    .get(&owner.entity)
                     .ok_or_else(|| FormulaBindError::Index {
-                        source: Box::new(AddressIndexError::MissingBoundSchema {
-                            schema: entity.schema.clone(),
+                        source: Box::new(AddressIndexError::MissingBoundEntity {
+                            entity: owner.entity.clone(),
                         }),
                     })?;
-            let definition =
-                schema
-                    .fields
-                    .get(&reference.field)
-                    .ok_or_else(|| FormulaBindError::Index {
-                        source: Box::new(AddressIndexError::MissingBoundField {
-                            entity: reference.entity.clone(),
-                            field: reference.field.clone(),
-                        }),
-                    })?;
-            if definition.field_type != FieldType::Number {
-                return Err(FormulaBindError::NonNumericTarget {
-                    address: address.clone(),
-                    reference,
-                });
-            }
-            Expression::Reference(reference)
+            let address = FieldAddress::new(entity.key.clone(), field.clone());
+            Expression::SameRowReference(bind_numeric_reference(document, index, &address)?.field)
         }
         UnboundExpression::Add { left, right } => Expression::Add {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Subtract { left, right } => Expression::Subtract {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Multiply { left, right } => Expression::Multiply {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Divide { left, right } => Expression::Divide {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Minimum { left, right } => Expression::Minimum {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Maximum { left, right } => Expression::Maximum {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
     })
 }
@@ -147,10 +173,11 @@ fn bind_node(
 /// Returns a typed stable-target set or structural/canonical-length failure.
 pub fn project_expression(
     document: &Document,
+    owner: &FieldRef,
     expression: &Expression,
 ) -> Result<String, CanonicalAuthoringProjectionError> {
     validate_expression_structure(expression)?;
-    let dependencies = extract_dependencies(expression);
+    let dependencies = extract_dependencies(owner, expression);
     let Ok(index) = AddressIndex::build(document) else {
         return Err(
             CanonicalAuthoringProjectionError::UnresolvableBoundReferences {
@@ -178,33 +205,47 @@ pub fn project_expression(
         );
     }
 
-    let projected = render_bound(expression, &addresses);
+    let projected = render_bound(expression, owner, &addresses);
     if projected.len() > parser::MAX_INPUT_BYTES {
         return Err(ExpressionComplexityError::CanonicalLengthLimit.into());
     }
     Ok(projected)
 }
 
-fn render_bound(expression: &Expression, addresses: &BTreeMap<FieldRef, FieldAddress>) -> String {
+fn render_bound(
+    expression: &Expression,
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, FieldAddress>,
+) -> String {
     match expression {
         Expression::Number(number) => parser::format_number(*number),
         Expression::Reference(reference) => {
             let address = &addresses[reference];
             format!("[{}.{}]", address.entity, address.field)
         }
-        Expression::Add { left, right } => render_bound_binary(left, "+", right, addresses),
-        Expression::Subtract { left, right } => render_bound_binary(left, "-", right, addresses),
-        Expression::Multiply { left, right } => render_bound_binary(left, "*", right, addresses),
-        Expression::Divide { left, right } => render_bound_binary(left, "/", right, addresses),
+        Expression::SameRowReference(field) => {
+            let reference = FieldRef::new(owner.entity.clone(), field.clone());
+            format!("[.{}]", addresses[&reference].field)
+        }
+        Expression::Add { left, right } => render_bound_binary(left, "+", right, owner, addresses),
+        Expression::Subtract { left, right } => {
+            render_bound_binary(left, "-", right, owner, addresses)
+        }
+        Expression::Multiply { left, right } => {
+            render_bound_binary(left, "*", right, owner, addresses)
+        }
+        Expression::Divide { left, right } => {
+            render_bound_binary(left, "/", right, owner, addresses)
+        }
         Expression::Minimum { left, right } => format!(
             "min({}, {})",
-            render_bound(left, addresses),
-            render_bound(right, addresses)
+            render_bound(left, owner, addresses),
+            render_bound(right, owner, addresses)
         ),
         Expression::Maximum { left, right } => format!(
             "max({}, {})",
-            render_bound(left, addresses),
-            render_bound(right, addresses)
+            render_bound(left, owner, addresses),
+            render_bound(right, owner, addresses)
         ),
     }
 }
@@ -213,12 +254,13 @@ fn render_bound_binary(
     left: &Expression,
     operator: &str,
     right: &Expression,
+    owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, FieldAddress>,
 ) -> String {
     format!(
         "({} {operator} {})",
-        render_bound(left, addresses),
-        render_bound(right, addresses)
+        render_bound(left, owner, addresses),
+        render_bound(right, owner, addresses)
     )
 }
 
@@ -252,21 +294,27 @@ pub fn validate_expression_structure(
                 stack.push((right, depth + 1));
                 stack.push((left, depth + 1));
             }
-            Expression::Number(_) | Expression::Reference(_) => {}
+            Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => {}
         }
     }
     Ok(())
 }
 
 /// Extract the deterministic static dependency set from a bound expression.
+///
+/// Same-row references resolve against `owner`, so the set is exactly the
+/// stable value nodes the formula reads.
 #[must_use]
-pub fn extract_dependencies(expression: &Expression) -> BTreeSet<FieldRef> {
+pub fn extract_dependencies(owner: &FieldRef, expression: &Expression) -> BTreeSet<FieldRef> {
     let mut dependencies = BTreeSet::new();
     let mut stack = vec![expression];
     while let Some(node) = stack.pop() {
         match node {
             Expression::Reference(reference) => {
                 dependencies.insert(reference.clone());
+            }
+            Expression::SameRowReference(field) => {
+                dependencies.insert(FieldRef::new(owner.entity.clone(), field.clone()));
             }
             Expression::Add { left, right }
             | Expression::Subtract { left, right }
@@ -958,7 +1006,7 @@ fn collect_calculation_nodes(
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
                 nodes.insert(field.clone(), value);
                 if let Value::Formula(expression) = value {
-                    dependencies.insert(field.clone(), extract_dependencies(expression));
+                    dependencies.insert(field.clone(), extract_dependencies(&field, expression));
                     formulas.insert(field, expression);
                 }
             }
@@ -980,7 +1028,7 @@ fn calculation_value<'document>(
 
 fn formula_dependencies(document: &Document, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
     match calculation_value(document, field) {
-        Some(Value::Formula(expression)) => Some(extract_dependencies(expression)),
+        Some(Value::Formula(expression)) => Some(extract_dependencies(field, expression)),
         Some(
             Value::Number(_)
             | Value::Text(_)
@@ -1195,7 +1243,7 @@ fn evaluate_remaining_formulas(
             .collect::<BTreeSet<_>>();
         if failed_dependencies.is_empty() {
             let expression = formulas[&formula];
-            match evaluate_bound_expression(expression, values) {
+            match evaluate_bound_expression(expression, &formula, values) {
                 Ok(value) => {
                     values.insert(formula.clone(), value);
                 }
@@ -1366,6 +1414,7 @@ fn cyclic_components(
 
 fn evaluate_bound_expression(
     expression: &Expression,
+    owner: &FieldRef,
     values: &BTreeMap<FieldRef, Number>,
 ) -> Result<Number, CalculationFailure> {
     let mut frames = vec![EvaluationFrame::Expression(expression)];
@@ -1377,6 +1426,15 @@ fn evaluate_bound_expression(
                 let Some(value) = values.get(reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference.clone()]),
+                    });
+                };
+                results.push(*value);
+            }
+            EvaluationFrame::Expression(Expression::SameRowReference(field)) => {
+                let reference = FieldRef::new(owner.entity.clone(), field.clone());
+                let Some(value) = values.get(&reference) else {
+                    return Err(CalculationFailure::FailedDependencies {
+                        dependencies: BTreeSet::from([reference]),
                     });
                 };
                 results.push(*value);

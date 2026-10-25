@@ -772,14 +772,14 @@ pub fn analyze_field(
     let index = AddressIndex::build(document)?;
     let address = index.field_address(document, field)?;
     let formula_source = match &stored_value {
-        Value::Formula(expression) => {
-            Some(project_expression(document, expression).map_err(|source| {
+        Value::Formula(expression) => Some(
+            project_expression(document, field, expression).map_err(|source| {
                 WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,
                 }
-            })?)
-        }
+            })?,
+        ),
         Value::Number(_)
         | Value::Text(_)
         | Value::Boolean(_)
@@ -1268,14 +1268,14 @@ pub fn explain_field(
         .value(&field)
         .map_or_else(|| format_value(document, value), format_number);
     let expression = match value {
-        Value::Formula(expression) => {
-            Some(project_expression(document, expression).map_err(|source| {
+        Value::Formula(expression) => Some(
+            project_expression(document, &field, expression).map_err(|source| {
                 WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,
                 }
-            })?)
-        }
+            })?,
+        ),
         _ => None,
     };
     let dependencies = calculation
@@ -1379,11 +1379,12 @@ pub(crate) fn bind_formula_update_unbound(
 ) -> Result<Expression, WorkspaceError> {
     formula_update_target_rule(document, field)?;
 
-    let expression =
-        bind_expression(document, unbound).map_err(|source| WorkspaceError::FormulaBinding {
+    let expression = bind_expression(document, field, unbound).map_err(|source| {
+        WorkspaceError::FormulaBinding {
             field: field.clone(),
             source: Box::new(source),
-        })?;
+        }
+    })?;
     Ok(expression)
 }
 
@@ -1596,7 +1597,13 @@ pub fn remove_entity(
             entity
                 .fields
                 .iter()
-                .filter(|(_, value)| value_references_entity(value, &target_id))
+                .filter(|(field_id, value)| {
+                    value_references_entity(
+                        value,
+                        &FieldRef::new(entity_id.clone(), (*field_id).clone()),
+                        &target_id,
+                    )
+                })
                 .map(|(field_id, _)| FieldRef::new(entity_id.clone(), field_id.clone()))
         })
         .collect::<BTreeSet<_>>()
@@ -1642,12 +1649,14 @@ fn validate_key(key: &str) -> Result<(), ()> {
 
 fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, target: &EntityId) {
     match expression {
-        Expression::Number(_) => {}
         Expression::Reference(reference) => {
             if &reference.entity == source {
                 reference.entity = target.clone();
             }
         }
+        // A same-row reference follows its owner, so rebasing an entity
+        // never rewrites it; a literal has nothing to rebase either.
+        Expression::Number(_) | Expression::SameRowReference(_) => {}
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }
@@ -1660,26 +1669,31 @@ fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, tar
     }
 }
 
-fn value_references_entity(value: &Value, target: &EntityId) -> bool {
+fn value_references_entity(value: &Value, owner: &FieldRef, target: &EntityId) -> bool {
     match value {
         Value::Reference(reference) => reference == target,
-        Value::Formula(expression) => expression_references_entity(expression, target),
+        Value::Formula(expression) => expression_references_entity(expression, owner, target),
         Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => false,
     }
 }
 
-fn expression_references_entity(expression: &Expression, target: &EntityId) -> bool {
+fn expression_references_entity(
+    expression: &Expression,
+    owner: &FieldRef,
+    target: &EntityId,
+) -> bool {
     match expression {
         Expression::Number(_) => false,
         Expression::Reference(reference) => &reference.entity == target,
+        Expression::SameRowReference(_) => &owner.entity == target,
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }
         | Expression::Divide { left, right }
         | Expression::Minimum { left, right }
         | Expression::Maximum { left, right } => {
-            expression_references_entity(left, target)
-                || expression_references_entity(right, target)
+            expression_references_entity(left, owner, target)
+                || expression_references_entity(right, owner, target)
         }
     }
 }
@@ -1748,7 +1762,7 @@ fn check_field_value_candidate(
         });
     }
     if let Value::Formula(expression) = value {
-        project_expression(document, expression).map_err(|source| match source {
+        project_expression(document, field, expression).map_err(|source| match source {
             CanonicalAuthoringProjectionError::Complexity(source) => {
                 WorkspaceError::ExpressionComplexity {
                     field: field.clone(),
@@ -2512,7 +2526,7 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
         for (field_id, value) in &entity.fields {
             if let Value::Formula(expression) = value {
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
-                project_expression(document, expression).map_err(|source| {
+                project_expression(document, &field, expression).map_err(|source| {
                     WorkspaceError::FormulaProjection {
                         field: field.clone(),
                         source,
@@ -2553,7 +2567,7 @@ fn drop_expression_iteratively(expression: Expression) {
                 stack.push(*right);
                 stack.push(*left);
             }
-            Expression::Number(_) | Expression::Reference(_) => {}
+            Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => {}
         }
     }
 }

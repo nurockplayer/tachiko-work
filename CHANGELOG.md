@@ -46,6 +46,31 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The Rust runtime, WASM bridge and public TypeScript client now author v3 field
+  constraints: closed Text literal lists (also filling `dropdown_options`) and
+  inclusive Number ranges. `setColumnConstraint` sets or clears one declaration;
+  constrained edits publish nothing and reject with a typed
+  `constraint_failure` carrying the allowed shape and offending row count, and
+  declaring a constraint that existing values violate is refused atomically.
+  Constrained projects save as `.roproj/v3`, reopen with constraints and values
+  intact, and legacy v1/v2 `exportProject` refuses them with
+  `legacy_export_unsupported` instead of dropping the declaration. The kit
+  advertises `setColumnConstraint` and the `columnConstraintProjection` marker.
+
+- Keyed grouped-sum projections now carry the overall total alongside the
+  category groups. `total` is derived from the same evaluation at the same
+  revision and is `null` whenever the result is unavailable, never zero or a
+  stale value; the public TypeScript client exposes `number | null`.
+- Formulas accept a same-row shorthand `[.field]` meaning "this formula's own
+  row". Binding stores the field identity and resolves the entity from the
+  owning formula, so `copyFormula` with relative rows and `duplicateCollection`
+  keep the source unchanged while each destination reads its own row. The
+  canonical projection keeps `([.expense] * [settings.rate])`; `.roproj/v3` and
+  direct-ro/v2 encode the distinct same-entity node, frozen `.roproj/v1`/`v2`
+  refuse it, and a missing field, non-Number field, or the formula's own field
+  refuse as `formula_unknown_reference`, `formula_type_mismatch`, or
+  `formula_cycle`.
+
 - Strengthening an optional native Text/Number column now reports
   `required_values_missing` with the blank row count and column identity. The
   rejection preserves the current revision and undo history; host and WASM

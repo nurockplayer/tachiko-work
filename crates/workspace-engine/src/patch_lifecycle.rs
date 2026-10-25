@@ -429,7 +429,7 @@ pub struct FormulaUpdateCommand {
 
 impl FormulaUpdateCommand {
     pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
-        let references = tachiko_formula_engine::extract_dependencies(&expression);
+        let references = tachiko_formula_engine::extract_dependencies(&target, &expression);
         Self {
             target,
             expression,
@@ -3008,12 +3008,20 @@ impl PatchLifecycle {
         let field_is_referenced_by_formula = candidate
             .entities
             .values()
-            .flat_map(|entity| entity.fields.values())
-            .any(|value| match value {
+            .flat_map(|entity| {
+                entity
+                    .fields
+                    .iter()
+                    .map(move |(field_id, value)| (entity.id.clone(), field_id, value))
+            })
+            .any(|(entity_id, field_id, value)| match value {
                 Value::Formula(expression) => {
-                    expression_references(expression).iter().any(|reference| {
-                        reference.field == field.id && schema_entities.contains(&reference.entity)
-                    })
+                    expression_references(&FieldRef::new(entity_id, field_id.clone()), expression)
+                        .iter()
+                        .any(|reference| {
+                            reference.field == field.id
+                                && schema_entities.contains(&reference.entity)
+                        })
                 }
                 _ => false,
             });
@@ -3719,10 +3727,12 @@ impl PatchLifecycle {
                         .filter(|entity| entity.schema == *schema)
                     {
                         if let Some(value) = entity.fields.get(field) {
+                            let owner = FieldRef::new(entity.id.clone(), field.clone());
                             self.insert_value_disclosures_for(
                                 OperationFamily::SchemaFieldMutation,
                                 before,
                                 after,
+                                &owner,
                                 value,
                                 disclosures,
                             )?;
@@ -3730,7 +3740,7 @@ impl PatchLifecycle {
                                 self.insert_calculation_dependency_disclosures(
                                     OperationFamily::SchemaFieldMutation,
                                     document,
-                                    expression_references(expression),
+                                    expression_references(&owner, expression),
                                     disclosures,
                                 )?;
                             }
@@ -3741,7 +3751,7 @@ impl PatchLifecycle {
             }
             SemanticCommand::SetFieldValue { field, value } => {
                 self.insert_field_disclosure(before, after, field, disclosures)?;
-                self.insert_value_disclosures(before, after, value, disclosures)
+                self.insert_value_disclosures(before, after, field, value, disclosures)
             }
             SemanticCommand::UnsetField { field } => {
                 self.insert_field_disclosure_for(
@@ -3760,6 +3770,7 @@ impl PatchLifecycle {
                         OperationFamily::SetFieldValue,
                         before,
                         after,
+                        field,
                         value,
                         disclosures,
                     )?;
@@ -3816,6 +3827,7 @@ impl PatchLifecycle {
                     OperationFamily::FormulaInverseRestore,
                     before,
                     after,
+                    command.target(),
                     &Value::Number(command.value()),
                     disclosures,
                 )
@@ -3912,7 +3924,7 @@ impl PatchLifecycle {
                     return Err(PatchLifecycleError::ScopeDerivationFailed);
                 }
                 self.insert_field_disclosure(before, after, field, disclosures)?;
-                self.insert_value_disclosures(before, after, value, disclosures)
+                self.insert_value_disclosures(before, after, field, value, disclosures)
             }
             SemanticChange::FieldRemoved { field, value } => {
                 let mut families = command_families_for_field(body, field);
@@ -3925,7 +3937,9 @@ impl PatchLifecycle {
                 }
                 for family in families {
                     self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
-                    self.insert_value_disclosures_for(family, before, after, value, disclosures)?;
+                    self.insert_value_disclosures_for(
+                        family, before, after, field, value, disclosures,
+                    )?;
                 }
                 Ok(())
             }
@@ -3941,18 +3955,10 @@ impl PatchLifecycle {
                 for family in families {
                     self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
                     self.insert_value_disclosures_for(
-                        family,
-                        before,
-                        after,
-                        old_value,
-                        disclosures,
+                        family, before, after, field, old_value, disclosures,
                     )?;
                     self.insert_value_disclosures_for(
-                        family,
-                        before,
-                        after,
-                        new_value,
-                        disclosures,
+                        family, before, after, field, new_value, disclosures,
                     )?;
                 }
                 Ok(())
@@ -3988,7 +3994,7 @@ impl PatchLifecycle {
                             self.insert_calculation_dependency_disclosures(
                                 family,
                                 document,
-                                expression_references(expression),
+                                expression_references(field, expression),
                                 disclosures,
                             )?;
                         }
@@ -4036,6 +4042,7 @@ impl PatchLifecycle {
         &self,
         before: &Document,
         after: &Document,
+        owner: &FieldRef,
         value: &Value,
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
@@ -4043,6 +4050,7 @@ impl PatchLifecycle {
             OperationFamily::SetFieldValue,
             before,
             after,
+            owner,
             value,
             disclosures,
         )
@@ -4053,6 +4061,7 @@ impl PatchLifecycle {
         family: OperationFamily,
         before: &Document,
         after: &Document,
+        owner: &FieldRef,
         value: &Value,
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
@@ -4064,7 +4073,7 @@ impl PatchLifecycle {
                 disclosures.insert(DisclosureRequirement { family, scope });
             }
             Value::Formula(expression) => {
-                for field in expression_references(expression) {
+                for field in expression_references(owner, expression) {
                     self.insert_field_disclosure_for(family, before, after, &field, disclosures)?;
                 }
             }
@@ -4093,7 +4102,7 @@ impl PatchLifecycle {
                 .and_then(|entity| entity.fields.get(&field.field))
                 .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
             if let Value::Formula(expression) = value {
-                pending.extend(expression_references(expression));
+                pending.extend(expression_references(&field, expression));
             }
         }
         Ok(())
@@ -4237,7 +4246,8 @@ impl PatchLifecycle {
                         field_id,
                         disclosures,
                     )?;
-                    for reference in expression_references(expression) {
+                    let owner = FieldRef::new(entity.id.clone(), field_id.clone());
+                    for reference in expression_references(&owner, expression) {
                         self.insert_keyed_grouped_sum_entity_field(
                             document,
                             &reference.entity,
@@ -4783,7 +4793,7 @@ fn keyed_grouped_sum_matched_products(
     (matched, formula_operand_required)
 }
 
-fn expression_references(expression: &Expression) -> BTreeSet<FieldRef> {
+fn expression_references(owner: &FieldRef, expression: &Expression) -> BTreeSet<FieldRef> {
     let mut references = BTreeSet::new();
     let mut pending = vec![expression];
     while let Some(current) = pending.pop() {
@@ -4791,6 +4801,9 @@ fn expression_references(expression: &Expression) -> BTreeSet<FieldRef> {
             Expression::Number(_) => {}
             Expression::Reference(field) => {
                 references.insert(field.clone());
+            }
+            Expression::SameRowReference(field) => {
+                references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
             }
             Expression::Add { left, right }
             | Expression::Subtract { left, right }

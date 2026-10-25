@@ -1,5 +1,5 @@
 use tachiko_semantic_core::{
-    FieldAddress, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, is_valid_identifier,
+    FieldAddress, FieldKey, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, is_valid_identifier,
 };
 use thiserror::Error;
 
@@ -10,6 +10,8 @@ pub(crate) const MAX_INPUT_BYTES: usize = 4_096;
 pub enum UnboundExpression {
     Number(Number),
     Reference(FieldAddress),
+    // `[.field]`: the field on the entity that owns the formula.
+    SameRowReference(FieldKey),
     Add { left: Box<Self>, right: Box<Self> },
     Subtract { left: Box<Self>, right: Box<Self> },
     Multiply { left: Box<Self>, right: Box<Self> },
@@ -106,6 +108,7 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
         UnboundExpression::Reference(reference) => {
             format!("[{}.{}]", reference.entity, reference.field)
         }
+        UnboundExpression::SameRowReference(field) => format!("[.{field}]"),
         UnboundExpression::Add { left, right } => format_binary(left, "+", right),
         UnboundExpression::Subtract { left, right } => format_binary(left, "-", right),
         UnboundExpression::Multiply { left, right } => format_binary(left, "*", right),
@@ -167,7 +170,9 @@ fn binary_children(
         | UnboundExpression::Divide { left, right }
         | UnboundExpression::Minimum { left, right }
         | UnboundExpression::Maximum { left, right } => Some((left, right)),
-        UnboundExpression::Number(_) | UnboundExpression::Reference(_) => None,
+        UnboundExpression::Number(_)
+        | UnboundExpression::Reference(_)
+        | UnboundExpression::SameRowReference(_) => None,
     }
 }
 
@@ -344,6 +349,22 @@ impl<'input> Parser<'input> {
         };
         let close = inner_start + relative_close;
         let inner = &self.input[inner_start..close];
+
+        // `[.field]` is the owner's own field. Any other dot is still an
+        // entity/field separator, so a same-row reference admits exactly one.
+        if let Some(field) = inner.strip_prefix('.') {
+            if field.contains('.') {
+                self.position = close;
+                return Err(self.error("reference must contain exactly one '.'"));
+            }
+            if !is_valid_identifier(field) {
+                self.position = invalid_identifier_position(field, inner_start + 1);
+                return Err(self.error("invalid reference field key"));
+            }
+            self.position = close + 1;
+            self.record_node(start)?;
+            return Ok(UnboundExpression::SameRowReference(FieldKey::from(field)));
+        }
 
         let Some(dot) = inner.find('.') else {
             self.position = close;

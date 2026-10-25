@@ -706,6 +706,17 @@ fn validate_expression(
             Expression::Reference(reference) => {
                 validate_formula_reference(document, owner, reference, path, diagnostics);
             }
+            Expression::SameRowReference(field) => {
+                // A same-row reference has the owner's entity, so it is
+                // validated as the owner's own field.
+                validate_formula_reference(
+                    document,
+                    owner,
+                    &FieldRef::new(owner.entity.clone(), field.clone()),
+                    path,
+                    diagnostics,
+                );
+            }
             Expression::Add { left, right }
             | Expression::Subtract { left, right }
             | Expression::Multiply { left, right }
@@ -1338,6 +1349,15 @@ mod issue_175_research {
                 Expression::Number(_) => {}
                 Expression::Reference(reference) => {
                     validate_formula_reference(document, owner, reference, path, diagnostics);
+                }
+                Expression::SameRowReference(field) => {
+                    validate_formula_reference(
+                        document,
+                        owner,
+                        &FieldRef::new(owner.entity.clone(), field.clone()),
+                        path,
+                        diagnostics,
+                    );
                 }
                 Expression::Add { left, right }
                 | Expression::Subtract { left, right }
