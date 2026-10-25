@@ -647,6 +647,9 @@ pub struct KeyedGroupedSumProjection {
     pub definition_id: String,
     pub revision: String,
     pub groups: Vec<KeyedGroupedSumGroupProjection>,
+    /// Sum of every group at this same revision. `None` whenever the result
+    /// is unavailable: never a zero or a stale value standing in for it.
+    pub total: Option<f64>,
     pub diagnostics: Vec<KeyedGroupedSumDiagnosticProjection>,
 }
 
@@ -1546,22 +1549,32 @@ impl DesignerRuntime {
         let revision = self.current_revision().to_owned();
         Ok(
             match evaluate_keyed_grouped_sum(snapshot.document(), definition_id) {
-                KeyedGroupedSumOutcome::Complete(groups) => KeyedGroupedSumProjection {
-                    definition_id: definition_id.to_string(),
-                    revision,
-                    groups: groups
+                KeyedGroupedSumOutcome::Complete(groups) => {
+                    let groups = groups
                         .into_iter()
                         .map(|group| KeyedGroupedSumGroupProjection {
                             category: group.category,
                             value: group.value.get(),
                         })
-                        .collect(),
-                    diagnostics: Vec::new(),
-                },
+                        .collect::<Vec<_>>();
+                    // Derive the overall total from the same evaluated groups so
+                    // it can never come from a different revision or a guess.
+                    let total = Number::new(groups.iter().map(|group| group.value).sum())
+                        .ok()
+                        .map(Number::get);
+                    KeyedGroupedSumProjection {
+                        definition_id: definition_id.to_string(),
+                        revision,
+                        groups,
+                        total,
+                        diagnostics: Vec::new(),
+                    }
+                }
                 KeyedGroupedSumOutcome::Unavailable(diagnostics) => KeyedGroupedSumProjection {
                     definition_id: definition_id.to_string(),
                     revision,
                     groups: Vec::new(),
+                    total: None,
                     diagnostics: diagnostics
                         .into_iter()
                         .map(|diagnostic| KeyedGroupedSumDiagnosticProjection {
