@@ -20,12 +20,13 @@ TACHIKO_CLIPPY_TOOLCHAIN to use it. A rustup/network check failure is a warning.
 An existing CARGO_TARGET_DIR is honored.
 
 Checks run in this order:
-  1. cargo fmt --all -- --check
-  2. workspace Clippy with all targets and warnings denied
-  3. browser-client runtime Clippy with all targets and warnings denied
-  4. Rust 1.85.0 workspace check (omitted with --fast)
-  5. Rust 1.85.0 wasm32 browser-client runtime check (omitted with --fast)
-  6. documentation consistency check
+  1. cargo fmt --all -- --check (workspace)
+  2. cargo fmt check of the browser-client runtime (outside the workspace)
+  3. workspace Clippy with all targets and warnings denied
+  4. browser-client runtime Clippy with all targets and warnings denied
+  5. Rust 1.85.0 workspace check (omitted with --fast)
+  6. Rust 1.85.0 wasm32 browser-client runtime check (omitted with --fast)
+  7. documentation consistency check
 EOF
 }
 
@@ -121,6 +122,9 @@ run_check() {
 }
 
 run_check "cargo fmt --all -- --check" cargo fmt --all -- --check
+# The runtime crate is not a workspace member, so the root check skips it.
+run_check "browser-client runtime cargo fmt check" \
+  cargo fmt --manifest-path packages/browser-client/runtime/Cargo.toml --all -- --check
 run_check "workspace Clippy (${clippy_toolchain})" \
   rustup run "${clippy_toolchain}" cargo clippy --workspace --all-targets --locked -- -D warnings
 run_check "browser-client runtime Clippy (${clippy_toolchain})" \

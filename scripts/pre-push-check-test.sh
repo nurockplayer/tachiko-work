@@ -39,6 +39,8 @@ PRE_PUSH_TEST_CALLS="${test_dir}/calls.log" \
   PATH="${test_dir}/fake-bin:${PATH}" \
   bash "${runner}" --fast >"${test_dir}/fast.out"
 grep -F 'cargo fmt --all -- --check' "${test_dir}/calls.log" >/dev/null
+grep -F 'cargo fmt --manifest-path packages/browser-client/runtime/Cargo.toml --all -- --check' \
+  "${test_dir}/calls.log" >/dev/null
 grep -F 'clippy --workspace --all-targets --locked -- -D warnings' \
   "${test_dir}/calls.log" >/dev/null
 if grep -F '1.85.0' "${test_dir}/calls.log" >/dev/null; then
