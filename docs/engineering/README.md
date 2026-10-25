@@ -32,6 +32,9 @@ Start here when building a Tachiko UI outside the main repository:
    - use this while wiring the current browser Worker/WASM kit.
 3. **[`examples/experimental-designer-client/`](../../examples/experimental-designer-client/)**
    - smallest external-style consumer that imports only the generated kit.
+4. **[Formula authoring reference](formula-authoring-reference.md)**
+   - accepted syntax, key-based `[entity.field]` references, canonical source
+     projection, and copy semantics for `updateFormula` and `copyFormula`.
 
 The current client kit is deliberately experimental. It is not an npm package,
 stable SDK, stable wire protocol, or compatibility promise.
