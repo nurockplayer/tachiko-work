@@ -1007,6 +1007,16 @@ fn view_index_cache_invalidates_when_a_publication_advances_the_revision() {
     );
 }
 
+/// Parse literal wire text; the runtime tests avoid the `serde_json` macro so every request
+/// stays inside the auditable source surface.
+fn wire_json(text: &str) -> serde_json::Value {
+    serde_json::from_str(text).expect("the wire request literal is JSON")
+}
+
+fn wire_string(text: &str) -> String {
+    serde_json::to_string(text).expect("a string encodes")
+}
+
 #[test]
 fn wire_requests_use_the_documented_envelope() {
     let mut runtime = Some(small_runtime());
@@ -1015,18 +1025,21 @@ fn wire_requests_use_the_documented_envelope() {
         .expect("the occurrence is installed")
         .observe_occurrence()
         .revision;
-    let request = serde_json::json!({
+    let request = wire_json(&format!(
+        r#"{{
         "type": "query_table_window",
-        "expected_revision": revision,
+        "expected_revision": {revision},
         "collection": "rows",
-        "view": {
-            "sort": [{"field": "f03_amount", "direction": "asc"}],
-            "filters": [{"kind": "number_compare", "field": "f03_amount", "op": ">=", "value": 5.0}],
+        "view": {{
+            "sort": [{{"field": "f03_amount", "direction": "asc"}}],
+            "filters": [{{"kind": "number_compare", "field": "f03_amount", "op": ">=", "value": 5.0}}],
             "keep_entities": ["e04"]
-        },
+        }},
         "start": 0,
         "count": 4
-    });
+    }}"#,
+        revision = wire_string(&revision)
+    ));
     let reply: serde_json::Value = serde_json::from_slice(&process_wire_request(
         &mut runtime,
         &serde_json::to_vec(&request).expect("the request encodes"),
@@ -1052,13 +1065,16 @@ fn wire_requests_use_the_documented_envelope() {
             .starts_with("columns/")
     );
 
-    let locate = serde_json::json!({
+    let locate = wire_json(&format!(
+        r#"{{
         "type": "locate_in_view",
-        "expected_revision": revision,
+        "expected_revision": {revision},
         "collection": "rows",
-        "view": {"sort": [{"field": "f03_amount", "direction": "asc"}]},
+        "view": {{"sort": [{{"field": "f03_amount", "direction": "asc"}}]}},
         "entity": "e06"
-    });
+    }}"#,
+        revision = wire_string(&revision)
+    ));
     let locate_reply: serde_json::Value = serde_json::from_slice(&process_wire_request(
         &mut runtime,
         &serde_json::to_vec(&locate).expect("the request encodes"),
@@ -1071,16 +1087,19 @@ fn wire_requests_use_the_documented_envelope() {
     // Every comparison operator and fractional literal survives the buffered
     // (arbitrary-precision) wire decode, not just the buffered `from_value` path.
     for op in ["=", "<>", "<", "<=", ">", ">="] {
-        let filtered_request = serde_json::json!({
+        let filtered_request = wire_json(&format!(
+            r#"{{
             "type": "query_table_window",
-            "expected_revision": revision,
+            "expected_revision": {revision},
             "collection": "rows",
-            "view": {
-                "filters": [{"kind": "number_compare", "field": "f03_amount", "op": op, "value": 5.5}]
-            },
+            "view": {{
+                "filters": [{{"kind": "number_compare", "field": "f03_amount", "op": "{op}", "value": 5.5}}]
+            }},
             "start": 0,
             "count": 0
-        });
+        }}"#,
+            revision = wire_string(&revision)
+        ));
         let reply: serde_json::Value = serde_json::from_slice(&process_wire_request(
             &mut runtime,
             &serde_json::to_vec(&filtered_request).expect("the request encodes"),
@@ -1089,16 +1108,19 @@ fn wire_requests_use_the_documented_envelope() {
         assert_eq!(reply["status"], "ok", "operator {op}: {reply}");
         assert_eq!(reply["response"]["type"], "table_window");
     }
-    let set_request = serde_json::json!({
+    let set_request = wire_json(&format!(
+        r#"{{
         "type": "query_table_window",
-        "expected_revision": revision,
+        "expected_revision": {revision},
         "collection": "rows",
-        "view": {
-            "filters": [{"kind": "in_set", "field": "f03_amount", "values": [5.0, 7.5]}]
-        },
+        "view": {{
+            "filters": [{{"kind": "in_set", "field": "f03_amount", "values": [5.0, 7.5]}}]
+        }},
         "start": 0,
         "count": 0
-    });
+    }}"#,
+        revision = wire_string(&revision)
+    ));
     let reply: serde_json::Value = serde_json::from_slice(&process_wire_request(
         &mut runtime,
         &serde_json::to_vec(&set_request).expect("the request encodes"),
@@ -1110,10 +1132,7 @@ fn wire_requests_use_the_documented_envelope() {
         DesignerRuntime::from_document(grid_document(1_001, 3, 8), OVER)
             .expect("1,001 rows are admitted"),
     );
-    let refusal = serde_json::json!({
-        "type": "query_table",
-        "collection": "rows",
-    });
+    let refusal = wire_json(r#"{"type": "query_table", "collection": "rows"}"#);
     let reply: serde_json::Value = serde_json::from_slice(&process_wire_request(
         &mut over,
         &serde_json::to_vec(&refusal).expect("the request encodes"),
