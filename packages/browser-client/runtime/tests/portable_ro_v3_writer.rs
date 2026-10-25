@@ -1,7 +1,8 @@
 //! Writer regressions for alternate package ingress and portable export preflight.
 use tachiko_designer_runtime::{
-    DesignerError, DesignerRequest, DesignerRuntime, FieldTarget, ImportFieldType, ImportSelection,
-    ScalarEditInput, import_workbook, interop_adapter, open_local_document, open_project,
+    DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget,
+    ImportFieldType, ImportSelection, ScalarEditInput, import_workbook, interop_adapter,
+    open_local_document, open_portable_ro, open_project, verify_portable_ro,
 };
 
 #[path = "support/portable_package_v3/bytes.rs"]
@@ -117,7 +118,7 @@ fn direct_json_envelope_refuses_constrained_and_unconstrained_packages_without_m
 }
 
 #[test]
-fn capacity_profile_portable_export_refuses_without_mutating_import_or_history() {
+fn capacity_profile_portable_export_round_trips_without_mutating_import_or_history() {
     let csv = format!("a,b,c\n{}", "x,y,z\n".repeat(320));
     let workbook =
         interop_adapter::import_csv(csv.as_bytes(), &interop_adapter::ImportOptions::default())
@@ -134,13 +135,12 @@ fn capacity_profile_portable_export_refuses_without_mutating_import_or_history()
         collection: imported.opened.table.collection.id.clone(),
     };
     let before = runtime.handle(table_request.clone()).unwrap();
-    let error = runtime
-        .export_portable_ro(&occurrence.revision)
-        .unwrap_err();
-    assert!(matches!(error, DesignerError::UnsupportedProject { .. }));
+    // A text-capacity import now leaves as a portable .ro instead of refusing.
+    let portable = runtime.export_portable_ro(&occurrence.revision).unwrap();
+    verify_portable_ro(&portable.bytes).unwrap();
     assert_eq!(runtime.observe_occurrence(), occurrence);
     assert_eq!(runtime.export_project(&occurrence.revision).unwrap(), saved);
-    assert_eq!(runtime.handle(table_request).unwrap(), before);
+    assert_eq!(runtime.handle(table_request.clone()).unwrap(), before);
     let undone = runtime
         .handle(DesignerRequest::Undo {
             expected_revision: occurrence.revision,
@@ -154,5 +154,19 @@ fn capacity_profile_portable_export_refuses_without_mutating_import_or_history()
         undone
             .to_string()
             .contains("no operation is available in this history direction")
+    );
+
+    // The .ro reopens as a capacity occurrence with every row and re-saves
+    // byte-identically.
+    let mut slot = None;
+    open_portable_ro(&mut slot, &portable.bytes, FRESH).unwrap();
+    let mut reopened = slot.unwrap();
+    let DesignerResponse::Table(table) = reopened.handle(table_request).unwrap() else {
+        panic!("expected a table projection");
+    };
+    assert_eq!(table.rows.len(), 320);
+    assert_eq!(
+        reopened.export_portable_ro("resident/0").unwrap().bytes,
+        portable.bytes
     );
 }
