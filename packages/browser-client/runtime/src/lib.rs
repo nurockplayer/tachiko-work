@@ -6643,7 +6643,7 @@ fn dependent_formula_cells(
                 }
                 let mut references = BTreeSet::new();
                 expression_references(
-                    &FieldRef::new(entity.id.clone(), field.clone()),
+                    &FieldRef::new(entity.id.clone(), (*field).clone()),
                     expression,
                     &mut references,
                 );
