@@ -93,3 +93,40 @@ grouped-sum definitions together and reopen through `inspectProject` and
 Ordinary `exportProject` refuses an occurrence successfully opened from v3;
 continue saving it with the explicit method. Retain a compatible v3 reader
 after emitting these artifacts, including during producer rollback.
+
+## Authoring formulas
+
+`updateFormula(revision, target, source)` submits source text against the
+expected revision. The runtime parses it, binds `[entity.field]` references
+(canonical lowercase **keys**, not display names or row labels) to stable IDs,
+type-checks them, rejects cycles, and evaluates the result. A refused update
+publishes nothing and leaves the previous formula source, calculated value, and
+revision unchanged.
+
+```ts
+const publication = await client.updateFormula(
+  table.revision,
+  rentReserve,
+  "[rent.expense] * [settings.rate]",
+);
+const copied = await client.copyFormula(publication.resulting_revision, {
+  source: rentReserve,
+  destinations: [adsReserve, toolsReserve],
+  fixed_references: [settingsRate],
+  relative_rows: true,
+  relative_columns: false,
+});
+console.log(copied.affected_calculations); // refresh these projections
+```
+
+Every accepted destination receives its own canonical, fully parenthesised
+`formula.source` (`([ads.expense] * [settings.rate])`). Treat that string as a
+copyable projection of the current document, not as numeric-token authority or
+a stable spelling contract. `duplicateCollection` rewrites a reference only
+when both its entity and its field belong to the copied collection, so a
+duplicated plan reads its own rows but keeps reading the original shared
+settings row.
+
+See the
+[formula authoring reference](https://github.com/nurockplayer/tachiko-work/blob/main/docs/engineering/formula-authoring-reference.md).
+ADR-0014 and the formula engine specification remain the language authority.
