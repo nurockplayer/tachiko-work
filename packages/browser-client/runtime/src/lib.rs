@@ -25,8 +25,8 @@ use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
     FieldId, FieldKey, FieldRef, FieldType, IdGenerator, KeyedGroupedSumDefinition,
     KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, Value, WorkspaceError,
-    analyze_field, create_document,
+    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, Value,
+    WorkspaceError, analyze_field, create_document,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -842,7 +842,11 @@ impl DesignerError {
             Self::Lifecycle(PatchLifecycleError::CommandRejected { .. }) => {
                 ("edit_rejected", Vec::new())
             }
-            Self::RequiredValuesMissing { schema, field, count } => (
+            Self::RequiredValuesMissing {
+                schema,
+                field,
+                count,
+            } => (
                 "required_values_missing",
                 vec![DiagnosticProjection {
                     code: "required_values_missing".to_owned(),
@@ -1983,9 +1987,7 @@ impl DesignerRuntime {
                 .document()
                 .entities
                 .values()
-                .filter(|entity| {
-                    entity.schema == schema && !entity.fields.contains_key(&field)
-                })
+                .filter(|entity| entity.schema == schema && !entity.fields.contains_key(&field))
                 .count();
             if blank_count > 0 {
                 return Err(DesignerError::RequiredValuesMissing {

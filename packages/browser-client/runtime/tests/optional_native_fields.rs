@@ -221,18 +221,19 @@ fn wire_journey_preserves_sparse_values_and_atomic_history() {
 #[test]
 fn requiredness_strengthening_reports_missing_values_and_preserves_history() {
     let mut j = Journey::default();
-    j.ok(json!({"type":"new_table","occurrence_id":OCCURRENCE,"name":"items","columns":[
-        {"name":"label","field_type":"text"},
-        {"name":"note","field_type":"text","required":false},
-        {"name":"amount","field_type":"number","required":false},
-        {"name":"single","field_type":"text","required":false},
-        {"name":"complete","field_type":"number","required":false}
-    ]}));
+    j.ok(
+        json!({"type":"new_table","occurrence_id":OCCURRENCE,"name":"items","columns":[
+            {"name":"label","field_type":"text"},
+            {"name":"note","field_type":"text","required":false},
+            {"name":"amount","field_type":"number","required":false},
+            {"name":"single","field_type":"text","required":false},
+            {"name":"complete","field_type":"number","required":false}
+        ]}),
+    );
     let table = j.table();
     let columns = table["columns"].as_array().unwrap();
-    let field = |key: &str| {
-        columns.iter().find(|column| column["key"] == key).unwrap()["id"].clone()
-    };
+    let field =
+        |key: &str| columns.iter().find(|column| column["key"] == key).unwrap()["id"].clone();
     let label = field("label");
     let note = field("note");
     let amount = field("amount");
@@ -240,19 +241,24 @@ fn requiredness_strengthening_reports_missing_values_and_preserves_history() {
     let complete = field("complete");
 
     for index in 0..5 {
-        j.mutate(json!({"type":"insert_row","collection":"items","initializers":[
-            {"field":label,"input":{"kind":"text","value":format!("row {index}")}}
-        ]}));
+        j.mutate(
+            json!({"type":"insert_row","collection":"items","initializers":[
+                {"field":label,"input":{"kind":"text","value":format!("row {index}")}}
+            ]}),
+        );
     }
     let rows = j.table()["rows"].as_array().unwrap().clone();
     let edits = |field: &Value, count: usize, kind: &str| {
-        rows.iter().take(count).map(|row| {
-            let input = match kind {
-                "number" => json!({"kind":"number","input":"1"}),
-                _ => json!({"kind":"text","value":"filled"}),
-            };
-            json!({"target":{"entity":row["id"],"field":field},"input":input})
-        }).collect::<Vec<_>>()
+        rows.iter()
+            .take(count)
+            .map(|row| {
+                let input = match kind {
+                    "number" => json!({"kind":"number","input":"1"}),
+                    _ => json!({"kind":"text","value":"filled"}),
+                };
+                json!({"target":{"entity":row["id"],"field":field},"input":input})
+            })
+            .collect::<Vec<_>>()
     };
     j.mutate(json!({"type":"edit_cells","edits":edits(&note, 2, "text")}));
     j.mutate(json!({"type":"edit_cells","edits":edits(&amount, 2, "number")}));
@@ -271,15 +277,28 @@ fn requiredness_strengthening_reports_missing_values_and_preserves_history() {
         assert_eq!(failure["current_revision"], before["revision"]);
         assert_eq!(failure["diagnostics"].as_array().unwrap().len(), 1);
         assert_eq!(failure["diagnostics"][0]["path"], target.clone());
-        assert_eq!(failure["diagnostics"][0]["subjects"][0]["kind"], "schema_field");
-        assert_eq!(failure["diagnostics"][0]["subjects"][0]["value"]["field"], target.clone());
-        assert_eq!(failure["diagnostics"][0]["facts"], json!([{"name":"blank_count","value":count}]));
+        assert_eq!(
+            failure["diagnostics"][0]["subjects"][0]["kind"],
+            "schema_field"
+        );
+        assert_eq!(
+            failure["diagnostics"][0]["subjects"][0]["value"]["field"],
+            target.clone()
+        );
+        assert_eq!(
+            failure["diagnostics"][0]["facts"],
+            json!([{"name":"blank_count","value":count}])
+        );
     }
 
     j.mutate(json!({"type":"undo"}));
-    assert!(j.table()["rows"].as_array().unwrap().iter().all(|row| {
-        row["blank_fields"].as_array().unwrap().contains(&complete)
-    }));
+    assert!(
+        j.table()["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| { row["blank_fields"].as_array().unwrap().contains(&complete) })
+    );
     j.mutate(json!({"type":"redo"}));
     assert!(j.table()["rows"].as_array().unwrap().iter().all(|row| {
         row["blank_fields"]
@@ -301,7 +320,9 @@ fn requiredness_strengthening_reports_missing_values_and_preserves_history() {
         json!({"target":{"entity":row["id"],"field":note},"input":{"kind":"text","value":""}})
     }).collect::<Vec<_>>();
     j.mutate(json!({"type":"edit_cells","edits":empty_notes}));
-    j.round_trip(json!({"type":"set_column_requiredness","collection":"items","field":note,"required":true}));
+    j.round_trip(
+        json!({"type":"set_column_requiredness","collection":"items","field":note,"required":true}),
+    );
     if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
         std::fs::write(
             format!("{path}.requiredness"),
