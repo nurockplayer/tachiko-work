@@ -60,6 +60,25 @@ export type FieldProjection = {
   editable_scalar: "number" | "text" | "boolean" | "date" | null;
 };
 
+/** One durable field constraint; absence of the projection means unconstrained. */
+export type FieldConstraint =
+  | { kind: "text_literal_set"; values: string[] }
+  | { kind: "number_inclusive_range"; min: number; max: number };
+
+/** One complete constraint replacement; `none` clears the declaration. */
+export type FieldConstraintInput = FieldConstraint | { kind: "none" };
+
+export type ConstraintFailureReason = "field_value" | "existing_values";
+
+/** Structured refusal: the allowed shape and how many rows or values failed. */
+export type ConstraintFailureProjection = {
+  reason: ConstraintFailureReason;
+  schema: string;
+  field: string;
+  constraint: FieldConstraint;
+  offending_rows: number;
+};
+
 export type ColumnProjection = {
   id: string;
   key: string;
@@ -69,6 +88,8 @@ export type ColumnProjection = {
   field_type: string;
   required: boolean;
   dropdown_options?: string[];
+  /** Declared durable constraint; omission means unconstrained. */
+  constraint?: FieldConstraint;
 };
 
 export type TableProjection = {
@@ -179,6 +200,8 @@ export type FailureProjection = {
   current_revision: string;
   diagnostics: DiagnosticProjection[];
   name_failures?: NameFailure[];
+  /** Present only when a field constraint refused the request. */
+  constraint_failure?: ConstraintFailureProjection;
 };
 
 export type TrackerCommand =
@@ -190,6 +213,7 @@ export type TrackerCommand =
   | { type: "remove_table_rows"; expected_revision: string; collection: string; entities: string[] }
   | { type: "add_column"; expected_revision: string; collection: string; name: string; field_type: string; required?: boolean; initializers?: Array<{entity: string; input: ScalarEditInput}> }
   | { type: "set_column_requiredness"; expected_revision: string; collection: string; field: string; required: boolean }
+  | { type: "set_column_constraint"; expected_revision: string; collection: string; field: string; constraint: FieldConstraintInput }
   | { type: "rename_column"; expected_revision: string; collection: string; field: string; name: string }
   | { type: "remove_column"; expected_revision: string; collection: string; field: string }
   | { type: "undo" | "redo"; expected_revision: string };

@@ -160,6 +160,58 @@ client replies, not materialized as extra payload members. Worker reply
 validation rejects malformed presence metadata. Optional Date/Boolean authoring,
 blank coercion and skip-blank calculation are outside this surface.
 
+## Field constraints (v3 list and number range)
+
+`setColumnConstraint(expectedRevision, collection, field, constraint)` replaces
+one durable constraint on a native Text or Number column:
+
+```ts
+await client.setColumnConstraint(revision, collectionKey, statusFieldId, {
+  kind: "text_literal_set",
+  values: ["Doing", "Done", "Todo"],
+});
+await client.setColumnConstraint(nextRevision, collectionKey, amountFieldId, {
+  kind: "number_inclusive_range",
+  min: 0,
+  max: 100,
+});
+// Clear the declaration; the column becomes unconstrained again.
+await client.setColumnConstraint(clearedRevision, collectionKey, statusFieldId, {kind: "none"});
+```
+
+The literal list is a complete closed set, as the semantic declaration requires:
+values are non-empty, unique, byte-sorted ascending (`["Doing", "Done", "Todo"]`,
+not `["Todo", ...]`), and bounded; range bounds must be finite and ordered.
+A constraint kind that does not match the column type is refused. The sets are
+closed: only an explicit `{kind: "none"}` clears a constraint, and calling the
+command with the constraint already in force is `no_change`.
+
+`ColumnProjection` gains `constraint?: FieldConstraint`:
+`{kind: "text_literal_set", values}` or
+`{kind: "number_inclusive_range", min, max}`. Omission means unconstrained.
+A literal set also fills the existing `dropdown_options` property, so it can
+drive a select control without a second lookup; range columns project no
+dropdown. The client validates the shape and rejects malformed constraints,
+but never normalizes, sorts or widens the declaration.
+
+An edit that violates a constraint publishes nothing and rejects with
+`DesignerRuntimeError`. Its `failure.code` is `field_constraint_violation` and
+`failure.constraint_failure` carries the typed shape:
+`{reason: "field_value", schema, field, constraint, offending_rows}`. Declaring
+a constraint that existing rows violate is refused the same way with
+`code: "existing_values_violate_constraint"`, `reason: "existing_values"` and
+the offending row count; the declaration is not applied. The UI can explain
+allowed values or bounds from `constraint_failure.constraint` without parsing
+the message.
+
+Constraints are stored only in `.roproj/v3`. A constrained project continues to
+save through `exportProjectV3`/`exportCanonicalTree` and reopens with its
+declarations and values intact, but legacy `exportProject` (v1/v2) refuses with
+`code: "legacy_export_unsupported"` instead of silently dropping constraints.
+The kit manifest's `capabilities` includes `columnConstraintProjection` as a
+projection feature marker (not a callable method); consumers must detect it
+before relying on `ColumnProjection.constraint` in older kits.
+
 ## Publish one revision-safe edit and observe authority
 
 Targets come from projections and contain stable semantic IDs. Do not construct

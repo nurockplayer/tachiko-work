@@ -19,6 +19,7 @@ import type {
   NewTableColumnInput,
   TableProjection,
   FailureProjection,
+  FieldConstraintInput,
 } from "./protocol.ts";
 
 export interface DesignerClient {
@@ -41,6 +42,8 @@ export interface DesignerClient {
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   clearField?(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
   setColumnRequiredness?(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection>;
+  /** Replace one durable constraint; `none` clears it. Constrained projects export as v3 only. */
+  setColumnConstraint?(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;

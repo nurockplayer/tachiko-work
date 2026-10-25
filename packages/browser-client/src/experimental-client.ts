@@ -12,6 +12,7 @@ import type {
   OccurrenceProjection,
   OpenedProjection,
   ProjectExport,
+  FieldConstraintInput,
   FieldTarget,
   PublicationProjection,
 } from "./runtime/protocol.ts";
@@ -34,6 +35,8 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   clearField(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
   /** Strengthening refuses while any entity lacks a value; never fills or coerces. */
   setColumnRequiredness(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection>;
+  /** Replace one durable Text/Number constraint; `none` clears it. */
+  setColumnConstraint(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection>;
   exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
   openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
@@ -123,8 +126,12 @@ export type {
   CalculationProjection,
   CollectionSummary,
   ColumnProjection,
+  ConstraintFailureProjection,
+  ConstraintFailureReason,
   DiagnosticProjection,
   FailureProjection,
+  FieldConstraint,
+  FieldConstraintInput,
   FieldBatchProjection,
   FieldDependencyProjection,
   FieldExplanationProjection,

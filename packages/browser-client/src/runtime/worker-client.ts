@@ -10,10 +10,12 @@ import type {
   BootstrapProjection,
   CanonicalTreeExport,
   CanonicalProjectFile,
+  ColumnProjection,
   DesignerRequest,
   DesignerResponse,
   FieldBatchProjection,
   FieldExplanationProjection,
+  FieldConstraintInput,
   FieldTarget,
   FieldProjection,
   OpenedProjection,
@@ -158,6 +160,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async setColumnRequiredness(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_requiredness", expected_revision: expectedRevision, collection, field, required});
+  }
+
+  async setColumnConstraint(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_constraint", expected_revision: expectedRevision, collection, field, constraint});
   }
 
   async bootstrap(): Promise<BootstrapProjection> {
@@ -551,12 +557,31 @@ function validateFieldPresence(field: FieldProjection): void {
   }
 }
 
+function validateColumnConstraint(column: ColumnProjection): void {
+  const constraint = column.constraint;
+  if (constraint === undefined) return;
+  if (constraint.kind === "text_literal_set") {
+    if (!Array.isArray(constraint.values) || !constraint.values.every(value => typeof value === "string")) {
+      throw new Error("Invalid Worker column constraint.");
+    }
+    return;
+  }
+  if (constraint.kind === "number_inclusive_range") {
+    if (!Number.isFinite(constraint.min) || !Number.isFinite(constraint.max) || constraint.min > constraint.max) {
+      throw new Error("Invalid Worker column constraint.");
+    }
+    return;
+  }
+  throw new Error("Invalid Worker column constraint.");
+}
+
 function validateTablePresence(table: TableProjection): void {
   const columns = new Map(table.columns.map((column, index) => {
     if (typeof column.required !== "boolean") throw new Error("Invalid Worker column requiredness.");
     if (column.display_name_explicit !== undefined && column.display_name_explicit !== true) {
       throw new Error("Invalid Worker column display_name_explicit.");
     }
+    validateColumnConstraint(column);
     return [column.id, {required: column.required, index}];
   }));
   if (columns.size !== table.columns.length) throw new Error("Invalid Worker duplicate column identity.");

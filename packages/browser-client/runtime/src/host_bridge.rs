@@ -780,6 +780,7 @@ fn no_project_open() -> DesignerWireReply {
             current_revision: "unavailable".to_owned(),
             diagnostics: Vec::new(),
             name_failures: Vec::new(),
+            constraint_failure: None,
         },
     }
 }

@@ -4,6 +4,8 @@
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
 #[cfg(test)]
+mod constraints_tests;
+#[cfg(test)]
 mod display_names_tests;
 
 mod name_admission;
@@ -22,11 +24,12 @@ use tachiko_storage::{
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, KeyedGroupedSumDefinition,
-    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value, WorkspaceError,
-    analyze_field, create_document,
+    CalculationFailure, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey, Expression,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, IdGenerator,
+    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
+    KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
+    SemanticSubject, StarterTemplate, ValidationReport, Value, WorkspaceError, analyze_field,
+    create_document,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -132,6 +135,12 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         required: bool,
+    },
+    SetColumnConstraint {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        constraint: FieldConstraintInput,
     },
     RenameColumn {
         expected_revision: String,
@@ -312,6 +321,173 @@ const fn default_required() -> bool {
     true
 }
 
+/// Private authoring input for one complete field constraint replacement.
+///
+/// `None` clears the declaration. The semantic declaration remains the
+/// authority; this input only decodes the bounded closed shape.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FieldConstraintInput {
+    None,
+    TextLiteralSet { values: Vec<String> },
+    NumberInclusiveRange { min: f64, max: f64 },
+}
+
+/// One declared field constraint as the UI needs to render it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FieldConstraintProjection {
+    TextLiteralSet { values: Vec<String> },
+    NumberInclusiveRange { min: f64, max: f64 },
+}
+
+/// Why the runtime refused a constrained operation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintFailureReason {
+    /// One requested value does not satisfy the field's declared constraint.
+    FieldValue,
+    /// Declaring the constraint would leave existing values invalid.
+    ExistingValues,
+}
+
+/// Structured refusal data for a constraint declaration or constrained edit.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ConstraintFailureProjection {
+    pub reason: ConstraintFailureReason,
+    pub schema: String,
+    pub field: String,
+    pub constraint: FieldConstraintProjection,
+    pub offending_rows: usize,
+}
+
+impl FieldConstraintInput {
+    fn into_constraint(self) -> Result<tachiko_workspace_engine::FieldConstraint, DesignerError> {
+        Ok(match self {
+            Self::None => tachiko_workspace_engine::FieldConstraint::None,
+            Self::TextLiteralSet { values } => {
+                tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values }
+            }
+            Self::NumberInclusiveRange { min, max } => {
+                tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange {
+                    min: Number::new(min)
+                        .map_err(|_| table_error("constraint bounds must be finite Numbers"))?,
+                    max: Number::new(max)
+                        .map_err(|_| table_error("constraint bounds must be finite Numbers"))?,
+                }
+            }
+        })
+    }
+}
+
+fn constraint_projection(
+    constraint: &tachiko_workspace_engine::FieldConstraint,
+) -> Option<FieldConstraintProjection> {
+    match constraint {
+        tachiko_workspace_engine::FieldConstraint::None => None,
+        tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } => {
+            Some(FieldConstraintProjection::TextLiteralSet {
+                values: values.clone(),
+            })
+        }
+        tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange { min, max } => {
+            Some(FieldConstraintProjection::NumberInclusiveRange {
+                min: min.get(),
+                max: max.get(),
+            })
+        }
+    }
+}
+
+fn document_has_constraints(document: &Document) -> bool {
+    document
+        .schemas
+        .values()
+        .flat_map(|schema| schema.fields.values())
+        .any(|field| !field.constraint.is_none())
+}
+
+fn document_requires_v2_evidence(document: &Document) -> bool {
+    document.has_display_names() || document_has_constraints(document)
+}
+
+/// Turn a constrained-value validation failure into the private typed refusal
+/// the UI can explain, including the declaration and the offending row count.
+fn constraint_failure(
+    candidate: &Document,
+    set_constraints: &BTreeSet<(SchemaId, FieldId)>,
+    report: &ValidationReport,
+) -> Option<DesignerError> {
+    let code = DiagnosticCode::new("core.field_value_constraint_mismatch");
+    let mismatch = report
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code == code)?;
+    let field_ref = mismatch.subjects.iter().find_map(|subject| match subject {
+        SemanticSubject::EntityField(field) => Some(field.clone()),
+        _ => None,
+    })?;
+    let schema = candidate
+        .entities
+        .get(&field_ref.entity)
+        .map(|entity| entity.schema.clone())?;
+    let definition = candidate
+        .schemas
+        .get(&schema)?
+        .fields
+        .get(&field_ref.field)?;
+    let constraint = constraint_projection(&definition.constraint)?;
+    let offending_rows = report
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == code
+                && diagnostic.subjects.iter().any(|subject| {
+                    matches!(
+                        subject,
+                        SemanticSubject::EntityField(field)
+                            if field.field == field_ref.field
+                                && candidate
+                                    .entities
+                                    .get(&field.entity)
+                                    .is_some_and(|entity| entity.schema == schema)
+                    )
+                })
+        })
+        .count();
+    let reason = if set_constraints.contains(&(schema.clone(), field_ref.field.clone())) {
+        ConstraintFailureReason::ExistingValues
+    } else {
+        ConstraintFailureReason::FieldValue
+    };
+    let requirement = match &constraint {
+        FieldConstraintProjection::TextLiteralSet { values } => {
+            format!("allowed values: {}", values.join(", "))
+        }
+        FieldConstraintProjection::NumberInclusiveRange { min, max } => {
+            format!("allowed range: {min} to {max}")
+        }
+    };
+    let message = match reason {
+        ConstraintFailureReason::FieldValue => format!(
+            "field '{schema}.{}' refuses this value outside its constraint ({requirement})",
+            field_ref.field
+        ),
+        ConstraintFailureReason::ExistingValues => format!(
+            "refused to set the constraint on '{schema}.{}': {offending_rows} existing row(s) are outside it ({requirement})",
+            field_ref.field
+        ),
+    };
+    Some(DesignerError::FieldConstraintViolation {
+        schema,
+        field: field_ref.field,
+        constraint,
+        offending_rows,
+        reason,
+        message,
+    })
+}
+
 /// Strings retain their exact typed-paste meaning; clear is always explicit.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -332,7 +508,7 @@ impl From<&str> for PasteCellInput {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ColumnProjection {
     #[serde(default = "default_required")]
     pub required: bool,
@@ -346,6 +522,9 @@ pub struct ColumnProjection {
     pub field_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dropdown_options: Option<Vec<String>>,
+    /// The declared durable constraint, if any. Absence means unconstrained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraint: Option<FieldConstraintProjection>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -578,7 +757,7 @@ pub struct DiagnosticFactProjection {
     pub value: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FailureProjection {
     pub code: String,
     pub message: String,
@@ -586,6 +765,9 @@ pub struct FailureProjection {
     pub diagnostics: Vec<DiagnosticProjection>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub name_failures: Vec<NameFailure>,
+    /// Present only when a field constraint refused the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraint_failure: Option<ConstraintFailureProjection>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -815,6 +997,19 @@ pub enum DesignerError {
     InvalidTableOperation { message: String },
     #[error("native name admission rejected: {}", name_admission::failure_message(.failures))]
     NameAdmission { failures: Vec<NameFailure> },
+    #[error("{message}")]
+    FieldConstraintViolation {
+        schema: SchemaId,
+        field: FieldId,
+        constraint: FieldConstraintProjection,
+        offending_rows: usize,
+        reason: ConstraintFailureReason,
+        message: String,
+    },
+    #[error(
+        "this project uses field constraints and cannot be saved as an earlier format: {message}"
+    )]
+    LegacyExportUnsupported { message: String },
 }
 
 impl DesignerError {
@@ -862,6 +1057,14 @@ impl DesignerError {
             Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
                 ("invalid_table_operation", Vec::new())
             }
+            Self::FieldConstraintViolation { reason, .. } => (
+                match reason {
+                    ConstraintFailureReason::FieldValue => "field_constraint_violation",
+                    ConstraintFailureReason::ExistingValues => "existing_values_violate_constraint",
+                },
+                Vec::new(),
+            ),
+            Self::LegacyExportUnsupported { .. } => ("legacy_export_unsupported", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
             Self::UnsupportedScalarEdit { .. } => ("unsupported_edit", Vec::new()),
@@ -888,6 +1091,23 @@ impl DesignerError {
             name_failures: match self {
                 Self::NameAdmission { failures } => failures.clone(),
                 _ => Vec::new(),
+            },
+            constraint_failure: match self {
+                Self::FieldConstraintViolation {
+                    schema,
+                    field,
+                    constraint,
+                    offending_rows,
+                    reason,
+                    ..
+                } => Some(ConstraintFailureProjection {
+                    reason: *reason,
+                    schema: schema.to_string(),
+                    field: field.to_string(),
+                    constraint: constraint.clone(),
+                    offending_rows: *offending_rows,
+                }),
+                _ => None,
             },
         }
     }
@@ -946,6 +1166,7 @@ struct ColumnSpec {
     display_name_explicit: bool,
     field_type: FieldType,
     required: bool,
+    constraint: tachiko_workspace_engine::FieldConstraint,
 }
 
 /// One presence rule for table projections and imported spreadsheet headers.
@@ -1137,6 +1358,17 @@ impl DesignerRuntime {
                 &collection,
                 &field,
                 required,
+            )?)),
+            DesignerRequest::SetColumnConstraint {
+                expected_revision,
+                collection,
+                field,
+                constraint,
+            } => Ok(DesignerResponse::Published(self.set_column_constraint(
+                &expected_revision,
+                &collection,
+                &field,
+                constraint,
             )?)),
             DesignerRequest::RenameColumn {
                 expected_revision,
@@ -1491,6 +1723,13 @@ impl DesignerRuntime {
             });
         }
         let snapshot = self.session.export_snapshot();
+        if document_has_constraints(snapshot.document()) {
+            return Err(DesignerError::LegacyExportUnsupported {
+                message:
+                    "field constraints are stored only in .roproj/v3; use exportProjectV3 or exportCanonicalTree"
+                        .to_owned(),
+            });
+        }
         let bytes = if document_contains_date(snapshot.document()) {
             encode_project_record_v2(snapshot.document())?
         } else if !snapshot.document().keyed_grouped_sum_definitions.is_empty() {
@@ -1516,7 +1755,6 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        ensure_v3_capabilities(snapshot.document())?;
         // V3 always uses the strict original profile. The non-v3 capacity
         // retry is intentionally not an export or re-admission capability.
         ensure_document_profile(snapshot.document(), false)?;
@@ -1546,8 +1784,7 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<CanonicalTreeExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        let bytes = if self.opened_from_v3 || snapshot.document().has_display_names() {
-            ensure_v3_capabilities(snapshot.document())?;
+        let bytes = if self.opened_from_v3 || document_requires_v2_evidence(snapshot.document()) {
             ensure_document_profile(snapshot.document(), false)?;
             let tree = encode_roproj_v3(snapshot.document())?;
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?
@@ -1572,7 +1809,6 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        ensure_v3_capabilities(snapshot.document())?;
         ensure_document_profile(snapshot.document(), false)?;
         let tree = encode_roproj_v3(snapshot.document())?;
         let bytes = encode_portable_package_v1(&tree)?;
@@ -1678,8 +1914,16 @@ impl DesignerRuntime {
                     display_name: column.display_name.clone(),
                     display_name_explicit: column.display_name_explicit.then_some(true),
                     field_type: field_type_name(&column.field_type).to_owned(),
-                    dropdown_options: (column.field_type == FieldType::Boolean)
-                        .then(|| vec!["true".to_owned(), "false".to_owned()]),
+                    dropdown_options: match &column.constraint {
+                        tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } => {
+                            Some(values.clone())
+                        }
+                        _ if column.field_type == FieldType::Boolean => {
+                            Some(vec!["true".to_owned(), "false".to_owned()])
+                        }
+                        _ => None,
+                    },
+                    constraint: constraint_projection(&column.constraint),
                 })
                 .collect(),
             rows,
@@ -1956,6 +2200,36 @@ impl DesignerRuntime {
             expected,
             vec![command(required)],
             vec![command(definition.required)],
+        )
+    }
+
+    fn set_column_constraint(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        constraint: FieldConstraintInput,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema_id, _) = self.native_column_schema(collection)?;
+        let snapshot = self.session.export_snapshot();
+        let definition = snapshot.document().schemas[&schema_id]
+            .fields
+            .get(&FieldId::from(field.to_owned()))
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        let constraint = constraint.into_constraint()?;
+        if definition.constraint == constraint {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        let command = |constraint| SemanticCommand::SetFieldConstraint {
+            schema: schema_id.clone(),
+            field: definition.id.clone(),
+            constraint,
+        };
+        self.record_edit(
+            expected,
+            vec![command(constraint)],
+            vec![command(definition.constraint.clone())],
         )
     }
 
@@ -2762,7 +3036,20 @@ impl DesignerRuntime {
                         );
                     }
                 }
-                SemanticCommand::FormulaUpdate(_) | SemanticCommand::SetFieldConstraint { .. } => {
+                SemanticCommand::SetFieldConstraint {
+                    schema,
+                    field,
+                    constraint,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .and_then(|schema| schema.fields.get_mut(field))
+                        .ok_or_else(|| table_error("column is unavailable"))?
+                        .constraint
+                        .clone_from(constraint);
+                }
+                SemanticCommand::FormulaUpdate(_) => {
                     return Err(tracker_error("unsupported history command"));
                 }
                 SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
@@ -2775,34 +3062,55 @@ impl DesignerRuntime {
                 }
             }
         }
-        if validate(&candidate).is_ok() {
-            if self.opened_from_v3 {
-                Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
-            } else if self.text_capacity {
-                match commands.as_slice() {
-                    [
-                        SemanticCommand::SetFieldValue {
-                            field,
-                            value: Value::Text(value),
-                        },
-                    ] if matches!(
-                        snapshot
-                            .document()
-                            .entities
-                            .get(&field.entity)
-                            .and_then(|entity| entity.fields.get(&field.field)),
-                        Some(Value::Text(_))
-                    ) =>
-                    {
-                        self.preflight_capacity_scalar(&candidate, field, value)?;
-                    }
-                    _ => {
-                        Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, true)?;
-                    }
+        let constraint_targets = commands
+            .iter()
+            .filter_map(|command| match command {
+                SemanticCommand::SetFieldConstraint { schema, field, .. } => {
+                    Some((schema.clone(), field.clone()))
                 }
-            } else {
-                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        match validate(&candidate) {
+            Ok(()) => {
+                if self.opened_from_v3 {
+                    Self::from_document_profile_with_opened(
+                        candidate,
+                        PREFLIGHT_OCCURRENCE,
+                        false,
+                    )?;
+                } else if self.text_capacity {
+                    match commands.as_slice() {
+                        [
+                            SemanticCommand::SetFieldValue {
+                                field,
+                                value: Value::Text(value),
+                            },
+                        ] if matches!(
+                            snapshot
+                                .document()
+                                .entities
+                                .get(&field.entity)
+                                .and_then(|entity| entity.fields.get(&field.field)),
+                            Some(Value::Text(_))
+                        ) =>
+                        {
+                            self.preflight_capacity_scalar(&candidate, field, value)?;
+                        }
+                        _ => {
+                            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, true)?;
+                        }
+                    }
+                } else {
+                    Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
+                }
             }
+            Err(WorkspaceError::InvalidDocument { report, .. }) => {
+                if let Some(error) = constraint_failure(&candidate, &constraint_targets, &report) {
+                    return Err(error);
+                }
+            }
+            Err(_) => {}
         }
         let capacity_text_edit = self.text_capacity
             && !commands.is_empty()
@@ -2817,10 +3125,11 @@ impl DesignerRuntime {
             });
         // Capacity Text human requests own their proposal evidence for this
         // one call. Other command families retain the existing lifecycle.
-        let v2_evidence_transition = snapshot.document().has_display_names()
+        let v2_evidence_transition = document_requires_v2_evidence(snapshot.document())
             || commands.iter().any(|command| match command {
                 SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
+                | SemanticCommand::SetFieldConstraint { .. }
                 | SemanticCommand::UnsetField { .. } => true,
                 SemanticCommand::AppendSchemaField { field, .. } => field.display_name.is_some(),
                 SemanticCommand::AppendCollection { schema, .. } => {
@@ -3860,7 +4169,6 @@ fn admit_portable_ro(
     let verified = decode_portable_package_v1(input)?;
     let document = decode_roproj_v3(verified.tree())?;
     ensure_document_profile(&document, false)?;
-    ensure_v3_capabilities(&document)?;
     let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
     Ok((candidate, opened))
@@ -4391,7 +4699,6 @@ fn decode_project_files(
                     message: format!("invalid canonical .roproj/v3: {error:?}"),
                 })
             })?;
-            ensure_v3_capabilities(&document)?;
             Ok((document, true))
         }
         Some(found) if found > 3 => Err(DesignerError::UnsupportedProject {
@@ -4399,20 +4706,6 @@ fn decode_project_files(
         }),
         _ => unreachable!("manifest version was dispatched above"),
     }
-}
-
-fn ensure_v3_capabilities(document: &Document) -> Result<(), DesignerError> {
-    if document
-        .schemas
-        .values()
-        .flat_map(|schema| schema.fields.values())
-        .any(|field| field.constraint != tachiko_workspace_engine::FieldConstraint::None)
-    {
-        return Err(DesignerError::UnsupportedProject {
-            message: "Designer v3 admission supports only unconstrained fields.".to_owned(),
-        });
-    }
-    Ok(())
 }
 
 fn document_contains_date(document: &Document) -> bool {
@@ -4554,29 +4847,21 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                     },
                 }
             } else {
-                DesignerWireReply::Error {
-                    error: FailureProjection {
-                        code: "no_project_open".to_owned(),
-                        message: "No Designer project is open.".to_owned(),
-                        current_revision: "unavailable".to_owned(),
-                        diagnostics: Vec::new(),
-                        name_failures: Vec::new(),
-                    },
-                }
+                failure_reply(
+                    "no_project_open",
+                    "No Designer project is open.".to_owned(),
+                    "unavailable",
+                )
             }
         }
-        Err(error) => DesignerWireReply::Error {
-            error: FailureProjection {
-                code: "invalid_request".to_owned(),
-                message: format!("The Designer request could not be decoded: {error}"),
-                current_revision: runtime.as_ref().map_or_else(
-                    || "unavailable".to_owned(),
-                    |runtime| runtime.current_revision().to_owned(),
-                ),
-                diagnostics: Vec::new(),
-                name_failures: Vec::new(),
-            },
-        },
+        Err(error) => failure_reply(
+            "invalid_request",
+            format!("The Designer request could not be decoded: {error}"),
+            &runtime.as_ref().map_or_else(
+                || "unavailable".to_owned(),
+                |runtime| runtime.current_revision().to_owned(),
+            ),
+        ),
     };
     let reply = if let Err(error) = ensure_wire_reply_size(
         &reply,
@@ -4598,20 +4883,28 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
 }
 
 fn request_too_large_reply(runtime: Option<&DesignerRuntime>) -> Vec<u8> {
-    encode_reply(&DesignerWireReply::Error {
+    encode_reply(&failure_reply(
+        "request_too_large",
+        format!(
+            "The Designer request exceeds the private {MAX_WIRE_REQUEST_BYTES}-byte bridge limit."
+        ),
+        runtime.map_or("unavailable", DesignerRuntime::current_revision),
+    ))
+}
+
+/// One bridge failure without authoring detail; constraint refusals keep their
+/// structured projection through `DesignerError::failure_projection` instead.
+fn failure_reply(code: &str, message: String, current_revision: &str) -> DesignerWireReply {
+    DesignerWireReply::Error {
         error: FailureProjection {
-            code: "request_too_large".to_owned(),
-            message: format!(
-                "The Designer request exceeds the private {MAX_WIRE_REQUEST_BYTES}-byte bridge limit."
-            ),
-            current_revision: runtime.map_or_else(
-                || "unavailable".to_owned(),
-                |runtime| runtime.current_revision().to_owned(),
-            ),
+            code: code.to_owned(),
+            message,
+            current_revision: current_revision.to_owned(),
             diagnostics: Vec::new(),
             name_failures: Vec::new(),
+            constraint_failure: None,
         },
-    })
+    }
 }
 
 fn document_scope(
@@ -4840,6 +5133,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                         display_name_explicit: explicit_column_display_name(field).is_some(),
                         field_type: field.field_type.clone(),
                         required: field.required,
+                        constraint: field.constraint.clone(),
                     })
                     .collect(),
                     entities,
@@ -5497,7 +5791,7 @@ fn designer_lifecycle(
         document_scope,
         document,
         principal,
-        document.has_display_names(),
+        document_requires_v2_evidence(document),
     )
 }
 
@@ -5505,10 +5799,10 @@ fn designer_lifecycle_profile(
     document_scope: &DocumentScopeId,
     document: &Document,
     principal: &PrincipalId,
-    names: bool,
+    v2_evidence: bool,
 ) -> Result<PatchLifecycle, DesignerError> {
     let authority = PrincipalId::from("designer-host-authority");
-    let constructor = if names {
+    let constructor = if v2_evidence {
         PatchLifecycle::new_v2
     } else {
         PatchLifecycle::new
