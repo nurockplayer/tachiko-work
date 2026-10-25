@@ -77,13 +77,7 @@ mod memory_stats {
     pub fn reset_peak() -> bool {
         #[cfg(target_os = "linux")]
         {
-            match std::fs::write("/proc/self/clear_refs", "5") {
-                Ok(()) => true,
-                Err(error) => {
-                    eprintln!("peak unavailable: cannot reset VmHWM: {error}");
-                    false
-                }
-            }
+            std::fs::write("/proc/self/clear_refs", "5").is_ok()
         }
         #[cfg(not(target_os = "linux"))]
         {

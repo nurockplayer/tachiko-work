@@ -87,9 +87,11 @@ Grid cells per fixture, and populated cells in brackets: 1,000 (920), 10,000
 "cells" in this note are grid slots and the counters below are the exact
 measurements.
 
-Latency, median of 3–5 iterations (milliseconds). The final run was
+Latency, median of 3–5 iterations (milliseconds). The numbers below are from
 `2026-10-26 06:18 JST` in `orb-test-tachiko-work-12727`, with the system
-allocator and peak RSS read from procfs.
+allocator and peak RSS read from procfs. A re-run at `2026-10-26 06:48 JST`
+after a review-only change to the failure path reproduced the counters and the
+large peaks (100k projection build 88.7 MiB, 111.898 ms).
 
 | operation | 1k cells | 10k cells | 100k cells |
 | --- | ---: | ---: | ---: |
