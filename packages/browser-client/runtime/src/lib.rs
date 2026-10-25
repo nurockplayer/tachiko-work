@@ -1027,6 +1027,11 @@ pub enum DesignerError {
         field: FieldId,
         count: usize,
     },
+    #[error("{}", formula_dependency_message(*.dependent_cells, subject))]
+    FormulaDependencyInUse {
+        dependent_cells: usize,
+        subject: String,
+    },
 }
 
 impl DesignerError {
@@ -1140,6 +1145,10 @@ impl DesignerError {
             Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
                 ("invalid_table_operation", Vec::new())
             }
+            Self::FormulaDependencyInUse {
+                dependent_cells,
+                subject,
+            } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
             Self::LegacyExportUnsupported { .. } => ("legacy_export_unsupported", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
@@ -1161,6 +1170,38 @@ impl DesignerError {
             | Self::MissingInvalidation => ("runtime_failure", Vec::new()),
         };
         (code, None, diagnostics)
+    }
+}
+
+fn formula_dependency_message(dependent_cells: usize, subject: &str) -> String {
+    format!(
+        "{dependent_cells} formula cell(s) reference {subject}; edit or remove those formulas first"
+    )
+}
+
+/// Typed refusal for a removal that would strand formula references; the count
+/// lets a client name how many cells must change first.
+fn formula_dependency_failure(
+    dependent_cells: usize,
+    subject: &str,
+) -> (&'static str, Vec<DiagnosticProjection>) {
+    (
+        "formula_dependency_in_use",
+        vec![formula_dependency_diagnostic(dependent_cells, subject)],
+    )
+}
+
+fn formula_dependency_diagnostic(dependent_cells: usize, subject: &str) -> DiagnosticProjection {
+    DiagnosticProjection {
+        code: "formula_dependency_in_use".to_owned(),
+        message: formula_dependency_message(dependent_cells, subject),
+        path: subject.to_owned(),
+        subjects: Vec::new(),
+        related_subjects: Vec::new(),
+        facts: vec![DiagnosticFactProjection {
+            name: "dependent_cells".to_owned(),
+            value: dependent_cells.to_string(),
+        }],
     }
 }
 
@@ -2594,6 +2635,21 @@ impl DesignerRuntime {
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
+        let dependent_cells = dependent_formula_cells(
+            snapshot.document(),
+            |reference| reference.field == field_id && entities.contains(&reference.entity),
+            |entity, removed| *removed == field_id && entities.contains(entity),
+        );
+        if dependent_cells > 0 {
+            return Err(DesignerError::FormulaDependencyInUse {
+                dependent_cells,
+                subject: format!(
+                    "column '{}' in collection '{}'",
+                    definition.effective_name(),
+                    collection
+                ),
+            });
+        }
         let mut values = BTreeMap::new();
         for entity in entities {
             if let Some(value) = snapshot
@@ -3257,6 +3313,14 @@ impl DesignerRuntime {
                         );
                     }
                 }
+                SemanticCommand::FormulaRestore(command) => {
+                    if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
+                        entity.fields.insert(
+                            command.target().field.clone(),
+                            Value::Formula(command.expression().clone()),
+                        );
+                    }
+                }
                 SemanticCommand::SetFieldConstraint {
                     schema,
                     field,
@@ -3810,8 +3874,9 @@ impl DesignerRuntime {
             }
             let value = cell_edit_value(column, old, &edit.input, &field)?;
             if value.as_ref() != old {
-                forward.push(value_command(&field, value.as_ref()));
-                inverse.push(value_command(&field, old));
+                let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
+                forward.push(command);
+                inverse.extend(undo);
             }
         }
         self.record_edit(expected, forward, inverse)
@@ -4031,6 +4096,21 @@ impl DesignerRuntime {
                 entity: entity.clone(),
             });
         }
+        let removed = seen
+            .iter()
+            .map(|id| EntityId::from(id.as_str()))
+            .collect::<BTreeSet<_>>();
+        let dependent_cells = dependent_formula_cells(
+            snapshot.document(),
+            |reference| removed.contains(&reference.entity),
+            |entity, _| removed.contains(entity),
+        );
+        if dependent_cells > 0 {
+            return Err(DesignerError::FormulaDependencyInUse {
+                dependent_cells,
+                subject: format!("removed rows in collection '{}'", spec.summary.display_name),
+            });
+        }
         inverse.reverse();
         self.record_edit(expected, forward, inverse)
     }
@@ -4142,8 +4222,9 @@ impl DesignerRuntime {
                 };
                 let value = cell_edit_value(column, old, &input, &field)?;
                 if existing.is_some() && value.as_ref() != old {
-                    forward.push(value_command(&field, value.as_ref()));
-                    inverse.push(value_command(&field, old));
+                    let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
+                    forward.push(command);
+                    inverse.extend(undo);
                 }
                 if let Some(value) = value {
                     entity.fields.insert(field.field, value);
@@ -4207,6 +4288,32 @@ fn value_command(field: &FieldRef, value: Option<&Value>) -> SemanticCommand {
     )
 }
 
+/// The command that publishes one accepted cell edit and the commands that undo
+/// it. A formula is not generally scalar-editable: replacing one with a scalar
+/// uses the dedicated bounded inverse-restore command, and undoing a clear uses
+/// the dedicated formula-restore command, because the ordinary value path
+/// rejects formula initialization.
+fn cell_edit_commands(
+    field: &FieldRef,
+    old: Option<&Value>,
+    value: Option<&Value>,
+) -> (SemanticCommand, Vec<SemanticCommand>) {
+    match (old, value) {
+        (Some(Value::Formula(_)), Some(Value::Number(number))) => (
+            SemanticCommand::formula_inverse_restore(field.clone(), *number),
+            vec![value_command(field, old)],
+        ),
+        (Some(Value::Formula(expression)), None) => (
+            value_command(field, None),
+            vec![SemanticCommand::formula_restore(
+                field.clone(),
+                expression.clone(),
+            )],
+        ),
+        _ => (value_command(field, value), vec![value_command(field, old)]),
+    }
+}
+
 fn cell_edit_value(
     column: &ColumnSpec,
     old: Option<&Value>,
@@ -4214,7 +4321,9 @@ fn cell_edit_value(
     field: &FieldRef,
 ) -> Result<Option<Value>, DesignerError> {
     if matches!(input, ScalarEditInput::Clear) {
-        if matches!(old, Some(Value::Formula(_) | Value::Reference(_))) {
+        // Clearing a formula cell removes its formula; a required column keeps
+        // the existing refusal because clearing would leave it blank.
+        if matches!(old, Some(Value::Reference(_))) {
             return Err(DesignerError::UnsupportedScalarEdit {
                 field: field.clone(),
             });
@@ -6580,7 +6689,7 @@ fn has_scalar_row_authoring_shape(
                             matches!(
                                 (field.field_type.clone(), value),
                                 (FieldType::Text, Value::Text(_))
-                                    | (FieldType::Number, Value::Number(_))
+                                    | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
                                     | (FieldType::Date, Value::Date(_))
                             )
@@ -6588,6 +6697,64 @@ fn has_scalar_row_authoring_shape(
                     })
             })
         })
+}
+
+/// Every field reference in one formula expression. Same-row references
+/// resolve against `owner`, so a retained `[.field]` formula counts as a
+/// dependent of its own row's field.
+fn expression_references(
+    owner: &FieldRef,
+    expression: &Expression,
+    references: &mut BTreeSet<FieldRef>,
+) {
+    match expression {
+        Expression::Number(_) => {}
+        Expression::Reference(reference) => {
+            references.insert(reference.clone());
+        }
+        Expression::SameRowReference(field) => {
+            references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
+        }
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            expression_references(owner, left, references);
+            expression_references(owner, right, references);
+        }
+    }
+}
+
+/// Retained formula cells whose calculation would lose a reference. Cells that
+/// are themselves being removed do not count as dependents.
+fn dependent_formula_cells(
+    document: &Document,
+    removed_reference: impl Fn(&FieldRef) -> bool,
+    removed_cell: impl Fn(&EntityId, &FieldId) -> bool,
+) -> usize {
+    document
+        .entities
+        .values()
+        .flat_map(|entity| {
+            entity.fields.iter().filter(|(field, value)| {
+                let Value::Formula(expression) = value else {
+                    return false;
+                };
+                if removed_cell(&entity.id, field) {
+                    return false;
+                }
+                let mut references = BTreeSet::new();
+                expression_references(
+                    &FieldRef::new(entity.id.clone(), (*field).clone()),
+                    expression,
+                    &mut references,
+                );
+                references.iter().any(&removed_reference)
+            })
+        })
+        .count()
 }
 
 fn tracker_error(message: &str) -> DesignerError {
@@ -6640,7 +6807,9 @@ fn parse_scalar(
     field: &FieldRef,
 ) -> Result<Value, DesignerError> {
     match (old, input) {
-        (Value::Number(_), ScalarEditInput::Number { input }) => input
+        // A scalar edit replaces a formula with the typed scalar, which is how
+        // a Sheet user overwrites a calculated cell.
+        (Value::Number(_) | Value::Formula(_), ScalarEditInput::Number { input }) => input
             .parse::<f64>()
             .ok()
             .and_then(|value| Number::new(value).ok())
@@ -8353,7 +8522,7 @@ mod tests {
         runtime: &mut DesignerRuntime,
         expected_revision: &str,
         field: &str,
-    ) {
+    ) -> DesignerError {
         let before = runtime
             .export_test_project(expected_revision)
             .unwrap()
@@ -8363,10 +8532,6 @@ mod tests {
         let error = runtime
             .remove_column(expected_revision, "orders", field)
             .unwrap_err();
-        assert!(matches!(
-            error,
-            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
-        ));
         assert_eq!(runtime.current_revision(), expected_revision);
         assert_eq!(
             runtime
@@ -8377,6 +8542,7 @@ mod tests {
         );
         assert_eq!(runtime.undo.len(), undo_count);
         assert_eq!(runtime.redo.len(), redo_count);
+        error
     }
 
     #[test]
@@ -8403,16 +8569,33 @@ mod tests {
             .get_mut("orders")
             .unwrap()
             .native_table_rows = true;
-        assert_native_column_removal_is_rejected(
+        let error = assert_native_column_removal_is_rejected(
             &mut formula_runtime,
             "resident/0",
             source.as_str(),
         );
-        assert_native_column_removal_is_rejected(
+        assert!(matches!(
+            error,
+            DesignerError::FormulaDependencyInUse {
+                dependent_cells: 1,
+                ..
+            }
+        ));
+        assert_eq!(
+            error.failure_projection("resident/0").code,
+            "formula_dependency_in_use"
+        );
+        // A column whose stored values carry formulas stays refused by the
+        // semantic RemoveSchemaField rule itself.
+        let error = assert_native_column_removal_is_rejected(
             &mut formula_runtime,
             "resident/0",
             derived.as_str(),
         );
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
+        ));
 
         let mut definition_runtime = native_column_runtime(
             &[
@@ -8446,11 +8629,15 @@ mod tests {
             .get(&super::KeyedGroupedSumDefinitionId::from("orders-summary"))
             .unwrap();
         assert_eq!(definition.orders.quantity_field, ids["quantity"]);
-        assert_native_column_removal_is_rejected(
+        let error = assert_native_column_removal_is_rejected(
             &mut definition_runtime,
             "resident/3",
             ids["quantity"].as_str(),
         );
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
+        ));
     }
 
     #[test]
@@ -8715,7 +8902,13 @@ mod tests {
         let error = runtime
             .remove_table_rows("resident/0", "orders", &[entity.to_string()])
             .unwrap_err();
-        assert!(matches!(error, DesignerError::Lifecycle(_)));
+        assert!(matches!(
+            error,
+            DesignerError::FormulaDependencyInUse {
+                dependent_cells: 1,
+                ..
+            }
+        ));
         assert_eq!(runtime.current_revision(), "resident/0");
         assert_eq!(
             runtime.export_test_project("resident/0").unwrap().bytes,

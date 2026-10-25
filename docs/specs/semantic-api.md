@@ -1978,7 +1978,11 @@ not arbitrary upsert, schema strengthening or a new conversion family.
 Admission resolves the existing entity and schema definition first. Only an
 absent optional field accepts a matching non-formula typed value. Unknown
 entities/fields, missing required fields, mismatched types, invalid references,
-formula initialization and protected formula replacement remain rejected.
+formula initialization and protected formula replacement remain rejected. The
+one exception is the app-private formula-restore history command: it can
+reinstall one already-admitted formula over an absent optional Number slot so a
+bounded session Undo can reverse a host clear. It is not advertised as a
+generic initialization capability and never parses authoring text.
 Candidate validation, exact revision, field/reference disclosure footprints,
 scoped grants and atomic publication still apply. None→Number(0) is a change.
 

@@ -265,6 +265,113 @@ fn optional_value_initialization_obeys_field_and_occurrence_scopes() {
     }
 }
 
+fn formula_restore_authority(scope: ScopedSemanticSubject) -> PatchLifecycle {
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "formula-restore",
+        "human-editor",
+        vec![
+            query_requirement(),
+            GrantRequirement::query(OperationFamily::FormulaUpdate, scope.clone()),
+            GrantRequirement::mutation(
+                AuthorizationAction::Propose,
+                OperationFamily::FormulaUpdate,
+                MutationClass::Formula,
+                scope.clone(),
+            )
+            .unwrap(),
+            GrantRequirement::mutation(
+                AuthorizationAction::Execute,
+                OperationFamily::FormulaUpdate,
+                MutationClass::Formula,
+                scope,
+            )
+            .unwrap(),
+        ],
+    );
+    lifecycle
+}
+
+#[test]
+fn formula_restore_reinstalls_one_cleared_formula_only_over_an_absent_optional_slot() {
+    use tachiko_workspace_engine::FieldType;
+    let document = optional_slot_document(FieldType::Number);
+    let expression = Expression::Number(Number::new(7.0).unwrap());
+    let restore = |expression: &Expression| {
+        SemanticPatchBody::command(SemanticCommand::formula_restore(
+            FieldRef::new("iron_sword", "optional"),
+            expression.clone(),
+        ))
+    };
+    let mut lifecycle = formula_restore_authority(field_scope("iron_sword", "weapons", "optional"));
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "restore-formula",
+        restore(&expression),
+        "human-editor",
+    );
+    let preview = lifecycle
+        .preview(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            &proposal,
+            &principal("human-editor"),
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(
+        preview.risk.mutation_classes,
+        BTreeSet::from([MutationClass::Formula])
+    );
+    assert!(preview.semantic_changes.iter().any(|change| matches!(
+        change,
+        SemanticChange::FieldAdded { field, value }
+            if field == &FieldRef::new("iron_sword", "optional")
+                && value == &Value::Formula(expression.clone())
+    )));
+    let mut publication = TestPublication::new(document, "r1", "r2");
+    lifecycle
+        .execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(publication.publish_calls, 1);
+    assert_eq!(
+        publication.document.entities["iron_sword"].fields["optional"],
+        Value::Formula(expression.clone())
+    );
+
+    // Only an absence is restorable: a present scalar or formula slot keeps
+    // the ordinary replacement rules and is refused here.
+    for occupied in [optional_scalar_document(), optional_formula_document()] {
+        let mut lifecycle =
+            formula_restore_authority(field_scope("iron_sword", "weapons", "optional"));
+        assert!(
+            lifecycle
+                .propose(
+                    &document_scope_id(),
+                    &occupied,
+                    &revision("r1"),
+                    ProposalRequest::new(
+                        proposal_id("restore-occupied"),
+                        revision("r1"),
+                        restore(&expression),
+                        principal("human-editor")
+                    ),
+                    NOW
+                )
+                .is_err()
+        );
+    }
+}
+
 #[test]
 fn invalid_later_batch_command_cannot_publish_an_initialized_optional_prefix() {
     let document = optional_slot_document(tachiko_workspace_engine::FieldType::Number);
