@@ -65,6 +65,14 @@ pub use interop_document::{
 
 // Exercise the browser bridge logic in native unit tests without dereferencing
 // its WASM-only pointer offsets. Production compilation remains WASM-only.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_bench;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_fixtures;
+#[cfg(all(target_arch = "wasm32", feature = "capacity-bench"))]
+compile_error!(
+    "the capacity-bench feature is native test-only; it must not be enabled for WASM builds"
+);
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -2039,7 +2047,18 @@ impl DesignerRuntime {
                 collection: collection.to_owned(),
             });
         }
+        self.build_table_projection_unbounded(collection)
+    }
 
+    /// Build the complete table projection without the row/column admission
+    /// cap. Every product path goes through [`Self::build_table_projection`];
+    /// only the capacity benchmark enters here, to measure Stage A sizes the
+    /// current admission profile still refuses.
+    fn build_table_projection_unbounded(
+        &self,
+        collection: &str,
+    ) -> Result<TableProjection, DesignerError> {
+        let spec = self.collection_spec(collection)?;
         let entities = self.session.query_entities(&spec.entities)?;
         let rows = if self.text_capacity {
             self.build_capacity_table_rows(spec, entities.value())?
@@ -4539,6 +4558,9 @@ fn ensure_projection_size_with_limit(
         }
     })?;
     let actual = counter.0;
+    tachiko_workspace_engine::instrumentation::record_json_bytes(
+        u64::try_from(actual).unwrap_or(u64::MAX),
+    );
     if actual > maximum {
         return Err(DesignerError::ProjectionTooLarge { actual, maximum });
     }

@@ -31,6 +31,7 @@ pub use tachiko_merge_engine::{
 use tachiko_merge_engine::{
     MergeOutcome, MergeOutcomeV2, UnmaterializedStoredFact, merge, merge_v2,
 };
+pub use tachiko_semantic_core::instrumentation;
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, KeyedGroupedSumDefinitionError, is_valid_identifier,
     validate_complete_formula_constraints, validate_document_core,

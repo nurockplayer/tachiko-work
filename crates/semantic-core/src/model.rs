@@ -343,7 +343,7 @@ fn decimal_component(bytes: &[u8]) -> u16 {
         .fold(0_u16, |value, byte| value * 10 + u16::from(byte - b'0'))
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
     pub id: DocumentId,
@@ -364,6 +364,22 @@ impl Document {
             schemas: BTreeMap::new(),
             entities: BTreeMap::new(),
             keyed_grouped_sum_definitions: BTreeMap::new(),
+        }
+    }
+}
+
+// The manual implementation only adds an instrumentation hook. Semantics are
+// identical to the derived `Clone`; the hook is an empty inline call unless the
+// `capacity-instrumentation` feature is enabled.
+impl Clone for Document {
+    fn clone(&self) -> Self {
+        crate::instrumentation::record_document_clone();
+        Self {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            schemas: self.schemas.clone(),
+            entities: self.entities.clone(),
+            keyed_grouped_sum_definitions: self.keyed_grouped_sum_definitions.clone(),
         }
     }
 }
