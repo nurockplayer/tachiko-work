@@ -73,7 +73,11 @@ warn_if_clippy_toolchain_is_old() {
   local toolchain="$1"
   local rustup_output newest_version local_output local_version
 
-  if ! rustup_output="$(rustup check 2>&1)"; then
+  # rustup check exits 100 when an update is available, which is the case this
+  # warning exists for; only other non-zero statuses mean the check failed.
+  local rustup_status=0
+  rustup_output="$(rustup check 2>&1)" || rustup_status=$?
+  if ((rustup_status != 0 && rustup_status != 100)); then
     echo "WARNING: unable to compare ${toolchain} with the newest stable toolchain (rustup check failed)." >&2
     echo "         Check network access and run 'rustup check' manually." >&2
     return 0

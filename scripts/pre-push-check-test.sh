@@ -22,6 +22,7 @@ cat >"${test_dir}/fake-bin/rustup" <<'EOF'
 set -euo pipefail
 if [[ "$1" == "check" ]]; then
   echo "${PRE_PUSH_TEST_CHECK:-stable-aarch64-apple-darwin - up to date : 1.99.0 (rustc 1.99.0)}"
+  exit "${PRE_PUSH_TEST_CHECK_STATUS:-0}"
 elif [[ "$1" == "run" && "$3" == "rustc" ]]; then
   echo "rustc ${PRE_PUSH_TEST_LOCAL:-1.99.0} (test build)"
 else
@@ -47,8 +48,10 @@ fi
 grep -F -- '--fast: skipping Rust 1.85.0 and wasm32 checks' \
   "${test_dir}/fast.out" >/dev/null
 
-# rustup's real wording: the newest version is the one after the arrow.
+# rustup's real wording and status: the newest version is the one after the
+# arrow, and rustup check exits 100 when an update is available.
 PRE_PUSH_TEST_CALLS="${test_dir}/calls-old.log" \
+  PRE_PUSH_TEST_CHECK_STATUS=100 \
   PRE_PUSH_TEST_CHECK='stable-aarch64-apple-darwin - update available: 1.97.1 (8bab26f4f 2026-07-14) -> 1.99.1 (58cf8f9c3 2026-10-13)' \
   PRE_PUSH_TEST_LOCAL=1.97.1 \
   PATH="${test_dir}/fake-bin:${PATH}" \
