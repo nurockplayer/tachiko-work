@@ -1137,10 +1137,10 @@ impl DesignerError {
             Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
                 ("invalid_table_operation", Vec::new())
             }
-            Self::FormulaDependencyInUse { dependent_cells, subject } => (
-                "formula_dependency_in_use",
-                vec![formula_dependency_diagnostic(*dependent_cells, subject)],
-            ),
+            Self::FormulaDependencyInUse {
+                dependent_cells,
+                subject,
+            } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
             Self::LegacyExportUnsupported { .. } => ("legacy_export_unsupported", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
@@ -1173,6 +1173,16 @@ fn formula_dependency_message(dependent_cells: usize, subject: &str) -> String {
 
 /// Typed refusal for a removal that would strand formula references; the count
 /// lets a client name how many cells must change first.
+fn formula_dependency_failure(
+    dependent_cells: usize,
+    subject: &str,
+) -> (&'static str, Vec<DiagnosticProjection>) {
+    (
+        "formula_dependency_in_use",
+        vec![formula_dependency_diagnostic(dependent_cells, subject)],
+    )
+}
+
 fn formula_dependency_diagnostic(dependent_cells: usize, subject: &str) -> DiagnosticProjection {
     DiagnosticProjection {
         code: "formula_dependency_in_use".to_owned(),
