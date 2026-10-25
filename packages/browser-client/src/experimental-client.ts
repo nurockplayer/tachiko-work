@@ -124,6 +124,7 @@ export type {
   CollectionSummary,
   ColumnProjection,
   DiagnosticProjection,
+  FailureCode,
   FailureProjection,
   FieldBatchProjection,
   FieldDependencyProjection,
