@@ -188,6 +188,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # Before the job split this native evidence travelled in the scalar-carrier artifact.
+      - name: Preserve native rectangular-capacity evidence on success or failure
+        if: ${{ always() && steps.full-release.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-native-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   browser-client-carrier-capacity:
     name: Browser client carrier and capacity qualification
     needs: quality
