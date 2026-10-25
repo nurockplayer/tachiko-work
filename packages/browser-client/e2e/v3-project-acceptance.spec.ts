@@ -717,12 +717,12 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const matrixProfile = (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string): any => ({
       dateValue, quantity, catalogue: [DEFINITION_ID], revision, occurrence: occurrenceUuid, dateType: marked,
     });
-    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800): Promise<void> => {
+    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800, ordinaryExportCode = "unsupported_project"): Promise<void> => {
       const profile = matrixProfile(marked, occurrenceUuid, dateValue, quantity, revision);
       await assertDateProjection({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, profile);
       const summary = await client.queryKeyedGroupedSum(DEFINITION_ID);
       if (summary.revision !== revision || JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", stationery]].sort())) throw new Error(`T2 literal catalogue summary changed at ${revision}`);
-      if (marked) await expectCode(() => client.exportProject(revision), "unsupported_project", revision);
+      if (marked) await expectCode(() => client.exportProject(revision), ordinaryExportCode, revision);
       else {
         const saved = await client.exportProject(revision);
         const manifest = JSON.parse(new TextDecoder().decode(decodeEntries(new Uint8Array(saved.bytes)).find(([path]) => path === "manifest.json")![1]));
@@ -818,7 +818,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
         await prepareMatrixResident(marked, openUuid);
         const opened = await client.openProject(transferCopy(candidate));
         equal(projectedConstraint(opened.table), expected.constraint, `${expected.label} Open / ${marked ? "v3" : "legacy"} projection changed`);
-        await checkMatrixResident(true, openUuid, "2026-09-28", 4, "resident/0");
+        await checkMatrixResident(true, openUuid, "2026-09-28", 4, "resident/0", 800, "legacy_export_unsupported");
       }
     }
     // Each rejection starts with an independent marked mixed U=[A], R=[B].

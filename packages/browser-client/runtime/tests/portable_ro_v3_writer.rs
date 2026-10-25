@@ -36,11 +36,16 @@ fn local_constrained_package_admits_with_its_declarations() {
         columns[2]["constraint"],
         serde_json::json!({"kind": "number_inclusive_range", "min": 0.0, "max": 10.0})
     );
-    // A local constrained document keeps its v3 origin: legacy export refuses
-    // and the portable re-export is byte-identical.
+    // A constrained document has no legacy representation at all: the refusal
+    // is the specific constraint code, not the generic v3-origin one.
+    let legacy = runtime.export_project("resident/0").unwrap_err();
+    assert_eq!(
+        legacy.failure_projection("resident/0").code,
+        "legacy_export_unsupported"
+    );
     assert!(matches!(
-        runtime.export_project("resident/0"),
-        Err(DesignerError::UnsupportedProject { .. })
+        legacy,
+        DesignerError::LegacyExportUnsupported { .. }
     ));
     assert_eq!(
         runtime.export_portable_ro("resident/0").unwrap().bytes,

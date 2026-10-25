@@ -2567,7 +2567,14 @@ fn candidate_inspect_and_open_admit_valid_v3_text_and_number_constraints() {
             resident.export_project_v3("resident/0").unwrap().bytes,
             input
         );
-        assert_ordinary_v3_export_refused(resident);
+        // Constrained documents have no legacy representation, so the refusal
+        // is the specific constraint code on either origin.
+        let legacy = resident.export_project("resident/0").unwrap_err();
+        assert_eq!(
+            legacy.failure_projection("resident/0").code,
+            "legacy_export_unsupported",
+            "{name}"
+        );
     }
 }
 

@@ -124,6 +124,22 @@ impl Fixture {
         }))
     }
 
+    fn undo(&mut self) -> Result<String, DesignerError> {
+        let expected_revision = self.runtime.current_revision().to_owned();
+        published(
+            self.runtime
+                .handle(DesignerRequest::Undo { expected_revision }),
+        )
+    }
+
+    fn redo(&mut self) -> Result<String, DesignerError> {
+        let expected_revision = self.runtime.current_revision().to_owned();
+        published(
+            self.runtime
+                .handle(DesignerRequest::Redo { expected_revision }),
+        )
+    }
+
     fn column(&self, field: &str) -> ColumnProjection {
         self.runtime
             .query_table(&self.collection)
@@ -314,6 +330,49 @@ fn clearing_a_constraint_restores_unconstrained_editing() {
             },
         )
         .unwrap();
+}
+
+#[test]
+fn constraint_replacements_undo_and_redo_exactly() {
+    let mut fixture = Fixture::new();
+    let status = fixture.status();
+    fixture.set(&status, list(&LITERALS)).unwrap();
+    fixture.set(&status, list(&["Doing", "Todo"])).unwrap();
+    assert_eq!(
+        fixture.column(&status).constraint,
+        Some(list_values(&["Doing", "Todo"]))
+    );
+
+    fixture.undo().unwrap();
+    assert_eq!(
+        fixture.column(&status).constraint,
+        Some(list_values(&LITERALS))
+    );
+    fixture.undo().unwrap();
+    assert_eq!(fixture.column(&status).constraint, None);
+    assert_eq!(fixture.column(&status).dropdown_options, None);
+
+    fixture.redo().unwrap();
+    assert_eq!(
+        fixture.column(&status).constraint,
+        Some(list_values(&LITERALS))
+    );
+    fixture.redo().unwrap();
+    assert_eq!(
+        fixture.column(&status).constraint,
+        Some(list_values(&["Doing", "Todo"]))
+    );
+    // The narrowed declaration still refuses values outside the new set.
+    assert!(
+        fixture
+            .edit(
+                &status,
+                ScalarEditInput::Text {
+                    value: "Done".into(),
+                },
+            )
+            .is_err()
+    );
 }
 
 #[test]

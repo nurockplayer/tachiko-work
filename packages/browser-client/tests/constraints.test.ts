@@ -88,6 +88,31 @@ describe("public field-constraint requests", () => {
     client.close();
   });
 
+  const semanticMismatches: Array<[string, ColumnProjection]> = [
+    ["empty literal list", {...status, constraint: {kind: "text_literal_set", values: []}, dropdown_options: []}],
+    ["unsorted literal list", {...status, constraint: {kind: "text_literal_set", values: ["Todo", "Done"]}, dropdown_options: ["Todo", "Done"]}],
+    ["duplicate literals", {...status, constraint: {kind: "text_literal_set", values: ["Done", "Done"]}, dropdown_options: ["Done", "Done"]}],
+    ["literal list on a number column", {
+      id: amount.id, key: amount.key, display_name: amount.display_name, field_type: "number", required: true,
+      dropdown_options: ["Doing", "Done"], constraint: {kind: "text_literal_set", values: ["Doing", "Done"]},
+    }],
+    ["range on a text column", {
+      id: status.id, key: status.key, display_name: status.display_name, field_type: "text", required: true,
+      constraint: {kind: "number_inclusive_range", min: 0, max: 100},
+    }],
+    ["dropdown that disagrees with the literals", {
+      ...status, constraint: {kind: "text_literal_set", values: ["Doing", "Done"]},
+      dropdown_options: ["Doing", "Done", "Todo"],
+    }],
+  ];
+  it.each(semanticMismatches)("rejects semantically invalid projections: %s", async (_label, column) => {
+    const {client, reply} = fixture();
+    const pending = client.queryTable("tasks");
+    reply("table", {...table, columns: [column]});
+    await expect(pending).rejects.toThrow("column constraint");
+    client.close();
+  });
+
   it("retains the typed refusal shape for off-constraint values", async () => {
     const {client, fail} = fixture();
     const failure: FailureProjection = {

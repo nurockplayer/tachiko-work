@@ -82,10 +82,11 @@ fn valid_constraint_fixtures_roundtrip_in_the_existing_v3_storage_codec() {
             runtime.export_project_v3("resident/0").unwrap().bytes,
             transfer
         );
-        assert!(matches!(
-            runtime.export_project("resident/0"),
-            Err(tachiko_designer_runtime::DesignerError::UnsupportedProject { .. })
-        ));
+        let legacy = runtime.export_project("resident/0").unwrap_err();
+        assert_eq!(
+            legacy.failure_projection("resident/0").code,
+            "legacy_export_unsupported"
+        );
     }
 }
 

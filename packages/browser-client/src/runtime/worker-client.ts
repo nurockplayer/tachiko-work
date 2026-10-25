@@ -557,17 +557,46 @@ function validateFieldPresence(field: FieldProjection): void {
   }
 }
 
+const byteOrder = new TextEncoder();
+
+function compareBytes(left: Uint8Array, right: Uint8Array): number {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] !== right[index]) return left[index]! < right[index]! ? -1 : 1;
+  }
+  return Math.sign(left.length - right.length);
+}
+
+/** Mirrors the semantic declaration: unique literals in strict byte order. */
+function strictlyByteOrdered(values: readonly string[]): boolean {
+  let previous: Uint8Array | undefined;
+  for (const value of values) {
+    const bytes = byteOrder.encode(value);
+    if (previous !== undefined && compareBytes(previous, bytes) >= 0) return false;
+    previous = bytes;
+  }
+  return true;
+}
+
 function validateColumnConstraint(column: ColumnProjection): void {
   const constraint = column.constraint;
   if (constraint === undefined) return;
   if (constraint.kind === "text_literal_set") {
-    if (!Array.isArray(constraint.values) || !constraint.values.every(value => typeof value === "string")) {
+    if (column.field_type !== "text" ||
+        !Array.isArray(constraint.values) || constraint.values.length === 0 ||
+        !constraint.values.every(value => typeof value === "string") ||
+        !strictlyByteOrdered(constraint.values) ||
+        !Array.isArray(column.dropdown_options) ||
+        column.dropdown_options.length !== constraint.values.length ||
+        column.dropdown_options.some((value, index) => value !== constraint.values[index])) {
       throw new Error("Invalid Worker column constraint.");
     }
     return;
   }
   if (constraint.kind === "number_inclusive_range") {
-    if (!Number.isFinite(constraint.min) || !Number.isFinite(constraint.max) || constraint.min > constraint.max) {
+    if (column.field_type !== "number" ||
+        !Number.isFinite(constraint.min) || !Number.isFinite(constraint.max) ||
+        constraint.min > constraint.max) {
       throw new Error("Invalid Worker column constraint.");
     }
     return;

@@ -1716,18 +1716,21 @@ impl DesignerRuntime {
                 current: current.to_owned(),
             });
         }
-        if self.opened_from_v3 {
-            return Err(DesignerError::UnsupportedProject {
-                message: "This occurrence was opened from .roproj/v3; use explicit v3 export."
-                    .to_owned(),
-            });
-        }
         let snapshot = self.session.export_snapshot();
+        // A constrained document has no legacy representation at all, so this
+        // answer is more specific than the generic v3-origin prohibition and
+        // applies to both origins.
         if document_has_constraints(snapshot.document()) {
             return Err(DesignerError::LegacyExportUnsupported {
                 message:
                     "field constraints are stored only in .roproj/v3; use exportProjectV3 or exportCanonicalTree"
                         .to_owned(),
+            });
+        }
+        if self.opened_from_v3 {
+            return Err(DesignerError::UnsupportedProject {
+                message: "This occurrence was opened from .roproj/v3; use explicit v3 export."
+                    .to_owned(),
             });
         }
         let bytes = if document_contains_date(snapshot.document()) {
@@ -3105,6 +3108,10 @@ impl DesignerRuntime {
                     Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
                 }
             }
+            // Preflight only upgrades a constraint mismatch into its typed
+            // refusal. Every other invalid candidate is still refused
+            // atomically by the lifecycle's own validation at execute time, so
+            // the proposal below cannot publish it.
             Err(WorkspaceError::InvalidDocument { report, .. }) => {
                 if let Some(error) = constraint_failure(&candidate, &constraint_targets, &report) {
                     return Err(error);
