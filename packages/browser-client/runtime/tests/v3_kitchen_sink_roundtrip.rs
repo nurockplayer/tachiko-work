@@ -3,9 +3,13 @@
 //! meaning is equal — Dates, explicit display names, required and optional
 //! fields, blank cells, formulas, a duplicated table and a saved
 //! keyed-grouped-sum definition — then does the same through a portable `.ro`.
+//! The reopened project must also leave as CSV/XLSX with truthful disclosure,
+//! and a constrained column must stay refused by the v3 writer instead of
+//! being silently dropped.
 
+use tachiko_designer_runtime::interop_adapter::{FidelityCategory, SourceValue, SourceWorkbook};
 use tachiko_designer_runtime::{
-    BootstrapProjection, DesignerRequest, DesignerResponse, DesignerRuntime,
+    BootstrapProjection, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
     KeyedGroupedSumProjection, ScalarEditInput, StoredValueProjection, TableProjection,
     open_portable_ro, open_project, verify_portable_ro,
 };
@@ -215,7 +219,7 @@ fn table(runtime: &mut DesignerRuntime, collection: &str) -> TableProjection {
 
 /// Revision spellings are per-occurrence history, not persisted meaning.
 fn normalized(mut table: TableProjection) -> TableProjection {
-    table.revision = "normalized".to_owned();
+    table.revision = String::from("normalized");
     table
 }
 
@@ -228,7 +232,7 @@ fn bootstrap(runtime: &mut DesignerRuntime, occurrence: &str) -> BootstrapProjec
     ) else {
         panic!("expected a bootstrap projection");
     };
-    bootstrap.revision = "normalized".to_owned();
+    bootstrap.revision = String::from("normalized");
     bootstrap
 }
 
@@ -241,7 +245,7 @@ fn grouped_sum(runtime: &mut DesignerRuntime) -> KeyedGroupedSumProjection {
     ) else {
         panic!("expected a keyed grouped-sum projection");
     };
-    sum.revision = "normalized".to_owned();
+    sum.revision = String::from("normalized");
     sum
 }
 
@@ -290,6 +294,56 @@ fn open_saved(bytes: &[u8], occurrence: &str) -> DesignerRuntime {
     reopened.expect("a successful open installs the occurrence")
 }
 
+/// Spot-check the features that a scalar-only projection assertion could hide.
+fn assert_spot_checked_meaning(runtime: &mut DesignerRuntime) {
+    let orders = table(runtime, "orders");
+    let ordered = cell(&orders, "order-note", "ordered_on");
+    assert_eq!(
+        ordered.stored,
+        Some(StoredValueProjection::Date {
+            value: Date::parse("2026-09-27").unwrap()
+        })
+    );
+    let blank_row = orders
+        .rows
+        .iter()
+        .find(|row| row.id == "order-note")
+        .expect("the blank row reopens");
+    assert_eq!(
+        blank_row.blank_fields,
+        vec!["note".to_owned(), "shipped".to_owned()],
+        "optional fields with no value stay absent, not placeholdered"
+    );
+    assert!(
+        blank_row
+            .fields
+            .iter()
+            .all(|field| !matches!(field.target.field.as_str(), "note" | "shipped"))
+    );
+    let empty_note = cell(&orders, "order-spare", "note");
+    assert_eq!(
+        empty_note.stored,
+        Some(StoredValueProjection::Text {
+            value: String::new()
+        }),
+        "a present empty Text stays distinguishable from an absent one"
+    );
+    assert_eq!(calculated(cell(&orders, "order-pen", "total")), Some(12.0));
+    assert_eq!(
+        grouped_sum(runtime).groups,
+        vec![
+            tachiko_designer_runtime::KeyedGroupedSumGroupProjection {
+                category: "Paper".to_owned(),
+                value: 20.0,
+            },
+            tachiko_designer_runtime::KeyedGroupedSumGroupProjection {
+                category: "Stationery".to_owned(),
+                value: 18.0,
+            },
+        ]
+    );
+}
+
 #[test]
 fn v3_save_reopen_preserves_every_supported_feature_and_reexports_identically() {
     let source = DesignerRuntime::from_document(kitchen_sink_document(), OCCURRENCE)
@@ -329,53 +383,7 @@ fn v3_save_reopen_preserves_every_supported_feature_and_reexports_identically() 
         "the saved grouped-sum definition and its results survive"
     );
 
-    // Spot-check the features that a scalar-only assertion could hide.
-    let orders = table(&mut reopened, "orders");
-    let ordered = cell(&orders, "order-note", "ordered_on");
-    assert_eq!(
-        ordered.stored,
-        Some(StoredValueProjection::Date {
-            value: Date::parse("2026-09-27").unwrap()
-        })
-    );
-    let blank_row = orders
-        .rows
-        .iter()
-        .find(|row| row.id == "order-note")
-        .expect("the blank row reopens");
-    assert_eq!(
-        blank_row.blank_fields,
-        vec!["note".to_owned(), "shipped".to_owned()],
-        "optional fields with no value stay absent, not placeholdered"
-    );
-    assert!(
-        blank_row
-            .fields
-            .iter()
-            .all(|field| !matches!(field.target.field.as_str(), "note" | "shipped"))
-    );
-    let empty_note = cell(&orders, "order-spare", "note");
-    assert_eq!(
-        empty_note.stored,
-        Some(StoredValueProjection::Text {
-            value: String::new()
-        }),
-        "a present empty Text stays distinguishable from an absent one"
-    );
-    assert_eq!(calculated(cell(&orders, "order-pen", "total")), Some(12.0));
-    assert_eq!(
-        grouped_sum(&mut reopened).groups,
-        vec![
-            tachiko_designer_runtime::KeyedGroupedSumGroupProjection {
-                category: "Paper".to_owned(),
-                value: 20.0,
-            },
-            tachiko_designer_runtime::KeyedGroupedSumGroupProjection {
-                category: "Stationery".to_owned(),
-                value: 18.0,
-            },
-        ]
-    );
+    assert_spot_checked_meaning(&mut reopened);
 
     // Re-saving the reopened occurrence is byte-identical: the round trip
     // loses nothing that the canonical v3 encoding can express.
@@ -388,7 +396,9 @@ fn v3_save_reopen_preserves_every_supported_feature_and_reexports_identically() 
     );
 
     // No stored result is trusted on reopen: an edited input recomputes.
-    let quantity = cell(&orders, "order-pen", "quantity").target.clone();
+    let quantity = cell(&table(&mut reopened, "orders"), "order-pen", "quantity")
+        .target
+        .clone();
     let DesignerResponse::Published(publication) = handle(
         &mut reopened,
         DesignerRequest::EditScalar {
@@ -457,4 +467,235 @@ fn v3_saved_project_round_trips_through_a_portable_ro() {
         portable_saved.bytes, saved.bytes,
         "the portable artifact and the v3 project carry the same document"
     );
+}
+
+/// Formula cells in the exported workbook, as the computed Number each
+/// `Total` column carries. Two collections (orders and its copy) have one.
+fn formula_totals(workbook: &SourceWorkbook) -> Vec<Vec<f64>> {
+    workbook
+        .sheets
+        .iter()
+        .filter_map(|sheet| {
+            let index = sheet
+                .columns
+                .iter()
+                .position(|column| column.name == "Total")?;
+            Some(
+                sheet
+                    .rows
+                    .iter()
+                    .map(|row| match &row[index].value {
+                        SourceValue::Number { value } => *value,
+                        other => panic!("a computed formula must export as Number, got {other:?}"),
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn sorted(mut values: Vec<f64>) -> Vec<f64> {
+    values.sort_by(f64::total_cmp);
+    values
+}
+
+fn disclosed_codes(workbook: &SourceWorkbook, code: &str) -> usize {
+    workbook
+        .ledger
+        .iter()
+        .filter(|finding| {
+            finding.code == code && finding.category == FidelityCategory::LossyOnExport
+        })
+        .count()
+}
+
+#[test]
+fn reopened_kitchen_sink_exports_formula_values_to_csv_and_xlsx() {
+    let mut source = DesignerRuntime::from_document(kitchen_sink_document(), OCCURRENCE)
+        .expect("the kitchen-sink document is admissible");
+    let copy_key = duplicate(&mut source, "resident/0");
+    let saved = source
+        .export_project_v3("resident/1")
+        .expect("the kitchen-sink document exports as v3");
+    let mut reopened = open_saved(&saved.bytes, REOPENED);
+
+    let workbook = reopened
+        .export_native_tables_workbook("resident/0", "orders")
+        .expect("the reopened project exports as XLSX");
+    assert_eq!(
+        formula_totals(&workbook)
+            .into_iter()
+            .map(sorted)
+            .collect::<Vec<_>>(),
+        vec![vec![6.0, 12.0, 20.0]; 2],
+        "formula cells export their current computed value, not a blank or a source"
+    );
+    assert_eq!(
+        disclosed_codes(&workbook, "native_tables_formula_values_only"),
+        2,
+        "both formula-bearing collections disclose that definitions stay behind"
+    );
+    assert_eq!(
+        disclosed_codes(&workbook, "native_tables_saved_grouped_sum_excluded"),
+        1
+    );
+    assert!(
+        !workbook.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        workbook.ledger
+    );
+    assert_eq!(workbook.sheets.len(), 3);
+    assert!(
+        workbook
+            .sheets
+            .iter()
+            .any(|sheet| sheet.name == "Orders copy"),
+        "the duplicated collection {copy_key} leaves as its own sheet"
+    );
+
+    // CSV keeps the same computed values for the selected collection only.
+    let csv = reopened
+        .export_native_tables_csv_workbook("resident/0", "orders")
+        .expect("the reopened formula table exports as CSV");
+    assert_eq!(csv.sheets.len(), 1);
+    assert_eq!(
+        sorted(formula_totals(&csv).remove(0)),
+        vec![6.0, 12.0, 20.0]
+    );
+    assert_eq!(
+        disclosed_codes(&csv, "native_tables_csv_collection_excluded"),
+        2,
+        "CSV excludes the other two collections by name"
+    );
+
+    // Export is read-only: the reopened occurrence keeps its revision and its
+    // formulas, and still saves back to the identical v3 bytes.
+    assert_eq!(reopened.observe_occurrence().revision, "resident/0");
+    assert_eq!(
+        calculated(cell(&table(&mut reopened, "orders"), "order-pen", "total")),
+        Some(12.0)
+    );
+    assert_eq!(
+        reopened
+            .export_project_v3("resident/0")
+            .expect("the reopened project still exports")
+            .bytes,
+        saved.bytes
+    );
+}
+
+/// The same feature matrix plus the two constraint shapes the native export
+/// discloses. v3 cannot carry either rule yet, so this fixture must never be
+/// silently saved without them.
+fn constrained_kitchen_sink() -> Document {
+    let mut document = kitchen_sink_document();
+    let orders = document
+        .schemas
+        .get_mut(&SchemaId::from("orders"))
+        .expect("the fixture orders schema exists");
+    orders
+        .fields
+        .get_mut(&FieldId::from("category"))
+        .expect("the fixture has a category column")
+        .constraint = FieldConstraint::TextLiteralSet {
+        values: vec!["Paper".to_owned(), "Stationery".to_owned()],
+    };
+    orders
+        .fields
+        .get_mut(&FieldId::from("unit_price"))
+        .expect("the fixture has a unit_price column")
+        .constraint = FieldConstraint::NumberInclusiveRange {
+        min: Number::new(0.0).expect("fixture bounds are finite"),
+        max: Number::new(1000.0).expect("fixture bounds are finite"),
+    };
+    document
+}
+
+fn text_column(workbook: &SourceWorkbook, column_name: &str) -> Vec<String> {
+    let sheet = workbook
+        .sheets
+        .iter()
+        .find(|sheet| {
+            sheet
+                .columns
+                .iter()
+                .any(|column| column.name == column_name)
+        })
+        .unwrap_or_else(|| panic!("no sheet carries '{column_name}'"));
+    let index = sheet
+        .columns
+        .iter()
+        .position(|column| column.name == column_name)
+        .expect("the column was just found");
+    sheet
+        .rows
+        .iter()
+        .map(|row| match &row[index].value {
+            SourceValue::Text { value } => value.clone(),
+            other => panic!("'{column_name}' must export as Text, got {other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn constrained_columns_export_with_disclosure_and_stay_refused_by_v3() {
+    let runtime = DesignerRuntime::from_document(constrained_kitchen_sink(), OCCURRENCE)
+        .expect("a constrained document is admissible in the resident runtime");
+
+    let workbook = runtime
+        .export_native_tables_workbook("resident/0", "orders")
+        .expect("constrained columns export their values");
+    let disclosures = workbook
+        .ledger
+        .iter()
+        .filter(|finding| finding.code == "native_tables_field_constraint_excluded")
+        .map(|finding| finding.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        disclosures
+            .iter()
+            .any(|message| message.contains("allowed values: Paper, Stationery")),
+        "{disclosures:?}"
+    );
+    assert!(
+        disclosures
+            .iter()
+            .any(|message| message.contains("allowed range: 0 to 1000")),
+        "{disclosures:?}"
+    );
+    assert_eq!(
+        sorted_text(text_column(&workbook, "Item")),
+        vec!["NOTE", "PEN", "PEN"]
+    );
+    assert_eq!(
+        sorted_text(text_column(&workbook, "分類 Category")),
+        vec!["Paper", "Stationery", "Stationery"],
+        "a constrained column exports its values unchanged"
+    );
+
+    // The v3 writer has no representation for the rules, so it refuses rather
+    // than dropping them; the resident document stays untouched either way.
+    for error in [
+        runtime.export_project_v3("resident/0").unwrap_err(),
+        runtime.export_portable_ro("resident/0").unwrap_err(),
+    ] {
+        assert!(
+            matches!(&error, DesignerError::UnsupportedProject { message } if message.contains("unconstrained")),
+            "{error}"
+        );
+    }
+    assert_eq!(runtime.observe_occurrence().revision, "resident/0");
+    let csv = runtime
+        .export_native_tables_csv_workbook("resident/0", "orders")
+        .expect("CSV still exports the constrained collection");
+    assert_eq!(csv.sheets.len(), 1);
+    assert_eq!(
+        sorted_text(text_column(&csv, "分類 Category")),
+        vec!["Paper", "Stationery", "Stationery"]
+    );
+}
+
+fn sorted_text(mut values: Vec<String>) -> Vec<String> {
+    values.sort();
+    values
 }
