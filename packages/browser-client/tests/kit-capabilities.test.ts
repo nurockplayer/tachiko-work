@@ -46,15 +46,19 @@ function publicSurface(): string[] {
   }
 }
 
+const projectionMarkers = ["columnDisplayNameExplicit", "columnConstraintProjection"];
+
 describe("kit manifest capabilities", () => {
   it("lists every public client method and entry function exactly once", () => {
     const capabilities = manifestCapabilities();
     expect(new Set(capabilities).size).toBe(capabilities.length);
-    expect([...capabilities].sort()).toEqual([...publicSurface(), "columnDisplayNameExplicit"].sort());
+    expect([...capabilities].sort()).toEqual([...publicSurface(), ...projectionMarkers].sort());
   });
 
-  it("advertises explicit column display-name presence as a projection feature", () => {
-    expect(manifestCapabilities()).toContain("columnDisplayNameExplicit");
-    expect(publicSurface()).not.toContain("columnDisplayNameExplicit");
+  it("advertises optional-field projection features without inventing methods", () => {
+    for (const marker of projectionMarkers) {
+      expect(manifestCapabilities()).toContain(marker);
+      expect(publicSurface()).not.toContain(marker);
+    }
   });
 });
