@@ -379,7 +379,9 @@ pub enum SemanticCommand {
     ///
     /// Formula initialization stays rejected on the generic value path; this
     /// app-private command exists only so one bounded session Undo can restore
-    /// the formula that a clear removed.
+    /// the formula that a clear removed. It is host-history only and shares the
+    /// `FormulaInverseRestore` trust boundary: no wire decoder produces it, so
+    /// it never widens the generic value path.
     FormulaRestore(FormulaRestoreCommand),
     /// Persist one complete saved keyed lookup + grouped-sum definition.
     ///
@@ -488,6 +490,11 @@ impl FormulaInverseRestoreCommand {
 /// this command never parses or binds authoring text; it stays separate from
 /// generic `SetFieldValue` so an absent slot cannot become a formula through
 /// the ordinary value path.
+///
+/// Host-history only, with the same trust boundary as
+/// [`FormulaInverseRestoreCommand`]: the host constructs it from history it
+/// recorded, no wire decoder produces it, and it is never reachable from
+/// authoring input.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FormulaRestoreCommand {
     target: FieldRef,
@@ -497,7 +504,7 @@ pub struct FormulaRestoreCommand {
 
 impl FormulaRestoreCommand {
     pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
-        let references = tachiko_formula_engine::extract_dependencies(&expression);
+        let references = tachiko_formula_engine::extract_dependencies(&target, &expression);
         Self {
             target,
             expression,

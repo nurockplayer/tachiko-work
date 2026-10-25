@@ -989,6 +989,82 @@ fn history_keeps_formula_sources_across_clear_and_scalar_replacement() {
     assert_eq!(redone.native_table_profile, Some(true));
 }
 
+const OPTIONAL_RESERVE: &str = "00000000-0000-4000-8000-000000000604";
+
+/// The J2 fixture with an optional Reserve column so one Clear is admitted;
+/// everything else, including the native table shape, stays the same.
+fn optional_reserve_plan() -> DesignerRuntime {
+    let mut document = plan_document();
+    document
+        .schemas
+        .get_mut(&SchemaId::from("plan"))
+        .expect("the plan schema is present")
+        .fields
+        .get_mut(&FieldId::from("reserve"))
+        .expect("the reserve column is present")
+        .required = false;
+    DesignerRuntime::from_document(document, OPTIONAL_RESERVE)
+        .expect("the optional-reserve J2 fixture is admissible")
+}
+
+#[test]
+fn same_row_formula_restore_recomputes_and_keeps_its_row_dependency() {
+    let mut runtime = optional_reserve_plan();
+    assert_eq!(
+        update(&mut runtime, "resident/0", "rent.reserve", SAME_ROW_RESERVE),
+        "resident/1"
+    );
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(plan.native_table_profile, Some(true));
+    assert_eq!(source(cell(&plan, "Rent", "reserve")), SAME_ROW_SOURCE);
+    assert_eq!(number(cell(&plan, "Rent", "reserve")), Some(8_000.0));
+    let reserve = cell(&plan, "Rent", "reserve").target.clone();
+    let expense = cell(&plan, "Rent", "expense").target.clone();
+    let reserve_id = table_column(&plan, "reserve").id.clone();
+
+    // Clearing removes the source. Undo reinstalls it from host history and
+    // recomputes from the row rather than replaying a stale scalar.
+    assert_eq!(
+        published(
+            &mut runtime,
+            DesignerRequest::EditScalar {
+                expected_revision: "resident/1".to_owned(),
+                target: reserve,
+                input: ScalarEditInput::Clear,
+            },
+        ),
+        "resident/2"
+    );
+    let cleared = table(&mut runtime, "plan");
+    assert!(row(&cleared, "Rent").blank_fields.contains(&reserve_id));
+
+    assert_eq!(
+        published(
+            &mut runtime,
+            DesignerRequest::Undo {
+                expected_revision: "resident/2".to_owned(),
+            },
+        ),
+        "resident/3"
+    );
+    let restored = table(&mut runtime, "plan");
+    assert_eq!(source(cell(&restored, "Rent", "reserve")), SAME_ROW_SOURCE);
+    assert_eq!(number(cell(&restored, "Rent", "reserve")), Some(8_000.0));
+
+    // The restored formula keeps its own-row dependency: a later Expense edit
+    // flows through to Reserve.
+    assert_eq!(
+        edit(&mut runtime, "resident/3", expense, "50000"),
+        "resident/4"
+    );
+    let followed = table(&mut runtime, "plan");
+    assert_eq!(number(cell(&followed, "Rent", "reserve")), Some(5_000.0));
+    assert_eq!(
+        cell(&followed, "Ads", "reserve").stored,
+        Some(StoredValueProjection::Number { value: 0.0 })
+    );
+}
+
 #[test]
 fn removals_refuse_while_a_formula_still_references_them() {
     let mut runtime = open_fixture();
