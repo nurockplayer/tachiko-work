@@ -68,7 +68,7 @@ fn number(value: f64) -> Value {
     Value::Number(Number::new(value).unwrap())
 }
 
-fn fixture(pen_price: f64) -> DesignerRuntime {
+fn document(pen_price: f64) -> Document {
     let mut document = Document::empty(OCCURRENCE, "J4 Catalog/Sales");
     document.schemas.insert(
         SchemaId::from("sales"),
@@ -109,7 +109,11 @@ fn fixture(pen_price: f64) -> DesignerRuntime {
             ),
         );
     }
-    DesignerRuntime::from_document(document, OCCURRENCE).unwrap()
+    document
+}
+
+fn fixture(pen_price: f64) -> DesignerRuntime {
+    DesignerRuntime::from_document(document(pen_price), OCCURRENCE).unwrap()
 }
 
 fn definition() -> KeyedGroupedSumDefinitionInput {
@@ -232,4 +236,19 @@ fn unavailable_results_never_report_a_zero_or_stale_total() {
         .unwrap();
     let restored = query(&mut runtime);
     assert_eq!(restored.total, Some(1800.0));
+}
+
+#[test]
+fn an_available_result_with_no_contributing_rows_is_zero() {
+    let mut document = document(200.0);
+    document
+        .entities
+        .retain(|_, entity| entity.schema != SchemaId::from("sales"));
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+    create(&mut runtime);
+    let result = query(&mut runtime);
+    // Complete with no rows is an available zero, not an unavailable result.
+    assert_eq!(result.groups.len(), 0);
+    assert_eq!(result.total, Some(0.0));
+    assert_eq!(result.diagnostics.len(), 0);
 }

@@ -181,7 +181,10 @@ evaluation, so a client never adds groups itself or reads a cached total.
 invalid input, an invalid definition) and `groups` is then empty with
 diagnostics explaining why. `null` is never a zero or a previous revision's
 value, so render it as "unavailable", not as 0. An available result with no
-contributing rows reports `total: 0` and `groups: []`.
+contributing rows reports `total: 0` and `groups: []`. If the aggregate
+cannot be represented as a finite number (overflow), `total` is `null` while the
+already-evaluated `groups` remain; `null` still means "unavailable", never a
+corrected or clamped number.
 
 ## Publish one revision-safe edit and observe authority
 
