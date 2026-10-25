@@ -65,6 +65,14 @@ pub use interop_document::{
 
 // Exercise the browser bridge logic in native unit tests without dereferencing
 // its WASM-only pointer offsets. Production compilation remains WASM-only.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_bench;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_fixtures;
+#[cfg(all(target_arch = "wasm32", feature = "capacity-bench"))]
+compile_error!(
+    "the capacity-bench feature is native test-only; it must not be enabled for WASM builds"
+);
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -1979,9 +1987,9 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        // V3 always uses the strict original profile. The non-v3 capacity
-        // retry is intentionally not an export or re-admission capability.
-        ensure_document_profile(snapshot.document(), false)?;
+        // The same profile decision as v3 open, so the preflight below admits
+        // exactly what this writes.
+        ensure_v3_document_profile(snapshot.document())?;
         let tree = encode_roproj_v3(snapshot.document())?;
         let bytes =
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?;
@@ -2009,7 +2017,7 @@ impl DesignerRuntime {
     ) -> Result<CanonicalTreeExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
         let bytes = if self.opened_from_v3 || document_requires_v2_evidence(snapshot.document()) {
-            ensure_document_profile(snapshot.document(), false)?;
+            ensure_v3_document_profile(snapshot.document())?;
             let tree = encode_roproj_v3(snapshot.document())?;
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?
         } else {
@@ -2033,7 +2041,7 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        ensure_document_profile(snapshot.document(), false)?;
+        ensure_v3_document_profile(snapshot.document())?;
         let tree = encode_roproj_v3(snapshot.document())?;
         let bytes = encode_portable_package_v1(&tree)?;
         admit_portable_ro(&bytes, PREFLIGHT_OCCURRENCE)?;
@@ -2084,7 +2092,18 @@ impl DesignerRuntime {
                 collection: collection.to_owned(),
             });
         }
+        self.build_table_projection_unbounded(collection)
+    }
 
+    /// Build the complete table projection without the row/column admission
+    /// cap. Every product path goes through [`Self::build_table_projection`];
+    /// only the capacity benchmark enters here, to measure Stage A sizes the
+    /// current admission profile still refuses.
+    fn build_table_projection_unbounded(
+        &self,
+        collection: &str,
+    ) -> Result<TableProjection, DesignerError> {
+        let spec = self.collection_spec(collection)?;
         let entities = self.session.query_entities(&spec.entities)?;
         let rows = if self.text_capacity {
             self.build_capacity_table_rows(spec, entities.value())?
@@ -2950,7 +2969,11 @@ impl DesignerRuntime {
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
         if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+            Self::from_document_profile_with_opened(
+                candidate,
+                PREFLIGHT_OCCURRENCE,
+                self.text_capacity,
+            )?;
         } else {
             Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
         }
@@ -3021,7 +3044,11 @@ impl DesignerRuntime {
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity.fields.insert(field.field, Value::Number(value));
         if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+            Self::from_document_profile_with_opened(
+                candidate,
+                PREFLIGHT_OCCURRENCE,
+                self.text_capacity,
+            )?;
         } else {
             Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
         }
@@ -3319,7 +3346,10 @@ impl DesignerRuntime {
             .collect::<BTreeSet<_>>();
         match validate(&candidate) {
             Ok(()) => {
-                if self.opened_from_v3 {
+                // A v3-origin text-capacity occurrence edits like any other
+                // capacity occurrence; only strict v3 origins keep the strict
+                // preflight.
+                if self.opened_from_v3 && !self.text_capacity {
                     Self::from_document_profile_with_opened(
                         candidate,
                         PREFLIGHT_OCCURRENCE,
@@ -4460,7 +4490,6 @@ fn admit_portable_ro(
     enforce_project_transfer_limit(input.len())?;
     let verified = decode_portable_package_v1(input)?;
     let document = decode_roproj_v3(verified.tree())?;
-    ensure_document_profile(&document, false)?;
     let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
     Ok((candidate, opened))
@@ -4503,14 +4532,36 @@ fn admit_project(
     Ok((candidate, opened))
 }
 
+/// Admit a v3/.ro document in the same profile order as
+/// [`DesignerRuntime::from_document`]: the strict original profile whenever it
+/// completely admits the document, otherwise the text-capacity profile for an
+/// eligible rectangle. Every v3/.ro writer preflights through this function, so
+/// a file is written only when the same bytes reopen (#480).
 fn admit_v3_document(
     document: Document,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
-    let (candidate, opened) =
-        DesignerRuntime::from_document_profile_with_opened(document, occurrence_id, false)?;
-    ensure_opened_projection_size(&opened, false)?;
-    Ok((candidate, opened))
+    let admit = |document: Document, text_capacity: bool| {
+        let (candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
+            document,
+            occurrence_id,
+            text_capacity,
+        )?;
+        ensure_opened_projection_size(&opened, text_capacity)?;
+        Ok((candidate, opened))
+    };
+    if !is_text_capacity_eligible_document(&document) {
+        return admit(document, false);
+    }
+    match admit(document.clone(), false) {
+        Ok(admitted) => Ok(admitted),
+        Err(DesignerError::InvalidOccurrenceIdentity) => {
+            Err(DesignerError::InvalidOccurrenceIdentity)
+        }
+        Err(strict) => {
+            admit(document, true).map_err(|capacity| beyond_both_profiles(strict, Some(capacity)))
+        }
+    }
 }
 
 pub(crate) fn admit_imported_project(
@@ -4521,11 +4572,17 @@ pub(crate) fn admit_imported_project(
     let (document, opened_from_v3) = decode_project_bundle(input)?;
     interop_document::validate_import_metadata(&document, metadata)?;
     if opened_from_v3 {
+        // A capacity-profile v3 save of an import keeps the same provenance
+        // gate as the legacy capacity retry below.
+        let gate = document.clone();
         let (candidate, opened) = admit_v3_document(document, occurrence_id)?;
+        if candidate.text_capacity {
+            interop_document::validate_saved_open_capacity_metadata(&gate, metadata)?;
+        }
         let mut candidate = candidate;
         candidate.opened_from_v3 = true;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        ensure_opened_wire_projection_size(&opened, false)?;
+        ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
         return Ok((candidate, opened));
     }
 
@@ -4595,6 +4652,9 @@ fn ensure_projection_size_with_limit(
         }
     })?;
     let actual = counter.0;
+    tachiko_workspace_engine::instrumentation::record_json_bytes(
+        u64::try_from(actual).unwrap_or(u64::MAX),
+    );
     if actual > maximum {
         return Err(DesignerError::ProjectionTooLarge { actual, maximum });
     }
@@ -4982,7 +5042,7 @@ fn decode_project_files(
             // separately and project storage failures through invalid_project.
             let mut profile_error = None;
             let admitted = CanonicalRoProjectV3::try_from_files_with_profile(files, |document| {
-                ensure_document_profile(document, false).map_err(|error| {
+                ensure_v3_document_profile(document).map_err(|error| {
                     profile_error = Some(error);
                 })
             });
@@ -5715,6 +5775,43 @@ fn ensure_capacity_document_profile(document: &Document) -> Result<(), DesignerE
     ensure_capacity_document_identities(document)?;
     interop_adapter::validate_text_capacity(&capacity_document_workbook(document))
         .map_err(|error| tracker_error(&error.0))
+}
+
+/// Cheap static profile gate for v3/.ro bytes, before the complete admission
+/// in [`admit_v3_document`]: the strict profile, or the text-capacity profile
+/// for an eligible rectangle. A profile refusal names both limits.
+fn ensure_v3_document_profile(document: &Document) -> Result<(), DesignerError> {
+    let strict = match ensure_document_profile(document, false) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    if !is_text_capacity_eligible_document(document) {
+        return Err(beyond_both_profiles(strict, None));
+    }
+    ensure_document_profile(document, true)
+        .map_err(|capacity| beyond_both_profiles(strict, Some(capacity)))
+}
+
+/// A standard-profile refusal extended with why the text-capacity profile
+/// does not apply either. Non-profile failures keep their own type.
+fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) -> DesignerError {
+    let DesignerError::UnsupportedProject { message } = &strict else {
+        return strict;
+    };
+    let capacity = capacity.map_or_else(
+        || {
+            format!(
+                "only one Text/Number table within {} rows, {} columns and {} cells qualifies",
+                interop_adapter::MAX_TEXT_CAPACITY_ROWS,
+                interop_adapter::MAX_COLUMNS,
+                interop_adapter::MAX_TEXT_CAPACITY_CELLS
+            )
+        },
+        |error| error.to_string(),
+    );
+    DesignerError::UnsupportedProject {
+        message: format!("{message}; text-capacity profile: {capacity}"),
+    }
 }
 
 fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(), DesignerError> {

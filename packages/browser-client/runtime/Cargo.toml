@@ -8,6 +8,11 @@ rust-version = "1.85"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Capacity Stage A benchmark only. Enables the workspace-engine counter hooks.
+# Never enabled for release WASM.
+capacity-bench = ["tachiko-workspace-engine/capacity-instrumentation"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

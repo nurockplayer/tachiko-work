@@ -3,6 +3,7 @@
 mod address;
 mod diagnostic;
 mod display_name;
+pub mod instrumentation;
 mod keyed_grouped_sum;
 mod model;
 mod validation;
