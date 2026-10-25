@@ -413,8 +413,9 @@ pub struct FormulaUpdateCommand {
 }
 
 impl FormulaUpdateCommand {
-    pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
-        let references = tachiko_formula_engine::extract_dependencies(&target, &expression);
+    pub(crate) fn new(document: &Document, target: FieldRef, expression: Expression) -> Self {
+        let references =
+            tachiko_formula_engine::extract_dependencies(document, &target, &expression);
         Self {
             target,
             expression,
@@ -2957,14 +2958,15 @@ impl PatchLifecycle {
                     .map(move |(field_id, value)| (entity.id.clone(), field_id, value))
             })
             .any(|(entity_id, field_id, value)| match value {
-                Value::Formula(expression) => {
-                    expression_references(&FieldRef::new(entity_id, field_id.clone()), expression)
-                        .iter()
-                        .any(|reference| {
-                            reference.field == field.id
-                                && schema_entities.contains(&reference.entity)
-                        })
-                }
+                Value::Formula(expression) => expression_references(
+                    candidate,
+                    &FieldRef::new(entity_id, field_id.clone()),
+                    expression,
+                )
+                .iter()
+                .any(|reference| {
+                    reference.field == field.id && schema_entities.contains(&reference.entity)
+                }),
                 _ => false,
             });
         let field_is_referenced_by_definition = candidate
@@ -3671,7 +3673,7 @@ impl PatchLifecycle {
                                 self.insert_calculation_dependency_disclosures(
                                     OperationFamily::SchemaFieldMutation,
                                     document,
-                                    expression_references(&owner, expression),
+                                    expression_references(document, &owner, expression),
                                     disclosures,
                                 )?;
                             }
@@ -3896,7 +3898,7 @@ impl PatchLifecycle {
                             self.insert_calculation_dependency_disclosures(
                                 family,
                                 document,
-                                expression_references(field, expression),
+                                expression_references(document, field, expression),
                                 disclosures,
                             )?;
                         }
@@ -3975,7 +3977,7 @@ impl PatchLifecycle {
                 disclosures.insert(DisclosureRequirement { family, scope });
             }
             Value::Formula(expression) => {
-                for field in expression_references(owner, expression) {
+                for field in expression_references(after, owner, expression) {
                     self.insert_field_disclosure_for(family, before, after, &field, disclosures)?;
                 }
             }
@@ -4004,7 +4006,7 @@ impl PatchLifecycle {
                 .and_then(|entity| entity.fields.get(&field.field))
                 .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
             if let Value::Formula(expression) = value {
-                pending.extend(expression_references(&field, expression));
+                pending.extend(expression_references(document, &field, expression));
             }
         }
         Ok(())
@@ -4149,7 +4151,7 @@ impl PatchLifecycle {
                         disclosures,
                     )?;
                     let owner = FieldRef::new(entity.id.clone(), field_id.clone());
-                    for reference in expression_references(&owner, expression) {
+                    for reference in expression_references(document, &owner, expression) {
                         self.insert_keyed_grouped_sum_entity_field(
                             document,
                             &reference.entity,
@@ -4692,7 +4694,11 @@ fn keyed_grouped_sum_matched_products(
     (matched, formula_operand_required)
 }
 
-fn expression_references(owner: &FieldRef, expression: &Expression) -> BTreeSet<FieldRef> {
+fn expression_references(
+    document: &Document,
+    owner: &FieldRef,
+    expression: &Expression,
+) -> BTreeSet<FieldRef> {
     let mut references = BTreeSet::new();
     let mut pending = vec![expression];
     while let Some(current) = pending.pop() {
@@ -4703,6 +4709,13 @@ fn expression_references(owner: &FieldRef, expression: &Expression) -> BTreeSet<
             }
             Expression::SameRowReference(field) => {
                 references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
+            }
+            Expression::ColumnTotal(column) => {
+                for (entity_id, entity) in &document.entities {
+                    if entity.schema == column.schema {
+                        references.insert(FieldRef::new(entity_id.clone(), column.field.clone()));
+                    }
+                }
             }
             Expression::Add { left, right }
             | Expression::Subtract { left, right }

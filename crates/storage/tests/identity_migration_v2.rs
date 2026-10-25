@@ -98,6 +98,10 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "same_row_reference",
             "args": field.as_str()
         }),
+        Expression::ColumnTotal(column) => serde_json::json!({
+            "op": "column_total",
+            "args": {"schema": column.schema.as_str(), "field": column.field.as_str()}
+        }),
         Expression::Add { left, right } => serde_json::json!({
             "op": "add",
             "args": {"left": expression_json(left), "right": expression_json(right)}

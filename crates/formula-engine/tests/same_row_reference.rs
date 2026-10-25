@@ -148,7 +148,7 @@ fn binding_resolves_the_field_against_the_owners_schema() {
         Expression::SameRowReference(FieldId::from("expense"))
     );
     assert_eq!(
-        extract_dependencies(&owner("rent", "reserve"), &bound),
+        extract_dependencies(&document, &owner("rent", "reserve"), &bound),
         std::collections::BTreeSet::from([owner("rent", "expense")])
     );
 }

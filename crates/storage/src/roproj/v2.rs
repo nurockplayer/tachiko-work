@@ -1081,6 +1081,11 @@ impl ExpressionV2 {
                     "same-row references are not representable in frozen .roproj/v2; use .roproj/v3 or direct-ro/v2".to_owned(),
                 );
             }
+            Expression::ColumnTotal(_) => {
+                return invalid_representation(
+                    "column totals are not representable in frozen .roproj/v2; use .roproj/v3 or direct-ro/v2".to_owned(),
+                );
+            }
             Expression::Add { left, right } => {
                 Self::Add(BinaryArgumentsV2::from_semantic(left, right)?)
             }
@@ -1578,7 +1583,8 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     }
                     Expression::Number(_)
                     | Expression::Reference(_)
-                    | Expression::SameRowReference(_) => {}
+                    | Expression::SameRowReference(_)
+                    | Expression::ColumnTotal(_) => {}
                 }
             }
         }

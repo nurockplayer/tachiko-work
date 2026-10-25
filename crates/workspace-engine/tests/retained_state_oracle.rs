@@ -521,7 +521,7 @@ fn assert_revision_oracles(session: &ResidentWorkspaceSession, context: &str) {
             projection.formula_definition.as_ref().map(|expression| {
                 (
                     projection.field.clone(),
-                    extract_dependencies(&projection.field, expression),
+                    extract_dependencies(document, &projection.field, expression),
                 )
             })
         })

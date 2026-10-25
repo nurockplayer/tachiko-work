@@ -82,7 +82,7 @@ fn authoring_addresses_bind_once_to_stable_ids() {
         }
     );
     assert_eq!(
-        extract_dependencies(&owner, &bound),
+        extract_dependencies(&document, &owner, &bound),
         BTreeSet::from([reference])
     );
 }

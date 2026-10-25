@@ -22,8 +22,8 @@ use tachiko_storage::{
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator,
+    CalculationFailure, ColumnRef, Date, Document, Entity, EntityId, EntityKey, Expression,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
     SemanticSubject, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
@@ -1012,6 +1012,32 @@ fn formula_failure_projection(
                 vec![tachiko_workspace_engine::SemanticSubject::EntityField(
                     field.clone(),
                 )],
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::Column { address, .. } => (
+                "formula_unknown_reference",
+                format!("Formula references an unknown column address '{address}'."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::NonNumericColumn { address } => (
+                "formula_type_mismatch",
+                format!("Formula column reference '{address}' is not a Number field."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
                 vec![DiagnosticFactProjection {
                     name: "reference".to_owned(),
                     value: address.to_string(),
@@ -2407,6 +2433,7 @@ impl DesignerRuntime {
             }
             fields.insert(field_id, definition);
         }
+        let schema_map = BTreeMap::from([(source_schema.id.clone(), schema_id.clone())]);
         let mut entity_map = BTreeMap::<EntityId, EntityId>::new();
         for source_id in &source_spec.entities {
             let target_id = loop {
@@ -2450,7 +2477,7 @@ impl DesignerRuntime {
                 let target_field = field_map
                     .get(source_field)
                     .ok_or_else(|| table_error("field mapping is incomplete"))?;
-                let value = remap_duplicate_value(value, &entity_map, &field_map)?;
+                let value = remap_duplicate_value(value, &entity_map, &field_map, &schema_map)?;
                 copied.fields.insert(target_field.clone(), value);
             }
             entities.push(copied);
@@ -2794,6 +2821,10 @@ impl DesignerRuntime {
                 );
                 require_copy_number(document, reference)
             })?;
+            // `[.field]` resolves against the destination's own row, so the
+            // copied formula must prove that row can supply the field now
+            // rather than on the first evaluation.
+            require_copy_expression_numbers(document, &target, &copied)?;
             let value = Value::Formula(copied);
             if &value != old {
                 forward.push(SemanticCommand::set_field_value(target.clone(), value));
@@ -4888,14 +4919,62 @@ fn require_copy_number(document: &Document, field: &FieldRef) -> Result<(), Desi
     Ok(())
 }
 
+/// Prove the numeric targets that `map_copy_references` does not visit:
+/// `[.field]` resolves against the destination row, and a column total names a
+/// schema column the copy keeps unchanged. Either must be valid now rather
+/// than on the first evaluation.
+fn require_copy_expression_numbers(
+    document: &Document,
+    owner: &FieldRef,
+    expression: &Expression,
+) -> Result<(), DesignerError> {
+    match expression {
+        Expression::SameRowReference(field) => require_copy_number(
+            document,
+            &FieldRef::new(owner.entity.clone(), field.clone()),
+        ),
+        Expression::ColumnTotal(column) => require_copy_column_number(document, column),
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            require_copy_expression_numbers(document, owner, left)?;
+            require_copy_expression_numbers(document, owner, right)
+        }
+        Expression::Number(_) | Expression::Reference(_) => Ok(()),
+    }
+}
+
+fn require_copy_column_number(
+    document: &Document,
+    column: &ColumnRef,
+) -> Result<(), DesignerError> {
+    let numeric = document
+        .schemas
+        .get(&column.schema)
+        .and_then(|schema| schema.fields.get(&column.field))
+        .is_some_and(|definition| definition.field_type == FieldType::Number);
+    if !numeric {
+        return Err(tracker_error(
+            "formula copy requires present numeric targets and references",
+        ));
+    }
+    Ok(())
+}
+
 fn map_copy_references(
     expression: &mut Expression,
     visit: &mut impl FnMut(&mut FieldRef) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
         // A relative copy keeps `[.field]` unchanged: the destination row is
-        // the formula's owner, so no per-row rewrite exists.
-        Expression::Number(_) | Expression::SameRowReference(_) => Ok(()),
+        // the formula's owner, so no per-row rewrite exists. A column total
+        // names a schema column, which no row-level copy changes.
+        Expression::Number(_) | Expression::SameRowReference(_) | Expression::ColumnTotal(_) => {
+            Ok(())
+        }
         Expression::Reference(reference) => visit(reference),
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
@@ -4913,6 +4992,7 @@ fn remap_duplicate_value(
     value: &Value,
     entities: &BTreeMap<EntityId, EntityId>,
     fields: &BTreeMap<FieldId, FieldId>,
+    schemas: &BTreeMap<SchemaId, SchemaId>,
 ) -> Result<Value, DesignerError> {
     match value {
         Value::Reference(entity) => Ok(Value::Reference(
@@ -4923,7 +5003,7 @@ fn remap_duplicate_value(
         )),
         Value::Formula(expression) => {
             let mut expression = expression.clone();
-            map_duplicate_expression(&mut expression, entities, fields)?;
+            map_duplicate_expression(&mut expression, entities, fields, schemas)?;
             Ok(Value::Formula(expression))
         }
         Value::Number(number) => Ok(Value::Number(*number)),
@@ -4937,6 +5017,7 @@ fn map_duplicate_expression(
     expression: &mut Expression,
     entities: &BTreeMap<EntityId, EntityId>,
     fields: &BTreeMap<FieldId, FieldId>,
+    schemas: &BTreeMap<SchemaId, SchemaId>,
 ) -> Result<(), DesignerError> {
     match expression {
         Expression::Number(_) => Ok(()),
@@ -4961,14 +5042,29 @@ fn map_duplicate_expression(
             })?;
             Ok(())
         }
+        Expression::ColumnTotal(column) => {
+            // A total of the copied table's own column follows the copy; a
+            // total of any other table keeps pointing at that table.
+            if let Some(schema) = schemas.get(&column.schema) {
+                let field = fields.get(&column.field).cloned().ok_or_else(|| {
+                    table_error(&format!(
+                        "internal column-total field '{}' has no copied field",
+                        column.field
+                    ))
+                })?;
+                column.schema = schema.clone();
+                column.field = field;
+            }
+            Ok(())
+        }
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }
         | Expression::Divide { left, right }
         | Expression::Minimum { left, right }
         | Expression::Maximum { left, right } => {
-            map_duplicate_expression(left, entities, fields)?;
-            map_duplicate_expression(right, entities, fields)
+            map_duplicate_expression(left, entities, fields, schemas)?;
+            map_duplicate_expression(right, entities, fields, schemas)
         }
     }
 }
@@ -5473,6 +5569,18 @@ fn ensure_formula_reference_profile(
                     field.as_str(),
                 )?;
             }
+            Expression::ColumnTotal(column) => {
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula column schema identity",
+                    column.schema.as_str(),
+                )?;
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula column field identity",
+                    column.field.as_str(),
+                )?;
+            }
             Expression::Add { left, right }
             | Expression::Subtract { left, right }
             | Expression::Multiply { left, right }
@@ -5918,6 +6026,7 @@ fn calculation_failure_code(failure: &CalculationFailure) -> &'static str {
     match failure {
         CalculationFailure::InvalidExpression { .. } => "invalid_expression",
         CalculationFailure::InvalidReferences { .. } => "invalid_references",
+        CalculationFailure::InvalidColumn { .. } => "invalid_column",
         CalculationFailure::Cycle { .. } => "cycle",
         CalculationFailure::FailedDependencies { .. } => "failed_dependencies",
         CalculationFailure::DivisionByZero => "division_by_zero",
@@ -5930,6 +6039,9 @@ fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
         CalculationFailure::InvalidExpression { .. } => "The formula structure is invalid.",
         CalculationFailure::InvalidReferences { .. } => {
             "The formula references an unavailable value."
+        }
+        CalculationFailure::InvalidColumn { .. } => {
+            "The formula references an unavailable column total."
         }
         CalculationFailure::Cycle { .. } => "The formula is part of a dependency cycle.",
         CalculationFailure::FailedDependencies { .. } => {

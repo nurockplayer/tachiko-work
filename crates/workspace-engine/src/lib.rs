@@ -18,7 +18,7 @@ use tachiko_formula_engine::{
     calculate_complete, parse_expression, project_expression, validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
-    CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
+    CalculationError, CalculationFailure, CanonicalAuthoringProjectionError, ColumnFailure,
     ExpressionComplexityError, FormulaBindError, ReferenceFailure,
 };
 pub use tachiko_merge_engine::{
@@ -37,10 +37,10 @@ use tachiko_semantic_core::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
-    Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
-    DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity, EntityId, EntityKey,
-    Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    ColumnRef, Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation,
+    DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity,
+    EntityId, EntityKey, Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId,
+    FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
     Schema, SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
     display_name_failures, trim_display_name,
@@ -1654,9 +1654,10 @@ fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, tar
                 reference.entity = target.clone();
             }
         }
-        // A same-row reference follows its owner, so rebasing an entity
-        // never rewrites it; a literal has nothing to rebase either.
-        Expression::Number(_) | Expression::SameRowReference(_) => {}
+        // A same-row reference follows its owner and a column total names a
+        // schema, so rebasing an entity never rewrites either; a literal has
+        // nothing to rebase.
+        Expression::Number(_) | Expression::SameRowReference(_) | Expression::ColumnTotal(_) => {}
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }
@@ -1677,13 +1678,23 @@ fn value_references_entity(value: &Value, owner: &FieldRef, target: &EntityId) -
     }
 }
 
+// Callers use this to refuse removing `target` while a formula still reads it.
+// A same-row reference reports the owner's entity because that is the row it
+// resolves to; `remove_entity` excludes the target's own formulas from the
+// check, so a formula on the removed entity never blocks its own removal. A
+// column total names a schema column rather than a row, so it reports no
+// entity dependency.
 fn expression_references_entity(
     expression: &Expression,
     owner: &FieldRef,
     target: &EntityId,
 ) -> bool {
     match expression {
-        Expression::Number(_) => false,
+        // A column total sums whichever rows the schema currently has, so
+        // removing one row changes its value rather than leaving a dangling
+        // stable target. Removing the schema or the column field is still
+        // refused through the column identity itself.
+        Expression::Number(_) | Expression::ColumnTotal(_) => false,
         Expression::Reference(reference) => &reference.entity == target,
         Expression::SameRowReference(_) => &owner.entity == target,
         Expression::Add { left, right }
@@ -1769,7 +1780,8 @@ fn check_field_value_candidate(
                     source,
                 }
             }
-            source @ CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. } => {
+            source @ (CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. }
+            | CanonicalAuthoringProjectionError::UnresolvableBoundColumns { .. }) => {
                 WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,
@@ -2157,6 +2169,9 @@ fn formula_diagnostics(
                 };
                 diagnostic
             }
+            CalculationFailure::InvalidColumn { columns } => {
+                invalid_column_diagnostic(formula, path.clone(), columns)
+            }
             CalculationFailure::Cycle { members } => formula_diagnostic(
                 diagnostic_codes::FORMULA_CYCLE,
                 members
@@ -2330,6 +2345,37 @@ fn invalid_reference_diagnostic(
     diagnostic
 }
 
+fn invalid_column_diagnostic(
+    formula: &FieldRef,
+    path: String,
+    columns: &BTreeMap<ColumnRef, ColumnFailure>,
+) -> Diagnostic {
+    let mut diagnostic = formula_diagnostic(
+        diagnostic_codes::FORMULA_INVALID_REFERENCES,
+        vec![SemanticSubject::EntityField(formula.clone())],
+        path,
+        format!("formula '{formula}' has invalid columns"),
+    )
+    .with_related_subjects(
+        columns
+            .keys()
+            .map(|column| SemanticSubject::SchemaField {
+                schema: column.schema.clone(),
+                field: column.field.clone(),
+            })
+            .collect(),
+    );
+    for (column, failure) in columns {
+        let fact = match failure {
+            ColumnFailure::MissingSchema => "missing_column_schema",
+            ColumnFailure::MissingField => "missing_column_field",
+            ColumnFailure::NonNumeric => "non_numeric_column",
+        };
+        diagnostic = diagnostic.with_fact(DiagnosticFact::new(fact, column.to_string()));
+    }
+    diagnostic
+}
+
 fn formula_diagnostic(
     code: DiagnosticCode,
     subjects: Vec<SemanticSubject>,
@@ -2354,7 +2400,8 @@ fn formula_prerequisites_available(
         | CalculationFailure::InvalidReferences { .. }
         | CalculationFailure::FailedDependencies { .. }
         | CalculationFailure::DivisionByZero
-        | CalculationFailure::NonFiniteResult => true,
+        | CalculationFailure::NonFiniteResult
+        | CalculationFailure::InvalidColumn { .. } => true,
         CalculationFailure::Cycle { members } => members
             .iter()
             .all(|member| field_prerequisites_available(document, member, &blockers.values)),
@@ -2520,7 +2567,10 @@ fn drop_expression_iteratively(expression: Expression) {
                 stack.push(*right);
                 stack.push(*left);
             }
-            Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => {}
+            Expression::Number(_)
+            | Expression::Reference(_)
+            | Expression::SameRowReference(_)
+            | Expression::ColumnTotal(_) => {}
         }
     }
 }

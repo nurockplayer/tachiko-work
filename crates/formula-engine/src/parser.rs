@@ -1,5 +1,6 @@
 use tachiko_semantic_core::{
-    FieldAddress, FieldKey, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, is_valid_identifier,
+    ColumnAddress, FieldAddress, FieldKey, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number,
+    is_valid_identifier,
 };
 use thiserror::Error;
 
@@ -12,6 +13,8 @@ pub enum UnboundExpression {
     Reference(FieldAddress),
     // `[.field]`: the field on the entity that owns the formula.
     SameRowReference(FieldKey),
+    // `[schema.field:total]`: the sum of one Number column over a schema.
+    ColumnTotal(ColumnAddress),
     Add { left: Box<Self>, right: Box<Self> },
     Subtract { left: Box<Self>, right: Box<Self> },
     Multiply { left: Box<Self>, right: Box<Self> },
@@ -109,6 +112,9 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
             format!("[{}.{}]", reference.entity, reference.field)
         }
         UnboundExpression::SameRowReference(field) => format!("[.{field}]"),
+        UnboundExpression::ColumnTotal(column) => {
+            format!("[{}.{}:total]", column.schema, column.field)
+        }
         UnboundExpression::Add { left, right } => format_binary(left, "+", right),
         UnboundExpression::Subtract { left, right } => format_binary(left, "-", right),
         UnboundExpression::Multiply { left, right } => format_binary(left, "*", right),
@@ -172,7 +178,8 @@ fn binary_children(
         | UnboundExpression::Maximum { left, right } => Some((left, right)),
         UnboundExpression::Number(_)
         | UnboundExpression::Reference(_)
-        | UnboundExpression::SameRowReference(_) => None,
+        | UnboundExpression::SameRowReference(_)
+        | UnboundExpression::ColumnTotal(_) => None,
     }
 }
 
@@ -366,6 +373,12 @@ impl<'input> Parser<'input> {
             return Ok(UnboundExpression::SameRowReference(FieldKey::from(field)));
         }
 
+        // `[schema.field:total]` keeps the column identity so the total never
+        // depends on which rows happen to exist.
+        let (inner, column_total) = match inner.strip_suffix(":total") {
+            Some(column) => (column, true),
+            None => (inner, false),
+        };
         let Some(dot) = inner.find('.') else {
             self.position = close;
             return Err(self.error("reference must contain exactly one '.'"));
@@ -388,9 +401,11 @@ impl<'input> Parser<'input> {
 
         self.position = close + 1;
         self.record_node(start)?;
-        Ok(UnboundExpression::Reference(FieldAddress::new(
-            entity, field,
-        )))
+        Ok(if column_total {
+            UnboundExpression::ColumnTotal(ColumnAddress::new(entity, field))
+        } else {
+            UnboundExpression::Reference(FieldAddress::new(entity, field))
+        })
     }
 
     fn parse_parenthesized(&mut self) -> Result<UnboundExpression, FormulaParseError> {

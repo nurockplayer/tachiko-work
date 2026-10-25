@@ -560,6 +560,10 @@ pub enum Expression {
     // that contains this node, so the node stores only the field identity and
     // keeps meaning "this row" through copies and row-relative moves.
     SameRowReference(FieldId),
+    // The sum of one Number column across every entity of a schema. The node
+    // names the schema and field, never the rows, so adding, deleting or
+    // renaming rows keeps the total meaning the whole column.
+    ColumnTotal(ColumnRef),
     Add { left: Box<Self>, right: Box<Self> },
     Subtract { left: Box<Self>, right: Box<Self> },
     Multiply { left: Box<Self>, right: Box<Self> },
@@ -611,5 +615,53 @@ impl FieldAddress {
 impl fmt::Display for FieldAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}.{}", self.entity, self.field)
+    }
+}
+
+/// A stable column identity: one schema field, independent of any row.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnRef {
+    pub schema: SchemaId,
+    pub field: FieldId,
+}
+
+impl ColumnRef {
+    #[must_use]
+    pub fn new(schema: impl Into<SchemaId>, field: impl Into<FieldId>) -> Self {
+        Self {
+            schema: schema.into(),
+            field: field.into(),
+        }
+    }
+}
+
+impl fmt::Display for ColumnRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.schema, self.field)
+    }
+}
+
+/// A human column address used while authoring a formula.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnAddress {
+    pub schema: SchemaKey,
+    pub field: FieldKey,
+}
+
+impl ColumnAddress {
+    #[must_use]
+    pub fn new(schema: impl Into<SchemaKey>, field: impl Into<FieldKey>) -> Self {
+        Self {
+            schema: schema.into(),
+            field: field.into(),
+        }
+    }
+}
+
+impl fmt::Display for ColumnAddress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.schema, self.field)
     }
 }
