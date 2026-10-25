@@ -782,6 +782,7 @@ pub extern "C" fn tachiko_designer_project_export() {
                     current_revision: "unavailable".to_owned(),
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
+                    constraint_failure: None,
                 },
             }
         };
@@ -834,6 +835,7 @@ pub extern "C" fn tachiko_designer_occurrence_observe() {
                     current_revision: "unavailable".to_owned(),
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
+                    constraint_failure: None,
                 },
             },
         };
@@ -889,6 +891,7 @@ fn export_project_bytes<E>(
                     current_revision: "unavailable".to_owned(),
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
+                    constraint_failure: None,
                 },
             }
         };

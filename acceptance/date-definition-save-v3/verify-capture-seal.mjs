@@ -11,7 +11,7 @@ export const NATIVE_CASES = [
   "ordinary_export_keeps_the_mixed_legacy_refusal_control", "frozen_codec_and_bridge_profile_controls",
   "legacy_date_only_ingress_edit_reexport", "legacy_definition_only_ingress_edit_reexport",
   "legacy_neither_ingress_edit_reexport", "fresh_candidate_ordinary_legacy_exports_remain_v1_v2_compatible",
-  "candidate_inspect_and_open_refuse_valid_v3_text_and_number_constraints",
+  "candidate_inspect_and_open_admit_valid_v3_text_and_number_constraints",
   "exact_full_catalogue_opened_projection_boundary_and_plus_one",
   "version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic",
   "successful_legacy_replacement_clears_v3_origin_marker",

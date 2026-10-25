@@ -46,6 +46,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The Rust runtime, WASM bridge and public TypeScript client now author v3 field
+  constraints: closed Text literal lists (also filling `dropdown_options`) and
+  inclusive Number ranges. `setColumnConstraint` sets or clears one declaration;
+  constrained edits publish nothing and reject with a typed
+  `constraint_failure` carrying the allowed shape and offending row count, and
+  declaring a constraint that existing values violate is refused atomically.
+  Constrained projects save as `.roproj/v3`, reopen with constraints and values
+  intact, and legacy v1/v2 `exportProject` refuses them with
+  `legacy_export_unsupported` instead of dropping the declaration. The kit
+  advertises `setColumnConstraint` and the `columnConstraintProjection` marker.
+
 - Keyed grouped-sum projections now carry the overall total alongside the
   category groups. `total` is derived from the same evaluation at the same
   revision and is `null` whenever the result is unavailable, never zero or a

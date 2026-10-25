@@ -366,7 +366,7 @@ fn eligible_inspection_controls_keep_lexical_text_and_enlarged_replies() {
 }
 
 #[test]
-fn portable_bridge_preserves_v3_bytes_and_constraint_refusals_without_replacement() {
+fn portable_bridge_preserves_v3_bytes_and_admits_constrained_packages() {
     fn fixture(hex: &str) -> Vec<u8> {
         hex.trim_end()
             .as_bytes()
@@ -392,13 +392,18 @@ fn portable_bridge_preserves_v3_bytes_and_constraint_refusals_without_replacemen
         json_of(&host.verify_portable_ro(&constrained))["status"],
         "ok"
     );
-    let refused = json_of(&host.open_portable_ro(&constrained, SECOND.as_bytes()));
-    assert_eq!(refused["error"]["code"], "unsupported_project");
-    assert_eq!(host.observe_occurrence(), before);
-    assert_eq!(
+    // Constrained v3 documents are supported: the package replaces the resident
+    // occurrence and re-exports its declarations byte for byte.
+    let admitted = json_of(&host.open_portable_ro(&constrained, SECOND.as_bytes()));
+    assert_eq!(admitted["status"], "ok", "{admitted}");
+    assert_ne!(host.observe_occurrence(), before);
+    assert_ne!(
         host.export_project_v3(b"resident/0").bytes.unwrap(),
         project_before
     );
+    let reexported = host.export_portable_ro(b"resident/0");
+    assert_eq!(json_of(&reexported.reply)["status"], "ok");
+    assert_eq!(reexported.bytes.unwrap(), constrained);
     let mut fresh = DesignerHost::new();
     assert_eq!(
         json_of(&fresh.open_portable_ro(&control, THIRD.as_bytes()))["status"],

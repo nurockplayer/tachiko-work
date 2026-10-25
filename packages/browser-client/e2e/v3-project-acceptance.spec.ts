@@ -26,7 +26,7 @@ const REQUIRED_NATIVE_CASES = [
   "ordinary_export_keeps_the_mixed_legacy_refusal_control", "frozen_codec_and_bridge_profile_controls",
   "legacy_date_only_ingress_edit_reexport", "legacy_definition_only_ingress_edit_reexport",
   "legacy_neither_ingress_edit_reexport", "fresh_candidate_ordinary_legacy_exports_remain_v1_v2_compatible",
-  "candidate_inspect_and_open_refuse_valid_v3_text_and_number_constraints",
+  "candidate_inspect_and_open_admit_valid_v3_text_and_number_constraints",
   "exact_full_catalogue_opened_projection_boundary_and_plus_one",
   "version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic",
   "successful_legacy_replacement_clears_v3_origin_marker",
@@ -717,12 +717,12 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const matrixProfile = (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string): any => ({
       dateValue, quantity, catalogue: [DEFINITION_ID], revision, occurrence: occurrenceUuid, dateType: marked,
     });
-    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800): Promise<void> => {
+    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800, ordinaryExportCode = "unsupported_project"): Promise<void> => {
       const profile = matrixProfile(marked, occurrenceUuid, dateValue, quantity, revision);
       await assertDateProjection({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, profile);
       const summary = await client.queryKeyedGroupedSum(DEFINITION_ID);
       if (summary.revision !== revision || JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", stationery]].sort())) throw new Error(`T2 literal catalogue summary changed at ${revision}`);
-      if (marked) await expectCode(() => client.exportProject(revision), "unsupported_project", revision);
+      if (marked) await expectCode(() => client.exportProject(revision), ordinaryExportCode, revision);
       else {
         const saved = await client.exportProject(revision);
         const manifest = JSON.parse(new TextDecoder().decode(decodeEntries(new Uint8Array(saved.bytes)).find(([path]) => path === "manifest.json")![1]));
@@ -767,7 +767,6 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     };
     const matrixCandidates: Array<{ label: string; code: string; bytes: Uint8Array; revision?: string }> = [
       ...ordinaryV3.map((candidate) => ({ label: candidate.label, code: candidate.code, bytes: candidate.bytes })),
-      ...constrainedMasters.map((bytes, index) => ({ label: `valid constrained v3 ${index}`, code: "unsupported_project", bytes })),
       { label: "exact transfer limit", code: "invalid_project", bytes: exactLimit },
       { label: "over transfer limit", code: "request_too_large", revision: "unavailable", bytes: overLimit },
       { label: "malformed legacy candidate", code: "invalid_project", bytes: new TextEncoder().encode("TWDPROJ2not-json") },
@@ -790,6 +789,43 @@ test("Worker preserves typed failures and resets origin after replacement or clo
         await unchanged(beforeOpen, `${candidate.label} Open / ${marked ? "v3" : "legacy"}`);
         await checkMatrixResident(marked, openUuid, "2026-09-29", 4, "resident/3");
         await replayMatrixHistory(marked, openUuid);
+      }
+    }
+    // Valid constrained v3 input is admitted: Inspect is read-only and projects
+    // the declaration, Open replaces the resident and keeps it projectable,
+    // and ordinary export still refuses because the admitted origin is v3.
+    const constraintFieldIds = ["import_00000000-0000-4000-8000-000000000001_0004", "import_00000000-0000-4000-8000-000000000001_0005"];
+    const constrainedExpectations: Array<{ label: string; field: string; constraint: unknown }> = [
+      { label: "valid constrained v3 text", field: constraintFieldIds[0]!, constraint: { kind: "text_literal_set", values: ["Paper", "Stationery"] } },
+      { label: "valid constrained v3 number", field: constraintFieldIds[1]!, constraint: { kind: "number_inclusive_range", min: 0, max: 10 } },
+      { label: "valid constrained v3 non-default text", field: constraintFieldIds[0]!, constraint: undefined },
+      { label: "valid constrained v3 non-default number", field: constraintFieldIds[1]!, constraint: undefined },
+    ];
+    for (let index = 0; index < constrainedMasters.length; index += 1) {
+      const candidate = constrainedMasters[index]!;
+      const expected = constrainedExpectations[index]!;
+      const projectedConstraint = (table: { columns: Array<{ id: string; constraint?: unknown }> }): unknown =>
+        table.columns.find((column) => column.id === expected.field)?.constraint;
+      for (const marked of [true, false]) {
+        const inspectUuid = nextMatrixUuid();
+        await prepareMatrixResident(marked, inspectUuid);
+        const beforeInspect = await residentState();
+        const inspected = await client.inspectProject(transferCopy(candidate));
+        equal(projectedConstraint(inspected.table), expected.constraint, `${expected.label} Inspect / ${marked ? "v3" : "legacy"} projection changed`);
+        await unchanged(beforeInspect, `${expected.label} Inspect / ${marked ? "v3" : "legacy"}`);
+
+        const openUuid = nextMatrixUuid();
+        await prepareMatrixResident(marked, openUuid);
+        // Admission replaces the resident, so the opened occurrence gets its own pinned identity.
+        const openedUuid = nextMatrixUuid();
+        const opened: any = await withUuid(openedUuid, () => client.openProject(transferCopy(candidate)));
+        equal(projectedConstraint(opened.table), expected.constraint, `${expected.label} Open / ${marked ? "v3" : "legacy"} projection changed`);
+        // The admitted candidate is now the resident: its live projection is the
+        // one Open returned, under the pinned occurrence, and it has no legacy form.
+        equal(await client.queryTable(opened.table.collection.key), opened.table, `${expected.label} Open / ${marked ? "v3" : "legacy"} live table changed`);
+        const occurrence: any = await client.observeOccurrence();
+        if (occurrence.revision !== "resident/0" || !occurrence.scope.startsWith(`designer-occurrence/${openedUuid}/`)) throw new Error(`${expected.label} Open occurrence changed: ${JSON.stringify(occurrence)}`);
+        await expectCode(() => client.exportProject("resident/0"), "legacy_export_unsupported", "resident/0");
       }
     }
     // Each rejection starts with an independent marked mixed U=[A], R=[B].
