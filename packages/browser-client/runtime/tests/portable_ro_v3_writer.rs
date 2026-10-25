@@ -30,11 +30,17 @@ fn local_constrained_package_admits_with_its_declarations() {
     let columns = serde_json::to_value(&opened.table.columns).unwrap();
     assert_eq!(
         columns[1]["constraint"],
-        serde_json::json!({"kind": "text_literal_set", "values": ["Paper", "Stationery"]})
+        serde_json::from_str::<serde_json::Value>(
+            r#"{"kind":"text_literal_set","values":["Paper","Stationery"]}"#
+        )
+        .unwrap()
     );
     assert_eq!(
         columns[2]["constraint"],
-        serde_json::json!({"kind": "number_inclusive_range", "min": 0.0, "max": 10.0})
+        serde_json::from_str::<serde_json::Value>(
+            r#"{"kind":"number_inclusive_range","min":0.0,"max":10.0}"#
+        )
+        .unwrap()
     );
     // A constrained document has no legacy representation at all: the refusal
     // is the specific constraint code, not the generic v3-origin one.
