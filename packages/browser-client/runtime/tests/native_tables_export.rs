@@ -623,7 +623,7 @@ fn csv_refuses_all_formula_prefixes_in_text_and_original_headers_but_typed_xlsx_
 }
 
 #[test]
-fn mixed_document_refuses_xlsx_and_allows_only_eligible_csv_collection() {
+fn mixed_document_refuses_xlsx_and_allows_only_eligible_csv_collections() {
     let mut document = fixture();
     add_table(
         &mut document,
@@ -666,7 +666,10 @@ fn mixed_document_refuses_xlsx_and_allows_only_eligible_csv_collection() {
         "native_tables_csv_collection_excluded",
         "lossy_on_export",
     );
-    for collection in ["formula", "reference", "missing"] {
+    let (reply, bytes) = export(&mut host, "resident/0", "formula", "csv");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    assert_eq!(bytes.unwrap(), b"n\r\n3\r\n");
+    for collection in ["reference", "missing"] {
         let (reply, bytes) = export(&mut host, "resident/0", collection, "csv");
         assert_eq!(reply["status"], "error");
         assert!(bytes.is_none());
@@ -1705,8 +1708,55 @@ fn native_tables_connector_csv_refuses_xml_illegal_selected_text_with_location()
     );
 }
 
+fn assert_constrained_export(runtime: &DesignerRuntime, expected: &[Vec<SourceValue>]) {
+    for csv in [true, false] {
+        let workbook = if csv {
+            runtime
+                .export_native_tables_csv_workbook("resident/0", "s")
+                .unwrap()
+        } else {
+            runtime
+                .export_native_tables_workbook("resident/0", "s")
+                .unwrap()
+        };
+        let constrained = if csv {
+            assert_eq!(workbook.sheets.len(), 1);
+            &workbook.sheets[0]
+        } else {
+            assert_eq!(
+                workbook
+                    .sheets
+                    .iter()
+                    .map(|sheet| sheet.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["Safe", "Constrained"]
+            );
+            workbook
+                .sheets
+                .iter()
+                .find(|sheet| sheet.name == "Constrained")
+                .unwrap()
+        };
+        assert_eq!(source_values(constrained), expected);
+        assert!(
+            !workbook.ledger.iter().any(|finding| finding.blocking),
+            "{:?}",
+            workbook.ledger
+        );
+        assert!(
+            workbook.ledger.iter().any(|finding| {
+                finding.code == "native_tables_field_constraint_excluded"
+                    && finding.category == FidelityCategory::LossyOnExport
+                    && finding.location == "collection s/field constrained"
+            }),
+            "{:?}",
+            workbook.ledger
+        );
+    }
+}
+
 #[test]
-fn native_tables_connector_constrained_fields_refuse_selected_csv_and_whole_xlsx() {
+fn native_tables_constrained_columns_export_their_values_and_disclose_the_rule() {
     let cases = [
         (
             FieldType::Text,
@@ -1714,6 +1764,9 @@ fn native_tables_connector_constrained_fields_refuse_selected_csv_and_whole_xlsx
                 values: vec!["allowed".into()],
             },
             Value::Text("allowed".into()),
+            SourceValue::Text {
+                value: "allowed".into(),
+            },
         ),
         (
             FieldType::Number,
@@ -1722,9 +1775,10 @@ fn native_tables_connector_constrained_fields_refuse_selected_csv_and_whole_xlsx
                 max: Number::new(10.0).unwrap(),
             },
             Value::Number(Number::new(5.0).unwrap()),
+            SourceValue::Number { value: 5.0 },
         ),
     ];
-    for (kind, constraint, value) in cases {
+    for (kind, constraint, value, exported) in cases {
         for populated in [false, true] {
             let mut document = Document::empty("constraints", "Constraints");
             let mut column = field("constrained", kind.clone(), false);
@@ -1751,22 +1805,12 @@ fn native_tables_connector_constrained_fields_refuse_selected_csv_and_whole_xlsx
             );
             let runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
             let before = serde_json::to_value(runtime.observe_occurrence()).unwrap();
-            let failures = [
-                runtime.export_native_tables_csv_workbook("resident/0", "s"),
-                runtime.export_native_tables_workbook("resident/0", "s"),
-                runtime.export_native_tables_workbook("resident/0", "safe"),
-            ];
-            for result in failures {
-                let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } =
-                    result.unwrap_err()
-                else {
-                    panic!("located finding")
-                };
-                assert_eq!(finding.code, "native_tables_field_constraint");
-                assert!(finding.blocking);
-                assert_eq!(finding.category, FidelityCategory::UnsupportedSafeDisabled);
-                assert_eq!(finding.location, "collection s/field constrained");
-            }
+            let expected = if populated {
+                vec![vec![exported.clone()]]
+            } else {
+                vec![]
+            };
+            assert_constrained_export(&runtime, &expected);
             let selected = runtime
                 .export_native_tables_csv_workbook("resident/0", "safe")
                 .unwrap();
@@ -1778,6 +1822,97 @@ fn native_tables_connector_constrained_fields_refuse_selected_csv_and_whole_xlsx
             );
         }
     }
+}
+
+fn formula_document() -> Document {
+    let reference = |entity: &str, field: &str| {
+        Expression::Reference(tachiko_workspace_engine::FieldRef::new(entity, field))
+    };
+    let product = |entity: &str| Expression::Multiply {
+        left: Box::new(reference(entity, "a")),
+        right: Box::new(reference(entity, "b")),
+    };
+    let mut document = Document::empty("formula-export", "Formula export");
+    add_table(
+        &mut document,
+        "calc",
+        "calc",
+        "Calculated",
+        vec![
+            field("a", FieldType::Number, true),
+            field("b", FieldType::Number, true),
+            field("total", FieldType::Number, true),
+        ],
+        vec![
+            vec![
+                Some(Value::Number(Number::new(2.0).unwrap())),
+                Some(Value::Number(Number::new(3.0).unwrap())),
+                Some(Value::Formula(product("calc-r000"))),
+            ],
+            vec![
+                Some(Value::Number(Number::new(4.0).unwrap())),
+                Some(Value::Number(Number::new(5.0).unwrap())),
+                Some(Value::Formula(product("calc-r001"))),
+            ],
+        ],
+    );
+    add_table(
+        &mut document,
+        "plain",
+        "plain",
+        "Plain",
+        vec![field("n", FieldType::Number, true)],
+        vec![vec![Some(Value::Number(Number::new(7.0).unwrap()))]],
+    );
+    document
+}
+
+#[test]
+fn native_tables_formula_cells_export_current_computed_values_to_csv_and_xlsx() {
+    let mut host = host_for(formula_document());
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let bytes = bytes.unwrap();
+    let sheet = xml(&bytes, "xl/worksheets/sheet1.xml");
+    assert!(!sheet.contains("<f>"), "{sheet}");
+    for value in ["6", "20"] {
+        assert!(
+            sheet.contains(&format!("t=\"n\"><v>{value}</v>")),
+            "{value}: {sheet}"
+        );
+    }
+    assert_finding(
+        &reply,
+        "native_tables_formula_values_only",
+        "lossy_on_export",
+    );
+    let imported = import_xlsx(&bytes).unwrap();
+    assert!(!imported.ledger.iter().any(|finding| finding.blocking));
+    assert_eq!(imported.sheets.len(), 2);
+    assert_eq!(
+        source_values(&imported.sheets[0]),
+        [
+            [
+                SourceValue::Number { value: 2.0 },
+                SourceValue::Number { value: 3.0 },
+                SourceValue::Number { value: 6.0 },
+            ],
+            [
+                SourceValue::Number { value: 4.0 },
+                SourceValue::Number { value: 5.0 },
+                SourceValue::Number { value: 20.0 },
+            ],
+        ]
+    );
+
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "csv");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    assert_eq!(bytes.unwrap(), b"a,b,total\r\n2,3,6\r\n4,5,20\r\n");
+    assert_finding(
+        &reply,
+        "native_tables_formula_values_only",
+        "lossy_on_export",
+    );
 }
 
 #[test]
