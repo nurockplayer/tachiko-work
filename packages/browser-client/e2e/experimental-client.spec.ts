@@ -506,7 +506,7 @@ test("#533 named cross-table summary survives edit, history and fresh Worker sav
     created: [{category: "hardware", value: 6}],
     afterCreationUndoIds: [], priceAfterCreationUndo: {kind: "number", value: 3}, afterCreationRedo: [{category: "hardware", value: 6}],
     afterEdit: [{category: "hardware", value: 12}], afterUndo: [{category: "hardware", value: 6}], afterRedo: [{category: "hardware", value: 12}],
-    reopenedRevision: "resident/0", summary: {definition_id: "expenses-summary", revision: "resident/0", groups: [{category: "hardware", value: 12}], diagnostics: []},
+    reopenedRevision: "resident/0", summary: {definition_id: "expenses-summary", revision: "resident/0", groups: [{category: "hardware", value: 12}], total: 12, diagnostics: []},
     ids: ["expenses-summary"], canonicalBytesEqual: true, opaqueBytesEqual: true,
   });
 });
