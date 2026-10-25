@@ -20,6 +20,7 @@ revision unchanged.
 | --- | --- |
 | Number literal (finite decimal or scientific) | `0.1`, `80000`, `1.5e3` |
 | Field reference | `[rent.expense]` |
+| Same-row field reference (the formula owner's own row) | `[.expense]` |
 | Binary `+`, `-`, `*`, `/` with standard precedence | `[rent.expense] * [settings.rate]` |
 | Unary `+` and `-` | `-[enemy.defense] + 2` |
 | Parentheses | `([rent.expense] + 100) * 2` |
@@ -42,6 +43,37 @@ Binding uses the current document snapshot. Renaming a key invalidates an old
 source spelling until it is rewritten; renaming only a display name does not
 affect meaning. A reference to a missing entity or field, or to a non-Number
 field, refuses the whole update.
+
+## Same-row shorthand `[.field]`
+
+`[.expense]` means "this row's `expense`" — a field on the entity that **owns
+the formula**. It exists so one formula can describe a per-row
+computation without naming the row:
+
+```text
+rent.reserve  [.expense] * [settings.rate]   80000 * 0.1 = 8000
+```
+
+The shorthand names a field **key**, never a row label or display name, and it
+must be a Number field on the owner's schema. A missing key refuses the update
+as `formula_unknown_reference`; a Text or other non-Number key refuses it as
+`formula_type_mismatch`. Referring to the formula's own field — `[.reserve]`
+inside `reserve` — is a dependency cycle and refuses as `formula_cycle`.
+
+The bound expression stores only the field identity; the entity is resolved
+from the formula that contains it. The canonical source projection keeps the
+written form (`([.expense] * [settings.rate])`) and follows a field-key rename.
+Because the entity is implicit:
+
+- `copyFormula` with `relative_rows` accepts the shorthand unchanged — there is
+  no per-row address to shift, and each destination interprets it against its
+  own row;
+- `duplicateCollection` keeps it unchanged as well, so a copied table reads the
+  copy's rows rather than the source table's.
+
+The shorthand is stored in `.roproj/v3` and direct-ro/v2 as a distinct
+same-entity reference. The frozen `.roproj/v1` and `.roproj/v2` formats refuse
+to encode it rather than silently dropping the row meaning.
 
 ## Canonical source projection
 
@@ -84,6 +116,12 @@ tools.reserve  ([tools.expense] * [settings.rate])   10000 * 0.1 = 1000
 when both its entity and its field belong to the copied collection, so a copy
 of the plan reads the copy's rows while still reading the original shared
 `settings.rate` row.
+
+A same-row shorthand skips both rewrites. If `rent.reserve` is
+`[.expense] * [settings.rate]`, copying it (with `relative_rows`) and
+duplicating the table both leave every destination's source as
+`([.expense] * [settings.rate])`, because each formula resolves the field from
+its own owner row.
 
 ## Limits
 

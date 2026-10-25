@@ -39,6 +39,8 @@ ADR-0014 owns the authoring grammar. The language contains:
 
 - finite decimal and scientific Number literals;
 - bracketed references in `[entity.field]` form;
+- same-row references in `[.field]` form (see
+  [Same-row references](#same-row-references));
 - binary `+`, `-`, `*`, and `/` with standard precedence;
 - unary `+` and `-`;
 - parentheses; and
@@ -50,7 +52,23 @@ Examples:
 min(60, [iron_sword.damage] / [iron_sword.attack_interval] + 5)
 -[enemy.defense] + 2
 max(0, [attacker.power] - [target.armor])
+[.expense] * [settings.rate]
 ```
+
+### Same-row references
+
+`[.field]` means a field on the entity that owns the formula. It is a
+same-entity reference: binding checks the field key against the owner's schema
+and stores only the field's stable ID, while dependency extraction, cycle
+detection, and evaluation resolve the entity from the owning formula. The
+canonical authoring projection writes it as `[.field]` using the field's
+current key.
+
+The shorthand is field-key based like `[entity.field]`; it does not name a row
+label. A missing key is an unknown-reference failure, a non-Number field is a
+type-mismatch failure, and referring to the formula's own field is a dependency
+cycle. Relative formula copies and collection duplication keep the shorthand
+unchanged, so it continues to mean the destination formula's own row.
 
 The parser enforces these Accepted limits before unbounded recursive work:
 
@@ -83,9 +101,9 @@ source text
 
 | Representation | Contains | Durable role |
 | --- | --- | --- |
-| Source text | Human spelling and mutable `[entity.field]` addresses | Authoring/display projection |
+| Source text | Human spelling, mutable `[entity.field]` addresses, and `[.field]` shorthand | Authoring/display projection |
 | Unbound AST | Parsed structure, source locations, and human addresses | Candidate awaiting binding |
-| Typed bound AST | Stable `EntityId + FieldId` references and Number-typed nodes | Semantic formula meaning |
+| Typed bound AST | Stable `EntityId + FieldId` references, owner-relative `FieldId` references, and Number-typed nodes | Semantic formula meaning |
 | Runtime graph/indexes | Stable value-node edges, reverse edges, order, and caches | Rebuildable derived state |
 
 Binding resolves each human `EntityKey + FieldKey` address to the stable
