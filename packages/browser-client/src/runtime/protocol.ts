@@ -174,6 +174,8 @@ export type KeyedGroupedSumProjection = {
   definition_id: string;
   revision: string;
   groups: Array<{category: string; value: number}>;
+  /** Sum of the groups at this revision; null whenever the result is unavailable. */
+  total: number | null;
   diagnostics: Array<{code: string; entity: string | null; field: string | null; lookup_key: string | null; candidates: string[]}>;
 };
 

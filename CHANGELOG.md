@@ -57,6 +57,11 @@ All notable changes to Tachiko Work are documented in this file.
   `legacy_export_unsupported` instead of dropping the declaration. The kit
   advertises `setColumnConstraint` and the `columnConstraintProjection` marker.
 
+- Keyed grouped-sum projections now carry the overall total alongside the
+  category groups. `total` is derived from the same evaluation at the same
+  revision and is `null` whenever the result is unavailable, never zero or a
+  stale value; the public TypeScript client exposes `number | null`.
+
 - Strengthening an optional native Text/Number column now reports
   `required_values_missing` with the blank row count and column identity. The
   rejection preserves the current revision and undo history; host and WASM
