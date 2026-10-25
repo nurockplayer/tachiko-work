@@ -12,7 +12,7 @@ mod package_acceptance_document;
 use tachiko_ai_api::{explain_formula, suggest_field_change};
 use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CalculationOutcome, CanonicalAuthoringProjectionError,
-    ReferenceFailure, calculate, calculate_complete, project_expression,
+    ColumnFailure, ReferenceFailure, calculate, calculate_complete, project_expression,
 };
 use tachiko_semantic_core::{
     Date, DiagnosticCode, DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey,
@@ -490,6 +490,23 @@ fn mix_calculation_failure(hash: &mut u64, failure: &CalculationFailure) {
         }
         CalculationFailure::DivisionByZero => mix_hash(hash, &[4]),
         CalculationFailure::NonFiniteResult => mix_hash(hash, &[5]),
+        CalculationFailure::InvalidColumn { columns } => {
+            mix_hash(hash, &[6]);
+            for (column, failure) in columns {
+                mix_hash(hash, column.schema.as_str().as_bytes());
+                mix_hash(hash, &[0]);
+                mix_hash(hash, column.field.as_str().as_bytes());
+                mix_hash(hash, &[0xff]);
+                mix_hash(
+                    hash,
+                    &[match failure {
+                        ColumnFailure::MissingSchema => 0,
+                        ColumnFailure::MissingField => 1,
+                        ColumnFailure::NonNumeric => 2,
+                    }],
+                );
+            }
+        }
     }
 }
 
@@ -2118,6 +2135,21 @@ fn analysis_hash_calculation_failure(hash: &mut u64, failure: &CalculationFailur
         }
         CalculationFailure::DivisionByZero => analysis_hash_text(hash, "division-by-zero"),
         CalculationFailure::NonFiniteResult => analysis_hash_text(hash, "non-finite-result"),
+        CalculationFailure::InvalidColumn { columns } => {
+            analysis_hash_text(hash, "invalid-column");
+            for (column, failure) in columns {
+                analysis_hash_text(hash, column.schema.as_str());
+                analysis_hash_text(hash, column.field.as_str());
+                analysis_hash_text(
+                    hash,
+                    match failure {
+                        ColumnFailure::MissingSchema => "missing-schema",
+                        ColumnFailure::MissingField => "missing-field",
+                        ColumnFailure::NonNumeric => "non-numeric",
+                    },
+                );
+            }
+        }
     }
 }
 
