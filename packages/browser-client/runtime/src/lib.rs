@@ -300,7 +300,7 @@ pub struct TableProjection {
     /// revision as `rows`. A null total means a contributing value is
     /// unavailable or not a number; blank cells are skipped, as in a formula
     /// column total.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_column_totals")]
     pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
@@ -742,6 +742,19 @@ impl CalculationProjection {
             Self::Failure { .. } | Self::Unavailable => None,
         }
     }
+}
+
+/// Decode a column-total map through JSON first, for the same reason as the
+/// value projections above: the pinned serde routes primitives inside this
+/// reply envelope through a map deserializer, which reaches an `f64` as a map.
+fn deserialize_column_totals<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Option<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    serde_json::from_value(raw).map_err(serde::de::Error::custom)
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
