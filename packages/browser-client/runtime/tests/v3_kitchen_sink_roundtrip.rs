@@ -3,15 +3,16 @@
 //! meaning is equal — Dates, explicit display names, required and optional
 //! fields, blank cells, formulas, a duplicated table and a saved
 //! keyed-grouped-sum definition — then does the same through a portable `.ro`.
-//! The reopened project must also leave as CSV/XLSX with truthful disclosure,
-//! and a constrained column must stay refused by the v3 writer instead of
-//! being silently dropped.
+//! The document also carries a Text literal-set and a Number range
+//! constraint, which v3 and the portable `.ro` must keep; the legacy writer
+//! refuses them instead of dropping them. The reopened project must also leave
+//! as CSV/XLSX with truthful disclosure.
 
 use tachiko_designer_runtime::interop_adapter::{FidelityCategory, SourceValue, SourceWorkbook};
 use tachiko_designer_runtime::{
     BootstrapProjection, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
-    KeyedGroupedSumProjection, ScalarEditInput, StoredValueProjection, TableProjection,
-    open_portable_ro, open_project, verify_portable_ro,
+    FieldConstraintInput, FieldConstraintProjection, KeyedGroupedSumProjection, ScalarEditInput,
+    StoredValueProjection, TableProjection, open_portable_ro, open_project, verify_portable_ro,
 };
 use tachiko_workspace_engine::{
     Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
@@ -90,27 +91,55 @@ fn schema(document: &mut Document, id: &str, name: &str, fields: Vec<FieldDefini
     schema_id
 }
 
+fn constrained(mut field: FieldDefinition, constraint: FieldConstraint) -> FieldDefinition {
+    field.constraint = constraint;
+    field
+}
+
+fn category_values() -> Vec<String> {
+    vec!["Paper".to_owned(), "Stationery".to_owned()]
+}
+
+fn price_range() -> FieldConstraint {
+    FieldConstraint::NumberInclusiveRange {
+        min: Number::new(0.0).expect("fixture bounds are finite"),
+        max: Number::new(1000.0).expect("fixture bounds are finite"),
+    }
+}
+
+/// Orders columns: every scalar type, required and optional, and both
+/// constraint shapes.
+fn order_fields() -> Vec<FieldDefinition> {
+    vec![
+        field("item", "Item", FieldType::Text, true),
+        constrained(
+            field("category", "分類 Category", FieldType::Text, true),
+            FieldConstraint::TextLiteralSet {
+                values: category_values(),
+            },
+        ),
+        field("quantity", "Quantity", FieldType::Number, true),
+        constrained(
+            field("unit_price", "Unit price", FieldType::Number, true),
+            price_range(),
+        ),
+        field("total", "Total", FieldType::Number, false),
+        field("ordered_on", "Ordered on", FieldType::Date, true),
+        field("note", "Note", FieldType::Text, false),
+        field("shipped", "Shipped", FieldType::Boolean, false),
+        field("paid", "Paid", FieldType::Boolean, true),
+        field("delivered_on", "Delivered on", FieldType::Date, false),
+    ]
+}
+
 /// The feature matrix of item (e) in one document: unicode display names,
 /// required/optional columns, a present-empty Text versus an absent one, Date,
-/// a per-row formula, a duplicated schema pair for the grouped sum, and one
-/// saved definition.
+/// a per-row formula, a Text literal-set and a Number range constraint, a
+/// duplicated schema pair for the grouped sum, and one saved definition whose
+/// product-side category and price differ from the order-side columns.
 fn kitchen_sink_document() -> Document {
     let mut document = Document::empty("kitchen_sink", "Kitchen sink 全部");
-    let orders = schema(
-        &mut document,
-        "orders",
-        "Orders 注文",
-        vec![
-            field("item", "Item", FieldType::Text, true),
-            field("category", "分類 Category", FieldType::Text, true),
-            field("quantity", "Quantity", FieldType::Number, true),
-            field("unit_price", "Unit price", FieldType::Number, true),
-            field("total", "Total", FieldType::Number, false),
-            field("ordered_on", "Ordered on", FieldType::Date, true),
-            field("note", "Note", FieldType::Text, false),
-            field("shipped", "Shipped", FieldType::Boolean, false),
-        ],
-    );
+    let orders = schema(&mut document, "orders", "Orders 注文", order_fields());
     for (id, item, quantity, price, day, note, shipped) in [
         (
             "order-pen",
@@ -136,15 +165,21 @@ fn kitchen_sink_document() -> Document {
             ("item", Value::Text(item.to_owned())),
             (
                 "category",
-                Value::Text(if item == "PEN" { "Stationery" } else { "Paper" }.to_owned()),
+                // Deliberately unlike the product-side category, so a grouped
+                // sum that read the orders column would give other groups.
+                Value::Text(if item == "PEN" { "Paper" } else { "Stationery" }.to_owned()),
             ),
             ("quantity", number(quantity)),
             ("unit_price", number(price)),
             ("total", product_total(id)),
             ("ordered_on", date(day)),
+            ("paid", Value::Boolean(id != "order-note")),
         ];
         fields.extend(note.map(|note| ("note", note)));
         fields.extend(shipped.map(|shipped| ("shipped", shipped)));
+        if id == "order-pen" {
+            fields.push(("delivered_on", date("2026-09-30")));
+        }
         entity(&mut document, &orders, id, fields);
     }
 
@@ -164,8 +199,8 @@ fn kitchen_sink_document() -> Document {
         ],
     );
     for (id, key, category, price) in [
-        ("product-pen", "PEN", "Stationery", 3.0),
-        ("product-note", "NOTE", "Paper", 4.0),
+        ("product-pen", "PEN", "Stationery", 5.0),
+        ("product-note", "NOTE", "Paper", 7.0),
     ] {
         entity(
             &mut document,
@@ -294,6 +329,72 @@ fn open_saved(bytes: &[u8], occurrence: &str) -> DesignerRuntime {
     reopened.expect("a successful open installs the occurrence")
 }
 
+fn column_constraint(table: &TableProjection, column: &str) -> Option<FieldConstraintProjection> {
+    table
+        .columns
+        .iter()
+        .find(|candidate| candidate.id == column)
+        .unwrap_or_else(|| panic!("no column '{column}'"))
+        .constraint
+        .clone()
+}
+
+/// The duplicated collection carries the original declarations, checked
+/// against the fixture rather than against another projection of the copy.
+fn assert_copy_keeps_declarations(runtime: &mut DesignerRuntime, copy_key: &str) {
+    let declared = |table: &TableProjection| {
+        table
+            .columns
+            .iter()
+            .map(|column| {
+                (
+                    column.display_name.clone(),
+                    column.required,
+                    column.constraint.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = order_fields()
+        .into_iter()
+        .map(|field| {
+            (
+                field.display_name.expect("fixture names are explicit"),
+                field.required,
+                constraint_projection(&field.constraint),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut copy = declared(&table(runtime, copy_key));
+    let mut original = declared(&table(runtime, "orders"));
+    let mut expected = expected;
+    for list in [&mut copy, &mut original, &mut expected] {
+        list.sort_by(|left, right| left.0.cmp(&right.0));
+    }
+    assert_eq!(original, expected, "the reopened orders match the fixture");
+    assert_eq!(
+        copy, expected,
+        "the duplicate keeps requiredness and constraints"
+    );
+}
+
+fn constraint_projection(constraint: &FieldConstraint) -> Option<FieldConstraintProjection> {
+    match constraint {
+        FieldConstraint::None => None,
+        FieldConstraint::TextLiteralSet { values } => {
+            Some(FieldConstraintProjection::TextLiteralSet {
+                values: values.clone(),
+            })
+        }
+        FieldConstraint::NumberInclusiveRange { min, max } => {
+            Some(FieldConstraintProjection::NumberInclusiveRange {
+                min: min.get(),
+                max: max.get(),
+            })
+        }
+    }
+}
+
 /// Spot-check the features that a scalar-only projection assertion could hide.
 fn assert_spot_checked_meaning(runtime: &mut DesignerRuntime) {
     let orders = table(runtime, "orders");
@@ -309,16 +410,28 @@ fn assert_spot_checked_meaning(runtime: &mut DesignerRuntime) {
         .iter()
         .find(|row| row.id == "order-note")
         .expect("the blank row reopens");
+    let mut blank_fields = blank_row.blank_fields.clone();
+    blank_fields.sort();
     assert_eq!(
-        blank_row.blank_fields,
-        vec!["note".to_owned(), "shipped".to_owned()],
+        blank_fields,
+        ["delivered_on", "note", "shipped"],
         "optional fields with no value stay absent, not placeholdered"
     );
-    assert!(
-        blank_row
-            .fields
-            .iter()
-            .all(|field| !matches!(field.target.field.as_str(), "note" | "shipped"))
+    assert!(blank_row.fields.iter().all(|field| !matches!(
+        field.target.field.as_str(),
+        "note" | "shipped" | "delivered_on"
+    )));
+    assert_eq!(
+        cell(&orders, "order-note", "paid").stored,
+        Some(StoredValueProjection::Boolean { value: false }),
+        "a required Boolean keeps a false value"
+    );
+    assert_eq!(
+        cell(&orders, "order-pen", "delivered_on").stored,
+        Some(StoredValueProjection::Date {
+            value: Date::parse("2026-09-30").unwrap()
+        }),
+        "an optional Date keeps its value where present"
     );
     let empty_note = cell(&orders, "order-spare", "note");
     assert_eq!(
@@ -330,15 +443,31 @@ fn assert_spot_checked_meaning(runtime: &mut DesignerRuntime) {
     );
     assert_eq!(calculated(cell(&orders, "order-pen", "total")), Some(12.0));
     assert_eq!(
+        column_constraint(&orders, "category"),
+        Some(FieldConstraintProjection::TextLiteralSet {
+            values: category_values()
+        }),
+        "a Text literal-set constraint survives with its values"
+    );
+    assert_eq!(
+        column_constraint(&orders, "unit_price"),
+        Some(FieldConstraintProjection::NumberInclusiveRange {
+            min: 0.0,
+            max: 1000.0
+        }),
+        "a Number range constraint survives with its bounds"
+    );
+    assert_eq!(column_constraint(&orders, "quantity"), None);
+    assert_eq!(
         grouped_sum(runtime).groups,
         vec![
             tachiko_designer_runtime::KeyedGroupedSumGroupProjection {
                 category: "Paper".to_owned(),
-                value: 20.0,
+                value: 35.0,
             },
             tachiko_designer_runtime::KeyedGroupedSumGroupProjection {
                 category: "Stationery".to_owned(),
-                value: 18.0,
+                value: 30.0,
             },
         ]
     );
@@ -384,6 +513,7 @@ fn v3_save_reopen_preserves_every_supported_feature_and_reexports_identically() 
     );
 
     assert_spot_checked_meaning(&mut reopened);
+    assert_copy_keeps_declarations(&mut reopened, &copy_key);
 
     // Re-saving the reopened occurrence is byte-identical: the round trip
     // loses nothing that the canonical v3 encoding can express.
@@ -567,6 +697,16 @@ fn reopened_kitchen_sink_exports_formula_values_to_csv_and_xlsx() {
         2,
         "CSV excludes the other two collections by name"
     );
+    assert_eq!(
+        disclosed_codes(&csv, "native_tables_formula_values_only"),
+        1,
+        "CSV discloses that the selected formulas leave as values"
+    );
+    assert_eq!(
+        disclosed_codes(&csv, "native_tables_field_constraint_excluded"),
+        2,
+        "CSV discloses both constraints of the selected collection"
+    );
 
     // Export is read-only: the reopened occurrence keeps its revision and its
     // formulas, and still saves back to the identical v3 bytes.
@@ -582,33 +722,6 @@ fn reopened_kitchen_sink_exports_formula_values_to_csv_and_xlsx() {
             .bytes,
         saved.bytes
     );
-}
-
-/// The same feature matrix plus the two constraint shapes the native export
-/// discloses. v3 cannot carry either rule yet, so this fixture must never be
-/// silently saved without them.
-fn constrained_kitchen_sink() -> Document {
-    let mut document = kitchen_sink_document();
-    let orders = document
-        .schemas
-        .get_mut(&SchemaId::from("orders"))
-        .expect("the fixture orders schema exists");
-    orders
-        .fields
-        .get_mut(&FieldId::from("category"))
-        .expect("the fixture has a category column")
-        .constraint = FieldConstraint::TextLiteralSet {
-        values: vec!["Paper".to_owned(), "Stationery".to_owned()],
-    };
-    orders
-        .fields
-        .get_mut(&FieldId::from("unit_price"))
-        .expect("the fixture has a unit_price column")
-        .constraint = FieldConstraint::NumberInclusiveRange {
-        min: Number::new(0.0).expect("fixture bounds are finite"),
-        max: Number::new(1000.0).expect("fixture bounds are finite"),
-    };
-    document
 }
 
 fn text_column(workbook: &SourceWorkbook, column_name: &str) -> Vec<String> {
@@ -638,9 +751,15 @@ fn text_column(workbook: &SourceWorkbook, column_name: &str) -> Vec<String> {
 }
 
 #[test]
-fn constrained_columns_export_with_disclosure_and_stay_refused_by_v3() {
-    let runtime = DesignerRuntime::from_document(constrained_kitchen_sink(), OCCURRENCE)
-        .expect("a constrained document is admissible in the resident runtime");
+fn constrained_columns_export_with_disclosure_and_refuse_only_the_legacy_writer() {
+    let mut runtime = open_saved(
+        &DesignerRuntime::from_document(kitchen_sink_document(), OCCURRENCE)
+            .expect("the kitchen-sink document is admissible")
+            .export_project_v3("resident/0")
+            .expect("constraints are stored in .roproj/v3")
+            .bytes,
+        REOPENED,
+    );
 
     let workbook = runtime
         .export_native_tables_workbook("resident/0", "orders")
@@ -651,47 +770,157 @@ fn constrained_columns_export_with_disclosure_and_stay_refused_by_v3() {
         .filter(|finding| finding.code == "native_tables_field_constraint_excluded")
         .map(|finding| finding.message.as_str())
         .collect::<Vec<_>>();
-    assert!(
-        disclosures
-            .iter()
-            .any(|message| message.contains("allowed values: Paper, Stationery")),
-        "{disclosures:?}"
-    );
-    assert!(
-        disclosures
-            .iter()
-            .any(|message| message.contains("allowed range: 0 to 1000")),
-        "{disclosures:?}"
-    );
-    assert_eq!(
-        sorted_text(text_column(&workbook, "Item")),
-        vec!["NOTE", "PEN", "PEN"]
-    );
-    assert_eq!(
-        sorted_text(text_column(&workbook, "分類 Category")),
-        vec!["Paper", "Stationery", "Stationery"],
-        "a constrained column exports its values unchanged"
-    );
-
-    // The v3 writer has no representation for the rules, so it refuses rather
-    // than dropping them; the resident document stays untouched either way.
-    for error in [
-        runtime.export_project_v3("resident/0").unwrap_err(),
-        runtime.export_portable_ro("resident/0").unwrap_err(),
+    for requirement in [
+        "allowed values: Paper, Stationery",
+        "allowed range: 0 to 1000",
     ] {
         assert!(
-            matches!(&error, DesignerError::UnsupportedProject { message } if message.contains("unconstrained")),
-            "{error}"
+            disclosures
+                .iter()
+                .any(|message| message.contains(requirement)),
+            "{requirement}: {disclosures:?}"
         );
     }
-    assert_eq!(runtime.observe_occurrence().revision, "resident/0");
+    assert_eq!(
+        sorted_text(text_column(&workbook, "分類 Category")),
+        vec!["Paper", "Paper", "Stationery"],
+        "a constrained column exports its values unchanged"
+    );
     let csv = runtime
         .export_native_tables_csv_workbook("resident/0", "orders")
         .expect("CSV still exports the constrained collection");
-    assert_eq!(csv.sheets.len(), 1);
     assert_eq!(
         sorted_text(text_column(&csv, "分類 Category")),
-        vec!["Paper", "Stationery", "Stationery"]
+        vec!["Paper", "Paper", "Stationery"]
+    );
+
+    // Only the legacy writer has no representation for the rules, so it
+    // refuses instead of silently dropping them.
+    let error = runtime
+        .export_project("resident/0")
+        .expect_err("the legacy writer cannot carry constraints");
+    assert!(
+        matches!(error, DesignerError::LegacyExportUnsupported { .. }),
+        "{error}"
+    );
+    assert_eq!(
+        error.failure_projection("resident/0").code,
+        "legacy_export_unsupported"
+    );
+
+    // The reopened rules are enforced, not merely projected.
+    let category = cell(&table(&mut runtime, "orders"), "order-pen", "category")
+        .target
+        .clone();
+    let refused = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/0".to_owned(),
+            target: category,
+            input: ScalarEditInput::Text {
+                value: "Food".to_owned(),
+            },
+        })
+        .expect_err("a value outside the reopened literal set is refused");
+    assert_eq!(
+        refused.failure_projection("resident/0").code,
+        "field_constraint_violation"
+    );
+    assert_eq!(runtime.observe_occurrence().revision, "resident/0");
+    assert_range_enforced(&mut runtime, "orders", "order-pen", "unit_price", 1000.0);
+}
+
+/// Inclusive bounds: one past the maximum is refused without publication,
+/// the maximum itself publishes.
+fn assert_range_enforced(
+    runtime: &mut DesignerRuntime,
+    collection: &str,
+    row: &str,
+    field: &str,
+    max: f64,
+) {
+    let target = cell(&table(runtime, collection), row, field).target.clone();
+    let revision = runtime.observe_occurrence().revision;
+    let edit = |runtime: &mut DesignerRuntime, value: f64| {
+        runtime.handle(DesignerRequest::EditScalar {
+            expected_revision: revision.clone(),
+            target: target.clone(),
+            input: ScalarEditInput::Number {
+                input: value.to_string(),
+            },
+        })
+    };
+    let refused = edit(runtime, max + 1.0).expect_err("a value above the range is refused");
+    assert_eq!(
+        refused.failure_projection(&revision).code,
+        "field_constraint_violation"
+    );
+    assert_eq!(runtime.observe_occurrence().revision, revision);
+    assert!(
+        matches!(edit(runtime, max), Ok(DesignerResponse::Published(_))),
+        "the inclusive maximum is accepted"
+    );
+}
+
+#[test]
+fn authored_constraint_round_trips_through_v3_and_portable_ro() {
+    let mut runtime = DesignerRuntime::from_document(kitchen_sink_document(), OCCURRENCE)
+        .expect("the kitchen-sink document is admissible");
+    let DesignerResponse::Published(publication) = handle(
+        &mut runtime,
+        DesignerRequest::SetColumnConstraint {
+            expected_revision: "resident/0".to_owned(),
+            collection: "products".to_owned(),
+            field: "product_price".to_owned(),
+            constraint: FieldConstraintInput::NumberInclusiveRange {
+                min: 1.0,
+                max: 50.0,
+            },
+        },
+    ) else {
+        panic!("expected a publication");
+    };
+    assert_eq!(publication.resulting_revision, "resident/1");
+    let authored = table(&mut runtime, "products");
+    let expected = Some(FieldConstraintProjection::NumberInclusiveRange {
+        min: 1.0,
+        max: 50.0,
+    });
+    assert_eq!(column_constraint(&authored, "product_price"), expected);
+
+    let saved = runtime
+        .export_project_v3("resident/1")
+        .expect("an authored constraint saves as v3");
+    let mut reopened = open_saved(&saved.bytes, REOPENED);
+    assert_eq!(
+        normalized(table(&mut reopened, "products")),
+        normalized(authored),
+        "the authored constraint reopens with identical meaning"
+    );
+    let portable = reopened
+        .export_portable_ro("resident/0")
+        .expect("an authored constraint exports as portable .ro");
+    verify_portable_ro(&portable.bytes).expect("the portable artifact verifies");
+    let mut portable_runtime = None;
+    open_portable_ro(&mut portable_runtime, &portable.bytes, PORTABLE)
+        .expect("the portable artifact opens");
+    let mut portable_runtime = portable_runtime.expect("a successful open installs the occurrence");
+    assert_eq!(
+        column_constraint(&table(&mut portable_runtime, "products"), "product_price"),
+        expected
+    );
+    assert_eq!(
+        portable_runtime
+            .export_project_v3("resident/0")
+            .expect("the portable-opened project exports as v3")
+            .bytes,
+        saved.bytes
+    );
+    assert_range_enforced(
+        &mut portable_runtime,
+        "products",
+        "product-pen",
+        "product_price",
+        50.0,
     );
 }
 
