@@ -198,6 +198,12 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
           };
         }),
       })), "complete literal field target/address/value/formula/diagnostic projection changed");
+      // The two Number columns total their two present cells; every other
+      // column is Text and contributes no footer entry.
+      equal(opened.table.column_totals, {
+        [literalIds.fields[2]!]: input.quantity + 5,
+        [literalIds.fields[3]!]: 400,
+      }, "complete literal Number column totals changed");
     };
     const assertCurrent = async (client: any, input: any): Promise<void> => {
       const occurrence = await client.observeOccurrence();
@@ -529,7 +535,8 @@ test("Worker preserves typed failures and resets origin after replacement or clo
           rows: rows.map((id, ri) => ({ id, key: `sheet_1_row_${ri + 1}`, fields: fields.map((field, fi) => {
             const kind = fi < 2 ? "text" : fi < 4 ? "number" : input.dateType === false ? "text" : "date";
             return { target: { entity: id, field }, address: `sheet_1_row_${ri + 1}.column_${fi + 1}`, stored: { kind, value: values[ri]![fi] }, formula: null, calculated: null, diagnostics: [], editable_scalar: kind };
-          }) })) },
+          }) })),
+          column_totals: { [fields[2]!]: input.quantity + 5, [fields[3]!]: 400 } },
       };
       equal(opened, expected, "full literal Date-only projection changed");
       equal(await client.observeOccurrence(), { scope: `designer-occurrence/${input.occurrence}/${prefix}0001`, revision: input.revision }, "literal Date-only occurrence changed");
@@ -584,13 +591,20 @@ test("Worker preserves typed failures and resets origin after replacement or clo
             stored: { kind, value: sourceRows[ri]![fi] }, formula: null, calculated: null, diagnostics: [], editable_scalar: kind };
         }),
       }));
+      // The two Number columns total their two present cells.
+      const column_totals = { [boundaryFieldIds[2]!]: quantity + 5, [boundaryFieldIds[3]!]: 400 };
       return {
         bootstrap: { title: "Imported workbook", revision, default_collection: "sheet_1", collections: [collection], keyed_grouped_sum_definition_ids: ids },
-        table: { revision, collection, columns, rows },
+        table: { revision, collection, columns, rows, column_totals },
       };
     };
+    // Column-total values are `Option<f64>` on the wire, so serde prints them
+    // with a fractional part (`400.0`) where JSON.stringify prints `400`.
+    // Count every present total the way the native projection encodes it.
     const rustProjectionBytes = (projection: any): number => new TextEncoder().encode(
-      JSON.stringify(projection).replace(/("value":)(-?\d+)([,}])/g, "$1$2.0$3"),
+      JSON.stringify(projection)
+        .replace(/("value":)(-?\d+)([,}])/g, "$1$2.0$3")
+        .replace(/"column_totals":\{[^}]*\}/g, (totals) => totals.replace(/:(-?\d+)([,}])/g, ":$1.0$2")),
     ).byteLength;
     const exactBoundaryIds = (target = 65536): string[] => {
       const prefixes = Array.from({ length: 16 }, (_, i) => `v3-budget-${String(i).padStart(2, "0")}-`);
@@ -1092,7 +1106,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const newField = `native_table_field_0003_${newUuid}`;
     const newExpected = {
       bootstrap: { title: "reset", revision: "resident/0", default_collection: "reset", collections: [{ id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
-      table: { revision: "resident/0", native_table_profile: true, collection: { id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }, columns: [{ id: newField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }, columns: [{ id: newField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [], column_totals: {} },
     };
     equal(newOpen, newExpected, "New did not produce the literal native table document");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${newUuid}/${newDocument}`, revision: "resident/0" }, "New scope/document identity changed");
@@ -1146,7 +1160,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const afterCloseField = `native_table_field_0003_${afterCloseUuid}`;
     const afterCloseExpected = {
       bootstrap: { title: "after_close", revision: "resident/0", default_collection: "after_close", collections: [{ id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
-      table: { revision: "resident/0", native_table_profile: true, collection: { id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [], column_totals: {} },
     };
     equal(afterClose, afterCloseExpected, "Close/New did not install the fresh native table");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${afterCloseUuid}/${afterCloseDocument}`, revision: "resident/0" }, "Close/New retained the previous occurrence identity");
