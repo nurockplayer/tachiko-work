@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -96,8 +98,8 @@ jobs:
       - name: Exercise the optional Git-native Game Dev Alpha journey
         run: bash scripts/git-ci-smoke.sh
 
-  browser-client:
-    name: Browser client runtime and external consumer journey
+  browser-client-release-gate:
+    name: Browser client release-equivalent gate
     needs: quality
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
@@ -113,6 +115,11 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
+
+      - name: Cache browser release Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: browser-release-gate
 
       - name: Install pnpm
         uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
@@ -180,6 +187,64 @@ jobs:
           path: ${{ runner.temp }}/scalar-carrier-evidence/release-check.log
           if-no-files-found: error
           retention-days: 7
+
+      # Before the job split this native evidence travelled in the scalar-carrier artifact.
+      - name: Preserve native rectangular-capacity evidence on success or failure
+        if: ${{ always() && steps.full-release.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-native-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  browser-client-carrier-capacity:
+    name: Browser client carrier and capacity qualification
+    needs: quality
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust
+        id: rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Cache browser carrier Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: browser-carrier-capacity
+
+      - name: Install pnpm
+        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+        with:
+          node-version-file: false
+          version: 12.11.2
+          install: false
+
+      - name: Install Node.js
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: packages/browser-client/pnpm-lock.yaml
+
+      - name: Install browser client qualification dependencies
+        run: pnpm --dir packages/browser-client install --frozen-lockfile
+
+      - name: Install ripgrep for source-boundary checks
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ripgrep
+
+      - name: Install Chromium
+        run: pnpm --dir packages/browser-client exec playwright install --with-deps chromium
 
       - name: Exercise focused native scalar-carrier acceptance
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' }}
@@ -293,7 +358,6 @@ jobs:
 
   operational-evidence:
     name: Strict operational evidence
-    needs: browser-client
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
@@ -321,7 +385,6 @@ jobs:
 
   minimum-rust:
     name: Minimum supported Rust 1.85.0
-    needs: operational-evidence
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
