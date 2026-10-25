@@ -6595,12 +6595,21 @@ fn has_scalar_row_authoring_shape(
         })
 }
 
-/// Every field reference in one formula expression.
-fn expression_references(expression: &Expression, references: &mut BTreeSet<FieldRef>) {
+/// Every field reference in one formula expression. Same-row references
+/// resolve against `owner`, so a retained `[.field]` formula counts as a
+/// dependent of its own row's field.
+fn expression_references(
+    owner: &FieldRef,
+    expression: &Expression,
+    references: &mut BTreeSet<FieldRef>,
+) {
     match expression {
         Expression::Number(_) => {}
         Expression::Reference(reference) => {
             references.insert(reference.clone());
+        }
+        Expression::SameRowReference(field) => {
+            references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
         }
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
@@ -6608,8 +6617,8 @@ fn expression_references(expression: &Expression, references: &mut BTreeSet<Fiel
         | Expression::Divide { left, right }
         | Expression::Minimum { left, right }
         | Expression::Maximum { left, right } => {
-            expression_references(left, references);
-            expression_references(right, references);
+            expression_references(owner, left, references);
+            expression_references(owner, right, references);
         }
     }
 }
@@ -6633,7 +6642,11 @@ fn dependent_formula_cells(
                     return false;
                 }
                 let mut references = BTreeSet::new();
-                expression_references(expression, &mut references);
+                expression_references(
+                    &FieldRef::new(entity.id.clone(), field.clone()),
+                    expression,
+                    &mut references,
+                );
                 references.iter().any(&removed_reference)
             })
         })
