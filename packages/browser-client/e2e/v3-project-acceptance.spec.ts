@@ -517,7 +517,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       return copy.buffer;
     };
     const openFresh = (master: Uint8Array): Promise<any> => client.openProject(transferCopy(master));
-    const assertDateProjection = async (opened: any, input: { dateValue: string; quantity: number; catalogue: string[]; revision: string; occurrence: string; identityUuid?: string; dateType?: boolean; constrained?: { field: string; constraint: any } }): Promise<void> => {
+    const assertDateProjection = async (opened: any, input: { dateValue: string; quantity: number; catalogue: string[]; revision: string; occurrence: string; identityUuid?: string; dateType?: boolean }): Promise<void> => {
       const prefix = `import_${input.identityUuid ?? "00000000-0000-4000-8000-000000000001"}_`;
       const fields = ["0003", "0004", "0005", "0006", "0007"].map((id) => `${prefix}${id}`);
       const rows = [`${prefix}0008`, `${prefix}0009`];
@@ -525,16 +525,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       const values = [["PEN", "Stationery", input.quantity, 200, input.dateValue], ["NOTE", "Paper", 5, 200, "2026-09-27"]];
       const expected = {
         bootstrap: { title: "Imported workbook", revision: input.revision, default_collection: "sheet_1", collections: [collection], keyed_grouped_sum_definition_ids: input.catalogue },
-        table: { revision: input.revision, ...(input.dateType === false ? { native_table_profile: true } : {}), collection, columns: fields.map((id, i) => {
-          const column: any = { id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.dateType === false ? "text" : "date"][i], required: false };
-          // An admitted constrained candidate projects its declaration (and list options) on that column.
-          const declared = input.constrained?.field === id ? input.constrained.constraint : undefined;
-          if (declared !== undefined) {
-            column.constraint = declared;
-            if (declared.kind === "text_literal_set") column.dropdown_options = declared.values;
-          }
-          return column;
-        }),
+        table: { revision: input.revision, ...(input.dateType === false ? { native_table_profile: true } : {}), collection, columns: fields.map((id, i) => ({ id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.dateType === false ? "text" : "date"][i], required: false })),
           rows: rows.map((id, ri) => ({ id, key: `sheet_1_row_${ri + 1}`, fields: fields.map((field, fi) => {
             const kind = fi < 2 ? "text" : fi < 4 ? "number" : input.dateType === false ? "text" : "date";
             return { target: { entity: id, field }, address: `sheet_1_row_${ri + 1}.column_${fi + 1}`, stored: { kind, value: values[ri]![fi] }, formula: null, calculated: null, diagnostics: [], editable_scalar: kind };
@@ -723,11 +714,11 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const overLimit = new Uint8Array(64 * 1024 * 1024 + 1);
     let matrixUuidCounter = 200;
     const nextMatrixUuid = (): string => `00000000-0000-4000-8000-${(matrixUuidCounter++).toString(16).padStart(12, "0")}`;
-    const matrixProfile = (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, constrained?: { field: string; constraint: unknown }): any => ({
-      dateValue, quantity, catalogue: [DEFINITION_ID], revision, occurrence: occurrenceUuid, dateType: marked, constrained,
+    const matrixProfile = (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string): any => ({
+      dateValue, quantity, catalogue: [DEFINITION_ID], revision, occurrence: occurrenceUuid, dateType: marked,
     });
-    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800, ordinaryExportCode = "unsupported_project", constrained?: { field: string; constraint: unknown }): Promise<void> => {
-      const profile = matrixProfile(marked, occurrenceUuid, dateValue, quantity, revision, constrained);
+    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800, ordinaryExportCode = "unsupported_project"): Promise<void> => {
+      const profile = matrixProfile(marked, occurrenceUuid, dateValue, quantity, revision);
       await assertDateProjection({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, profile);
       const summary = await client.queryKeyedGroupedSum(DEFINITION_ID);
       if (summary.revision !== revision || JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", stationery]].sort())) throw new Error(`T2 literal catalogue summary changed at ${revision}`);
@@ -829,7 +820,12 @@ test("Worker preserves typed failures and resets origin after replacement or clo
         const openedUuid = nextMatrixUuid();
         const opened: any = await withUuid(openedUuid, () => client.openProject(transferCopy(candidate)));
         equal(projectedConstraint(opened.table), expected.constraint, `${expected.label} Open / ${marked ? "v3" : "legacy"} projection changed`);
-        await checkMatrixResident(true, openedUuid, "2026-09-28", 4, "resident/0", 800, "legacy_export_unsupported", expected.constraint === undefined ? undefined : expected);
+        // The admitted candidate is now the resident: its live projection is the
+        // one Open returned, under the pinned occurrence, and it has no legacy form.
+        equal(await client.queryTable(opened.table.collection.key), opened.table, `${expected.label} Open / ${marked ? "v3" : "legacy"} live table changed`);
+        const occurrence: any = await client.observeOccurrence();
+        if (occurrence.revision !== "resident/0" || !occurrence.scope.startsWith(`designer-occurrence/${openedUuid}/`)) throw new Error(`${expected.label} Open occurrence changed: ${JSON.stringify(occurrence)}`);
+        await expectCode(() => client.exportProject("resident/0"), "legacy_export_unsupported", "resident/0");
       }
     }
     // Each rejection starts with an independent marked mixed U=[A], R=[B].
