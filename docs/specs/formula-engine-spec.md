@@ -94,8 +94,11 @@ remain deferred. Its contract is:
   invalidation like any other dependency; a total that includes its own row is
   therefore a `formula_cycle`;
 - evaluation sums the column's normalized values in ascending `EntityId` order
-  and normalizes the result; an empty column totals semantic zero;
-- a contributing value that is missing, non-Number, or failed makes the total
+  and normalizes the result, skipping blank cells (a row with no stored value
+  for the field); an empty or all-blank column totals semantic zero. This
+  column-scoped skip is the one exception to "a missing dependency is a
+  failure": a direct `[entity.field]` reference to a blank cell still fails;
+- a contributing value that is non-Number or failed makes the total
   unavailable rather than partially summed, with a typed diagnostic; and
 - duplicate collection moves a reference to the copied table's own column onto
   the copy, while a reference to any other table keeps pointing at the
@@ -134,9 +137,11 @@ source text
   -> evaluation
 ```
 
-A column total's static dependency set follows the document's current entity
-membership, so retained incremental state is rebuilt rather than patched when
-an entity is added, removed, or moved between schemas.
+A column total's static dependency set follows the document's current row
+membership. Retained incremental state therefore treats every column-total
+formula that a changed row can affect — one that read the row before, or that
+totals the row's current schema — as a dirty root and re-extracts its
+dependencies.
 
 | Representation | Contains | Durable role |
 | --- | --- | --- |

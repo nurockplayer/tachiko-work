@@ -2969,6 +2969,14 @@ impl PatchLifecycle {
                 }),
                 _ => false,
             });
+        // A column total names the column itself, so it blocks removal even
+        // when the schema has no rows to expand into references.
+        let field_is_totaled_by_formula = candidate.entities.values().any(|entity| {
+            entity.fields.values().any(|value| {
+                matches!(value, Value::Formula(expression)
+                    if expression_names_column(expression, schema_id, &field.id))
+            })
+        });
         let field_is_referenced_by_definition = candidate
             .keyed_grouped_sum_definitions
             .values()
@@ -2981,7 +2989,10 @@ impl PatchLifecycle {
                             || definition.products.category_field == field.id
                             || definition.products.price_field == field.id))
             });
-        if field_is_referenced_by_formula || field_is_referenced_by_definition {
+        if field_is_referenced_by_formula
+            || field_is_totaled_by_formula
+            || field_is_referenced_by_definition
+        {
             return Err(WorkspaceError::SchemaFieldReferenced {
                 field: FieldRef::new(schema_id.to_string(), field.id.clone()),
             });
@@ -4692,6 +4703,30 @@ fn keyed_grouped_sum_matched_products(
         );
     }
     (matched, formula_operand_required)
+}
+
+fn expression_names_column(expression: &Expression, schema: &SchemaId, field: &FieldId) -> bool {
+    let mut pending = vec![expression];
+    while let Some(current) = pending.pop() {
+        match current {
+            Expression::ColumnTotal(column) => {
+                if &column.schema == schema && &column.field == field {
+                    return true;
+                }
+            }
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                pending.push(right);
+                pending.push(left);
+            }
+            Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => {}
+        }
+    }
+    false
 }
 
 fn expression_references(

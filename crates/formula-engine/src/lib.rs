@@ -452,9 +452,8 @@ fn direct_references(owner: &FieldRef, expression: &Expression) -> BTreeSet<Fiel
 /// Same-row references resolve against `owner`, and a column total expands to
 /// that column on every entity of the document's current schema, so the set is
 /// exactly the stable value nodes the formula reads. Because a column total's
-/// expansion follows current entity membership, retained incremental state must
-/// be rebuilt rather than patched when an entity is added, removed, or moved
-/// between schemas.
+/// expansion follows current row membership, retained incremental state
+/// re-extracts it whenever a row of that schema changes.
 #[must_use]
 pub fn extract_dependencies(
     document: &Document,
@@ -604,8 +603,9 @@ impl RetainedCalculationState {
     ///
     /// The caller owns conservative impact classification. When that cannot be
     /// proved, discard this state and call [`Self::rebuild`] instead. Column
-    /// totals make entity membership part of a formula's dependencies, so any
-    /// added, removed, or re-schemed entity requires [`Self::rebuild`].
+    /// totals make row membership part of a formula's dependencies; the
+    /// caller only lists changed rows, and this update re-extracts every
+    /// column total those rows can affect.
     #[must_use]
     pub fn update(
         &mut self,
@@ -625,6 +625,7 @@ impl RetainedCalculationState {
 
         let before_failed = self.is_failed();
         let before_formulas = self.dependencies.keys().cloned().collect::<BTreeSet<_>>();
+        let dirty_roots = &self.with_column_total_roots(document, dirty_roots);
         let impact = self.update_dependency_impact(document, dirty_roots);
         let before_projections = impact
             .dirty
@@ -672,6 +673,51 @@ impl RetainedCalculationState {
                 .collect(),
             changed_calculation_projections,
         }
+    }
+
+    /// A column total's dependencies are the schema's current rows, so a
+    /// changed row can change the dependency set of a formula that is not
+    /// itself dirty. Promote every column-total formula that read a root
+    /// before (old graph) or totals a root's schema now, so its dependencies
+    /// are re-extracted rather than left stale.
+    fn with_column_total_roots(
+        &self,
+        document: &Document,
+        dirty_roots: &BTreeSet<FieldRef>,
+    ) -> BTreeSet<FieldRef> {
+        let mut roots = dirty_roots.clone();
+        let root_schemas = dirty_roots
+            .iter()
+            .filter_map(|root| document.entities.get(&root.entity))
+            .map(|entity| &entity.schema)
+            .collect::<BTreeSet<_>>();
+        for root in dirty_roots {
+            for dependent in self.reverse_dependents.get(root).into_iter().flatten() {
+                if matches!(
+                    calculation_value(document, dependent),
+                    Some(Value::Formula(expression))
+                        if !extract_column_totals(expression).is_empty()
+                ) {
+                    roots.insert(dependent.clone());
+                }
+            }
+        }
+        if root_schemas.is_empty() {
+            return roots;
+        }
+        for (entity_id, entity) in &document.entities {
+            for (field_id, value) in &entity.fields {
+                if let Value::Formula(expression) = value {
+                    if extract_column_totals(expression)
+                        .iter()
+                        .any(|column| root_schemas.contains(&column.schema))
+                    {
+                        roots.insert(FieldRef::new(entity_id.clone(), field_id.clone()));
+                    }
+                }
+            }
+        }
+        roots
     }
 
     fn update_dependency_impact(
@@ -1345,8 +1391,14 @@ fn pregraph_failures(
         if let Some(failure) = reference_failure(document, field) {
             invalid_targets.insert(field.clone(), failure);
         }
-        if matches!(value, Value::Formula(_)) {
+        if let Value::Formula(expression) = value {
+            // A blank cell read only through a column total is skipped by the
+            // sum, not a missing target; a direct reference to it still fails.
+            let direct = direct_references(field, expression);
             for dependency in dependencies.get(field).into_iter().flatten() {
+                if !direct.contains(dependency) && is_blank_cell(document, dependency) {
+                    continue;
+                }
                 if let Some(failure) = reference_failure(document, dependency) {
                     invalid_targets.insert(dependency.clone(), failure);
                 }
@@ -1532,6 +1584,14 @@ fn column_failures(
     failures
 }
 
+/// An existing entity that holds no value for `field`.
+fn is_blank_cell(document: &Document, field: &FieldRef) -> bool {
+    document
+        .entities
+        .get(&field.entity)
+        .is_some_and(|entity| !entity.fields.contains_key(&field.field))
+}
+
 fn reference_failure(document: &Document, field: &FieldRef) -> Option<ReferenceFailure> {
     let Some(entity) = document.entities.get(&field.entity) else {
         return Some(ReferenceFailure::Missing);
@@ -1681,12 +1741,13 @@ fn evaluate_bound_expression(
                 results.push(*value);
             }
             EvaluationFrame::Expression(Expression::ColumnTotal(column)) => {
-                // Dependency extraction already proved every row of the
-                // column is a valid value node, so a missing value here is a
-                // failed contributing row rather than an empty column.
+                // Blank cells are skipped. Every other row already passed the
+                // target checks, so a value missing here is a failed
+                // contributing row rather than an empty column.
                 let mut total = 0.0;
                 for (entity_id, entity) in &document.entities {
-                    if entity.schema != column.schema {
+                    if entity.schema != column.schema || !entity.fields.contains_key(&column.field)
+                    {
                         continue;
                     }
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());

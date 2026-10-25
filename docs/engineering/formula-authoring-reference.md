@@ -89,9 +89,9 @@ summary.total  [plan.reserve:total] + [plan_copy.reserve:total]
 Binding resolves the table key and the field key in the current snapshot and
 requires a Number column. An unknown table or field key refuses the update as
 `formula_unknown_reference`; a Text or other non-Number column refuses it as
-`formula_type_mismatch`. An empty table totals `0`. A row whose value is
-missing, non-Number, or failed makes the total unavailable instead of summing
-the rest.
+`formula_type_mismatch`. Blank cells are skipped, and an empty or all-blank
+table totals `0`. A row whose value is non-Number or failed makes the total
+unavailable instead of summing the rest.
 
 The total depends on every row of that column, so a formula that reads the
 column of its own row — `[plan.reserve:total]` inside a `plan.reserve` cell —

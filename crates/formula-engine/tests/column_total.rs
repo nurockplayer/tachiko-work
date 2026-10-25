@@ -312,7 +312,7 @@ fn an_empty_table_totals_zero() {
 }
 
 #[test]
-fn a_row_without_the_column_makes_the_total_unavailable() {
+fn a_blank_cell_is_skipped_by_the_total() {
     let mut document = document();
     document
         .entities
@@ -320,13 +320,84 @@ fn a_row_without_the_column_makes_the_total_unavailable() {
         .unwrap()
         .fields
         .remove("reserve");
+    let CalculationOutcome::Complete(calculation) = calculate_complete(&document) else {
+        panic!("a blank cell must not block the total");
+    };
+    assert_eq!(
+        calculation.value(&owner("summary", "total")),
+        Some(Number::new(12_000.0).unwrap())
+    );
+}
+
+#[test]
+fn a_direct_reference_to_a_blank_cell_still_fails() {
+    let mut document = document();
+    document
+        .entities
+        .get_mut("ads")
+        .unwrap()
+        .fields
+        .remove("reserve");
+    document.entities.get_mut("summary").unwrap().fields.insert(
+        FieldId::from("total"),
+        Value::Formula(Expression::Add {
+            left: Box::new(total("plan", "reserve")),
+            right: Box::new(Expression::Reference(owner("ads", "reserve"))),
+        }),
+    );
     let CalculationOutcome::Failed(failures) = calculate_complete(&document) else {
-        panic!("a missing contributing value must not total");
+        panic!("a direct blank reference must not calculate");
     };
     assert_eq!(
         failures.failures().get(&owner("summary", "total")),
         Some(&CalculationFailure::InvalidReferences {
-            targets: BTreeMap::from([(owner("ads", "reserve"), { ReferenceFailure::Missing })]),
+            targets: BTreeMap::from([(owner("ads", "reserve"), ReferenceFailure::Missing)]),
+        })
+    );
+}
+
+#[test]
+fn filling_a_blank_cell_recomputes_the_total_incrementally() {
+    let mut document = document();
+    document
+        .entities
+        .get_mut("ads")
+        .unwrap()
+        .fields
+        .remove("reserve");
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    document
+        .entities
+        .get_mut("ads")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("reserve"), number(700.0));
+    let _ = retained.update(&document, &BTreeSet::from([owner("ads", "reserve")]));
+    let CalculationOutcome::Complete(calculation) = retained.outcome() else {
+        panic!("the retained state must calculate");
+    };
+    assert_eq!(
+        calculation.value(&owner("summary", "total")),
+        Some(Number::new(12_700.0).unwrap())
+    );
+}
+
+#[test]
+fn a_text_value_in_the_column_makes_the_total_unavailable() {
+    let mut document = document();
+    document
+        .entities
+        .get_mut("ads")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("reserve"), Value::Text("n/a".to_owned()));
+    let CalculationOutcome::Failed(failures) = calculate_complete(&document) else {
+        panic!("a non-Number value must not total");
+    };
+    assert_eq!(
+        failures.failures().get(&owner("summary", "total")),
+        Some(&CalculationFailure::InvalidReferences {
+            targets: BTreeMap::from([(owner("ads", "reserve"), ReferenceFailure::NonNumeric)]),
         })
     );
 }
@@ -389,4 +460,67 @@ fn a_changed_row_recomputes_the_total_incrementally() {
         calculation.value(&owner("summary", "total")),
         Some(Number::new(13_000.0).unwrap())
     );
+}
+
+fn row_roots(document: &Document, entity: &str) -> BTreeSet<FieldRef> {
+    document.entities[entity]
+        .fields
+        .keys()
+        .map(|field| FieldRef::new(entity, field.clone()))
+        .collect()
+}
+
+#[test]
+fn an_added_row_joins_the_total_incrementally() {
+    let mut document = document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    document.entities.insert(
+        EntityId::from("tools"),
+        plan_row("tools", "Tools", number(1_000.0)),
+    );
+    let _ = retained.update(&document, &row_roots(&document, "tools"));
+    assert_eq!(retained.outcome(), calculate_complete(&document));
+    let CalculationOutcome::Complete(calculation) = retained.outcome() else {
+        panic!("the retained state must calculate");
+    };
+    assert_eq!(
+        calculation.value(&owner("summary", "total")),
+        Some(Number::new(13_500.0).unwrap())
+    );
+}
+
+#[test]
+fn a_removed_row_leaves_the_total_incrementally() {
+    let mut document = document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    let roots = row_roots(&document, "ads");
+    document.entities.remove("ads");
+    let _ = retained.update(&document, &roots);
+    assert_eq!(retained.outcome(), calculate_complete(&document));
+    let CalculationOutcome::Complete(calculation) = retained.outcome() else {
+        panic!("the retained state must calculate");
+    };
+    assert_eq!(
+        calculation.value(&owner("summary", "total")),
+        Some(Number::new(12_000.0).unwrap())
+    );
+}
+
+#[test]
+fn a_row_moved_into_the_schema_joins_the_total_incrementally() {
+    let mut document = document();
+    document.entities.insert(
+        EntityId::from("tools"),
+        Entity {
+            schema: SchemaId::from("summary"),
+            fields: BTreeMap::new(),
+            ..plan_row("tools", "Tools", number(0.0))
+        },
+    );
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    let tools = document.entities.get_mut("tools").unwrap();
+    tools.schema = SchemaId::from("plan");
+    tools.fields.insert(FieldId::from("reserve"), number(250.0));
+    let _ = retained.update(&document, &row_roots(&document, "tools"));
+    assert_eq!(retained.outcome(), calculate_complete(&document));
 }
