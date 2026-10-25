@@ -46,6 +46,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Keyed grouped-sum projections now carry the overall total alongside the
+  category groups. `total` is derived from the same evaluation at the same
+  revision and is `null` whenever the result is unavailable, never zero or a
+  stale value; the public TypeScript client exposes `number | null`.
 - Formulas accept a same-row shorthand `[.field]` meaning "this formula's own
   row". Binding stores the field identity and resolves the entity from the
   owning formula, so `copyFormula` with relative rows and `duplicateCollection`

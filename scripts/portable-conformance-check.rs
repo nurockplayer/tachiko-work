@@ -2901,7 +2901,7 @@ fn case_record(index: u32) -> Record {
             else {
                 return Record::failure(UNEXPECTED, 0);
             };
-            match project_expression(&document, expression) {
+            match project_expression(&document, &FieldRef::new("entity-stable", "output-stable"), expression) {
                 Ok(source) => record.auxiliary = source.len() as u64,
                 Err(_) => return Record::failure(UNEXPECTED, 0),
             }
@@ -2929,7 +2929,7 @@ fn case_record(index: u32) -> Record {
                     fields: BTreeMap::new(),
                 },
             );
-            match project_expression(&document, &expression) {
+            match project_expression(&document, &FieldRef::new("entity-stable", "output-stable"), &expression) {
                 Err(CanonicalAuthoringProjectionError::UnresolvableBoundReferences { targets }) => {
                     Record::failure(PROJECTION_FAILURE, targets.len() as u64)
                 }

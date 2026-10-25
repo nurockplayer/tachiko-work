@@ -164,6 +164,28 @@ client replies, not materialized as extra payload members. Worker reply
 validation rejects malformed presence metadata. Optional Date/Boolean authoring,
 blank coercion and skip-blank calculation are outside this surface.
 
+## Keyed grouped-sum totals
+
+`queryKeyedGroupedSum` and `createKeyedGroupedSum` return
+`KeyedGroupedSumProjection`, which now carries an authoritative overall total:
+
+```ts
+const summary = await client.queryKeyedGroupedSum(definitionId);
+for (const {category, value} of summary.groups) renderCategory(category, value);
+renderTotal(summary.total); // number | null
+```
+
+`total` is the sum of `groups` at the same `revision`; Work derives both from one
+evaluation, so a client never adds groups itself or reads a cached total.
+`total` is `null` whenever the result is unavailable (missing or ambiguous keys,
+invalid input, an invalid definition) and `groups` is then empty with
+diagnostics explaining why. `null` is never a zero or a previous revision's
+value, so render it as "unavailable", not as 0. An available result with no
+contributing rows reports `total: 0` and `groups: []`. If the aggregate
+cannot be represented as a finite number (overflow), `total` is `null` while the
+already-evaluated `groups` remain; `null` still means "unavailable", never a
+corrected or clamped number.
+
 ## Publish one revision-safe edit and observe authority
 
 Targets come from projections and contain stable semantic IDs. Do not construct
