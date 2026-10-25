@@ -25,6 +25,7 @@ const THOUSAND: &str = "00000000-0000-4000-8000-000000000b02";
 const OVER: &str = "00000000-0000-4000-8000-000000000b03";
 const WIDE: &str = "00000000-0000-4000-8000-000000000b04";
 const WIDENED_SCHEMA: &str = "00000000-0000-4000-8000-000000000b05";
+const REFERENCE: &str = "00000000-0000-4000-8000-000000000b06";
 
 fn number(value: f64) -> Value {
     Value::Number(Number::new(value).expect("fixture numbers are finite"))
@@ -253,6 +254,41 @@ fn small_document() -> Document {
 fn small_runtime() -> DesignerRuntime {
     DesignerRuntime::from_document(small_document(), SMALL)
         .expect("the mixed fixture is admitted by the ordinary profile")
+}
+
+/// Three rows over a Text label and a self-referencing column, so reference
+/// presence, reference value filters and reference sorting are pinned
+/// independently of the scalar fixture.
+fn reference_document() -> Document {
+    schema_document(
+        vec![
+            field("f01_label", FieldType::Text, false),
+            field(
+                "f02_link",
+                FieldType::Reference {
+                    schema: SchemaId::from("rows"),
+                },
+                false,
+            ),
+        ],
+        vec![
+            entity(
+                "e01",
+                vec![
+                    ("f01_label", text("alpha")),
+                    ("f02_link", Value::Reference(EntityId::from("e02"))),
+                ],
+            ),
+            entity("e02", vec![("f01_label", text("beta"))]),
+            entity(
+                "e03",
+                vec![
+                    ("f01_label", text("gamma")),
+                    ("f02_link", Value::Reference(EntityId::from("e01"))),
+                ],
+            ),
+        ],
+    )
 }
 
 /// One Text/Number rectangle of the given size, the text-capacity shape the
@@ -791,6 +827,54 @@ fn view_validation_fails_with_typed_errors() {
         count: 1,
     });
     assert!(matches!(stale_view, Err(DesignerError::StaleQuery { .. })));
+}
+
+#[test]
+fn reference_columns_support_presence_filters_only() {
+    let mut runtime = DesignerRuntime::from_document(reference_document(), REFERENCE)
+        .expect("the reference fixture is admitted by the ordinary profile");
+    assert_eq!(
+        order(
+            &mut runtime,
+            filtered(ViewFilter::IsBlank {
+                field: "f02_link".to_owned(),
+            })
+        ),
+        ids(&["e02"])
+    );
+    assert_eq!(
+        order(
+            &mut runtime,
+            filtered(ViewFilter::NotBlank {
+                field: "f02_link".to_owned(),
+            })
+        ),
+        ids(&["e01", "e03"])
+    );
+    for filter in [
+        ViewFilter::TextEquals {
+            field: "f02_link".to_owned(),
+            value: "e02".to_owned(),
+        },
+        compare("f02_link", ComparisonOperator::Eq, 1.0),
+        ViewFilter::InSet {
+            field: "f02_link".to_owned(),
+            values: vec![ScalarLiteral::Text("e02".to_owned())],
+        },
+    ] {
+        assert!(
+            matches!(
+                window(&mut runtime, filtered(filter), 0, 8),
+                Err(DesignerError::InvalidView { .. })
+            ),
+            "a value filter on a reference column is refused"
+        );
+    }
+    // Silent entity-id ordering would misrepresent a reference sort.
+    assert!(matches!(
+        window(&mut runtime, sorted("f02_link", SortDirection::Asc), 0, 8),
+        Err(DesignerError::InvalidView { .. })
+    ));
 }
 
 #[test]

@@ -1701,27 +1701,33 @@ struct ViewPlan {
 }
 
 /// One cell value as the view sees it: stored scalars plus a formula column's
-/// calculated Number. References and failed/unavailable calculations are
-/// blank, matching `is_blank`.
+/// calculated Number. A stored reference is only a presence marker: value
+/// filters and sorting reject reference columns at plan time, while
+/// `is_blank` / `not_blank` can still see it. Failed or unavailable
+/// calculations are blank, matching `is_blank`.
 #[derive(Clone, Debug, PartialEq)]
 enum ViewValue {
     Number(f64),
     Text(String),
     Boolean(bool),
     Date(Date),
+    Reference,
 }
 
 fn view_value(
     field: &tachiko_workspace_engine::resident_session::ResidentFieldProjection,
 ) -> Option<ViewValue> {
     if let Some(value) = &field.stored_value {
-        return match value {
-            Value::Number(number) => Some(ViewValue::Number(number.get())),
-            Value::Text(text) => Some(ViewValue::Text(text.clone())),
-            Value::Boolean(flag) => Some(ViewValue::Boolean(*flag)),
-            Value::Date(date) => Some(ViewValue::Date(*date)),
-            Value::Reference(_) | Value::Formula(_) => None,
-        };
+        match value {
+            Value::Number(number) => return Some(ViewValue::Number(number.get())),
+            Value::Text(text) => return Some(ViewValue::Text(text.clone())),
+            Value::Boolean(flag) => return Some(ViewValue::Boolean(*flag)),
+            Value::Date(date) => return Some(ViewValue::Date(*date)),
+            Value::Reference(_) => return Some(ViewValue::Reference),
+            // A formula field projection carries the expression separately and
+            // its calculation below; never read the expression as a value.
+            Value::Formula(_) => {}
+        }
     }
     match &field.calculated_value {
         Some(FormulaCalculationOutcome::Value(number)) => Some(ViewValue::Number(number.get())),
@@ -1774,6 +1780,16 @@ fn plan_view(
     let mut sort = Vec::with_capacity(view.sort.len());
     for key in &view.sort {
         let column = builder.column(&key.field)?;
+        // Reference values have no defined order, so refuse the key instead of
+        // silently ordering every row by its entity-id tie-break.
+        if ViewKind::of(&column.field_type).is_none() {
+            return Err(DesignerError::InvalidView {
+                message: format!(
+                    "view sorting does not support reference column '{}'",
+                    column.id
+                ),
+            });
+        }
         sort.push(ViewSortPlan {
             ordinal: builder.ordinal(column),
             direction: key.direction,
@@ -1800,24 +1816,26 @@ fn plan_filter(
 ) -> Result<ViewPredicate, DesignerError> {
     let column = builder.column(filter.field())?;
     let ordinal = builder.ordinal(column);
-    let kind = ViewKind::of(&column.field_type).ok_or_else(|| DesignerError::InvalidView {
-        message: format!(
-            "view filters do not support reference column '{}'",
-            column.id
-        ),
-    })?;
+    // Every column kind, references included, answers a presence filter.
+    let kind = ViewKind::of(&column.field_type);
     let expect = |expected: ViewKind| -> Result<(), DesignerError> {
-        if kind == expected {
-            return Ok(());
+        match kind {
+            Some(kind) if kind == expected => Ok(()),
+            Some(kind) => Err(DesignerError::InvalidView {
+                message: format!(
+                    "column '{}' is a {} column, not {}",
+                    column.id,
+                    view_kind_name(kind),
+                    view_kind_name(expected)
+                ),
+            }),
+            None => Err(DesignerError::InvalidView {
+                message: format!(
+                    "view filters do not support reference column '{}'",
+                    column.id
+                ),
+            }),
         }
-        Err(DesignerError::InvalidView {
-            message: format!(
-                "column '{}' is a {} column, not {}",
-                column.id,
-                view_kind_name(kind),
-                view_kind_name(expected)
-            ),
-        })
     };
     Ok(match filter {
         ViewFilter::TextEquals { value, .. } => {
@@ -1856,13 +1874,23 @@ fn plan_filter(
         }
         ViewFilter::IsBlank { .. } => ViewPredicate::IsBlank { ordinal },
         ViewFilter::NotBlank { .. } => ViewPredicate::NotBlank { ordinal },
-        ViewFilter::InSet { values, .. } => ViewPredicate::InSet {
-            ordinal,
-            values: values
-                .iter()
-                .map(|literal| view_literal(kind, literal, column))
-                .collect::<Result<_, _>>()?,
-        },
+        ViewFilter::InSet { values, .. } => {
+            let Some(kind) = kind else {
+                return Err(DesignerError::InvalidView {
+                    message: format!(
+                        "view filters do not support reference column '{}'",
+                        column.id
+                    ),
+                });
+            };
+            ViewPredicate::InSet {
+                ordinal,
+                values: values
+                    .iter()
+                    .map(|literal| view_literal(kind, literal, column))
+                    .collect::<Result<_, _>>()?,
+            }
+        }
     })
 }
 
@@ -1995,6 +2023,8 @@ const fn view_value_rank(value: &ViewValue) -> u8 {
         ViewValue::Text(_) => 1,
         ViewValue::Boolean(_) => 2,
         ViewValue::Date(_) => 3,
+        // Sorting rejects reference columns; kept for exhaustive ordering only.
+        ViewValue::Reference => 4,
     }
 }
 
