@@ -93,6 +93,8 @@ def as_int(record: dict, key: str) -> int | None:
     value = record.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        return None
     return int(value)
 
 
@@ -108,7 +110,7 @@ def main() -> int:
         print(f"error: SHA-1 mismatch: {actual_sha1} != {args.sha1}", file=sys.stderr)
         return 2
 
-    lines = json_lines = parse_errors = 0
+    lines = json_lines = parse_errors = malformed_records = 0
     missing_poi = 0
     error_notifications: Counter[str] = Counter()
     content_types: Counter[str] = Counter()
@@ -141,19 +143,16 @@ def main() -> int:
                 parse_errors += 1
                 continue
             json_lines += 1
+            if not isinstance(record, dict):
+                malformed_records += 1
+                continue
 
-            digest = (record.get("Tika") or {}).get("Digest")
-            if digest:
-                if digest in seen_digests:
-                    duplicate_digests += 1
-                    continue
-                seen_digests.add(digest)
-
-            content_type = (record.get("Tika") or {}).get("Tika-Content-Type")
-            if content_type:
-                content_types[content_type] += 1
-            else:
-                content_type_unavailable += 1
+            tika = record.get("Tika")
+            if not isinstance(tika, dict):
+                tika = {}
+            digest = tika.get("Digest")
+            if not isinstance(digest, str):
+                digest = None
 
             poi = record.get("POI")
             if not isinstance(poi, dict):
@@ -164,7 +163,21 @@ def main() -> int:
             if notification != "OK":
                 continue
 
-            size = as_int((record.get("Tika") or {}), "Length")
+            # Deduplicate among analyzable records only, so a partial or
+            # unreadable duplicate cannot shadow a readable copy of the file.
+            if digest:
+                if digest in seen_digests:
+                    duplicate_digests += 1
+                    continue
+                seen_digests.add(digest)
+
+            content_type = tika.get("Tika-Content-Type")
+            if isinstance(content_type, str):
+                content_types[content_type] += 1
+            else:
+                content_type_unavailable += 1
+
+            size = as_int(tika, "Length")
             sheets = as_int(poi, "numSheets")
             total_input = as_int(poi, "totalInputCells")
             total_formula = as_int(poi, "totalFormulas")
@@ -178,7 +191,7 @@ def main() -> int:
                     missing_fields[name] += 1
             if None in (size, sheets, total_input, total_formula):
                 continue
-            if sheets <= 0 or total_input < 0 or total_formula < 0:
+            if size <= 0 or sheets <= 0 or total_input < 0 or total_formula < 0:
                 excluded_non_positive += 1
                 continue
 
@@ -267,10 +280,11 @@ def main() -> int:
         },
         "exclusions": {
             "parse_errors": parse_errors,
+            "malformed_records": malformed_records,
             "missing_POI": missing_poi,
             "missing_fields": dict(missing_fields),
             "duplicate_tika_digests_dropped": duplicate_digests,
-            "non_positive_dimensions": excluded_non_positive,
+            "invalid_size_or_dimensions": excluded_non_positive,
             "poi_error_notification": dict(error_notifications.most_common()),
             "formula_subtype_sum_mismatch": formula_subtype_mismatch,
             "input_subtype_sum_mismatch": input_subtype_mismatch,
