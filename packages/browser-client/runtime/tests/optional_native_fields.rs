@@ -294,6 +294,14 @@ fn requiredness_strengthening_reports_missing_values_and_preserves_history() {
     assert_eq!(stale["error"]["code"], "stale_revision");
     let unknown = j.refused(json!({"type":"set_column_requiredness","collection":"items","field":"missing","required":true}));
     assert_eq!(unknown["error"]["code"], "invalid_table_operation");
+
+    // Empty Text is a stored value, not a blank: filling the last three `note`
+    // cells with "" admits strengthening.
+    let empty_notes = rows.iter().skip(2).map(|row| {
+        json!({"target":{"entity":row["id"],"field":note},"input":{"kind":"text","value":""}})
+    }).collect::<Vec<_>>();
+    j.mutate(json!({"type":"edit_cells","edits":empty_notes}));
+    j.round_trip(json!({"type":"set_column_requiredness","collection":"items","field":note,"required":true}));
     if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
         std::fs::write(
             format!("{path}.requiredness"),

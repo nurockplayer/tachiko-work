@@ -815,7 +815,7 @@ pub enum DesignerError {
     InvalidTableOperation { message: String },
     #[error("native name admission rejected: {}", name_admission::failure_message(.failures))]
     NameAdmission { failures: Vec<NameFailure> },
-    #[error("{count} rows have no value in this column")]
+    #[error("{}", required_values_missing_message(*.count))]
     RequiredValuesMissing {
         schema: SchemaId,
         field: FieldId,
@@ -905,12 +905,7 @@ impl DesignerError {
         };
         FailureProjection {
             code: code.to_owned(),
-            message: match self {
-                Self::RequiredValuesMissing { count, .. } => {
-                    required_values_missing_message(*count)
-                }
-                _ => self.to_string(),
-            },
+            message: self.to_string(),
             current_revision: current_revision.to_owned(),
             diagnostics,
             name_failures: match self {
