@@ -123,6 +123,10 @@ entity is blank; it never fills or coerces. Ordinary final validation can also
 refuse a clear that breaks a surviving formula. An already-blank clear is
 `no_change`. Rejected/no-change attempts add no history; `undo`/`redo` through
 `trackerCommand` restore exact prior presence and values as forward operations.
+When strengthening is refused for blank values, the failure code is
+`required_values_missing`; its single diagnostic identifies the column and
+reports the authoritative blank count. The message says how many rows have no
+value in the column.
 
 `ScalarEditInput` adds `{kind: "clear"}` alongside typed sets. `edit_cells`
 can mix both atomically. `paste_cells.rows` accepts `PasteCellInput[][]`:

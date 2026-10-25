@@ -46,6 +46,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Strengthening an optional native Text/Number column now reports
+  `required_values_missing` with the blank row count and column identity. The
+  rejection preserves the current revision and undo history; host and WASM
+  expose the same failure projection.
+
 - Table columns expose optional `display_name_explicit: true` through the Rust,
   WASM and public TypeScript client projections, sharing the imported-export
   presence rule. Clients can retain metadata headers unless a stored display

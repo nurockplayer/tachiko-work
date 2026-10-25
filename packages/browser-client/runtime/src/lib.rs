@@ -25,8 +25,8 @@ use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
     FieldId, FieldKey, FieldRef, FieldType, IdGenerator, KeyedGroupedSumDefinition,
     KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value, WorkspaceError,
-    analyze_field, create_document,
+    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, Value,
+    WorkspaceError, analyze_field, create_document,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -815,6 +815,12 @@ pub enum DesignerError {
     InvalidTableOperation { message: String },
     #[error("native name admission rejected: {}", name_admission::failure_message(.failures))]
     NameAdmission { failures: Vec<NameFailure> },
+    #[error("{}", required_values_missing_message(*.count))]
+    RequiredValuesMissing {
+        schema: SchemaId,
+        field: FieldId,
+        count: usize,
+    },
 }
 
 impl DesignerError {
@@ -836,6 +842,27 @@ impl DesignerError {
             Self::Lifecycle(PatchLifecycleError::CommandRejected { .. }) => {
                 ("edit_rejected", Vec::new())
             }
+            Self::RequiredValuesMissing {
+                schema,
+                field,
+                count,
+            } => (
+                "required_values_missing",
+                vec![DiagnosticProjection {
+                    code: "required_values_missing".to_owned(),
+                    message: required_values_missing_message(*count),
+                    path: field.to_string(),
+                    subjects: vec![SemanticSubject::SchemaField {
+                        schema: schema.clone(),
+                        field: field.clone(),
+                    }],
+                    related_subjects: Vec::new(),
+                    facts: vec![DiagnosticFactProjection {
+                        name: "blank_count".to_owned(),
+                        value: count.to_string(),
+                    }],
+                }],
+            ),
             Self::NativeTablesExport { finding } => (
                 "native_tables_export_refused",
                 vec![DiagnosticProjection {
@@ -890,6 +917,14 @@ impl DesignerError {
                 _ => Vec::new(),
             },
         }
+    }
+}
+
+fn required_values_missing_message(count: usize) -> String {
+    if count == 1 {
+        "1 row has no value in this column.".to_owned()
+    } else {
+        format!("{count} rows have no value in this column.")
     }
 }
 
@@ -1946,6 +1981,21 @@ impl DesignerRuntime {
         }
         if definition.required == required {
             return Err(PatchLifecycleError::NoChange.into());
+        }
+        if required {
+            let blank_count = snapshot
+                .document()
+                .entities
+                .values()
+                .filter(|entity| entity.schema == schema && !entity.fields.contains_key(&field))
+                .count();
+            if blank_count > 0 {
+                return Err(DesignerError::RequiredValuesMissing {
+                    schema,
+                    field,
+                    count: blank_count,
+                });
+            }
         }
         let command = |required| SemanticCommand::SetSchemaFieldRequiredness {
             schema: schema.clone(),
