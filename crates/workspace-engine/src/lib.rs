@@ -14,13 +14,12 @@ pub use tachiko_diff_engine::{
 #[cfg(feature = "issue-175-research")]
 pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
 use tachiko_formula_engine::{
-    Calculation, CalculationOutcome, FormulaBindError, FormulaParseError, RetainedCalculationState,
-    bind_expression, calculate_complete, parse_expression, project_expression,
-    validate_expression_structure,
+    Calculation, CalculationOutcome, FormulaParseError, RetainedCalculationState, bind_expression,
+    calculate_complete, parse_expression, project_expression, validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
-    ExpressionComplexityError, ReferenceFailure,
+    ExpressionComplexityError, FormulaBindError, ReferenceFailure,
 };
 pub use tachiko_merge_engine::{
     ConflictFacet, ConflictFacetV2, ConflictFact, ConflictFactV2, ConflictKind, ConflictTarget,

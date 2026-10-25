@@ -23,10 +23,10 @@ use tachiko_storage::{
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, KeyedGroupedSumDefinition,
-    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value, WorkspaceError,
-    analyze_field, create_document,
+    FieldId, FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator,
+    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
+    KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
+    StarterTemplate, Value, WorkspaceError, analyze_field, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -820,22 +820,45 @@ pub enum DesignerError {
 impl DesignerError {
     #[must_use]
     pub fn failure_projection(&self, current_revision: &str) -> FailureProjection {
+        let mut formula_message = None;
         let (code, diagnostics) = match self {
             Self::Lifecycle(PatchLifecycleError::Stale) | Self::StaleQuery { .. } => {
                 ("stale_revision", Vec::new())
             }
-            Self::Lifecycle(PatchLifecycleError::ValidationFailed { report }) => (
-                "validation_failed",
-                report
+            Self::Lifecycle(PatchLifecycleError::ValidationFailed { report }) => {
+                let diagnostics: Vec<_> = report
                     .diagnostics()
                     .iter()
                     .map(diagnostic_projection)
-                    .collect(),
-            ),
-            Self::Lifecycle(PatchLifecycleError::NoChange) => ("no_change", Vec::new()),
-            Self::Lifecycle(PatchLifecycleError::CommandRejected { .. }) => {
-                ("edit_rejected", Vec::new())
+                    .collect();
+                if report
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == diagnostic_codes::FORMULA_CYCLE)
+                {
+                    formula_message = Some(FORMULA_CYCLE_MESSAGE.to_owned());
+                    ("formula_cycle", diagnostics)
+                } else {
+                    ("validation_failed", diagnostics)
+                }
             }
+            Self::Lifecycle(PatchLifecycleError::NoChange) => ("no_change", Vec::new()),
+            Self::Lifecycle(PatchLifecycleError::CommandRejected { source }) => {
+                match formula_failure_projection(source) {
+                    Some((code, message, diagnostics)) => {
+                        formula_message = Some(message);
+                        (code, diagnostics)
+                    }
+                    None => ("edit_rejected", Vec::new()),
+                }
+            }
+            Self::Workspace(error) => match formula_failure_projection(error) {
+                Some((code, message, diagnostics)) => {
+                    formula_message = Some(message);
+                    (code, diagnostics)
+                }
+                None => ("runtime_failure", Vec::new()),
+            },
             Self::NativeTablesExport { finding } => (
                 "native_tables_export_refused",
                 vec![DiagnosticProjection {
@@ -875,14 +898,13 @@ impl DesignerError {
             Self::CollectionTooLarge { .. }
             | Self::FieldQueryTooLarge { .. }
             | Self::ProjectionTooLarge { .. } => ("query_too_large", Vec::new()),
-            Self::Workspace(_)
-            | Self::MissingFormulaProjection { .. }
+            Self::MissingFormulaProjection { .. }
             | Self::Lifecycle(_)
             | Self::MissingInvalidation => ("runtime_failure", Vec::new()),
         };
         FailureProjection {
             code: code.to_owned(),
-            message: self.to_string(),
+            message: formula_message.unwrap_or_else(|| self.to_string()),
             current_revision: current_revision.to_owned(),
             diagnostics,
             name_failures: match self {
@@ -891,6 +913,80 @@ impl DesignerError {
             },
         }
     }
+}
+
+/// One human-readable refusal for a formula update that would create a
+/// dependency cycle; the authoritative validation diagnostics follow it.
+const FORMULA_CYCLE_MESSAGE: &str =
+    "The formulas create a dependency cycle; the update was refused.";
+
+/// Typed formula-authoring refusal projection for one workspace admission
+/// error, or `None` for the generic rejection family.
+fn formula_failure_projection(
+    error: &WorkspaceError,
+) -> Option<(&'static str, String, Vec<DiagnosticProjection>)> {
+    let (code, message, field, subjects, related_subjects, facts) = match error {
+        WorkspaceError::InvalidFormula { field, source } => (
+            "formula_syntax",
+            format!(
+                "Formula syntax error at byte {}: {}",
+                source.position, source.message
+            ),
+            field,
+            vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                field.clone(),
+            )],
+            Vec::new(),
+            vec![DiagnosticFactProjection {
+                name: "position".to_owned(),
+                value: source.position.to_string(),
+            }],
+        ),
+        WorkspaceError::FormulaBinding { field, source } => match source.as_ref() {
+            FormulaBindError::Address { address, .. } => (
+                "formula_unknown_reference",
+                format!("Formula references an unknown address '{address}'."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::NonNumericTarget { address, reference } => (
+                "formula_type_mismatch",
+                format!("Formula reference '{address}' is not a Number field."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    reference.clone(),
+                )],
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::Complexity(_) | FormulaBindError::Index { .. } => return None,
+        },
+        _ => return None,
+    };
+    Some((
+        code,
+        message.clone(),
+        vec![DiagnosticProjection {
+            code: code.to_owned(),
+            message,
+            path: format!("formulas.{field}"),
+            subjects,
+            related_subjects,
+            facts,
+        }],
+    ))
 }
 
 /// One Rust-authoritative occurrence composed for the experimental browser client.

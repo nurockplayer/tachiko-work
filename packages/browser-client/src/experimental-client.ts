@@ -6,6 +6,7 @@ import {
 import type { SpreadsheetExport, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
 import { DesignerRuntimeError, type DesignerClient } from "./runtime/client.ts";
 import { WorkerDesignerClient } from "./runtime/worker-client.ts";
+import { isFormulaFailure } from "./runtime/protocol.ts";
 import type {
   CanonicalProjectFile,
   CanonicalTreeExport,
@@ -111,6 +112,7 @@ export function createExperimentalDesignerClient(): ExperimentalDesignerClient {
 
 export {
   DesignerRuntimeError,
+  isFormulaFailure,
   projectTransferFromEntries,
   projectTransferFromFiles,
 };
@@ -126,6 +128,8 @@ export type {
   DiagnosticProjection,
   FailureProjection,
   FieldBatchProjection,
+  FormulaFailureCode,
+  FormulaFailureProjection,
   FieldDependencyProjection,
   FieldExplanationProjection,
   FieldProjection,

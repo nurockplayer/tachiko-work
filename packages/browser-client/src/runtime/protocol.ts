@@ -181,6 +181,32 @@ export type FailureProjection = {
   name_failures?: NameFailure[];
 };
 
+/**
+ * Stable refusal codes for `updateFormula`. Each failure carries a human
+ * message in `FailureProjection.message`. Syntax and reference failures add
+ * one diagnostic for the refused formula with a `position` or `reference`
+ * fact; a cycle failure carries the authoritative validation diagnostics,
+ * whose location is the cycle's canonical member.
+ */
+export type FormulaFailureCode =
+  | "formula_syntax"
+  | "formula_unknown_reference"
+  | "formula_type_mismatch"
+  | "formula_cycle";
+
+const FORMULA_FAILURE_CODES: readonly string[] = [
+  "formula_syntax",
+  "formula_unknown_reference",
+  "formula_type_mismatch",
+  "formula_cycle",
+];
+
+export type FormulaFailureProjection = FailureProjection & { code: FormulaFailureCode };
+
+export function isFormulaFailure(failure: FailureProjection): failure is FormulaFailureProjection {
+  return FORMULA_FAILURE_CODES.includes(failure.code);
+}
+
 export type TrackerCommand =
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
   | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: PasteCellInput[][] }
