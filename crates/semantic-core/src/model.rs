@@ -556,6 +556,10 @@ pub const MAX_EXPRESSION_DEPTH: usize = 64;
 pub enum Expression {
     Number(Number),
     Reference(FieldRef),
+    // The formula owner's own field: the entity is resolved from the formula
+    // that contains this node, so the node stores only the field identity and
+    // keeps meaning "this row" through copies and row-relative moves.
+    SameRowReference(FieldId),
     Add { left: Box<Self>, right: Box<Self> },
     Subtract { left: Box<Self>, right: Box<Self> },
     Multiply { left: Box<Self>, right: Box<Self> },

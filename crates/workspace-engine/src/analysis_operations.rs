@@ -777,7 +777,7 @@ fn insert_formula_dependency_requirements(
         else {
             continue;
         };
-        for dependency in extract_dependencies(expression) {
+        for dependency in extract_dependencies(&formula, expression) {
             requirements.insert(lifecycle.field_scope(document, &dependency).map_or_else(
                 |_| document_requirement.clone(),
                 |scope| DisclosureRequirement {

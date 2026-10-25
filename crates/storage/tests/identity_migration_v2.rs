@@ -94,6 +94,10 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "reference",
             "args": {"entity": reference.entity.as_str(), "field": reference.field.as_str()}
         }),
+        Expression::SameRowReference(field) => serde_json::json!({
+            "op": "same_row_reference",
+            "args": field.as_str()
+        }),
         Expression::Add { left, right } => serde_json::json!({
             "op": "add",
             "args": {"left": expression_json(left), "right": expression_json(right)}
