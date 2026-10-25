@@ -72,8 +72,20 @@ try {
                 });
               });
             };
+            // queryTable refuses above 1,000 rows; page the complete table.
             const table = async () => {
-              const actual = await timed("query", () => client.queryTable(collection)); verify(actual); return actual;
+              const actual = await timed("query", async () => {
+                const revision = (await client.observeOccurrence()).revision;
+                const first = await client.queryTableWindow(revision, collection, {}, 0, 64);
+                const rows = [...first.rows];
+                while (rows.length < first.total_rows) {
+                  const page = await client.queryTableWindow(revision, collection, {}, rows.length, 64);
+                  if (page.rows.length === 0) break;
+                  rows.push(...page.rows);
+                }
+                return { revision: first.revision, collection: first.collection, columns: first.columns, rows };
+              });
+              verify(actual); return actual;
             };
             const exported = async () => {
               const revision = (await client.observeOccurrence()).revision;

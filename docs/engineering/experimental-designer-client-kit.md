@@ -96,6 +96,46 @@ for (const row of table.rows) {
 `openProject` transfers its input buffer to the Worker. Copy the buffer first if
 your host needs to retain it.
 
+## Bounded table windows
+
+`queryTable` stays the complete-table read and refuses a collection above 1,000
+rows with the `use_window_query` failure; `failure.row_count` carries the actual
+count so the host never parses the message. Nothing is truncated.
+
+Large tables use a stateless window instead:
+
+```ts
+const view = {
+  sort: [{ field: amountColumn.id, direction: "desc" as const }],
+  filters: [
+    { kind: "number_compare" as const, field: amountColumn.id, op: ">=" as const, value: 5 },
+    { kind: "text_contains" as const, field: nameColumn.id, value: "beta" },
+  ],
+  keep_entities: [pinnedRow.id], // at most 256, visible even when filtered out
+};
+const window = await client.queryTableWindow(revision, collection, view, 0, 256);
+const located = await client.locateInView(revision, collection, view, pinnedRow.id);
+// located = { revision, result: "found", index: 12 } or { result: "filtered_out" }
+```
+
+`count` is 0..=256 and `0` returns the columns and totals only. `start` clamps
+past the end instead of failing, so a shrinking view never turns a scroll into an
+error. The reply repeats `revision`, `collection`, `columns`, a
+`columns_revision` digest that changes only when a column definition changes,
+`total_rows` (after filters and kept entities), `unfiltered_rows`, the clamped
+`start`, and the window's `rows` with the same row/field projections as
+`queryTable`.
+
+The view is request state owned by the host: it never enters the document,
+publication history or revision token. Sort keys apply in order with blanks last
+and a stable entity-ID tie-break; filters are AND-ed. Text filters compare
+case-insensitively and are text-only, number and date filters use
+`= <> < <= > >=`, `is_blank`/`not_blank` find missing or present values, and
+`in_set` takes literals of the column's declared kind. Formula columns filter and
+sort by their calculated Number. A window above the 1 MiB reply cap refuses with
+`query_too_large` rather than serialising an oversized response; ask for
+fewer rows or fewer columns.
+
 ## Optional native Text and Number columns
 
 Under [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md),

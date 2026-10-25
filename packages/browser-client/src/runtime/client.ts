@@ -18,6 +18,9 @@ import type {
   KeyedGroupedSumPublishedProjection,
   NewTableColumnInput,
   TableProjection,
+  TableView,
+  TableWindowProjection,
+  LocatedInViewProjection,
   FailureProjection,
   FieldConstraintInput,
 } from "./protocol.ts";
@@ -57,7 +60,23 @@ export interface DesignerClient {
   openPortableRo?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   observeOccurrence?(): Promise<OccurrenceProjection>;
   closeProject(): Promise<void>;
+  /** Complete table; collections above 1,000 rows refuse with `use_window_query`. */
   queryTable(collection: string): Promise<TableProjection>;
+  /** Rows `[start, start+count)` of a stateless view; `count` is 0..256, 0 for totals only. */
+  queryTableWindow(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    start: number,
+    count: number,
+  ): Promise<TableWindowProjection>;
+  /** The entity's zero-based position in that same view, or `filtered_out`. */
+  locateInView(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    entity: string,
+  ): Promise<LocatedInViewProjection>;
   queryFields(
     expectedRevision: string,
     fields: FieldTarget[],

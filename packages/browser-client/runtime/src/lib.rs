@@ -12,8 +12,10 @@ mod name_admission;
 use name_admission::{NameFailure, allocate_key, author_column_name, author_table_names};
 
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, BTreeSet, VecDeque},
     mem::{size_of, size_of_val},
+    rc::Rc,
 };
 
 use serde::{Deserialize, Serialize};
@@ -92,6 +94,23 @@ pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 16 * 1024 * 1024;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) const MAX_SPREADSHEET_METADATA_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TEXT_CAPACITY_PROFILE_BYTES: usize = 4 * 1024 * 1024;
+/// Whole-table `queryTable` compatibility bound. At or below it the legacy
+/// complete projection keeps working; above it the typed `use_window_query`
+/// refusal points callers at [`DesignerRequest::QueryTableWindow`].
+const MAX_QUERY_TABLE_ROWS: usize = 1_000;
+/// Largest bounded window one request may ask for; `0` returns totals only.
+const MAX_TABLE_WINDOW_ROWS: usize = 256;
+/// Largest `view.keep_entities` set admitted by one request.
+const MAX_VIEW_KEEP_ENTITIES: usize = 256;
+/// Ordered-view vectors retained by the resident runtime, most recently used
+/// first. Every entry belongs to one revision and is dropped when it changes.
+const MAX_VIEW_INDEX_ENTRIES: usize = 4;
+/// Stage A bounded window-reply budget. Whole-table capacity replies keep their
+/// separate text-capacity 16 MiB profile.
+const MAX_TABLE_WINDOW_BYTES: usize = 1024 * 1024;
+/// Room reserved inside [`MAX_TABLE_WINDOW_BYTES`] for the reply envelope,
+/// collection summary, revision and totals around the measured payload.
+const TABLE_WINDOW_ENVELOPE_BYTES: usize = 4_096;
 // The stock Tracker's 128 fixed scalar rows carry repeated field projections
 // and may contain one bounded collection of Text. This is a private delivery
 // profile, derived from the existing two 64 KiB input/profile budgets; generic
@@ -204,6 +223,28 @@ pub enum DesignerRequest {
     QueryTable {
         collection: String,
     },
+    /// One bounded, revision-pinned window of a collection table.
+    ///
+    /// The view is a stateless request parameter: it is never stored in the
+    /// document and creates no history. `count` is `0..=256`; `0` returns the
+    /// totals and no rows.
+    QueryTableWindow {
+        expected_revision: String,
+        collection: String,
+        #[serde(default)]
+        view: TableView,
+        start: usize,
+        count: usize,
+    },
+    /// The zero-based position of one entity inside the same view order a
+    /// window query would return, without projecting any row.
+    LocateInView {
+        expected_revision: String,
+        collection: String,
+        #[serde(default)]
+        view: TableView,
+        entity: String,
+    },
     QueryFields {
         expected_revision: String,
         fields: Vec<FieldTarget>,
@@ -254,6 +295,8 @@ pub enum DesignerResponse {
     Bootstrap(BootstrapProjection),
     Opened(Box<OpenedProjection>),
     Table(TableProjection),
+    TableWindow(TableWindowProjection),
+    LocatedInView(LocatedInViewProjection),
     Fields(FieldBatchProjection),
     FieldExplanation(FieldExplanationProjection),
     Published(PublicationProjection),
@@ -304,6 +347,166 @@ pub struct TableProjection {
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     pub rows: Vec<RowProjection>,
+}
+
+/// One bounded window of a collection table at one revision.
+///
+/// `rows` is exactly the `RowProjection` shape of the complete table query and
+/// `columns` the same column projection. `total_rows` counts the rows the view
+/// admits (including kept entities); `unfiltered_rows` counts every row in the
+/// collection. `start` is clamped to `total_rows`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TableWindowProjection {
+    pub revision: String,
+    pub collection: CollectionSummary,
+    pub columns: Vec<ColumnProjection>,
+    /// Deterministic digest of the column definitions. It changes only when a
+    /// column definition changes, never for an ordinary row edit.
+    pub columns_revision: String,
+    pub total_rows: usize,
+    pub unfiltered_rows: usize,
+    pub start: usize,
+    pub rows: Vec<RowProjection>,
+}
+
+/// Result of locating an entity inside one stateless view order.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocatedInViewProjection {
+    pub revision: String,
+    pub result: LocateInViewResult,
+    /// Zero-based position in the filtered and sorted view; present only when
+    /// `result` is [`LocateInViewResult::Found`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocateInViewResult {
+    Found,
+    FilteredOut,
+}
+
+/// One stateless table view: ordered sort keys, AND-ed filters and up to 256
+/// entities that stay visible even when a filter excludes them.
+///
+/// The view never enters the semantic document, the publication history, or
+/// the revision token; `Sheet` owns it as request state.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TableView {
+    #[serde(default)]
+    pub sort: Vec<ViewSortKey>,
+    #[serde(default)]
+    pub filters: Vec<ViewFilter>,
+    #[serde(default)]
+    pub keep_entities: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewSortKey {
+    /// Column ID from [`ColumnProjection::id`].
+    pub field: String,
+    pub direction: SortDirection,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+/// One AND-ed view filter. Text matching is case-insensitive and text-only;
+/// number and date columns use comparisons. Comparisons and set membership
+/// match only rows that hold a value of the filter's kind; `is_blank` finds the
+/// rest. Formula columns filter and sort by their calculated Number.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ViewFilter {
+    TextEquals {
+        field: String,
+        value: String,
+    },
+    TextContains {
+        field: String,
+        value: String,
+    },
+    NumberCompare {
+        field: String,
+        op: ComparisonOperator,
+        #[serde(deserialize_with = "wire_number")]
+        value: f64,
+    },
+    DateCompare {
+        field: String,
+        op: ComparisonOperator,
+        /// Canonical `YYYY-MM-DD` spelling.
+        value: String,
+    },
+    IsBlank {
+        field: String,
+    },
+    NotBlank {
+        field: String,
+    },
+    InSet {
+        field: String,
+        values: Vec<ScalarLiteral>,
+    },
+}
+
+impl ViewFilter {
+    /// The column every variant filters on.
+    #[must_use]
+    pub fn field(&self) -> &str {
+        match self {
+            Self::TextEquals { field, .. }
+            | Self::TextContains { field, .. }
+            | Self::NumberCompare { field, .. }
+            | Self::DateCompare { field, .. }
+            | Self::IsBlank { field }
+            | Self::NotBlank { field }
+            | Self::InSet { field, .. } => field,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ComparisonOperator {
+    #[serde(rename = "=")]
+    Eq,
+    #[serde(rename = "<>")]
+    Ne,
+    #[serde(rename = "<")]
+    Lt,
+    #[serde(rename = "<=")]
+    Lte,
+    #[serde(rename = ">")]
+    Gt,
+    #[serde(rename = ">=")]
+    Gte,
+}
+
+/// One literal member of an `in_set` filter. The JSON kind selects the literal
+/// type; it must fit the filtered column's declared field type.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ScalarLiteral {
+    Number(#[serde(deserialize_with = "wire_number")] f64),
+    Text(String),
+    Boolean(bool),
+}
+
+// Tagged and untagged operations buffer JSON numbers with arbitrary_precision.
+// Decode through Number so integer and fractional literals both survive the
+// buffering step; finiteness is still checked where the value is planned.
+fn wire_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    serde_json::Number::deserialize(deserializer)?
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| serde::de::Error::custom("numbers in a view must be finite"))
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -776,6 +979,10 @@ pub struct FailureProjection {
     /// Present only when a field constraint refused the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub constraint_failure: Option<ConstraintFailureProjection>,
+    /// Present only for the `use_window_query` refusal: the collection's row
+    /// count, so the caller never has to parse the message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_count: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -984,6 +1191,20 @@ pub enum DesignerError {
     MissingCollection { collection: String },
     #[error("collection '{collection}' exceeds the bounded table profile")]
     CollectionTooLarge { collection: String },
+    #[error(
+        "collection '{collection}' has {rows} rows; queryTable returns at most {maximum} rows. Use queryTableWindow for bounded windows."
+    )]
+    UseWindowQuery {
+        collection: String,
+        rows: usize,
+        maximum: usize,
+    },
+    #[error("the table view is invalid: {message}")]
+    InvalidView { message: String },
+    #[error("table view field '{field}' is not a column of collection '{collection}'")]
+    UnknownViewField { collection: String, field: String },
+    #[error("entity '{entity}' is not in collection '{collection}'")]
+    UnknownEntity { collection: String, entity: String },
     #[error("field query requested {requested} targets; the bounded maximum is {maximum}")]
     FieldQueryTooLarge { requested: usize, maximum: usize },
     #[error("projection is {actual} bytes; the bounded maximum is {maximum}")]
@@ -1060,6 +1281,10 @@ impl DesignerError {
                     constraint: constraint.clone(),
                     offending_rows: *offending_rows,
                 }),
+                _ => None,
+            },
+            row_count: match self {
+                Self::UseWindowQuery { rows, .. } => Some(*rows),
                 _ => None,
             },
         }
@@ -1155,6 +1380,10 @@ impl DesignerError {
             Self::CollectionTooLarge { .. }
             | Self::FieldQueryTooLarge { .. }
             | Self::ProjectionTooLarge { .. } => ("query_too_large", Vec::new()),
+            Self::UseWindowQuery { .. } => ("use_window_query", Vec::new()),
+            Self::InvalidView { .. } => ("invalid_view", Vec::new()),
+            Self::UnknownViewField { .. } => ("unknown_view_field", Vec::new()),
+            Self::UnknownEntity { .. } => ("unknown_entity", Vec::new()),
             Self::Workspace(_)
             | Self::MissingFormulaProjection { .. }
             | Self::Lifecycle(_)
@@ -1301,6 +1530,10 @@ pub struct DesignerRuntime {
     principal: PrincipalId,
     clock: DesignerClock,
     proposal_serial: u64,
+    /// Ordered row-index vectors for the most recent `(revision, collection,
+    /// view)` window queries. Every entry is revision-scoped because a
+    /// publication can change values, presence, or the entity set.
+    view_index: ViewIndexCache,
     row_serial: usize,
     row_namespace: String,
     undo: Vec<HistoryEntry>,
@@ -1341,6 +1574,450 @@ struct ColumnSpec {
     field_type: FieldType,
     required: bool,
     constraint: tachiko_workspace_engine::FieldConstraint,
+}
+
+/// Small LRU of ordered view indices. An entry is the row positions inside
+/// [`CollectionSpec::entities`] for one `(revision, collection, view)`, never a
+/// projected table, so it stays cheap even at 100k rows. A new publication
+/// always advances the revision token, so entries from an older revision can
+/// never match again and are dropped on the next window query.
+#[derive(Default)]
+struct ViewIndexCache {
+    entries: VecDeque<ViewIndexEntry>,
+}
+
+struct ViewIndexEntry {
+    revision: String,
+    collection: String,
+    view: String,
+    order: Rc<[usize]>,
+}
+
+impl ViewIndexCache {
+    /// Return the cached order, marking it most recently used.
+    fn get(&mut self, revision: &str, collection: &str, view: &str) -> Option<Rc<[usize]>> {
+        let position = self.entries.iter().position(|entry| {
+            entry.revision == revision && entry.collection == collection && entry.view == view
+        })?;
+        let entry = self.entries.remove(position)?;
+        let order = Rc::clone(&entry.order);
+        self.entries.push_front(entry);
+        Some(order)
+    }
+
+    fn insert(&mut self, entry: ViewIndexEntry) {
+        self.entries.push_front(entry);
+        self.entries.truncate(MAX_VIEW_INDEX_ENTRIES);
+    }
+
+    fn retain_revision(&mut self, revision: &str) {
+        self.entries.retain(|entry| entry.revision == revision);
+    }
+}
+
+/// The value domain a view can sort or filter on. Formula columns hold their
+/// calculated Number, and `is_blank`/`not_blank` accept any column kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ViewKind {
+    Number,
+    Text,
+    Boolean,
+    Date,
+}
+
+impl ViewKind {
+    fn of(field_type: &FieldType) -> Option<Self> {
+        match field_type {
+            FieldType::Number => Some(Self::Number),
+            FieldType::Text => Some(Self::Text),
+            FieldType::Boolean => Some(Self::Boolean),
+            FieldType::Date => Some(Self::Date),
+            FieldType::Reference { .. } => None,
+        }
+    }
+}
+
+const fn view_kind_name(kind: ViewKind) -> &'static str {
+    match kind {
+        ViewKind::Number => "number",
+        ViewKind::Text => "text",
+        ViewKind::Boolean => "boolean",
+        ViewKind::Date => "date",
+    }
+}
+
+/// One resolved sort key. Ordinals point into [`ViewPlan::fields`].
+struct ViewSortPlan {
+    ordinal: usize,
+    direction: SortDirection,
+}
+
+/// One fully resolved AND-ed filter. Every literal is parsed and normalized
+/// once when the plan is built, not per row.
+enum ViewPredicate {
+    TextEquals {
+        ordinal: usize,
+        value: String,
+    },
+    TextContains {
+        ordinal: usize,
+        value: String,
+    },
+    NumberCompare {
+        ordinal: usize,
+        op: ComparisonOperator,
+        value: Number,
+    },
+    DateCompare {
+        ordinal: usize,
+        op: ComparisonOperator,
+        value: Date,
+    },
+    IsBlank {
+        ordinal: usize,
+    },
+    NotBlank {
+        ordinal: usize,
+    },
+    InSet {
+        ordinal: usize,
+        values: Vec<ViewLiteral>,
+    },
+}
+
+enum ViewLiteral {
+    Number(Number),
+    /// Lowered once for a text column.
+    Text(String),
+    Boolean(bool),
+    Date(Date),
+}
+
+struct ViewPlan {
+    sort: Vec<ViewSortPlan>,
+    filters: Vec<ViewPredicate>,
+    /// Every field the plan reads, in first-use order.
+    fields: Vec<FieldId>,
+}
+
+/// One cell value as the view sees it: stored scalars plus a formula column's
+/// calculated Number. References and failed/unavailable calculations are
+/// blank, matching `is_blank`.
+#[derive(Clone, Debug, PartialEq)]
+enum ViewValue {
+    Number(f64),
+    Text(String),
+    Boolean(bool),
+    Date(Date),
+}
+
+fn view_value(
+    field: &tachiko_workspace_engine::resident_session::ResidentFieldProjection,
+) -> Option<ViewValue> {
+    if let Some(value) = &field.stored_value {
+        return match value {
+            Value::Number(number) => Some(ViewValue::Number(number.get())),
+            Value::Text(text) => Some(ViewValue::Text(text.clone())),
+            Value::Boolean(flag) => Some(ViewValue::Boolean(*flag)),
+            Value::Date(date) => Some(ViewValue::Date(*date)),
+            Value::Reference(_) | Value::Formula(_) => None,
+        };
+    }
+    match &field.calculated_value {
+        Some(FormulaCalculationOutcome::Value(number)) => Some(ViewValue::Number(number.get())),
+        Some(FormulaCalculationOutcome::Failure(_) | FormulaCalculationOutcome::Unavailable)
+        | None => None,
+    }
+}
+
+struct ViewPlanBuilder<'a> {
+    spec: &'a CollectionSpec,
+    collection: &'a str,
+    fields: Vec<&'a ColumnSpec>,
+}
+
+impl<'a> ViewPlanBuilder<'a> {
+    fn column(&self, field: &str) -> Result<&'a ColumnSpec, DesignerError> {
+        self.spec
+            .columns
+            .iter()
+            .find(|column| column.id.as_str() == field)
+            .ok_or_else(|| DesignerError::UnknownViewField {
+                collection: self.collection.to_owned(),
+                field: field.to_owned(),
+            })
+    }
+
+    fn ordinal(&mut self, column: &'a ColumnSpec) -> usize {
+        if let Some(position) = self
+            .fields
+            .iter()
+            .position(|candidate| candidate.id == column.id)
+        {
+            return position;
+        }
+        self.fields.push(column);
+        self.fields.len() - 1
+    }
+}
+
+fn plan_view(
+    spec: &CollectionSpec,
+    collection: &str,
+    view: &TableView,
+) -> Result<ViewPlan, DesignerError> {
+    let mut builder = ViewPlanBuilder {
+        spec,
+        collection,
+        fields: Vec::new(),
+    };
+    let mut sort = Vec::with_capacity(view.sort.len());
+    for key in &view.sort {
+        let column = builder.column(&key.field)?;
+        sort.push(ViewSortPlan {
+            ordinal: builder.ordinal(column),
+            direction: key.direction,
+        });
+    }
+    let mut filters = Vec::with_capacity(view.filters.len());
+    for filter in &view.filters {
+        filters.push(plan_filter(&mut builder, filter)?);
+    }
+    Ok(ViewPlan {
+        sort,
+        filters,
+        fields: builder
+            .fields
+            .iter()
+            .map(|column| column.id.clone())
+            .collect(),
+    })
+}
+
+fn plan_filter(
+    builder: &mut ViewPlanBuilder<'_>,
+    filter: &ViewFilter,
+) -> Result<ViewPredicate, DesignerError> {
+    let column = builder.column(filter.field())?;
+    let ordinal = builder.ordinal(column);
+    let kind = ViewKind::of(&column.field_type).ok_or_else(|| DesignerError::InvalidView {
+        message: format!(
+            "view filters do not support reference column '{}'",
+            column.id
+        ),
+    })?;
+    let expect = |expected: ViewKind| -> Result<(), DesignerError> {
+        if kind == expected {
+            return Ok(());
+        }
+        Err(DesignerError::InvalidView {
+            message: format!(
+                "column '{}' is a {} column, not {}",
+                column.id,
+                view_kind_name(kind),
+                view_kind_name(expected)
+            ),
+        })
+    };
+    Ok(match filter {
+        ViewFilter::TextEquals { value, .. } => {
+            expect(ViewKind::Text)?;
+            ViewPredicate::TextEquals {
+                ordinal,
+                value: value.to_lowercase(),
+            }
+        }
+        ViewFilter::TextContains { value, .. } => {
+            expect(ViewKind::Text)?;
+            ViewPredicate::TextContains {
+                ordinal,
+                value: value.to_lowercase(),
+            }
+        }
+        ViewFilter::NumberCompare { op, value, .. } => {
+            expect(ViewKind::Number)?;
+            ViewPredicate::NumberCompare {
+                ordinal,
+                op: *op,
+                value: Number::new(*value).map_err(|_| DesignerError::InvalidView {
+                    message: format!("number filter for '{}' is not finite", column.id),
+                })?,
+            }
+        }
+        ViewFilter::DateCompare { op, value, .. } => {
+            expect(ViewKind::Date)?;
+            ViewPredicate::DateCompare {
+                ordinal,
+                op: *op,
+                value: Date::parse(value).map_err(|_| DesignerError::InvalidView {
+                    message: format!("'{value}' is not a canonical YYYY-MM-DD date"),
+                })?,
+            }
+        }
+        ViewFilter::IsBlank { .. } => ViewPredicate::IsBlank { ordinal },
+        ViewFilter::NotBlank { .. } => ViewPredicate::NotBlank { ordinal },
+        ViewFilter::InSet { values, .. } => ViewPredicate::InSet {
+            ordinal,
+            values: values
+                .iter()
+                .map(|literal| view_literal(kind, literal, column))
+                .collect::<Result<_, _>>()?,
+        },
+    })
+}
+
+fn view_literal(
+    kind: ViewKind,
+    literal: &ScalarLiteral,
+    column: &ColumnSpec,
+) -> Result<ViewLiteral, DesignerError> {
+    match (kind, literal) {
+        (ViewKind::Text, ScalarLiteral::Text(text)) => Ok(ViewLiteral::Text(text.to_lowercase())),
+        (ViewKind::Number, ScalarLiteral::Number(value)) => Number::new(*value)
+            .map(ViewLiteral::Number)
+            .map_err(|_| DesignerError::InvalidView {
+                message: format!("in_set literal for '{}' is not finite", column.id),
+            }),
+        (ViewKind::Boolean, ScalarLiteral::Boolean(value)) => Ok(ViewLiteral::Boolean(*value)),
+        (ViewKind::Date, ScalarLiteral::Text(text)) => Date::parse(text)
+            .map(ViewLiteral::Date)
+            .map_err(|_| DesignerError::InvalidView {
+                message: format!(
+                    "in_set literal '{text}' for '{}' is not a canonical YYYY-MM-DD date",
+                    column.id
+                ),
+            }),
+        _ => Err(DesignerError::InvalidView {
+            message: format!(
+                "in_set literal for '{}' does not match its {} column",
+                column.id,
+                view_kind_name(kind)
+            ),
+        }),
+    }
+}
+
+fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> bool {
+    match predicate {
+        ViewPredicate::TextEquals { ordinal, value } => matches!(
+            cells.get(*ordinal),
+            Some(Some(ViewValue::Text(text))) if text.to_lowercase() == *value
+        ),
+        ViewPredicate::TextContains { ordinal, value } => matches!(
+            cells.get(*ordinal),
+            Some(Some(ViewValue::Text(text))) if text.to_lowercase().contains(value.as_str())
+        ),
+        ViewPredicate::NumberCompare { ordinal, op, value } => matches!(
+            cells.get(*ordinal),
+            Some(Some(ViewValue::Number(cell)))
+                if cell
+                    .partial_cmp(&value.get())
+                    .is_some_and(|ordering| compare_ordering(ordering, *op))
+        ),
+        ViewPredicate::DateCompare { ordinal, op, value } => matches!(
+            cells.get(*ordinal),
+            Some(Some(ViewValue::Date(cell))) if compare_ordering(cell.cmp(value), *op)
+        ),
+        ViewPredicate::IsBlank { ordinal } => matches!(cells.get(*ordinal), Some(None)),
+        ViewPredicate::NotBlank { ordinal } => matches!(cells.get(*ordinal), Some(Some(_))),
+        ViewPredicate::InSet { ordinal, values } => match cells.get(*ordinal) {
+            Some(Some(cell)) => values.iter().any(|literal| literal_matches(literal, cell)),
+            _ => false,
+        },
+    }
+}
+
+fn literal_matches(literal: &ViewLiteral, cell: &ViewValue) -> bool {
+    match (literal, cell) {
+        (ViewLiteral::Number(literal), ViewValue::Number(cell)) => {
+            literal.get().total_cmp(cell) == Ordering::Equal
+        }
+        (ViewLiteral::Text(literal), ViewValue::Text(cell)) => cell.to_lowercase() == *literal,
+        (ViewLiteral::Boolean(literal), ViewValue::Boolean(cell)) => literal == cell,
+        (ViewLiteral::Date(literal), ViewValue::Date(cell)) => literal == cell,
+        _ => false,
+    }
+}
+
+fn compare_ordering(ordering: Ordering, op: ComparisonOperator) -> bool {
+    match op {
+        ComparisonOperator::Eq => ordering == Ordering::Equal,
+        ComparisonOperator::Ne => ordering != Ordering::Equal,
+        ComparisonOperator::Lt => ordering == Ordering::Less,
+        ComparisonOperator::Lte => ordering != Ordering::Greater,
+        ComparisonOperator::Gt => ordering == Ordering::Greater,
+        ComparisonOperator::Gte => ordering != Ordering::Less,
+    }
+}
+
+/// Stable view order. Missing values sort last in both directions; equal sort
+/// values keep the ascending entity-id order, which is the order of
+/// [`CollectionSpec::entities`].
+fn compare_view_rows(
+    left: usize,
+    right: usize,
+    sort: &[ViewSortPlan],
+    cells: &[Vec<Option<ViewValue>>],
+    entities: &[EntityId],
+) -> Ordering {
+    for key in sort {
+        let ordering = match (&cells[left][key.ordinal], &cells[right][key.ordinal]) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(left), Some(right)) => match key.direction {
+                SortDirection::Asc => compare_view_values(left, right),
+                SortDirection::Desc => compare_view_values(right, left),
+            },
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    entities[left].cmp(&entities[right])
+}
+
+fn compare_view_values(left: &ViewValue, right: &ViewValue) -> Ordering {
+    match (left, right) {
+        (ViewValue::Number(left), ViewValue::Number(right)) => left.total_cmp(right),
+        (ViewValue::Text(left), ViewValue::Text(right)) => left.cmp(right),
+        (ViewValue::Boolean(left), ViewValue::Boolean(right)) => left.cmp(right),
+        (ViewValue::Date(left), ViewValue::Date(right)) => left.cmp(right),
+        // A column has one declared kind; this only orders mixed leftovers
+        // deterministically.
+        _ => view_value_rank(left).cmp(&view_value_rank(right)),
+    }
+}
+
+const fn view_value_rank(value: &ViewValue) -> u8 {
+    match value {
+        ViewValue::Number(_) => 0,
+        ViewValue::Text(_) => 1,
+        ViewValue::Boolean(_) => 2,
+        ViewValue::Date(_) => 3,
+    }
+}
+
+fn validate_view_bounds(view: &TableView) -> Result<(), DesignerError> {
+    if view.keep_entities.len() > MAX_VIEW_KEEP_ENTITIES {
+        return Err(DesignerError::InvalidView {
+            message: format!(
+                "view.keep_entities carries {} ids; the bounded maximum is {MAX_VIEW_KEEP_ENTITIES}",
+                view.keep_entities.len()
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn view_cache_key(view: &TableView) -> Result<String, DesignerError> {
+    serde_json::to_string(view).map_err(|error| view_encoding_failure("view", &error))
+}
+
+fn view_encoding_failure(part: &str, error: &serde_json::Error) -> DesignerError {
+    DesignerError::InvalidView {
+        message: format!("the table window {part} could not be encoded: {error}"),
+    }
 }
 
 /// One presence rule for table projections and imported spreadsheet headers.
@@ -1447,6 +2124,7 @@ impl DesignerRuntime {
             principal,
             clock: DesignerClock::default(),
             proposal_serial: 0,
+            view_index: ViewIndexCache::default(),
             row_serial: 0,
             row_namespace: occurrence_id.to_owned(),
             undo: Vec::new(),
@@ -1631,9 +2309,33 @@ impl DesignerRuntime {
             DesignerRequest::Bootstrap { .. } => {
                 Ok(DesignerResponse::Bootstrap(self.bootstrap_projection()))
             }
-            DesignerRequest::QueryTable { collection } => {
-                Ok(DesignerResponse::Table(self.query_table(&collection)?))
-            }
+            DesignerRequest::QueryTable { collection } => Ok(DesignerResponse::Table(
+                self.query_table_compatibility(&collection)?,
+            )),
+            DesignerRequest::QueryTableWindow {
+                expected_revision,
+                collection,
+                view,
+                start,
+                count,
+            } => Ok(DesignerResponse::TableWindow(self.query_table_window(
+                &expected_revision,
+                &collection,
+                &view,
+                start,
+                count,
+            )?)),
+            DesignerRequest::LocateInView {
+                expected_revision,
+                collection,
+                view,
+                entity,
+            } => Ok(DesignerResponse::LocatedInView(self.locate_in_view(
+                &expected_revision,
+                &collection,
+                &view,
+                &entity,
+            )?)),
             DesignerRequest::QueryFields {
                 expected_revision,
                 fields,
@@ -2026,6 +2728,25 @@ impl DesignerRuntime {
         Ok(self.session.export_snapshot())
     }
 
+    /// Whole-table compatibility query. Up to [`MAX_QUERY_TABLE_ROWS`] rows it
+    /// keeps the existing complete projection; above that it returns the typed
+    /// `use_window_query` refusal with the row count and never truncates. The
+    /// internal open/bootstrap path keeps calling [`Self::query_table`].
+    fn query_table_compatibility(
+        &self,
+        collection: &str,
+    ) -> Result<TableProjection, DesignerError> {
+        let rows = self.collection_spec(collection)?.entities.len();
+        if rows > MAX_QUERY_TABLE_ROWS {
+            return Err(DesignerError::UseWindowQuery {
+                collection: collection.to_owned(),
+                rows,
+                maximum: MAX_QUERY_TABLE_ROWS,
+            });
+        }
+        self.query_table(collection)
+    }
+
     fn query_table(&self, collection: &str) -> Result<TableProjection, DesignerError> {
         let projection = self.build_table_projection(collection)?;
         if self.text_capacity {
@@ -2102,28 +2823,7 @@ impl DesignerRuntime {
             native_table_profile: is_native_table_spec(spec).then_some(true),
             revision: entities.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
-            columns: spec
-                .columns
-                .iter()
-                .map(|column| ColumnProjection {
-                    required: column.required,
-                    id: column.id.to_string(),
-                    key: column.key.clone(),
-                    display_name: column.display_name.clone(),
-                    display_name_explicit: column.display_name_explicit.then_some(true),
-                    field_type: field_type_name(&column.field_type).to_owned(),
-                    dropdown_options: match &column.constraint {
-                        tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } => {
-                            Some(values.clone())
-                        }
-                        _ if column.field_type == FieldType::Boolean => {
-                            Some(vec!["true".to_owned(), "false".to_owned()])
-                        }
-                        _ => None,
-                    },
-                    constraint: constraint_projection(&column.constraint),
-                })
-                .collect(),
+            columns: column_projections(spec),
             rows,
         };
         Ok(projection)
@@ -2141,31 +2841,264 @@ impl DesignerRuntime {
         let mut rows = Vec::with_capacity(entities.len());
         let mut targets = Vec::with_capacity(spec.columns.len());
         for entity in entities {
-            targets.clear();
-            targets.extend(
-                spec.columns
-                    .iter()
-                    .filter(|column| entity.fields.contains(&column.id))
-                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone())),
-            );
-            let field_query = self.session.query_fields(&targets)?;
-            let fields = spec
-                .columns
+            rows.push(self.build_row(spec, entity, &mut targets)?);
+        }
+        Ok(rows)
+    }
+
+    /// Project one entity into the shared table row shape. `targets` is a
+    /// caller-owned scratch buffer so a full-table build keeps reusing one
+    /// allocation across rows.
+    fn build_row(
+        &self,
+        spec: &CollectionSpec,
+        entity: &tachiko_workspace_engine::EntityInspection,
+        targets: &mut Vec<FieldRef>,
+    ) -> Result<RowProjection, DesignerError> {
+        targets.clear();
+        targets.extend(
+            spec.columns
                 .iter()
-                .filter_map(|column| {
-                    field_query
-                        .value()
-                        .iter()
-                        .find(|field| field.field.field == column.id)
-                        .map(|field| self.project_field(field))
-                })
-                .collect();
-            rows.push(RowProjection {
-                id: entity.id.to_string(),
-                key: entity.key.to_string(),
-                blank_fields: blank_field_ids(entity, spec),
-                fields,
+                .filter(|column| entity.fields.contains(&column.id))
+                .map(|column| FieldRef::new(entity.id.clone(), column.id.clone())),
+        );
+        let field_query = self.session.query_fields(targets)?;
+        let fields = spec
+            .columns
+            .iter()
+            .filter_map(|column| {
+                field_query
+                    .value()
+                    .iter()
+                    .find(|field| field.field.field == column.id)
+                    .map(|field| self.project_field(field))
+            })
+            .collect();
+        Ok(RowProjection {
+            id: entity.id.to_string(),
+            key: entity.key.to_string(),
+            blank_fields: blank_field_ids(entity, spec),
+            fields,
+        })
+    }
+
+    /// One bounded, revision-pinned window of the rows a stateless view
+    /// admits. Only the requested rows are ever projected; the ordered index
+    /// behind them is cached per `(revision, collection, view)`.
+    fn query_table_window(
+        &mut self,
+        expected_revision: &str,
+        collection: &str,
+        view: &TableView,
+        start: usize,
+        count: usize,
+    ) -> Result<TableWindowProjection, DesignerError> {
+        if count > MAX_TABLE_WINDOW_ROWS {
+            return Err(DesignerError::InvalidView {
+                message: format!(
+                    "window count {count} exceeds the bounded maximum of {MAX_TABLE_WINDOW_ROWS}"
+                ),
             });
+        }
+        validate_view_bounds(view)?;
+        self.check_revision(expected_revision)?;
+        let revision = self.current_revision().to_owned();
+        let order = self.view_order(collection, view)?;
+        let spec = self.collection_spec(collection)?;
+        let total_rows = order.len();
+        let start = start.min(total_rows);
+        let end = start.saturating_add(count).min(total_rows);
+        let entities = order[start..end]
+            .iter()
+            .map(|row| spec.entities[*row].clone())
+            .collect::<Vec<_>>();
+        let columns = column_projections(spec);
+        let columns_revision = columns_revision(&columns)?;
+        // Count the reply envelope and the column definitions before any row
+        // is built, so an oversized window is refused before it exists.
+        let mut used = TABLE_WINDOW_ENVELOPE_BYTES.saturating_add(
+            serde_json::to_vec(&columns)
+                .map_err(|error| view_encoding_failure("columns", &error))?
+                .len(),
+        );
+        let rows = self.build_window_rows(spec, &entities, &mut used)?;
+        Ok(TableWindowProjection {
+            revision,
+            collection: spec.summary.clone(),
+            columns,
+            columns_revision,
+            total_rows,
+            unfiltered_rows: spec.entities.len(),
+            start,
+            rows,
+        })
+    }
+
+    /// The zero-based position of `entity` inside the same order a window
+    /// query would return, without projecting a row.
+    fn locate_in_view(
+        &mut self,
+        expected_revision: &str,
+        collection: &str,
+        view: &TableView,
+        entity: &str,
+    ) -> Result<LocatedInViewProjection, DesignerError> {
+        validate_view_bounds(view)?;
+        self.check_revision(expected_revision)?;
+        let revision = self.current_revision().to_owned();
+        let order = self.view_order(collection, view)?;
+        let spec = self.collection_spec(collection)?;
+        let entity = EntityId::from(entity);
+        let row = spec
+            .entities
+            .iter()
+            .position(|candidate| *candidate == entity)
+            .ok_or_else(|| DesignerError::UnknownEntity {
+                collection: collection.to_owned(),
+                entity: entity.to_string(),
+            })?;
+        let index = order.iter().position(|candidate| *candidate == row);
+        Ok(LocatedInViewProjection {
+            revision,
+            result: if index.is_some() {
+                LocateInViewResult::Found
+            } else {
+                LocateInViewResult::FilteredOut
+            },
+            index,
+        })
+    }
+
+    /// The cached ordered row positions for one stateless view. The cache is
+    /// keyed by the exact revision, so an edit that advances the revision can
+    /// never reuse a stale order.
+    fn view_order(
+        &mut self,
+        collection: &str,
+        view: &TableView,
+    ) -> Result<Rc<[usize]>, DesignerError> {
+        let revision = self.current_revision().to_owned();
+        let key = view_cache_key(view)?;
+        self.view_index.retain_revision(&revision);
+        if let Some(order) = self.view_index.get(&revision, collection, &key) {
+            return Ok(order);
+        }
+        let order = Rc::from(self.build_view_order(collection, view)?);
+        self.view_index.insert(ViewIndexEntry {
+            revision,
+            collection: collection.to_owned(),
+            view: key,
+            order: Rc::clone(&order),
+        });
+        Ok(order)
+    }
+
+    fn build_view_order(
+        &self,
+        collection: &str,
+        view: &TableView,
+    ) -> Result<Vec<usize>, DesignerError> {
+        let spec = self.collection_spec(collection)?;
+        let plan = plan_view(spec, collection, view)?;
+        let row_count = spec.entities.len();
+        if plan.sort.is_empty() && plan.filters.is_empty() {
+            // No filter can exclude a row and `spec.entities` is already the
+            // ascending entity-id order, so kept ids need no special handling.
+            return Ok((0..row_count).collect());
+        }
+        let keep = view
+            .keep_entities
+            .iter()
+            .map(|entity| EntityId::from(entity.as_str()))
+            .collect::<BTreeSet<_>>();
+        let entities = self.session.query_entities(&spec.entities)?;
+        let mut targets = Vec::new();
+        for entity in entities.value() {
+            targets.extend(
+                plan.fields
+                    .iter()
+                    .filter(|field| entity.fields.contains(*field))
+                    .map(|field| FieldRef::new(entity.id.clone(), field.clone())),
+            );
+        }
+        let values = self.session.query_fields(&targets)?;
+        let mut cells: Vec<Vec<Option<ViewValue>>> = vec![vec![None; plan.fields.len()]; row_count];
+        let row_of = entities
+            .value()
+            .iter()
+            .enumerate()
+            .map(|(row, entity)| (entity.id.as_str(), row))
+            .collect::<BTreeMap<_, _>>();
+        let ordinal_of = plan
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(ordinal, field)| (field.clone(), ordinal))
+            .collect::<BTreeMap<_, _>>();
+        for field in values.value() {
+            let (Some(row), Some(ordinal)) = (
+                row_of.get(field.field.entity.as_str()).copied(),
+                ordinal_of.get(&field.field.field).copied(),
+            ) else {
+                continue;
+            };
+            cells[row][ordinal] = view_value(field);
+        }
+        let mut order = Vec::with_capacity(row_count);
+        for (row, row_cells) in cells.iter().enumerate() {
+            let admitted = plan
+                .filters
+                .iter()
+                .all(|predicate| predicate_matches(predicate, row_cells));
+            if admitted || keep.contains(&spec.entities[row]) {
+                order.push(row);
+            }
+        }
+        if !plan.sort.is_empty() {
+            order.sort_by(|left, right| {
+                compare_view_rows(*left, *right, &plan.sort, &cells, &spec.entities)
+            });
+        }
+        Ok(order)
+    }
+
+    /// Project the window's entities in view order, enforcing the reply byte
+    /// cap while rows are built. `query_entities` returns stable-identity
+    /// order, so the row map restores the requested order.
+    fn build_window_rows(
+        &self,
+        spec: &CollectionSpec,
+        entities_in_order: &[EntityId],
+        used: &mut usize,
+    ) -> Result<Vec<RowProjection>, DesignerError> {
+        let entities = self.session.query_entities(entities_in_order)?;
+        let mut row_of = entities
+            .value()
+            .iter()
+            .map(|entity| (entity.id.clone(), entity))
+            .collect::<BTreeMap<_, _>>();
+        let mut rows = Vec::with_capacity(entities_in_order.len());
+        let mut targets = Vec::with_capacity(spec.columns.len());
+        for id in entities_in_order {
+            let entity = row_of
+                .remove(id)
+                .ok_or_else(|| DesignerError::UnknownEntity {
+                    collection: spec.summary.id.clone(),
+                    entity: id.to_string(),
+                })?;
+            let row = self.build_row(spec, entity, &mut targets)?;
+            let row_bytes = serde_json::to_vec(&row)
+                .map_err(|error| view_encoding_failure("row", &error))?
+                .len()
+                + 1;
+            *used = used.saturating_add(row_bytes);
+            if *used > MAX_TABLE_WINDOW_BYTES {
+                return Err(DesignerError::ProjectionTooLarge {
+                    actual: *used,
+                    maximum: MAX_TABLE_WINDOW_BYTES,
+                });
+            }
+            rows.push(row);
         }
         Ok(rows)
     }
@@ -4188,6 +5121,47 @@ impl DesignerRuntime {
     }
 }
 
+/// The single column projection shared by the complete table query and the
+/// bounded window query.
+fn column_projections(spec: &CollectionSpec) -> Vec<ColumnProjection> {
+    spec.columns
+        .iter()
+        .map(|column| ColumnProjection {
+            required: column.required,
+            id: column.id.to_string(),
+            key: column.key.clone(),
+            display_name: column.display_name.clone(),
+            display_name_explicit: column.display_name_explicit.then_some(true),
+            field_type: field_type_name(&column.field_type).to_owned(),
+            dropdown_options: match &column.constraint {
+                tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } => {
+                    Some(values.clone())
+                }
+                _ if column.field_type == FieldType::Boolean => {
+                    Some(vec!["true".to_owned(), "false".to_owned()])
+                }
+                _ => None,
+            },
+            constraint: constraint_projection(&column.constraint),
+        })
+        .collect()
+}
+
+/// Deterministic digest of the column definitions. It depends only on the
+/// projected columns, so an ordinary row edit keeps it stable. FNV-1a is
+/// sufficient here: the value identifies one schema shape for the client, it
+/// does not authenticate anything.
+fn columns_revision(columns: &[ColumnProjection]) -> Result<String, DesignerError> {
+    let encoded =
+        serde_json::to_vec(columns).map_err(|error| view_encoding_failure("columns", &error))?;
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in &encoded {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Ok(format!("columns/{hash:016x}"))
+}
+
 fn admit_native_requiredness(kind: &FieldType, required: bool) -> Result<(), DesignerError> {
     if required || matches!(kind, FieldType::Text | FieldType::Number) {
         Ok(())
@@ -4681,6 +5655,9 @@ pub(crate) fn ensure_wire_reply_size(
         DesignerWireReply::Ok {
             response: DesignerResponse::Fields(_) | DesignerResponse::FieldExplanation(_),
         } => MAX_PROJECTION_BYTES,
+        DesignerWireReply::Ok {
+            response: DesignerResponse::TableWindow(_) | DesignerResponse::LocatedInView(_),
+        } => MAX_TABLE_WINDOW_BYTES,
         DesignerWireReply::Ok { .. } if text_capacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
         _ => MAX_PROJECTION_BYTES,
     };
@@ -5161,6 +6138,7 @@ fn failure_reply(code: &str, message: String, current_revision: &str) -> Designe
             diagnostics: Vec::new(),
             name_failures: Vec::new(),
             constraint_failure: None,
+            row_count: None,
         },
     }
 }
