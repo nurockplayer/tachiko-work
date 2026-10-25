@@ -176,6 +176,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "projectTransferFromEntries",
     "preflightCanonicalProjectEntries",
     "openCanonicalTreeFromEntries",
+    "isFormulaFailure",
     "bootstrap",
     "inspectProject",
     "openProject",

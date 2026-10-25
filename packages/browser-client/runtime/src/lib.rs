@@ -25,11 +25,11 @@ use tachiko_storage::{
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey, Expression,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, IdGenerator,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
     SemanticSubject, StarterTemplate, ValidationReport, Value, WorkspaceError, analyze_field,
-    create_document,
+    create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -1010,27 +1010,99 @@ pub enum DesignerError {
         "this project uses field constraints and cannot be saved as an earlier format: {message}"
     )]
     LegacyExportUnsupported { message: String },
+    #[error("{}", required_values_missing_message(*.count))]
+    RequiredValuesMissing {
+        schema: SchemaId,
+        field: FieldId,
+        count: usize,
+    },
 }
 
 impl DesignerError {
     #[must_use]
     pub fn failure_projection(&self, current_revision: &str) -> FailureProjection {
+        let (code, message, diagnostics) = match formula_refusal(self) {
+            Some((code, message, diagnostics)) => (code, Some(message), diagnostics),
+            None => self.generic_failure(),
+        };
+        FailureProjection {
+            code: code.to_owned(),
+            message: message.unwrap_or_else(|| self.to_string()),
+            current_revision: current_revision.to_owned(),
+            diagnostics,
+            name_failures: match self {
+                Self::NameAdmission { failures } => failures.clone(),
+                _ => Vec::new(),
+            },
+            constraint_failure: match self {
+                Self::FieldConstraintViolation {
+                    schema,
+                    field,
+                    constraint,
+                    offending_rows,
+                    reason,
+                    ..
+                } => Some(ConstraintFailureProjection {
+                    reason: *reason,
+                    schema: schema.to_string(),
+                    field: field.to_string(),
+                    constraint: constraint.clone(),
+                    offending_rows: *offending_rows,
+                }),
+                _ => None,
+            },
+        }
+    }
+
+    fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
             Self::Lifecycle(PatchLifecycleError::Stale) | Self::StaleQuery { .. } => {
                 ("stale_revision", Vec::new())
             }
-            Self::Lifecycle(PatchLifecycleError::ValidationFailed { report }) => (
-                "validation_failed",
-                report
+            Self::Lifecycle(PatchLifecycleError::ValidationFailed { report }) => {
+                let diagnostics: Vec<_> = report
                     .diagnostics()
                     .iter()
                     .map(diagnostic_projection)
-                    .collect(),
-            ),
+                    .collect();
+                if report
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == diagnostic_codes::FORMULA_CYCLE)
+                {
+                    return (
+                        "formula_cycle",
+                        Some(FORMULA_CYCLE_MESSAGE.to_owned()),
+                        diagnostics,
+                    );
+                }
+                ("validation_failed", diagnostics)
+            }
             Self::Lifecycle(PatchLifecycleError::NoChange) => ("no_change", Vec::new()),
             Self::Lifecycle(PatchLifecycleError::CommandRejected { .. }) => {
                 ("edit_rejected", Vec::new())
             }
+            Self::RequiredValuesMissing {
+                schema,
+                field,
+                count,
+            } => (
+                "required_values_missing",
+                vec![DiagnosticProjection {
+                    code: "required_values_missing".to_owned(),
+                    message: required_values_missing_message(*count),
+                    path: field.to_string(),
+                    subjects: vec![SemanticSubject::SchemaField {
+                        schema: schema.clone(),
+                        field: field.clone(),
+                    }],
+                    related_subjects: Vec::new(),
+                    facts: vec![DiagnosticFactProjection {
+                        name: "blank_count".to_owned(),
+                        value: count.to_string(),
+                    }],
+                }],
+            ),
             Self::NativeTablesExport { finding } => (
                 "native_tables_export_refused",
                 vec![DiagnosticProjection {
@@ -1057,13 +1129,7 @@ impl DesignerError {
             Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
                 ("invalid_table_operation", Vec::new())
             }
-            Self::FieldConstraintViolation { reason, .. } => (
-                match reason {
-                    ConstraintFailureReason::FieldValue => "field_constraint_violation",
-                    ConstraintFailureReason::ExistingValues => "existing_values_violate_constraint",
-                },
-                Vec::new(),
-            ),
+            Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
             Self::LegacyExportUnsupported { .. } => ("legacy_export_unsupported", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
@@ -1083,32 +1149,129 @@ impl DesignerError {
             | Self::Lifecycle(_)
             | Self::MissingInvalidation => ("runtime_failure", Vec::new()),
         };
-        FailureProjection {
+        (code, None, diagnostics)
+    }
+}
+
+/// Typed formula-authoring refusal projection for one error, or `None` for the
+/// generic rejection family.
+fn formula_refusal(
+    error: &DesignerError,
+) -> Option<(&'static str, String, Vec<DiagnosticProjection>)> {
+    match error {
+        DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { source }) => {
+            formula_failure_projection(source)
+        }
+        DesignerError::Workspace(source) => formula_failure_projection(source),
+        _ => None,
+    }
+}
+
+/// One human-readable refusal for a formula update that would create a
+/// dependency cycle; the authoritative validation diagnostics follow it.
+const FORMULA_CYCLE_MESSAGE: &str =
+    "The formulas create a dependency cycle; the update was refused.";
+
+/// Typed formula-authoring refusal projection for one workspace admission
+/// error, or `None` for the generic rejection family.
+fn formula_failure_projection(
+    error: &WorkspaceError,
+) -> Option<(&'static str, String, Vec<DiagnosticProjection>)> {
+    let (code, message, field, subjects, related_subjects, facts) = match error {
+        WorkspaceError::InvalidFormula {
+            field,
+            input,
+            source,
+        } => {
+            let position = character_position(input, source.position);
+            (
+                "formula_syntax",
+                format!(
+                    "Formula syntax error at character {position}: {}",
+                    source.message
+                ),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
+                vec![DiagnosticFactProjection {
+                    name: "position".to_owned(),
+                    value: position.to_string(),
+                }],
+            )
+        }
+        WorkspaceError::FormulaBinding { field, source } => match source.as_ref() {
+            FormulaBindError::Address { address, .. } => (
+                "formula_unknown_reference",
+                format!("Formula references an unknown address '{address}'."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::NonNumericTarget { address, reference } => (
+                "formula_type_mismatch",
+                format!("Formula reference '{address}' is not a Number field."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    reference.clone(),
+                )],
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::Complexity(_) | FormulaBindError::Index { .. } => return None,
+        },
+        _ => return None,
+    };
+    Some((
+        code,
+        message.clone(),
+        vec![DiagnosticProjection {
             code: code.to_owned(),
-            message: self.to_string(),
-            current_revision: current_revision.to_owned(),
-            diagnostics,
-            name_failures: match self {
-                Self::NameAdmission { failures } => failures.clone(),
-                _ => Vec::new(),
-            },
-            constraint_failure: match self {
-                Self::FieldConstraintViolation {
-                    schema,
-                    field,
-                    constraint,
-                    offending_rows,
-                    reason,
-                    ..
-                } => Some(ConstraintFailureProjection {
-                    reason: *reason,
-                    schema: schema.to_string(),
-                    field: field.to_string(),
-                    constraint: constraint.clone(),
-                    offending_rows: *offending_rows,
-                }),
-                _ => None,
-            },
+            message,
+            path: format!("formulas.{field}"),
+            subjects,
+            related_subjects,
+            facts,
+        }],
+    ))
+}
+
+/// One-based character position for a parser byte offset, so refusals count
+/// the characters an author typed rather than UTF-8 bytes.
+fn character_position(input: &str, byte_position: usize) -> usize {
+    input
+        .char_indices()
+        .take_while(|(offset, _)| *offset < byte_position)
+        .count()
+        + 1
+}
+
+fn required_values_missing_message(count: usize) -> String {
+    if count == 1 {
+        "1 row has no value in this column.".to_owned()
+    } else {
+        format!("{count} rows have no value in this column.")
+    }
+}
+
+impl ConstraintFailureReason {
+    /// Stable failure code for this constraint refusal.
+    const fn code(self) -> &'static str {
+        match self {
+            Self::FieldValue => "field_constraint_violation",
+            Self::ExistingValues => "existing_values_violate_constraint",
         }
     }
 }
@@ -2193,6 +2356,21 @@ impl DesignerRuntime {
         }
         if definition.required == required {
             return Err(PatchLifecycleError::NoChange.into());
+        }
+        if required {
+            let blank_count = snapshot
+                .document()
+                .entities
+                .values()
+                .filter(|entity| entity.schema == schema && !entity.fields.contains_key(&field))
+                .count();
+            if blank_count > 0 {
+                return Err(DesignerError::RequiredValuesMissing {
+                    schema,
+                    field,
+                    count: blank_count,
+                });
+            }
         }
         let command = |required| SemanticCommand::SetSchemaFieldRequiredness {
             schema: schema.clone(),

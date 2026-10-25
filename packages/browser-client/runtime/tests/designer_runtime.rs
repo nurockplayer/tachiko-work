@@ -1156,7 +1156,7 @@ fn budget_open_and_formula_updates_use_the_authoritative_cross_collection_lifecy
         .expect_err("unbound formulas must not publish");
     assert_eq!(
         rejected.failure_projection("resident/1").code,
-        "edit_rejected"
+        "formula_unknown_reference"
     );
     let DesignerResponse::Fields(unchanged) = runtime
         .handle(DesignerRequest::QueryFields {
