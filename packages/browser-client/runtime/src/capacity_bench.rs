@@ -12,10 +12,11 @@
 //!   --features capacity-bench -- --ignored --test-threads=1 --nocapture
 //! ```
 //!
-//! The counting allocator lives in this unit-test binary only. Every
-//! `#[global_allocator]` and `unsafe impl` below is confined to
-//! `cfg(all(test, feature = "capacity-bench"))`; production WASM and the
-//! ordinary test profile use the system allocator and the no-op counter hooks.
+//! Peak memory is read from Linux procfs: the harness resets `VmHWM` through
+//! `/proc/self/clear_refs` before each measured operation and reports the peak
+//! RSS delta afterwards. Those numbers are resident set size — allocator
+//! retention included — not live heap. Non-Linux targets report "unavailable"
+//! instead of failing the run.
 
 use std::time::Instant;
 
@@ -53,141 +54,106 @@ const SEED: u64 = 0x00C0_FFEE_D00D_1234;
 const RUNTIME_EDIT_ROWS: usize = 64;
 const RUNTIME_EDIT_COLUMNS: usize = 5;
 
-#[cfg(feature = "capacity-bench")]
-mod counting_allocator {
-    use std::{
-        alloc::{GlobalAlloc, Layout, System},
-        sync::atomic::{AtomicU64, Ordering},
-    };
+/// Linux procfs memory readings.
+///
+/// The harness runs natively only in the Linux `OrbStack` container. On other
+/// targets every reading is `None`, which the report prints as "unavailable"
+/// instead of failing the run.
+mod memory_stats {
+    /// Resident set size in bytes, from `VmRSS`.
+    pub fn rss_bytes() -> Option<u64> {
+        status_kib("VmRSS:").map(kib_to_bytes)
+    }
 
-    static LIVE: AtomicU64 = AtomicU64::new(0);
-    static PEAK: AtomicU64 = AtomicU64::new(0);
+    /// Resident high-water mark in bytes, from `VmHWM`.
+    pub(super) fn peak_bytes() -> Option<u64> {
+        status_kib("VmHWM:").map(kib_to_bytes)
+    }
 
-    /// Counting allocator used only by the capacity baseline test binary.
-    pub struct Counting;
-
-    // SAFETY: every operation delegates to `System`; the only additional work
-    // is relaxed atomic accounting of requested layout bytes. The counters
-    // cannot affect allocation addresses or sizes.
-    unsafe impl GlobalAlloc for Counting {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            // SAFETY: caller upholds the `GlobalAlloc::alloc` contract.
-            let pointer = unsafe { System.alloc(layout) };
-            if !pointer.is_null() {
-                add(bytes_of(layout));
-            }
-            pointer
-        }
-
-        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-            subtract(bytes_of(layout));
-            // SAFETY: pointer and layout come from this allocator unchanged.
-            unsafe { System.dealloc(pointer, layout) };
-        }
-
-        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            // SAFETY: caller upholds the `GlobalAlloc::alloc_zeroed` contract.
-            let pointer = unsafe { System.alloc_zeroed(layout) };
-            if !pointer.is_null() {
-                add(bytes_of(layout));
-            }
-            pointer
-        }
-
-        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            // SAFETY: pointer and layout come from this allocator unchanged, and
-            // the caller upholds the `GlobalAlloc::realloc` contract.
-            let resized = unsafe { System.realloc(pointer, layout, new_size) };
-            if !resized.is_null() {
-                // A failed realloc keeps the original block, so only a success
-                // changes the accounted live bytes.
-                let before = bytes_of(layout);
-                let after = u64::try_from(new_size).unwrap_or(u64::MAX);
-                if after >= before {
-                    add(after - before);
-                } else {
-                    subtract(before - after);
+    /// Reset the high-water mark to the current RSS.
+    ///
+    /// Returns `false` when the platform or the container does not expose the
+    /// interface; the caller then records the peak as unavailable.
+    pub fn reset_peak() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            match std::fs::write("/proc/self/clear_refs", "5") {
+                Ok(()) => true,
+                Err(error) => {
+                    eprintln!("peak unavailable: cannot reset VmHWM: {error}");
+                    false
                 }
             }
-            resized
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
         }
     }
 
-    fn bytes_of(layout: Layout) -> u64 {
-        u64::try_from(layout.size()).unwrap_or(u64::MAX)
+    fn kib_to_bytes(kib: u64) -> u64 {
+        kib.saturating_mul(1024)
     }
 
-    fn add(bytes: u64) {
-        let live = LIVE
-            .fetch_add(bytes, Ordering::Relaxed)
-            .saturating_add(bytes);
-        PEAK.fetch_max(live, Ordering::Relaxed);
+    #[cfg(target_os = "linux")]
+    fn status_kib(key: &str) -> Option<u64> {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status.lines().find_map(|line| {
+            let value = line.strip_prefix(key)?;
+            value.split_whitespace().next()?.parse().ok()
+        })
     }
 
-    fn subtract(bytes: u64) {
-        LIVE.fetch_sub(bytes, Ordering::Relaxed);
+    #[cfg(not(target_os = "linux"))]
+    fn status_kib(_key: &str) -> Option<u64> {
+        None
     }
-
-    pub fn live() -> u64 {
-        LIVE.load(Ordering::Relaxed)
-    }
-
-    pub fn peak() -> u64 {
-        PEAK.load(Ordering::Relaxed)
-    }
-
-    pub fn reset_peak() {
-        PEAK.store(live(), Ordering::Relaxed);
-    }
-}
-
-#[cfg(feature = "capacity-bench")]
-#[global_allocator]
-static CAPACITY_BENCH_ALLOCATOR: counting_allocator::Counting = counting_allocator::Counting;
-
-#[cfg(feature = "capacity-bench")]
-mod alloc_stats {
-    pub use super::counting_allocator::{live, peak, reset_peak};
-}
-
-#[cfg(not(feature = "capacity-bench"))]
-mod alloc_stats {
-    pub const fn live() -> u64 {
-        0
-    }
-
-    pub const fn peak() -> u64 {
-        0
-    }
-
-    pub const fn reset_peak() {}
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Sample {
     millis: f64,
     counters: CapacityCounters,
-    peak_bytes: u64,
+    peak_delta_bytes: Option<u64>,
     formula_nodes: u64,
 }
 
 fn observe<R>(action: impl FnOnce() -> R) -> (R, Sample) {
     instrumentation::reset();
-    alloc_stats::reset_peak();
-    let live_before = alloc_stats::live();
+    let rss_before = memory_stats::rss_bytes();
+    let tracking_peak = memory_stats::reset_peak();
     let started = Instant::now();
     let result = action();
     let millis = started.elapsed().as_secs_f64() * 1_000.0;
-    let peak = alloc_stats::peak();
     (
         result,
         Sample {
             millis,
             counters: instrumentation::counters(),
-            peak_bytes: peak.saturating_sub(live_before),
+            peak_delta_bytes: peak_delta(rss_before, tracking_peak),
             formula_nodes: 0,
         },
     )
+}
+
+/// Peak resident memory the operation added: `VmHWM` after minus `VmRSS`
+/// before the operation started.
+fn peak_delta(rss_before: Option<u64>, tracking_peak: bool) -> Option<u64> {
+    if !tracking_peak {
+        return None;
+    }
+    let before = rss_before?;
+    memory_stats::peak_bytes().map(|peak| peak.saturating_sub(before))
+}
+
+/// RSS change since the earlier reading, or `None` where procfs is unavailable.
+fn rss_delta(before: Option<u64>) -> Option<u64> {
+    let before = before?;
+    memory_stats::rss_bytes().map(|after| after.saturating_sub(before))
+}
+
+fn describe_bytes(value: Option<u64>) -> String {
+    value.map_or_else(|| "unavailable".to_owned(), |bytes| bytes.to_string())
 }
 
 fn summarize(samples: &[Sample]) -> Sample {
@@ -195,11 +161,10 @@ fn summarize(samples: &[Sample]) -> Sample {
     ordered.sort_by(|left, right| left.millis.total_cmp(&right.millis));
     let median = ordered[ordered.len() / 2];
     Sample {
-        peak_bytes: samples
+        peak_delta_bytes: samples
             .iter()
-            .map(|sample| sample.peak_bytes)
-            .max()
-            .unwrap_or(0),
+            .filter_map(|sample| sample.peak_delta_bytes)
+            .max(),
         ..median
     }
 }
@@ -501,21 +466,23 @@ fn measure_runtime_edit(rows_report: &mut Vec<Row>) {
     );
 }
 
-/// Priority 1 check: how many live bytes the runtime retains per undo step.
+/// Priority 1 check: how much resident memory the runtime retains per undo step.
 ///
 /// Each step is one small scalar edit, all undone afterwards. If a history entry
-/// held a full `Document` copy, retained bytes per step would be at least the
-/// whole fixture document; the measured value answers that directly.
+/// held a full `Document` copy, retained RSS per step would be at least the
+/// whole fixture document; the measured value answers that directly. RSS is
+/// page-granular and includes allocator retention, so small differences read as
+/// zero or in 4 KiB steps.
 fn measure_history() {
     let size = (RUNTIME_EDIT_ROWS, RUNTIME_EDIT_COLUMNS);
-    let baseline = alloc_stats::live();
+    let rss_baseline = memory_stats::rss_bytes();
     let document = capacity_document(FixtureSpec {
         rows: size.0,
         columns: size.1,
         formula_cells: 0,
         seed: SEED ^ 0x5A5A,
     });
-    let document_bytes = alloc_stats::live().saturating_sub(baseline);
+    let document_bytes = rss_delta(rss_baseline);
     validate(&document).expect("history fixture validates");
     let mut runtime =
         match DesignerRuntime::from_document(document, "00000000-0000-4000-8000-0000000000a3") {
@@ -525,7 +492,7 @@ fn measure_history() {
                 return;
             }
         };
-    let live_before = alloc_stats::live();
+    let rss_before = memory_stats::rss_bytes();
     let edit_started = Instant::now();
     for iteration in 0..HISTORY_DEPTH {
         let revision = runtime.observe_occurrence().revision;
@@ -545,8 +512,8 @@ fn measure_history() {
             .expect("history edit succeeds");
     }
     let edit_millis = edit_started.elapsed().as_secs_f64() * 1_000.0;
-    let retained = alloc_stats::live().saturating_sub(live_before);
-    let per_entry = retained / u64::try_from(HISTORY_DEPTH).unwrap_or(1);
+    let retained = rss_delta(rss_before);
+    let per_entry = retained.map(|bytes| bytes / u64::try_from(HISTORY_DEPTH).unwrap_or(1));
     let undo_started = Instant::now();
     for _ in 0..HISTORY_DEPTH {
         let revision = runtime.observe_occurrence().revision;
@@ -557,15 +524,19 @@ fn measure_history() {
             .expect("history undo succeeds");
     }
     let undo_millis = undo_started.elapsed().as_secs_f64() * 1_000.0;
-    let live_after_undo = alloc_stats::live().saturating_sub(live_before);
+    let after_undo = rss_delta(rss_before);
     println!(
-        "\nhistory: {HISTORY_DEPTH} admitted edits retained {retained} bytes ({per_entry} bytes/entry) in {edit_millis:.3} ms; {HISTORY_DEPTH} undos in {undo_millis:.3} ms; retained after undo {live_after_undo} bytes; fixture document {document_bytes} bytes"
+        "\nhistory: {HISTORY_DEPTH} admitted edits retained {} bytes ({} bytes/entry) in {edit_millis:.3} ms; {HISTORY_DEPTH} undos in {undo_millis:.3} ms; retained after undo {} bytes; fixture document {} bytes",
+        describe_bytes(retained),
+        describe_bytes(per_entry),
+        describe_bytes(after_undo),
+        describe_bytes(document_bytes),
     );
 }
 
 fn print_report(rows: &[Row]) {
     println!(
-        "\n| cells | rows | columns | operation | median ms | document clones | entities inspected | fields inspected | document comparisons | formula nodes | JSON bytes | output bytes | peak delta MiB |"
+        "\n| cells | rows | columns | operation | median ms | document clones | entities inspected | fields inspected | document comparisons | formula nodes | JSON bytes | output bytes | peak RSS delta MiB |"
     );
     println!(
         "| ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
@@ -585,7 +556,13 @@ fn print_report(rows: &[Row]) {
         let comparisons = counters.publication_document_comparisons;
         let formula_nodes = sample.formula_nodes;
         let json_bytes = counters.json_bytes_serialized;
-        let peak_mib = sample.peak_bytes / (1024 * 1024);
+        let peak_mib = sample.peak_delta_bytes.map_or_else(
+            || "unavailable".to_owned(),
+            |bytes| {
+                let tenths = bytes.saturating_mul(10) / (1024 * 1024);
+                format!("{}.{}", tenths / 10, tenths % 10)
+            },
+        );
         println!(
             "| {cells} | {row_count} | {columns} | {operation} | {millis:.3} | {clones} | {entities} | {fields} | {comparisons} | {formula_nodes} | {json_bytes} | {output_bytes} | {peak_mib} |"
         );
@@ -604,9 +581,9 @@ fn capacity_stage_a_baseline() {
             formula_cells: 0,
             seed: SEED,
         };
-        let baseline = alloc_stats::live();
+        let rss_baseline = memory_stats::rss_bytes();
         let document = capacity_document(spec);
-        let document_bytes = alloc_stats::live().saturating_sub(baseline);
+        let document_bytes = rss_delta(rss_baseline);
         validate(&document).expect("fixture validates");
         let (row_count, columns, cells) = (spec.rows, spec.columns, spec.cells());
         let populated = document
@@ -615,7 +592,8 @@ fn capacity_stage_a_baseline() {
             .map(|entity| entity.fields.len())
             .sum::<usize>();
         println!(
-            "size {row_count}x{columns} ({cells} grid cells, {populated} populated): fixture document live bytes {document_bytes}"
+            "size {row_count}x{columns} ({cells} grid cells, {populated} populated): fixture document RSS increase {} bytes",
+            describe_bytes(document_bytes),
         );
         measure_engine_edits(&document, size, &mut rows);
         measure_projection(&document, size, &mut rows);

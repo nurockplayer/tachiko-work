@@ -9,9 +9,8 @@ rust-version = "1.85"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# Capacity Stage A benchmark only. Enables the workspace-engine counter hooks
-# and (in the native unit-test binary) the counting allocator. Never enabled for
-# release WASM.
+# Capacity Stage A benchmark only. Enables the workspace-engine counter hooks.
+# Never enabled for release WASM.
 capacity-bench = ["tachiko-workspace-engine/capacity-instrumentation"]
 
 [dependencies]
