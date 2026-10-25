@@ -825,9 +825,11 @@ test("Worker preserves typed failures and resets origin after replacement or clo
 
         const openUuid = nextMatrixUuid();
         await prepareMatrixResident(marked, openUuid);
-        const opened = await client.openProject(transferCopy(candidate));
+        // Admission replaces the resident, so the opened occurrence gets its own pinned identity.
+        const openedUuid = nextMatrixUuid();
+        const opened: any = await withUuid(openedUuid, () => client.openProject(transferCopy(candidate)));
         equal(projectedConstraint(opened.table), expected.constraint, `${expected.label} Open / ${marked ? "v3" : "legacy"} projection changed`);
-        await checkMatrixResident(true, openUuid, "2026-09-28", 4, "resident/0", 800, "legacy_export_unsupported", expected.constraint === undefined ? undefined : expected);
+        await checkMatrixResident(true, openedUuid, "2026-09-28", 4, "resident/0", 800, "legacy_export_unsupported", expected.constraint === undefined ? undefined : expected);
       }
     }
     // Each rejection starts with an independent marked mixed U=[A], R=[B].
