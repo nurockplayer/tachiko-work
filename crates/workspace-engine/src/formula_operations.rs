@@ -570,6 +570,7 @@ impl PatchLifecycle {
                 PatchLifecycleError::CommandRejected {
                     source: Box::new(WorkspaceError::InvalidFormula {
                         field: request.target.clone(),
+                        input: request.source.clone(),
                         source,
                     }),
                 }

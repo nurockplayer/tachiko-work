@@ -174,12 +174,17 @@ export type NameFailure = {
 };
 
 export type FailureProjection = {
-  code: string;
+  code: FailureCode;
   message: string;
   current_revision: string;
   diagnostics: DiagnosticProjection[];
   name_failures?: NameFailure[];
 };
+
+/** Known runtime failure codes, while allowing forward-compatible additions. */
+export type FailureCode =
+  | "required_values_missing"
+  | (string & {});
 
 /**
  * Stable refusal codes for `updateFormula`. Each failure carries a human

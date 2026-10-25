@@ -26,7 +26,8 @@ use tachiko_workspace_engine::{
     FieldId, FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
-    StarterTemplate, Value, WorkspaceError, analyze_field, create_document, diagnostic_codes,
+    SemanticSubject, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
+    diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -815,12 +816,34 @@ pub enum DesignerError {
     InvalidTableOperation { message: String },
     #[error("native name admission rejected: {}", name_admission::failure_message(.failures))]
     NameAdmission { failures: Vec<NameFailure> },
+    #[error("{}", required_values_missing_message(*.count))]
+    RequiredValuesMissing {
+        schema: SchemaId,
+        field: FieldId,
+        count: usize,
+    },
 }
 
 impl DesignerError {
     #[must_use]
     pub fn failure_projection(&self, current_revision: &str) -> FailureProjection {
-        let mut formula_message = None;
+        let (code, message, diagnostics) = match formula_refusal(self) {
+            Some((code, message, diagnostics)) => (code, Some(message), diagnostics),
+            None => self.generic_failure(),
+        };
+        FailureProjection {
+            code: code.to_owned(),
+            message: message.unwrap_or_else(|| self.to_string()),
+            current_revision: current_revision.to_owned(),
+            diagnostics,
+            name_failures: match self {
+                Self::NameAdmission { failures } => failures.clone(),
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
             Self::Lifecycle(PatchLifecycleError::Stale) | Self::StaleQuery { .. } => {
                 ("stale_revision", Vec::new())
@@ -836,29 +859,39 @@ impl DesignerError {
                     .iter()
                     .any(|diagnostic| diagnostic.code == diagnostic_codes::FORMULA_CYCLE)
                 {
-                    formula_message = Some(FORMULA_CYCLE_MESSAGE.to_owned());
-                    ("formula_cycle", diagnostics)
-                } else {
-                    ("validation_failed", diagnostics)
+                    return (
+                        "formula_cycle",
+                        Some(FORMULA_CYCLE_MESSAGE.to_owned()),
+                        diagnostics,
+                    );
                 }
+                ("validation_failed", diagnostics)
             }
             Self::Lifecycle(PatchLifecycleError::NoChange) => ("no_change", Vec::new()),
-            Self::Lifecycle(PatchLifecycleError::CommandRejected { source }) => {
-                match formula_failure_projection(source) {
-                    Some((code, message, diagnostics)) => {
-                        formula_message = Some(message);
-                        (code, diagnostics)
-                    }
-                    None => ("edit_rejected", Vec::new()),
-                }
+            Self::Lifecycle(PatchLifecycleError::CommandRejected { .. }) => {
+                ("edit_rejected", Vec::new())
             }
-            Self::Workspace(error) => match formula_failure_projection(error) {
-                Some((code, message, diagnostics)) => {
-                    formula_message = Some(message);
-                    (code, diagnostics)
-                }
-                None => ("runtime_failure", Vec::new()),
-            },
+            Self::RequiredValuesMissing {
+                schema,
+                field,
+                count,
+            } => (
+                "required_values_missing",
+                vec![DiagnosticProjection {
+                    code: "required_values_missing".to_owned(),
+                    message: required_values_missing_message(*count),
+                    path: field.to_string(),
+                    subjects: vec![SemanticSubject::SchemaField {
+                        schema: schema.clone(),
+                        field: field.clone(),
+                    }],
+                    related_subjects: Vec::new(),
+                    facts: vec![DiagnosticFactProjection {
+                        name: "blank_count".to_owned(),
+                        value: count.to_string(),
+                    }],
+                }],
+            ),
             Self::NativeTablesExport { finding } => (
                 "native_tables_export_refused",
                 vec![DiagnosticProjection {
@@ -898,20 +931,26 @@ impl DesignerError {
             Self::CollectionTooLarge { .. }
             | Self::FieldQueryTooLarge { .. }
             | Self::ProjectionTooLarge { .. } => ("query_too_large", Vec::new()),
-            Self::MissingFormulaProjection { .. }
+            Self::Workspace(_)
+            | Self::MissingFormulaProjection { .. }
             | Self::Lifecycle(_)
             | Self::MissingInvalidation => ("runtime_failure", Vec::new()),
         };
-        FailureProjection {
-            code: code.to_owned(),
-            message: formula_message.unwrap_or_else(|| self.to_string()),
-            current_revision: current_revision.to_owned(),
-            diagnostics,
-            name_failures: match self {
-                Self::NameAdmission { failures } => failures.clone(),
-                _ => Vec::new(),
-            },
+        (code, None, diagnostics)
+    }
+}
+
+/// Typed formula-authoring refusal projection for one error, or `None` for the
+/// generic rejection family.
+fn formula_refusal(
+    error: &DesignerError,
+) -> Option<(&'static str, String, Vec<DiagnosticProjection>)> {
+    match error {
+        DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { source }) => {
+            formula_failure_projection(source)
         }
+        DesignerError::Workspace(source) => formula_failure_projection(source),
+        _ => None,
     }
 }
 
@@ -926,22 +965,29 @@ fn formula_failure_projection(
     error: &WorkspaceError,
 ) -> Option<(&'static str, String, Vec<DiagnosticProjection>)> {
     let (code, message, field, subjects, related_subjects, facts) = match error {
-        WorkspaceError::InvalidFormula { field, source } => (
-            "formula_syntax",
-            format!(
-                "Formula syntax error at byte {}: {}",
-                source.position, source.message
-            ),
+        WorkspaceError::InvalidFormula {
             field,
-            vec![tachiko_workspace_engine::SemanticSubject::EntityField(
-                field.clone(),
-            )],
-            Vec::new(),
-            vec![DiagnosticFactProjection {
-                name: "position".to_owned(),
-                value: source.position.to_string(),
-            }],
-        ),
+            input,
+            source,
+        } => {
+            let position = character_position(input, source.position);
+            (
+                "formula_syntax",
+                format!(
+                    "Formula syntax error at character {position}: {}",
+                    source.message
+                ),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
+                vec![DiagnosticFactProjection {
+                    name: "position".to_owned(),
+                    value: position.to_string(),
+                }],
+            )
+        }
         WorkspaceError::FormulaBinding { field, source } => match source.as_ref() {
             FormulaBindError::Address { address, .. } => (
                 "formula_unknown_reference",
@@ -987,6 +1033,24 @@ fn formula_failure_projection(
             facts,
         }],
     ))
+}
+
+/// One-based character position for a parser byte offset, so refusals count
+/// the characters an author typed rather than UTF-8 bytes.
+fn character_position(input: &str, byte_position: usize) -> usize {
+    input
+        .char_indices()
+        .take_while(|(offset, _)| *offset < byte_position)
+        .count()
+        + 1
+}
+
+fn required_values_missing_message(count: usize) -> String {
+    if count == 1 {
+        "1 row has no value in this column.".to_owned()
+    } else {
+        format!("{count} rows have no value in this column.")
+    }
 }
 
 /// One Rust-authoritative occurrence composed for the experimental browser client.
@@ -2042,6 +2106,21 @@ impl DesignerRuntime {
         }
         if definition.required == required {
             return Err(PatchLifecycleError::NoChange.into());
+        }
+        if required {
+            let blank_count = snapshot
+                .document()
+                .entities
+                .values()
+                .filter(|entity| entity.schema == schema && !entity.fields.contains_key(&field))
+                .count();
+            if blank_count > 0 {
+                return Err(DesignerError::RequiredValuesMissing {
+                    schema,
+                    field,
+                    count: blank_count,
+                });
+            }
         }
         let command = |required| SemanticCommand::SetSchemaFieldRequiredness {
             schema: schema.clone(),

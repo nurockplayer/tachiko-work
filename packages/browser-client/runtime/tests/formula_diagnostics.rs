@@ -107,7 +107,11 @@ fn syntax_error_is_typed_with_position_and_preserves_the_previous_formula() {
     let error = update(&mut runtime, 1, "r1.n", "[r1.m").expect_err("invalid syntax must refuse");
     let failure = error.failure_projection("resident/1");
     assert_eq!(failure.code, "formula_syntax");
-    assert!(failure.message.starts_with("Formula syntax error at byte "));
+    assert!(
+        failure
+            .message
+            .starts_with("Formula syntax error at character ")
+    );
     let diagnostic = &failure.diagnostics[0];
     assert_eq!(diagnostic.code, "formula_syntax");
     assert_eq!(diagnostic.path, "formulas.r1.n");
@@ -116,11 +120,8 @@ fn syntax_error_is_typed_with_position_and_preserves_the_previous_formula() {
         [SemanticSubject::EntityField(FieldRef::new("r1", "n"))]
     );
     assert_eq!(diagnostic.facts[0].name, "position");
-    let position: usize = diagnostic.facts[0]
-        .value
-        .parse()
-        .expect("the position fact is a byte offset");
-    assert!(failure.message.contains(&format!("at byte {position}:")));
+    assert_eq!(diagnostic.facts[0].value, "6");
+    assert!(failure.message.contains("at character 6:"));
 
     let unchanged = field(&mut runtime, 1, "r1.n");
     assert_eq!(
@@ -131,6 +132,30 @@ fn syntax_error_is_typed_with_position_and_preserves_the_previous_formula() {
         Some("([r1.m] * 2)")
     );
     assert_eq!(calculated(&unchanged), Some(6.0));
+}
+
+#[test]
+fn syntax_position_counts_characters_rather_than_utf8_bytes() {
+    let mut runtime = fixture();
+    // The multiplication sign ends the expression: the refusal counts the
+    // characters typed before it, which the message and fact report one-based.
+    let error = update(&mut runtime, 0, "r1.n", "[r1.m] × 2")
+        .expect_err("a non-ASCII operator must refuse");
+    let failure = error.failure_projection("resident/0");
+    assert_eq!(failure.code, "formula_syntax");
+    assert!(failure.message.contains("at character 8:"));
+    assert_eq!(failure.diagnostics[0].facts[0].value, "8");
+
+    // The byte budget ends inside a multi-byte character; the refusal reports
+    // the character position the author reached, not the 4096-byte offset.
+    let oversized = "＋".repeat(1400);
+    assert_eq!(oversized.len(), 4200);
+    let error =
+        update(&mut runtime, 0, "r1.n", &oversized).expect_err("oversized input must refuse");
+    let failure = error.failure_projection("resident/0");
+    assert_eq!(failure.code, "formula_syntax");
+    assert!(failure.message.contains("at character 1367:"));
+    assert_eq!(failure.diagnostics[0].facts[0].value, "1367");
 }
 
 #[test]

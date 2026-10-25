@@ -8,7 +8,7 @@ import test from "node:test";
 
 const script = fileURLToPath(new URL("./optional_native_fields.mjs", import.meta.url));
 const suffixes = ["", ".capacity", ".formula", ".rowgate",
-  ".editability-boolean", ".editability-date", ".editability-text"];
+  ".editability-boolean", ".editability-date", ".editability-text", ".requiredness"];
 
 async function fixture(t, records) {
   const root = await mkdtemp(join(tmpdir(), "554-fields-parity-negative-"));
@@ -44,8 +44,8 @@ test("empty native and wrapped captures cannot pass with an empty WASM module", 
 
 test("missing and duplicate native cases fail the expected inventory", async t => {
   const { wasm, captures } = await fixture(t, [{}]);
-  refuses(wasm, captures.slice(0, 6), /inventory must include all seven expected cases/);
-  refuses(wasm, [...captures.slice(0, 6), captures[0]], /duplicate native capture case/);
+  refuses(wasm, captures.slice(0, 7), /inventory must include all eight expected cases/);
+  refuses(wasm, [...captures.slice(0, 7), captures[0]], /duplicate native capture case/);
 });
 
 test("non-array records and missing initial projects fail before replay", async t => {
