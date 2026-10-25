@@ -1708,7 +1708,11 @@ fn native_tables_connector_csv_refuses_xml_illegal_selected_text_with_location()
     );
 }
 
-fn assert_constrained_export(runtime: &DesignerRuntime, expected: &[Vec<SourceValue>]) {
+fn assert_constrained_export(
+    runtime: &DesignerRuntime,
+    expected: &[Vec<SourceValue>],
+    requirement: &str,
+) {
     for csv in [true, false] {
         let workbook = if csv {
             runtime
@@ -1748,6 +1752,9 @@ fn assert_constrained_export(runtime: &DesignerRuntime, expected: &[Vec<SourceVa
                 finding.code == "native_tables_field_constraint_excluded"
                     && finding.category == FidelityCategory::LossyOnExport
                     && finding.location == "collection s/field constrained"
+                    && finding.message.contains(requirement)
+                    && !finding.message.contains("TextLiteralSet")
+                    && !finding.message.contains("NumberInclusiveRange")
             }),
             "{:?}",
             workbook.ledger
@@ -1767,6 +1774,7 @@ fn native_tables_constrained_columns_export_their_values_and_disclose_the_rule()
             SourceValue::Text {
                 value: "allowed".into(),
             },
+            "allowed values: allowed",
         ),
         (
             FieldType::Number,
@@ -1776,9 +1784,10 @@ fn native_tables_constrained_columns_export_their_values_and_disclose_the_rule()
             },
             Value::Number(Number::new(5.0).unwrap()),
             SourceValue::Number { value: 5.0 },
+            "allowed range: 1 to 10",
         ),
     ];
-    for (kind, constraint, value, exported) in cases {
+    for (kind, constraint, value, exported, requirement) in cases {
         for populated in [false, true] {
             let mut document = Document::empty("constraints", "Constraints");
             let mut column = field("constrained", kind.clone(), false);
@@ -1810,7 +1819,7 @@ fn native_tables_constrained_columns_export_their_values_and_disclose_the_rule()
             } else {
                 vec![]
             };
-            assert_constrained_export(&runtime, &expected);
+            assert_constrained_export(&runtime, &expected, requirement);
             let selected = runtime
                 .export_native_tables_csv_workbook("resident/0", "safe")
                 .unwrap();

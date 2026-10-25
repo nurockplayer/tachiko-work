@@ -77,20 +77,23 @@ fn constraint_findings(
     ledger: &mut Vec<FidelityFinding>,
 ) {
     for field in document.schemas[spec.summary.id.as_str()].fields.values() {
-        if !matches!(
-            field.constraint,
-            tachiko_workspace_engine::FieldConstraint::None
-        ) {
-            ledger.push(finding(
-                FidelityCategory::LossyOnExport,
-                "native_tables_field_constraint_excluded",
-                &format!("collection {}/field {}", spec.summary.id, field.id),
-                format!(
-                    "Field constraint {:?} has no native spreadsheet mapping; its values export unchanged and the spreadsheet does not validate them.",
-                    field.constraint
-                ),
-            ));
-        }
+        let requirement = match &field.constraint {
+            tachiko_workspace_engine::FieldConstraint::None => continue,
+            tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } => {
+                format!("allowed values: {}", values.join(", "))
+            }
+            tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange { min, max } => {
+                format!("allowed range: {} to {}", min.get(), max.get())
+            }
+        };
+        ledger.push(finding(
+            FidelityCategory::LossyOnExport,
+            "native_tables_field_constraint_excluded",
+            &format!("collection {}/field {}", spec.summary.id, field.id),
+            format!(
+                "Field constraint ({requirement}) has no native spreadsheet mapping; its values export unchanged and the spreadsheet does not validate them."
+            ),
+        ));
     }
 }
 
