@@ -1137,10 +1137,7 @@ impl DesignerError {
             Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
                 ("invalid_table_operation", Vec::new())
             }
-            Self::FormulaDependencyInUse {
-                dependent_cells,
-                subject,
-            } => (
+            Self::FormulaDependencyInUse { dependent_cells, subject } => (
                 "formula_dependency_in_use",
                 vec![formula_dependency_diagnostic(*dependent_cells, subject)],
             ),
