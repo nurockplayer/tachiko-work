@@ -41,6 +41,8 @@ ADR-0014 owns the authoring grammar. The language contains:
 - bracketed references in `[entity.field]` form;
 - same-row references in `[.field]` form (see
   [Same-row references](#same-row-references));
+- column totals in `[schema.field:total]` form (see
+  [Column totals](#column-totals));
 - binary `+`, `-`, `*`, and `/` with standard precedence;
 - unary `+` and `-`;
 - parentheses; and
@@ -53,6 +55,7 @@ min(60, [iron_sword.damage] / [iron_sword.attack_interval] + 5)
 -[enemy.defense] + 2
 max(0, [attacker.power] - [target.armor])
 [.expense] * [settings.rate]
+[plan.reserve:total] + [plan-copy.reserve:total]
 ```
 
 ### Same-row references
@@ -69,6 +72,38 @@ label. A missing key is an unknown-reference failure, a non-Number field is a
 type-mismatch failure, and referring to the formula's own field is a dependency
 cycle. Relative formula copies and collection duplication keep the shorthand
 unchanged, so it continues to mean the destination formula's own row.
+
+### Column totals
+
+`[schema.field:total]` is the sum of one Number column over every entity of the
+named schema. It names a **column identity** — stable `SchemaId + FieldId` — not
+a set of rows, so adding, removing, or renaming rows and their keys never
+retargets it. Renaming the schema key or field key changes only the human
+projection, exactly as for `[entity.field]`.
+
+This form is Provisional: the owning delivery slice introduces it, ADR-0014
+does not yet name it, and the Deferred list's general aggregates and reductions
+remain deferred. Its contract is:
+
+- binding resolves the schema and field keys in one snapshot and requires a
+  Number column; an unknown schema or field key is an unknown-reference
+  failure (`formula_unknown_reference`) and a non-Number column is a
+  type-mismatch failure (`formula_type_mismatch`);
+- static dependencies expand to that column's value node on every entity of the
+  schema, so the total participates in cycle detection and incremental
+  invalidation like any other dependency; a total that includes its own row is
+  therefore a `formula_cycle`;
+- evaluation sums the column's normalized values in ascending `EntityId` order
+  and normalizes the result; an empty column totals semantic zero;
+- a contributing value that is missing, non-Number, or failed makes the total
+  unavailable rather than partially summed, with a typed diagnostic; and
+- duplicate collection moves a reference to the copied table's own column onto
+  the copy, while a reference to any other table keeps pointing at the
+  original.
+
+Removing one row of a totaled column is an ordinary value change: the total
+recomputes over the remaining rows. Removing or retyping the schema or the
+column field is refused while a formula still names that column.
 
 The parser enforces these Accepted limits before unbounded recursive work:
 
@@ -99,11 +134,15 @@ source text
   -> evaluation
 ```
 
+A column total's static dependency set follows the document's current entity
+membership, so retained incremental state is rebuilt rather than patched when
+an entity is added, removed, or moved between schemas.
+
 | Representation | Contains | Durable role |
 | --- | --- | --- |
-| Source text | Human spelling, mutable `[entity.field]` addresses, and `[.field]` shorthand | Authoring/display projection |
+| Source text | Human spelling, mutable `[entity.field]` addresses, the `[.field]` shorthand, and `[schema.field:total]` column totals | Authoring/display projection |
 | Unbound AST | Parsed structure, source locations, and human addresses | Candidate awaiting binding |
-| Typed bound AST | Stable `EntityId + FieldId` references, owner-relative `FieldId` references, and Number-typed nodes | Semantic formula meaning |
+| Typed bound AST | Stable `EntityId + FieldId` references, owner-relative `FieldId` references, `SchemaId + FieldId` column identities, and Number-typed nodes | Semantic formula meaning |
 | Runtime graph/indexes | Stable value-node edges, reverse edges, order, and caches | Rebuildable derived state |
 
 Binding resolves each human `EntityKey + FieldKey` address to the stable
@@ -310,7 +349,9 @@ formula value node -> referenced value node
 ```
 
 Static dependency extraction walks the typed bound AST without evaluating it,
-deduplicates repeated references, and returns a deterministic set. The reverse
+deduplicates repeated references, and returns a deterministic set. A column
+total contributes one edge per current entity of its schema, so the edges of a
+formula that reads a column follow that schema's row membership. The reverse
 index is derived from those edges. Dependency and reverse-dependency indexes are
 runtime state under ADR-0015 and must be rebuildable from canonical bound
 formulas.
@@ -524,7 +565,8 @@ stable IDs, and bound AST on rejection.
 
 ## Deferred language features
 
-- aggregate clauses and general reductions; ADR-0036's fixed saved live
+- aggregate clauses and general reductions beyond the single saved form
+  [column totals](#column-totals) admits; ADR-0036's fixed saved live
   definition remains outside this formula language;
 - conditional expressions and comparisons;
 - lookups and schema-level computed defaults; ADR-0036 admits only its explicit
