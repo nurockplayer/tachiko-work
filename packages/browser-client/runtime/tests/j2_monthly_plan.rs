@@ -105,6 +105,22 @@ fn plan_document() -> Document {
         BTreeMap::from([(FieldId::from("rate"), count(0.10))]),
     );
     document.entities.insert(id, row);
+    let summary_id = SchemaId::from("summary");
+    document.schemas.insert(
+        summary_id.clone(),
+        Schema {
+            id: summary_id.clone(),
+            key: SchemaKey::from("summary"),
+            display_name: Some("Summary".to_owned()),
+            fields: BTreeMap::from([column("total", "Total", FieldType::Number)]),
+        },
+    );
+    let (id, row) = entity(
+        "summary",
+        &summary_id,
+        BTreeMap::from([(FieldId::from("total"), count(0.0))]),
+    );
+    document.entities.insert(id, row);
     document
 }
 
@@ -244,6 +260,46 @@ fn source(field: &FieldProjection) -> &str {
         .as_ref()
         .expect("the cell retains a formula source")
         .source
+}
+
+fn column_id(table: &TableProjection, column: &str) -> String {
+    table
+        .columns
+        .iter()
+        .find(|candidate| candidate.key == column)
+        .unwrap_or_else(|| panic!("the table has no '{column}' column"))
+        .id
+        .clone()
+}
+
+fn column_total(table: &TableProjection, column: &str) -> Option<f64> {
+    let id = column_id(table, column);
+    *table
+        .column_totals
+        .get(&id)
+        .unwrap_or_else(|| panic!("the table reports no total for '{column}'"))
+}
+
+fn first_row_number(table: &TableProjection, column: &str) -> Option<f64> {
+    let id = column_id(table, column);
+    number(
+        table.rows[0]
+            .fields
+            .iter()
+            .find(|field| field.target.field == id)
+            .unwrap_or_else(|| panic!("the row has no '{column}' value")),
+    )
+}
+
+fn first_row_source<'a>(table: &'a TableProjection, column: &str) -> &'a str {
+    let id = column_id(table, column);
+    source(
+        table.rows[0]
+            .fields
+            .iter()
+            .find(|field| field.target.field == id)
+            .unwrap_or_else(|| panic!("the row has no '{column}' value")),
+    )
 }
 
 #[test]
@@ -527,4 +583,138 @@ fn duplicate_collection_rewrites_intra_refs_and_keeps_the_shared_rate() {
     let plan = table(&mut runtime, "plan");
     assert_eq!(number(cell(&plan, "Tools", "reserve")), Some(1_000.0));
     assert_eq!(number(cell(&plan, "Ads", "reserve")), Some(3_000.0));
+}
+
+#[test]
+fn column_totals_project_per_table_and_feed_a_cross_table_summary() {
+    let mut runtime = open_fixture();
+    assert_eq!(
+        update(&mut runtime, "resident/0", "rent.reserve", SAME_ROW_RESERVE),
+        "resident/1"
+    );
+    copy(
+        &mut runtime,
+        "resident/1",
+        "rent.reserve",
+        &["ads.reserve", "tools.reserve"],
+        &[],
+    );
+
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(column_total(&plan, "reserve"), Some(12_000.0));
+    assert_eq!(column_total(&plan, "expense"), Some(120_000.0));
+
+    let duplicated = duplicate(&mut runtime, "resident/2", "plan", "Plan copy");
+    let copy_key = duplicated.collection.key.clone();
+    let copy_table = table(&mut runtime, &copy_key);
+    assert_eq!(column_total(&copy_table, "reserve"), Some(12_000.0));
+
+    // Editing the copy moves the copy's footer only.
+    let copy_ads_expense = cell(&copy_table, "Ads", "expense").target.clone();
+    assert_eq!(
+        edit(&mut runtime, "resident/3", copy_ads_expense, "35000"),
+        "resident/4"
+    );
+    let copy_table = table(&mut runtime, &copy_key);
+    assert_eq!(column_total(&copy_table, "reserve"), Some(12_500.0));
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(column_total(&plan, "reserve"), Some(12_000.0));
+
+    // The summary reads both tables' totals, keyed by table key rather than by
+    // any row.
+    let summary_target = "summary.total";
+    let summary_source = format!("[plan.reserve:total] + [{copy_key}.reserve:total]");
+    assert_eq!(
+        update(&mut runtime, "resident/4", summary_target, &summary_source),
+        "resident/5"
+    );
+    let summary = table(&mut runtime, "summary");
+    assert_eq!(first_row_number(&summary, "total"), Some(24_500.0));
+    assert_eq!(
+        first_row_source(&summary, "total"),
+        format!("([plan.reserve:total] + [{copy_key}.reserve:total])")
+    );
+
+    // A display rename changes no identity: the total and its source stay.
+    let copy_reserve = column_id(&copy_table, "reserve");
+    let DesignerResponse::Published(publication) = runtime
+        .handle(DesignerRequest::RenameColumn {
+            expected_revision: "resident/5".to_owned(),
+            collection: copy_key.clone(),
+            field: copy_reserve,
+            name: "Buffer".to_owned(),
+        })
+        .expect("renaming a copied column is accepted")
+    else {
+        panic!("expected a publication");
+    };
+    assert_eq!(publication.resulting_revision, "resident/6");
+    let summary = table(&mut runtime, "summary");
+    assert_eq!(first_row_number(&summary, "total"), Some(24_500.0));
+    assert_eq!(
+        first_row_source(&summary, "total"),
+        format!("([plan.reserve:total] + [{copy_key}.reserve:total])")
+    );
+
+    // v3 keeps the column identities; reopening recomputes the totals.
+    let saved = runtime
+        .export_project_v3("resident/6")
+        .expect("column totals export as v3");
+    let mut reopened = None;
+    tachiko_designer_runtime::open_project(&mut reopened, &saved.bytes, RESAVED)
+        .expect("the saved column-total project reopens");
+    let mut reopened = reopened.expect("a successful open installs the occurrence");
+    let summary = table(&mut reopened, "summary");
+    assert_eq!(first_row_number(&summary, "total"), Some(24_500.0));
+    let plan = table(&mut reopened, "plan");
+    assert_eq!(column_total(&plan, "reserve"), Some(12_000.0));
+    let copy_table = table(&mut reopened, &copy_key);
+    assert_eq!(column_total(&copy_table, "reserve"), Some(12_500.0));
+
+    // No persisted total is trusted: a changed input recomputes both tables
+    // and the summary.
+    let copy_ads_expense = cell(&copy_table, "Ads", "expense").target.clone();
+    assert_eq!(
+        edit(&mut reopened, "resident/0", copy_ads_expense, "40000"),
+        "resident/1"
+    );
+    let copy_table = table(&mut reopened, &copy_key);
+    assert_eq!(column_total(&copy_table, "reserve"), Some(13_000.0));
+    let summary = table(&mut reopened, "summary");
+    assert_eq!(first_row_number(&summary, "total"), Some(25_000.0));
+}
+
+#[test]
+fn column_total_refusals_keep_their_typed_codes_and_change_nothing() {
+    let mut runtime = open_fixture();
+    for (target, formula, expected_code) in [
+        ("rent.reserve", "[plan.reserve:total]", "formula_cycle"),
+        (
+            "summary.total",
+            "[plan.missing:total]",
+            "formula_unknown_reference",
+        ),
+        (
+            "summary.total",
+            "[plan.item:total]",
+            "formula_type_mismatch",
+        ),
+    ] {
+        let error = runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: "resident/0".to_owned(),
+                target: target.into(),
+                source: formula.to_owned(),
+            })
+            .expect_err("the column-total refusal is typed");
+        let failure = error.failure_projection("resident/0");
+        assert_eq!(failure.code, expected_code, "{formula}");
+        assert!(!failure.message.is_empty(), "{formula}");
+    }
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(plan.revision, "resident/0");
+    assert_eq!(
+        cell(&plan, "Rent", "reserve").stored,
+        Some(StoredValueProjection::Number { value: 0.0 })
+    );
 }

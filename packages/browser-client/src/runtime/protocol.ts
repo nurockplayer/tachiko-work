@@ -100,6 +100,12 @@ export type TableProjection = {
   columns: ColumnProjection[];
   /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
   rows: Array<{ id: string; key: string; blank_fields?: string[]; fields: FieldProjection[] }>;
+  /**
+   * One total per Number column, keyed by column id and observed at the same
+   * revision as rows. Null means a contributing value is unavailable; blank
+   * cells are skipped.
+   */
+  column_totals?: Record<string, number | null>;
 };
 
 export type FieldBatchProjection = {

@@ -475,6 +475,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 constraint: None,
             })
             .collect(),
+        column_totals: std::collections::BTreeMap::new(),
         rows: entities
             .into_iter()
             .map(|entity| RowProjection {

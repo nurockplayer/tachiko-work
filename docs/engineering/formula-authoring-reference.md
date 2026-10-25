@@ -107,6 +107,12 @@ is a `formula_cycle`.
 The form is stored in `.roproj/v3` and direct-ro/v2 as a column identity; the
 frozen `.roproj/v1` and `.roproj/v2` formats refuse to encode it.
 
+Every table projection also reports these numbers in a `column_totals` map from
+column ID to `number | null`, observed at the same revision as its rows, so a
+footer row can show them without authoring a formula. Blank cells are skipped
+there too, and a null entry means a contributing value is unavailable rather
+than zero.
+
 ## Canonical source projection
 
 Accepted updates return the stored formula through `field.formula.source`

@@ -1276,6 +1276,10 @@ fn independent_opened_projection(
             collection,
             columns,
             rows,
+            column_totals: BTreeMap::from([
+                (FIELD_IDS[2].to_owned(), Some(quantity + 5.0)),
+                (FIELD_IDS[3].to_owned(), Some(400.0)),
+            ]),
         },
     }
 }
@@ -2261,6 +2265,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 constraint: None
             }],
             rows: vec![],
+            column_totals: BTreeMap::new(),
         }
     );
     assert_eq!(

@@ -24,12 +24,12 @@ use tachiko_storage::{
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, ColumnRef, Date, Document, Entity, EntityId, EntityKey, Expression,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator,
-    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
-    KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
-    SemanticSubject, StarterTemplate, ValidationReport, Value, WorkspaceError, analyze_field,
-    create_document, diagnostic_codes,
+    CalculationFailure, ColumnRef, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey,
+    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError,
+    IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
+    SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
+    WorkspaceError, analyze_field, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -296,6 +296,12 @@ pub struct TableProjection {
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     pub rows: Vec<RowProjection>,
+    /// One total per Number column, keyed by column id and observed at the same
+    /// revision as `rows`. A null total means a contributing value is
+    /// unavailable or not a number; blank cells are skipped, as in a formula
+    /// column total.
+    #[serde(default)]
+    pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -2104,6 +2110,7 @@ impl DesignerRuntime {
                 })
                 .collect()
         };
+        let column_totals = column_totals(spec, &rows);
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
@@ -2132,6 +2139,7 @@ impl DesignerRuntime {
                 })
                 .collect(),
             rows,
+            column_totals,
         };
         Ok(projection)
     }
@@ -4236,6 +4244,48 @@ fn cell_edit_value(
             field: field.clone(),
         })
     }
+}
+
+/// Sum each Number column over the table's present values.
+///
+/// This is the footer every table projection carries, so it must agree with a
+/// formula column total: blank cells are skipped rather than failing the sum,
+/// and any other unavailable or non-numeric value makes the whole total null
+/// instead of silently summing a subset.
+fn column_totals(spec: &CollectionSpec, rows: &[RowProjection]) -> BTreeMap<String, Option<f64>> {
+    spec.columns
+        .iter()
+        .filter(|column| column.field_type == FieldType::Number)
+        .map(|column| {
+            let id = column.id.to_string();
+            let mut total = 0.0;
+            let mut complete = true;
+            for row in rows {
+                let Some(field) = row.fields.iter().find(|field| field.target.field == id) else {
+                    continue;
+                };
+                match (&field.calculated, &field.stored) {
+                    (Some(CalculationProjection::Value { value }), _)
+                    | (None, Some(StoredValueProjection::Number { value })) => total += value,
+                    (
+                        Some(
+                            CalculationProjection::Failure { .. }
+                            | CalculationProjection::Unavailable,
+                        ),
+                        _,
+                    )
+                    | (None, Some(_) | None) => {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            (
+                id,
+                complete.then_some(total).filter(|total| total.is_finite()),
+            )
+        })
+        .collect()
 }
 
 fn blank_field_ids(
@@ -6723,11 +6773,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        AuthorizationAction, ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime,
-        DocumentScopeId, EntityId, FieldDefinition, FieldId, FieldKey, FieldType, Grant, GrantId,
-        GrantRequirement, HistoryAction, KeyedGroupedSumDefinitionInput,
+        AuthorizationAction, ColumnInitializer, ColumnRef, DesignerError, DesignerRequest,
+        DesignerRuntime, DocumentScopeId, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+        FieldType, Grant, GrantId, GrantRequirement, HistoryAction, KeyedGroupedSumDefinitionInput,
         MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass, NewTableColumnInput, OperationFamily,
-        PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput,
+        PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput, SchemaId,
         ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
     };
 
@@ -9012,6 +9062,139 @@ mod tests {
                 .expect("finite Number must serialize")
                 .len(),
             24
+        );
+    }
+
+    fn total_spec() -> super::CollectionSpec {
+        super::CollectionSpec {
+            direct_tracker_rows: false,
+            native_table_rows: false,
+            summary: super::CollectionSummary {
+                id: "s".to_owned(),
+                key: "s".to_owned(),
+                display_name: "S".to_owned(),
+                entity_count: 0,
+            },
+            columns: vec![super::ColumnSpec {
+                id: FieldId::from("amount"),
+                key: "amount".to_owned(),
+                display_name: "Amount".to_owned(),
+                display_name_explicit: false,
+                field_type: FieldType::Number,
+                required: true,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
+            }],
+            entities: Vec::new(),
+        }
+    }
+
+    fn total_row(
+        id: &str,
+        stored: Option<super::StoredValueProjection>,
+        calculated: Option<super::CalculationProjection>,
+    ) -> super::RowProjection {
+        super::RowProjection {
+            id: id.to_owned(),
+            key: id.to_owned(),
+            blank_fields: Vec::new(),
+            fields: vec![super::FieldProjection {
+                blank: false,
+                target: super::FieldTarget {
+                    entity: id.to_owned(),
+                    field: "amount".to_owned(),
+                },
+                address: format!("{id}.amount"),
+                stored,
+                formula: None,
+                calculated,
+                diagnostics: Vec::new(),
+                editable_scalar: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn column_totals_skip_blank_cells_and_refuse_a_partial_sum() {
+        let spec = total_spec();
+        let blank = super::RowProjection {
+            id: "blank".to_owned(),
+            key: "blank".to_owned(),
+            blank_fields: vec!["amount".to_owned()],
+            fields: Vec::new(),
+        };
+        let rows = vec![
+            total_row(
+                "a",
+                Some(super::StoredValueProjection::Number { value: 2.5 }),
+                None,
+            ),
+            total_row(
+                "b",
+                None,
+                Some(super::CalculationProjection::Value { value: 1.5 }),
+            ),
+            blank.clone(),
+        ];
+        assert_eq!(
+            super::column_totals(&spec, &rows),
+            BTreeMap::from([("amount".to_owned(), Some(4.0))])
+        );
+        assert_eq!(
+            super::column_totals(&spec, &[]),
+            BTreeMap::from([("amount".to_owned(), Some(0.0))]),
+            "an empty table totals zero rather than null"
+        );
+
+        for unavailable in [
+            total_row("c", None, Some(super::CalculationProjection::Unavailable)),
+            total_row(
+                "d",
+                None,
+                Some(super::CalculationProjection::Failure {
+                    code: "cycle".to_owned(),
+                    message: "cycle".to_owned(),
+                }),
+            ),
+            total_row(
+                "e",
+                Some(super::StoredValueProjection::Text {
+                    value: "2".to_owned(),
+                }),
+                None,
+            ),
+        ] {
+            let mut rows = rows.clone();
+            rows.push(unavailable);
+            assert_eq!(
+                super::column_totals(&spec, &rows),
+                BTreeMap::from([("amount".to_owned(), None)]),
+                "an unavailable or non-numeric contributor makes the total null"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicated_expressions_move_own_column_totals_and_keep_foreign_ones() {
+        let mut expression = Expression::Add {
+            left: Box::new(Expression::ColumnTotal(ColumnRef::new("plan", "reserve"))),
+            right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
+        };
+        super::map_duplicate_expression(
+            &mut expression,
+            &BTreeMap::new(),
+            &BTreeMap::from([(FieldId::from("reserve"), FieldId::from("reserve_copy"))]),
+            &BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]),
+        )
+        .expect("the duplicated expression maps");
+        assert_eq!(
+            expression,
+            Expression::Add {
+                left: Box::new(Expression::ColumnTotal(ColumnRef::new(
+                    "plan_copy_schema",
+                    "reserve_copy"
+                ))),
+                right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
+            }
         );
     }
 }
