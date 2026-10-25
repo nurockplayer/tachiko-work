@@ -268,10 +268,12 @@ opening every workbook.
 ## 8. Reproduce
 
 ```sh
-# 1. Download the dataset (public; no authentication).
-curl -L -o fuse-bin.analysis.dedup.poi-dec2014.json.gz \
+# 1. Download the dataset (public; no authentication) into the scratch mount
+#    that orb-test binds at /w/target/corpus-scratch.
+mkdir -p target/corpus-scratch
+curl -L -o target/corpus-scratch/fuse-bin.analysis.dedup.poi-dec2014.json.gz \
   https://blob.barik.net/fuse/fuse-bin.analysis.dedup.poi-dec2014.json.gz
-shasum -a 1 fuse-bin.analysis.dedup.poi-dec2014.json.gz
+shasum -a 1 target/corpus-scratch/fuse-bin.analysis.dedup.poi-dec2014.json.gz
 # 9aea74288ce99129282d8dfed78aeed11dc911ee
 
 # 2. Analyse (from the worktree root; the dataset is scratch input).
