@@ -218,6 +218,27 @@ fn wire_journey_preserves_sparse_values_and_atomic_history() {
     }
 }
 
+fn assert_required_values_missing(
+    failure: &Value,
+    before: &Value,
+    target: &Value,
+    count: &str,
+    message: &str,
+) {
+    assert_eq!(failure["code"], "required_values_missing");
+    assert_eq!(failure["message"], message);
+    assert_eq!(failure["current_revision"], before["revision"]);
+    assert_eq!(failure["diagnostics"].as_array().unwrap().len(), 1);
+    let diagnostic = &failure["diagnostics"][0];
+    assert_eq!(diagnostic["path"], *target);
+    assert_eq!(diagnostic["subjects"][0]["kind"], "schema_field");
+    assert_eq!(diagnostic["subjects"][0]["value"]["field"], *target);
+    assert_eq!(
+        diagnostic["facts"],
+        json!([{"name":"blank_count","value":count}])
+    );
+}
+
 #[test]
 fn requiredness_strengthening_reports_missing_values_and_preserves_history() {
     let mut j = Journey::default();
@@ -272,23 +293,7 @@ fn requiredness_strengthening_reports_missing_values_and_preserves_history() {
     ] {
         let before = j.table();
         let failure = j.refused(json!({"type":"set_column_requiredness","collection":"items","field":target,"required":true}))["error"].clone();
-        assert_eq!(failure["code"], "required_values_missing");
-        assert_eq!(failure["message"], message);
-        assert_eq!(failure["current_revision"], before["revision"]);
-        assert_eq!(failure["diagnostics"].as_array().unwrap().len(), 1);
-        assert_eq!(failure["diagnostics"][0]["path"], target.clone());
-        assert_eq!(
-            failure["diagnostics"][0]["subjects"][0]["kind"],
-            "schema_field"
-        );
-        assert_eq!(
-            failure["diagnostics"][0]["subjects"][0]["value"]["field"],
-            target.clone()
-        );
-        assert_eq!(
-            failure["diagnostics"][0]["facts"],
-            json!([{"name":"blank_count","value":count}])
-        );
+        assert_required_values_missing(&failure, &before, target, count, message);
     }
 
     j.mutate(json!({"type":"undo"}));
