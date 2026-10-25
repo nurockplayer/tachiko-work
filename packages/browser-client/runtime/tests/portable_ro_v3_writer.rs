@@ -1,7 +1,7 @@
 //! Writer regressions for alternate package ingress and portable export preflight.
 use tachiko_designer_runtime::{
-    DesignerError, DesignerRequest, DesignerRuntime, ImportFieldType, ImportSelection,
-    import_workbook, interop_adapter, open_local_document, open_project,
+    DesignerError, DesignerRequest, DesignerRuntime, FieldTarget, ImportFieldType, ImportSelection,
+    ScalarEditInput, import_workbook, interop_adapter, open_local_document, open_project,
 };
 
 #[path = "support/portable_package_v3/bytes.rs"]
@@ -19,31 +19,50 @@ fn resident() -> DesignerRuntime {
 }
 
 #[test]
-fn local_constrained_package_refuses_without_replacing_resident() {
+fn local_constrained_package_admits_with_its_declarations() {
     // Confirm both the constrained payload and package independently verify.
     tachiko_storage::CanonicalRoProjectV3::try_from_files(bytes::input_files()).unwrap();
-    let mut runtime = resident();
-    let occurrence = runtime.observe_occurrence();
-    let saved = runtime.export_project(&occurrence.revision).unwrap();
-    let table = runtime
-        .handle(DesignerRequest::QueryTable {
-            collection: "items".into(),
-        })
-        .unwrap();
-    let mut slot = Some(runtime);
-    let error = open_local_document(&mut slot, &bytes::vector("golden"), FRESH).unwrap_err();
-    assert!(matches!(error, DesignerError::UnsupportedProject { .. }));
-    let runtime = slot.as_mut().unwrap();
-    assert_eq!(runtime.observe_occurrence(), occurrence);
-    assert_eq!(runtime.export_project(&occurrence.revision).unwrap(), saved);
+    let mut slot = Some(resident());
+    let before = slot.as_ref().unwrap().observe_occurrence();
+    let opened = open_local_document(&mut slot, &bytes::vector("golden"), FRESH).unwrap();
+    let mut runtime = slot.unwrap();
+    assert_ne!(runtime.observe_occurrence(), before);
+    let columns = serde_json::to_value(&opened.table.columns).unwrap();
     assert_eq!(
-        runtime
-            .handle(DesignerRequest::QueryTable {
-                collection: "items".into()
-            })
-            .unwrap(),
-        table
+        columns[1]["constraint"],
+        serde_json::json!({"kind": "text_literal_set", "values": ["Paper", "Stationery"]})
     );
+    assert_eq!(
+        columns[2]["constraint"],
+        serde_json::json!({"kind": "number_inclusive_range", "min": 0.0, "max": 10.0})
+    );
+    // A local constrained document keeps its v3 origin: legacy export refuses
+    // and the portable re-export is byte-identical.
+    assert!(matches!(
+        runtime.export_project("resident/0"),
+        Err(DesignerError::UnsupportedProject { .. })
+    ));
+    assert_eq!(
+        runtime.export_portable_ro("resident/0").unwrap().bytes,
+        bytes::vector("golden")
+    );
+    // The declarations keep enforcing the admitted stored values.
+    let error = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/0".into(),
+            target: FieldTarget {
+                entity: opened.table.rows[0].id.clone(),
+                field: opened.table.columns[1].id.clone(),
+            },
+            input: ScalarEditInput::Text {
+                value: "Other".into(),
+            },
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        DesignerError::FieldConstraintViolation { .. }
+    ));
 }
 
 #[test]

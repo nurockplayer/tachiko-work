@@ -472,6 +472,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 display_name_explicit: None,
                 field_type: "text".to_owned(),
                 dropdown_options: None,
+                constraint: None,
             })
             .collect(),
         rows: entities

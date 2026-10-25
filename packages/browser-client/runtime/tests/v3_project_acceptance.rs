@@ -8,6 +8,7 @@ use std::{
     io::{Cursor, Read, Write},
 };
 
+use serde_json::json;
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, import_csv};
 use tachiko_designer_runtime::{
     BootstrapProjection, CollectionSummary, ColumnProjection, DesignerRequest, DesignerResponse,
@@ -1194,6 +1195,7 @@ fn independent_opened_projection(
         display_name_explicit: None,
         field_type: field_type.to_owned(),
         dropdown_options: None,
+        constraint: None,
     })
     .collect::<Vec<_>>();
     let quantity_value = quantity.to_string();
@@ -1871,21 +1873,6 @@ fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() 
         title_over,
         "unsupported_project",
     ));
-    let (constrained_text, constrained_number) = (
-        acceptance_fixtures::constrained_v3_transfer(1),
-        acceptance_fixtures::constrained_v3_transfer(2),
-    );
-    invalid.push((
-        "valid Text constraint capability",
-        constrained_text,
-        "unsupported_project",
-    ));
-    invalid.push((
-        "valid Number constraint capability",
-        constrained_number,
-        "unsupported_project",
-    ));
-
     let exact_transfer = vec![0; TRANSFER_MAX];
     let over_transfer = vec![0; TRANSFER_MAX + 1];
     invalid.push((
@@ -2270,7 +2257,8 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 display_name: "value".into(),
                 display_name_explicit: Some(true),
                 field_type: "text".into(),
-                dropdown_options: None
+                dropdown_options: None,
+                constraint: None
             }],
             rows: vec![],
         }
@@ -2516,59 +2504,70 @@ fn fresh_candidate_ordinary_legacy_exports_remain_v1_v2_compatible() {
     }
 }
 
+/// The declared constraint the projection exposes for one projected field.
+fn projected_constraint(opened: &OpenedProjection, field: &str) -> Option<serde_json::Value> {
+    let columns = serde_json::to_value(&opened.table.columns).unwrap();
+    columns
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|column| column["id"] == field)
+        .unwrap()
+        .get("constraint")
+        .cloned()
+}
+
 #[test]
-fn candidate_inspect_and_open_refuse_valid_v3_text_and_number_constraints() {
+fn candidate_inspect_and_open_admit_valid_v3_text_and_number_constraints() {
     let profiles = [
         (
             "constrained-text",
             acceptance_fixtures::constrained_v3_transfer(1),
+            FIELD_IDS[1],
+            Some(json!({"kind": "text_literal_set", "values": ["Paper", "Stationery"]})),
         ),
         (
             "constrained-number",
             acceptance_fixtures::constrained_v3_transfer(2),
+            FIELD_IDS[2],
+            Some(json!({"kind": "number_inclusive_range", "min": 0.0, "max": 10.0})),
         ),
         (
             "constrained-nondefault-text",
             acceptance_fixtures::nondefault_constrained_v3_transfer(1),
+            FIELD_IDS[1],
+            None,
         ),
         (
             "constrained-nondefault-number",
             acceptance_fixtures::nondefault_constrained_v3_transfer(2),
+            FIELD_IDS[2],
+            None,
         ),
     ];
     let mut counter = 400;
-    for (name, input) in profiles {
+    for (name, input, field, expected) in profiles {
         capture_candidate_output(name, &input);
-        for marked in [false, true] {
-            for operation in ["Inspect", "Open"] {
-                counter += 1;
-                let occurrence = format!("00000000-0000-4000-8000-{counter:012x}");
-                let (mut slot, mut expected) = historied_resident(marked, &occurrence);
-                let before = slot.as_ref().unwrap().observe_occurrence();
-                assert_eq!(before.revision, "resident/3");
-                let error = if operation == "Inspect" {
-                    inspect_project(&input).expect_err("all fields, including non-default unbound fields, must have None constraints")
-                } else {
-                    open_project(&mut slot, &input, FRESH).expect_err(
-                        "valid storage constraints are outside the bounded runtime profile",
-                    )
-                };
-                assert_eq!(
-                    error.failure_projection("resident/3").code,
-                    "unsupported_project",
-                    "{name} {operation}"
-                );
-                assert_eq!(slot.as_ref().unwrap().observe_occurrence(), before);
-                assert_live_fixture(slot.as_mut().unwrap(), &expected, &occurrence, "resident/3");
-                summary(slot.as_mut().unwrap(), 800.0);
-                if marked {
-                    assert_ordinary_v3_export_refused(slot.as_mut().unwrap());
-                } else {
-                    assert_legacy_origin(slot.as_mut().unwrap(), &expected, Some(2));
-                }
-                replay_history_after_candidate(&mut slot, &mut expected, &occurrence, marked);
-            }
-        }
+        // Inspection is read-only and already exposes the declared constraint.
+        counter += 1;
+        let occurrence = format!("00000000-0000-4000-8000-{counter:012x}");
+        let (mut slot, _) = historied_resident(true, &occurrence);
+        let before = slot.as_ref().unwrap().observe_occurrence();
+        let inspected = inspect_project(&input).expect("valid constrained v3 must inspect");
+        assert_eq!(projected_constraint(&inspected, field), expected, "{name}");
+        assert_eq!(slot.as_ref().unwrap().observe_occurrence(), before);
+        // Replacement admission keeps the declarations and the exact v3 bytes.
+        counter += 1;
+        let opened =
+            open_project(&mut slot, &input, FRESH).expect("valid constrained v3 must open");
+        assert_eq!(projected_constraint(&opened, field), expected, "{name}");
+        let resident = slot.as_mut().unwrap();
+        assert_eq!(resident.observe_occurrence().revision, "resident/0");
+        assert_eq!(
+            resident.export_project_v3("resident/0").unwrap().bytes,
+            input
+        );
+        assert_ordinary_v3_export_refused(resident);
     }
 }
 
