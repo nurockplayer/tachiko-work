@@ -1122,10 +1122,12 @@ fn build_import_sheet(
             }
             let mut style = cell.style.clone();
             if source.columns[column].number_format.is_some()
-                && (cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. }))
+                && (cell.formula.is_some()
+                    || matches!(cell.value, SourceValue::Number { .. } | SourceValue::Empty))
             {
-                // The promoted column format now owns this cell's numeric
-                // presentation; retaining the source copy would bring a later
+                // The promoted column format now owns numeric presentation in
+                // this column, blanks included (a number typed there later is
+                // the column's); retaining the source copy would bring a later
                 // cleared format back on export.
                 style.number_format = None;
             }

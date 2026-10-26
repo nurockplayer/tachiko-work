@@ -698,6 +698,14 @@ fn cleared_promoted_xlsx_format_stays_cleared_on_export() {
             rows: vec![
                 vec![source_cell(SourceValue::Number { value: 0.125 }, None)],
                 vec![source_cell(SourceValue::Number { value: 0.5 }, None)],
+                vec![SourceCell {
+                    value: SourceValue::Empty,
+                    formula: None,
+                    style: CellStyle {
+                        number_format: Some("0.0%".into()),
+                        ..CellStyle::default()
+                    },
+                }],
             ],
         }],
         ledger: Vec::new(),
@@ -705,6 +713,10 @@ fn cleared_promoted_xlsx_format_stays_cleared_on_export() {
     let bytes = tachiko_designer_runtime::interop_adapter::export_xlsx(&authored).unwrap();
     let source = tachiko_designer_runtime::interop_adapter::import_xlsx(&bytes).unwrap();
     assert_eq!(source.sheets[0].columns[0].number_format, Some(percent));
+    assert!(
+        source.sheets[0].rows[2][0].style.number_format.is_some(),
+        "the styled blank survives the XLSX round trip, so the test covers it"
+    );
     let selection = ImportSelection {
         column_types: vec![vec![ImportFieldType::Number]],
         extra_columns: vec![Vec::new()],
