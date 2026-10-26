@@ -142,6 +142,9 @@ export type TableView = {
 
 /** One bounded window of a table; `count` 0 returns totals and columns only. */
 export type TableWindowProjection = {
+  /** Same profile flags as `TableProjection`; present only when true. */
+  tracker_profile?: boolean;
+  native_table_profile?: boolean;
   revision: string;
   collection: CollectionSummary;
   columns: ColumnProjection[];

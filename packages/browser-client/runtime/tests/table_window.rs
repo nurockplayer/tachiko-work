@@ -1143,3 +1143,34 @@ fn wire_requests_use_the_documented_envelope() {
     assert_eq!(reply["error"]["code"], "use_window_query");
     assert_eq!(reply["error"]["row_count"], 1_001);
 }
+
+#[test]
+fn windows_carry_the_query_table_profile_flags() {
+    let mut runtime = small_runtime();
+    let table = whole_table(&mut runtime);
+    let totals = window(&mut runtime, TableView::default(), 0, 0).expect("count 0 is legal");
+    assert_eq!(totals.tracker_profile, table.tracker_profile);
+    assert_eq!(totals.native_table_profile, table.native_table_profile);
+
+    let mut wide = DesignerRuntime::from_document(grid_document(250, 16, 256), WIDE)
+        .expect("the wide rectangle is admitted");
+    let wide_table = whole_table(&mut wide);
+    let wide_totals = window(&mut wide, TableView::default(), 0, 0).expect("count 0 is legal");
+    assert_eq!(wide_totals.tracker_profile, wide_table.tracker_profile);
+    assert_eq!(
+        wide_totals.native_table_profile,
+        wide_table.native_table_profile
+    );
+}
+
+fn whole_table(runtime: &mut DesignerRuntime) -> tachiko_designer_runtime::TableProjection {
+    let DesignerResponse::Table(table) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: "rows".to_owned(),
+        })
+        .expect("the table is at most 1,000 rows")
+    else {
+        panic!("expected a table projection");
+    };
+    table
+}
