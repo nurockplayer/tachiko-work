@@ -21,13 +21,14 @@ revision unchanged.
 | Number literal (finite decimal or scientific) | `0.1`, `80000`, `1.5e3` |
 | Field reference | `[rent.expense]` |
 | Same-row field reference (the formula owner's own row) | `[.expense]` |
+| Column total (sum of one Number column over a table) | `[plan.reserve:total]` |
 | Binary `+`, `-`, `*`, `/` with standard precedence | `[rent.expense] * [settings.rate]` |
 | Unary `+` and `-` | `-[enemy.defense] + 2` |
 | Parentheses | `([rent.expense] + 100) * 2` |
 | Two-argument minimum and maximum | `min(0, [attacker.power] - [target.armor])` |
 
-Aggregates, conditional expressions, comparisons, lookups, and user-defined
-functions are not part of this language; the
+Conditional expressions, comparisons, lookups, user-defined functions, and
+aggregates beyond the saved column total are not part of this language; the
 [specification](../specs/formula-engine-spec.md#deferred-language-features)
 lists them as deferred. Reference targets must be Number fields.
 
@@ -74,6 +75,43 @@ Because the entity is implicit:
 The shorthand is stored in `.roproj/v3` and direct-ro/v2 as a distinct
 same-entity reference. The frozen `.roproj/v1` and `.roproj/v2` formats refuse
 to encode it rather than silently dropping the row meaning.
+
+## Column totals `[schema.field:total]`
+
+`[plan.reserve:total]` is the sum of the `reserve` column over **every row of
+the `plan` table**. It names the column, not the rows, so it keeps meaning the
+same column when rows, row keys, the table key, or the field key change:
+
+```text
+summary.total  [plan.reserve:total] + [plan_copy.reserve:total]
+```
+
+Binding resolves the table key and the field key in the current snapshot and
+requires a Number column. An unknown table or field key refuses the update as
+`formula_unknown_reference`; a Text or other non-Number column refuses it as
+`formula_type_mismatch`. Blank cells are skipped, and an empty or all-blank
+table totals `0`. A row whose value is non-Number or failed makes the total
+unavailable instead of summing the rest.
+
+The total depends on every row of that column, so a formula that reads the
+column of its own row — `[plan.reserve:total]` inside a `plan.reserve` cell —
+is a `formula_cycle`.
+
+- `copyFormula` leaves a column total unchanged: it is not a per-row address.
+- `duplicateCollection` moves a total of the copied table's own column onto the
+  copy (`[plan_copy.reserve:total]`), and keeps a total of any other table on
+  the original.
+- Removing a row of the table recomputes the total over the remaining rows;
+  removing the table or the column field is refused while a formula names it.
+
+The form is stored in `.roproj/v3` and direct-ro/v2 as a column identity; the
+frozen `.roproj/v1` and `.roproj/v2` formats refuse to encode it.
+
+Every table projection also reports these numbers in a `column_totals` map from
+column ID to `number | null`, observed at the same revision as its rows, so a
+footer row can show them without authoring a formula. Blank cells are skipped
+there too, and a null entry means a contributing value is unavailable rather
+than zero.
 
 ## Canonical source projection
 

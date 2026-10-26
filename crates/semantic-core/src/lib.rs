@@ -23,9 +23,9 @@ pub use keyed_grouped_sum::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use model::{
-    Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
-    FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, InvalidDate,
-    InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, NumberFormat,
+    ColumnAddress, ColumnRef, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
+    FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, NumberFormat,
     NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey, Value,
 };
 #[cfg(feature = "issue-175-research")]

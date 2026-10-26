@@ -809,3 +809,26 @@ fn an_unnamed_oversized_table_is_refused_for_its_name_not_its_capacity() {
         "{error:?}"
     );
 }
+
+#[test]
+fn a_column_total_counts_one_dependency_edge_per_row_of_its_table() {
+    let mut document = capacity_document(FixtureSpec {
+        rows: 3,
+        columns: 2,
+        formula_cells: 0,
+        seed: 15,
+    });
+    let owner = super::capacity_fixtures::entity_id(0);
+    let schema = document.entities[&owner].schema.clone();
+    let field = super::capacity_fixtures::field_id(1);
+    document.entities.get_mut(&owner).unwrap().fields.insert(
+        super::capacity_fixtures::field_id(0),
+        Value::Formula(Expression::ColumnTotal(super::ColumnRef::new(
+            schema, field,
+        ))),
+    );
+    let usage = check_document(&document, DEFAULT_LIMITS).unwrap();
+    assert_eq!(usage.formulas, 1);
+    assert_eq!(usage.formula_ast_nodes, 1);
+    assert_eq!(usage.dependency_edges, 3);
+}

@@ -161,6 +161,18 @@ fn atomic_history(imported: bool) {
         value: "101".into(),
     });
     expected.rows[1].fields[1].stored = Some(StoredValueProjection::Number { value: 101.0 });
+    // The Number column's footer follows the edited cell: the batch replaces
+    // one stored value, so the total moves by the difference.
+    let edited_column = expected.rows[1].fields[1].target.field.clone();
+    let previous = before.rows[1].fields[1]
+        .stored
+        .as_ref()
+        .and_then(StoredValueProjection::number)
+        .expect("the fixture's second row holds a Number value");
+    let total = before.column_totals[&edited_column].expect("the fixture totals its Number column");
+    expected
+        .column_totals
+        .insert(edited_column, Some(total - previous + 101.0));
     assert_same_values(&accepted, &expected);
     let undone = history(&mut runtime, &accepted, "undo");
     assert_same_values(&undone, &before);
