@@ -15,7 +15,7 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet, VecDeque},
     mem::{size_of, size_of_val},
-    rc::Rc,
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
@@ -1564,6 +1564,13 @@ impl ConstraintFailureReason {
     }
 }
 
+// Native hosts move the runtime between threads (Sheet's desktop app keeps it
+// in shared state behind async commands), so it must stay `Send`.
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    assert_send::<DesignerRuntime>();
+};
+
 /// One Rust-authoritative occurrence composed for the experimental browser client.
 pub struct DesignerRuntime {
     text_capacity: bool,
@@ -1638,17 +1645,20 @@ struct ViewIndexEntry {
     revision: String,
     collection: String,
     view: String,
-    order: Rc<[usize]>,
+    /// Shared with the window being built. `Arc`, not `Rc`, because native
+    /// hosts (Sheet's desktop app) keep the runtime behind a mutex across
+    /// async commands, which requires `DesignerRuntime: Send`.
+    order: Arc<[usize]>,
 }
 
 impl ViewIndexCache {
     /// Return the cached order, marking it most recently used.
-    fn get(&mut self, revision: &str, collection: &str, view: &str) -> Option<Rc<[usize]>> {
+    fn get(&mut self, revision: &str, collection: &str, view: &str) -> Option<Arc<[usize]>> {
         let position = self.entries.iter().position(|entry| {
             entry.revision == revision && entry.collection == collection && entry.view == view
         })?;
         let entry = self.entries.remove(position)?;
-        let order = Rc::clone(&entry.order);
+        let order = Arc::clone(&entry.order);
         self.entries.push_front(entry);
         Some(order)
     }
@@ -3056,19 +3066,19 @@ impl DesignerRuntime {
         &mut self,
         collection: &str,
         view: &TableView,
-    ) -> Result<Rc<[usize]>, DesignerError> {
+    ) -> Result<Arc<[usize]>, DesignerError> {
         let revision = self.current_revision().to_owned();
         let key = view_cache_key(view)?;
         self.view_index.retain_revision(&revision);
         if let Some(order) = self.view_index.get(&revision, collection, &key) {
             return Ok(order);
         }
-        let order = Rc::from(self.build_view_order(collection, view)?);
+        let order = Arc::from(self.build_view_order(collection, view)?);
         self.view_index.insert(ViewIndexEntry {
             revision,
             collection: collection.to_owned(),
             view: key,
-            order: Rc::clone(&order),
+            order: Arc::clone(&order),
         });
         Ok(order)
     }
