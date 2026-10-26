@@ -667,10 +667,16 @@ function validateColumnNumberFormat(column: ColumnProjection): void {
   if (format === null || typeof format !== "object") {
     throw new Error("Invalid Worker column number format.");
   }
-  const kind = format?.kind;
-  const validKind = kind?.type === "plain" || kind?.type === "percent" ||
-    (kind?.type === "currency" && typeof kind.code === "string" && kind.code.length === 3 && /^[A-Z]{3}$/.test(kind.code));
-  if (column.field_type !== "number" || !Number.isInteger(format.decimals) ||
+  const kind = format.kind as { type?: unknown; code?: unknown } | null;
+  // Mirror Rust's closed wire: exact member sets on the format and each kind.
+  const exactKeys = (value: object, keys: string[]) =>
+    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  const validKind = kind !== null && typeof kind === "object" && (
+    ((kind.type === "plain" || kind.type === "percent") && exactKeys(kind, ["type"])) ||
+    (kind.type === "currency" && exactKeys(kind, ["type", "code"]) &&
+      typeof kind.code === "string" && /^[A-Z]{3}$/.test(kind.code)));
+  if (column.field_type !== "number" || !exactKeys(format, ["decimals", "kind", "thousands_separator"]) ||
+      !Number.isInteger(format.decimals) ||
       format.decimals < 0 || format.decimals > 10 || typeof format.thousands_separator !== "boolean" || !validKind) {
     throw new Error("Invalid Worker column number format.");
   }

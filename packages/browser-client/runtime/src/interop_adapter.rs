@@ -1124,6 +1124,11 @@ fn infer_column_number_format(
         let numeric = cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. });
         numeric_without_style |= numeric && cell.style.number_format.is_none();
         non_numeric_value |= !matches!(cell.value, SourceValue::Empty | SourceValue::Number { .. });
+        // Only populated numeric cells decide the column format; a styled blank
+        // (often "General") must not veto an otherwise uniform column.
+        if !numeric {
+            continue;
+        }
         let Some(pattern) = cell.style.number_format.as_deref() else {
             continue;
         };
@@ -5007,5 +5012,50 @@ mod native_tables_output_tests {
         }
         let error = export_xlsx_for_profile(&workbook, profile).unwrap_err();
         assert!(error.0.contains("24 MiB"), "{error:?}");
+    }
+}
+
+#[cfg(test)]
+mod column_number_format_inference_tests {
+    use super::{CellStyle, SourceCell, SourceValue, infer_column_number_format};
+
+    fn cell(value: SourceValue, pattern: Option<&str>) -> Vec<SourceCell> {
+        vec![SourceCell {
+            value,
+            formula: None,
+            style: CellStyle {
+                number_format: pattern.map(str::to_owned),
+                ..CellStyle::default()
+            },
+        }]
+    }
+
+    #[test]
+    fn a_styled_blank_does_not_veto_a_uniform_numeric_column() {
+        let mut rows = (0..3)
+            .map(|index| {
+                cell(
+                    SourceValue::Number {
+                        value: f64::from(index),
+                    },
+                    Some("#,##0.00"),
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.push(cell(SourceValue::Empty, Some("General")));
+        let (format, rejected) = infer_column_number_format(&rows, 0);
+        assert!(format.is_some(), "the numeric cells agree on #,##0.00");
+        assert!(!rejected);
+    }
+
+    #[test]
+    fn mixed_numeric_formats_still_drop_the_column_format() {
+        let rows = vec![
+            cell(SourceValue::Number { value: 1.0 }, Some("#,##0.00")),
+            cell(SourceValue::Number { value: 2.0 }, Some("0%")),
+        ];
+        let (format, rejected) = infer_column_number_format(&rows, 0);
+        assert!(format.is_none());
+        assert!(rejected);
     }
 }

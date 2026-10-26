@@ -68,6 +68,10 @@ describe("public number-format requests", () => {
     {decimals: 2, kind: {type: "currency", code: "USD\n"}, thousands_separator: true},
     {decimals: 2, kind: {type: "unknown"}, thousands_separator: true},
     {decimals: 2, kind: {type: "plain"}, thousands_separator: 1},
+    {decimals: 2, kind: {type: "plain", code: "USD"}, thousands_separator: true},
+    {decimals: 2, kind: {type: "percent", code: "USD"}, thousands_separator: true},
+    {decimals: 2, kind: {type: "currency", code: "USD", symbol: "$"}, thousands_separator: true},
+    {decimals: 2, kind: {type: "plain"}, thousands_separator: true, locale: "en"},
   ])("rejects malformed number-format projections %j", async format => {
     const {client, reply} = fixture();
     const pending = client.queryTable("tasks");
