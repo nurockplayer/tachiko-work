@@ -123,6 +123,8 @@ fn table(runtime: &mut DesignerRuntime) -> TableProjection {
         collection: collection.expect("the first window carries the collection"),
         columns,
         rows,
+        // Windows carry no totals yet; this assembly only compares rows.
+        column_totals: std::collections::BTreeMap::new(),
     }
 }
 

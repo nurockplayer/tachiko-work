@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
-use tachiko_workspace_engine::{Document, EntityId, Expression, FieldId, Value};
+use tachiko_workspace_engine::{Document, EntityId, Expression, FieldId, SchemaId, Value};
 use thiserror::Error;
 
 use crate::DesignerError;
@@ -139,6 +139,10 @@ impl CapacityUsage {
                 )
             })
             .collect::<BTreeMap<_, _>>();
+        let mut rows_per_schema = BTreeMap::<&SchemaId, usize>::new();
+        for entity in document.entities.values() {
+            *rows_per_schema.entry(&entity.schema).or_default() += 1;
+        }
         for entity in document.entities.values() {
             if let Some((_, table)) = tables.get_mut(&entity.schema) {
                 table.rows += 1;
@@ -150,7 +154,7 @@ impl CapacityUsage {
             for value in entity.fields.values() {
                 if let Value::Formula(expression) = value {
                     usage.formulas += 1;
-                    let (nodes, edges) = formula_usage(&entity.id, expression);
+                    let (nodes, edges) = formula_usage(&rows_per_schema, &entity.id, expression);
                     usage.formula_ast_nodes += nodes;
                     usage.dependency_edges += edges;
                 }
@@ -210,11 +214,16 @@ impl CapacityUsage {
     }
 }
 
-fn formula_usage<'a>(owner: &'a EntityId, expression: &'a Expression) -> (usize, usize) {
+fn formula_usage<'a>(
+    rows_per_schema: &BTreeMap<&SchemaId, usize>,
+    owner: &'a EntityId,
+    expression: &'a Expression,
+) -> (usize, usize) {
     let mut pending = vec![expression];
     let mut nodes = 0;
     // Borrow identities so counting never copies formula trees or ID strings.
     let mut dependencies = BTreeSet::<(&EntityId, &FieldId)>::new();
+    let mut columns = BTreeSet::<(&SchemaId, &FieldId)>::new();
     while let Some(expression) = pending.pop() {
         nodes += 1;
         match expression {
@@ -223,6 +232,9 @@ fn formula_usage<'a>(owner: &'a EntityId, expression: &'a Expression) -> (usize,
             }
             Expression::SameRowReference(field) => {
                 dependencies.insert((owner, field));
+            }
+            Expression::ColumnTotal(column) => {
+                columns.insert((&column.schema, &column.field));
             }
             Expression::Add { left, right }
             | Expression::Subtract { left, right }
@@ -236,7 +248,14 @@ fn formula_usage<'a>(owner: &'a EntityId, expression: &'a Expression) -> (usize,
             Expression::Number(_) => {}
         }
     }
-    (nodes, dependencies.len())
+    // A column total depends on that column in every row of its table. Count
+    // the rows instead of listing them, so accounting stays linear in the
+    // document even with many totals.
+    let column_edges = columns
+        .iter()
+        .map(|(schema, _)| rows_per_schema.get(schema).copied().unwrap_or(0))
+        .sum::<usize>();
+    (nodes, dependencies.len() + column_edges)
 }
 
 pub(crate) fn check_document(

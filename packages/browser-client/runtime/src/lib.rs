@@ -35,12 +35,12 @@ use tachiko_storage::{
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey, Expression,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator,
-    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
-    KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
-    SemanticSubject, StarterTemplate, ValidationReport, Value, WorkspaceError, analyze_field,
-    create_document, diagnostic_codes,
+    CalculationFailure, ColumnRef, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey,
+    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError,
+    IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
+    SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
+    WorkspaceError, analyze_field, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -366,6 +366,12 @@ pub struct TableProjection {
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     pub rows: Vec<RowProjection>,
+    /// One total per Number column, keyed by column id and observed at the same
+    /// revision as `rows`. A null total means a contributing value is
+    /// unavailable or not a number; blank cells are skipped, as in a formula
+    /// column total.
+    #[serde(default, deserialize_with = "deserialize_column_totals")]
+    pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
 /// One bounded window of a collection table at one revision.
@@ -1046,6 +1052,19 @@ impl CalculationProjection {
     }
 }
 
+/// Decode a column-total map through JSON first, for the same reason as the
+/// value projections above: the pinned serde routes primitives inside this
+/// reply envelope through a map deserializer, which reaches an `f64` as a map.
+fn deserialize_column_totals<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Option<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    serde_json::from_value(raw).map_err(serde::de::Error::custom)
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DiagnosticProjection {
     pub code: String,
@@ -1617,6 +1636,32 @@ fn formula_failure_projection(
                 vec![tachiko_workspace_engine::SemanticSubject::EntityField(
                     field.clone(),
                 )],
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::Column { address, .. } => (
+                "formula_unknown_reference",
+                format!("Formula references an unknown column address '{address}'."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::NonNumericColumn { address } => (
+                "formula_type_mismatch",
+                format!("Formula column reference '{address}' is not a Number field."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
                 vec![DiagnosticFactProjection {
                     name: "reference".to_owned(),
                     value: address.to_string(),
@@ -3043,6 +3088,7 @@ impl DesignerRuntime {
                 })
                 .collect()
         };
+        let column_totals = column_totals(spec, &rows);
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
@@ -3050,6 +3096,7 @@ impl DesignerRuntime {
             collection: spec.summary.clone(),
             columns: column_projections(spec),
             rows,
+            column_totals,
         };
         Ok(projection)
     }
@@ -3444,10 +3491,30 @@ impl DesignerRuntime {
         let value = query.fields.remove(0);
         let field = target.as_field_ref();
         let edges = self.session.direct_field_dependencies();
-        let dependencies = edges
+        let mut dependencies = edges
             .get(&field)
             .map(|dependencies| dependencies.iter().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
+        // A column total's edges include every row of its column, blank slots
+        // too (they keep invalidation exact); evaluation skips blanks, so the
+        // explanation lists only the present values it actually read.
+        let owners = dependencies
+            .iter()
+            .map(|dependency| dependency.entity.clone())
+            .collect::<Vec<_>>();
+        let present = self
+            .session
+            .query_entities(&owners)?
+            .value()
+            .iter()
+            .flat_map(|entity| {
+                entity
+                    .fields
+                    .iter()
+                    .map(|field| FieldRef::new(entity.id.clone(), field.clone()))
+            })
+            .collect::<BTreeSet<_>>();
+        dependencies.retain(|dependency| present.contains(dependency));
         let direct_dependencies = self
             .session
             .query_fields(&dependencies)?
@@ -3814,6 +3881,7 @@ impl DesignerRuntime {
         let dependent_cells = dependent_formula_cells(
             snapshot.document(),
             |reference| reference.field == field_id && entities.contains(&reference.entity),
+            |column| column.field == field_id && column.schema == schema.id,
             |entity, removed| *removed == field_id && entities.contains(entity),
         );
         if dependent_cells > 0 {
@@ -3955,6 +4023,7 @@ impl DesignerRuntime {
             }
             fields.insert(field_id, definition);
         }
+        let schema_map = BTreeMap::from([(source_schema.id.clone(), schema_id.clone())]);
         let mut entity_map = BTreeMap::<EntityId, EntityId>::new();
         for source_id in &source_spec.entities {
             let target_id = loop {
@@ -3998,7 +4067,7 @@ impl DesignerRuntime {
                 let target_field = field_map
                     .get(source_field)
                     .ok_or_else(|| table_error("field mapping is incomplete"))?;
-                let value = remap_duplicate_value(value, &entity_map, &field_map)?;
+                let value = remap_duplicate_value(value, &entity_map, &field_map, &schema_map)?;
                 copied.fields.insert(target_field.clone(), value);
             }
             entities.push(copied);
@@ -4350,6 +4419,10 @@ impl DesignerRuntime {
                 );
                 require_copy_number(document, reference)
             })?;
+            // `[.field]` resolves against the destination's own row, so the
+            // copied formula must prove that row can supply the field now
+            // rather than on the first evaluation.
+            require_copy_expression_numbers(document, &target, &copied)?;
             let value = Value::Formula(copied);
             if &value != old {
                 forward.push(SemanticCommand::set_field_value(target.clone(), value));
@@ -5316,6 +5389,7 @@ impl DesignerRuntime {
         let dependent_cells = dependent_formula_cells(
             snapshot.document(),
             |reference| removed.contains(&reference.entity),
+            |_| false,
             |entity, _| removed.contains(entity),
         );
         if dependent_cells > 0 {
@@ -5604,6 +5678,48 @@ fn cell_edit_value(
             field: field.clone(),
         })
     }
+}
+
+/// Sum each Number column over the table's present values.
+///
+/// This is the footer every table projection carries, so it must agree with a
+/// formula column total: blank cells are skipped rather than failing the sum,
+/// and any other unavailable or non-numeric value makes the whole total null
+/// instead of silently summing a subset.
+fn column_totals(spec: &CollectionSpec, rows: &[RowProjection]) -> BTreeMap<String, Option<f64>> {
+    spec.columns
+        .iter()
+        .filter(|column| column.field_type == FieldType::Number)
+        .map(|column| {
+            let id = column.id.to_string();
+            let mut total = 0.0;
+            let mut complete = true;
+            for row in rows {
+                let Some(field) = row.fields.iter().find(|field| field.target.field == id) else {
+                    continue;
+                };
+                match (&field.calculated, &field.stored) {
+                    (Some(CalculationProjection::Value { value }), _)
+                    | (None, Some(StoredValueProjection::Number { value })) => total += value,
+                    (
+                        Some(
+                            CalculationProjection::Failure { .. }
+                            | CalculationProjection::Unavailable,
+                        ),
+                        _,
+                    )
+                    | (None, Some(_) | None) => {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            (
+                id,
+                complete.then_some(total).filter(|total| total.is_finite()),
+            )
+        })
+        .collect()
 }
 
 fn blank_field_ids(
@@ -6650,14 +6766,62 @@ fn require_copy_number(document: &Document, field: &FieldRef) -> Result<(), Desi
     Ok(())
 }
 
+/// Prove the numeric targets that `map_copy_references` does not visit:
+/// `[.field]` resolves against the destination row, and a column total names a
+/// schema column the copy keeps unchanged. Either must be valid now rather
+/// than on the first evaluation.
+fn require_copy_expression_numbers(
+    document: &Document,
+    owner: &FieldRef,
+    expression: &Expression,
+) -> Result<(), DesignerError> {
+    match expression {
+        Expression::SameRowReference(field) => require_copy_number(
+            document,
+            &FieldRef::new(owner.entity.clone(), field.clone()),
+        ),
+        Expression::ColumnTotal(column) => require_copy_column_number(document, column),
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            require_copy_expression_numbers(document, owner, left)?;
+            require_copy_expression_numbers(document, owner, right)
+        }
+        Expression::Number(_) | Expression::Reference(_) => Ok(()),
+    }
+}
+
+fn require_copy_column_number(
+    document: &Document,
+    column: &ColumnRef,
+) -> Result<(), DesignerError> {
+    let numeric = document
+        .schemas
+        .get(&column.schema)
+        .and_then(|schema| schema.fields.get(&column.field))
+        .is_some_and(|definition| definition.field_type == FieldType::Number);
+    if !numeric {
+        return Err(tracker_error(
+            "formula copy requires present numeric targets and references",
+        ));
+    }
+    Ok(())
+}
+
 fn map_copy_references(
     expression: &mut Expression,
     visit: &mut impl FnMut(&mut FieldRef) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
         // A relative copy keeps `[.field]` unchanged: the destination row is
-        // the formula's owner, so no per-row rewrite exists.
-        Expression::Number(_) | Expression::SameRowReference(_) => Ok(()),
+        // the formula's owner, so no per-row rewrite exists. A column total
+        // names a schema column, which no row-level copy changes.
+        Expression::Number(_) | Expression::SameRowReference(_) | Expression::ColumnTotal(_) => {
+            Ok(())
+        }
         Expression::Reference(reference) => visit(reference),
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
@@ -6675,6 +6839,7 @@ fn remap_duplicate_value(
     value: &Value,
     entities: &BTreeMap<EntityId, EntityId>,
     fields: &BTreeMap<FieldId, FieldId>,
+    schemas: &BTreeMap<SchemaId, SchemaId>,
 ) -> Result<Value, DesignerError> {
     match value {
         Value::Reference(entity) => Ok(Value::Reference(
@@ -6685,7 +6850,7 @@ fn remap_duplicate_value(
         )),
         Value::Formula(expression) => {
             let mut expression = expression.clone();
-            map_duplicate_expression(&mut expression, entities, fields)?;
+            map_duplicate_expression(&mut expression, entities, fields, schemas)?;
             Ok(Value::Formula(expression))
         }
         Value::Number(number) => Ok(Value::Number(*number)),
@@ -6699,6 +6864,7 @@ fn map_duplicate_expression(
     expression: &mut Expression,
     entities: &BTreeMap<EntityId, EntityId>,
     fields: &BTreeMap<FieldId, FieldId>,
+    schemas: &BTreeMap<SchemaId, SchemaId>,
 ) -> Result<(), DesignerError> {
     match expression {
         Expression::Number(_) => Ok(()),
@@ -6723,14 +6889,29 @@ fn map_duplicate_expression(
             })?;
             Ok(())
         }
+        Expression::ColumnTotal(column) => {
+            // A total of the copied table's own column follows the copy; a
+            // total of any other table keeps pointing at that table.
+            if let Some(schema) = schemas.get(&column.schema) {
+                let field = fields.get(&column.field).cloned().ok_or_else(|| {
+                    table_error(&format!(
+                        "internal column-total field '{}' has no copied field",
+                        column.field
+                    ))
+                })?;
+                column.schema = schema.clone();
+                column.field = field;
+            }
+            Ok(())
+        }
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }
         | Expression::Divide { left, right }
         | Expression::Minimum { left, right }
         | Expression::Maximum { left, right } => {
-            map_duplicate_expression(left, entities, fields)?;
-            map_duplicate_expression(right, entities, fields)
+            map_duplicate_expression(left, entities, fields, schemas)?;
+            map_duplicate_expression(right, entities, fields, schemas)
         }
     }
 }
@@ -7222,6 +7403,18 @@ fn ensure_formula_reference_profile(
                     field.as_str(),
                 )?;
             }
+            Expression::ColumnTotal(column) => {
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula column schema identity",
+                    column.schema.as_str(),
+                )?;
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula column field identity",
+                    column.field.as_str(),
+                )?;
+            }
             Expression::Add { left, right }
             | Expression::Subtract { left, right }
             | Expression::Multiply { left, right }
@@ -7668,6 +7861,7 @@ fn calculation_failure_code(failure: &CalculationFailure) -> &'static str {
     match failure {
         CalculationFailure::InvalidExpression { .. } => "invalid_expression",
         CalculationFailure::InvalidReferences { .. } => "invalid_references",
+        CalculationFailure::InvalidColumn { .. } => "invalid_column",
         CalculationFailure::Cycle { .. } => "cycle",
         CalculationFailure::FailedDependencies { .. } => "failed_dependencies",
         CalculationFailure::DivisionByZero => "division_by_zero",
@@ -7680,6 +7874,9 @@ fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
         CalculationFailure::InvalidExpression { .. } => "The formula structure is invalid.",
         CalculationFailure::InvalidReferences { .. } => {
             "The formula references an unavailable value."
+        }
+        CalculationFailure::InvalidColumn { .. } => {
+            "The formula references an unavailable column total."
         }
         CalculationFailure::Cycle { .. } => "The formula is part of a dependency cycle.",
         CalculationFailure::FailedDependencies { .. } => {
@@ -7928,11 +8125,14 @@ fn has_scalar_row_authoring_shape(
 
 /// Every field reference in one formula expression. Same-row references
 /// resolve against `owner`, so a retained `[.field]` formula counts as a
-/// dependent of its own row's field.
+/// dependent of its own row's field. Column totals read a whole column, not a
+/// cell, so they go to `columns`: row churn keeps them valid and only losing
+/// that exact schema's column breaks them.
 fn expression_references(
     owner: &FieldRef,
     expression: &Expression,
     references: &mut BTreeSet<FieldRef>,
+    columns: &mut BTreeSet<ColumnRef>,
 ) {
     match expression {
         Expression::Number(_) => {}
@@ -7942,14 +8142,17 @@ fn expression_references(
         Expression::SameRowReference(field) => {
             references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
         }
+        Expression::ColumnTotal(column) => {
+            columns.insert(column.clone());
+        }
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }
         | Expression::Divide { left, right }
         | Expression::Minimum { left, right }
         | Expression::Maximum { left, right } => {
-            expression_references(owner, left, references);
-            expression_references(owner, right, references);
+            expression_references(owner, left, references, columns);
+            expression_references(owner, right, references, columns);
         }
     }
 }
@@ -7959,6 +8162,7 @@ fn expression_references(
 fn dependent_formula_cells(
     document: &Document,
     removed_reference: impl Fn(&FieldRef) -> bool,
+    removed_column: impl Fn(&ColumnRef) -> bool,
     removed_cell: impl Fn(&EntityId, &FieldId) -> bool,
 ) -> usize {
     document
@@ -7973,12 +8177,14 @@ fn dependent_formula_cells(
                     return false;
                 }
                 let mut references = BTreeSet::new();
+                let mut columns = BTreeSet::new();
                 expression_references(
                     &FieldRef::new(entity.id.clone(), (*field).clone()),
                     expression,
                     &mut references,
+                    &mut columns,
                 );
-                references.iter().any(&removed_reference)
+                references.iter().any(&removed_reference) || columns.iter().any(&removed_column)
             })
         })
         .count()
@@ -8104,12 +8310,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        AuthorizationAction, ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime,
-        DocumentScopeId, EntityId, FieldDefinition, FieldId, FieldKey, FieldType, Grant, GrantId,
-        GrantRequirement, HistoryAction, KeyedGroupedSumDefinitionInput,
-        MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass, NewTableColumnInput, OperationFamily,
-        PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput,
-        ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
+        AuthorizationAction, ColumnInitializer, ColumnRef, DesignerError, DesignerRequest,
+        DesignerRuntime, DocumentScopeId, EntityId, EntityKey, Expression, FieldDefinition,
+        FieldId, FieldKey, FieldType, Grant, GrantId, GrantRequirement, HistoryAction,
+        KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
+        NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId, ProposalId,
+        RowInitializer, ScalarEditInput, SchemaId, SchemaKey, ScopedSemanticSubject,
+        SemanticCommand, SemanticScope, Value,
     };
 
     #[test]
@@ -9868,6 +10075,96 @@ mod tests {
     }
 
     #[test]
+    fn native_column_rejects_a_retained_column_total_before_publication() {
+        let base =
+            native_column_runtime(&[("Source", "number"), ("Derived", "number")], &["1", "2"]);
+        let ids = native_column_ids(&base);
+        let entity = base.collection_specs["orders"].entities[0].clone();
+        let schema = base.collection_specs["orders"].summary.id.clone();
+        let derived = ids["derived"].clone();
+        let source = ids["source"].clone();
+        let mut document = base.session.export_snapshot().document().clone();
+        document.entities.get_mut(&entity).unwrap().fields.insert(
+            derived.clone(),
+            Value::Formula(super::Expression::ColumnTotal(ColumnRef::new(
+                schema,
+                source.clone(),
+            ))),
+        );
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .native_table_rows = true;
+        // A total reads the whole column, so losing the column loses the
+        // total even though no single row is referenced by address. The
+        // refusal is checked without the frozen v1 export round-trip: a
+        // document holding a column total is not representable in .roproj/v1
+        // at all.
+        let undo_count = runtime.undo.len();
+        let redo_count = runtime.redo.len();
+        let error = runtime
+            .remove_column("resident/0", "orders", source.as_str())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::FormulaDependencyInUse {
+                dependent_cells: 1,
+                ..
+            }
+        ));
+        assert_eq!(runtime.current_revision(), "resident/0");
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert_eq!(runtime.redo.len(), redo_count);
+    }
+
+    #[test]
+    fn native_column_removal_ignores_a_total_over_another_tables_same_field_id() {
+        let base =
+            native_column_runtime(&[("Source", "number"), ("Derived", "number")], &["1", "2"]);
+        let ids = native_column_ids(&base);
+        let entity = base.collection_specs["orders"].entities[0].clone();
+        let schema = SchemaId::from(base.collection_specs["orders"].summary.id.clone());
+        let derived = ids["derived"].clone();
+        let source = ids["source"].clone();
+        let mut document = base.session.export_snapshot().document().clone();
+        // A second table whose field ids match the first one's.
+        let plan = SchemaId::from("plan");
+        let mut plan_schema = document.schemas[&schema].clone();
+        plan_schema.id = plan.clone();
+        plan_schema.key = SchemaKey::from("plan");
+        document.schemas.insert(plan.clone(), plan_schema);
+        let mut plan_row = document.entities[&entity].clone();
+        plan_row.id = EntityId::from("plan-row");
+        plan_row.key = EntityKey::from("plan-row");
+        plan_row.schema = plan.clone();
+        document.entities.insert(plan_row.id.clone(), plan_row);
+        document.entities.get_mut(&entity).unwrap().fields.insert(
+            derived,
+            Value::Formula(super::Expression::ColumnTotal(ColumnRef::new(
+                plan,
+                source.clone(),
+            ))),
+        );
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .native_table_rows = true;
+        // The total reads plan's column; removing orders' same-id column must
+        // not count it as a dependent.
+        runtime
+            .remove_column("resident/0", "orders", source.as_str())
+            .unwrap();
+    }
+
+    #[test]
     fn native_column_inverse_dependency_refusal_preserves_history_and_current_state() {
         let mut runtime = native_column_runtime(
             &[
@@ -10425,6 +10722,140 @@ mod tests {
                 .expect("finite Number must serialize")
                 .len(),
             24
+        );
+    }
+
+    fn total_spec() -> super::CollectionSpec {
+        super::CollectionSpec {
+            direct_tracker_rows: false,
+            native_table_rows: false,
+            summary: super::CollectionSummary {
+                id: "s".to_owned(),
+                key: "s".to_owned(),
+                display_name: "S".to_owned(),
+                entity_count: 0,
+            },
+            columns: vec![super::ColumnSpec {
+                id: FieldId::from("amount"),
+                key: "amount".to_owned(),
+                display_name: "Amount".to_owned(),
+                display_name_explicit: false,
+                field_type: FieldType::Number,
+                required: true,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
+                number_format: None,
+            }],
+            entities: Vec::new(),
+        }
+    }
+
+    fn total_row(
+        id: &str,
+        stored: Option<super::StoredValueProjection>,
+        calculated: Option<super::CalculationProjection>,
+    ) -> super::RowProjection {
+        super::RowProjection {
+            id: id.to_owned(),
+            key: id.to_owned(),
+            blank_fields: Vec::new(),
+            fields: vec![super::FieldProjection {
+                blank: false,
+                target: super::FieldTarget {
+                    entity: id.to_owned(),
+                    field: "amount".to_owned(),
+                },
+                address: format!("{id}.amount"),
+                stored,
+                formula: None,
+                calculated,
+                diagnostics: Vec::new(),
+                editable_scalar: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn column_totals_skip_blank_cells_and_refuse_a_partial_sum() {
+        let spec = total_spec();
+        let blank = super::RowProjection {
+            id: "blank".to_owned(),
+            key: "blank".to_owned(),
+            blank_fields: vec!["amount".to_owned()],
+            fields: Vec::new(),
+        };
+        let rows = vec![
+            total_row(
+                "a",
+                Some(super::StoredValueProjection::Number { value: 2.5 }),
+                None,
+            ),
+            total_row(
+                "b",
+                None,
+                Some(super::CalculationProjection::Value { value: 1.5 }),
+            ),
+            blank.clone(),
+        ];
+        assert_eq!(
+            super::column_totals(&spec, &rows),
+            BTreeMap::from([("amount".to_owned(), Some(4.0))])
+        );
+        assert_eq!(
+            super::column_totals(&spec, &[]),
+            BTreeMap::from([("amount".to_owned(), Some(0.0))]),
+            "an empty table totals zero rather than null"
+        );
+
+        for unavailable in [
+            total_row("c", None, Some(super::CalculationProjection::Unavailable)),
+            total_row(
+                "d",
+                None,
+                Some(super::CalculationProjection::Failure {
+                    code: "cycle".to_owned(),
+                    message: "cycle".to_owned(),
+                }),
+            ),
+            total_row(
+                "e",
+                Some(super::StoredValueProjection::Text {
+                    value: "2".to_owned(),
+                }),
+                None,
+            ),
+        ] {
+            let mut rows = rows.clone();
+            rows.push(unavailable);
+            assert_eq!(
+                super::column_totals(&spec, &rows),
+                BTreeMap::from([("amount".to_owned(), None)]),
+                "an unavailable or non-numeric contributor makes the total null"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicated_expressions_move_own_column_totals_and_keep_foreign_ones() {
+        let mut expression = Expression::Add {
+            left: Box::new(Expression::ColumnTotal(ColumnRef::new("plan", "reserve"))),
+            right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
+        };
+        super::map_duplicate_expression(
+            &mut expression,
+            &BTreeMap::new(),
+            &BTreeMap::from([(FieldId::from("reserve"), FieldId::from("reserve_copy"))]),
+            &BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]),
+        )
+        .expect("the duplicated expression maps");
+        assert_eq!(
+            expression,
+            Expression::Add {
+                left: Box::new(Expression::ColumnTotal(ColumnRef::new(
+                    "plan_copy_schema",
+                    "reserve_copy"
+                ))),
+                right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
+            }
         );
     }
 }

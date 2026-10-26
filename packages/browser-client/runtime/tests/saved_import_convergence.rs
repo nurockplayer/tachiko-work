@@ -383,7 +383,9 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         // bytes for the column fallback names in this literal projection.
         // ADR-0045 adds 3 x 16 bytes for explicit column requiredness;
         // default false blank flags and empty blank-field lists stay omitted.
-        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19 + 3 * 16);
+        // The column-total footer adds `,"column_totals":{}` (19 bytes): this
+        // fixture declares only Text columns, so it has no Number total.
+        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19 + 3 * 16 + 19);
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
 
@@ -443,6 +445,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 number_format: None,
             })
             .collect(),
+        column_totals: std::collections::BTreeMap::new(),
         rows: entities
             .into_iter()
             .map(|entity| RowProjection {

@@ -133,6 +133,12 @@ export type TableProjection = {
   collection: CollectionSummary;
   columns: ColumnProjection[];
   rows: TableRowProjection[];
+  /**
+   * One total per Number column, keyed by column id and observed at the same
+   * revision as rows. Null means a contributing value is unavailable; blank
+   * cells are skipped.
+   */
+  column_totals?: Record<string, number | null>;
 };
 
 export type SortDirection = "asc" | "desc";

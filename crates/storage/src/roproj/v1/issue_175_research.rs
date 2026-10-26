@@ -617,7 +617,8 @@ fn validate_semantic_expression_limits_cancellable(
                     }
                     Expression::Number(_)
                     | Expression::Reference(_)
-                    | Expression::SameRowReference(_) => {}
+                    | Expression::SameRowReference(_)
+                    | Expression::ColumnTotal(_) => {}
                 }
             }
         }

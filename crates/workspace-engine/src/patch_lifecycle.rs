@@ -435,8 +435,9 @@ pub struct FormulaUpdateCommand {
 }
 
 impl FormulaUpdateCommand {
-    pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
-        let references = tachiko_formula_engine::extract_dependencies(&target, &expression);
+    pub(crate) fn new(document: &Document, target: FieldRef, expression: Expression) -> Self {
+        let references =
+            tachiko_formula_engine::extract_dependencies(document, &target, &expression);
         Self {
             target,
             expression,
@@ -504,17 +505,11 @@ impl FormulaInverseRestoreCommand {
 pub struct FormulaRestoreCommand {
     target: FieldRef,
     expression: Expression,
-    references: BTreeSet<FieldRef>,
 }
 
 impl FormulaRestoreCommand {
     pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
-        let references = tachiko_formula_engine::extract_dependencies(&target, &expression);
-        Self {
-            target,
-            expression,
-            references,
-        }
+        Self { target, expression }
     }
 
     #[must_use]
@@ -525,11 +520,6 @@ impl FormulaRestoreCommand {
     #[must_use]
     pub fn expression(&self) -> &Expression {
         &self.expression
-    }
-
-    #[must_use]
-    pub fn references(&self) -> &BTreeSet<FieldRef> {
-        &self.references
     }
 }
 
@@ -3028,16 +3018,25 @@ impl PatchLifecycle {
                     .map(move |(field_id, value)| (entity.id.clone(), field_id, value))
             })
             .any(|(entity_id, field_id, value)| match value {
-                Value::Formula(expression) => {
-                    expression_references(&FieldRef::new(entity_id, field_id.clone()), expression)
-                        .iter()
-                        .any(|reference| {
-                            reference.field == field.id
-                                && schema_entities.contains(&reference.entity)
-                        })
-                }
+                Value::Formula(expression) => expression_references(
+                    candidate,
+                    &FieldRef::new(entity_id, field_id.clone()),
+                    expression,
+                )
+                .iter()
+                .any(|reference| {
+                    reference.field == field.id && schema_entities.contains(&reference.entity)
+                }),
                 _ => false,
             });
+        // A column total names the column itself, so it blocks removal even
+        // when the schema has no rows to expand into references.
+        let field_is_totaled_by_formula = candidate.entities.values().any(|entity| {
+            entity.fields.values().any(|value| {
+                matches!(value, Value::Formula(expression)
+                    if expression_names_column(expression, schema_id, &field.id))
+            })
+        });
         let field_is_referenced_by_definition = candidate
             .keyed_grouped_sum_definitions
             .values()
@@ -3050,7 +3049,10 @@ impl PatchLifecycle {
                             || definition.products.category_field == field.id
                             || definition.products.price_field == field.id))
             });
-        if field_is_referenced_by_formula || field_is_referenced_by_definition {
+        if field_is_referenced_by_formula
+            || field_is_totaled_by_formula
+            || field_is_referenced_by_definition
+        {
             return Err(WorkspaceError::SchemaFieldReferenced {
                 field: FieldRef::new(schema_id.to_string(), field.id.clone()),
             });
@@ -3789,7 +3791,7 @@ impl PatchLifecycle {
                                 self.insert_calculation_dependency_disclosures(
                                     OperationFamily::SchemaFieldMutation,
                                     document,
-                                    expression_references(&owner, expression),
+                                    expression_references(document, &owner, expression),
                                     disclosures,
                                 )?;
                             }
@@ -3853,12 +3855,19 @@ impl PatchLifecycle {
                     command.target(),
                     disclosures,
                 )?;
-                for reference in command.references() {
+                // A column total reads every entity of its schema, so the
+                // reference set expands against the admitted document. The
+                // command is built from host history where no document is at
+                // hand (the capacity edit path keeps none), so the expansion
+                // happens here, once both documents exist.
+                for reference in
+                    expression_references(after, command.target(), command.expression())
+                {
                     self.insert_field_disclosure_for(
                         OperationFamily::FormulaUpdate,
                         before,
                         after,
-                        reference,
+                        &reference,
                         disclosures,
                     )?;
                 }
@@ -4043,7 +4052,7 @@ impl PatchLifecycle {
                             self.insert_calculation_dependency_disclosures(
                                 family,
                                 document,
-                                expression_references(field, expression),
+                                expression_references(document, field, expression),
                                 disclosures,
                             )?;
                         }
@@ -4122,7 +4131,7 @@ impl PatchLifecycle {
                 disclosures.insert(DisclosureRequirement { family, scope });
             }
             Value::Formula(expression) => {
-                for field in expression_references(owner, expression) {
+                for field in expression_references(after, owner, expression) {
                     self.insert_field_disclosure_for(family, before, after, &field, disclosures)?;
                 }
             }
@@ -4145,13 +4154,25 @@ impl PatchLifecycle {
                 continue;
             }
             self.insert_field_disclosure_for(family, document, document, &field, disclosures)?;
-            let value = document
+            let entity = document
                 .entities
                 .get(&field.entity)
-                .and_then(|entity| entity.fields.get(&field.field))
                 .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+            let Some(value) = entity.fields.get(&field.field) else {
+                // A blank slot of a declared field (a column total reads every
+                // row, blanks included) is disclosed but has nothing further
+                // to traverse.
+                let declared = document
+                    .schemas
+                    .get(&entity.schema)
+                    .is_some_and(|schema| schema.fields.contains_key(&field.field));
+                if declared {
+                    continue;
+                }
+                return Err(PatchLifecycleError::ScopeDerivationFailed);
+            };
             if let Value::Formula(expression) = value {
-                pending.extend(expression_references(&field, expression));
+                pending.extend(expression_references(document, &field, expression));
             }
         }
         Ok(())
@@ -4296,7 +4317,7 @@ impl PatchLifecycle {
                         disclosures,
                     )?;
                     let owner = FieldRef::new(entity.id.clone(), field_id.clone());
-                    for reference in expression_references(&owner, expression) {
+                    for reference in expression_references(document, &owner, expression) {
                         self.insert_keyed_grouped_sum_entity_field(
                             document,
                             &reference.entity,
@@ -4864,7 +4885,35 @@ fn keyed_grouped_sum_matched_products(
     (matched, formula_operand_required)
 }
 
-fn expression_references(owner: &FieldRef, expression: &Expression) -> BTreeSet<FieldRef> {
+fn expression_names_column(expression: &Expression, schema: &SchemaId, field: &FieldId) -> bool {
+    let mut pending = vec![expression];
+    while let Some(current) = pending.pop() {
+        match current {
+            Expression::ColumnTotal(column) => {
+                if &column.schema == schema && &column.field == field {
+                    return true;
+                }
+            }
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                pending.push(right);
+                pending.push(left);
+            }
+            Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => {}
+        }
+    }
+    false
+}
+
+fn expression_references(
+    document: &Document,
+    owner: &FieldRef,
+    expression: &Expression,
+) -> BTreeSet<FieldRef> {
     let mut references = BTreeSet::new();
     let mut pending = vec![expression];
     while let Some(current) = pending.pop() {
@@ -4875,6 +4924,13 @@ fn expression_references(owner: &FieldRef, expression: &Expression) -> BTreeSet<
             }
             Expression::SameRowReference(field) => {
                 references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
+            }
+            Expression::ColumnTotal(column) => {
+                for (entity_id, entity) in &document.entities {
+                    if entity.schema == column.schema {
+                        references.insert(FieldRef::new(entity_id.clone(), column.field.clone()));
+                    }
+                }
             }
             Expression::Add { left, right }
             | Expression::Subtract { left, right }

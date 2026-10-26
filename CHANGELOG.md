@@ -61,6 +61,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Formulas now read column totals with `[schema.field:total]`. A total names a
+  column identity rather than rows, so row churn and key renames never retarget
+  it; blank cells are skipped, an empty column totals zero, and an unavailable,
+  failed or non-numeric contributor makes the total unavailable instead of a
+  partial sum. Unresolvable columns are typed (`InvalidColumn`, plus the
+  `formula_unknown_reference`/`formula_type_mismatch` bind codes) and a total
+  over its own row is `formula_cycle`. Totals save as `.roproj/v3`; frozen v1/v2
+  portable encoding refuses them. Every table projection carries a
+  `column_totals` footer keyed by column id, which the TypeScript client and kit
+  expose and document.
+
 - The Rust runtime, WASM bridge and public TypeScript client now author v3 field
   constraints: closed Text literal lists (also filling `dropdown_options`) and
   inclusive Number ranges. `setColumnConstraint` sets or clears one declaration;

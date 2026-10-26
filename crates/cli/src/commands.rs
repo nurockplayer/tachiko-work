@@ -21,14 +21,14 @@ use tachiko_workspace_engine::analysis_operations::{
     AnalysisResultValue, MetricIncompleteReason, NumericAggregateOutcome, PredicateOperand,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Date, Document, EditPreview, ExpressionComplexityError, FieldAddress,
-    FieldKind, FieldRef, IdGenerator, MergeConflict, ReferenceFailure, SemanticChange,
-    SemanticIdKind, StarterTemplate, ValidationReport, WorkspaceError, WorkspaceMergeOutcome,
-    analyze_changes as analyze_semantic_changes, analyze_field as analyze_semantic_field,
-    analyze_validation as analyze_semantic_validation, calculate_fields, compare_documents,
-    create_document, duplicate_entity, explain_field, inspect_document,
-    merge_documents as merge_semantic_documents, overview, remove_entity, rename_entity,
-    runtime_export, set_formula, set_scalar, validate as validate_semantics,
+    CalculationFailure, ColumnFailure, Date, Document, EditPreview, ExpressionComplexityError,
+    FieldAddress, FieldKind, FieldRef, IdGenerator, MergeConflict, ReferenceFailure,
+    SemanticChange, SemanticIdKind, StarterTemplate, ValidationReport, WorkspaceError,
+    WorkspaceMergeOutcome, analyze_changes as analyze_semantic_changes,
+    analyze_field as analyze_semantic_field, analyze_validation as analyze_semantic_validation,
+    calculate_fields, compare_documents, create_document, duplicate_entity, explain_field,
+    inspect_document, merge_documents as merge_semantic_documents, overview, remove_entity,
+    rename_entity, runtime_export, set_formula, set_scalar, validate as validate_semantics,
 };
 use tachiko_workspace_engine::{
     formula_operations::{
@@ -991,6 +991,21 @@ fn calculation_failure_output(failure: &CalculationFailure) -> serde_json::Value
         }),
         CalculationFailure::DivisionByZero => json!({ "kind": "division_by_zero" }),
         CalculationFailure::NonFiniteResult => json!({ "kind": "non_finite_result" }),
+        CalculationFailure::InvalidColumn { columns } => json!({
+            "kind": "invalid_column",
+            "columns": columns.iter().map(|(column, reason)| json!({
+                "column": column,
+                "reason": column_failure_name(*reason),
+            })).collect::<Vec<_>>(),
+        }),
+    }
+}
+
+const fn column_failure_name(failure: ColumnFailure) -> &'static str {
+    match failure {
+        ColumnFailure::MissingSchema => "missing_schema",
+        ColumnFailure::MissingField => "missing_field",
+        ColumnFailure::NonNumeric => "non_numeric",
     }
 }
 
