@@ -21,7 +21,7 @@ pub const MAX_NATIVE_TABLES_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_NATIVE_TABLES_EXPANDED_BYTES: usize = 24 * 1024 * 1024;
 pub const MAX_NATIVE_TABLES_XLSX_TEXT_UNITS: usize = 32_767;
 const MAX_NATIVE_TABLES_PRECISION_LOCATIONS: usize = 20;
-pub const MAX_FORMULAS: usize = 32;
+pub const MAX_FORMULAS: usize = crate::capacity::DEFAULT_LIMITS.formulas;
 pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
 pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 25_218;
 pub(crate) const MAX_TEXT_CAPACITY_BYTES: usize = 1024 * 1024;
@@ -1238,11 +1238,15 @@ impl Default for ImportOptions {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct InteropError(pub String);
+pub enum InteropError {
+    #[error("{0}")]
+    Invalid(String),
+    #[error(transparent)]
+    Capacity(#[from] crate::CapacityExceeded),
+}
 type Result<T> = std::result::Result<T, InteropError>;
 fn fail<T>(message: impl Into<String>) -> Result<T> {
-    Err(InteropError(message.into()))
+    Err(InteropError::Invalid(message.into()))
 }
 fn finding(
     category: FidelityCategory,
@@ -1276,7 +1280,8 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
     if ![',', ';', '\t'].contains(&options.delimiter) {
         return fail("Unsupported CSV delimiter");
     }
-    let text = std::str::from_utf8(bytes).map_err(|_| InteropError("CSV must be UTF-8".into()))?;
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| InteropError::Invalid("CSV must be UTF-8".into()))?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut rows = Vec::new();
     let mut row = Vec::new();
@@ -1320,11 +1325,15 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         } else {
             field.push(ch);
         }
-        if row.len() > MAX_COLUMNS
-            || rows.len() > MAX_TEXT_CAPACITY_ROWS + usize::from(options.header)
-        {
-            return fail("CSV exceeds 8,406 row or column bounds");
+        if row.len() > MAX_COLUMNS {
+            return fail("CSV exceeds column bounds");
         }
+        crate::capacity::check_limit(
+            crate::CapacityLimit::TableRows,
+            MAX_TEXT_CAPACITY_ROWS,
+            rows.len().saturating_sub(usize::from(options.header)),
+            Some("Imported table"),
+        )?;
     }
     if quoted {
         return fail("CSV contains an unclosed quoted field");
@@ -1334,10 +1343,13 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         rows.push(row);
     }
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
-    if width == 0
-        || width > MAX_COLUMNS
-        || rows.len() > MAX_TEXT_CAPACITY_ROWS + usize::from(options.header)
-    {
+    crate::capacity::check_limit(
+        crate::CapacityLimit::TableRows,
+        MAX_TEXT_CAPACITY_ROWS,
+        rows.len().saturating_sub(usize::from(options.header)),
+        Some("Imported table"),
+    )?;
+    if width == 0 || width > MAX_COLUMNS {
         return fail("CSV exceeds profile bounds");
     }
     let headers = if options.header {
@@ -1577,7 +1589,8 @@ fn capacity_plain_declaration(decl: &quick_xml::events::BytesDecl<'_>) -> bool {
 
 #[allow(clippy::too_many_lines)] // One XML event state machine and namespace scope.
 fn parse_xml(bytes: &[u8]) -> Result<Xml> {
-    let input = std::str::from_utf8(bytes).map_err(|_| InteropError("XML must be UTF-8".into()))?;
+    let input = std::str::from_utf8(bytes)
+        .map_err(|_| InteropError::Invalid("XML must be UTF-8".into()))?;
     if input.chars().any(|c| {
         (c < ' ' && !matches!(c, '\t' | '\n' | '\r')) || matches!(c, '\u{fffe}' | '\u{ffff}')
     }) {
@@ -1594,12 +1607,12 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     let mut document_event = false;
     loop {
         let start = usize::try_from(reader.buffer_position())
-            .map_err(|_| InteropError("XML offset overflow".into()))?;
+            .map_err(|_| InteropError::Invalid("XML offset overflow".into()))?;
         let event = reader
             .read_event()
-            .map_err(|e| InteropError(format!("Invalid XML: {e}")))?;
+            .map_err(|e| InteropError::Invalid(format!("Invalid XML: {e}")))?;
         let end = usize::try_from(reader.buffer_position())
-            .map_err(|_| InteropError("XML offset overflow".into()))?;
+            .map_err(|_| InteropError::Invalid("XML offset overflow".into()))?;
         plain_document &= tokens
             .get(start..end)
             .is_some_and(|raw| plain_token(raw, &event));
@@ -1625,15 +1638,15 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     if attribute_count > 64 {
                         return fail("XML attribute count exceeds profile");
                     }
-                    let a = a.map_err(|e| InteropError(e.to_string()))?;
+                    let a = a.map_err(|e| InteropError::Invalid(e.to_string()))?;
                     plain_lexical_values &=
                         !a.value.iter().any(|b| matches!(b, b'\t' | b'\n' | b'\r'));
                     let key = std::str::from_utf8(a.key.as_ref())
-                        .map_err(|_| InteropError("Invalid XML attribute".into()))?
+                        .map_err(|_| InteropError::Invalid("Invalid XML attribute".into()))?
                         .to_owned();
                     let value = a
                         .unescape_value()
-                        .map_err(|e| InteropError(e.to_string()))?
+                        .map_err(|e| InteropError::Invalid(e.to_string()))?
                         .into_owned();
                     if !xml_text_valid(&value) {
                         return fail("Invalid escaped XML attribute character");
@@ -1676,10 +1689,9 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     let uri = if prefix.is_empty() {
                         ""
                     } else {
-                        bindings
-                            .get(prefix)
-                            .map(String::as_str)
-                            .ok_or_else(|| InteropError("Unbound XML attribute namespace".into()))?
+                        bindings.get(prefix).map(String::as_str).ok_or_else(|| {
+                            InteropError::Invalid("Unbound XML attribute namespace".into())
+                        })?
                     };
                     if !expanded_attributes.insert((uri, local)) {
                         return fail("Duplicate expanded XML attribute");
@@ -1691,7 +1703,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                         || (uri == "http://www.w3.org/XML/1998/namespace" && local == "space");
                 }
                 let qname = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|_| InteropError("Invalid XML element".into()))?
+                    .map_err(|_| InteropError::Invalid("Invalid XML element".into()))?
                     .to_owned();
                 let (prefix, name) = qname.split_once(':').unwrap_or(("", &qname));
                 let ns = bindings.get(prefix).cloned().unwrap_or_default();
@@ -1723,11 +1735,13 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
             Event::End(_) => {
                 let (node, _) = stack
                     .pop()
-                    .ok_or_else(|| InteropError("Unexpected XML end".into()))?;
+                    .ok_or_else(|| InteropError::Invalid("Unexpected XML end".into()))?;
                 attach_xml(node, &mut stack, &mut root)?;
             }
             Event::Text(e) => {
-                let value = e.unescape().map_err(|e| InteropError(e.to_string()))?;
+                let value = e
+                    .unescape()
+                    .map_err(|e| InteropError::Invalid(e.to_string()))?;
                 if !xml_text_valid(&value) {
                     return fail("Invalid escaped XML character");
                 }
@@ -1747,7 +1761,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
             }
             Event::CData(e) => {
                 let value = std::str::from_utf8(e.as_ref())
-                    .map_err(|_| InteropError("Invalid CDATA".into()))?;
+                    .map_err(|_| InteropError::Invalid("Invalid CDATA".into()))?;
                 if !xml_text_valid(value) {
                     return fail("Invalid CDATA XML character");
                 }
@@ -1772,7 +1786,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     if !stack.is_empty() {
         return fail("Unclosed XML element");
     }
-    let mut root = root.ok_or_else(|| InteropError("Missing XML root".into()))?;
+    let mut root = root.ok_or_else(|| InteropError::Invalid("Missing XML root".into()))?;
     root.plain_lexical_values &= plain_document;
     Ok(root)
 }
@@ -1792,14 +1806,17 @@ fn attach_xml(
 fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
     source_bound(bytes)?;
     validate_zip_directory(bytes)?;
-    let mut zip = ZipArchive::new(Cursor::new(bytes)).map_err(|e| InteropError(e.to_string()))?;
+    let mut zip =
+        ZipArchive::new(Cursor::new(bytes)).map_err(|e| InteropError::Invalid(e.to_string()))?;
     if zip.len() > MAX_ZIP_ENTRIES {
         return fail("ZIP entry count exceeds 256");
     }
     let mut result = BTreeMap::new();
     let mut total = 0usize;
     for i in 0..zip.len() {
-        let mut file = zip.by_index(i).map_err(|e| InteropError(e.to_string()))?;
+        let mut file = zip
+            .by_index(i)
+            .map_err(|e| InteropError::Invalid(e.to_string()))?;
         let name = file.name().to_owned();
         if name.is_empty()
             || name.starts_with('/')
@@ -1811,11 +1828,11 @@ fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
         if result.contains_key(&name) {
             return fail("Duplicate ZIP entry path");
         }
-        let size =
-            usize::try_from(file.size()).map_err(|_| InteropError("ZIP size overflow".into()))?;
+        let size = usize::try_from(file.size())
+            .map_err(|_| InteropError::Invalid("ZIP size overflow".into()))?;
         total = total
             .checked_add(size)
-            .ok_or_else(|| InteropError("ZIP size overflow".into()))?;
+            .ok_or_else(|| InteropError::Invalid("ZIP size overflow".into()))?;
         if total > MAX_EXPANDED_BYTES {
             return fail("Expanded ZIP exceeds 8 MiB");
         }
@@ -1823,7 +1840,7 @@ fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
         (&mut file)
             .take((size + 1) as u64)
             .read_to_end(&mut contents)
-            .map_err(|e| InteropError(e.to_string()))?;
+            .map_err(|e| InteropError::Invalid(e.to_string()))?;
         if contents.len() != size {
             return fail("ZIP expanded size mismatch");
         }
@@ -1834,15 +1851,15 @@ fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
 fn zip_u16(bytes: &[u8], offset: usize) -> Result<usize> {
     let raw = bytes
         .get(offset..offset + 2)
-        .ok_or_else(|| InteropError("Truncated ZIP directory".into()))?;
+        .ok_or_else(|| InteropError::Invalid("Truncated ZIP directory".into()))?;
     Ok(usize::from(u16::from_le_bytes([raw[0], raw[1]])))
 }
 fn zip_u32(bytes: &[u8], offset: usize) -> Result<usize> {
     let raw = bytes
         .get(offset..offset + 4)
-        .ok_or_else(|| InteropError("Truncated ZIP directory".into()))?;
+        .ok_or_else(|| InteropError::Invalid("Truncated ZIP directory".into()))?;
     usize::try_from(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
-        .map_err(|_| InteropError("ZIP directory offset overflow".into()))
+        .map_err(|_| InteropError::Invalid("ZIP directory offset overflow".into()))
 }
 fn validate_zip_directory(bytes: &[u8]) -> Result<()> {
     // zip indexes entries by name, so duplicate names must be rejected before its index collapses them.
@@ -1853,7 +1870,7 @@ fn validate_zip_directory(bytes: &[u8]) -> Result<()> {
             bytes.get(p..p + 4) == Some(b"PK\x05\x06")
                 && zip_u16(bytes, p + 20).is_ok_and(|n| p + 22 + n == bytes.len())
         })
-        .ok_or_else(|| InteropError("Missing ZIP end directory".into()))?;
+        .ok_or_else(|| InteropError::Invalid("Missing ZIP end directory".into()))?;
     if zip_u16(bytes, end + 4)? != 0 || zip_u16(bytes, end + 6)? != 0 {
         return fail("Multi-disk ZIP is outside profile");
     }
@@ -1876,13 +1893,13 @@ fn validate_zip_directory(bytes: &[u8]) -> Result<()> {
         let comment = zip_u16(bytes, pos + 32)?;
         let name = bytes
             .get(pos + 46..pos + 46 + name_len)
-            .ok_or_else(|| InteropError("Truncated ZIP name".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Truncated ZIP name".into()))?;
         if !names.insert(name) {
             return fail("Duplicate ZIP entry path");
         }
         pos = pos
             .checked_add(46 + name_len + extra + comment)
-            .ok_or_else(|| InteropError("ZIP directory overflow".into()))?;
+            .ok_or_else(|| InteropError::Invalid("ZIP directory overflow".into()))?;
         if pos > end {
             return fail("ZIP directory outside archive");
         }
@@ -1896,7 +1913,7 @@ fn part<'a>(parts: &'a BTreeMap<String, Vec<u8>>, name: &str) -> Result<&'a [u8]
     parts
         .get(name)
         .map(Vec::as_slice)
-        .ok_or_else(|| InteropError(format!("Missing XLSX part {name}")))
+        .ok_or_else(|| InteropError::Invalid(format!("Missing XLSX part {name}")))
 }
 fn xml_part(parts: &BTreeMap<String, Vec<u8>>, name: &str, root: &str, ns: &str) -> Result<Xml> {
     let xml = parse_xml(part(parts, name)?)?;
@@ -2449,10 +2466,10 @@ fn parse_styles(
             xf.attr(key)
                 .unwrap_or("0")
                 .parse::<usize>()
-                .map_err(|_| InteropError("Invalid style index".into()))
+                .map_err(|_| InteropError::Invalid("Invalid style index".into()))
         };
         let fmt_id = u32::try_from(index("numFmtId")?)
-            .map_err(|_| InteropError("Invalid number format".into()))?;
+            .map_err(|_| InteropError::Invalid("Invalid number format".into()))?;
         let number_format = formats
             .get(&fmt_id)
             .cloned()
@@ -2505,33 +2522,41 @@ fn parse_styles(
     }
     Ok(styles)
 }
-fn coordinate(address: &str) -> Result<(usize, usize)> {
+pub(crate) fn coordinate(address: &str) -> Result<(usize, usize)> {
     let split = address
         .bytes()
         .position(|b| !b.is_ascii_alphabetic())
-        .ok_or_else(|| InteropError("Missing cell row".into()))?;
+        .ok_or_else(|| InteropError::Invalid("Missing cell row".into()))?;
     let mut col = 0usize;
     for b in address[..split].bytes() {
         col = col
             .checked_mul(26)
             .and_then(|n| n.checked_add(usize::from(b.to_ascii_uppercase() - b'A' + 1)))
-            .ok_or_else(|| InteropError("Cell column overflow".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Cell column overflow".into()))?;
         if col > MAX_COLUMNS {
             return fail("Cell column exceeds profile");
         }
     }
     let row = address[split..]
         .parse::<usize>()
-        .map_err(|_| InteropError("Invalid cell row".into()))?;
-    if col == 0 || row == 0 || row > MAX_TEXT_CAPACITY_ROWS + 1 {
-        return fail("Cell row exceeds 8,406 profile");
+        .map_err(|_| InteropError::Invalid("Invalid cell row".into()))?;
+    if col == 0 || row == 0 {
+        return fail("Invalid cell coordinate");
     }
+    // Row 1 is the header, so data rows are `row - 1`.
+    crate::capacity::check_limit(
+        crate::CapacityLimit::TableRows,
+        MAX_TEXT_CAPACITY_ROWS,
+        row - 1,
+        Some("Imported table"),
+    )?;
     Ok((row - 1, col - 1))
 }
 use crate::interop_number_format::NumberFormatKind;
 
 fn checked_number_format(style: &CellStyle) -> Result<NumberFormatKind> {
-    crate::interop_number_format::classify(style.number_format.as_deref()).map_err(InteropError)
+    crate::interop_number_format::classify(style.number_format.as_deref())
+        .map_err(InteropError::Invalid)
 }
 #[allow(clippy::float_cmp, clippy::cast_possible_truncation)] // Serial is first proven finite, integral, and within the i64 range; serial 60 is exact.
 fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
@@ -2561,7 +2586,8 @@ fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
     let m = mp + if mp < 10 { 3 } else { -9 };
     y += i64::from(m <= 2);
     let text = format!("{y:04}-{m:02}-{d:02}");
-    tachiko_workspace_engine::Date::parse(&text).map_err(|e| InteropError(e.to_string()))?;
+    tachiko_workspace_engine::Date::parse(&text)
+        .map_err(|e| InteropError::Invalid(e.to_string()))?;
     Ok(text)
 }
 fn cell_value(
@@ -2582,11 +2608,11 @@ fn cell_value(
         "s" => shared
             .get(
                 raw.parse::<usize>()
-                    .map_err(|_| InteropError("Invalid shared string index".into()))?,
+                    .map_err(|_| InteropError::Invalid("Invalid shared string index".into()))?,
             )
             .cloned()
             .map(|value| SourceValue::Text { value })
-            .ok_or_else(|| InteropError("Shared string index out of bounds".into())),
+            .ok_or_else(|| InteropError::Invalid("Shared string index out of bounds".into())),
         "inlineStr" => Ok(SourceValue::Text {
             value: cell.child("is").map(Xml::content).unwrap_or_default(),
         }),
@@ -2597,7 +2623,8 @@ fn cell_value(
             _ => fail("Invalid XLSX Boolean"),
         },
         "d" => {
-            tachiko_workspace_engine::Date::parse(raw).map_err(|e| InteropError(e.to_string()))?;
+            tachiko_workspace_engine::Date::parse(raw)
+                .map_err(|e| InteropError::Invalid(e.to_string()))?;
             Ok(SourceValue::Date { value: raw.into() })
         }
         "n" => {
@@ -2606,7 +2633,7 @@ fn cell_value(
             }
             let value = raw
                 .parse::<f64>()
-                .map_err(|_| InteropError("Invalid XLSX Number".into()))?;
+                .map_err(|_| InteropError::Invalid("Invalid XLSX Number".into()))?;
             if !value.is_finite() {
                 return fail("Nonfinite XLSX Number");
             }
@@ -2835,7 +2862,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     for relationship in relationships.kids("Relationship") {
         let id = relationship
             .attr("Id")
-            .ok_or_else(|| InteropError("Missing relationship identity".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Missing relationship identity".into()))?;
         if rels.insert(id.to_owned(), relationship).is_some() {
             return fail("Duplicate workbook relationship identity");
         }
@@ -2864,7 +2891,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     };
     let sheet_nodes = workbook
         .child("sheets")
-        .ok_or_else(|| InteropError("Missing worksheets".into()))?
+        .ok_or_else(|| InteropError::Invalid("Missing worksheets".into()))?
         .kids("sheet")
         .collect::<Vec<_>>();
     if sheet_nodes.is_empty() || sheet_nodes.len() > MAX_SHEETS {
@@ -2877,7 +2904,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     for sheet in sheet_nodes {
         let name = sheet
             .attr("name")
-            .ok_or_else(|| InteropError("Missing worksheet name".into()))?
+            .ok_or_else(|| InteropError::Invalid("Missing worksheet name".into()))?
             .to_owned();
         if !valid_worksheet_name(&name) || !names.insert(name.to_lowercase()) {
             return fail("Invalid or duplicate worksheet name");
@@ -2891,9 +2918,9 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             .get(
                 sheet
                     .attr("rel:id")
-                    .ok_or_else(|| InteropError("Missing sheet relationship".into()))?,
+                    .ok_or_else(|| InteropError::Invalid("Missing sheet relationship".into()))?,
             )
-            .ok_or_else(|| InteropError("Unresolved worksheet relationship".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Unresolved worksheet relationship".into()))?;
         if relationship.attr("TargetMode") == Some("External") {
             return fail("External worksheet is not admitted");
         }
@@ -2906,7 +2933,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             "xl",
             relationship
                 .attr("Target")
-                .ok_or_else(|| InteropError("Missing sheet target".into()))?,
+                .ok_or_else(|| InteropError::Invalid("Missing sheet target".into()))?,
         )?;
         let xml = xml_part(&parts, &path, "worksheet", MAIN)?;
         if !worksheet_paths.insert(path.clone()) {
@@ -2931,7 +2958,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         let mut width = 0;
         let data = xml
             .child("sheetData")
-            .ok_or_else(|| InteropError("Missing sheetData".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Missing sheetData".into()))?;
         if data
             .children
             .iter()
@@ -2955,17 +2982,23 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             }
             let row_index = row
                 .attr("r")
-                .ok_or_else(|| InteropError("Missing worksheet row index".into()))?
+                .ok_or_else(|| InteropError::Invalid("Missing worksheet row index".into()))?
                 .parse::<usize>()
-                .map_err(|_| InteropError("Invalid row index".into()))?;
-            if row_index == 0 || row_index > MAX_TEXT_CAPACITY_ROWS + 1 {
-                return fail("Worksheet row exceeds 8,406 profile");
+                .map_err(|_| InteropError::Invalid("Invalid row index".into()))?;
+            if row_index == 0 {
+                return fail("Invalid row index");
             }
+            crate::capacity::check_limit(
+                crate::CapacityLimit::TableRows,
+                MAX_TEXT_CAPACITY_ROWS,
+                row_index - 1,
+                Some("Imported table"),
+            )?;
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
                 let address = c
                     .attr("r")
-                    .ok_or_else(|| InteropError("Missing cell coordinate".into()))?;
+                    .ok_or_else(|| InteropError::Invalid("Missing cell coordinate".into()))?;
                 let (r, col) = coordinate(address)?;
                 if r + 1 != row_index || !seen.insert((r, col)) {
                     return fail("Duplicate or inconsistent cell coordinate");
@@ -2978,16 +3011,16 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                         c.attr("s")
                             .unwrap_or("0")
                             .parse::<usize>()
-                            .map_err(|_| InteropError("Invalid cell style".into()))?,
+                            .map_err(|_| InteropError::Invalid("Invalid cell style".into()))?,
                     )
-                    .ok_or_else(|| InteropError("Cell style index out of bounds".into()))?
+                    .ok_or_else(|| InteropError::Invalid("Cell style index out of bounds".into()))?
                     .clone();
                 let location = format!("{name}!{address}");
                 let formula = c.child("f");
                 let mut value = match cell_value(c, &shared, &style, date1904) {
                     Ok(value) => value,
                     Err(error) if formula.is_some() && ignorable_formula_cache(c, &style) => {
-                        ledger.push(finding(FidelityCategory::Converted, "formula_cache_ignored", &location, &format!("Cached formula result is unusable and ignored: {}. Rust must bind and recalculate the source formula", error.0), false));
+                        ledger.push(finding(FidelityCategory::Converted, "formula_cache_ignored", &location, &format!("Cached formula result is unusable and ignored: {error}. Rust must bind and recalculate the source formula"), false));
                         SourceValue::Empty
                     }
                     Err(error) => {
@@ -2995,7 +3028,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                             FidelityCategory::UnsupportedSafeDisabled,
                             "scalar_mapping_rejected",
                             &location,
-                            &error.0,
+                            &error.to_string(),
                             true,
                         ));
                         SourceValue::Empty
@@ -3005,7 +3038,13 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 if let Some(f) = formula {
                     formula_count += 1;
                     if formula_count > MAX_FORMULAS {
-                        return fail("Workbook exceeds 32 formulas");
+                        return Err(crate::CapacityExceeded {
+                            limit: crate::CapacityLimit::Formulas,
+                            maximum: MAX_FORMULAS,
+                            attempted: formula_count,
+                            collection: None,
+                        }
+                        .into());
                     }
                     if f.attr("t").is_some_and(|t| t != "normal") || f.text.is_empty() {
                         ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"shared_array_dynamic_formula",&location,"Shared, empty, array or dynamic formula is safe-disabled; cached value is not semantic truth",true));
@@ -3128,17 +3167,17 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     .attr("min")
                     .unwrap_or("1")
                     .parse::<usize>()
-                    .map_err(|_| InteropError("Invalid column width range".into()))?;
+                    .map_err(|_| InteropError::Invalid("Invalid column width range".into()))?;
                 let max = c
                     .attr("max")
                     .unwrap_or("1")
                     .parse::<usize>()
-                    .map_err(|_| InteropError("Invalid column width range".into()))?;
+                    .map_err(|_| InteropError::Invalid("Invalid column width range".into()))?;
                 let w = c
                     .attr("width")
                     .map(str::parse::<f64>)
                     .transpose()
-                    .map_err(|_| InteropError("Invalid column width".into()))?;
+                    .map_err(|_| InteropError::Invalid("Invalid column width".into()))?;
                 capacity_plain &= w.is_none();
                 if min == 0
                     || max < min
@@ -3198,10 +3237,7 @@ fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
                 FidelityCategory::UnsupportedSafeDisabled,
                 "output_profile_rejected",
                 "workbook",
-                &format!(
-                    "Source cannot be represented by the shared output profile: {}",
-                    error.0
-                ),
+                &format!("Source cannot be represented by the shared output profile: {error}"),
                 true,
             ));
         }
@@ -3229,7 +3265,7 @@ pub(crate) fn export_csv_for_profile(
 ) -> Result<Vec<u8>> {
     if profile == OutputProfile::NativeTables {
         validate_native_tables_csv(sheet).map_err(|finding| {
-            InteropError(format!(
+            InteropError::Invalid(format!(
                 "{} at {}: {}",
                 finding.code, finding.location, finding.message
             ))
@@ -3471,7 +3507,7 @@ pub(crate) fn validate_output_for_profile(
             if let Some(number_format) = &column.number_format {
                 number_format
                     .validate_for(&tachiko_workspace_engine::FieldType::Number)
-                    .map_err(|error| InteropError(error.to_string()))?;
+                    .map_err(|error| InteropError::Invalid(error.to_string()))?;
                 if s.rows.iter().any(|row| {
                     row.get(column_index).is_none_or(|cell| {
                         !matches!(cell.value, SourceValue::Empty | SourceValue::Number { .. })
@@ -3516,7 +3552,7 @@ pub(crate) fn validate_output_for_profile(
                 }
                 if let SourceValue::Date { value } = &c.value {
                     tachiko_workspace_engine::Date::parse(value)
-                        .map_err(|e| InteropError(e.to_string()))?;
+                        .map_err(|e| InteropError::Invalid(e.to_string()))?;
                 }
                 if let Some(formula) = &c.formula {
                     formulas += 1;
@@ -3537,7 +3573,13 @@ pub(crate) fn validate_output_for_profile(
         }
     }
     if formulas > MAX_FORMULAS {
-        return fail("Export exceeds formula bound");
+        return Err(crate::CapacityExceeded {
+            limit: crate::CapacityLimit::Formulas,
+            maximum: MAX_FORMULAS,
+            attempted: formulas,
+            collection: None,
+        }
+        .into());
     }
     Ok(())
 }
@@ -3598,7 +3640,7 @@ pub(crate) fn export_xlsx_for_profile(
 ) -> Result<Vec<u8>> {
     if profile == OutputProfile::NativeTables {
         validate_native_tables_xlsx(workbook).map_err(|finding| {
-            InteropError(format!(
+            InteropError::Invalid(format!(
                 "{} at {}: {}",
                 finding.code, finding.location, finding.message
             ))
@@ -3606,7 +3648,8 @@ pub(crate) fn export_xlsx_for_profile(
     }
     validate_output_for_profile(workbook, profile)?;
     let mut style_keys = vec![
-        serde_json::to_string(&CellStyle::default()).map_err(|e| InteropError(e.to_string()))?,
+        serde_json::to_string(&CellStyle::default())
+            .map_err(|e| InteropError::Invalid(e.to_string()))?,
     ];
     let mut styles = vec![CellStyle::default()];
     for s in workbook
@@ -3622,7 +3665,8 @@ pub(crate) fn export_xlsx_for_profile(
                         .get(column)
                         .and_then(|column| column.number_format.as_ref()),
                 );
-                let key = serde_json::to_string(&style).map_err(|e| InteropError(e.to_string()))?;
+                let key = serde_json::to_string(&style)
+                    .map_err(|e| InteropError::Invalid(e.to_string()))?;
                 if !style_keys.contains(&key) {
                     style_keys.push(key);
                     styles.push(style);
@@ -3751,7 +3795,7 @@ pub(crate) fn export_xlsx_for_profile(
                             .get(col)
                             .and_then(|column| column.number_format.as_ref()),
                     ))
-                    .map_err(|e| InteropError(e.to_string()))?;
+                    .map_err(|e| InteropError::Invalid(e.to_string()))?;
                     style_keys.iter().position(|x| x == &key).unwrap_or(0)
                 };
                 let formula = c
@@ -3844,12 +3888,14 @@ pub(crate) fn export_xlsx_for_profile(
             };
             writer
                 .start_file(name, options)
-                .map_err(|e| InteropError(e.to_string()))?;
+                .map_err(|e| InteropError::Invalid(e.to_string()))?;
             writer
                 .write_all(xml.as_bytes())
-                .map_err(|e| InteropError(e.to_string()))?;
+                .map_err(|e| InteropError::Invalid(e.to_string()))?;
         }
-        writer.finish().map_err(|e| InteropError(e.to_string()))?;
+        writer
+            .finish()
+            .map_err(|e| InteropError::Invalid(e.to_string()))?;
     }
     let bytes = output.into_inner();
     if profile == OutputProfile::NativeTables {
@@ -4714,7 +4760,7 @@ mod native_tables_output_tests {
                 assert_eq!(finding.location, format!("sheet 1 \"Table\"{suffix}"));
                 let error =
                     export_csv_for_profile(&selected, OutputProfile::NativeTables).unwrap_err();
-                assert!(error.0.contains(&finding.location));
+                assert!(error.to_string().contains(&finding.location));
                 assert!(export_csv_for_profile(&selected, OutputProfile::Shared).is_ok());
             }
         }
@@ -4944,9 +4990,11 @@ mod native_tables_output_tests {
                         assert!(result.is_ok(), "{character} header={header}: {result:?}");
                     } else {
                         let error = result.unwrap_err();
-                        assert!(error.0.contains("32,767 UTF-16"), "{error:?}");
+                        assert!(error.to_string().contains("32,767 UTF-16"), "{error:?}");
                         assert!(
-                            error.0.contains(if header { "header" } else { "row 2" }),
+                            error
+                                .to_string()
+                                .contains(if header { "header" } else { "row 2" }),
                             "{error:?}"
                         );
                         let finding = validate_native_tables_xlsx(&workbook).unwrap_err();
@@ -5011,7 +5059,7 @@ mod native_tables_output_tests {
             assert!(value.encode_utf16().count() <= 32_767);
         }
         let error = export_xlsx_for_profile(&workbook, profile).unwrap_err();
-        assert!(error.0.contains("24 MiB"), "{error:?}");
+        assert!(error.to_string().contains("24 MiB"), "{error:?}");
     }
 }
 

@@ -229,9 +229,11 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
     let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
     let lifecycle =
         designer_lifecycle(&document_scope, &document, &principal).expect("fixture lifecycle");
+    let capacity_usage = crate::CapacityUsage::measure(&document);
     let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
     DesignerRuntime {
         text_capacity: false,
+        capacity_usage,
         title,
         document_scope,
         default_collection,
@@ -596,5 +598,37 @@ fn capacity_stage_a_baseline() {
     }
     measure_runtime_edit(&mut rows);
     measure_history();
+    print_report(&rows);
+}
+
+/// Isolate the A-02 O(document) admission scan from publication and encoding.
+#[test]
+#[ignore = "capacity accounting; run explicitly in release with --features capacity-bench"]
+fn capacity_accounting_baseline() {
+    let mut rows = Vec::new();
+    for size in [(100, 10), (1_000, 10)] {
+        let document = capacity_document(FixtureSpec {
+            rows: size.0,
+            columns: size.1,
+            formula_cells: 0,
+            seed: SEED,
+        });
+        let limits = crate::CapacityLimits {
+            table_rows: 10_000,
+            total_entities: 100_000,
+            ..crate::capacity::DEFAULT_LIMITS
+        };
+        let samples = (0..EDIT_ITERATIONS)
+            .map(|_| {
+                observe(|| {
+                    std::hint::black_box(
+                        crate::capacity::check_document(&document, limits).unwrap(),
+                    );
+                })
+                .1
+            })
+            .collect::<Vec<_>>();
+        report_row(&mut rows, size, "capacity accounting", &samples, 0);
+    }
     print_report(&rows);
 }

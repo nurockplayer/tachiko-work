@@ -511,8 +511,13 @@ impl DesignerRuntime {
             let precision_findings = native_tables_xlsx_number_findings(&workbook);
             workbook.ledger.extend(precision_findings);
         }
-        validate_output_for_profile(&workbook, OutputProfile::NativeTables)
-            .map_err(|error| refused("native_tables_output_refused", "workbook", error.0))?;
+        validate_output_for_profile(&workbook, OutputProfile::NativeTables).map_err(|error| {
+            refused(
+                "native_tables_output_refused",
+                "workbook",
+                error.to_string(),
+            )
+        })?;
         Ok(workbook)
     }
 }
@@ -530,7 +535,13 @@ pub(crate) fn encode_native_tables_spreadsheet(
     } else {
         export_xlsx_for_profile(&workbook, OutputProfile::NativeTables)
     }
-    .map_err(|error| refused("native_tables_output_refused", collection, error.0))?;
+    .map_err(|error| {
+        refused(
+            "native_tables_output_refused",
+            collection,
+            error.to_string(),
+        )
+    })?;
     crate::enforce_project_transfer_limit(bytes.len())?;
     let reply = DesignerWireReply::Ok {
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {

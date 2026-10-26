@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The browser runtime reports workbook-wide capacity usage and effective limits
+  through `queryCapacity`. Candidate admissions now share accounting and return
+  a typed `capacity_exceeded` refusal without publishing changes. Existing
+  document limits and the Text/Number capacity exception remain unchanged.
 - Number columns can store a display format with 0–10 decimal places, optional
   grouping, plain/currency/percent presentation, and revision-pinned set/clear
   with Undo/Redo. Table projections, collection copies, explicit v3 saves and

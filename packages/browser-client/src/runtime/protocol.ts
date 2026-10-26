@@ -20,6 +20,20 @@ export type BootstrapProjection = {
   keyed_grouped_sum_definition_ids?: string[];
 };
 
+export type CapacityLimits = Record<CapacityLimitName, number>;
+
+export type CapacityUsage = {
+  collections: number;
+  total_entities: number;
+  populated_cells: number;
+  formulas: number;
+  formula_ast_nodes: number;
+  dependency_edges: number;
+  tables: Record<string, {rows: number; fields: number}>;
+};
+
+export type CapacityProjection = {revision: string; usage: CapacityUsage; limits: CapacityLimits};
+
 export type OpenedProjection = {
   bootstrap: BootstrapProjection;
   table: TableProjection;
@@ -278,6 +292,11 @@ export type FailureProjection = {
   message: string;
   current_revision: string;
   diagnostics: DiagnosticProjection[];
+  /** Present only for the `capacity_exceeded` refusal. */
+  limit?: CapacityLimitName;
+  maximum?: number;
+  attempted?: number;
+  collection?: string;
   name_failures?: NameFailure[];
   /** Present only when a field constraint refused the request. */
   constraint_failure?: ConstraintFailureProjection;
@@ -285,9 +304,56 @@ export type FailureProjection = {
   row_count?: number;
 };
 
+/** Runtime accounting limit named by a capacity refusal. */
+export type CapacityLimitName =
+  | "collections"
+  | "table_fields"
+  | "table_rows"
+  | "total_entities"
+  | "populated_cells"
+  | "formulas"
+  | "formula_ast_nodes"
+  | "dependency_edges";
+
+export type CapacityFailureProjection = FailureProjection & {
+  code: "capacity_exceeded";
+  limit: CapacityLimitName;
+  maximum: number;
+  attempted: number;
+} & (
+  | { limit: "table_fields" | "table_rows"; collection: string }
+  | { limit: Exclude<CapacityLimitName, "table_fields" | "table_rows">; collection?: never }
+);
+
+const CAPACITY_LIMIT_NAMES: readonly CapacityLimitName[] = [
+  "collections",
+  "table_fields",
+  "table_rows",
+  "total_entities",
+  "populated_cells",
+  "formulas",
+  "formula_ast_nodes",
+  "dependency_edges",
+];
+
+/** Validate the detailed wire payload for a capacity refusal. */
+export function isCapacityFailure(failure: FailureProjection): failure is CapacityFailureProjection {
+  if (failure.code !== "capacity_exceeded" ||
+      !CAPACITY_LIMIT_NAMES.includes(failure.limit as CapacityLimitName) ||
+      !Number.isSafeInteger(failure.maximum) || failure.maximum! < 0 ||
+      !Number.isSafeInteger(failure.attempted) || failure.attempted! <= failure.maximum!) {
+    return false;
+  }
+  if (failure.limit === "table_fields" || failure.limit === "table_rows") {
+    return typeof failure.collection === "string" && failure.collection.length > 0;
+  }
+  return failure.collection === undefined;
+}
+
 /** Known runtime failure codes, while allowing forward-compatible additions. */
 export type FailureCode =
   | "required_values_missing"
+  | "capacity_exceeded"
   | (string & {});
 
 /**
@@ -362,6 +428,7 @@ export type DesignerRequest =
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[] }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string }
   | { type: "bootstrap"; occurrence_id: string }
+  | { type: "query_capacity"; expected_revision?: string }
   | { type: "query_table"; collection: string }
   | {
       type: "query_table_window";
@@ -409,6 +476,7 @@ export type DesignerResponse =
   | {type: "imported"; payload: ImportedProjection}
   | {type: "spreadsheet_exported"; payload: {revision: string; byte_length: number; ledger: FidelityFinding[]}}
   | { type: "bootstrap"; payload: BootstrapProjection }
+  | { type: "capacity"; payload: CapacityProjection }
   | { type: "opened"; payload: OpenedProjection }
   | { type: "table"; payload: TableProjection }
   | { type: "table_window"; payload: TableWindowProjection }

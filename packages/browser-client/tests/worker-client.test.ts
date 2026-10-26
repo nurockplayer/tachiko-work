@@ -54,6 +54,117 @@ describe("Designer project inspection", () => {
   });
 });
 
+describe("capacity refusal wire validation", () => {
+  const failureBase = {
+    code: "capacity_exceeded",
+    message: "Capacity limit exceeded.",
+    current_revision: "resident/4",
+    diagnostics: [],
+  };
+
+  async function rejectWithFailure(failure: unknown): Promise<{rejected: Promise<unknown>}> {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: {id: number}) => {
+        receive?.({data: {id: request.id, status: "error", error: failure}} as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    return {rejected: client.bootstrap()};
+  }
+
+  it("accepts a valid workbook capacity refusal", async () => {
+    const {rejected} = await rejectWithFailure({
+      ...failureBase, limit: "populated_cells", maximum: 100_000, attempted: 100_001,
+    });
+    await expect(rejected).rejects.toMatchObject({
+      failure: {code: "capacity_exceeded", limit: "populated_cells", maximum: 100_000, attempted: 100_001},
+    });
+  });
+
+  it.each([
+    ["unknown limit", {...failureBase, limit: "wat", maximum: 1, attempted: 2}],
+    ["negative maximum", {...failureBase, limit: "collections", maximum: -1, attempted: 0}],
+    ["fractional maximum", {...failureBase, limit: "collections", maximum: 1.5, attempted: 2}],
+    ["attempt at the limit", {...failureBase, limit: "collections", maximum: 1, attempted: 1}],
+    ["nested capacity fields", {...failureBase, capacity: {limit: "collections", maximum: 1, attempted: 2}}],
+    ["table limit without collection", {...failureBase, limit: "table_rows", maximum: 1, attempted: 2}],
+    ["workbook limit with collection", {...failureBase, limit: "populated_cells", maximum: 1, attempted: 2, collection: "items"}],
+  ])("rejects malformed capacity refusal: %s", async (_label, failure) => {
+    const {rejected} = await rejectWithFailure(failure);
+    await expect(rejected).rejects.toThrow("Invalid Worker capacity failure.");
+  });
+
+  it("accepts a per-table refusal with its collection", async () => {
+    const {rejected} = await rejectWithFailure({
+      ...failureBase, limit: "table_rows", maximum: 10, attempted: 11, collection: "items",
+    });
+    await expect(rejected).rejects.toMatchObject({
+      failure: {code: "capacity_exceeded", limit: "table_rows", collection: "items"},
+    });
+  });
+});
+
+describe("capacity query wire validation", () => {
+  const capacity = {
+    revision: "resident/3",
+    usage: {
+      collections: 1, total_entities: 2, populated_cells: 3, formulas: 0,
+      formula_ast_nodes: 0, dependency_edges: 0,
+      tables: {items: {rows: 2, fields: 3}},
+    },
+    limits: {
+      collections: 32, table_fields: 32, table_rows: 128, total_entities: 1024,
+      populated_cells: 100_000, formulas: 32, formula_ast_nodes: 100_000, dependency_edges: 200_000,
+    },
+  };
+
+  async function requestCapacity(payload: unknown, expectedRevision: string | null = "resident/3"): Promise<{result: Promise<unknown>; request: unknown}> {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    let capturedRequest: unknown;
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: unknown) => {
+        capturedRequest = request;
+        const message = request as {id: number};
+        receive?.({data: {id: message.id, status: "ok", response: {type: "capacity", payload}}} as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    return {result: expectedRevision === null ? client.queryCapacity() : client.queryCapacity(expectedRevision), get request() { return capturedRequest; }};
+  }
+
+  it("sends the optional revision and accepts valid usage and limits", async () => {
+    const {result, request} = await requestCapacity(capacity);
+    await expect(result).resolves.toEqual(capacity);
+    expect(request).toMatchObject({kind: "command", request: {type: "query_capacity", expected_revision: "resident/3"}});
+  });
+
+  it("omits an unspecified revision", async () => {
+    const {result, request} = await requestCapacity(capacity, null);
+    await expect(result).resolves.toEqual(capacity);
+    expect(request).toMatchObject({kind: "command", request: {type: "query_capacity"}});
+    expect((request as {request: object}).request).not.toHaveProperty("expected_revision");
+  });
+
+  it.each([
+    ["missing revision", {...capacity, revision: undefined}],
+    ["missing limit", {...capacity, limits: {...capacity.limits, table_rows: undefined}}],
+    ["fractional usage", {...capacity, usage: {...capacity.usage, formulas: 0.5}}],
+    ["invalid table count", {...capacity, usage: {...capacity.usage, tables: {items: {rows: -1, fields: 3}}}}],
+  ])("rejects malformed capacity projection: %s", async (_label, payload) => {
+    const {result} = await requestCapacity(payload);
+    await expect(result).rejects.toThrow("Invalid Worker capacity projection.");
+  });
+});
+
 describe("Designer canonical and portable storage bridge", () => {
   it("keeps canonical tree entries distinct from genuine portable .ro bytes and fails closed on rejected verification", async () => {
     const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
