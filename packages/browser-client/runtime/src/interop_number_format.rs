@@ -1,6 +1,68 @@
 //! Closed classification of retained spreadsheet number-format strings.
 //! This does not render formats or select a sign/conditional section.
 
+use tachiko_workspace_engine::{NumberFormat, NumberFormatKind as StoredNumberFormatKind};
+
+/// Convert only the exact numeric vocabulary emitted by Tachiko's native
+/// XLSX writer. Other Excel patterns remain source-only and are disclosed.
+pub(crate) fn from_excel(pattern: &str) -> Option<NumberFormat> {
+    let (kind, numeric) = if let Some(rest) = pattern.strip_suffix('%') {
+        (StoredNumberFormatKind::Percent, rest)
+    } else if let Some(rest) = pattern.strip_prefix('"') {
+        let end = rest.find("\" ")?;
+        let code = &rest[..end];
+        if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_uppercase()) {
+            return None;
+        }
+        (
+            StoredNumberFormatKind::Currency {
+                code: code.to_owned(),
+            },
+            &rest[end + 2..],
+        )
+    } else {
+        (StoredNumberFormatKind::Plain, pattern)
+    };
+    let (thousands_separator, numeric) = if let Some(rest) = numeric.strip_prefix("#,##0") {
+        (true, rest)
+    } else {
+        (false, numeric.strip_prefix('0')?)
+    };
+    let decimals = if numeric.is_empty() {
+        0
+    } else {
+        let places = numeric.strip_prefix('.')?;
+        if places.is_empty() || places.len() > 10 || !places.bytes().all(|byte| byte == b'0') {
+            return None;
+        }
+        u8::try_from(places.len()).ok()?
+    };
+    Some(NumberFormat {
+        decimals,
+        kind,
+        thousands_separator,
+    })
+}
+
+pub(crate) fn to_excel(format: &NumberFormat) -> String {
+    let grouped = if format.thousands_separator {
+        "#,##0"
+    } else {
+        "0"
+    };
+    let places = if format.decimals == 0 {
+        String::new()
+    } else {
+        format!(".{}", "0".repeat(usize::from(format.decimals)))
+    };
+    let numeric = format!("{grouped}{places}");
+    match &format.kind {
+        StoredNumberFormatKind::Plain => numeric,
+        StoredNumberFormatKind::Percent => format!("{numeric}%"),
+        StoredNumberFormatKind::Currency { code } => format!("\"{code}\" {numeric}"),
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum NumberFormatKind {
     Number,
@@ -223,6 +285,80 @@ fn bracket(content: &str, conditions: &mut Vec<String>) -> Result<Option<Token>,
 #[cfg(test)]
 mod tests {
     use super::{NumberFormatKind::*, classify};
+
+    #[test]
+    fn stored_formats_round_trip_only_exact_xlsx_codes() {
+        use tachiko_workspace_engine::{NumberFormat, NumberFormatKind as StoredKind};
+
+        for format in [
+            NumberFormat {
+                decimals: 2,
+                kind: StoredKind::Plain,
+                thousands_separator: true,
+            },
+            NumberFormat {
+                decimals: 0,
+                kind: StoredKind::Percent,
+                thousands_separator: false,
+            },
+            NumberFormat {
+                decimals: 3,
+                kind: StoredKind::Currency { code: "JPY".into() },
+                thousands_separator: true,
+            },
+        ] {
+            let code = super::to_excel(&format);
+            assert_eq!(super::from_excel(&code), Some(format));
+        }
+        for unsupported in [
+            "General",
+            "0.##",
+            "0.00;[Red]-0.00",
+            "$#,##0.00",
+            "\"usd\" 0.00",
+        ] {
+            assert_eq!(super::from_excel(unsupported), None, "{unsupported}");
+        }
+    }
+
+    #[test]
+    fn xlsx_column_format_uses_display_code_and_csv_keeps_raw_number() {
+        use crate::interop_adapter::{
+            SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook, export_csv,
+            export_xlsx, import_xlsx,
+        };
+        use tachiko_workspace_engine::{NumberFormat, NumberFormatKind as StoredKind};
+
+        let format = NumberFormat {
+            decimals: 2,
+            kind: StoredKind::Percent,
+            thousands_separator: true,
+        };
+        let workbook = SourceWorkbook {
+            sheets: vec![SourceSheet {
+                name: "Numbers".into(),
+                has_header: true,
+                columns: vec![SourceColumn {
+                    name: "Rate".into(),
+                    width: None,
+                    number_format: Some(format.clone()),
+                }],
+                rows: vec![vec![SourceCell {
+                    value: SourceValue::Number { value: 0.125 },
+                    ..SourceCell::default()
+                }]],
+            }],
+            ledger: Vec::new(),
+        };
+        let csv = String::from_utf8(export_csv(&workbook.sheets[0]).unwrap()).unwrap();
+        assert_eq!(csv, "Rate\r\n0.125\r\n");
+        let imported = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+        assert_eq!(imported.sheets[0].columns[0].number_format, Some(format));
+        assert_eq!(
+            imported.sheets[0].rows[0][0].style.number_format.as_deref(),
+            Some("#,##0.00%")
+        );
+    }
 
     #[test]
     fn calendar_months_and_contextual_minutes() {

@@ -1128,6 +1128,7 @@ fn oracle_document() -> Document {
                     id: FieldId::from(id),
                     key: FieldKey::from(id),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Number,
                     required: false,
                     constraint: tachiko_semantic_core::FieldConstraint::None,

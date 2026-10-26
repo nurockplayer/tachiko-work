@@ -5,7 +5,8 @@ use tachiko_designer_runtime::{
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    FieldRef, FieldType, Number, NumberFormat, NumberFormatKind, Schema, SchemaId, SchemaKey,
+    Value,
 };
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 
@@ -36,6 +37,7 @@ fn fixture(dependent: bool) -> DesignerRuntime {
                         id,
                         key: FieldKey::from(name),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: name != "missing" && name != "converted",
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -557,6 +559,7 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
                     .map(|name| SourceColumn {
                         name: name.into(),
                         width: None,
+                        number_format: None,
                     })
                     .collect(),
                 rows: vec![
@@ -571,6 +574,7 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
                 columns: vec![SourceColumn {
                     name: "Total".into(),
                     width: None,
+                    number_format: None,
                 }],
                 rows: vec![vec![source_cell(
                     SourceValue::Number { value: 9999.0 },
@@ -607,6 +611,7 @@ fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
                     .map(|name| SourceColumn {
                         name: name.into(),
                         width: None,
+                        number_format: None,
                     })
                     .collect(),
                 rows: vec![vec![
@@ -637,6 +642,41 @@ fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
             extra_columns: vec![vec![]],
         },
     )
+}
+
+#[test]
+fn xlsx_number_format_import_is_stored_and_reexported_by_column() {
+    let format = NumberFormat {
+        decimals: 2,
+        kind: NumberFormatKind::Currency { code: "USD".into() },
+        thousands_separator: true,
+    };
+    let source = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Amounts".into(),
+            has_header: true,
+            columns: vec![SourceColumn {
+                name: "Amount".into(),
+                width: None,
+                number_format: Some(format.clone()),
+            }],
+            rows: vec![vec![source_cell(SourceValue::Number { value: 12.5 }, None)]],
+        }],
+        ledger: Vec::new(),
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert_eq!(
+        imported.opened.table.columns[0].number_format,
+        Some(format.clone())
+    );
+    let reexported = runtime
+        .export_workbook(&imported.opened.bootstrap.revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(reexported.sheets[0].columns[0].number_format, Some(format));
 }
 
 fn export_summary_definition(
@@ -1096,10 +1136,12 @@ fn import_keeps_text_and_true_absence_until_explicit_selection_and_extra_output_
                 SourceColumn {
                     name: "Identifier".into(),
                     width: None,
+                    number_format: None,
                 },
                 SourceColumn {
                     name: "Ambiguous".into(),
                     width: None,
+                    number_format: None,
                 },
             ],
             rows: vec![

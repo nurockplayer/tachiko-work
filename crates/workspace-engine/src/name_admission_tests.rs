@@ -21,6 +21,7 @@ fn definition(id: &str, name: Option<&str>) -> FieldDefinition {
         id: id.into(),
         key: id.into(),
         display_name: name.map(str::to_owned),
+        number_format: None,
         field_type: FieldType::Text,
         required: true,
         constraint: FieldConstraint::None,

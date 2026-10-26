@@ -35,6 +35,7 @@ fn native_explicit_320_by_2_number_confirmation() {
                 .map(|name| SourceColumn {
                     name: name.into(),
                     width: None,
+                    number_format: None,
                 })
                 .to_vec(),
             rows: (0..320)
@@ -328,6 +329,7 @@ fn native_required_mixed_document(rows: usize, text_width: usize) -> Document {
                         id,
                         key: FieldKey::from(key),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: true,
                         constraint: FieldConstraint::None,

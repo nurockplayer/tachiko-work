@@ -68,6 +68,13 @@ export type FieldConstraint =
 /** One complete constraint replacement; `none` clears the declaration. */
 export type FieldConstraintInput = FieldConstraint | { kind: "none" };
 
+/** Display-only number formatting stored on a Number field. */
+export type NumberFormat = {
+  decimals: number;
+  kind: { type: "plain" } | { type: "currency"; code: string } | { type: "percent" };
+  thousands_separator: boolean;
+};
+
 export type ConstraintFailureReason = "field_value" | "existing_values";
 
 /** Structured refusal: the allowed shape and how many rows or values failed. */
@@ -90,6 +97,8 @@ export type ColumnProjection = {
   dropdown_options?: string[];
   /** Declared durable constraint; omission means unconstrained. */
   constraint?: FieldConstraint;
+  /** Declared display-only number format; omission means default formatting. */
+  number_format?: NumberFormat;
 };
 
 export type TableProjection = {
@@ -247,6 +256,7 @@ export type TrackerCommand =
   | { type: "add_column"; expected_revision: string; collection: string; name: string; field_type: string; required?: boolean; initializers?: Array<{entity: string; input: ScalarEditInput}> }
   | { type: "set_column_requiredness"; expected_revision: string; collection: string; field: string; required: boolean }
   | { type: "set_column_constraint"; expected_revision: string; collection: string; field: string; constraint: FieldConstraintInput }
+  | { type: "set_column_number_format"; expected_revision: string; collection: string; field: string; number_format: NumberFormat | null }
   | { type: "rename_column"; expected_revision: string; collection: string; field: string; name: string }
   | { type: "remove_column"; expected_revision: string; collection: string; field: string }
   | { type: "undo" | "redo"; expected_revision: string };

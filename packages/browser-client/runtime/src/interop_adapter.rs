@@ -870,7 +870,13 @@ pub(crate) fn validate_xlsx_compatibility(
                     NativeTablesCheck::Style(cell),
                     &format!("{location}/style"),
                 )?;
-                let style = output_style(cell);
+                let style = output_style(
+                    cell,
+                    sheet
+                        .columns
+                        .get(column)
+                        .and_then(|column| column.number_format.as_ref()),
+                );
                 if !styles.contains(&style) {
                     styles.push(style);
                 }
@@ -1105,6 +1111,36 @@ fn escaped_xml_bytes(value: &str) -> usize {
         .sum()
 }
 
+fn infer_column_number_format(
+    rows: &[Vec<SourceCell>],
+    column_index: usize,
+) -> (Option<tachiko_workspace_engine::NumberFormat>, bool) {
+    let mut observed = None;
+    let mut has_explicit = false;
+    let mut numeric_without_style = false;
+    let mut invalid = false;
+    for cell in rows.iter().filter_map(|row| row.get(column_index)) {
+        let numeric = cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. });
+        numeric_without_style |= numeric && cell.style.number_format.is_none();
+        let Some(pattern) = cell.style.number_format.as_deref() else {
+            continue;
+        };
+        has_explicit = true;
+        match crate::interop_number_format::from_excel(pattern) {
+            Some(format) if observed.as_ref().is_none_or(|prior| *prior == format) => {
+                observed = Some(format);
+            }
+            _ => invalid = true,
+        }
+    }
+    invalid |= has_explicit && numeric_without_style;
+    if invalid {
+        (None, has_explicit)
+    } else {
+        (observed, false)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceWorkbook {
     pub sheets: Vec<SourceSheet>,
@@ -1122,6 +1158,8 @@ pub struct SourceSheet {
 pub struct SourceColumn {
     pub name: String,
     pub width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<tachiko_workspace_engine::NumberFormat>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SourceCell {
@@ -1305,7 +1343,11 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
     }
     let columns = headers
         .into_iter()
-        .map(|name| SourceColumn { name, width: None })
+        .map(|name| SourceColumn {
+            name,
+            width: None,
+            number_format: None,
+        })
         .collect();
     let rows = rows
         .into_iter()
@@ -2987,19 +3029,6 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 if matches!(value, SourceValue::Date { .. }) {
                     ledger.push(finding(FidelityCategory::Converted,"gregorian_date",&location,"Date mapped to Gregorian YYYY-MM-DD; source serial identity is adapter-only",false));
                 }
-                if style
-                    .number_format
-                    .as_ref()
-                    .is_some_and(|s| s.contains(['%', '$']))
-                {
-                    ledger.push(finding(
-                        FidelityCategory::Converted,
-                        "number_presentation",
-                        &location,
-                        "Percentage/currency is Number plus presentation",
-                        false,
-                    ));
-                }
                 rows[r][col] = SourceCell {
                     value,
                     formula: source,
@@ -3046,7 +3075,21 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             columns.push(SourceColumn {
                 name: title,
                 width: None,
+                number_format: None,
             });
+        }
+        for (column_index, column) in columns.iter_mut().enumerate() {
+            let (format, rejected) = infer_column_number_format(&rows, column_index);
+            column.number_format = format;
+            if rejected {
+                ledger.push(finding(
+                    FidelityCategory::LossyOnExport,
+                    "number_format_not_mapped",
+                    &format!("{name}:column {}", column_index + 1),
+                    "XLSX numeric formatting is mixed or outside the exact Tachiko number-format vocabulary; the field keeps its default format and source styling is not promoted.",
+                    false,
+                ));
+            }
         }
         for cols in xml.kids("cols") {
             if cols
@@ -3376,6 +3419,7 @@ fn output_headers_unique(columns: &[SourceColumn], profile: OutputProfile) -> bo
     }
 }
 
+#[allow(clippy::too_many_lines)] // One ordered profile check per output column, including number formats.
 pub(crate) fn validate_output_for_profile(
     workbook: &SourceWorkbook,
     profile: OutputProfile,
@@ -3412,6 +3456,20 @@ pub(crate) fn validate_output_for_profile(
             || s.rows.len() > profile.max_data_rows()
         {
             return fail("Export exceeds sheet bounds");
+        }
+        for (column_index, column) in s.columns.iter().enumerate() {
+            if let Some(number_format) = &column.number_format {
+                number_format
+                    .validate_for(&tachiko_workspace_engine::FieldType::Number)
+                    .map_err(|error| InteropError(error.to_string()))?;
+                if s.rows.iter().any(|row| {
+                    row.get(column_index).is_none_or(|cell| {
+                        !matches!(cell.value, SourceValue::Empty | SourceValue::Number { .. })
+                    })
+                }) {
+                    return fail("Column number format requires Number values");
+                }
+            }
         }
         for row in &s.rows {
             if row.len() != s.columns.len() {
@@ -3478,8 +3536,14 @@ fn xml_text_valid(text: &str) -> bool {
         (c < ' ' && !matches!(c, '\t' | '\n' | '\r')) || matches!(c, '\u{fffe}' | '\u{ffff}')
     })
 }
-fn output_style(cell: &SourceCell) -> CellStyle {
+fn output_style(
+    cell: &SourceCell,
+    column_format: Option<&tachiko_workspace_engine::NumberFormat>,
+) -> CellStyle {
     let mut style = cell.style.clone();
+    if let Some(format) = column_format {
+        style.number_format = Some(crate::interop_number_format::to_excel(format));
+    }
     if matches!(cell.value, SourceValue::Date { .. }) && style.number_format.is_none() {
         style.number_format = Some("yyyy-mm-dd".into());
     }
@@ -3541,8 +3605,13 @@ pub(crate) fn export_xlsx_for_profile(
         .filter(|_| profile != OutputProfile::TextCapacity)
     {
         for row in &s.rows {
-            for c in row {
-                let style = output_style(c);
+            for (column, c) in row.iter().enumerate() {
+                let style = output_style(
+                    c,
+                    s.columns
+                        .get(column)
+                        .and_then(|column| column.number_format.as_ref()),
+                );
                 let key = serde_json::to_string(&style).map_err(|e| InteropError(e.to_string()))?;
                 if !style_keys.contains(&key) {
                     style_keys.push(key);
@@ -3666,8 +3735,13 @@ pub(crate) fn export_xlsx_for_profile(
                 let sid = if profile == OutputProfile::TextCapacity {
                     0
                 } else {
-                    let key = serde_json::to_string(&output_style(c))
-                        .map_err(|e| InteropError(e.to_string()))?;
+                    let key = serde_json::to_string(&output_style(
+                        c,
+                        s.columns
+                            .get(col)
+                            .and_then(|column| column.number_format.as_ref()),
+                    ))
+                    .map_err(|e| InteropError(e.to_string()))?;
                     style_keys.iter().position(|x| x == &key).unwrap_or(0)
                 };
                 let formula = c
@@ -3850,6 +3924,7 @@ mod capacity_proof_tests {
                 .map(|index| SourceColumn {
                     name: format!("h{index}"),
                     width: None,
+                    number_format: None,
                 })
                 .collect(),
             rows: Vec::new(),
@@ -3988,6 +4063,7 @@ mod native_tables_output_tests {
                 .map(|index| SourceColumn {
                     name: format!("c{index}"),
                     width: None,
+                    number_format: None,
                 })
                 .collect(),
             rows: vec![vec![SourceCell::default(); columns]; rows],

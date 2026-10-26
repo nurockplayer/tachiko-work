@@ -50,6 +50,23 @@ await client.closeProject();
 await client.close();
 ```
 
+Number columns may carry a durable display format. Formats affect presentation
+only; stored values and calculated results remain numeric. Replace a format or
+pass `null` to clear it, using the current table revision:
+
+```ts
+await client.setColumnNumberFormat(table.revision, "tasks", "amount", {
+  decimals: 2,
+  kind: { type: "currency", code: "USD" },
+  thousands_separator: true,
+});
+```
+
+`kind` is `{ type: "plain" }`, `{ type: "currency", code: "USD" }` (three
+uppercase ISO-4217 letters), or `{ type: "percent" }`. `decimals` is an integer
+from 0 through 10. A column projection includes `number_format` only when a
+format is stored.
+
 Publication replies include `schemas` and `schema_fields` (stable schema ID or
 `{schema, field}` ID pairs) for presentation invalidation, independently of
 `entities`, `fields`, and `affected_calculations`. Refresh affected collection

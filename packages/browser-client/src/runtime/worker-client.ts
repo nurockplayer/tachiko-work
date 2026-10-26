@@ -16,6 +16,7 @@ import type {
   FieldBatchProjection,
   FieldExplanationProjection,
   FieldConstraintInput,
+  NumberFormat,
   FieldTarget,
   FieldProjection,
   OpenedProjection,
@@ -164,6 +165,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async setColumnConstraint(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_constraint", expected_revision: expectedRevision, collection, field, constraint});
+  }
+
+  async setColumnNumberFormat(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_number_format", expected_revision: expectedRevision, collection, field, number_format: numberFormat});
   }
 
   async bootstrap(): Promise<BootstrapProjection> {
@@ -604,6 +609,21 @@ function validateColumnConstraint(column: ColumnProjection): void {
   throw new Error("Invalid Worker column constraint.");
 }
 
+function validateColumnNumberFormat(column: ColumnProjection): void {
+  const format = column.number_format;
+  if (format === undefined) return;
+  if (format === null || typeof format !== "object") {
+    throw new Error("Invalid Worker column number format.");
+  }
+  const kind = format?.kind;
+  const validKind = kind?.type === "plain" || kind?.type === "percent" ||
+    (kind?.type === "currency" && typeof kind.code === "string" && kind.code.length === 3 && /^[A-Z]{3}$/.test(kind.code));
+  if (column.field_type !== "number" || !Number.isInteger(format.decimals) ||
+      format.decimals < 0 || format.decimals > 10 || typeof format.thousands_separator !== "boolean" || !validKind) {
+    throw new Error("Invalid Worker column number format.");
+  }
+}
+
 function validateTablePresence(table: TableProjection): void {
   const columns = new Map(table.columns.map((column, index) => {
     if (typeof column.required !== "boolean") throw new Error("Invalid Worker column requiredness.");
@@ -611,6 +631,7 @@ function validateTablePresence(table: TableProjection): void {
       throw new Error("Invalid Worker column display_name_explicit.");
     }
     validateColumnConstraint(column);
+    validateColumnNumberFormat(column);
     return [column.id, {required: column.required, index}];
   }));
   if (columns.size !== table.columns.length) throw new Error("Invalid Worker duplicate column identity.");

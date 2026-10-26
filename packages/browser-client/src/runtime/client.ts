@@ -20,6 +20,7 @@ import type {
   TableProjection,
   FailureProjection,
   FieldConstraintInput,
+  NumberFormat,
 } from "./protocol.ts";
 
 export interface DesignerClient {
@@ -44,6 +45,8 @@ export interface DesignerClient {
   setColumnRequiredness?(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection>;
   /** Replace one durable constraint; `none` clears it. Constrained projects export as v3 only. */
   setColumnConstraint?(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection>;
+  /** Replace or clear one Number column's durable display format. */
+  setColumnNumberFormat?(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;

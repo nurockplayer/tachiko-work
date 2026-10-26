@@ -30,6 +30,7 @@ fn document() -> Document {
                 id: id.into(),
                 key: id.into(),
                 display_name: None,
+                number_format: None,
                 field_type: kind,
                 required: true,
                 constraint: FieldConstraint::None,

@@ -567,6 +567,16 @@ fn validate_field_constraint(
     subject: SemanticSubject,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if let Some(format) = &definition.number_format {
+        if let Err(error) = format.validate_for(&definition.field_type) {
+            diagnostics.push(core_diagnostic(
+                format!("{field_path}.number_format"),
+                DiagnosticCode::new("core.field_number_format_declaration"),
+                error.to_string(),
+                vec![subject.clone()],
+            ));
+        }
+    }
     let invalid = match (&definition.field_type, &definition.constraint) {
         (_, FieldConstraint::None) => false,
         (FieldType::Text, FieldConstraint::TextLiteralSet { values }) => {
@@ -1380,6 +1390,7 @@ mod issue_175_research {
                                 id: FieldId::from("name"),
                                 key: "name".into(),
                                 display_name: None,
+                                number_format: None,
                                 field_type: FieldType::Text,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1391,6 +1402,7 @@ mod issue_175_research {
                                 id: FieldId::from("different-amount-id"),
                                 key: "Invalid Amount Key".into(),
                                 display_name: None,
+                                number_format: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1402,6 +1414,7 @@ mod issue_175_research {
                                 id: FieldId::from("calc"),
                                 key: "calc".into(),
                                 display_name: None,
+                                number_format: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1489,6 +1502,7 @@ mod issue_175_research {
                             id: FieldId::from("name"),
                             key: "name".into(),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint,
