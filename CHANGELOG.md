@@ -4,6 +4,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Number columns can store a display format with 0–10 decimal places, optional
+  grouping, plain/currency/percent presentation, and revision-pinned set/clear
+  with Undo/Redo. Table projections, collection copies, explicit v3 saves and
+  direct `.ro/v2` preserve it; format-free document bytes stay unchanged.
+  Frozen project exports refuse formats with a typed error. XLSX writes an
+  equivalent column format and imports exact uniform formats; CSV retains raw
+  values and reports omitted formatting. Existing merge contracts explicitly
+  refuse formatted documents rather than dropping display metadata.
+
 ### Fixed
 
 - Capacity metadata acceptance now states the imported export name policy:

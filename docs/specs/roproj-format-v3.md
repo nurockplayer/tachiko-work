@@ -33,7 +33,7 @@ supersession below, an incompatible change requires a new representation
 version and Accepted authority. ADR-0043 selects no v4 or down-conversion.
 
 V3's only DTO changes are: manifest version `3`; FieldDefinition's five
-required members plus optional `display_name`; optional Schema `display_name`;
+required members plus optional `display_name` and `number_format`; optional Schema `display_name`;
 the added `date` FieldType; the added `date` Value; and the constraint union
 below. All other v2 members, tags, requiredness, ordering,
 unknown-member rejection, ID ordering, formula rules, definition rules, and
@@ -66,7 +66,7 @@ unsupported, or non-lexical version fails closed.
 A Schema has fixed member order `id`, `key`, `display_name` when present,
 `fields`; fields are ordered by stable Field ID. V3's complete FieldDefinition
 has fixed member order `id`, `key`, `display_name` when present, `field_type`,
-`required`, `constraint`. This placement is normative under
+`required`, `constraint`, `number_format` when present. This placement is normative under
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md):
 
 ```json
@@ -126,6 +126,18 @@ binaries refuse name-bearing trees and packages; no compatibility with those
 binaries is claimed. Existing valid nameless fixtures MUST remain byte-identical.
 The separate #529 implementation MUST add an independent named fixture with
 exact bytes and round-trip evidence; this authority PR creates no fixture.
+
+### Optional Number display format (R3)
+
+FieldDefinition admits optional non-null `number_format`, after `constraint`.
+Its members are `decimals`, `kind`, `thousands_separator`, in that order. The
+closed object and `kind` union follow the
+[semantic declaration](semantic-data-model.md#per-column-number-display-format-r3).
+Canonical output uses ordinary two-space JSON indentation. Unknown/missing
+members, malformed kinds, non-Number pairing, decimals outside 0..=10, and
+malformed currency identifiers fail admission. Omitted formats stay omitted;
+there is no default format materialized into an older document. Consequently
+all previously canonical format-free trees and package hashes remain exact.
 
 ### FieldType
 

@@ -153,6 +153,7 @@ fn rewrite_document(
                     Ok((
                         field_id.clone(),
                         FieldDefinitionV2 {
+                            number_format: None,
                             id: field_id,
                             key: legacy_field.0,
                             field_type,

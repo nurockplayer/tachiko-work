@@ -412,6 +412,8 @@ pub struct FieldDefinition {
     pub field_type: FieldType,
     pub required: bool,
     pub constraint: FieldConstraint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<NumberFormat>,
 }
 
 fn stored_display_name<'de, D: Deserializer<'de>>(
@@ -435,6 +437,14 @@ impl FieldDefinition {
 }
 
 impl Document {
+    #[must_use]
+    pub fn has_number_formats(&self) -> bool {
+        self.schemas
+            .values()
+            .flat_map(|schema| schema.fields.values())
+            .any(|field| field.number_format.is_some())
+    }
+
     #[must_use]
     pub fn has_display_names(&self) -> bool {
         self.schemas.values().any(|schema| {
@@ -627,5 +637,92 @@ impl FieldAddress {
 impl fmt::Display for FieldAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}.{}", self.entity, self.field)
+    }
+}
+
+/// Display-only presentation of a Number; never changes stored or calculated values.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NumberFormat {
+    pub decimals: u8,
+    pub kind: NumberFormatKind,
+    pub thousands_separator: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", from = "NumberFormatKindWire")]
+pub enum NumberFormatKind {
+    Plain,
+    Currency { code: String },
+    Percent,
+}
+
+// Unit variants of an internally tagged enum ignore extra keys, so the wire
+// shape wraps each kind in a `deny_unknown_fields` struct to keep it closed.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum NumberFormatKindWire {
+    Plain(EmptyKindWire),
+    Currency(CurrencyKindWire),
+    Percent(EmptyKindWire),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyKindWire {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CurrencyKindWire {
+    code: String,
+}
+
+impl From<NumberFormatKindWire> for NumberFormatKind {
+    fn from(wire: NumberFormatKindWire) -> Self {
+        match wire {
+            NumberFormatKindWire::Plain(_) => Self::Plain,
+            NumberFormatKindWire::Currency(CurrencyKindWire { code }) => Self::Currency { code },
+            NumberFormatKindWire::Percent(_) => Self::Percent,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NumberFormatError {
+    NonNumberField,
+    DecimalsOutOfRange,
+    InvalidCurrencyCode,
+}
+
+impl fmt::Display for NumberFormatError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NonNumberField => "number format is only valid on Number fields",
+            Self::DecimalsOutOfRange => "number format decimals must be between 0 and 10",
+            Self::InvalidCurrencyCode => "currency code must be three uppercase ASCII letters",
+        })
+    }
+}
+
+impl std::error::Error for NumberFormatError {}
+
+impl NumberFormat {
+    /// Validate the format declaration independently of storage or rendering.
+    ///
+    /// # Errors
+    /// Returns a typed declaration error without coercion.
+    pub fn validate_for(&self, field_type: &FieldType) -> Result<(), NumberFormatError> {
+        if *field_type != FieldType::Number {
+            return Err(NumberFormatError::NonNumberField);
+        }
+        if self.decimals > 10 {
+            return Err(NumberFormatError::DecimalsOutOfRange);
+        }
+        if let NumberFormatKind::Currency { code } = &self.kind {
+            if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_uppercase()) {
+                return Err(NumberFormatError::InvalidCurrencyCode);
+            }
+        }
+        Ok(())
     }
 }

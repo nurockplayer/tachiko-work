@@ -385,6 +385,7 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
                         id: id.into(),
                         key: id.into(),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required,
                         constraint: FieldConstraint::None,

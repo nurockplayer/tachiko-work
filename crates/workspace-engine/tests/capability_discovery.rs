@@ -29,6 +29,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
         id: FieldId::from(id),
         key: id.into(),
         display_name: None,
+        number_format: None,
         field_type,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,

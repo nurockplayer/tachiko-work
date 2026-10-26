@@ -16,6 +16,7 @@ fn number_field(id: &str) -> FieldDefinition {
         id: id.into(),
         key: id.into(),
         display_name: None,
+        number_format: None,
         field_type: FieldType::Number,
         required: false,
         constraint: FieldConstraint::None,

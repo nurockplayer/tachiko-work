@@ -7,6 +7,8 @@
 mod constraints_tests;
 #[cfg(test)]
 mod display_names_tests;
+#[cfg(test)]
+mod number_format_tests;
 
 mod name_admission;
 use name_admission::{NameFailure, allocate_key, author_column_name, author_table_names};
@@ -162,6 +164,12 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         required: bool,
+    },
+    SetColumnNumberFormat {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        number_format: Option<tachiko_workspace_engine::NumberFormat>,
     },
     SetColumnConstraint {
         expected_revision: String,
@@ -625,7 +633,9 @@ fn document_has_constraints(document: &Document) -> bool {
 }
 
 fn document_requires_v2_evidence(document: &Document) -> bool {
-    document.has_display_names() || document_has_constraints(document)
+    document.has_display_names()
+        || document_has_constraints(document)
+        || document.has_number_formats()
 }
 
 /// Turn a constrained-value validation failure into the private typed refusal
@@ -742,6 +752,8 @@ pub struct ColumnProjection {
     /// The declared durable constraint, if any. Absence means unconstrained.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub constraint: Option<FieldConstraintProjection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<tachiko_workspace_engine::NumberFormat>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1244,10 +1256,13 @@ pub enum DesignerError {
         reason: ConstraintFailureReason,
         message: String,
     },
-    #[error(
-        "this project uses field constraints and cannot be saved as an earlier format: {message}"
-    )]
+    #[error("this project cannot be saved as an earlier format: {message}")]
     LegacyExportUnsupported { message: String },
+    #[error("invalid number format: {source}")]
+    InvalidNumberFormat {
+        #[source]
+        source: tachiko_workspace_engine::NumberFormatError,
+    },
     #[error("{}", required_values_missing_message(*.count))]
     RequiredValuesMissing {
         schema: SchemaId,
@@ -1382,6 +1397,7 @@ impl DesignerError {
                 subject,
             } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
+            Self::InvalidNumberFormat { .. } => ("invalid_number_format", Vec::new()),
             Self::LegacyExportUnsupported { .. } => ("legacy_export_unsupported", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
@@ -1629,6 +1645,7 @@ struct ColumnSpec {
     field_type: FieldType,
     required: bool,
     constraint: tachiko_workspace_engine::FieldConstraint,
+    number_format: Option<tachiko_workspace_engine::NumberFormat>,
 }
 
 /// Small LRU of ordered view indices. An entry is the row positions inside
@@ -2299,6 +2316,17 @@ impl DesignerRuntime {
                 &field,
                 required,
             )?)),
+            DesignerRequest::SetColumnNumberFormat {
+                expected_revision,
+                collection,
+                field,
+                number_format,
+            } => Ok(DesignerResponse::Published(self.set_column_number_format(
+                &expected_revision,
+                &collection,
+                &field,
+                number_format,
+            )?)),
             DesignerRequest::SetColumnConstraint {
                 expected_revision,
                 collection,
@@ -2694,6 +2722,11 @@ impl DesignerRuntime {
         // A constrained document has no legacy representation at all, so this
         // answer is more specific than the generic v3-origin prohibition and
         // applies to both origins.
+        if snapshot.document().has_number_formats() {
+            return Err(DesignerError::LegacyExportUnsupported {
+                message: "number formats require exportProjectV3 or exportCanonicalTree".to_owned(),
+            });
+        }
         if document_has_constraints(snapshot.document()) {
             return Err(DesignerError::LegacyExportUnsupported {
                 message:
@@ -3440,6 +3473,47 @@ impl DesignerRuntime {
         )
     }
 
+    fn set_column_number_format(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        number_format: Option<tachiko_workspace_engine::NumberFormat>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        // Display-only: a format does not depend on the row authoring shape, so it
+        // stays available after formula cells make the table non-native.
+        let schema_id = SchemaId::from(self.collection_spec(collection)?.summary.id.clone());
+        let snapshot = self.session.export_snapshot();
+        let definition = snapshot.document().schemas[&schema_id]
+            .fields
+            .get(&FieldId::from(field.to_owned()))
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        if definition.field_type != FieldType::Number {
+            return Err(DesignerError::InvalidNumberFormat {
+                source: tachiko_workspace_engine::NumberFormatError::NonNumberField,
+            });
+        }
+        if let Some(format) = &number_format {
+            format
+                .validate_for(&definition.field_type)
+                .map_err(|source| DesignerError::InvalidNumberFormat { source })?;
+        }
+        if definition.number_format == number_format {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        let command = |number_format| SemanticCommand::SetFieldNumberFormat {
+            schema: schema_id.clone(),
+            field: definition.id.clone(),
+            number_format,
+        };
+        self.record_edit(
+            expected,
+            vec![command(number_format)],
+            vec![command(definition.number_format.clone())],
+        )
+    }
+
     fn set_column_constraint(
         &mut self,
         expected: &str,
@@ -3532,6 +3606,7 @@ impl DesignerRuntime {
             id: id.clone(),
             key: FieldKey::from(key),
             display_name: Some(name),
+            number_format: None,
             field_type: kind,
             required,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -4296,6 +4371,19 @@ impl DesignerRuntime {
                         );
                     }
                 }
+                SemanticCommand::SetFieldNumberFormat {
+                    schema,
+                    field,
+                    number_format,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .and_then(|schema| schema.fields.get_mut(field))
+                        .ok_or_else(|| table_error("column is unavailable"))?
+                        .number_format
+                        .clone_from(number_format);
+                }
                 SemanticCommand::FormulaRestore(command) => {
                     if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
                         entity.fields.insert(
@@ -4405,14 +4493,16 @@ impl DesignerRuntime {
                 SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
                 | SemanticCommand::SetFieldConstraint { .. }
+                | SemanticCommand::SetFieldNumberFormat { .. }
                 | SemanticCommand::UnsetField { .. } => true,
-                SemanticCommand::AppendSchemaField { field, .. } => field.display_name.is_some(),
+                SemanticCommand::AppendSchemaField { field, .. } => {
+                    field.display_name.is_some() || field.number_format.is_some()
+                }
                 SemanticCommand::AppendCollection { schema, .. } => {
                     schema.display_name.is_some()
-                        || schema
-                            .fields
-                            .values()
-                            .any(|field| field.display_name.is_some())
+                        || schema.fields.values().any(|field| {
+                            field.display_name.is_some() || field.number_format.is_some()
+                        })
                 }
                 _ => false,
             });
@@ -4554,6 +4644,7 @@ impl DesignerRuntime {
                         id,
                         key: FieldKey::from(key),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -4602,6 +4693,7 @@ impl DesignerRuntime {
                     id,
                     key: FieldKey::from(key),
                     display_name: Some(name.to_owned()),
+                    number_format: None,
                     field_type,
                     required: column.required,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -5274,6 +5366,7 @@ fn column_projections(spec: &CollectionSpec) -> Vec<ColumnProjection> {
                 _ => None,
             },
             constraint: constraint_projection(&column.constraint),
+            number_format: column.number_format.clone(),
         })
         .collect()
 }
@@ -5853,6 +5946,7 @@ fn budget_schema<const COUNT: usize>(
                         id,
                         key: FieldKey::from(key),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -6551,6 +6645,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                         field_type: field.field_type.clone(),
                         required: field.required,
                         constraint: field.constraint.clone(),
+                        number_format: field.number_format.clone(),
                     })
                     .collect(),
                     entities,
@@ -6648,6 +6743,7 @@ fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWor
                     name: char::from(b'a' + u8::try_from(index).expect("bounded capacity column"))
                         .to_string(),
                     width: None,
+                    number_format: None,
                 })
                 .collect(),
             rows: document
@@ -7402,6 +7498,7 @@ fn add_moonfall_boolean_fixture(document: &mut Document) -> Result<(), DesignerE
             id: field.clone(),
             key: FieldKey::from("enabled"),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Boolean,
             required: true,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -9699,6 +9796,7 @@ mod tests {
             id: "legacy-quantity-field".into(),
             key: "quantity".into(),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Number,
             required: true,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -9769,6 +9867,7 @@ mod tests {
                             id: FieldId::from(format!("bad-{}", runtime.proposal_serial)),
                             key: FieldKey::from(format!("bad_{}", runtime.proposal_serial)),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,

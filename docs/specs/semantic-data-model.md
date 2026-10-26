@@ -87,6 +87,34 @@ graph or introduce a new type architecture. `Date` is a proleptic Gregorian
 civil date in the bounded `0001..=9999` range, canonically represented as
 `YYYY-MM-DD` without time or timezone semantics.
 
+### Per-column Number display format (R3)
+
+A FieldDefinition MAY carry `number_format` only when its FieldType is Number.
+Omission means the existing default presentation and leaves existing serialized
+Document bytes and hashes unchanged. The closed declaration is:
+
+```json
+{"decimals":2,"kind":{"type":"currency","code":"USD"},"thousands_separator":true}
+```
+
+`decimals` is an integer in 0..=10; `thousands_separator` is a boolean. `kind`
+is `{"type":"plain"}`, `{"type":"currency","code":"USD"}`, or
+`{"type":"percent"}`. Currency identifiers use the ISO-4217 spelling of three
+uppercase ASCII letters (the model checks syntax, not a changing currency registry).
+Percent renders the value multiplied by 100 and followed by `%`. This is display
+metadata: stored Numbers, formula expressions, calculated results, and constraints
+retain their existing meaning. Invalid declarations produce typed errors and
+`core.field_number_format_declaration` diagnostics during document validation.
+
+The revision-pinned `set_column_number_format` command replaces this facet;
+`null` clears it. It publishes through the ordinary schema-field lifecycle and
+records an exact inverse for Undo/Redo. The v2 canonical delta carries a
+`SchemaFieldNumberFormatChanged` fact, and complete field payloads include the
+format. Frozen v1 evidence and the existing merge contracts refuse formatted
+documents instead of discarding an unsupported facet. Collection duplication
+copies the format with the field; column removal discards it. A replacement
+column starts without a format, including when its type differs.
+
 ### Document
 
 A document is a graph containing semantic blocks.

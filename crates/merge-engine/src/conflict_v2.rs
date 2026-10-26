@@ -250,6 +250,7 @@ pub enum MergeOutcomeV2 {
     Merged(MergeCandidate),
     Conflicted(Vec<MergeConflictV2>),
     UnsupportedKeyedGroupedSumDefinitionChange,
+    UnsupportedNumberFormat,
 }
 
 /// Reconcile model facts under the constraint-aware v2 conflict profile.
@@ -263,6 +264,12 @@ pub enum MergeOutcomeV2 {
 /// free outcome contains a candidate.
 #[must_use]
 pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutcomeV2 {
+    if [base, left, right]
+        .iter()
+        .any(|document| document.has_number_formats())
+    {
+        return MergeOutcomeV2::UnsupportedNumberFormat;
+    }
     if base.keyed_grouped_sum_definitions != left.keyed_grouped_sum_definitions
         || base.keyed_grouped_sum_definitions != right.keyed_grouped_sum_definitions
     {
@@ -284,6 +291,9 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
         ),
         MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange => {
             return MergeOutcomeV2::UnsupportedKeyedGroupedSumDefinitionChange;
+        }
+        MergeOutcome::UnsupportedNumberFormat => {
+            unreachable!("v2 rejects number formats before invoking v1")
         }
         MergeOutcome::UnsupportedDisplayName => unreachable!("v2 strips names before invoking v1"),
         MergeOutcome::UnsupportedFieldConstraintChange => {
