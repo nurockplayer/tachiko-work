@@ -7,9 +7,9 @@ use std::{
 };
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, SourceWorkbook, import_csv};
 use tachiko_designer_runtime::{
-    CleanupOperation, CollectionSummary, ColumnProjection, DesignerError, DesignerRequest,
-    DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType,
-    ImportSelection, InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
+    CleanupOperation, CollectionSummary, ColumnProjection, DesignerRequest, DesignerResponse,
+    DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType, ImportSelection,
+    InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
     StoredValueProjection, TableProjection, import_workbook, inspect_imported_project,
     open_imported_project, open_project,
 };
@@ -387,61 +387,27 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
 
-        // A valid storage-v3 document is independently framed from the same
-        // original snapshot. Selected v3 export refuses this Table envelope.
+        // The full Table envelope exceeds the original reply limit, so the
+        // session already holds this rectangle in the text-capacity profile.
+        // Selected v3 export saves it and reopens it in the same profile with
+        // the same complete Table, and the reopen re-saves byte-identically.
         let before_export_occurrence = source.observe_occurrence();
         let before_export_bootstrap = bootstrap(&mut source);
         let before_export_table = table(&mut source);
         let before_export_saved = carriers(&source);
-        let export_error = source
-            .export_project_v3(&before_export_occurrence.revision)
-            .expect_err("the original Table projection exceeds the native reply limit");
-        assert!(matches!(
-            export_error,
-            DesignerError::UnsupportedProject { .. }
-        ));
+        let selected = v3_bytes(&source);
+        assert_eq!(selected, independently_frame_v3(&original));
         assert_eq!(source.observe_occurrence(), before_export_occurrence);
         assert_eq!(bootstrap(&mut source), before_export_bootstrap);
         assert_eq!(table(&mut source), before_export_table);
         assert_eq!(carriers(&source), before_export_saved);
-
-        let encoded = independently_frame_v3(&original);
-        let inspect_error = tachiko_designer_runtime::inspect_project(&encoded)
-            .expect_err("v3 Inspect refuses the original oversized Table projection");
-        assert!(matches!(
-            inspect_error,
-            DesignerError::UnsupportedProject { .. }
-        ));
-        let mut empty = None;
-        let open_error = open_project(&mut empty, &encoded, FRESH)
-            .expect_err("v3 open refuses the original oversized Table projection");
-        assert!(matches!(
-            open_error,
-            DesignerError::UnsupportedProject { .. }
-        ));
-        assert!(empty.is_none());
-
-        let (mut seeded, metadata) = imported(8);
-        let states = seed_histories(&mut seeded);
-        let before_occurrence = seeded.observe_occurrence();
-        let before_bootstrap = bootstrap(&mut seeded);
-        let before_table = table(&mut seeded);
-        let before_saved = carriers(&seeded);
-        let before_workbook = workbook(&seeded, &metadata);
-        let mut seeded = Some(seeded);
-        let open_error = open_project(&mut seeded, &encoded, FRESH)
-            .expect_err("v3 open refusal preserves the seeded resident");
-        assert!(matches!(
-            open_error,
-            DesignerError::UnsupportedProject { .. }
-        ));
-        let retained = seeded.as_mut().unwrap();
-        assert_eq!(retained.observe_occurrence(), before_occurrence);
-        assert_eq!(bootstrap(retained), before_bootstrap);
-        assert_eq!(table(retained), before_table);
-        assert_eq!(carriers(retained), before_saved);
-        assert_eq!(workbook(retained, &metadata), before_workbook);
-        assert_histories(retained, &states);
+        tachiko_designer_runtime::inspect_project(&selected).unwrap();
+        let mut v3 = None;
+        open_project(&mut v3, &selected, SECOND).unwrap();
+        let v3 = v3.as_mut().unwrap();
+        assert_eq!(table(v3), expected);
+        ordinary_export_refuses(v3);
+        assert_eq!(v3_bytes(v3), selected);
     }
 }
 
@@ -754,21 +720,81 @@ fn metadata_aware_bounded_v3_open_preserves_origin_through_history_and_failed_re
     assert_eq!(v3_bytes(fresh.as_ref().unwrap()), reopened_bytes);
 }
 
-#[test]
-fn enlarged_v3_cannot_enter_through_capacity_decode_open_inspect_or_selected_export() {
-    let candidate = native_document(129); // Original native per-table ceiling128.
+/// v3 saves and reopens every document the runtime holds in session, so a
+/// text-capacity rectangle round-trips; only a document beyond both profiles
+/// still cannot enter.
+fn assert_capacity_v3_round_trip(candidate: &Document) {
     let source = DesignerRuntime::from_document(candidate.clone(), ORIGINAL).unwrap();
     let before = opaque(&source);
-    assert!(
-        source
-            .export_project_v3(&source.observe_occurrence().revision)
-            .is_err()
+    let saved = v3_bytes(&source);
+    assert_eq!(
+        opaque(&source),
+        before,
+        "v3 export does not mark the origin"
     );
-    assert_eq!(opaque(&source), before);
+    assert_eq!(saved, independently_frame_v3(candidate));
+    tachiko_designer_runtime::inspect_project(&saved).unwrap();
+    let mut reopened = None;
+    open_project(&mut reopened, &saved, FRESH).unwrap();
+    let reopened = reopened.as_mut().unwrap();
+    ordinary_export_refuses(reopened);
+    assert_eq!(document_v3(reopened), *candidate);
+    assert_eq!(
+        v3_bytes(reopened),
+        saved,
+        "the capacity reopen re-saves identically"
+    );
+}
+
+/// The document a runtime would save, decoded by the independent v3 reader.
+fn document_v3(runtime: &DesignerRuntime) -> Document {
+    tachiko_storage::decode_roproj_v3(&v3_tree(&v3_bytes(runtime))).unwrap()
+}
+
+/// Split the app-private v3 transfer framing back into the storage tree.
+fn v3_tree(bytes: &[u8]) -> tachiko_storage::CanonicalRoProjectV3 {
+    let mut rest = bytes.strip_prefix(b"TWDPROJ1").unwrap();
+    let count = u32::from_le_bytes(rest[..4].try_into().unwrap());
+    rest = &rest[4..];
+    let mut files = Vec::new();
+    for _ in 0..count {
+        let path = usize::from(u16::from_le_bytes(rest[..2].try_into().unwrap()));
+        let len = usize::try_from(u32::from_le_bytes(rest[2..6].try_into().unwrap())).unwrap();
+        rest = &rest[6..];
+        files.push((
+            String::from_utf8(rest[..path].to_vec()).unwrap(),
+            rest[path..path + len].to_vec(),
+        ));
+        rest = &rest[path + len..];
+    }
+    tachiko_storage::CanonicalRoProjectV3::try_from_files(files).unwrap()
+}
+
+#[test]
+fn enlarged_v3_round_trips_in_capacity_and_beyond_both_profiles_cannot_enter() {
+    // 129 rows exceed the original 128-row ceiling but fit text capacity.
+    assert_capacity_v3_round_trip(&native_document(129));
+
+    // A second collection takes the document out of the single-table
+    // capacity shape, so 129 rows exceed both profiles.
+    let mut candidate = native_document(129);
+    let mut extra = candidate.schemas[&SchemaId::from("s")].clone();
+    extra.id = SchemaId::from("t");
+    extra.key = SchemaKey::from("other");
+    candidate.schemas.insert(extra.id.clone(), extra);
+    let source = DesignerRuntime::from_document(candidate.clone(), ORIGINAL);
+    assert!(
+        source.is_err(),
+        "the runtime cannot hold it in session either"
+    );
     // Strict storage codec may encode a valid v3 tree independently of Designer
     // admission. This reaches the producer boundary instead of invalid framing.
     let encoded = independently_frame_v3(&candidate);
-    assert!(tachiko_designer_runtime::inspect_project(&encoded).is_err());
+    let refused = tachiko_designer_runtime::inspect_project(&encoded).unwrap_err();
+    assert_eq!(
+        refused.failure_projection("resident/0").code,
+        "unsupported_project"
+    );
     let mut empty = None;
     assert!(open_project(&mut empty, &encoded, FRESH).is_err());
     assert!(empty.is_none());
@@ -789,7 +815,7 @@ fn enlarged_v3_cannot_enter_through_capacity_decode_open_inspect_or_selected_exp
 }
 
 #[test]
-fn small_row_v3_cannot_bypass_original_complete_reply_limit() {
+fn small_row_v3_over_the_original_reply_limit_round_trips_in_capacity() {
     let mut candidate = native_document(64);
     for schema in candidate.schemas.values_mut() {
         for field in schema.fields.values_mut() {
@@ -810,16 +836,10 @@ fn small_row_v3_cannot_bypass_original_complete_reply_limit() {
         .len()
             > 65_536
     );
-    assert!(
-        source
-            .export_project_v3(&source.observe_occurrence().revision)
-            .is_err()
-    );
-    let encoded = independently_frame_v3(&candidate);
-    assert!(tachiko_designer_runtime::inspect_project(&encoded).is_err());
-    let mut empty = None;
-    assert!(open_project(&mut empty, &encoded, FRESH).is_err());
-    assert!(empty.is_none());
+    // The session already holds this as a text-capacity occurrence, so v3
+    // saves and reopens it in that profile instead of refusing.
+    drop(source);
+    assert_capacity_v3_round_trip(&candidate);
 }
 
 #[test]

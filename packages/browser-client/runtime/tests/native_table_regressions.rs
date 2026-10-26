@@ -184,7 +184,9 @@ fn native_table_profile_requires_complete_typed_rows_without_publication() {
 #[test]
 fn row_paste_rejects_non_native_collections_before_row_construction() {
     let mut runtime = DesignerRuntime::moonfall(OCCURRENCE).expect("Moonfall fixture must admit");
-    let initial = table(&mut runtime, "weapons");
+    // Characters carries a typed Reference column, so it is not a scalar table
+    // regardless of the formulas in the weapons collection.
+    let initial = table(&mut runtime, "characters");
     assert_ne!(initial.native_table_profile, Some(true));
     let before = runtime
         .export_project_v3(&initial.revision)

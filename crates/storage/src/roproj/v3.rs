@@ -360,6 +360,7 @@ enum ValueV3 {
 enum ExpressionV3 {
     Number(NumberV3),
     Reference(FieldRefV3),
+    SameRowReference(String),
     Add(BinaryArgumentsV3),
     Subtract(BinaryArgumentsV3),
     Multiply(BinaryArgumentsV3),
@@ -926,6 +927,9 @@ impl ExpressionV3 {
                     require_id("formula entity id", &reference.entity)?;
                     require_id("formula field id", &reference.field)?;
                 }
+                Self::SameRowReference(field) => {
+                    require_id("formula field id", field)?;
+                }
                 Self::Add(arguments)
                 | Self::Subtract(arguments)
                 | Self::Multiply(arguments)
@@ -947,6 +951,7 @@ impl ExpressionV3 {
             Self::Reference(reference) => {
                 Expression::Reference(FieldRef::new(reference.entity, reference.field))
             }
+            Self::SameRowReference(field) => Expression::SameRowReference(FieldId::from(field)),
             Self::Add(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Add { left, right })?
             }
@@ -1093,6 +1098,7 @@ impl ExpressionV3 {
             Expression::Reference(reference) => {
                 Self::Reference(FieldRefV3::from_semantic(reference))
             }
+            Expression::SameRowReference(field) => Self::SameRowReference(field.to_string()),
             Expression::Add { left, right } => {
                 Self::Add(BinaryArgumentsV3::from_semantic(left, right))
             }
@@ -1500,6 +1506,10 @@ fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<()
             compact_member_string(output, "field", &reference.field, false)?;
             output.push('}');
         }
+        ExpressionV3::SameRowReference(field) => {
+            compact_member_string(output, "op", "same_row_reference", true)?;
+            compact_member_string(output, "args", field, false)?;
+        }
         ExpressionV3::Add(args) => write_binary_expression(output, "add", args)?,
         ExpressionV3::Subtract(args) => write_binary_expression(output, "subtract", args)?,
         ExpressionV3::Multiply(args) => write_binary_expression(output, "multiply", args)?,
@@ -1665,7 +1675,9 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                         stack.push((right, depth + 1));
                         stack.push((left, depth + 1));
                     }
-                    Expression::Number(_) | Expression::Reference(_) => {}
+                    Expression::Number(_)
+                    | Expression::Reference(_)
+                    | Expression::SameRowReference(_) => {}
                 }
             }
         }

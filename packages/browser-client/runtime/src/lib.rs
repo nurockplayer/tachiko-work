@@ -67,6 +67,14 @@ pub use interop_document::{
 
 // Exercise the browser bridge logic in native unit tests without dereferencing
 // its WASM-only pointer offsets. Production compilation remains WASM-only.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_bench;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_fixtures;
+#[cfg(all(target_arch = "wasm32", feature = "capacity-bench"))]
+compile_error!(
+    "the capacity-bench feature is native test-only; it must not be enabled for WASM builds"
+);
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -1034,6 +1042,11 @@ pub enum DesignerError {
         field: FieldId,
         count: usize,
     },
+    #[error("{}", formula_dependency_message(*.dependent_cells, subject))]
+    FormulaDependencyInUse {
+        dependent_cells: usize,
+        subject: String,
+    },
 }
 
 impl DesignerError {
@@ -1147,6 +1160,10 @@ impl DesignerError {
             Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
                 ("invalid_table_operation", Vec::new())
             }
+            Self::FormulaDependencyInUse {
+                dependent_cells,
+                subject,
+            } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
             Self::InvalidNumberFormat { .. } => ("invalid_number_format", Vec::new()),
             Self::LegacyExportUnsupported { .. } => ("legacy_export_unsupported", Vec::new()),
@@ -1169,6 +1186,38 @@ impl DesignerError {
             | Self::MissingInvalidation => ("runtime_failure", Vec::new()),
         };
         (code, None, diagnostics)
+    }
+}
+
+fn formula_dependency_message(dependent_cells: usize, subject: &str) -> String {
+    format!(
+        "{dependent_cells} formula cell(s) reference {subject}; edit or remove those formulas first"
+    )
+}
+
+/// Typed refusal for a removal that would strand formula references; the count
+/// lets a client name how many cells must change first.
+fn formula_dependency_failure(
+    dependent_cells: usize,
+    subject: &str,
+) -> (&'static str, Vec<DiagnosticProjection>) {
+    (
+        "formula_dependency_in_use",
+        vec![formula_dependency_diagnostic(dependent_cells, subject)],
+    )
+}
+
+fn formula_dependency_diagnostic(dependent_cells: usize, subject: &str) -> DiagnosticProjection {
+    DiagnosticProjection {
+        code: "formula_dependency_in_use".to_owned(),
+        message: formula_dependency_message(dependent_cells, subject),
+        path: subject.to_owned(),
+        subjects: Vec::new(),
+        related_subjects: Vec::new(),
+        facts: vec![DiagnosticFactProjection {
+            name: "dependent_cells".to_owned(),
+            value: dependent_cells.to_string(),
+        }],
     }
 }
 
@@ -1967,9 +2016,9 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        // V3 always uses the strict original profile. The non-v3 capacity
-        // retry is intentionally not an export or re-admission capability.
-        ensure_document_profile(snapshot.document(), false)?;
+        // The same profile decision as v3 open, so the preflight below admits
+        // exactly what this writes.
+        ensure_v3_document_profile(snapshot.document())?;
         let tree = encode_roproj_v3(snapshot.document())?;
         let bytes =
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?;
@@ -1997,7 +2046,7 @@ impl DesignerRuntime {
     ) -> Result<CanonicalTreeExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
         let bytes = if self.opened_from_v3 || document_requires_v2_evidence(snapshot.document()) {
-            ensure_document_profile(snapshot.document(), false)?;
+            ensure_v3_document_profile(snapshot.document())?;
             let tree = encode_roproj_v3(snapshot.document())?;
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?
         } else {
@@ -2021,7 +2070,7 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        ensure_document_profile(snapshot.document(), false)?;
+        ensure_v3_document_profile(snapshot.document())?;
         let tree = encode_roproj_v3(snapshot.document())?;
         let bytes = encode_portable_package_v1(&tree)?;
         admit_portable_ro(&bytes, PREFLIGHT_OCCURRENCE)?;
@@ -2072,7 +2121,18 @@ impl DesignerRuntime {
                 collection: collection.to_owned(),
             });
         }
+        self.build_table_projection_unbounded(collection)
+    }
 
+    /// Build the complete table projection without the row/column admission
+    /// cap. Every product path goes through [`Self::build_table_projection`];
+    /// only the capacity benchmark enters here, to measure Stage A sizes the
+    /// current admission profile still refuses.
+    fn build_table_projection_unbounded(
+        &self,
+        collection: &str,
+    ) -> Result<TableProjection, DesignerError> {
+        let spec = self.collection_spec(collection)?;
         let entities = self.session.query_entities(&spec.entities)?;
         let rows = if self.text_capacity {
             self.build_capacity_table_rows(spec, entities.value())?
@@ -2651,6 +2711,21 @@ impl DesignerRuntime {
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
+        let dependent_cells = dependent_formula_cells(
+            snapshot.document(),
+            |reference| reference.field == field_id && entities.contains(&reference.entity),
+            |entity, removed| *removed == field_id && entities.contains(entity),
+        );
+        if dependent_cells > 0 {
+            return Err(DesignerError::FormulaDependencyInUse {
+                dependent_cells,
+                subject: format!(
+                    "column '{}' in collection '{}'",
+                    definition.effective_name(),
+                    collection
+                ),
+            });
+        }
         let mut values = BTreeMap::new();
         for entity in entities {
             if let Some(value) = snapshot
@@ -2978,7 +3053,11 @@ impl DesignerRuntime {
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
         if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+            Self::from_document_profile_with_opened(
+                candidate,
+                PREFLIGHT_OCCURRENCE,
+                self.text_capacity,
+            )?;
         } else {
             Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
         }
@@ -3049,7 +3128,11 @@ impl DesignerRuntime {
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity.fields.insert(field.field, Value::Number(value));
         if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, false)?;
+            Self::from_document_profile_with_opened(
+                candidate,
+                PREFLIGHT_OCCURRENCE,
+                self.text_capacity,
+            )?;
         } else {
             Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
         }
@@ -3319,6 +3402,14 @@ impl DesignerRuntime {
                         .number_format
                         .clone_from(number_format);
                 }
+                SemanticCommand::FormulaRestore(command) => {
+                    if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
+                        entity.fields.insert(
+                            command.target().field.clone(),
+                            Value::Formula(command.expression().clone()),
+                        );
+                    }
+                }
                 SemanticCommand::SetFieldConstraint {
                     schema,
                     field,
@@ -3356,7 +3447,10 @@ impl DesignerRuntime {
             .collect::<BTreeSet<_>>();
         match validate(&candidate) {
             Ok(()) => {
-                if self.opened_from_v3 {
+                // A v3-origin text-capacity occurrence edits like any other
+                // capacity occurrence; only strict v3 origins keep the strict
+                // preflight.
+                if self.opened_from_v3 && !self.text_capacity {
                     Self::from_document_profile_with_opened(
                         candidate,
                         PREFLIGHT_OCCURRENCE,
@@ -3873,8 +3967,9 @@ impl DesignerRuntime {
             }
             let value = cell_edit_value(column, old, &edit.input, &field)?;
             if value.as_ref() != old {
-                forward.push(value_command(&field, value.as_ref()));
-                inverse.push(value_command(&field, old));
+                let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
+                forward.push(command);
+                inverse.extend(undo);
             }
         }
         self.record_edit(expected, forward, inverse)
@@ -4094,6 +4189,21 @@ impl DesignerRuntime {
                 entity: entity.clone(),
             });
         }
+        let removed = seen
+            .iter()
+            .map(|id| EntityId::from(id.as_str()))
+            .collect::<BTreeSet<_>>();
+        let dependent_cells = dependent_formula_cells(
+            snapshot.document(),
+            |reference| removed.contains(&reference.entity),
+            |entity, _| removed.contains(entity),
+        );
+        if dependent_cells > 0 {
+            return Err(DesignerError::FormulaDependencyInUse {
+                dependent_cells,
+                subject: format!("removed rows in collection '{}'", spec.summary.display_name),
+            });
+        }
         inverse.reverse();
         self.record_edit(expected, forward, inverse)
     }
@@ -4205,8 +4315,9 @@ impl DesignerRuntime {
                 };
                 let value = cell_edit_value(column, old, &input, &field)?;
                 if existing.is_some() && value.as_ref() != old {
-                    forward.push(value_command(&field, value.as_ref()));
-                    inverse.push(value_command(&field, old));
+                    let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
+                    forward.push(command);
+                    inverse.extend(undo);
                 }
                 if let Some(value) = value {
                     entity.fields.insert(field.field, value);
@@ -4270,6 +4381,32 @@ fn value_command(field: &FieldRef, value: Option<&Value>) -> SemanticCommand {
     )
 }
 
+/// The command that publishes one accepted cell edit and the commands that undo
+/// it. A formula is not generally scalar-editable: replacing one with a scalar
+/// uses the dedicated bounded inverse-restore command, and undoing a clear uses
+/// the dedicated formula-restore command, because the ordinary value path
+/// rejects formula initialization.
+fn cell_edit_commands(
+    field: &FieldRef,
+    old: Option<&Value>,
+    value: Option<&Value>,
+) -> (SemanticCommand, Vec<SemanticCommand>) {
+    match (old, value) {
+        (Some(Value::Formula(_)), Some(Value::Number(number))) => (
+            SemanticCommand::formula_inverse_restore(field.clone(), *number),
+            vec![value_command(field, old)],
+        ),
+        (Some(Value::Formula(expression)), None) => (
+            value_command(field, None),
+            vec![SemanticCommand::formula_restore(
+                field.clone(),
+                expression.clone(),
+            )],
+        ),
+        _ => (value_command(field, value), vec![value_command(field, old)]),
+    }
+}
+
 fn cell_edit_value(
     column: &ColumnSpec,
     old: Option<&Value>,
@@ -4277,7 +4414,9 @@ fn cell_edit_value(
     field: &FieldRef,
 ) -> Result<Option<Value>, DesignerError> {
     if matches!(input, ScalarEditInput::Clear) {
-        if matches!(old, Some(Value::Formula(_) | Value::Reference(_))) {
+        // Clearing a formula cell removes its formula; a required column keeps
+        // the existing refusal because clearing would leave it blank.
+        if matches!(old, Some(Value::Reference(_))) {
             return Err(DesignerError::UnsupportedScalarEdit {
                 field: field.clone(),
             });
@@ -4502,14 +4641,36 @@ fn admit_project(
     Ok((candidate, opened))
 }
 
+/// Admit a v3/.ro document in the same profile order as
+/// [`DesignerRuntime::from_document`]: the strict original profile whenever it
+/// completely admits the document, otherwise the text-capacity profile for an
+/// eligible rectangle. Every v3/.ro writer preflights through this function, so
+/// a file is written only when the same bytes reopen (#480).
 fn admit_v3_document(
     document: Document,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
-    let (candidate, opened) =
-        DesignerRuntime::from_document_profile_with_opened(document, occurrence_id, false)?;
-    ensure_opened_projection_size(&opened, false)?;
-    Ok((candidate, opened))
+    let admit = |document: Document, text_capacity: bool| {
+        let (candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
+            document,
+            occurrence_id,
+            text_capacity,
+        )?;
+        ensure_opened_projection_size(&opened, text_capacity)?;
+        Ok((candidate, opened))
+    };
+    if !is_text_capacity_eligible_document(&document) {
+        return admit(document, false);
+    }
+    match admit(document.clone(), false) {
+        Ok(admitted) => Ok(admitted),
+        Err(DesignerError::InvalidOccurrenceIdentity) => {
+            Err(DesignerError::InvalidOccurrenceIdentity)
+        }
+        Err(strict) => {
+            admit(document, true).map_err(|capacity| beyond_both_profiles(strict, Some(capacity)))
+        }
+    }
 }
 
 pub(crate) fn admit_imported_project(
@@ -4520,11 +4681,17 @@ pub(crate) fn admit_imported_project(
     let (document, opened_from_v3) = decode_project_bundle(input)?;
     interop_document::validate_import_metadata(&document, metadata)?;
     if opened_from_v3 {
+        // A capacity-profile v3 save of an import keeps the same provenance
+        // gate as the legacy capacity retry below.
+        let gate = document.clone();
         let (candidate, opened) = admit_v3_document(document, occurrence_id)?;
+        if candidate.text_capacity {
+            interop_document::validate_saved_open_capacity_metadata(&gate, metadata)?;
+        }
         let mut candidate = candidate;
         candidate.opened_from_v3 = true;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        ensure_opened_wire_projection_size(&opened, false)?;
+        ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
         return Ok((candidate, opened));
     }
 
@@ -4594,6 +4761,9 @@ fn ensure_projection_size_with_limit(
         }
     })?;
     let actual = counter.0;
+    tachiko_workspace_engine::instrumentation::record_json_bytes(
+        u64::try_from(actual).unwrap_or(u64::MAX),
+    );
     if actual > maximum {
         return Err(DesignerError::ProjectionTooLarge { actual, maximum });
     }
@@ -4982,7 +5152,7 @@ fn decode_project_files(
             // separately and project storage failures through invalid_project.
             let mut profile_error = None;
             let admitted = CanonicalRoProjectV3::try_from_files_with_profile(files, |document| {
-                ensure_document_profile(document, false).map_err(|error| {
+                ensure_v3_document_profile(document).map_err(|error| {
                     profile_error = Some(error);
                 })
             });
@@ -5303,7 +5473,9 @@ fn map_copy_references(
     visit: &mut impl FnMut(&mut FieldRef) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
-        Expression::Number(_) => Ok(()),
+        // A relative copy keeps `[.field]` unchanged: the destination row is
+        // the formula's owner, so no per-row rewrite exists.
+        Expression::Number(_) | Expression::SameRowReference(_) => Ok(()),
         Expression::Reference(reference) => visit(reference),
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
@@ -5358,6 +5530,15 @@ fn map_duplicate_expression(
                     ))
                 })?;
             }
+            Ok(())
+        }
+        Expression::SameRowReference(field) => {
+            // The copy has its own field IDs; the reference follows its row.
+            *field = fields.get(field).cloned().ok_or_else(|| {
+                table_error(&format!(
+                    "internal same-row formula field '{field}' has no copied field"
+                ))
+            })?;
             Ok(())
         }
         Expression::Add { left, right }
@@ -5643,6 +5824,43 @@ fn ensure_capacity_document_profile(document: &Document) -> Result<(), DesignerE
         .map_err(|error| tracker_error(&error.0))
 }
 
+/// Cheap static profile gate for v3/.ro bytes, before the complete admission
+/// in [`admit_v3_document`]: the strict profile, or the text-capacity profile
+/// for an eligible rectangle. A profile refusal names both limits.
+fn ensure_v3_document_profile(document: &Document) -> Result<(), DesignerError> {
+    let strict = match ensure_document_profile(document, false) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    if !is_text_capacity_eligible_document(document) {
+        return Err(beyond_both_profiles(strict, None));
+    }
+    ensure_document_profile(document, true)
+        .map_err(|capacity| beyond_both_profiles(strict, Some(capacity)))
+}
+
+/// A standard-profile refusal extended with why the text-capacity profile
+/// does not apply either. Non-profile failures keep their own type.
+fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) -> DesignerError {
+    let DesignerError::UnsupportedProject { message } = &strict else {
+        return strict;
+    };
+    let capacity = capacity.map_or_else(
+        || {
+            format!(
+                "only one Text/Number table within {} rows, {} columns and {} cells qualifies",
+                interop_adapter::MAX_TEXT_CAPACITY_ROWS,
+                interop_adapter::MAX_COLUMNS,
+                interop_adapter::MAX_TEXT_CAPACITY_CELLS
+            )
+        },
+        |error| error.to_string(),
+    );
+    DesignerError::UnsupportedProject {
+        message: format!("{message}; text-capacity profile: {capacity}"),
+    }
+}
+
 fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(), DesignerError> {
     if text_capacity {
         return ensure_capacity_document_profile(document);
@@ -5866,6 +6084,13 @@ fn ensure_formula_reference_profile(
                     profile_string_bytes,
                     "formula reference field identity",
                     reference.field.as_str(),
+                )?;
+            }
+            Expression::SameRowReference(field) => {
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula same-row field identity",
+                    field.as_str(),
                 )?;
             }
             Expression::Add { left, right }
@@ -6562,7 +6787,7 @@ fn has_scalar_row_authoring_shape(
                             matches!(
                                 (field.field_type.clone(), value),
                                 (FieldType::Text, Value::Text(_))
-                                    | (FieldType::Number, Value::Number(_))
+                                    | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
                                     | (FieldType::Date, Value::Date(_))
                             )
@@ -6570,6 +6795,64 @@ fn has_scalar_row_authoring_shape(
                     })
             })
         })
+}
+
+/// Every field reference in one formula expression. Same-row references
+/// resolve against `owner`, so a retained `[.field]` formula counts as a
+/// dependent of its own row's field.
+fn expression_references(
+    owner: &FieldRef,
+    expression: &Expression,
+    references: &mut BTreeSet<FieldRef>,
+) {
+    match expression {
+        Expression::Number(_) => {}
+        Expression::Reference(reference) => {
+            references.insert(reference.clone());
+        }
+        Expression::SameRowReference(field) => {
+            references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
+        }
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            expression_references(owner, left, references);
+            expression_references(owner, right, references);
+        }
+    }
+}
+
+/// Retained formula cells whose calculation would lose a reference. Cells that
+/// are themselves being removed do not count as dependents.
+fn dependent_formula_cells(
+    document: &Document,
+    removed_reference: impl Fn(&FieldRef) -> bool,
+    removed_cell: impl Fn(&EntityId, &FieldId) -> bool,
+) -> usize {
+    document
+        .entities
+        .values()
+        .flat_map(|entity| {
+            entity.fields.iter().filter(|(field, value)| {
+                let Value::Formula(expression) = value else {
+                    return false;
+                };
+                if removed_cell(&entity.id, field) {
+                    return false;
+                }
+                let mut references = BTreeSet::new();
+                expression_references(
+                    &FieldRef::new(entity.id.clone(), (*field).clone()),
+                    expression,
+                    &mut references,
+                );
+                references.iter().any(&removed_reference)
+            })
+        })
+        .count()
 }
 
 fn tracker_error(message: &str) -> DesignerError {
@@ -6622,7 +6905,9 @@ fn parse_scalar(
     field: &FieldRef,
 ) -> Result<Value, DesignerError> {
     match (old, input) {
-        (Value::Number(_), ScalarEditInput::Number { input }) => input
+        // A scalar edit replaces a formula with the typed scalar, which is how
+        // a Sheet user overwrites a calculated cell.
+        (Value::Number(_) | Value::Formula(_), ScalarEditInput::Number { input }) => input
             .parse::<f64>()
             .ok()
             .and_then(|value| Number::new(value).ok())
@@ -8335,7 +8620,7 @@ mod tests {
         runtime: &mut DesignerRuntime,
         expected_revision: &str,
         field: &str,
-    ) {
+    ) -> DesignerError {
         let before = runtime
             .export_test_project(expected_revision)
             .unwrap()
@@ -8345,10 +8630,6 @@ mod tests {
         let error = runtime
             .remove_column(expected_revision, "orders", field)
             .unwrap_err();
-        assert!(matches!(
-            error,
-            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
-        ));
         assert_eq!(runtime.current_revision(), expected_revision);
         assert_eq!(
             runtime
@@ -8359,6 +8640,7 @@ mod tests {
         );
         assert_eq!(runtime.undo.len(), undo_count);
         assert_eq!(runtime.redo.len(), redo_count);
+        error
     }
 
     #[test]
@@ -8385,16 +8667,33 @@ mod tests {
             .get_mut("orders")
             .unwrap()
             .native_table_rows = true;
-        assert_native_column_removal_is_rejected(
+        let error = assert_native_column_removal_is_rejected(
             &mut formula_runtime,
             "resident/0",
             source.as_str(),
         );
-        assert_native_column_removal_is_rejected(
+        assert!(matches!(
+            error,
+            DesignerError::FormulaDependencyInUse {
+                dependent_cells: 1,
+                ..
+            }
+        ));
+        assert_eq!(
+            error.failure_projection("resident/0").code,
+            "formula_dependency_in_use"
+        );
+        // A column whose stored values carry formulas stays refused by the
+        // semantic RemoveSchemaField rule itself.
+        let error = assert_native_column_removal_is_rejected(
             &mut formula_runtime,
             "resident/0",
             derived.as_str(),
         );
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
+        ));
 
         let mut definition_runtime = native_column_runtime(
             &[
@@ -8428,11 +8727,15 @@ mod tests {
             .get(&super::KeyedGroupedSumDefinitionId::from("orders-summary"))
             .unwrap();
         assert_eq!(definition.orders.quantity_field, ids["quantity"]);
-        assert_native_column_removal_is_rejected(
+        let error = assert_native_column_removal_is_rejected(
             &mut definition_runtime,
             "resident/3",
             ids["quantity"].as_str(),
         );
+        assert!(matches!(
+            error,
+            DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
+        ));
     }
 
     #[test]
@@ -8699,7 +9002,13 @@ mod tests {
         let error = runtime
             .remove_table_rows("resident/0", "orders", &[entity.to_string()])
             .unwrap_err();
-        assert!(matches!(error, DesignerError::Lifecycle(_)));
+        assert!(matches!(
+            error,
+            DesignerError::FormulaDependencyInUse {
+                dependent_cells: 1,
+                ..
+            }
+        ));
         assert_eq!(runtime.current_revision(), "resident/0");
         assert_eq!(
             runtime.export_test_project("resident/0").unwrap().bytes,

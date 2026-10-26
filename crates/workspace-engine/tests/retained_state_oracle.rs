@@ -518,10 +518,12 @@ fn assert_revision_oracles(session: &ResidentWorkspaceSession, context: &str) {
     let projected_dependencies = warm_fields
         .iter()
         .filter_map(|projection| {
-            projection
-                .formula_definition
-                .as_ref()
-                .map(|expression| (projection.field.clone(), extract_dependencies(expression)))
+            projection.formula_definition.as_ref().map(|expression| {
+                (
+                    projection.field.clone(),
+                    extract_dependencies(&projection.field, expression),
+                )
+            })
         })
         .collect::<BTreeMap<_, _>>();
     let full_dependencies = match &full_outcome {

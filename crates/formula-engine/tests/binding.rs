@@ -72,7 +72,8 @@ fn authoring_addresses_bind_once_to_stable_ids() {
     let document = document();
     let unbound = parse_expression("[iron_sword.damage] + 5").unwrap();
 
-    let bound = bind_expression(&document, &unbound).unwrap();
+    let owner = FieldRef::new("entity-stable", "dps-stable");
+    let bound = bind_expression(&document, &owner, &unbound).unwrap();
 
     let reference = FieldRef::new("entity-stable", "damage-stable");
     assert_eq!(
@@ -82,7 +83,10 @@ fn authoring_addresses_bind_once_to_stable_ids() {
             right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
         }
     );
-    assert_eq!(extract_dependencies(&bound), BTreeSet::from([reference]));
+    assert_eq!(
+        extract_dependencies(&owner, &bound),
+        BTreeSet::from([reference])
+    );
 }
 
 #[test]
@@ -106,8 +110,13 @@ fn addresses_that_resolve_to_non_numeric_fields_are_rejected_exactly() {
             Value::Text("not a number".to_owned()),
         );
 
-    let error =
-        bind_expression(&document, &parse_expression("[iron_sword.damage]").unwrap()).unwrap_err();
+    let owner = FieldRef::new("entity-stable", "dps-stable");
+    let error = bind_expression(
+        &document,
+        &owner,
+        &parse_expression("[iron_sword.damage]").unwrap(),
+    )
+    .unwrap_err();
 
     assert_eq!(
         error,
@@ -121,8 +130,10 @@ fn addresses_that_resolve_to_non_numeric_fields_are_rejected_exactly() {
 #[test]
 fn projection_uses_current_keys_without_rewriting_bound_ast() {
     let mut document = document();
+    let owner = FieldRef::new("entity-stable", "dps-stable");
     let bound = bind_expression(
         &document,
+        &owner,
         &parse_expression("[iron_sword.damage] + 5").unwrap(),
     )
     .unwrap();
@@ -139,7 +150,7 @@ fn projection_uses_current_keys_without_rewriting_bound_ast() {
         .key = FieldKey::from("power");
 
     assert_eq!(
-        project_expression(&document, &bound).unwrap(),
+        project_expression(&document, &owner, &bound).unwrap(),
         "([moonblade.power] + 5)"
     );
     assert_eq!(bound, before);
@@ -161,7 +172,8 @@ fn projection_fails_with_stable_targets_instead_of_retargeting_reused_keys() {
         },
     );
 
-    let error = project_expression(&document, &expression).unwrap_err();
+    let owner = FieldRef::new("entity-stable", "dps-stable");
+    let error = project_expression(&document, &owner, &expression).unwrap_err();
 
     assert_eq!(
         error,
@@ -182,7 +194,12 @@ fn directly_supplied_unbound_expressions_are_bounded_before_recursive_binding() 
     }
 
     assert_eq!(
-        bind_expression(&document(), &expression).unwrap_err(),
+        bind_expression(
+            &document(),
+            &FieldRef::new("entity-stable", "dps-stable"),
+            &expression,
+        )
+        .unwrap_err(),
         FormulaBindError::Complexity(ExpressionComplexityError::DepthLimit)
     );
 }
@@ -198,7 +215,8 @@ fn incoherent_field_store_returns_a_typed_binding_error_without_panicking() {
         .insert(FieldId::from("damage-stable"), definition);
     let unbound = parse_expression("[iron_sword.damage]").unwrap();
 
-    let result = std::panic::catch_unwind(|| bind_expression(&document, &unbound))
+    let owner = FieldRef::new("entity-stable", "dps-stable");
+    let result = std::panic::catch_unwind(|| bind_expression(&document, &owner, &unbound))
         .expect("binding malformed input must not panic");
 
     assert!(matches!(result, Err(FormulaBindError::Index { .. })));

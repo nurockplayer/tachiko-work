@@ -72,6 +72,15 @@ All notable changes to Tachiko Work are documented in this file.
   category groups. `total` is derived from the same evaluation at the same
   revision and is `null` whenever the result is unavailable, never zero or a
   stale value; the public TypeScript client exposes `number | null`.
+- Formulas accept a same-row shorthand `[.field]` meaning "this formula's own
+  row". Binding stores the field identity and resolves the entity from the
+  owning formula, so `copyFormula` with relative rows and `duplicateCollection`
+  keep the source unchanged while each destination reads its own row. The
+  canonical projection keeps `([.expense] * [settings.rate])`; `.roproj/v3` and
+  direct-ro/v2 encode the distinct same-entity node, frozen `.roproj/v1`/`v2`
+  refuse it, and a missing field, non-Number field, or the formula's own field
+  refuse as `formula_unknown_reference`, `formula_type_mismatch`, or
+  `formula_cycle`.
 
 - Strengthening an optional native Text/Number column now reports
   `required_values_missing` with the blank row count and column identity. The

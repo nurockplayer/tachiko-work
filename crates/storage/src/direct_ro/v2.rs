@@ -91,6 +91,7 @@ pub(crate) enum ValueV2 {
 pub(crate) enum ExpressionV2 {
     Number(f64),
     Reference(FieldRefV2),
+    SameRowReference(String),
     Add(BinaryArgsV2),
     Subtract(BinaryArgsV2),
     Multiply(BinaryArgsV2),
@@ -406,6 +407,7 @@ impl ExpressionV2 {
                 entity: reference.entity.to_string(),
                 field: reference.field.to_string(),
             }),
+            Expression::SameRowReference(field) => Self::SameRowReference(field.to_string()),
             Expression::Add { left, right } => Self::Add(BinaryArgsV2::from_semantic(left, right)),
             Expression::Subtract { left, right } => {
                 Self::Subtract(BinaryArgsV2::from_semantic(left, right))
@@ -447,6 +449,16 @@ impl ExpressionV2 {
             match node {
                 Self::Number(number) => validate_number(*number)?,
                 Self::Reference(reference) => reference.validate(schemas, entities)?,
+                Self::SameRowReference(field) => {
+                    if !schemas
+                        .values()
+                        .any(|schema| schema.fields.contains_key(field))
+                    {
+                        return invalid(format!(
+                            "same-row formula field '{field}' does not exist in any schema"
+                        ));
+                    }
+                }
                 Self::Add(args)
                 | Self::Subtract(args)
                 | Self::Multiply(args)
@@ -468,6 +480,7 @@ impl ExpressionV2 {
                 entity: EntityId::from(reference.entity),
                 field: FieldId::from(reference.field),
             }),
+            Self::SameRowReference(field) => Expression::SameRowReference(FieldId::from(field)),
             Self::Add(args) => Expression::Add {
                 left: Box::new(args.left.into_semantic()?),
                 right: Box::new(args.right.into_semantic()?),
@@ -532,7 +545,7 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
                 stack.push((right, depth + 1));
                 stack.push((left, depth + 1));
             }
-            Expression::Number(_) | Expression::Reference(_) => {}
+            Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => {}
         }
     }
     Ok(())
@@ -730,6 +743,10 @@ fn write_expression(
             member_string(output, indent + 1, "op", "reference", true)?;
             member_prefix(output, indent + 1, "args")?;
             write_field_ref(output, reference, indent + 1)?;
+        }
+        ExpressionV2::SameRowReference(field) => {
+            member_string(output, indent + 1, "op", "same_row_reference", true)?;
+            member_string(output, indent + 1, "args", field, false)?;
         }
         ExpressionV2::Add(args) => write_binary(output, indent, "add", args)?,
         ExpressionV2::Subtract(args) => write_binary(output, indent, "subtract", args)?,

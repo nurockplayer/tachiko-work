@@ -136,7 +136,12 @@ fn entity_field_and_schema_rename_preserve_ids_and_bound_meaning() {
         Value::Formula(bound.clone())
     );
     assert_eq!(
-        project_expression(&schema.document, &bound).unwrap(),
+        project_expression(
+            &schema.document,
+            &FieldRef::new("owner-stable", "dps-stable"),
+            &bound,
+        )
+        .unwrap(),
         "[moonblade.power]"
     );
 }
@@ -183,9 +188,13 @@ fn rename_projection_accepts_4096_bytes_and_rejects_4097_atomically() {
         unreachable!()
     };
     assert_eq!(
-        project_expression(&accepted.document, expression)
-            .unwrap()
-            .len(),
+        project_expression(
+            &accepted.document,
+            &FieldRef::new("owner-stable", "dps-stable"),
+            expression,
+        )
+        .unwrap()
+        .len(),
         4_096
     );
     assert!(matches!(error, WorkspaceError::FormulaProjection { .. }));
