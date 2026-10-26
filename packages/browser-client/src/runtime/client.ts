@@ -18,8 +18,12 @@ import type {
   KeyedGroupedSumPublishedProjection,
   NewTableColumnInput,
   TableProjection,
+  TableView,
+  TableWindowProjection,
+  LocatedInViewProjection,
   FailureProjection,
   FieldConstraintInput,
+  NumberFormat,
 } from "./protocol.ts";
 
 export interface DesignerClient {
@@ -44,6 +48,8 @@ export interface DesignerClient {
   setColumnRequiredness?(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection>;
   /** Replace one durable constraint; `none` clears it. Constrained projects export as v3 only. */
   setColumnConstraint?(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection>;
+  /** Replace or clear one Number column's durable display format. */
+  setColumnNumberFormat?(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
@@ -57,7 +63,23 @@ export interface DesignerClient {
   openPortableRo?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   observeOccurrence?(): Promise<OccurrenceProjection>;
   closeProject(): Promise<void>;
+  /** Complete table; collections above 1,000 rows refuse with `use_window_query`. */
   queryTable(collection: string): Promise<TableProjection>;
+  /** Rows `[start, start+count)` of a stateless view; `count` is 0..256, 0 for totals only. */
+  queryTableWindow(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    start: number,
+    count: number,
+  ): Promise<TableWindowProjection>;
+  /** The entity's zero-based position in that same view, or `filtered_out`. */
+  locateInView(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    entity: string,
+  ): Promise<LocatedInViewProjection>;
   queryFields(
     expectedRevision: string,
     fields: FieldTarget[],

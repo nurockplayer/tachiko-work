@@ -47,6 +47,7 @@ fn document(fields: Vec<(&str, &str, FieldType, Value)>) -> Document {
                             id,
                             key: FieldKey::from(*key),
                             display_name: None,
+                            number_format: None,
                             field_type: field_type.clone(),
                             required: true,
                             constraint: FieldConstraint::None,

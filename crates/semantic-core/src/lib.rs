@@ -25,8 +25,8 @@ pub use keyed_grouped_sum::{
 pub use model::{
     ColumnAddress, ColumnRef, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
     FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
-    InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema,
-    SchemaId, SchemaKey, Value,
+    InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, NumberFormat,
+    NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey, Value,
 };
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;

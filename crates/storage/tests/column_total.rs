@@ -19,6 +19,7 @@ fn field(name: &str, field_type: FieldType) -> FieldDefinition {
         field_type,
         required: true,
         constraint: FieldConstraint::None,
+        number_format: None,
     }
 }
 

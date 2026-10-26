@@ -21,6 +21,7 @@ fn number_field(id: &str) -> FieldDefinition {
         field_type: FieldType::Number,
         required: true,
         constraint: FieldConstraint::None,
+        number_format: None,
     }
 }
 

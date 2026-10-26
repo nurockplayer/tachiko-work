@@ -62,6 +62,7 @@ pub fn document() -> Document {
                         field_type,
                         required: false,
                         constraint,
+                        number_format: None,
                     },
                 )
             })

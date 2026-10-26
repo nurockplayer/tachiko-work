@@ -781,6 +781,7 @@ fn no_project_open() -> DesignerWireReply {
             diagnostics: Vec::new(),
             name_failures: Vec::new(),
             constraint_failure: None,
+            row_count: None,
         },
     }
 }

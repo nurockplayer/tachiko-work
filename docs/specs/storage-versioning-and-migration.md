@@ -317,6 +317,26 @@ new migration edge is selected.
 
 ## `.roproj/v3` bounded constraint pipeline
 
+### Number-format persistence (R3)
+
+The optional Number-only `number_format` declaration is preserved by the
+current `.roproj/v3` codec, canonical tree, explicit v3 project transfer, and
+portable package. Direct `.ro/v2` also carries schema fields and preserves this
+optional declaration after `required`. Both writers omit it entirely when
+absent, preserving existing bytes and hashes; old strict readers reject the
+new member. Explicit v1/v2 project migration leaves formats absent.
+
+The frozen `.roproj/v1` and `.roproj/v2` writers return
+`FormatError::UnsupportedNumberFormat` for formatted documents. Ordinary
+`exportProject` returns `legacy_export_unsupported`, directing callers to
+`exportProjectV3` or `exportCanonicalTree`. R3 chooses refusal over a lossy save
+ledger because those explicit save paths preserve the document completely.
+CSV export emits raw stored/calculated scalar values and discloses that formats
+are omitted. XLSX exports equivalent per-column number-format codes; import
+promotes only an exactly representable uniform column format. Unsupported or
+mixed formats keep existing source presentation behavior and produce a ledger
+finding rather than an invented semantic format.
+
 ### Native display-name pre-release exception — ADR-0043
 
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)

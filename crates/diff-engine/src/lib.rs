@@ -238,6 +238,8 @@ pub enum DiffError {
     UnsupportedFieldConstraintChange,
     #[error("tachiko.semantic-delta/v1 does not support durable display names")]
     UnsupportedDisplayName,
+    #[error("tachiko.semantic-delta/v1 does not support durable number formats")]
+    UnsupportedNumberFormat,
     #[error("could not calculate the original document: {0}")]
     BeforeCalculation(#[source] CalculationError),
     #[error("could not calculate the changed document: {0}")]
@@ -250,6 +252,9 @@ pub enum DiffError {
 ///
 /// Returns [`DiffError`] when either document cannot be calculated.
 pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {
+    if before.has_number_formats() || after.has_number_formats() {
+        return Err(DiffError::UnsupportedNumberFormat);
+    }
     if before.has_display_names() || after.has_display_names() {
         return Err(DiffError::UnsupportedDisplayName);
     }

@@ -426,6 +426,7 @@ fn fixture_document(
                         id,
                         key: FieldKey::from(format!("column_{}", index + 1)),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: false,
                         constraint: FieldConstraint::None,
@@ -1196,6 +1197,7 @@ fn independent_opened_projection(
         field_type: field_type.to_owned(),
         dropdown_options: None,
         constraint: None,
+        number_format: None,
     })
     .collect::<Vec<_>>();
     let quantity_value = quantity.to_string();
@@ -2217,6 +2219,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                     id: field_id,
                     key: FieldKey::from("value"),
                     display_name: Some("value".to_owned()),
+                    number_format: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: FieldConstraint::None,
@@ -2262,7 +2265,8 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 display_name_explicit: Some(true),
                 field_type: "text".into(),
                 dropdown_options: None,
-                constraint: None
+                constraint: None,
+                number_format: None
             }],
             rows: vec![],
             column_totals: BTreeMap::new(),

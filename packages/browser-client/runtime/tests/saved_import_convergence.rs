@@ -38,6 +38,7 @@ fn native_document(rows: usize) -> Document {
                         id,
                         key: FieldKey::from(key),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: FieldConstraint::None,
@@ -441,6 +442,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 field_type: "text".to_owned(),
                 dropdown_options: None,
                 constraint: None,
+                number_format: None,
             })
             .collect(),
         column_totals: std::collections::BTreeMap::new(),

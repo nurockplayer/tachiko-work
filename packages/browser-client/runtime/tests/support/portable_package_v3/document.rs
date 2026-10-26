@@ -59,6 +59,7 @@ pub fn document() -> Document {
                         id,
                         key: FieldKey::from(format!("column_{}", index + 1)),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: false,
                         constraint,

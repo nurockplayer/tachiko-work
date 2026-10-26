@@ -71,7 +71,18 @@ try {
             try { return await action(); }
             finally { durationsMs[key].push(performance.now() - start); }
           };
-          const currentTable = () => timed('query', () => client.queryTable(collection));
+          // queryTable refuses above 1,000 rows; page the complete table.
+          const currentTable = () => timed('query', async () => {
+            const revision = (await client.observeOccurrence()).revision;
+            const first = await client.queryTableWindow(revision, collection, {}, 0, 64);
+            const rows = [...first.rows];
+            while (rows.length < first.total_rows) {
+              const page = await client.queryTableWindow(revision, collection, {}, rows.length, 64);
+              if (page.rows.length === 0) break;
+              rows.push(...page.rows);
+            }
+            return {revision: first.revision, collection: first.collection, columns: first.columns, rows};
+          });
           const checkTable = table => {
             same(table.rows.length, expected.length, 'all rows');
             same(table.columns.length, 3, 'three columns');

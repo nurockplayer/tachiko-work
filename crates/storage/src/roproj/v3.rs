@@ -225,6 +225,8 @@ struct FieldDefinitionV3 {
     field_type: FieldTypeV3,
     required: bool,
     constraint: ConstraintV3,
+    #[serde(default, deserialize_with = "crate::number_format::optional")]
+    number_format: Option<crate::number_format::NumberFormatDto>,
 }
 
 fn optional_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
@@ -779,6 +781,7 @@ impl FieldDefinitionV3 {
             id: FieldId::from(self.id),
             key: FieldKey::from(self.key),
             display_name: self.display_name,
+            number_format: self.number_format.map(Into::into),
             field_type: self.field_type.into_semantic()?,
             required: self.required,
             constraint: self.constraint.into_semantic()?,
@@ -1038,6 +1041,7 @@ impl FieldDefinitionV3 {
             field_type: FieldTypeV3::from_semantic(&field.field_type),
             required: field.required,
             constraint: ConstraintV3::from_semantic(&field.constraint)?,
+            number_format: field.number_format.as_ref().map(Into::into),
         })
     }
 }
@@ -1360,6 +1364,11 @@ fn write_field_definition(
     )?;
     pretty_member_prefix(output, indent + 1, "constraint")?;
     write_constraint(output, &field.constraint, indent + 1)?;
+    if let Some(format) = &field.number_format {
+        output.push_str(",\n");
+        pretty_member_prefix(output, indent + 1, "number_format")?;
+        crate::number_format::write(output, format, indent + 1)?;
+    }
     output.push('\n');
     push_indent(output, indent);
     output.push('}');

@@ -16,6 +16,7 @@ import type {
   FieldBatchProjection,
   FieldExplanationProjection,
   FieldConstraintInput,
+  NumberFormat,
   FieldTarget,
   FieldProjection,
   OpenedProjection,
@@ -28,6 +29,10 @@ import type {
   NewTableColumnInput,
   ProjectExport,
   TableProjection,
+  TableRowProjection,
+  TableView,
+  TableWindowProjection,
+  LocatedInViewProjection,
   WorkerReply,
   WorkerRequest,
 } from "./protocol.ts";
@@ -164,6 +169,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async setColumnConstraint(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_constraint", expected_revision: expectedRevision, collection, field, constraint});
+  }
+
+  async setColumnNumberFormat(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_number_format", expected_revision: expectedRevision, collection, field, number_format: numberFormat});
   }
 
   async bootstrap(): Promise<BootstrapProjection> {
@@ -319,6 +328,44 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse(
       "table",
       await this.#command({ type: "query_table", collection }),
+    );
+  }
+
+  async queryTableWindow(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    start: number,
+    count: number,
+  ): Promise<TableWindowProjection> {
+    return expectResponse(
+      "table_window",
+      await this.#command({
+        type: "query_table_window",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+        start,
+        count,
+      }),
+    );
+  }
+
+  async locateInView(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    entity: string,
+  ): Promise<LocatedInViewProjection> {
+    return expectResponse(
+      "located_in_view",
+      await this.#command({
+        type: "locate_in_view",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+        entity,
+      }),
     );
   }
 
@@ -497,6 +544,14 @@ function expectResponse(
   response: DesignerResponse,
 ): TableProjection;
 function expectResponse(
+  type: "table_window",
+  response: DesignerResponse,
+): TableWindowProjection;
+function expectResponse(
+  type: "located_in_view",
+  response: DesignerResponse,
+): LocatedInViewProjection;
+function expectResponse(
   type: "fields",
   response: DesignerResponse,
 ): FieldBatchProjection;
@@ -529,6 +584,8 @@ function expectResponse(
   // sparse Rust payload (or fabricating empty Text for absent slots).
   switch (response.type) {
     case "table": validateTablePresence(response.payload); break;
+    case "table_window": validateTablePresence(response.payload); break;
+    case "located_in_view": validateLocatedInView(response.payload); break;
     case "opened": validateTablePresence(response.payload.table); break;
     case "imported": validateTablePresence(response.payload.opened.table); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
@@ -604,13 +661,49 @@ function validateColumnConstraint(column: ColumnProjection): void {
   throw new Error("Invalid Worker column constraint.");
 }
 
-function validateTablePresence(table: TableProjection): void {
+function validateColumnNumberFormat(column: ColumnProjection): void {
+  const format = column.number_format;
+  if (format === undefined) return;
+  if (format === null || typeof format !== "object") {
+    throw new Error("Invalid Worker column number format.");
+  }
+  const kind = format.kind as { type?: unknown; code?: unknown } | null;
+  // Mirror Rust's closed wire: exact member sets on the format and each kind.
+  const exactKeys = (value: object, keys: string[]) =>
+    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  const validKind = kind !== null && typeof kind === "object" && (
+    ((kind.type === "plain" || kind.type === "percent") && exactKeys(kind, ["type"])) ||
+    (kind.type === "currency" && exactKeys(kind, ["type", "code"]) &&
+      typeof kind.code === "string" && /^[A-Z]{3}$/.test(kind.code)));
+  if (column.field_type !== "number" || !exactKeys(format, ["decimals", "kind", "thousands_separator"]) ||
+      !Number.isInteger(format.decimals) ||
+      format.decimals < 0 || format.decimals > 10 || typeof format.thousands_separator !== "boolean" || !validKind) {
+    throw new Error("Invalid Worker column number format.");
+  }
+}
+
+function validateLocatedInView(located: LocatedInViewProjection): void {
+  if (located.result === "found") {
+    if (!Number.isInteger(located.index) || located.index! < 0) {
+      throw new Error("Invalid Worker located-in-view position.");
+    }
+    return;
+  }
+  if (located.result !== "filtered_out" || located.index !== undefined) {
+    throw new Error("Invalid Worker located-in-view result.");
+  }
+}
+
+function validateTablePresence(
+  table: Pick<TableProjection, "columns"> & { rows: TableRowProjection[] },
+): void {
   const columns = new Map(table.columns.map((column, index) => {
     if (typeof column.required !== "boolean") throw new Error("Invalid Worker column requiredness.");
     if (column.display_name_explicit !== undefined && column.display_name_explicit !== true) {
       throw new Error("Invalid Worker column display_name_explicit.");
     }
     validateColumnConstraint(column);
+    validateColumnNumberFormat(column);
     return [column.id, {required: column.required, index}];
   }));
   if (columns.size !== table.columns.length) throw new Error("Invalid Worker duplicate column identity.");
