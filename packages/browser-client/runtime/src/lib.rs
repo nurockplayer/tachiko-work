@@ -3387,10 +3387,30 @@ impl DesignerRuntime {
         let value = query.fields.remove(0);
         let field = target.as_field_ref();
         let edges = self.session.direct_field_dependencies();
-        let dependencies = edges
+        let mut dependencies = edges
             .get(&field)
             .map(|dependencies| dependencies.iter().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
+        // A column total's edges include every row of its column, blank slots
+        // too (they keep invalidation exact); evaluation skips blanks, so the
+        // explanation lists only the present values it actually read.
+        let owners = dependencies
+            .iter()
+            .map(|dependency| dependency.entity.clone())
+            .collect::<Vec<_>>();
+        let present = self
+            .session
+            .query_entities(&owners)?
+            .value()
+            .iter()
+            .flat_map(|entity| {
+                entity
+                    .fields
+                    .iter()
+                    .map(|field| FieldRef::new(entity.id.clone(), field.clone()))
+            })
+            .collect::<BTreeSet<_>>();
+        dependencies.retain(|dependency| present.contains(dependency));
         let direct_dependencies = self
             .session
             .query_fields(&dependencies)?
@@ -3743,6 +3763,7 @@ impl DesignerRuntime {
         let dependent_cells = dependent_formula_cells(
             snapshot.document(),
             |reference| reference.field == field_id && entities.contains(&reference.entity),
+            |column| column.field == field_id && column.schema == schema.id,
             |entity, removed| *removed == field_id && entities.contains(entity),
         );
         if dependent_cells > 0 {
@@ -5230,6 +5251,7 @@ impl DesignerRuntime {
         let dependent_cells = dependent_formula_cells(
             snapshot.document(),
             |reference| removed.contains(&reference.entity),
+            |_| false,
             |entity, _| removed.contains(entity),
         );
         if dependent_cells > 0 {
@@ -8012,11 +8034,14 @@ fn has_scalar_row_authoring_shape(
 
 /// Every field reference in one formula expression. Same-row references
 /// resolve against `owner`, so a retained `[.field]` formula counts as a
-/// dependent of its own row's field.
+/// dependent of its own row's field. Column totals read a whole column, not a
+/// cell, so they go to `columns`: row churn keeps them valid and only losing
+/// that exact schema's column breaks them.
 fn expression_references(
     owner: &FieldRef,
     expression: &Expression,
     references: &mut BTreeSet<FieldRef>,
+    columns: &mut BTreeSet<ColumnRef>,
 ) {
     match expression {
         Expression::Number(_) => {}
@@ -8027,12 +8052,7 @@ fn expression_references(
             references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
         }
         Expression::ColumnTotal(column) => {
-            // A total reads a column, not the individual cells of a row, so
-            // row churn keeps it valid and only losing the whole column breaks
-            // it. The owning row stands in for the column's schema: the column
-            // guard matches this field against the rows of that collection,
-            // and the row guard skips the owning cell when its own row goes.
-            references.insert(FieldRef::new(owner.entity.clone(), column.field.clone()));
+            columns.insert(column.clone());
         }
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
@@ -8040,8 +8060,8 @@ fn expression_references(
         | Expression::Divide { left, right }
         | Expression::Minimum { left, right }
         | Expression::Maximum { left, right } => {
-            expression_references(owner, left, references);
-            expression_references(owner, right, references);
+            expression_references(owner, left, references, columns);
+            expression_references(owner, right, references, columns);
         }
     }
 }
@@ -8051,6 +8071,7 @@ fn expression_references(
 fn dependent_formula_cells(
     document: &Document,
     removed_reference: impl Fn(&FieldRef) -> bool,
+    removed_column: impl Fn(&ColumnRef) -> bool,
     removed_cell: impl Fn(&EntityId, &FieldId) -> bool,
 ) -> usize {
     document
@@ -8065,12 +8086,14 @@ fn dependent_formula_cells(
                     return false;
                 }
                 let mut references = BTreeSet::new();
+                let mut columns = BTreeSet::new();
                 expression_references(
                     &FieldRef::new(entity.id.clone(), (*field).clone()),
                     expression,
                     &mut references,
+                    &mut columns,
                 );
-                references.iter().any(&removed_reference)
+                references.iter().any(&removed_reference) || columns.iter().any(&removed_column)
             })
         })
         .count()
@@ -8197,11 +8220,12 @@ mod tests {
 
     use super::{
         AuthorizationAction, ColumnInitializer, ColumnRef, DesignerError, DesignerRequest,
-        DesignerRuntime, DocumentScopeId, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-        FieldType, Grant, GrantId, GrantRequirement, HistoryAction, KeyedGroupedSumDefinitionInput,
-        MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass, NewTableColumnInput, OperationFamily,
-        PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput, SchemaId,
-        ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
+        DesignerRuntime, DocumentScopeId, EntityId, EntityKey, Expression, FieldDefinition,
+        FieldId, FieldKey, FieldType, Grant, GrantId, GrantRequirement, HistoryAction,
+        KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
+        NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId, ProposalId,
+        RowInitializer, ScalarEditInput, SchemaId, SchemaKey, ScopedSemanticSubject,
+        SemanticCommand, SemanticScope, Value,
     };
 
     #[test]
@@ -10004,6 +10028,49 @@ mod tests {
         assert_eq!(runtime.current_revision(), "resident/0");
         assert_eq!(runtime.undo.len(), undo_count);
         assert_eq!(runtime.redo.len(), redo_count);
+    }
+
+    #[test]
+    fn native_column_removal_ignores_a_total_over_another_tables_same_field_id() {
+        let base =
+            native_column_runtime(&[("Source", "number"), ("Derived", "number")], &["1", "2"]);
+        let ids = native_column_ids(&base);
+        let entity = base.collection_specs["orders"].entities[0].clone();
+        let schema = SchemaId::from(base.collection_specs["orders"].summary.id.clone());
+        let derived = ids["derived"].clone();
+        let source = ids["source"].clone();
+        let mut document = base.session.export_snapshot().document().clone();
+        // A second table whose field ids match the first one's.
+        let plan = SchemaId::from("plan");
+        let mut plan_schema = document.schemas[&schema].clone();
+        plan_schema.id = plan.clone();
+        plan_schema.key = SchemaKey::from("plan");
+        document.schemas.insert(plan.clone(), plan_schema);
+        let mut plan_row = document.entities[&entity].clone();
+        plan_row.id = EntityId::from("plan-row");
+        plan_row.key = EntityKey::from("plan-row");
+        plan_row.schema = plan.clone();
+        document.entities.insert(plan_row.id.clone(), plan_row);
+        document.entities.get_mut(&entity).unwrap().fields.insert(
+            derived,
+            Value::Formula(super::Expression::ColumnTotal(ColumnRef::new(
+                plan,
+                source.clone(),
+            ))),
+        );
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .native_table_rows = true;
+        // The total reads plan's column; removing orders' same-id column must
+        // not count it as a dependent.
+        runtime
+            .remove_column("resident/0", "orders", source.as_str())
+            .unwrap();
     }
 
     #[test]

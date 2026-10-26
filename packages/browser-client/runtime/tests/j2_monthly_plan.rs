@@ -1523,3 +1523,58 @@ fn column_total_refusals_keep_their_typed_codes_and_change_nothing() {
         Some(StoredValueProjection::Number { value: 0.0 })
     );
 }
+
+#[test]
+fn explaining_a_column_total_over_a_blank_cell_lists_only_present_values() {
+    let mut document = plan_document();
+    let plan = SchemaId::from("plan");
+    document
+        .schemas
+        .get_mut(&plan)
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from("expense"))
+        .unwrap()
+        .required = false;
+    document
+        .entities
+        .get_mut(&EntityId::from("ads"))
+        .unwrap()
+        .fields
+        .remove(&FieldId::from("expense"));
+    document
+        .entities
+        .get_mut(&EntityId::from("summary"))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("total"),
+            Value::Formula(Expression::ColumnTotal(
+                tachiko_workspace_engine::ColumnRef::new(plan, "expense"),
+            )),
+        );
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+    let revision = runtime.observe_occurrence().revision;
+    let DesignerResponse::FieldExplanation(explanation) = runtime
+        .handle(DesignerRequest::ExplainField {
+            expected_revision: revision,
+            target: FieldTarget {
+                entity: "summary".to_owned(),
+                field: "total".to_owned(),
+            },
+        })
+        .expect("a total over a blank cell explains")
+    else {
+        panic!("explain returns an explanation");
+    };
+    assert_eq!(
+        explanation.value.calculated,
+        Some(CalculationProjection::Value { value: 90_000.0 })
+    );
+    let read = explanation
+        .direct_dependencies
+        .iter()
+        .map(|dependency| dependency.target.entity.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(read, ["rent", "tools"]);
+}
