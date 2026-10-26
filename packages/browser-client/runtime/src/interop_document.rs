@@ -1120,7 +1120,16 @@ fn build_import_sheet(
                     .fields
                     .insert(FieldId::from(sheet.columns[column].field_id.clone()), value);
             }
-            styles.push(cell.style.clone());
+            let mut style = cell.style.clone();
+            if source.columns[column].number_format.is_some()
+                && (cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. }))
+            {
+                // The promoted column format now owns this cell's numeric
+                // presentation; retaining the source copy would bring a later
+                // cleared format back on export.
+                style.number_format = None;
+            }
+            styles.push(style);
         }
         styles.resize_with(sheet.columns.len(), CellStyle::default);
         sheet.rows.push(InteropRowMetadata {
@@ -2260,39 +2269,12 @@ impl DesignerRuntime {
                     .collect(),
                 rows,
             });
-            if !values_only && profile != OutputProfile::TextCapacity {
-                if let Some(sheet) = sheets.last_mut() {
-                    drop_cleared_promoted_formats(sheet);
-                }
-            }
         }
         let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
             category: FidelityCategory::Converted, code: "bound_formula_absolute_a1".into(), location: "workbook".into(),
             message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(), blocking: false,
         }] };
         Ok(workbook)
-    }
-}
-
-/// Retained cell styles still carry the format a column was promoted from at
-/// import. When that column now has no semantic format (the user cleared it),
-/// a uniform, promotable retained format is the cleared one: drop it so export
-/// and reimport do not bring it back. Mixed or unsupported source styling,
-/// which import never promoted, stays untouched.
-fn drop_cleared_promoted_formats(sheet: &mut SourceSheet) {
-    for column in 0..sheet.columns.len() {
-        if sheet.columns[column].number_format.is_some()
-            || super::interop_adapter::infer_column_number_format(&sheet.rows, column)
-                .0
-                .is_none()
-        {
-            continue;
-        }
-        for cell in sheet.rows.iter_mut().filter_map(|row| row.get_mut(column)) {
-            if cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. }) {
-                cell.style.number_format = None;
-            }
-        }
     }
 }
 

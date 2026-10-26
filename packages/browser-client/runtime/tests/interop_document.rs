@@ -740,6 +740,53 @@ fn cleared_promoted_xlsx_format_stays_cleared_on_export() {
     assert_eq!(reimported.sheets[0].columns[0].number_format, None);
 }
 
+#[test]
+fn unpromoted_mixed_formats_survive_row_removal_and_export() {
+    let styled = |value: f64, format: &str| SourceCell {
+        value: SourceValue::Number { value },
+        formula: None,
+        style: CellStyle {
+            number_format: Some(format.into()),
+            ..CellStyle::default()
+        },
+    };
+    let source = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Mixed".into(),
+            has_header: true,
+            columns: vec![SourceColumn {
+                name: "Value".into(),
+                width: None,
+                number_format: None,
+            }],
+            rows: vec![vec![styled(0.5, "0%")], vec![styled(2.0, "0.00")]],
+        }],
+        ledger: Vec::new(),
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let removed = runtime
+        .handle(DesignerRequest::RemoveTableRows {
+            expected_revision: imported.opened.bootstrap.revision.clone(),
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            entities: vec![imported.metadata.sheets[0].rows[1].entity_id.clone()],
+        })
+        .unwrap();
+    let DesignerResponse::Published(published) = removed else {
+        panic!("removing a row publishes");
+    };
+    let reexported = runtime
+        .export_workbook(&published.resulting_revision, &imported.metadata)
+        .unwrap();
+    let sheet = &reexported.sheets[0];
+    assert_eq!(sheet.columns[0].number_format, None);
+    assert_eq!(sheet.rows.len(), 1);
+    assert_eq!(sheet.rows[0][0].style.number_format.as_deref(), Some("0%"));
+}
+
 fn export_summary_definition(
     metadata: &InteropMetadata,
     id: &str,
