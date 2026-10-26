@@ -246,6 +246,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
         clock: DesignerClock::default(),
         proposal_serial: 0,
         view_index: ViewIndexCache::default(),
+        totals_cache: None,
         row_serial: 0,
         row_namespace: occurrence_id.to_owned(),
         undo: Vec::new(),

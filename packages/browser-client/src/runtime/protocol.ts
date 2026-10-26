@@ -187,6 +187,12 @@ export type TableWindowProjection = {
   unfiltered_rows: number;
   start: number;
   rows: TableRowProjection[];
+  /**
+   * One total per Number column, keyed by column id and observed at the same
+   * revision as rows. Null means a contributing value is unavailable; blank
+   * cells are skipped.
+   */
+  column_totals?: Record<string, number | null>;
 };
 
 /** Zero-based position in the filtered, sorted view; `index` appears only when found. */
