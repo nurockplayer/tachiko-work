@@ -398,6 +398,11 @@ pub struct TableWindowProjection {
     pub unfiltered_rows: usize,
     pub start: usize,
     pub rows: Vec<RowProjection>,
+    /// Whole-collection totals, one per Number column, identical to
+    /// `TableProjection::column_totals` at the same revision. View filters do
+    /// not apply, and blank cells are skipped.
+    #[serde(default, deserialize_with = "deserialize_column_totals")]
+    pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
 /// Result of locating an entity inside one stateless view order.
@@ -1740,6 +1745,11 @@ pub struct DesignerRuntime {
     /// view)` window queries. Every entry is revision-scoped because a
     /// publication can change values, presence, or the entity set.
     view_index: ViewIndexCache,
+    /// Whole-collection Number totals for the most recent window reply, held
+    /// as `(revision, collection, totals)` so scrolling one table gives every
+    /// window the same footer without re-reading the collection. Owned data,
+    /// not `Rc`, because native hosts keep the runtime `Send`.
+    totals_cache: Option<(String, String, BTreeMap<String, Option<f64>>)>,
     row_serial: usize,
     row_namespace: String,
     undo: Vec<HistoryEntry>,
@@ -2369,6 +2379,7 @@ impl DesignerRuntime {
             clock: DesignerClock::default(),
             proposal_serial: 0,
             view_index: ViewIndexCache::default(),
+            totals_cache: None,
             row_serial: 0,
             row_namespace: occurrence_id.to_owned(),
             undo: Vec::new(),
@@ -3176,6 +3187,7 @@ impl DesignerRuntime {
         self.check_revision(expected_revision)?;
         let revision = self.current_revision().to_owned();
         let order = self.view_order(collection, view)?;
+        let column_totals = self.window_column_totals(collection)?;
         let spec = self.collection_spec(collection)?;
         let total_rows = order.len();
         let start = start.min(total_rows);
@@ -3193,6 +3205,11 @@ impl DesignerRuntime {
                 .map_err(|error| view_encoding_failure("columns", &error))?
                 .len(),
         );
+        used = used.saturating_add(
+            serde_json::to_vec(&column_totals)
+                .map_err(|error| view_encoding_failure("column_totals", &error))?
+                .len(),
+        );
         let rows = self.build_window_rows(spec, &entities, &mut used)?;
         Ok(TableWindowProjection {
             revision,
@@ -3205,6 +3222,7 @@ impl DesignerRuntime {
             unfiltered_rows: spec.entities.len(),
             start,
             rows,
+            column_totals,
         })
     }
 
@@ -3334,6 +3352,43 @@ impl DesignerRuntime {
             });
         }
         Ok(order)
+    }
+
+    /// Whole-collection Number totals for window replies, cached per revision.
+    fn window_column_totals(
+        &mut self,
+        collection: &str,
+    ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        let revision = self.current_revision().to_owned();
+        if let Some((cached_revision, cached_collection, totals)) = &self.totals_cache {
+            if *cached_revision == revision && cached_collection == collection {
+                return Ok(totals.clone());
+            }
+        }
+        let spec = self.collection_spec(collection)?;
+        let entities = self.session.query_entities(&spec.entities)?;
+        let targets = entities
+            .value()
+            .iter()
+            .flat_map(|entity| {
+                spec.columns
+                    .iter()
+                    .filter(|column| {
+                        column.field_type == FieldType::Number && entity.fields.contains(&column.id)
+                    })
+                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let projected = self
+            .session
+            .query_fields(&targets)?
+            .value()
+            .iter()
+            .map(|field| self.project_field(field))
+            .collect::<Vec<_>>();
+        let totals = column_totals_from_fields(spec, &projected.iter().collect::<Vec<_>>());
+        self.totals_cache = Some((revision, collection.to_owned(), totals.clone()));
+        Ok(totals)
     }
 
     /// Project the window's entities in view order, enforcing the reply byte
@@ -5687,6 +5742,16 @@ fn cell_edit_value(
 /// and any other unavailable or non-numeric value makes the whole total null
 /// instead of silently summing a subset.
 fn column_totals(spec: &CollectionSpec, rows: &[RowProjection]) -> BTreeMap<String, Option<f64>> {
+    let fields = rows.iter().flat_map(|row| &row.fields).collect::<Vec<_>>();
+    column_totals_from_fields(spec, &fields)
+}
+
+/// The same totals from bare field projections, so a window can total the
+/// whole collection without building rows for it.
+fn column_totals_from_fields(
+    spec: &CollectionSpec,
+    fields: &[&FieldProjection],
+) -> BTreeMap<String, Option<f64>> {
     spec.columns
         .iter()
         .filter(|column| column.field_type == FieldType::Number)
@@ -5694,10 +5759,7 @@ fn column_totals(spec: &CollectionSpec, rows: &[RowProjection]) -> BTreeMap<Stri
             let id = column.id.to_string();
             let mut total = 0.0;
             let mut complete = true;
-            for row in rows {
-                let Some(field) = row.fields.iter().find(|field| field.target.field == id) else {
-                    continue;
-                };
+            for field in fields.iter().filter(|field| field.target.field == id) {
                 match (&field.calculated, &field.stored) {
                     (Some(CalculationProjection::Value { value }), _)
                     | (None, Some(StoredValueProjection::Number { value })) => total += value,
