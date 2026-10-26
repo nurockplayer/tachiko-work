@@ -3,6 +3,13 @@
 //! This crate is app-local composition code. Its DTOs and WASM ABI are
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
+mod capacity;
+pub use capacity::{
+    CapacityExceeded, CapacityLimit, CapacityLimits, CapacityProjection, CapacityUsage,
+    TableCapacityUsage,
+};
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_tests;
 #[cfg(test)]
 mod constraints_tests;
 #[cfg(test)]
@@ -81,12 +88,11 @@ mod wasm;
 #[allow(clippy::cast_possible_truncation)]
 mod wasm;
 
-const MAX_COLLECTIONS: usize = 32;
-const MAX_TABLE_FIELDS: usize = 32;
-const MAX_TABLE_ROWS: usize = 128;
-const MAX_TOTAL_ENTITIES: usize = 1024;
+const MAX_COLLECTIONS: usize = capacity::DEFAULT_LIMITS.collections;
+const MAX_TABLE_FIELDS: usize = capacity::DEFAULT_LIMITS.table_fields;
+const MAX_TABLE_ROWS: usize = capacity::DEFAULT_LIMITS.table_rows;
+const MAX_TOTAL_ENTITIES: usize = capacity::DEFAULT_LIMITS.total_entities;
 const MAX_FIELD_QUERY_TARGETS: usize = 1024;
-const MAX_FORMULAS: usize = 32;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
@@ -220,6 +226,10 @@ pub enum DesignerRequest {
     Redo {
         expected_revision: String,
     },
+    QueryCapacity {
+        #[serde(default)]
+        expected_revision: Option<String>,
+    },
     QueryTable {
         collection: String,
     },
@@ -293,6 +303,7 @@ pub enum DesignerRequest {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DesignerResponse {
     Bootstrap(BootstrapProjection),
+    Capacity(CapacityProjection),
     Opened(Box<OpenedProjection>),
     Table(TableProjection),
     TableWindow(TableWindowProjection),
@@ -989,6 +1000,8 @@ pub struct FailureProjection {
     /// count, so the caller never has to parse the message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row_count: Option<usize>,
+    #[serde(flatten)]
+    pub capacity: Option<CapacityExceeded>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1166,6 +1179,8 @@ pub struct PortableRoVerification {
 
 #[derive(Debug, Error)]
 pub enum DesignerError {
+    #[error(transparent)]
+    CapacityExceeded(#[from] CapacityExceeded),
     #[error("Designer workspace operation failed: {0}")]
     Workspace(#[from] WorkspaceError),
     #[error("canonical project failed complete workspace validation: {source}")]
@@ -1294,6 +1309,10 @@ impl DesignerError {
                 }),
                 _ => None,
             },
+            capacity: match self {
+                Self::CapacityExceeded(capacity) => Some(capacity.clone()),
+                _ => None,
+            },
             row_count: match self {
                 Self::UseWindowQuery { rows, .. } => Some(*rows),
                 _ => None,
@@ -1304,6 +1323,7 @@ impl DesignerError {
     #[allow(clippy::too_many_lines)] // One exhaustive error-to-wire-code table; splitting it hides missing arms.
     fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
+            Self::CapacityExceeded(_) => ("capacity_exceeded", Vec::new()),
             Self::Lifecycle(PatchLifecycleError::Stale) | Self::StaleQuery { .. } => {
                 ("stale_revision", Vec::new())
             }
@@ -1574,6 +1594,7 @@ const _: () = {
 /// One Rust-authoritative occurrence composed for the experimental browser client.
 pub struct DesignerRuntime {
     text_capacity: bool,
+    capacity_usage: CapacityUsage,
     title: String,
     document_scope: DocumentScopeId,
     default_collection: String,
@@ -1599,12 +1620,14 @@ pub struct DesignerRuntime {
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 struct HistoryEntry {
     forward: HistoryAction,
     inverse: HistoryAction,
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 enum HistoryAction {
     Commands(Vec<SemanticCommand>),
     FormulaUpdate { target: FieldTarget, source: String },
@@ -2198,9 +2221,11 @@ impl DesignerRuntime {
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
+        let capacity_usage = CapacityUsage::measure(&document);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
             text_capacity,
+            capacity_usage,
             title,
             document_scope,
             default_collection,
@@ -2396,6 +2421,16 @@ impl DesignerRuntime {
             )),
             DesignerRequest::Bootstrap { .. } => {
                 Ok(DesignerResponse::Bootstrap(self.bootstrap_projection()))
+            }
+            DesignerRequest::QueryCapacity { expected_revision } => {
+                if let Some(expected) = expected_revision {
+                    self.check_revision(&expected)?;
+                }
+                Ok(DesignerResponse::Capacity(CapacityProjection {
+                    revision: self.current_revision().to_owned(),
+                    usage: self.capacity_usage.clone(),
+                    limits: capacity::limits_for_profile(self.text_capacity),
+                }))
             }
             DesignerRequest::QueryTable { collection } => Ok(DesignerResponse::Table(
                 self.query_table_compatibility(&collection)?,
@@ -3488,9 +3523,12 @@ impl DesignerRuntime {
             .schemas
             .get(&schema_id)
             .ok_or_else(|| table_error("native table schema is unavailable"))?;
-        if schema.fields.len() >= MAX_TABLE_FIELDS {
-            return Err(table_error("column capacity is exhausted"));
-        }
+        capacity::check_limit(
+            CapacityLimit::TableFields,
+            MAX_TABLE_FIELDS,
+            schema.fields.len().saturating_add(1),
+            Some(collection),
+        )?;
         let name = author_column_name(name, schema, None)?;
         let occupied = schema
             .fields
@@ -3676,9 +3714,12 @@ impl DesignerRuntime {
                 collection: collection.to_owned(),
             }
         })?;
-        if document.schemas.len() >= MAX_COLLECTIONS {
-            return Err(table_error("collection capacity is exhausted"));
-        }
+        capacity::check_limit(
+            CapacityLimit::Collections,
+            MAX_COLLECTIONS,
+            document.schemas.len().saturating_add(1),
+            None,
+        )?;
         let mut failures = Vec::new();
         let name = name_admission::check_name(
             name,
@@ -3710,14 +3751,15 @@ impl DesignerRuntime {
             .map(|schema| schema.key.to_string())
             .collect();
         let target_key = allocate_key(name, "table", &occupied)?;
-        if document
-            .entities
-            .len()
-            .saturating_add(source_spec.entities.len())
-            > MAX_TOTAL_ENTITIES
-        {
-            return Err(table_error("entity capacity is exhausted"));
-        }
+        capacity::check_limit(
+            CapacityLimit::TotalEntities,
+            capacity::limits_for_profile(self.text_capacity).total_entities,
+            document
+                .entities
+                .len()
+                .saturating_add(source_spec.entities.len()),
+            None,
+        )?;
         let source_schema = document
             .schemas
             .get(&SchemaId::from(source_spec.summary.id.clone()))
@@ -4330,6 +4372,8 @@ impl DesignerRuntime {
                 }
             }
         }
+        let capacity_usage =
+            capacity::check_document(&candidate, capacity::limits_for_profile(self.text_capacity))?;
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -4469,6 +4513,7 @@ impl DesignerRuntime {
                 .ok_or(DesignerError::MissingInvalidation)?
                 .clone()
         };
+        self.capacity_usage = capacity_usage;
         if !capacity_text_edit {
             self.refresh_structure();
             if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
@@ -4514,7 +4559,9 @@ impl DesignerRuntime {
     }
 
     fn refresh_structure(&mut self) {
-        self.collection_specs = collection_specs(self.session.export_snapshot().document());
+        let snapshot = self.session.export_snapshot();
+        self.capacity_usage = CapacityUsage::measure(snapshot.document());
+        self.collection_specs = collection_specs(snapshot.document());
         self.collections = self
             .collection_specs
             .values()
@@ -4580,9 +4627,15 @@ impl DesignerRuntime {
         name: &str,
         columns: &[NewTableColumnInput],
     ) -> Result<Self, DesignerError> {
-        if columns.is_empty() || columns.len() > MAX_TABLE_FIELDS {
-            return Err(table_error("table must declare 1..32 columns"));
+        if columns.is_empty() {
+            return Err(table_error("table must declare at least one column"));
         }
+        capacity::check_limit(
+            CapacityLimit::TableFields,
+            MAX_TABLE_FIELDS,
+            columns.len(),
+            Some(name),
+        )?;
         let (name, names) = author_table_names(name, columns)?;
         let schema_key = allocate_key(name, "table", &BTreeSet::new())?;
         let mut ids = NewTableIds::new(occurrence_id);
@@ -4973,9 +5026,12 @@ impl DesignerRuntime {
                 "row insertion is available for native scalar tables",
             ));
         }
-        if spec.entities.len() >= MAX_TABLE_ROWS {
-            return Err(table_error("row capacity is exhausted"));
-        }
+        capacity::check_limit(
+            CapacityLimit::TableRows,
+            MAX_TABLE_ROWS,
+            spec.entities.len().saturating_add(1),
+            Some(collection),
+        )?;
         if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
             return Err(tracker_error("row identity allocation is exhausted"));
         }
@@ -5142,15 +5198,20 @@ impl DesignerRuntime {
                 .position(|entity| entity.as_str() == id)
                 .ok_or_else(|| tracker_error("starting row is unavailable"))
         })?;
+        capacity::check_limit(
+            CapacityLimit::TableRows,
+            MAX_TABLE_ROWS,
+            spec.entities.len().max(start.saturating_add(rows.len())),
+            Some(collection),
+        )?;
         if rows.is_empty()
-            || start.saturating_add(rows.len()) > MAX_TABLE_ROWS
             || rows[0].is_empty()
             || rows
                 .iter()
                 .any(|row| row.len() != rows[0].len() || row.len() + column > spec.columns.len())
         {
             return Err(tracker_error(
-                "paste must be a nonempty rectangular range within 128 rows and the declared typed columns",
+                "paste must be a nonempty rectangular range within the declared typed columns",
             ));
         }
         if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
@@ -6309,6 +6370,7 @@ fn failure_reply(code: &str, message: String, current_revision: &str) -> Designe
             name_failures: Vec::new(),
             constraint_failure: None,
             row_count: None,
+            capacity: None,
         },
     }
 }
@@ -6686,7 +6748,7 @@ fn ensure_capacity_document_encoding(document: &Document) -> Result<(), Designer
         &workbook,
         interop_adapter::OutputProfile::TextCapacity,
     )
-    .map_err(|error| tracker_error(&error.0))?;
+    .map_err(|error| tracker_error(&error.to_string()))?;
     let columns = document
         .schemas
         .values()
@@ -6763,7 +6825,7 @@ fn ensure_capacity_document_identities(document: &Document) -> Result<(), Design
 fn ensure_capacity_document_profile(document: &Document) -> Result<(), DesignerError> {
     ensure_capacity_document_identities(document)?;
     interop_adapter::validate_text_capacity(&capacity_document_workbook(document))
-        .map_err(|error| tracker_error(&error.0))
+        .map_err(|error| tracker_error(&error.to_string()))
 }
 
 /// Cheap static profile gate for v3/.ro bytes, before the complete admission
@@ -6804,6 +6866,7 @@ fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) 
 }
 
 fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(), DesignerError> {
+    capacity::check_document(document, capacity::limits_for_profile(text_capacity))?;
     if text_capacity {
         return ensure_capacity_document_profile(document);
     }
@@ -6814,14 +6877,6 @@ fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(
         document.id.as_str(),
     )?;
     ensure_profile_string(&mut profile_string_bytes, "document title", &document.title)?;
-    if document.schemas.len() > MAX_COLLECTIONS {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!(
-                "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
-                document.schemas.len()
-            ),
-        });
-    }
     for (schema_id, schema) in &document.schemas {
         ensure_profile_string(
             &mut profile_string_bytes,
@@ -6836,14 +6891,6 @@ fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(
         ensure_profile_string(&mut profile_string_bytes, "schema key", schema.key.as_str())?;
         if let Some(name) = &schema.display_name {
             ensure_profile_string(&mut profile_string_bytes, "schema display name", name)?;
-        }
-        if schema.fields.len() > MAX_TABLE_FIELDS {
-            return Err(DesignerError::UnsupportedProject {
-                message: DesignerError::CollectionTooLarge {
-                    collection: schema.key.to_string(),
-                }
-                .to_string(),
-            });
         }
         for (field_id, field) in &schema.fields {
             ensure_profile_string(
@@ -6876,14 +6923,6 @@ fn ensure_cheap_entity_profile(
     document: &Document,
     profile_string_bytes: &mut usize,
 ) -> Result<(), DesignerError> {
-    if document.entities.len() > MAX_TOTAL_ENTITIES {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!(
-                "the project contains {} entities; the bounded maximum is {MAX_TOTAL_ENTITIES}",
-                document.entities.len()
-            ),
-        });
-    }
     let mut collection_profiles = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
         ensure_profile_string(
@@ -6898,18 +6937,9 @@ fn ensure_cheap_entity_profile(
             "entity schema identity",
             entity.schema.as_str(),
         )?;
-        if entity.fields.len() > MAX_TABLE_FIELDS {
-            return Err(DesignerError::UnsupportedProject {
-                message: format!(
-                    "entity '{}' contains {} stored fields; the bounded maximum is {MAX_TABLE_FIELDS}",
-                    entity.id,
-                    entity.fields.len()
-                ),
-            });
-        }
         let profile = collection_profiles
             .entry(entity.schema.clone())
-            .or_insert((0usize, 0usize));
+            .or_insert(0usize);
         for (field_id, value) in &entity.fields {
             ensure_profile_string(
                 profile_string_bytes,
@@ -6929,8 +6959,8 @@ fn ensure_cheap_entity_profile(
                 }
                 Value::Text(text) => {
                     ensure_stored_text_profile(text)?;
-                    profile.1 = profile.1.saturating_add(text.len());
-                    if profile.1 > MAX_PROJECTION_BYTES {
+                    *profile = profile.saturating_add(text.len());
+                    if *profile > MAX_PROJECTION_BYTES {
                         return Err(DesignerError::UnsupportedProject {
                             message: format!(
                                 "a collection contains more than the bounded {MAX_PROJECTION_BYTES}-byte stored-text projection maximum"
@@ -6941,27 +6971,6 @@ fn ensure_cheap_entity_profile(
                 Value::Number(_) | Value::Boolean(_) | Value::Date(_) => {}
             }
         }
-        profile.0 = profile.0.saturating_add(1);
-        if profile.0 > MAX_TABLE_ROWS {
-            return Err(DesignerError::UnsupportedProject {
-                message: format!(
-                    "a collection exceeds the bounded maximum of {MAX_TABLE_ROWS} entities"
-                ),
-            });
-        }
-    }
-    let formula_count = document
-        .entities
-        .values()
-        .flat_map(|entity| entity.fields.values())
-        .filter(|value| matches!(value, Value::Formula(_)))
-        .count();
-    if formula_count > MAX_FORMULAS {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!(
-                "the project contains {formula_count} formulas; the bounded maximum is {MAX_FORMULAS}"
-            ),
-        });
     }
     Ok(())
 }
@@ -10066,7 +10075,13 @@ mod tests {
             let error = runtime
                 .update_formula("resident/0", &"r32.planned".into(), "3")
                 .unwrap_err();
-            assert!(matches!(error, DesignerError::UnsupportedProject { .. }));
+            assert!(matches!(
+                error,
+                DesignerError::CapacityExceeded(capacity)
+                    if capacity.limit == super::CapacityLimit::Formulas
+                        && capacity.maximum == 32
+                        && capacity.attempted == 33
+            ));
             assert!(
                 runtime
                     .lifecycle
@@ -10214,7 +10229,7 @@ mod tests {
                 name: "Capacity overflow".to_owned(),
             })
             .unwrap_err();
-        assert!(matches!(error, DesignerError::InvalidTableOperation { .. }));
+        assert!(matches!(error, DesignerError::CapacityExceeded(_)));
         assert_eq!(runtime.current_revision(), "resident/31");
         assert_eq!(
             runtime.export_test_project("resident/31").unwrap().bytes,

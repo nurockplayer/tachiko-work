@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use tachiko_designer_runtime::{
-    CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection,
-    FieldTarget,
+    CalculationProjection, CapacityExceeded, CapacityLimit, DesignerRequest, DesignerResponse,
+    DesignerRuntime, FieldProjection, FieldTarget,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey, FieldType, Number,
@@ -329,6 +329,7 @@ fn assert_formula_rejection_preserves_reopen(
     revision: u32,
     target: &str,
     source: &str,
+    capacity_refusal: bool,
 ) {
     let revision_text = format!("resident/{revision}");
     let before = runtime.export_project(&revision_text).unwrap().bytes;
@@ -339,10 +340,21 @@ fn assert_formula_rejection_preserves_reopen(
             source: source.into(),
         })
         .expect_err("unopenable formula candidate must be rejected before publication");
-    assert_eq!(
-        error.failure_projection(&revision_text).code,
-        "unsupported_project"
-    );
+    let failure = error.failure_projection(&revision_text);
+    if capacity_refusal {
+        assert_eq!(failure.code, "capacity_exceeded");
+        assert_eq!(
+            failure.capacity,
+            Some(CapacityExceeded {
+                limit: CapacityLimit::Formulas,
+                maximum: 32,
+                attempted: 33,
+                collection: None,
+            })
+        );
+    } else {
+        assert_eq!(failure.code, "unsupported_project");
+    }
     assert_eq!(
         runtime.export_project(&revision_text).unwrap().bytes,
         before
@@ -367,7 +379,7 @@ fn assert_formula_rejection_preserves_reopen(
 #[test]
 fn formula_authoring_rejects_33rd_formula_before_publication_and_keeps_32_reopenable() {
     let mut runtime = formula_capacity_fixture();
-    assert_formula_rejection_preserves_reopen(&mut runtime, 0, "r32.n", "3");
+    assert_formula_rejection_preserves_reopen(&mut runtime, 0, "r32.n", "3", true);
 }
 
 #[test]
@@ -409,7 +421,7 @@ fn formula_authoring_preflights_complete_projection_budget_for_long_sources() {
                     .bytes,
                 before
             );
-            assert_formula_rejection_preserves_reopen(&mut runtime, index, &target, &source);
+            assert_formula_rejection_preserves_reopen(&mut runtime, index, &target, &source, false);
             rejected = true;
             break;
         }

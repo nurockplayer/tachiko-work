@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
-    CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply,
-    ScalarEditInput, ScalarKind, StoredValueProjection, close_project, open_portable_ro,
-    open_project, process_wire_request, verify_portable_ro,
+    CalculationProjection, CapacityExceeded, CapacityLimit, DesignerRequest, DesignerResponse,
+    DesignerRuntime, DesignerWireReply, ScalarEditInput, ScalarKind, StoredValueProjection,
+    close_project, open_portable_ro, open_project, process_wire_request, verify_portable_ro,
 };
 use tachiko_workspace_engine::{
     Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
@@ -368,9 +368,16 @@ fn admission_rejects_any_collection_that_cannot_be_rendered() {
     let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
         panic!("every advertised collection must fit the bounded table profile");
     };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "capacity_exceeded");
     assert_eq!(
-        error.failure_projection("unavailable").code,
-        "unsupported_project"
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::TableFields,
+            maximum: 32,
+            attempted: 33,
+            collection: Some("items".to_owned()),
+        })
     );
 }
 
@@ -396,12 +403,21 @@ fn admission_rejects_an_unbounded_collection_catalog() {
         );
     }
 
+    let attempted = document.schemas.len();
     let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
         panic!("the advertised collection catalog must remain bounded");
     };
     let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(failure.message.contains("bounded maximum is 32"));
+    assert_eq!(failure.code, "capacity_exceeded");
+    assert_eq!(
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::Collections,
+            maximum: 32,
+            attempted,
+            collection: None,
+        })
+    );
 }
 
 #[test]
@@ -732,13 +748,16 @@ fn admission_bounds_formula_analysis_before_per_formula_projection() {
         panic!("formula analysis must have a cheap aggregate admission bound");
     };
     let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(
-        failure
-            .message
-            .contains(&format!("contains {formula_count} formulas"))
+    assert_eq!(failure.code, "capacity_exceeded");
+    assert_eq!(
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::Formulas,
+            maximum: 32,
+            attempted: formula_count,
+            collection: None,
+        })
     );
-    assert!(failure.message.contains("bounded maximum is 32"));
 }
 
 #[test]
@@ -770,9 +789,16 @@ fn admission_bounds_total_entities_before_workspace_validation() {
         panic!("total entities must be bounded before workspace validation");
     };
     let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(failure.message.contains("contains 1025 entities"));
-    assert!(failure.message.contains("bounded maximum is 1024"));
+    assert_eq!(failure.code, "capacity_exceeded");
+    assert_eq!(
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::TotalEntities,
+            maximum: 1_024,
+            attempted: 1_025,
+            collection: None,
+        })
+    );
 }
 
 #[test]
@@ -800,9 +826,16 @@ fn admission_bounds_entity_fields_before_workspace_validation() {
         panic!("stored entity fields must be bounded before workspace validation");
     };
     let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(failure.message.contains("contains 33 stored fields"));
-    assert!(failure.message.contains("bounded maximum is 32"));
+    assert_eq!(failure.code, "capacity_exceeded");
+    assert_eq!(
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::TableFields,
+            maximum: 32,
+            attempted: 33,
+            collection: Some("weapons".to_owned()),
+        })
+    );
 }
 
 #[test]

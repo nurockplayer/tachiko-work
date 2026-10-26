@@ -6,6 +6,14 @@ use super::{
     ScalarEditInput, StoredValueProjection,
 };
 use serde::{Deserialize, Serialize};
+
+fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
+    match error {
+        super::interop_adapter::InteropError::Invalid(message) => super::tracker_error(&message),
+        super::interop_adapter::InteropError::Capacity(capacity) => capacity.into(),
+    }
+}
+
 use tachiko_workspace_engine::patch_lifecycle::SemanticCommand;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -865,13 +873,13 @@ fn finish_import(
     if runtime.text_capacity {
         let encoded =
             super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
-                .map_err(|error| tracker_error(&error.0))?;
-        super::interop_adapter::import_xlsx(&encoded).map_err(|error| tracker_error(&error.0))?;
+                .map_err(interop_admission_error)?;
+        super::interop_adapter::import_xlsx(&encoded).map_err(interop_admission_error)?;
         super::interop_adapter::export_csv_for_profile(
             &exported.sheets[0],
             OutputProfile::TextCapacity,
         )
-        .map_err(|error| tracker_error(&error.0))?;
+        .map_err(interop_admission_error)?;
     }
     drop(exported);
     let bootstrap = runtime.bootstrap_projection();
@@ -908,8 +916,8 @@ fn finish_import(
             candidate.export_workbook(candidate.current_revision(), &projection.metadata)?;
         let bytes =
             super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
-                .map_err(|error| tracker_error(&error.0))?;
-        super::interop_adapter::import_xlsx(&bytes).map_err(|error| tracker_error(&error.0))?;
+                .map_err(interop_admission_error)?;
+        super::interop_adapter::import_xlsx(&bytes).map_err(interop_admission_error)?;
         projection.opened = OpenedProjection {
             bootstrap: candidate.bootstrap_projection(),
             table: candidate.query_table(&candidate.default_collection)?,
@@ -994,11 +1002,12 @@ fn validate_selection(
             formulas += row.iter().filter(|cell| cell.formula.is_some()).count();
         }
     }
-    if formulas > super::MAX_FORMULAS {
-        return Err(tracker_error(
-            "source formulas exceed the declared bounded profile",
-        ));
-    }
+    super::capacity::check_limit(
+        super::CapacityLimit::Formulas,
+        super::capacity::DEFAULT_LIMITS.formulas,
+        formulas,
+        None,
+    )?;
     if serde_json::to_vec(workbook)
         .map_err(|_| tracker_error("source workbook is not encodable"))?
         .len()
@@ -1911,8 +1920,7 @@ fn validate_capacity_metadata(
         sheets: vec![header],
         ledger: Vec::new(),
     };
-    super::interop_adapter::validate_text_capacity(&workbook)
-        .map_err(|error| tracker_error(&error.0))
+    super::interop_adapter::validate_text_capacity(&workbook).map_err(interop_admission_error)
 }
 
 impl DesignerRuntime {
@@ -2242,7 +2250,7 @@ fn finalize_export_workbook(
 ) -> Result<SourceWorkbook, DesignerError> {
     append_saved_export_findings(document, &mut workbook);
     super::interop_adapter::validate_output_for_profile(&workbook, profile)
-        .map_err(|error| tracker_error(&error.0))?;
+        .map_err(interop_admission_error)?;
     Ok(workbook)
 }
 
@@ -2746,11 +2754,11 @@ pub(crate) fn validate_saved_open_closure(
         OutputProfile::Shared
     };
     let encoded = super::interop_adapter::export_xlsx_for_profile(&workbook, profile)
-        .map_err(|error| tracker_error(&error.0))?;
-    super::interop_adapter::import_xlsx(&encoded).map_err(|error| tracker_error(&error.0))?;
+        .map_err(interop_admission_error)?;
+    super::interop_adapter::import_xlsx(&encoded).map_err(interop_admission_error)?;
     for sheet in &workbook.sheets {
         super::interop_adapter::export_csv_for_profile(sheet, profile)
-            .map_err(|error| tracker_error(&error.0))?;
+            .map_err(interop_admission_error)?;
     }
     Ok(())
 }

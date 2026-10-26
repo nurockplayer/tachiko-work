@@ -448,7 +448,10 @@ fn import_source(
 }
 
 fn interop_error(error: InteropError) -> DesignerError {
-    DesignerError::InvalidProjectTransfer { message: error.0 }
+    match error {
+        InteropError::Invalid(message) => DesignerError::InvalidProjectTransfer { message },
+        InteropError::Capacity(capacity) => capacity.into(),
+    }
 }
 
 fn spreadsheet_operation(
@@ -734,7 +737,7 @@ fn export_spreadsheet(
         SpreadsheetFormat::Csv => {
             let sheet = &workbook.sheets[0];
             let bytes = export_csv(sheet).map_err(|error| {
-                crate::interop_document::imported_export_error("workbook", &error.0)
+                crate::interop_document::imported_export_error("workbook", &error.to_string())
             })?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,
@@ -746,7 +749,7 @@ fn export_spreadsheet(
             bytes
         }
         SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(|error| {
-            crate::interop_document::imported_export_error("workbook", &error.0)
+            crate::interop_document::imported_export_error("workbook", &error.to_string())
         })?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
@@ -782,6 +785,7 @@ fn no_project_open() -> DesignerWireReply {
             name_failures: Vec::new(),
             constraint_failure: None,
             row_count: None,
+            capacity: None,
         },
     }
 }

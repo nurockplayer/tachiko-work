@@ -4,6 +4,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- The browser runtime reports workbook-wide capacity usage and effective limits
+  through `queryCapacity`. Candidate admissions now share accounting and return
+  a typed `capacity_exceeded` refusal without publishing changes. Existing
+  document limits and the Text/Number capacity exception remain unchanged.
+
 ### Fixed
 
 - Capacity metadata acceptance now states the imported export name policy:

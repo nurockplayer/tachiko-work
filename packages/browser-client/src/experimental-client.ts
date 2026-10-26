@@ -6,7 +6,7 @@ import {
 import type { SpreadsheetExport, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
 import { DesignerRuntimeError, type DesignerClient } from "./runtime/client.ts";
 import { WorkerDesignerClient } from "./runtime/worker-client.ts";
-import { isFormulaFailure } from "./runtime/protocol.ts";
+import { isCapacityFailure, isFormulaFailure } from "./runtime/protocol.ts";
 import type {
   CanonicalProjectFile,
   CanonicalTreeExport,
@@ -16,6 +16,7 @@ import type {
   FieldConstraintInput,
   FieldTarget,
   PublicationProjection,
+  CapacityProjection,
 } from "./runtime/protocol.ts";
 
 export const EXPERIMENTAL_CLIENT_KIT_ID = "tachiko-designer-client-kit/v0-experimental";
@@ -32,6 +33,7 @@ const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
  * and the vendored kit makes that stronger contract explicit for consumers.
  */
 export interface ExperimentalDesignerClient extends DesignerClient {
+  queryCapacity(expectedRevision?: string): Promise<CapacityProjection>;
   /** Explicit absence for one optional native Text/Number slot. */
   clearField(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
   /** Strengthening refuses while any entity lacks a value; never fills or coerces. */
@@ -115,6 +117,7 @@ export function createExperimentalDesignerClient(): ExperimentalDesignerClient {
 
 export {
   DesignerRuntimeError,
+  isCapacityFailure,
   isFormulaFailure,
   projectTransferFromEntries,
   projectTransferFromFiles,
@@ -123,6 +126,11 @@ export type { DesignerClient };
 export type { CanonicalProjectTransferEntry } from "./host/project-transfer.ts";
 export type {
   BootstrapProjection,
+  CapacityFailureProjection,
+  CapacityLimitName,
+  CapacityLimits,
+  CapacityProjection,
+  CapacityUsage,
   CanonicalProjectFile,
   CanonicalTreeExport,
   CalculationProjection,

@@ -3,6 +3,7 @@ import type {
   FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
+  CapacityProjection,
   FieldBatchProjection,
   FieldExplanationProjection,
   FieldTarget,
@@ -48,6 +49,7 @@ export interface DesignerClient {
   /** Replace one durable constraint; `none` clears it. Constrained projects export as v3 only. */
   setColumnConstraint?(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
+  queryCapacity?(expectedRevision?: string): Promise<CapacityProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openCanonicalTree?(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
