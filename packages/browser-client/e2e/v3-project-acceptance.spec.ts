@@ -1056,22 +1056,26 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       await checkResident("2026-09-29", 4, "resident/3");
     };
 
-    // T4: v3-to-v3 replacement installs a different semantic candidate and clears history.
+    // T4: v3-to-v3 replacement installs a different semantic candidate and clears
+    // history. The candidate must stay inside the fresh admission budget, so it
+    // moves the Date cell (byte-neutral) rather than the quantity: a quantity edit
+    // grows the column footer from 9.0 to 11.0 and the catalogue already fills the
+    // 65,536-byte budget exactly, so that candidate could not be exported at all.
     await withUuid("00000000-0000-4000-8000-000000000003", () => openFresh(boundaryAtMaster));
-    await client.editNumber("resident/0", { entity: boundaryEntityIds[0], field: boundaryFieldIds[2] }, "6");
-    const q6 = await client.exportProjectV3("resident/1");
-    const q6Entries = decodeEntries(new Uint8Array(q6.bytes));
-    const q6Manifest = JSON.parse(new TextDecoder().decode(q6Entries.find(([path]) => path === "manifest.json")![1]));
-    const q6Definitions = JSON.parse(new TextDecoder().decode(q6Entries.find(([path]) => path === "definitions.json")![1]));
-    if (q6Manifest.format_version !== 3 || q6Definitions.length !== boundaryIds.length) throw new Error("v3-to-v3 replacement candidate lost the selected format or catalogue");
-    equal(q6Definitions, boundaryIds.map((id) => ({ id,
+    await client.editDate("resident/0", { entity: boundaryEntityIds[0], field: boundaryFieldIds[4] }, "2026-09-29");
+    const distinct = await client.exportProjectV3("resident/1");
+    const distinctEntries = decodeEntries(new Uint8Array(distinct.bytes));
+    const distinctManifest = JSON.parse(new TextDecoder().decode(distinctEntries.find(([path]) => path === "manifest.json")![1]));
+    const distinctDefinitions = JSON.parse(new TextDecoder().decode(distinctEntries.find(([path]) => path === "definitions.json")![1]));
+    if (distinctManifest.format_version !== 3 || distinctDefinitions.length !== boundaryIds.length) throw new Error("v3-to-v3 replacement candidate lost the selected format or catalogue");
+    equal(distinctDefinitions, boundaryIds.map((id) => ({ id,
       orders: { schema: `${boundaryPrefix}0002`, lookup_key_field: boundaryFieldIds[0], quantity_field: boundaryFieldIds[2] },
       products: { schema: `${boundaryPrefix}0002`, key_field: boundaryFieldIds[0], category_field: boundaryFieldIds[1], price_field: boundaryFieldIds[3] },
     })), "v3-to-v3 encoded definition bindings changed");
     await establishMarkedHistory("00000000-0000-4000-8000-000000000015");
-    await withUuid("00000000-0000-4000-8000-000000000004", () => client.openProject(q6.bytes.slice(0)));
-    const q6Expected = boundaryProjection("resident/0", boundaryIds, "2026-09-28", 6);
-    equal({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, q6Expected, "successful v3 replacement did not install the distinct q6 candidate");
+    await withUuid("00000000-0000-4000-8000-000000000004", () => client.openProject(distinct.bytes.slice(0)));
+    const distinctExpected = boundaryProjection("resident/0", boundaryIds, "2026-09-29", 4);
+    equal({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, distinctExpected, "successful v3 replacement did not install the distinct candidate");
     equal(await client.observeOccurrence(), { scope: "designer-occurrence/00000000-0000-4000-8000-000000000004/import_00000000-0000-4000-8000-000000000001_0001", revision: "resident/0" }, "v3 replacement scope/revision changed");
     await expectCode(() => client.exportProject("resident/0"), "unsupported_project", "resident/0");
     for (const type of ["undo", "redo"] as const) {
