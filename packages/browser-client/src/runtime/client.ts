@@ -3,6 +3,7 @@ import type {
   FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
+  CapacityProjection,
   FieldBatchProjection,
   FieldExplanationProjection,
   FieldTarget,
@@ -51,6 +52,7 @@ export interface DesignerClient {
   /** Replace or clear one Number column's durable display format. */
   setColumnNumberFormat?(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
+  queryCapacity?(expectedRevision?: string): Promise<CapacityProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openCanonicalTree?(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;

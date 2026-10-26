@@ -70,7 +70,7 @@ fn capacity_source_cannot_hide_header_style_or_out_of_grid_width() {
     assert!(
         import_xlsx(&styled)
             .unwrap_err()
-            .0
+            .to_string()
             .contains("default source headers")
     );
     let width = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
@@ -79,7 +79,12 @@ fn capacity_source_cannot_hide_header_style_or_out_of_grid_width() {
             "<cols><col min=\"4\" max=\"4\" width=\"12\"/></cols><sheetData>",
         )
     });
-    assert!(import_xlsx(&width).unwrap_err().0.contains("column widths"));
+    assert!(
+        import_xlsx(&width)
+            .unwrap_err()
+            .to_string()
+            .contains("column widths")
+    );
     // Existing small generic source-only losses keep their original behavior.
     let small = export_xlsx(&simple()).unwrap();
     let width = mutate(&small, "xl/worksheets/sheet1.xml", |xml| {
@@ -402,7 +407,7 @@ fn formula_export_requires_numeric_presentation_for_every_cache_kind() {
             assert!(
                 export_xlsx(&book)
                     .unwrap_err()
-                    .0
+                    .to_string()
                     .contains("uniform numeric number format")
             );
         }
@@ -655,7 +660,11 @@ fn decoded_attributes_reject_illegal_characters_including_namespaces() {
             });
             let error = import_xlsx(&invalid).unwrap_err();
             if reference == "&#xFFFE;" {
-                assert!(error.0.contains("Invalid escaped XML attribute character"));
+                assert!(
+                    error
+                        .to_string()
+                        .contains("Invalid escaped XML attribute character")
+                );
             }
         }
     }
@@ -1139,7 +1148,7 @@ fn multiple_column_groups_are_all_inspected_and_singleton_duplicates_rejected() 
         assert!(
             import_xlsx(&changed)
                 .unwrap_err()
-                .0
+                .to_string()
                 .contains("Duplicate singleton")
         );
     }
@@ -1300,7 +1309,7 @@ fn cdata_obeys_xml_characters_and_root_boundaries() {
             assert!(
                 import_xlsx(&invalid)
                     .unwrap_err()
-                    .0
+                    .to_string()
                     .contains("CDATA outside XML root")
             );
         }
@@ -1699,7 +1708,12 @@ fn expanded_limit_is_checked_before_xml_materialization() {
         format!("<x>{}</x>", "a".repeat(MAX_EXPANDED_BYTES + 1))
     });
     assert!(large.len() < MAX_SOURCE_BYTES);
-    assert!(import_xlsx(&large).unwrap_err().0.contains("Expanded ZIP"));
+    assert!(
+        import_xlsx(&large)
+            .unwrap_err()
+            .to_string()
+            .contains("Expanded ZIP")
+    );
 }
 #[test]
 fn zip_path_entry_count_and_source_bounds_fail_closed() {
@@ -1742,7 +1756,7 @@ fn unknown_parts_are_blocking_and_xml_namespace_aliases_cannot_hide_duplicate_at
     assert!(
         import_xlsx(&bytes)
             .unwrap_err()
-            .0
+            .to_string()
             .contains("Duplicate expanded")
     );
 }
@@ -1755,7 +1769,7 @@ fn csv_does_not_activate_literal_text_as_external_formulas() {
         assert!(
             export_csv(&book.sheets[0])
                 .unwrap_err()
-                .0
+                .to_string()
                 .contains("literal Text")
         );
         let reimport = import_xlsx(&export_xlsx(&book).unwrap()).unwrap();
@@ -1944,7 +1958,7 @@ fn numeric_scalar_export_cannot_change_type_through_its_format() {
         assert!(
             export_xlsx(&book)
                 .unwrap_err()
-                .0
+                .to_string()
                 .contains("Number requires")
         );
     }

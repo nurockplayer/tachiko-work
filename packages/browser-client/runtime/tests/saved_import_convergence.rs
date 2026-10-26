@@ -7,9 +7,9 @@ use std::{
 };
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, SourceWorkbook, import_csv};
 use tachiko_designer_runtime::{
-    CleanupOperation, CollectionSummary, ColumnProjection, DesignerRequest, DesignerResponse,
-    DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType, ImportSelection,
-    InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
+    CapacityLimit, CleanupOperation, CollectionSummary, ColumnProjection, DesignerRequest,
+    DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType,
+    ImportSelection, InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
     StoredValueProjection, TableProjection, import_workbook, inspect_imported_project,
     open_imported_project, open_project,
 };
@@ -791,10 +791,12 @@ fn enlarged_v3_round_trips_in_capacity_and_beyond_both_profiles_cannot_enter() {
     // admission. This reaches the producer boundary instead of invalid framing.
     let encoded = independently_frame_v3(&candidate);
     let refused = tachiko_designer_runtime::inspect_project(&encoded).unwrap_err();
-    assert_eq!(
-        refused.failure_projection("resident/0").code,
-        "unsupported_project"
-    );
+    let failure = refused.failure_projection("resident/0");
+    assert_eq!(failure.code, "capacity_exceeded");
+    let capacity = failure.capacity.unwrap();
+    assert_eq!(capacity.limit, CapacityLimit::TableRows);
+    assert_eq!(capacity.maximum, 128);
+    assert_eq!(capacity.attempted, 129);
     let mut empty = None;
     assert!(open_project(&mut empty, &encoded, FRESH).is_err());
     assert!(empty.is_none());

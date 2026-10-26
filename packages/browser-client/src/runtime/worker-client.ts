@@ -1,5 +1,6 @@
 import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
 import { projectTransferFromEntries } from "../host/project-transfer.ts";
+import { isCapacityFailure } from "./protocol.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
@@ -8,6 +9,7 @@ import type {
   FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
+  CapacityProjection,
   CanonicalTreeExport,
   CanonicalProjectFile,
   ColumnProjection,
@@ -56,6 +58,10 @@ export class WorkerDesignerClient implements DesignerClient {
       if (pending === undefined) return;
       this.#pending.delete(event.data.id);
       if (event.data.status === "error") {
+        if (event.data.error.code === "capacity_exceeded" && !isCapacityFailure(event.data.error)) {
+          pending.reject(new Error("Invalid Worker capacity failure."));
+          return;
+        }
         pending.reject(new DesignerRuntimeError(event.data.error));
       } else {
         pending.resolve(event.data);
@@ -182,6 +188,15 @@ export class WorkerDesignerClient implements DesignerClient {
         type: "bootstrap",
         occurrence_id: freshOccurrenceId(),
       }),
+    );
+  }
+
+  async queryCapacity(expectedRevision?: string): Promise<CapacityProjection> {
+    return expectResponse(
+      "capacity",
+      await this.#command(expectedRevision === undefined
+        ? {type: "query_capacity"}
+        : {type: "query_capacity", expected_revision: expectedRevision}),
     );
   }
 
@@ -531,6 +546,7 @@ export function freshOccurrenceId(): string {
 function expectResponse(type: "import_preview", response: DesignerResponse): SourceWorkbook;
 function expectResponse(type: "imported", response: DesignerResponse): ImportedProjection;
 function expectResponse(type: "cleanup_preview", response: DesignerResponse): CleanupPreview;
+function expectResponse(type: "capacity", response: DesignerResponse): CapacityProjection;
 function expectResponse(
   type: "bootstrap",
   response: DesignerResponse,
@@ -596,8 +612,38 @@ function expectResponse(
     case "cleanup_preview":
       response.payload.changes.forEach(change => { if (change.before !== null) validateFieldPresence(change.before); });
       break;
+    case "capacity": validateCapacity(response.payload); break;
   }
   return "payload" in response ? response.payload : undefined;
+}
+
+const CAPACITY_LIMITS = [
+  "collections", "table_fields", "table_rows", "total_entities", "populated_cells",
+  "formulas", "formula_ast_nodes", "dependency_edges",
+] as const;
+
+function validateCapacity(capacity: CapacityProjection): void {
+  const nonnegativeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+  if (capacity === null || typeof capacity !== "object" ||
+      typeof capacity.revision !== "string" ||
+      capacity.usage === null || typeof capacity.usage !== "object" ||
+      capacity.limits === null || typeof capacity.limits !== "object") {
+    throw new Error("Invalid Worker capacity projection.");
+  }
+  const usage = capacity.usage;
+  const limits = capacity.limits;
+  const usageCounts = [usage.collections, usage.total_entities, usage.populated_cells, usage.formulas,
+    usage.formula_ast_nodes, usage.dependency_edges];
+  if (!usageCounts.every(nonnegativeInteger) || !CAPACITY_LIMITS.every(limit => nonnegativeInteger(limits[limit])) ||
+      usage.tables === null || typeof usage.tables !== "object" || Array.isArray(usage.tables)) {
+    throw new Error("Invalid Worker capacity projection.");
+  }
+  for (const table of Object.values(usage.tables)) {
+    if (table === null || typeof table !== "object" ||
+        !nonnegativeInteger(table.rows) || !nonnegativeInteger(table.fields)) {
+      throw new Error("Invalid Worker capacity projection.");
+    }
+  }
 }
 
 function validateFieldPresence(field: FieldProjection): void {
