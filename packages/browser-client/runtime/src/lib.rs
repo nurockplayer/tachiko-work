@@ -366,6 +366,12 @@ pub struct TableProjection {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TableWindowProjection {
     pub revision: String,
+    /// The same profile flags `queryTable` carries, so a client reading only
+    /// windows knows whether native row and column commands apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracker_profile: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_table_profile: Option<bool>,
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     /// Deterministic digest of the column definitions. It changes only when a
@@ -3029,6 +3035,8 @@ impl DesignerRuntime {
         let rows = self.build_window_rows(spec, &entities, &mut used)?;
         Ok(TableWindowProjection {
             revision,
+            tracker_profile: is_tracker_spec(spec).then_some(true),
+            native_table_profile: is_native_table_spec(spec).then_some(true),
             collection: spec.summary.clone(),
             columns,
             columns_revision,
