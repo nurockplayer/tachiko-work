@@ -6890,6 +6890,14 @@ fn expression_references(
         Expression::SameRowReference(field) => {
             references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
         }
+        Expression::ColumnTotal(column) => {
+            // A total reads a column, not the individual cells of a row, so
+            // row churn keeps it valid and only losing the whole column breaks
+            // it. The owning row stands in for the column's schema: the column
+            // guard matches this field against the rows of that collection,
+            // and the row guard skips the owning cell when its own row goes.
+            references.insert(FieldRef::new(owner.entity.clone(), column.field.clone()));
+        }
         Expression::Add { left, right }
         | Expression::Subtract { left, right }
         | Expression::Multiply { left, right }
@@ -8813,6 +8821,53 @@ mod tests {
             error,
             DesignerError::Lifecycle(PatchLifecycleError::CommandRejected { .. })
         ));
+    }
+
+    #[test]
+    fn native_column_rejects_a_retained_column_total_before_publication() {
+        let base =
+            native_column_runtime(&[("Source", "number"), ("Derived", "number")], &["1", "2"]);
+        let ids = native_column_ids(&base);
+        let entity = base.collection_specs["orders"].entities[0].clone();
+        let schema = base.collection_specs["orders"].summary.id.clone();
+        let derived = ids["derived"].clone();
+        let source = ids["source"].clone();
+        let mut document = base.session.export_snapshot().document().clone();
+        document.entities.get_mut(&entity).unwrap().fields.insert(
+            derived.clone(),
+            Value::Formula(super::Expression::ColumnTotal(ColumnRef::new(
+                schema,
+                source.clone(),
+            ))),
+        );
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .native_table_rows = true;
+        // A total reads the whole column, so losing the column loses the
+        // total even though no single row is referenced by address. The
+        // refusal is checked without the frozen v1 export round-trip: a
+        // document holding a column total is not representable in .roproj/v1
+        // at all.
+        let undo_count = runtime.undo.len();
+        let redo_count = runtime.redo.len();
+        let error = runtime
+            .remove_column("resident/0", "orders", source.as_str())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::FormulaDependencyInUse {
+                dependent_cells: 1,
+                ..
+            }
+        ));
+        assert_eq!(runtime.current_revision(), "resident/0");
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert_eq!(runtime.redo.len(), redo_count);
     }
 
     #[test]
