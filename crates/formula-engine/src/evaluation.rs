@@ -178,21 +178,57 @@ fn round(value: Number, digits: u8) -> Result<Number, CalculationFailure> {
     }
     let value = value.get();
     // Integral binary64 values already satisfy every supported precision.
-    // Returning them directly also avoids scaling overflow and large-value drift.
     if value.fract() == 0.0 {
         return number_result(value);
     }
-    let scale = 10_f64.powi(i32::from(digits));
-    let exponent_bits = (value.abs().to_bits() >> 52) & 0x7ff;
-    let exponent = i32::try_from(exponent_bits).expect("binary64 exponent fits i32") - 1023;
-    // Rounding by less than one binary64 spacing cannot change the Number.
-    // Avoid a multiply/divide round trip that could perturb such a value.
-    if 2_f64.powi(exponent - 52) >= 1.0 / scale {
-        return number_result(value);
+    number_result(round_decimal(value, usize::from(digits)))
+}
+
+/// Round half away from zero on the decimal the user sees, not on the binary64
+/// product: `1.005 * 100.0` is `100.49999999999999`, which would round down,
+/// while spreadsheets give `ROUND(1.005, 2) = 1.01`. Rust's `Display` prints
+/// the shortest decimal that round-trips to the same binary64 value, so the
+/// digit after the kept places decides, then the result is parsed back.
+fn round_decimal(value: f64, digits: usize) -> f64 {
+    let text = format!("{}", value.abs());
+    let (integer, fraction) = text.split_once('.').unwrap_or((text.as_str(), ""));
+    if fraction.len() <= digits {
+        return value;
     }
-    // Scaling is one binary64 operation, followed by half-away-from-zero rounding.
-    // This deliberately makes ROUND(2.675, 2) = 2.68 without decimal formatting.
-    number_result((value * scale).round() / scale)
+    let mut kept = integer
+        .bytes()
+        .chain(fraction.bytes().take(digits))
+        .collect::<Vec<_>>();
+    if fraction.as_bytes()[digits] >= b'5' {
+        let mut index = kept.len();
+        loop {
+            if index == 0 {
+                kept.insert(0, b'1');
+                break;
+            }
+            index -= 1;
+            if kept[index] == b'9' {
+                kept[index] = b'0';
+            } else {
+                kept[index] += 1;
+                break;
+            }
+        }
+    }
+    let (whole, places) = kept.split_at(kept.len() - digits);
+    let mut rounded = String::from_utf8_lossy(whole).into_owned();
+    if !places.is_empty() {
+        rounded.push('.');
+        rounded.push_str(&String::from_utf8_lossy(places));
+    }
+    let magnitude = rounded
+        .parse::<f64>()
+        .expect("ASCII decimal digits always parse");
+    if magnitude == 0.0 {
+        0.0
+    } else {
+        magnitude.copysign(value)
+    }
 }
 
 fn number_result(value: f64) -> Result<Number, CalculationFailure> {

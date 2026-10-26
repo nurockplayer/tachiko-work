@@ -529,3 +529,65 @@ fn absent_non_number_fields_are_only_valid_as_presence_probes() {
         assert_eq!(number_at(&calculate_complete(&document), "output"), 3.0);
     }
 }
+
+#[test]
+fn round_decides_on_the_decimal_not_the_scaled_binary_product() {
+    for (source, expected) in [
+        ("ROUND(1.005, 2)", 1.01),
+        ("ROUND(1.015, 2)", 1.02),
+        ("ROUND(0.285, 2)", 0.29),
+        ("ROUND(-1.005, 2)", -1.01),
+        ("ROUND(2.675, 2)", 2.68),
+        ("ROUND(9.995, 2)", 10.0),
+        ("ROUND(-0.004, 2)", 0.0),
+        ("ROUND(0.125, 2)", 0.13),
+        ("ROUND(1.4999, 0)", 1.0),
+    ] {
+        let mut document = document();
+        set_formula(&mut document, "output", source);
+        let actual = number_at(&calculate_complete(&document), "output");
+        assert_eq!(actual, expected, "{source}");
+        assert!(
+            !actual.is_sign_negative() || actual != 0.0,
+            "{source} is not -0"
+        );
+    }
+}
+
+#[test]
+fn a_missing_required_value_fails_only_the_selected_if_branch() {
+    let mut document = document();
+    // `then_value` is a required Number; remove its value.
+    document
+        .entities
+        .get_mut("row")
+        .unwrap()
+        .fields
+        .remove(&FieldId::from("then_value"));
+    set_formula(
+        &mut document,
+        "output",
+        "IF([row.input] < 0, [row.then_value], 42)",
+    );
+    assert_eq!(number_at(&calculate_complete(&document), "output"), 42.0);
+
+    set_formula(
+        &mut document,
+        "output",
+        "IF([row.input] > 0, [row.then_value], 42)",
+    );
+    let CalculationOutcome::Failed(failures) = calculate_complete(&document) else {
+        panic!("the selected branch reads a missing required value");
+    };
+    assert!(failures.failures().contains_key(&owner("output")));
+
+    // Outside a branch the missing value still fails before evaluation.
+    set_formula(&mut document, "output", "[row.then_value] + 1");
+    let CalculationOutcome::Failed(failures) = calculate_complete(&document) else {
+        panic!("an unconditional missing value fails");
+    };
+    assert!(matches!(
+        failures.failures().get(&owner("output")),
+        Some(CalculationFailure::InvalidReferences { .. })
+    ));
+}

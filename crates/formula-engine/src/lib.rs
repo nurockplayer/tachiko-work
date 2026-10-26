@@ -1270,8 +1270,17 @@ fn pregraph_failures(
             invalid_targets.insert(field.clone(), failure);
         }
         if let Value::Formula(expression) = value {
+            let unconditional = expression.unconditional_references(field);
             for (dependency, numeric) in expression.reference_uses(field) {
-                if let Some(failure) = reference_failure(document, &dependency, numeric) {
+                // A value missing only inside an IF branch is decided at
+                // evaluation, when the branch is actually selected; the
+                // reference itself must still be well-formed.
+                let failure = if unconditional.contains(&dependency) {
+                    reference_failure(document, &dependency, numeric)
+                } else {
+                    structural_reference_failure(document, &dependency, numeric)
+                };
+                if let Some(failure) = failure {
                     invalid_targets.insert(dependency, failure);
                 }
             }
@@ -1422,7 +1431,9 @@ fn evaluate_remaining_formulas(
     );
 }
 
-fn reference_failure(
+/// The reference names an existing entity and field of the right type,
+/// whatever value it holds now.
+fn structural_reference_failure(
     document: &Document,
     field: &FieldRef,
     numeric: bool,
@@ -1437,12 +1448,22 @@ fn reference_failure(
     else {
         return Some(ReferenceFailure::Missing);
     };
+    (numeric && definition.field_type != FieldType::Number).then_some(ReferenceFailure::NonNumeric)
+}
+
+fn reference_failure(
+    document: &Document,
+    field: &FieldRef,
+    numeric: bool,
+) -> Option<ReferenceFailure> {
+    if let Some(failure) = structural_reference_failure(document, field, numeric) {
+        return Some(failure);
+    }
     if !numeric {
         return None;
     }
-    if definition.field_type != FieldType::Number {
-        return Some(ReferenceFailure::NonNumeric);
-    }
+    let entity = &document.entities[&field.entity];
+    let definition = &document.schemas[&entity.schema].fields[&field.field];
     match entity.fields.get(&field.field) {
         Some(Value::Number(_) | Value::Formula(_)) => None,
         Some(Value::Text(_) | Value::Boolean(_) | Value::Date(_) | Value::Reference(_)) => {

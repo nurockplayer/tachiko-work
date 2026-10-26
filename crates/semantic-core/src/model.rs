@@ -1,7 +1,7 @@
 use std::{
     borrow::Borrow,
     cmp::Ordering,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt,
     hash::{Hash, Hasher},
 };
@@ -736,6 +736,29 @@ impl Expression {
             )
             .then_some(Condition),
         }
+    }
+
+    /// References read on every evaluation: everything except IF's
+    /// `then`/`else` branches (the condition is always read). A missing value
+    /// here fails the formula before evaluation; inside a branch it fails only
+    /// when that branch is selected.
+    #[must_use]
+    pub fn unconditional_references(&self, owner: &FieldRef) -> BTreeSet<FieldRef> {
+        let mut references = BTreeSet::new();
+        let mut pending = vec![self];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::Reference(reference) => {
+                    references.insert(reference.clone());
+                }
+                Self::SameRowReference(field) => {
+                    references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
+                }
+                Self::If { condition, .. } => pending.push(condition),
+                _ => pending.extend(node.children()),
+            }
+        }
+        references
     }
 
     /// Every static reference and whether its use requires a Number field.
