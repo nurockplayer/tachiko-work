@@ -500,17 +500,11 @@ impl FormulaInverseRestoreCommand {
 pub struct FormulaRestoreCommand {
     target: FieldRef,
     expression: Expression,
-    references: BTreeSet<FieldRef>,
 }
 
 impl FormulaRestoreCommand {
     pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
-        let references = tachiko_formula_engine::extract_dependencies(&target, &expression);
-        Self {
-            target,
-            expression,
-            references,
-        }
+        Self { target, expression }
     }
 
     #[must_use]
@@ -521,11 +515,6 @@ impl FormulaRestoreCommand {
     #[must_use]
     pub fn expression(&self) -> &Expression {
         &self.expression
-    }
-
-    #[must_use]
-    pub fn references(&self) -> &BTreeSet<FieldRef> {
-        &self.references
     }
 }
 
@@ -3824,12 +3813,19 @@ impl PatchLifecycle {
                     command.target(),
                     disclosures,
                 )?;
-                for reference in command.references() {
+                // A column total reads every entity of its schema, so the
+                // reference set expands against the admitted document. The
+                // command is built from host history where no document is at
+                // hand (the capacity edit path keeps none), so the expansion
+                // happens here, once both documents exist.
+                for reference in
+                    expression_references(after, command.target(), command.expression())
+                {
                     self.insert_field_disclosure_for(
                         OperationFamily::FormulaUpdate,
                         before,
                         after,
-                        reference,
+                        &reference,
                         disclosures,
                     )?;
                 }
