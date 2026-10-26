@@ -4598,7 +4598,6 @@ fn admit_portable_ro(
     enforce_project_transfer_limit(input.len())?;
     let verified = decode_portable_package_v1(input)?;
     let document = decode_roproj_v3(verified.tree())?;
-    ensure_document_profile(&document, false)?;
     let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
     Ok((candidate, opened))

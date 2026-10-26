@@ -288,22 +288,22 @@ mod tests {
 
     #[test]
     fn stored_formats_round_trip_only_exact_xlsx_codes() {
-        use tachiko_workspace_engine::{NumberFormat, NumberFormatKind as StoredKind};
+        use tachiko_workspace_engine::NumberFormat;
 
         for format in [
             NumberFormat {
                 decimals: 2,
-                kind: StoredKind::Plain,
+                kind: tachiko_workspace_engine::NumberFormatKind::Plain,
                 thousands_separator: true,
             },
             NumberFormat {
                 decimals: 0,
-                kind: StoredKind::Percent,
+                kind: tachiko_workspace_engine::NumberFormatKind::Percent,
                 thousands_separator: false,
             },
             NumberFormat {
                 decimals: 3,
-                kind: StoredKind::Currency { code: "JPY".into() },
+                kind: tachiko_workspace_engine::NumberFormatKind::Currency { code: "JPY".into() },
                 thousands_separator: true,
             },
         ] {
@@ -327,11 +327,11 @@ mod tests {
             SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook, export_csv,
             export_xlsx, import_xlsx,
         };
-        use tachiko_workspace_engine::{NumberFormat, NumberFormatKind as StoredKind};
+        use tachiko_workspace_engine::NumberFormat;
 
         let format = NumberFormat {
             decimals: 2,
-            kind: StoredKind::Percent,
+            kind: tachiko_workspace_engine::NumberFormatKind::Percent,
             thousands_separator: true,
         };
         let workbook = SourceWorkbook {

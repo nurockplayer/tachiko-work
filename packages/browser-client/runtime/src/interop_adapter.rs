@@ -1118,10 +1118,12 @@ fn infer_column_number_format(
     let mut observed = None;
     let mut has_explicit = false;
     let mut numeric_without_style = false;
+    let mut non_numeric_value = false;
     let mut invalid = false;
     for cell in rows.iter().filter_map(|row| row.get(column_index)) {
         let numeric = cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. });
         numeric_without_style |= numeric && cell.style.number_format.is_none();
+        non_numeric_value |= !matches!(cell.value, SourceValue::Empty | SourceValue::Number { .. });
         let Some(pattern) = cell.style.number_format.as_deref() else {
             continue;
         };
@@ -1134,6 +1136,9 @@ fn infer_column_number_format(
         }
     }
     invalid |= has_explicit && numeric_without_style;
+    // A column format is only carried by Number columns; a text or other non-Number
+    // value keeps the source value and drops the format as a non-blocking finding.
+    invalid |= observed.is_some() && non_numeric_value;
     if invalid {
         (None, has_explicit)
     } else {
@@ -3086,7 +3091,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     FidelityCategory::LossyOnExport,
                     "number_format_not_mapped",
                     &format!("{name}:column {}", column_index + 1),
-                    "XLSX numeric formatting is mixed or outside the exact Tachiko number-format vocabulary; the field keeps its default format and source styling is not promoted.",
+                    "XLSX numeric formatting is mixed, outside the exact Tachiko number-format vocabulary, or applied to non-numeric values; the field keeps its default format and source styling is not promoted.",
                     false,
                 ));
             }
