@@ -73,8 +73,11 @@ pub(crate) fn optional_v2<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<NumberFormatDto>, D::Error> {
     let mut value = serde_json::Value::deserialize(deserializer)?;
-    if let Some(decimals) = value.get("decimals").and_then(serde_json::Value::as_f64)
-        && let Ok(integer) = decimals.to_string().parse::<u8>()
+    // One `if let` (no let-chain): the workspace MSRV is 1.85.
+    if let Some(integer) = value
+        .get("decimals")
+        .and_then(serde_json::Value::as_f64)
+        .and_then(|decimals| decimals.to_string().parse::<u8>().ok())
     {
         value["decimals"] = integer.into();
     }
