@@ -152,8 +152,20 @@ try {
     const baselineValue = imported.opened.table.rows[0].fields[0].stored.value;
     const exportOperation = format => ({ type: "export", format, expected_revision: revision, metadata,
       collection: metadata.sheets[0].schema_id });
+    // queryTable refuses above 1,000 rows; read the complete table by window.
+    function completeTable() {
+      const rows = [];
+      let columns;
+      for (;;) {
+        const window = okay(ordinary({ type: "query_table_window", expected_revision: revision,
+          collection, view: {}, start: rows.length, count: 64 }), "table_window");
+        columns ??= window.columns;
+        rows.push(...window.rows);
+        if (window.rows.length === 0 || rows.length >= window.total_rows) return { columns, rows };
+      }
+    }
     function snapshot() {
-      const table = okay(ordinary({ type: "query_table", collection }), "table");
+      const table = completeTable();
       const exports = {};
       for (const format of ["csv", "xlsx"]) {
         okay(spreadsheet(exportOperation(format)), "spreadsheet_exported");
@@ -301,7 +313,7 @@ try {
       okay(spreadsheetRaw(wire), "spreadsheet_exported");
       assert.equal(sha(output()), stable.exports.csv);
       const inspected = okay(spreadsheetRaw(json({ metadata, type: "inspect_project" }), save(revision)), "opened");
-      const resident = okay(ordinary({ type: "query_table", collection }), "table");
+      const resident = completeTable();
       assert.deepEqual(inspected.table.rows, resident.rows);
       unchanged(stable);
     });
@@ -454,7 +466,7 @@ try {
     });
     // PROPOSED ONLY: exact 4MiB open succeeds and installs a fresh occurrence.
     const savedForExactOpen = save(revision);
-    const beforeExactOpenTable = okay(ordinary({ type: "query_table", collection }), "table");
+    const beforeExactOpenTable = completeTable();
     const beforeExactOpenOccurrence = okay(observe(), "occurrence_observed");
     const exactOpenOperation = { type: "open_project", occurrence_id: uuid(), metadata };
     const { type, ...openRest } = exactOpenOperation;

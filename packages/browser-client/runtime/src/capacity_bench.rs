@@ -31,8 +31,8 @@ use tachiko_workspace_engine::{
 
 use super::{
     DESIGNER_PRINCIPAL, DesignerClock, DesignerRequest, DesignerRuntime, FieldTarget, PrincipalId,
-    ScalarEditInput, collection_specs, decode_project_bundle, designer_lifecycle, document_scope,
-    encode_project_bundle, ensure_projection_size_with_limit, formula_sources,
+    ScalarEditInput, ViewIndexCache, collection_specs, decode_project_bundle, designer_lifecycle,
+    document_scope, encode_project_bundle, ensure_projection_size_with_limit, formula_sources,
     select_default_collection,
 };
 use crate::capacity_fixtures::{
@@ -243,6 +243,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
         principal,
         clock: DesignerClock::default(),
         proposal_serial: 0,
+        view_index: ViewIndexCache::default(),
         row_serial: 0,
         row_namespace: occurrence_id.to_owned(),
         undo: Vec::new(),

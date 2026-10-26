@@ -63,7 +63,21 @@ function exported(format) {
     collection: metadata.sheets[0].schema_id }), "spreadsheet_exported");
   return output();
 }
-const table = () => okay(ordinary({ type: "query_table", collection }), "table");
+// queryTable refuses above 1,000 rows; page the complete table through windows.
+function table() {
+  const rows = [];
+  let columns, collectionSummary;
+  for (;;) {
+    const window = okay(ordinary({ type: "query_table_window", expected_revision: revision,
+      collection, view: {}, start: rows.length, count: 64 }), "table_window");
+    columns ??= window.columns;
+    collectionSummary ??= window.collection;
+    rows.push(...window.rows);
+    if (window.rows.length === 0 || rows.length >= window.total_rows) {
+      return { revision, collection: collectionSummary, columns, rows };
+    }
+  }
+}
 function verify(actual, caseValue, values) {
   assert.equal(actual.rows.length, values.length);
   assert.equal(actual.collection.entity_count, values.length);

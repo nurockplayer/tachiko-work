@@ -29,6 +29,10 @@ import type {
   NewTableColumnInput,
   ProjectExport,
   TableProjection,
+  TableRowProjection,
+  TableView,
+  TableWindowProjection,
+  LocatedInViewProjection,
   WorkerReply,
   WorkerRequest,
 } from "./protocol.ts";
@@ -327,6 +331,44 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async queryTableWindow(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    start: number,
+    count: number,
+  ): Promise<TableWindowProjection> {
+    return expectResponse(
+      "table_window",
+      await this.#command({
+        type: "query_table_window",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+        start,
+        count,
+      }),
+    );
+  }
+
+  async locateInView(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    entity: string,
+  ): Promise<LocatedInViewProjection> {
+    return expectResponse(
+      "located_in_view",
+      await this.#command({
+        type: "locate_in_view",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+        entity,
+      }),
+    );
+  }
+
   async queryFields(
     expectedRevision: string,
     fields: FieldTarget[],
@@ -502,6 +544,14 @@ function expectResponse(
   response: DesignerResponse,
 ): TableProjection;
 function expectResponse(
+  type: "table_window",
+  response: DesignerResponse,
+): TableWindowProjection;
+function expectResponse(
+  type: "located_in_view",
+  response: DesignerResponse,
+): LocatedInViewProjection;
+function expectResponse(
   type: "fields",
   response: DesignerResponse,
 ): FieldBatchProjection;
@@ -534,6 +584,8 @@ function expectResponse(
   // sparse Rust payload (or fabricating empty Text for absent slots).
   switch (response.type) {
     case "table": validateTablePresence(response.payload); break;
+    case "table_window": validateTablePresence(response.payload); break;
+    case "located_in_view": validateLocatedInView(response.payload); break;
     case "opened": validateTablePresence(response.payload.table); break;
     case "imported": validateTablePresence(response.payload.opened.table); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
@@ -624,7 +676,21 @@ function validateColumnNumberFormat(column: ColumnProjection): void {
   }
 }
 
-function validateTablePresence(table: TableProjection): void {
+function validateLocatedInView(located: LocatedInViewProjection): void {
+  if (located.result === "found") {
+    if (!Number.isInteger(located.index) || located.index! < 0) {
+      throw new Error("Invalid Worker located-in-view position.");
+    }
+    return;
+  }
+  if (located.result !== "filtered_out" || located.index !== undefined) {
+    throw new Error("Invalid Worker located-in-view result.");
+  }
+}
+
+function validateTablePresence(
+  table: Pick<TableProjection, "columns"> & { rows: TableRowProjection[] },
+): void {
   const columns = new Map(table.columns.map((column, index) => {
     if (typeof column.required !== "boolean") throw new Error("Invalid Worker column requiredness.");
     if (column.display_name_explicit !== undefined && column.display_name_explicit !== true) {

@@ -7,7 +7,8 @@
 
 use tachiko_designer_runtime::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, ScalarEditInput,
-    TableProjection, inspect_project, open_portable_ro, open_project, verify_portable_ro,
+    TableProjection, TableView, inspect_project, open_portable_ro, open_project,
+    verify_portable_ro,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, FieldConstraint, FieldDefinition, FieldId, FieldKey,
@@ -83,17 +84,46 @@ fn independently_frame_v3(document: &Document) -> Vec<u8> {
     bytes
 }
 
+/// Read the whole capacity table through bounded windows: `queryTable` now
+/// refuses above 1,000 rows, so paging is the only complete read.
 fn table(runtime: &mut DesignerRuntime) -> TableProjection {
-    let DesignerResponse::Table(mut table) = runtime
-        .handle(DesignerRequest::QueryTable {
-            collection: "grid".to_owned(),
-        })
-        .expect("the capacity table is queryable")
-    else {
-        panic!("expected a table projection");
-    };
-    table.revision = String::from("normalized");
-    table
+    let revision = runtime.observe_occurrence().revision;
+    let mut rows = Vec::new();
+    let mut columns = Vec::new();
+    let mut collection = None;
+    let mut start = 0;
+    loop {
+        let DesignerResponse::TableWindow(window) = runtime
+            .handle(DesignerRequest::QueryTableWindow {
+                expected_revision: revision.clone(),
+                collection: "grid".to_owned(),
+                view: TableView::default(),
+                start,
+                count: 256,
+            })
+            .expect("the capacity table is windowable")
+        else {
+            panic!("expected a table window");
+        };
+        if collection.is_none() {
+            columns = window.columns;
+            collection = Some(window.collection);
+        }
+        let received = window.rows.len();
+        rows.extend(window.rows);
+        start += received;
+        if received == 0 || start >= window.total_rows {
+            break;
+        }
+    }
+    TableProjection {
+        revision: String::from("normalized"),
+        tracker_profile: None,
+        native_table_profile: None,
+        collection: collection.expect("the first window carries the collection"),
+        columns,
+        rows,
+    }
 }
 
 fn reopen(bytes: &[u8], occurrence: &str) -> DesignerRuntime {

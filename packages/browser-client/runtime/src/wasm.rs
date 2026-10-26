@@ -783,6 +783,7 @@ pub extern "C" fn tachiko_designer_project_export() {
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
                     constraint_failure: None,
+                    row_count: None,
                 },
             }
         };
@@ -836,6 +837,7 @@ pub extern "C" fn tachiko_designer_occurrence_observe() {
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
                     constraint_failure: None,
+                    row_count: None,
                 },
             },
         };
@@ -892,6 +894,7 @@ fn export_project_bytes<E>(
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
                     constraint_failure: None,
+                    row_count: None,
                 },
             }
         };
