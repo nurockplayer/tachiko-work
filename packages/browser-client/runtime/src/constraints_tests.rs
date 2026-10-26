@@ -401,27 +401,76 @@ fn declaring_a_constraint_refuses_existing_violations_atomically() {
 }
 
 #[test]
-fn invalid_declarations_are_refused_without_publication() {
+fn non_finite_bounds_are_refused_without_publication() {
+    let mut fixture = Fixture::new();
+    let amount = fixture.amount();
+    let before = fixture.runtime.current_revision().to_owned();
+    // Non-finite bounds are refused while decoding the declaration itself.
+    for declaration in [range(f64::NAN, 100.0), range(0.0, f64::INFINITY)] {
+        assert!(fixture.set(&amount, declaration).is_err());
+        assert_eq!(fixture.runtime.current_revision(), before);
+        assert_eq!(fixture.column(&amount).constraint, None);
+    }
+}
+
+#[test]
+fn unsorted_duplicate_text_values_are_normalised() {
+    let mut fixture = Fixture::new();
+    let status = fixture.status();
+    fixture
+        .set(&status, list(&["Todo", "Doing", "Todo", "Done"]))
+        .unwrap();
+    assert_eq!(
+        fixture.column(&status).constraint,
+        Some(list_values(&["Doing", "Done", "Todo"]))
+    );
+}
+
+#[test]
+fn invalid_declarations_are_typed_and_publish_nothing() {
     let mut fixture = Fixture::new();
     let (status, amount) = (fixture.status(), fixture.amount());
     let before = fixture.runtime.current_revision().to_owned();
-    // Stored literals must be non-empty, unique and byte-sorted; ranges must be
-    // finite and ordered; and the constraint kind must match the field type.
     let declarations = [
-        (status.as_str(), list(&[])),
-        (status.as_str(), list(&["Todo", "Done"])),
-        (status.as_str(), list(&["Done", "Done"])),
-        (amount.as_str(), range(100.0, 0.0)),
-        (amount.as_str(), range(f64::NAN, 100.0)),
-        (amount.as_str(), range(0.0, f64::INFINITY)),
-        (status.as_str(), range(0.0, 100.0)),
-        (amount.as_str(), list(&LITERALS)),
+        (amount.as_str(), range(10.0, 5.0), "max"),
+        (status.as_str(), list(&[]), "at least one value"),
+        (status.as_str(), range(0.0, 1.0), "Number columns"),
+        (amount.as_str(), list(&["a"]), "Text columns"),
     ];
-    for (field, declaration) in declarations {
-        assert!(fixture.set(field, declaration).is_err(), "{field}");
+    for (field, declaration, expected) in declarations {
+        match fixture.set(field, declaration).unwrap_err() {
+            DesignerError::FieldConstraintViolation {
+                reason,
+                offending_rows,
+                message,
+                ..
+            } => {
+                assert_eq!(reason, ConstraintFailureReason::Declaration);
+                assert_eq!(offending_rows, 0);
+                assert!(message.contains(expected), "{message}");
+            }
+            other => panic!("unexpected declaration refusal {other:?}"),
+        }
+        // A refused declaration publishes nothing, including its revision.
         assert_eq!(fixture.runtime.current_revision(), before);
         assert_eq!(fixture.column(field).constraint, None);
     }
+    let failure = DesignerError::FieldConstraintViolation {
+        schema: fixture.collection.as_str().into(),
+        field: status.as_str().into(),
+        constraint: list_values(&["a"]),
+        offending_rows: 0,
+        reason: ConstraintFailureReason::Declaration,
+        message: "message".into(),
+    }
+    .failure_projection(&before);
+    assert_eq!(failure.code, "invalid_constraint_declaration");
+    assert_eq!(
+        failure
+            .constraint_failure
+            .map(|structured| structured.reason),
+        Some(ConstraintFailureReason::Declaration)
+    );
 }
 
 #[test]

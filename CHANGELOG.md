@@ -78,6 +78,10 @@ All notable changes to Tachiko Work are documented in this file.
   constrained edits publish nothing and reject with a typed
   `constraint_failure` carrying the allowed shape and offending row count, and
   declaring a constraint that existing values violate is refused atomically.
+  Unsorted or duplicate Text values are normalised to their byte-sorted unique
+  set; an empty or oversized literal list, reversed bounds, or a kind that does
+  not match the column is refused before publication with the typed
+  `invalid_constraint_declaration` reason.
   Constrained projects save as `.roproj/v3`, reopen with constraints and values
   intact, and legacy v1/v2 `exportProject` refuses them with
   `legacy_export_unsupported` instead of dropping the declaration. The kit
