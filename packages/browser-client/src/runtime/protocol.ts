@@ -89,7 +89,10 @@ export type NumberFormat = {
   thousands_separator: boolean;
 };
 
-export type ConstraintFailureReason = "field_value" | "existing_values";
+export type ConstraintFailureReason =
+  | "field_value"
+  | "existing_values"
+  | "declaration";
 
 /** Structured refusal: the allowed shape and how many rows or values failed. */
 export type ConstraintFailureProjection = {

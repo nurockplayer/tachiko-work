@@ -585,6 +585,8 @@ pub enum ConstraintFailureReason {
     FieldValue,
     /// Declaring the constraint would leave existing values invalid.
     ExistingValues,
+    /// The declaration itself is invalid for its column (bounds, ordering limits or kind).
+    Declaration,
 }
 
 /// Structured refusal data for a constraint declaration or constrained edit.
@@ -715,6 +717,12 @@ fn constraint_failure(
             "refused to set the constraint on '{schema}.{}': {offending_rows} existing row(s) are outside it ({requirement})",
             field_ref.field
         ),
+        // Declaration refusals carry their own message from `declaration_failure`
+        // and never reach this path; keep the projection total without panicking.
+        ConstraintFailureReason::Declaration => format!(
+            "invalid constraint declaration for '{schema}.{}' ({requirement})",
+            field_ref.field
+        ),
     };
     Some(DesignerError::FieldConstraintViolation {
         schema,
@@ -722,6 +730,66 @@ fn constraint_failure(
         constraint,
         offending_rows,
         reason,
+        message,
+    })
+}
+
+// The same declaration limits `semantic_core::validation::validate_field_constraint`
+// enforces, checked here so the UI gets a typed refusal before publication.
+const MAX_TEXT_LITERALS: usize = 256;
+const MAX_TEXT_LITERAL_BYTES: usize = 1024;
+const MAX_TEXT_LITERALS_TOTAL_BYTES: usize = 65_536;
+
+/// Refuse a constraint declaration that cannot be valid for its column, so the
+/// UI learns the exact reason instead of the generic semantic rejection.
+fn declaration_failure(
+    schema: &SchemaId,
+    definition: &FieldDefinition,
+    constraint: &tachiko_workspace_engine::FieldConstraint,
+) -> Option<DesignerError> {
+    let message = match (&definition.field_type, constraint) {
+        (_, tachiko_workspace_engine::FieldConstraint::None) => return None,
+        (FieldType::Text, tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values }) => {
+            let total_bytes = values.iter().map(String::len).sum::<usize>();
+            if values.is_empty() {
+                "a text value set needs at least one value".to_owned()
+            } else if values.len() > MAX_TEXT_LITERALS {
+                format!("a text value set holds at most {MAX_TEXT_LITERALS} values")
+            } else if let Some(value) = values
+                .iter()
+                .find(|value| value.len() > MAX_TEXT_LITERAL_BYTES)
+            {
+                let preview = value.chars().take(32).collect::<String>();
+                format!("text value '{preview}…' exceeds {MAX_TEXT_LITERAL_BYTES} bytes")
+            } else if total_bytes > MAX_TEXT_LITERALS_TOTAL_BYTES {
+                format!("a text value set holds at most {MAX_TEXT_LITERALS_TOTAL_BYTES} bytes")
+            } else {
+                return None;
+            }
+        }
+        (
+            FieldType::Number,
+            tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange { min, max },
+        ) => {
+            if min <= max {
+                return None;
+            }
+            format!("constraint min {min} is greater than max {max}")
+        }
+        (_, tachiko_workspace_engine::FieldConstraint::TextLiteralSet { .. }) => {
+            "a text value set applies only to Text columns".to_owned()
+        }
+        (_, tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange { .. }) => {
+            "a number range applies only to Number columns".to_owned()
+        }
+    };
+    Some(DesignerError::FieldConstraintViolation {
+        schema: schema.clone(),
+        field: definition.id.clone(),
+        constraint: constraint_projection(constraint)
+            .expect("non-None constraint has a projection"),
+        offending_rows: 0,
+        reason: ConstraintFailureReason::Declaration,
         message,
     })
 }
@@ -1596,6 +1664,7 @@ impl ConstraintFailureReason {
         match self {
             Self::FieldValue => "field_constraint_violation",
             Self::ExistingValues => "existing_values_violate_constraint",
+            Self::Declaration => "invalid_constraint_declaration",
         }
     }
 }
@@ -3563,7 +3632,18 @@ impl DesignerRuntime {
             .fields
             .get(&FieldId::from(field.to_owned()))
             .ok_or_else(|| table_error("column is unavailable"))?;
-        let constraint = constraint.into_constraint()?;
+        let mut constraint = constraint.into_constraint()?;
+        // `String` ordering is byte-lexicographic, which is the canonical form
+        // validation and export expect, so sort before deduping.
+        if let tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } =
+            &mut constraint
+        {
+            values.sort();
+            values.dedup();
+        }
+        if let Some(failure) = declaration_failure(&schema_id, definition, &constraint) {
+            return Err(failure);
+        }
         if definition.constraint == constraint {
             return Err(PatchLifecycleError::NoChange.into());
         }
