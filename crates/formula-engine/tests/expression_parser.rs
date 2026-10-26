@@ -251,7 +251,11 @@ fn diagnostics_report_stable_byte_positions_and_messages() {
             "reference must contain exactly one '.'",
         ),
         ("min(1 2)", 6, "expected ',' between function arguments"),
-        ("sqrt(1)", 0, "unknown function 'sqrt'; expected min or max"),
+        (
+            "sqrt(1)",
+            0,
+            "unknown function 'sqrt'; expected min, max, IF, AND, OR, NOT, ROUND, or ISBLANK",
+        ),
         ("1e+", 3, "expected exponent digits"),
         (
             "1e999",

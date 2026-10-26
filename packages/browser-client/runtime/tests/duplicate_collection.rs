@@ -47,7 +47,7 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
         .handle(DesignerRequest::FormulaUpdate {
             expected_revision: "resident/0".into(),
             target: "monthly_summary.remaining".into(),
-            source: "[monthly_summary.planned_total] + [utilities.actual]".into(),
+            source: "IF(AND([monthly_summary.planned_total]>0,OR([monthly_summary.planned_total]<100000,[monthly_summary.planned_total]=100000),NOT(ISBLANK([utilities.actual]))),ROUND([monthly_summary.planned_total]*50%,0),0)".into(),
         })
         .unwrap();
     let source = table(&mut runtime, "budget_summary");

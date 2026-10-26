@@ -9,7 +9,7 @@ and those authorities disagree, the authorities win.
 
 A formula is submitted as **source text** against an expected revision. The
 runtime parses it, binds every reference to stable IDs in one document
-snapshot, checks that each reference is a Number field, rejects cycles, and
+snapshot, checks numeric references and condition types, rejects cycles, and
 evaluates it. A successful update publishes the new formula; a refused update
 publishes nothing and leaves the previous formula source, calculated value, and
 revision unchanged.
@@ -25,11 +25,33 @@ revision unchanged.
 | Unary `+` and `-` | `-[enemy.defense] + 2` |
 | Parentheses | `([rent.expense] + 100) * 2` |
 | Two-argument minimum and maximum | `min(0, [attacker.power] - [target.armor])` |
+| Number comparisons (below arithmetic in precedence) | `=`, `<>`, `<`, `<=`, `>`, `>=` |
+| Conditional Number | `IF([.expense] > 0, [.expense], 0)` |
+| Logical conditions | `IF(AND([.expense] > 0, NOT([.expense] >= 100)), 1, 0)` |
+| Decimal rounding, half away from zero | `ROUND(2.675, 2)` yields `2.68` |
+| Percent literal | `50%` is `0.5` |
+| Blank predicate | `IF(ISBLANK([.expense]), 0, [.expense])` |
 
-Aggregates, conditional expressions, comparisons, lookups, and user-defined
-functions are not part of this language; the
-[specification](../specs/formula-engine-spec.md#deferred-language-features)
-lists them as deferred. Reference targets must be Number fields.
+IF, AND, OR, NOT, ROUND and ISBLANK accept upper- or lowercase names; canonical
+source uses uppercase. Existing binary min/max retain their lowercase form.
+A formula source has no leading `=`.
+
+Conditions are not values: they may appear only as IF's condition or inside
+AND/OR/NOT. Numeric truthiness and comparisons between non-Numbers are refused
+as `formula_type_mismatch`. ROUND's second argument must be an integer literal
+in `0..=10`; negative, fractional, calculated, and reference precisions are
+refused with the same typed code. AND/OR require at least one condition; NOT
+and ISBLANK require one argument and IF requires three.
+
+Only the selected IF branch is evaluated, but every reference in both branches
+remains a dependency and participates in cycle checks. AND/OR evaluate all their
+arguments left-to-right. An absent optional Number reads as zero in numeric
+expressions; its stored cell stays blank. ISBLANK accepts any declared field
+reference, including Text; empty Text and zero are present. Unknown fields and
+non-Number numeric operands remain failures. See the
+[blank semantics note](../specs/formula-engine-r2-blank-semantics.md).
+
+Aggregates, lookups, and user-defined functions remain deferred.
 
 ## References use keys, not labels
 
@@ -42,7 +64,7 @@ not an address.
 Binding uses the current document snapshot. Renaming a key invalidates an old
 source spelling until it is rewritten; renaming only a display name does not
 affect meaning. A reference to a missing entity or field, or to a non-Number
-field, refuses the whole update.
+field used as a Number, refuses the whole update.
 
 ## Same-row shorthand `[.field]`
 
@@ -54,8 +76,8 @@ computation without naming the row:
 rent.reserve  [.expense] * [settings.rate]   80000 * 0.1 = 8000
 ```
 
-The shorthand names a field **key**, never a row label or display name, and it
-must be a Number field on the owner's schema. A missing key refuses the update
+The shorthand names a field **key**, never a row label or display name. Numeric
+uses require a Number field on the owner's schema; ISBLANK may inspect any field. A missing key refuses the update
 as `formula_unknown_reference`; a Text or other non-Number key refuses it as
 `formula_type_mismatch`. Referring to the formula's own field — `[.reserve]`
 inside `reserve` — is a dependency cycle and refuses as `formula_cycle`.
@@ -78,7 +100,7 @@ to encode it rather than silently dropping the row meaning.
 ## Canonical source projection
 
 Accepted updates return the stored formula through `field.formula.source`
-(the string `projectExpression` renders), which is a **fully parenthesised**
+(the shared canonical printer's source string), which is a **fully parenthesised**
 projection of the bound expression through the document's current human keys:
 
 ```text

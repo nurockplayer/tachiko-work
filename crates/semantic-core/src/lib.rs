@@ -23,10 +23,10 @@ pub use keyed_grouped_sum::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use model::{
-    Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
-    FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, InvalidDate,
-    InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey,
-    Value,
+    ComparisonOperator, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
+    FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    FormulaExpressionType, InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES,
+    Number, Schema, SchemaId, SchemaKey, Value,
 };
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;

@@ -576,12 +576,190 @@ pub enum Expression {
     // that contains this node, so the node stores only the field identity and
     // keeps meaning "this row" through copies and row-relative moves.
     SameRowReference(FieldId),
-    Add { left: Box<Self>, right: Box<Self> },
-    Subtract { left: Box<Self>, right: Box<Self> },
-    Multiply { left: Box<Self>, right: Box<Self> },
-    Divide { left: Box<Self>, right: Box<Self> },
-    Minimum { left: Box<Self>, right: Box<Self> },
-    Maximum { left: Box<Self>, right: Box<Self> },
+    Add {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Subtract {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Multiply {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Divide {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Minimum {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Maximum {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Compare {
+        operator: ComparisonOperator,
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    If {
+        condition: Box<Self>,
+        then_value: Box<Self>,
+        else_value: Box<Self>,
+    },
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Not(Box<Self>),
+    Round {
+        value: Box<Self>,
+        digits: u8,
+    },
+    IsBlank(Box<Self>),
+}
+
+/// A condition is an intermediate formula type, never a stored scalar value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FormulaExpressionType {
+    Number,
+    Condition,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonOperator {
+    Equal,
+    NotEqual,
+    Less,
+    LessOrEqual,
+    Greater,
+    GreaterOrEqual,
+}
+
+impl ComparisonOperator {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Equal => "=",
+            Self::NotEqual => "<>",
+            Self::Less => "<",
+            Self::LessOrEqual => "<=",
+            Self::Greater => ">",
+            Self::GreaterOrEqual => ">=",
+        }
+    }
+}
+
+impl Expression {
+    /// Direct children in evaluation order, including both conditional branches.
+    #[must_use]
+    pub fn children(&self) -> Vec<&Self> {
+        match self {
+            Self::Number(_) | Self::Reference(_) | Self::SameRowReference(_) => Vec::new(),
+            Self::Add { left, right }
+            | Self::Subtract { left, right }
+            | Self::Multiply { left, right }
+            | Self::Divide { left, right }
+            | Self::Minimum { left, right }
+            | Self::Maximum { left, right }
+            | Self::Compare { left, right, .. } => vec![left, right],
+            Self::If {
+                condition,
+                then_value,
+                else_value,
+            } => vec![condition, then_value, else_value],
+            Self::And(arguments) | Self::Or(arguments) => arguments.iter().collect(),
+            Self::Not(value) | Self::Round { value, .. } | Self::IsBlank(value) => vec![value],
+        }
+    }
+
+    /// Mutable children for identity-preserving formula remapping.
+    pub fn children_mut(&mut self) -> Vec<&mut Self> {
+        match self {
+            Self::Number(_) | Self::Reference(_) | Self::SameRowReference(_) => Vec::new(),
+            Self::Add { left, right }
+            | Self::Subtract { left, right }
+            | Self::Multiply { left, right }
+            | Self::Divide { left, right }
+            | Self::Minimum { left, right }
+            | Self::Maximum { left, right }
+            | Self::Compare { left, right, .. } => vec![left, right],
+            Self::If {
+                condition,
+                then_value,
+                else_value,
+            } => vec![condition, then_value, else_value],
+            Self::And(arguments) | Self::Or(arguments) => arguments.iter_mut().collect(),
+            Self::Not(value) | Self::Round { value, .. } | Self::IsBlank(value) => vec![value],
+        }
+    }
+
+    /// Infer the non-value condition type after structural bounds are checked.
+    #[must_use]
+    pub fn expression_type(&self) -> Option<FormulaExpressionType> {
+        use FormulaExpressionType::{Condition, Number};
+        match self {
+            Self::Number(_) | Self::Reference(_) | Self::SameRowReference(_) => Some(Number),
+            Self::Add { left, right }
+            | Self::Subtract { left, right }
+            | Self::Multiply { left, right }
+            | Self::Divide { left, right }
+            | Self::Minimum { left, right }
+            | Self::Maximum { left, right } => (left.expression_type() == Some(Number)
+                && right.expression_type() == Some(Number))
+            .then_some(Number),
+            Self::Compare { left, right, .. } => (left.expression_type() == Some(Number)
+                && right.expression_type() == Some(Number))
+            .then_some(Condition),
+            Self::If {
+                condition,
+                then_value,
+                else_value,
+            } => (condition.expression_type() == Some(Condition)
+                && then_value.expression_type() == Some(Number)
+                && else_value.expression_type() == Some(Number))
+            .then_some(Number),
+            Self::And(arguments) | Self::Or(arguments) => (!arguments.is_empty()
+                && arguments
+                    .iter()
+                    .all(|argument| argument.expression_type() == Some(Condition)))
+            .then_some(Condition),
+            Self::Not(value) => (value.expression_type() == Some(Condition)).then_some(Condition),
+            Self::Round { value, digits } => {
+                (*digits <= 10 && value.expression_type() == Some(Number)).then_some(Number)
+            }
+            Self::IsBlank(value) => matches!(
+                value.as_ref(),
+                Self::Reference(_) | Self::SameRowReference(_)
+            )
+            .then_some(Condition),
+        }
+    }
+
+    /// Every static reference and whether its use requires a Number field.
+    #[must_use]
+    pub fn reference_uses(&self, owner: &FieldRef) -> Vec<(FieldRef, bool)> {
+        let mut uses = Vec::new();
+        let mut pending = vec![(self, true)];
+        while let Some((node, numeric)) = pending.pop() {
+            match node {
+                Self::Reference(reference) => uses.push((reference.clone(), numeric)),
+                Self::SameRowReference(field) => {
+                    uses.push((FieldRef::new(owner.entity.clone(), field.clone()), numeric));
+                }
+                Self::IsBlank(value) => pending.push((value, false)),
+                _ => pending.extend(
+                    node.children()
+                        .into_iter()
+                        .rev()
+                        .map(|child| (child, numeric)),
+                ),
+            }
+        }
+        uses
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]

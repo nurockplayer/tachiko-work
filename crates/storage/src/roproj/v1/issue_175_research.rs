@@ -605,20 +605,7 @@ fn validate_semantic_expression_limits_cancellable(
                         "formula expression exceeds {MAX_EXPRESSION_NODES}-node limit"
                     ));
                 }
-                match node {
-                    Expression::Add { left, right }
-                    | Expression::Subtract { left, right }
-                    | Expression::Multiply { left, right }
-                    | Expression::Divide { left, right }
-                    | Expression::Minimum { left, right }
-                    | Expression::Maximum { left, right } => {
-                        stack.push((right, depth + 1));
-                        stack.push((left, depth + 1));
-                    }
-                    Expression::Number(_)
-                    | Expression::Reference(_)
-                    | Expression::SameRowReference(_) => {}
-                }
+                stack.extend(node.children().into_iter().map(|child| (child, depth + 1)));
             }
         }
     }

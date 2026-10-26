@@ -46,6 +46,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Number formulas now support IF, exact Number comparisons, AND/OR/NOT,
+  ROUND (literal precision 0..=10, half away from zero), percent literals, and
+  ISBLANK. IF evaluates only the selected branch while tracking dependencies in
+  both branches. Absent optional Number inputs calculate as zero without
+  filling the stored cell; non-Number numeric operands still fail. The new
+  expressions survive canonical v3/direct-ro v2 saves, formula copy, collection
+  duplication, history, and XLSX formula export. Frozen project v1/v2 writers
+  refuse the new operations.
+
 - The Rust runtime, WASM bridge and public TypeScript client now author v3 field
   constraints: closed Text literal lists (also filling `dropdown_options`) and
   inclusive Number ranges. `setColumnConstraint` sets or clears one declaration;

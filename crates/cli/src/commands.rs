@@ -970,6 +970,7 @@ fn calculation_output(outcome: &FormulaCalculationOutcome) -> serde_json::Value 
 
 fn calculation_failure_output(failure: &CalculationFailure) -> serde_json::Value {
     match failure {
+        CalculationFailure::TypeMismatch => json!({ "kind": "type_mismatch" }),
         CalculationFailure::InvalidExpression { error } => json!({
             "kind": "invalid_expression",
             "error": expression_complexity_name(*error),

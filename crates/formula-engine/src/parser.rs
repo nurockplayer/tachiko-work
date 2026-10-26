@@ -1,5 +1,6 @@
 use tachiko_semantic_core::{
-    FieldAddress, FieldKey, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, is_valid_identifier,
+    ComparisonOperator, FieldAddress, FieldKey, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number,
+    is_valid_identifier,
 };
 use thiserror::Error;
 
@@ -12,12 +13,48 @@ pub enum UnboundExpression {
     Reference(FieldAddress),
     // `[.field]`: the field on the entity that owns the formula.
     SameRowReference(FieldKey),
-    Add { left: Box<Self>, right: Box<Self> },
-    Subtract { left: Box<Self>, right: Box<Self> },
-    Multiply { left: Box<Self>, right: Box<Self> },
-    Divide { left: Box<Self>, right: Box<Self> },
-    Minimum { left: Box<Self>, right: Box<Self> },
-    Maximum { left: Box<Self>, right: Box<Self> },
+    Add {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Subtract {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Multiply {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Divide {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Minimum {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Maximum {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Compare {
+        operator: ComparisonOperator,
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    If {
+        condition: Box<Self>,
+        then_value: Box<Self>,
+        else_value: Box<Self>,
+    },
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Not(Box<Self>),
+    Round {
+        value: Box<Self>,
+        digits: Box<Self>,
+    },
+    IsBlank(Box<Self>),
 }
 
 /// A deterministic formula-language failure at a UTF-8 byte position.
@@ -123,7 +160,44 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
             format_unbound_expression(left),
             format_unbound_expression(right)
         ),
+        UnboundExpression::Compare {
+            operator,
+            left,
+            right,
+        } => format_binary(left, operator.as_str(), right),
+        UnboundExpression::If {
+            condition,
+            then_value,
+            else_value,
+        } => format!(
+            "IF({}, {}, {})",
+            format_unbound_expression(condition),
+            format_unbound_expression(then_value),
+            format_unbound_expression(else_value)
+        ),
+        UnboundExpression::And(arguments) => format_function("AND", arguments),
+        UnboundExpression::Or(arguments) => format_function("OR", arguments),
+        UnboundExpression::Not(value) => format!("NOT({})", format_unbound_expression(value)),
+        UnboundExpression::Round { value, digits } => format!(
+            "ROUND({}, {})",
+            format_unbound_expression(value),
+            format_unbound_expression(digits)
+        ),
+        UnboundExpression::IsBlank(value) => {
+            format!("ISBLANK({})", format_unbound_expression(value))
+        }
     }
+}
+
+fn format_function(name: &str, arguments: &[UnboundExpression]) -> String {
+    format!(
+        "{name}({})",
+        arguments
+            .iter()
+            .map(format_unbound_expression)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn format_binary(left: &UnboundExpression, operator: &str, right: &UnboundExpression) -> String {
@@ -154,25 +228,44 @@ fn push_children<'expression>(
     expression: &'expression UnboundExpression,
     child_depth: usize,
 ) {
-    if let Some((left, right)) = binary_children(expression) {
-        stack.push((right, child_depth));
-        stack.push((left, child_depth));
-    }
-}
-
-fn binary_children(
-    expression: &UnboundExpression,
-) -> Option<(&UnboundExpression, &UnboundExpression)> {
     match expression {
+        UnboundExpression::If {
+            condition,
+            then_value,
+            else_value,
+        } => {
+            stack.push((else_value, child_depth));
+            stack.push((then_value, child_depth));
+            stack.push((condition, child_depth));
+        }
+        UnboundExpression::And(arguments) | UnboundExpression::Or(arguments) => {
+            stack.extend(
+                arguments
+                    .iter()
+                    .rev()
+                    .map(|argument| (argument, child_depth)),
+            );
+        }
+        UnboundExpression::Not(value) | UnboundExpression::IsBlank(value) => {
+            stack.push((value, child_depth));
+        }
         UnboundExpression::Add { left, right }
         | UnboundExpression::Subtract { left, right }
         | UnboundExpression::Multiply { left, right }
         | UnboundExpression::Divide { left, right }
         | UnboundExpression::Minimum { left, right }
-        | UnboundExpression::Maximum { left, right } => Some((left, right)),
+        | UnboundExpression::Maximum { left, right }
+        | UnboundExpression::Compare { left, right, .. }
+        | UnboundExpression::Round {
+            value: left,
+            digits: right,
+        } => {
+            stack.push((right, child_depth));
+            stack.push((left, child_depth));
+        }
         UnboundExpression::Number(_)
         | UnboundExpression::Reference(_)
-        | UnboundExpression::SameRowReference(_) => None,
+        | UnboundExpression::SameRowReference(_) => {}
     }
 }
 
@@ -200,12 +293,44 @@ impl<'input> Parser<'input> {
         if self.is_finished() {
             return Err(self.error("expected expression"));
         }
-        let expression = self.parse_additive()?;
+        let expression = self.parse_comparison()?;
         self.skip_whitespace();
         if !self.is_finished() {
             return Err(self.error("unexpected trailing content"));
         }
         Ok(expression)
+    }
+
+    fn parse_comparison(&mut self) -> Result<UnboundExpression, FormulaParseError> {
+        let mut expression = self.parse_additive()?;
+        loop {
+            self.skip_whitespace();
+            let start = self.position;
+            let rest = &self.input[start..];
+            let operator = if rest.starts_with("<=") {
+                ComparisonOperator::LessOrEqual
+            } else if rest.starts_with(">=") {
+                ComparisonOperator::GreaterOrEqual
+            } else if rest.starts_with("<>") {
+                ComparisonOperator::NotEqual
+            } else if rest.starts_with('=') {
+                ComparisonOperator::Equal
+            } else if rest.starts_with('<') {
+                ComparisonOperator::Less
+            } else if rest.starts_with('>') {
+                ComparisonOperator::Greater
+            } else {
+                return Ok(expression);
+            };
+            self.position += operator.as_str().len();
+            self.record_node(start)?;
+            let right = self.parse_additive()?;
+            expression = UnboundExpression::Compare {
+                operator,
+                left: Box::new(expression),
+                right: Box::new(right),
+            };
+        }
     }
 
     fn parse_additive(&mut self) -> Result<UnboundExpression, FormulaParseError> {
@@ -326,6 +451,25 @@ impl<'input> Parser<'input> {
         }
 
         let literal = &self.input[start..self.position];
+        let percent = self.peek() == Some(b'%');
+        let scaled;
+        let literal = if percent {
+            self.position += 1;
+            let (mantissa, exponent) = literal.split_once(['e', 'E']).unwrap_or((literal, "0"));
+            // Extremely large exponents have the same overflow/underflow outcome
+            // after subtracting two; saturating keeps that conversion bounded.
+            let exponent = exponent.parse::<i64>().unwrap_or_else(|_| {
+                if exponent.starts_with('-') {
+                    i64::MIN
+                } else {
+                    i64::MAX
+                }
+            });
+            scaled = format!("{mantissa}e{}", exponent.saturating_sub(2));
+            scaled.as_str()
+        } else {
+            literal
+        };
         let number = literal
             .parse::<f64>()
             .map_err(|_| FormulaParseError::new(start, "invalid numeric literal"))?;
@@ -397,7 +541,7 @@ impl<'input> Parser<'input> {
         let open = self.position;
         self.position += 1;
         self.with_nesting(open, |parser| {
-            let expression = parser.parse_additive()?;
+            let expression = parser.parse_comparison()?;
             parser.expect(b')', "expected ')' after expression")?;
             Ok(expression)
         })
@@ -413,13 +557,21 @@ impl<'input> Parser<'input> {
             self.position += 1;
         }
         let name = &self.input[start..self.position];
+        if matches!(
+            name.to_ascii_uppercase().as_str(),
+            "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
+        ) {
+            return self.parse_extended_function(start, &name.to_ascii_uppercase());
+        }
         let is_minimum = match name {
-            "min" => true,
-            "max" => false,
+            "min" | "MIN" => true,
+            "max" | "MAX" => false,
             _ => {
                 return Err(FormulaParseError::new(
                     start,
-                    format!("unknown function '{name}'; expected min or max"),
+                    format!(
+                        "unknown function '{name}'; expected min, max, IF, AND, OR, NOT, ROUND, or ISBLANK"
+                    ),
                 ));
             }
         };
@@ -429,9 +581,9 @@ impl<'input> Parser<'input> {
         self.expect(b'(', "expected '(' after function name")?;
         self.record_node(start)?;
         self.with_nesting(open, |parser| {
-            let left = parser.parse_additive()?;
+            let left = parser.parse_comparison()?;
             parser.expect(b',', "expected ',' between function arguments")?;
-            let right = parser.parse_additive()?;
+            let right = parser.parse_comparison()?;
             parser.expect(b')', "expected ')' after function arguments")?;
             if is_minimum {
                 Ok(UnboundExpression::Minimum {
@@ -444,6 +596,67 @@ impl<'input> Parser<'input> {
                     right: Box::new(right),
                 })
             }
+        })
+    }
+
+    fn parse_extended_function(
+        &mut self,
+        start: usize,
+        name: &str,
+    ) -> Result<UnboundExpression, FormulaParseError> {
+        self.skip_whitespace();
+        let open = self.position;
+        self.expect(b'(', "expected '(' after function name")?;
+        self.record_node(start)?;
+        let mut arguments = self.with_nesting(open, |parser| {
+            let mut arguments = Vec::new();
+            parser.skip_whitespace();
+            if parser.peek() != Some(b')') {
+                loop {
+                    arguments.push(parser.parse_comparison()?);
+                    parser.skip_whitespace();
+                    if parser.peek() != Some(b',') {
+                        break;
+                    }
+                    parser.position += 1;
+                }
+            }
+            parser.expect(b')', "expected ')' after function arguments")?;
+            Ok(arguments)
+        })?;
+        let valid_arity = match name {
+            "IF" => arguments.len() == 3,
+            "ROUND" => arguments.len() == 2,
+            "NOT" | "ISBLANK" => arguments.len() == 1,
+            _ => !arguments.is_empty(),
+        };
+        if !valid_arity {
+            return Err(FormulaParseError::new(
+                start,
+                format!("invalid arity for {name}"),
+            ));
+        }
+        Ok(match name {
+            "IF" => {
+                let else_value = Box::new(arguments.pop().expect("checked arity"));
+                let then_value = Box::new(arguments.pop().expect("checked arity"));
+                let condition = Box::new(arguments.pop().expect("checked arity"));
+                UnboundExpression::If {
+                    condition,
+                    then_value,
+                    else_value,
+                }
+            }
+            "AND" => UnboundExpression::And(arguments),
+            "OR" => UnboundExpression::Or(arguments),
+            "NOT" => UnboundExpression::Not(Box::new(arguments.remove(0))),
+            "ISBLANK" => UnboundExpression::IsBlank(Box::new(arguments.remove(0))),
+            "ROUND" => {
+                let digits = Box::new(arguments.pop().expect("checked arity"));
+                let value = Box::new(arguments.pop().expect("checked arity"));
+                UnboundExpression::Round { value, digits }
+            }
+            _ => unreachable!("known function"),
         })
     }
 

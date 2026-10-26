@@ -4106,9 +4106,18 @@ impl PatchLifecycle {
             let value = document
                 .entities
                 .get(&field.entity)
-                .and_then(|entity| entity.fields.get(&field.field))
-                .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
-            if let Value::Formula(expression) = value {
+                .and_then(|entity| entity.fields.get(&field.field));
+            // The declared field's Query disclosure above includes absence.
+            // Optional blank inputs have no value tree to follow; their scope
+            // remains required even when numeric evaluation reads zero.
+            if value.is_none() {
+                let definition = crate::field_definition(document, &field)
+                    .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
+                if definition.required {
+                    return Err(PatchLifecycleError::ScopeDerivationFailed);
+                }
+            }
+            if let Some(Value::Formula(expression)) = value {
                 pending.extend(expression_references(&field, expression));
             }
         }
@@ -4801,29 +4810,11 @@ fn keyed_grouped_sum_matched_products(
 }
 
 fn expression_references(owner: &FieldRef, expression: &Expression) -> BTreeSet<FieldRef> {
-    let mut references = BTreeSet::new();
-    let mut pending = vec![expression];
-    while let Some(current) = pending.pop() {
-        match current {
-            Expression::Number(_) => {}
-            Expression::Reference(field) => {
-                references.insert(field.clone());
-            }
-            Expression::SameRowReference(field) => {
-                references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
-            }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                pending.push(right);
-                pending.push(left);
-            }
-        }
-    }
-    references
+    expression
+        .reference_uses(owner)
+        .into_iter()
+        .map(|(reference, _)| reference)
+        .collect()
 }
 
 fn scope_covers(granted: &ScopedSemanticSubject, required: &ScopedSemanticSubject) -> bool {

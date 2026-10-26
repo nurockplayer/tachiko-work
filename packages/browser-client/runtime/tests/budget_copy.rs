@@ -180,6 +180,38 @@ fn copy_column_offset_uses_canonical_columns_and_absolute_mode_preserves_ids() {
         "([r1.a] * 2)"
     );
 }
+
+#[test]
+fn copy_shifts_references_inside_conditions_and_rounding_arguments() {
+    let mut runtime = fixture();
+    update(
+        &mut runtime,
+        0,
+        "r1.c",
+        "IF(AND([r1.a]>0,OR([r1.b]<30,[r1.b]=30)),ROUND([r1.b]*50%,0),0)",
+    );
+    runtime
+        .handle(copy(1, "r1.c", &["r2.c"], &[], true, false))
+        .unwrap();
+    let copied = field(&mut runtime, 2, "r2.c");
+    assert_eq!(
+        copied
+            .formula
+            .as_ref()
+            .map(|formula| formula.source.as_str()),
+        Some(
+            "IF(AND(([r2.a] > 0), OR(([r2.b] < 30), ([r2.b] = 30))), ROUND(([r2.b] * 0.5), 0), 0)"
+        )
+    );
+    assert_eq!(
+        copied
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(10.0)
+    );
+}
+
 #[test]
 fn rejected_copy_preserves_the_complete_snapshot_and_previous_history() {
     let mut runtime = fixture();

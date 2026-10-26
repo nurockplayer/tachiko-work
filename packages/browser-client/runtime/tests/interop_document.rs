@@ -1037,6 +1037,48 @@ fn imported_forward_and_cross_sheet_formulas_rebind_and_export_from_live_ids_aft
     .unwrap();
     assert!(reimported.export_project("resident/0").is_ok());
 }
+
+#[test]
+fn conditional_formula_runtime_exports_excel_functions_and_comparisons() {
+    let (source, selection) = workbook_fixture();
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let metadata = imported.metadata;
+    let result = &metadata.sheets[0].rows[0];
+    let formula_source = "IF(AND([sheet_1_row_1.column_1]>7,OR([sheet_1_row_1.column_1]<20,[sheet_1_row_1.column_1]=10),NOT(ISBLANK([sheet_1_row_1.column_1]))),ROUND([sheet_1_row_1.column_1]*50%,0),0)".to_owned();
+    runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".into(),
+            target: tachiko_designer_runtime::FieldTarget {
+                entity: result.entity_id.clone(),
+                field: metadata.sheets[0].columns[2].field_id.clone(),
+            },
+            source: formula_source,
+        })
+        .unwrap();
+    let exported = runtime.export_workbook("resident/1", &metadata).unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][2].formula.as_deref(),
+        Some(
+            "IF(AND(('Data'!$A$2>7),OR(('Data'!$A$2<20),('Data'!$A$2=10)),NOT(ISBLANK('Data'!$A$2))),ROUND(('Data'!$A$2*0.5),0),0)"
+        )
+    );
+    let xlsx = tachiko_designer_runtime::interop_adapter::export_xlsx(&exported)
+        .expect("new formula syntax must pass XLSX compatibility and export");
+    let inspected = tachiko_designer_runtime::interop_adapter::import_xlsx(&xlsx).unwrap();
+    let (reopened, imported) = import_workbook(&inspected, &selection, OCCURRENCE).unwrap();
+    let round_trip = reopened
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        round_trip.sheets[0].rows[0][2].formula,
+        exported.sheets[0].rows[0][2].formula
+    );
+    assert_eq!(
+        round_trip.sheets[0].rows[0][2].value,
+        SourceValue::Number { value: 4.0 }
+    );
+}
+
 #[test]
 fn saved_metadata_preflight_uses_the_same_output_format_and_name_validation() {
     let (source, selection) = workbook_fixture();

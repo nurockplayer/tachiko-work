@@ -701,7 +701,7 @@ fn compatible_formula(
         category: FidelityCategory::UnsupportedSafeDisabled,
         code: "native_tables_xlsx_formula".into(),
         location: location.into(),
-        message: "Formula is outside the bounded numeric/reference/MIN/MAX output grammar.".into(),
+        message: "Formula is outside the bounded numeric/reference/function output grammar.".into(),
         blocking: true,
     };
     if formula.len() > 4096 || !xml_text_valid(formula) {
@@ -748,9 +748,18 @@ fn compatible_formula(
                 return Err(refuse());
             }
             remaining = &remaining[rows..];
-        } else if remaining.starts_with("MIN(") || remaining.starts_with("MAX(") {
-            remaining = &remaining[4..];
-        } else if remaining.starts_with(['(', ')', '+', '-', '*', '/', ',']) {
+        } else if remaining.starts_with("MIN(")
+            || remaining.starts_with("MAX(")
+            || remaining.starts_with("IF(")
+            || remaining.starts_with("AND(")
+            || remaining.starts_with("OR(")
+            || remaining.starts_with("NOT(")
+            || remaining.starts_with("ROUND(")
+            || remaining.starts_with("ISBLANK(")
+        {
+            let open = remaining.find('(').ok_or_else(refuse)?;
+            remaining = &remaining[open + 1..];
+        } else if remaining.starts_with(['(', ')', '+', '-', '*', '/', ',', '=', '<', '>']) {
             remaining = &remaining[1..];
         } else {
             let mut end = remaining
