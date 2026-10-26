@@ -366,6 +366,7 @@ impl DefinitionV2 {
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV2, FormatError> {
     super::super::reject_display_names(document)?;
     super::super::reject_field_constraints(document)?;
+    super::super::reject_number_formats(document)?;
     super::super::check_document(document)?;
     validate_semantic_expression_limits(document)?;
     validate_keyed_grouped_sum_definitions(document).map_err(|error| {
@@ -833,6 +834,7 @@ impl FieldDefinitionV2 {
             id: FieldId::from(self.id),
             key: FieldKey::from(self.key),
             display_name: None,
+            number_format: None,
             field_type: self.field_type.into_semantic()?,
             required: self.required,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -1686,6 +1688,7 @@ mod tests {
                         id: FieldId::from("field"),
                         key: FieldKey::from("name"),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Text,
                         required: false,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

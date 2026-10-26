@@ -52,6 +52,7 @@ fn large_document() -> Document {
                 id: field_id.clone(),
                 key: FieldKey::from("payload"),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,

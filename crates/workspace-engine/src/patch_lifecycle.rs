@@ -357,6 +357,11 @@ pub enum SemanticCommand {
         required: bool,
     },
     /// Replace the complete durable constraint facet of one stable field.
+    SetFieldNumberFormat {
+        schema: SchemaId,
+        field: FieldId,
+        number_format: Option<super::NumberFormat>,
+    },
     SetFieldConstraint {
         schema: SchemaId,
         field: FieldId,
@@ -2561,6 +2566,7 @@ impl PatchLifecycle {
                     | SemanticCommand::RenameSchemaField { .. }
                     | SemanticCommand::SetSchemaFieldDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldRequiredness { .. }
+                    | SemanticCommand::SetFieldNumberFormat { .. }
                     | SemanticCommand::SetFieldConstraint { .. } => {
                         OperationFamily::SchemaFieldMutation
                     }
@@ -3300,6 +3306,40 @@ impl PatchLifecycle {
                         scope: self.schema_field_scope(schema, field),
                     });
                 }
+                SemanticCommand::SetFieldNumberFormat {
+                    schema,
+                    field,
+                    number_format,
+                } => {
+                    let definition = candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        })?
+                        .fields
+                        .get_mut(field)
+                        .ok_or_else(|| WorkspaceError::MissingSchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        })?;
+                    if definition.field_type != FieldType::Number {
+                        return Err(WorkspaceError::InvalidNumberFormat {
+                            source: super::NumberFormatError::NonNumberField,
+                        });
+                    }
+                    if let Some(format) = number_format {
+                        format
+                            .validate_for(&definition.field_type)
+                            .map_err(|source| WorkspaceError::InvalidNumberFormat { source })?;
+                    }
+                    definition.number_format.clone_from(number_format);
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_field_scope(schema, field),
+                    });
+                }
                 SemanticCommand::SetFieldConstraint {
                     schema,
                     field,
@@ -3470,6 +3510,7 @@ impl PatchLifecycle {
                 associated_write_requirements,
             );
         }
+        reject_legacy_number_formats(base, &candidate, body)?;
         if contains_constraint_command(body)
             || document_has_field_constraints(base)
             || document_has_field_constraints(&candidate)
@@ -3718,6 +3759,7 @@ impl PatchLifecycle {
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
+            | SemanticCommand::SetFieldNumberFormat { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. } => {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
                 Ok(())
@@ -4588,6 +4630,27 @@ fn duplicate_constraint_write(body: &SemanticPatchBody) -> Option<(SchemaId, Fie
     None
 }
 
+fn reject_legacy_number_formats(
+    base: &Document,
+    candidate: &Document,
+    body: &SemanticPatchBody,
+) -> Result<(), PatchLifecycleError> {
+    if base.has_number_formats()
+        || candidate.has_number_formats()
+        || body
+            .commands()
+            .iter()
+            .any(|command| matches!(command, SemanticCommand::SetFieldNumberFormat { .. }))
+    {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(
+                super::DiffError::UnsupportedNumberFormat,
+            )),
+        });
+    }
+    Ok(())
+}
+
 fn contains_constraint_command(body: &SemanticPatchBody) -> bool {
     body.commands()
         .iter()
@@ -4683,6 +4746,7 @@ fn formula_projection_document(document: &Document) -> Document {
         schema.display_name = None;
         for field in schema.fields.values_mut() {
             field.constraint = FieldConstraint::None;
+            field.number_format = None;
             field.display_name = None;
         }
     }
@@ -4974,6 +5038,7 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
             | SemanticCommand::AppendEntity { .. }
             | SemanticCommand::RemoveEntity { .. }
             | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetFieldNumberFormat { .. }
             | SemanticCommand::SetFieldConstraint { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. }
             | SemanticCommand::SetFieldValue { .. }
@@ -5009,6 +5074,7 @@ mod tests {
             id: FieldId::from(field),
             key: FieldKey::from(field),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Number,
             required: true,
             constraint: FieldConstraint::None,
@@ -5041,6 +5107,7 @@ mod tests {
                             id: FieldId::from("field"),
                             key: FieldKey::from("field"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: FieldConstraint::None,
@@ -5144,6 +5211,7 @@ mod tests {
                             id: FieldId::from("order-key"),
                             key: FieldKey::from("product_key"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5155,6 +5223,7 @@ mod tests {
                             id: FieldId::from("quantity"),
                             key: FieldKey::from("quantity"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5176,6 +5245,7 @@ mod tests {
                             id: FieldId::from("product-key"),
                             key: FieldKey::from("product_key"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5187,6 +5257,7 @@ mod tests {
                             id: FieldId::from("category"),
                             key: FieldKey::from("category"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5198,6 +5269,7 @@ mod tests {
                             id: FieldId::from("price"),
                             key: FieldKey::from("price"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5781,6 +5853,7 @@ mod tests {
                     id,
                     key: FieldKey::from(field),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Number,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,

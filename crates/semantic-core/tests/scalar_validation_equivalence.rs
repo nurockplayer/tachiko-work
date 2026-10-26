@@ -16,6 +16,7 @@ fn definition(id: &str, field_type: FieldType, required: bool) -> (FieldId, Fiel
             id: id.into(),
             key: id.into(),
             display_name: None,
+            number_format: None,
             field_type,
             required,
             constraint: FieldConstraint::None,

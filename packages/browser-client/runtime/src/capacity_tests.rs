@@ -799,8 +799,11 @@ fn an_unnamed_oversized_table_is_refused_for_its_name_not_its_capacity() {
         })
         .collect::<Vec<_>>();
     // A capacity refusal names its collection, so the name is admitted first.
-    let error = DesignerRuntime::new_table("00000000-0000-4000-8000-000000000539", "", &columns)
-        .unwrap_err();
+    let Err(error) =
+        DesignerRuntime::new_table("00000000-0000-4000-8000-000000000539", "", &columns)
+    else {
+        panic!("an unnamed table is refused");
+    };
     assert!(
         !matches!(error, DesignerError::CapacityExceeded(_)),
         "{error:?}"

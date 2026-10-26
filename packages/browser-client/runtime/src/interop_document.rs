@@ -1020,7 +1020,7 @@ fn validate_selection(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // One sheet builder shares one bounded import transaction.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // One sheet builder shares one bounded import transaction.
 fn build_import_sheet(
     index: usize,
     source: &SourceSheet,
@@ -1049,13 +1049,32 @@ fn build_import_sheet(
         .columns
         .iter()
         .zip(&selection.column_types[index])
-        .map(|(column, kind)| (column.name.clone(), column.width, *kind))
+        .map(|(column, kind)| {
+            (
+                column.name.clone(),
+                column.width,
+                *kind,
+                column.number_format.clone(),
+            )
+        })
         .chain(
             selection.extra_columns[index]
                 .iter()
-                .map(|column| (column.name.clone(), None, column.field_type)),
+                .map(|column| (column.name.clone(), None, column.field_type, None)),
         );
-    for (column, (name, width, kind)) in columns.enumerate() {
+    for (column, (name, width, kind, number_format)) in columns.enumerate() {
+        if kind.field_type() != FieldType::Number && number_format.is_some() {
+            ledger.push(FidelityFinding {
+                category: FidelityCategory::LossyOnExport,
+                code: "number_format_not_applied".into(),
+                location: format!("{}:column {}", source.name, column + 1),
+                message: "The selected field type is not Number, so the imported XLSX display format was not stored.".into(),
+                blocking: false,
+            });
+        }
+        let number_format = (kind.field_type() == FieldType::Number)
+            .then_some(number_format)
+            .flatten();
         let id = FieldId::from(ids.generate(SemanticIdKind::Field));
         schema.fields.insert(
             id.clone(),
@@ -1066,6 +1085,7 @@ fn build_import_sheet(
                 field_type: kind.field_type(),
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
+                number_format,
             },
         );
         sheet.columns.push(InteropColumnMetadata {
@@ -1109,7 +1129,18 @@ fn build_import_sheet(
                     .fields
                     .insert(FieldId::from(sheet.columns[column].field_id.clone()), value);
             }
-            styles.push(cell.style.clone());
+            let mut style = cell.style.clone();
+            if source.columns[column].number_format.is_some()
+                && (cell.formula.is_some()
+                    || matches!(cell.value, SourceValue::Number { .. } | SourceValue::Empty))
+            {
+                // The promoted column format now owns numeric presentation in
+                // this column, blanks included (a number typed there later is
+                // the column's); retaining the source copy would bring a later
+                // cleared format back on export.
+                style.number_format = None;
+            }
+            styles.push(style);
         }
         styles.resize_with(sheet.columns.len(), CellStyle::default);
         sheet.rows.push(InteropRowMetadata {
@@ -1912,6 +1943,7 @@ fn validate_capacity_metadata(
             .map(|column| SourceColumn {
                 name: column.name.clone(),
                 width: None,
+                number_format: None,
             })
             .collect(),
         rows: Vec::new(),
@@ -2104,6 +2136,7 @@ impl DesignerRuntime {
                     .map(|column| SourceColumn {
                         name: column.key.clone(),
                         width: None,
+                        number_format: None,
                     })
                     .collect(),
                 rows,
@@ -2136,6 +2169,7 @@ impl DesignerRuntime {
         finalize_export_workbook(document, workbook, profile)
     }
 
+    #[allow(clippy::too_many_lines)] // One metadata-to-workbook rebuild, column formats included.
     fn rebuild_workbook_from_metadata(
         &self,
         expected_revision: &str,
@@ -2230,6 +2264,17 @@ impl DesignerRuntime {
                     .map(|column| SourceColumn {
                         name: column.name.clone(),
                         width: if values_only { None } else { column.width },
+                        number_format: if values_only || profile == OutputProfile::TextCapacity {
+                            None
+                        } else {
+                            document
+                                .schemas
+                                .get(&SchemaId::from(sheet.schema_id.clone()))
+                                .and_then(|schema| {
+                                    schema.fields.get(&FieldId::from(column.field_id.clone()))
+                                })
+                                .and_then(|field| field.number_format.clone())
+                        },
                     })
                     .collect(),
                 rows,

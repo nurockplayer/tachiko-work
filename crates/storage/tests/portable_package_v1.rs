@@ -455,6 +455,7 @@ fn reference_document() -> Document {
                             id: reference_field.clone(),
                             key: FieldKey::from("reference"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Reference {
                                 schema: target_schema.clone(),
                             },

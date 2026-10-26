@@ -34,6 +34,7 @@ fn field(id: &str, name: &str, field_type: FieldType, required: bool) -> FieldDe
         field_type,
         required,
         constraint: FieldConstraint::None,
+        number_format: None,
     }
 }
 

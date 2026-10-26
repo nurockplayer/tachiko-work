@@ -508,6 +508,7 @@ fn structural_export_preserves_untouched_formulas_styles_and_workbook_coverage()
         columns: vec![SourceColumn {
             name: "Result".into(),
             width: None,
+            number_format: None,
         }],
         rows: vec![vec![SourceCell {
             formula: Some("'Data'!$B$2+1".into()),
@@ -911,6 +912,7 @@ fn formula_journey_rows(formula: &str, data_name: &str, rows: usize) -> Journey 
         columns: vec![SourceColumn {
             name: "Result".into(),
             width: None,
+            number_format: None,
         }],
         rows: vec![
             vec![SourceCell {
@@ -1226,6 +1228,7 @@ fn imported_style_inventory_refuses_before_excel_format_resource_limits() {
                         id: field.clone(),
                         key: FieldKey::from("value"),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Text,
                         required: false,
                         constraint: FieldConstraint::None,
@@ -1446,6 +1449,7 @@ fn imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output() {
                 columns: vec![SourceColumn {
                     name: "Result".into(),
                     width: None,
+                    number_format: None,
                 }],
                 rows: vec![vec![SourceCell {
                     value: SourceValue::Number { value: 1.0 },

@@ -3,6 +3,7 @@
 mod direct_ro;
 mod legacy_direct_ro;
 mod migration;
+mod number_format;
 mod portable_package;
 mod roproj;
 mod strict_json;
@@ -122,6 +123,8 @@ pub enum FormatError {
     UnsupportedFieldConstraint,
     #[error("this frozen representation does not support durable display names")]
     UnsupportedDisplayName,
+    #[error("this frozen representation does not support durable number formats; use .roproj/v3")]
+    UnsupportedNumberFormat,
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
     #[error(
@@ -498,6 +501,13 @@ fn check_document(document: &Document) -> Result<(), FormatError> {
     } else {
         Err(FormatError::InvalidDocument { diagnostics })
     }
+}
+
+pub(crate) fn reject_number_formats(document: &Document) -> Result<(), FormatError> {
+    if document.has_number_formats() {
+        return Err(FormatError::UnsupportedNumberFormat);
+    }
+    Ok(())
 }
 
 pub(crate) fn reject_display_names(document: &Document) -> Result<(), FormatError> {

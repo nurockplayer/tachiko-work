@@ -43,8 +43,8 @@ pub use tachiko_semantic_core::{
     Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
     FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
-    Schema, SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
-    display_name_failures, trim_display_name,
+    NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey,
+    SemanticSubject, StableDiagnosticObservation, Value, display_name_failures, trim_display_name,
 };
 use thiserror::Error;
 
@@ -340,6 +340,11 @@ impl Serialize for SchemaInspection {
             .fields
             .iter()
             .map(|field| {
+                if field.number_format.is_some() {
+                    return Err(S::Error::custom(
+                        "the frozen schema inspection transport cannot represent number formats",
+                    ));
+                }
                 if field.constraint != FieldConstraint::None {
                     return Err(S::Error::custom(
                         "the frozen schema inspection transport cannot represent field constraints",
@@ -590,6 +595,13 @@ pub enum WorkspaceError {
     UnsupportedFieldConstraintMerge,
     #[error("the selected frozen representation cannot represent display names")]
     UnsupportedDisplayNameRepresentation,
+    #[error("the selected merge contract does not support durable number formats")]
+    UnsupportedNumberFormatMerge,
+    #[error("invalid number format: {source}")]
+    InvalidNumberFormat {
+        #[source]
+        source: NumberFormatError,
+    },
     #[error("unsupported semantic conflict contract '{contract}'")]
     UnsupportedSemanticConflictContract { contract: String },
     #[error("{role} keyed grouped-sum definitions are invalid: {source}")]
@@ -1023,6 +1035,7 @@ pub fn merge_documents(
         MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange => {
             Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
         }
+        MergeOutcome::UnsupportedNumberFormat => Err(WorkspaceError::UnsupportedNumberFormatMerge),
         MergeOutcome::UnsupportedDisplayName => {
             Err(WorkspaceError::UnsupportedDisplayNameRepresentation)
         }
@@ -1093,6 +1106,9 @@ pub fn merge_documents_v2(
             })))
         }
         MergeOutcomeV2::Conflicted(conflicts) => Ok(WorkspaceMergeOutcomeV2::Conflicted(conflicts)),
+        MergeOutcomeV2::UnsupportedNumberFormat => {
+            Err(WorkspaceError::UnsupportedNumberFormatMerge)
+        }
         MergeOutcomeV2::UnsupportedKeyedGroupedSumDefinitionChange => {
             Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
         }
@@ -2825,6 +2841,7 @@ fn game_balance_schemas(
                     id: field_id,
                     key: FieldKey::from(field_key),
                     display_name: None,
+                    number_format: None,
                     field_type,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,

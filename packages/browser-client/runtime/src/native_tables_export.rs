@@ -369,7 +369,13 @@ fn project_sheet(
                     ),
                 ));
             }
-            Ok(SourceColumn { name, width: None })
+            Ok(SourceColumn {
+                name,
+                width: None,
+                number_format: document.schemas[spec.summary.id.as_str()].fields[&column.id]
+                    .number_format
+                    .clone(),
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let computed = computed_formula_values(runtime, revision, document, spec)?;
@@ -475,7 +481,7 @@ impl DesignerRuntime {
         }
         if csv {
             ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_csv_values_only", collection,
-                "CSV exports scalar lexical values only: typing and formatting are lost. Formula-leading Text or headers are refused; use typed XLSX.".into()));
+                "CSV exports scalar lexical values only: typing and per-column number formats are not carried. Formula-leading Text or headers are refused; use typed XLSX.".into()));
             // Either state alone is ambiguous on readback. Populated nonempty
             // Text and empty tables have no value-level loss to disclose.
             if selected.columns.iter().any(|column| {
