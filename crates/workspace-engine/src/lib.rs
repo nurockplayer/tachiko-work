@@ -1988,6 +1988,53 @@ pub(crate) fn formula_inverse_restore_candidate(
     Ok(candidate)
 }
 
+/// Build the narrow restore candidate for one host-cleared formula cell.
+///
+/// Formula initialization stays prohibited on the generic value path. This
+/// path reinstalls one already-admitted formula over an absent optional Number
+/// slot so one bounded session Undo can restore the formula that a clear
+/// removed.
+pub(crate) fn formula_restore_candidate(
+    document: &Document,
+    field: &FieldRef,
+    expression: &Expression,
+) -> Result<Document, WorkspaceError> {
+    let entity =
+        document
+            .entities
+            .get(&field.entity)
+            .ok_or_else(|| WorkspaceError::MissingEntityId {
+                entity: field.entity.clone(),
+            })?;
+    let definition = field_definition(document, field)?;
+    if definition.field_type != FieldType::Number {
+        return Err(WorkspaceError::NonNumericFormulaField {
+            field: field.clone(),
+        });
+    }
+    if definition.required {
+        return Err(WorkspaceError::MissingField {
+            field: field.clone(),
+        });
+    }
+    if entity.fields.contains_key(&field.field) {
+        return Err(WorkspaceError::NoChange {
+            field: field.clone(),
+        });
+    }
+    preflight_formula_structures(document)?;
+    let mut candidate = document.clone();
+    let entity = candidate.entities.get_mut(&field.entity).ok_or_else(|| {
+        WorkspaceError::MissingEntityId {
+            entity: field.entity.clone(),
+        }
+    })?;
+    entity
+        .fields
+        .insert(field.field.clone(), Value::Formula(expression.clone()));
+    Ok(candidate)
+}
+
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
     require_validated_calculation_for(&edited, ValidationRole::Candidate)?;
     preflight_formula_projections(&edited)?;
