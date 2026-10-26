@@ -132,7 +132,8 @@ and a stable entity-ID tie-break; filters are AND-ed. Text filters compare
 case-insensitively and are text-only, number and date filters use
 `= <> < <= > >=`, `is_blank`/`not_blank` find missing or present values, and
 `in_set` takes literals of the column's declared kind. Formula columns filter and
-sort by their calculated Number. A window above the 1 MiB reply cap refuses with
+sort by their calculated Number. A window above the reply cap (1 MiB, or 16 MiB for a text-capacity
+document) refuses with
 `query_too_large` rather than serialising an oversized response; ask for
 fewer rows or fewer columns.
 

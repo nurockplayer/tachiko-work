@@ -3122,10 +3122,11 @@ impl DesignerRuntime {
                 .len()
                 + 1;
             *used = used.saturating_add(row_bytes);
-            if *used > MAX_TABLE_WINDOW_BYTES {
+            let maximum = table_window_byte_limit(self.text_capacity);
+            if *used > maximum {
                 return Err(DesignerError::ProjectionTooLarge {
                     actual: *used,
-                    maximum: MAX_TABLE_WINDOW_BYTES,
+                    maximum,
                 });
             }
             rows.push(row);
@@ -5671,6 +5672,17 @@ fn ensure_opened_wire_projection_size(
     )
 }
 
+/// A window reply keeps the byte budget of the occurrence's profile: a
+/// text-capacity document's rows may each carry long text, so a fixed 1 MiB
+/// cap would refuse windows the complete text-capacity table already admits.
+const fn table_window_byte_limit(text_capacity: bool) -> usize {
+    if text_capacity {
+        MAX_TEXT_CAPACITY_PROJECTION_BYTES
+    } else {
+        MAX_TABLE_WINDOW_BYTES
+    }
+}
+
 pub(crate) fn ensure_wire_reply_size(
     reply: &DesignerWireReply,
     text_capacity: bool,
@@ -5687,7 +5699,7 @@ pub(crate) fn ensure_wire_reply_size(
         } => MAX_PROJECTION_BYTES,
         DesignerWireReply::Ok {
             response: DesignerResponse::TableWindow(_) | DesignerResponse::LocatedInView(_),
-        } => MAX_TABLE_WINDOW_BYTES,
+        } => table_window_byte_limit(text_capacity),
         DesignerWireReply::Ok { .. } if text_capacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
         _ => MAX_PROJECTION_BYTES,
     };
