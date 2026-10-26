@@ -923,9 +923,11 @@ fn query_table_refuses_above_one_thousand_rows() {
 }
 
 #[test]
-fn window_reply_byte_cap_refuses_before_building_oversized_output() {
+fn text_capacity_windows_use_the_text_capacity_reply_budget() {
     // 250 legal rows of 16 × 256-byte Text cells stay under the text-capacity
-    // aggregate but project far beyond the 1 MiB window reply.
+    // aggregate yet project beyond 1 MiB. A text-capacity occurrence already
+    // admits its complete table within 16 MiB, so its windows use that budget
+    // instead of the strict 1 MiB window cap.
     let mut runtime = DesignerRuntime::from_document(grid_document(250, 16, 256), WIDE)
         .expect("the wide rectangle is admitted");
     let totals = window(&mut runtime, TableView::default(), 0, 0).expect("totals need no rows");
@@ -935,14 +937,13 @@ fn window_reply_byte_cap_refuses_before_building_oversized_output() {
     let small = window(&mut runtime, TableView::default(), 0, 16).expect("16 rows fit");
     assert_eq!(small.rows.len(), 16);
 
-    let refuse = window(&mut runtime, TableView::default(), 0, 250).unwrap_err();
-    assert!(matches!(
-        refuse,
-        DesignerError::ProjectionTooLarge {
-            maximum: 1_048_576,
-            ..
-        }
-    ));
+    let wide = window(&mut runtime, TableView::default(), 0, 250)
+        .expect("a text-capacity window above 1 MiB stays inside 16 MiB");
+    assert_eq!(wide.rows.len(), 250);
+    assert!(
+        serde_json::to_vec(&wide).expect("the window encodes").len() > 1_048_576,
+        "the fixture must exceed the strict window cap to prove the profile budget"
+    );
 }
 
 /// The small fixture document plus one optional trailing column, to prove the

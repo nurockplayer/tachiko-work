@@ -1295,6 +1295,7 @@ impl DesignerError {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // One exhaustive error-to-wire-code table; splitting it hides missing arms.
     fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
             Self::Lifecycle(PatchLifecycleError::Stale) | Self::StaleQuery { .. } => {
