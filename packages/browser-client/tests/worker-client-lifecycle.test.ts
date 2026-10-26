@@ -107,6 +107,42 @@ describe("Designer Worker request lifecycle", () => {
     await expect(results).resolves.toEqual([table("first"), table("second")]);
   });
 
+  it("forwards bounded window and located-in-view requests and validates their replies", async () => {
+    const worker = transport();
+    const view = {
+      sort: [{field: "amount", direction: "desc" as const}],
+      filters: [{kind: "number_compare" as const, field: "amount", op: ">=" as const, value: 5.5}],
+      keep_entities: ["row-9"],
+    };
+    const pendingWindow = worker.client.queryTableWindow("resident/7", "items", view, 64, 256);
+    expect(worker.request(0)).toMatchObject({
+      kind: "command",
+      request: {type: "query_table_window", expected_revision: "resident/7", collection: "items", view, start: 64, count: 256},
+    });
+    const window = {
+      ...table("items"),
+      columns_revision: "columns/00000000000000ff",
+      total_rows: 900,
+      unfiltered_rows: 1_000,
+      start: 64,
+      rows: [],
+    };
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "table_window", payload: window}});
+    await expect(pendingWindow).resolves.toEqual(window);
+
+    const pendingLocate = worker.client.locateInView("resident/7", "items", view, "row-9");
+    expect(worker.request(1)).toMatchObject({
+      kind: "command",
+      request: {type: "locate_in_view", expected_revision: "resident/7", collection: "items", view, entity: "row-9"},
+    });
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "located_in_view", payload: {revision: "resident/7", result: "found", index: 12}}});
+    await expect(pendingLocate).resolves.toEqual({revision: "resident/7", result: "found", index: 12});
+
+    const malformed = worker.client.locateInView("resident/7", "items", view, "row-1");
+    worker.reply({id: worker.request(2).id, status: "ok", response: {type: "located_in_view", payload: {revision: "resident/7", result: "filtered_out", index: 3}}});
+    await expect(malformed).rejects.toThrow("Invalid Worker located-in-view result.");
+  });
+
   it("ignores unknown and duplicate replies without consuming another pending request", async () => {
     const worker = transport();
     const first = worker.client.queryTable("first");

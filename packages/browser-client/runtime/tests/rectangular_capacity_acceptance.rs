@@ -7,7 +7,7 @@ use serde_json::json;
 use tachiko_designer_runtime::{
     DesignerRequest, DesignerResponse, DesignerRuntime, ImportFieldType, ImportSelection,
     InteropMetadata, OccurrenceProjection, ScalarEditInput, StoredValueProjection, TableProjection,
-    import_workbook,
+    TableView, import_workbook,
     interop_adapter::{
         ImportOptions, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
         export_csv, export_xlsx, import_csv, import_xlsx,
@@ -84,16 +84,46 @@ struct Expected {
     metadata: InteropMetadata,
 }
 
+/// Read the whole capacity table through bounded windows: `queryTable` refuses
+/// above 1,000 rows.
 fn table(runtime: &mut DesignerRuntime, collection: &str) -> TableProjection {
-    let DesignerResponse::Table(table) = runtime
-        .handle(DesignerRequest::QueryTable {
-            collection: collection.into(),
-        })
-        .unwrap()
-    else {
-        panic!("complete table response");
-    };
-    table
+    let revision = runtime.observe_occurrence().revision;
+    let mut rows = Vec::new();
+    let mut columns = None;
+    let mut summary = None;
+    let mut start = 0;
+    loop {
+        let DesignerResponse::TableWindow(window) = runtime
+            .handle(DesignerRequest::QueryTableWindow {
+                expected_revision: revision.clone(),
+                collection: collection.into(),
+                view: TableView::default(),
+                start,
+                count: 128,
+            })
+            .unwrap()
+        else {
+            panic!("table window response");
+        };
+        if columns.is_none() {
+            columns = Some(window.columns);
+            summary = Some(window.collection);
+        }
+        let received = window.rows.len();
+        rows.extend(window.rows);
+        start += received;
+        if received == 0 || start >= window.total_rows {
+            break;
+        }
+    }
+    TableProjection {
+        revision,
+        tracker_profile: None,
+        native_table_profile: None,
+        collection: summary.expect("the first window carries the collection"),
+        columns: columns.expect("the first window carries the columns"),
+        rows,
+    }
 }
 
 fn verify(actual: &TableProjection, expected: &Expected) {
@@ -775,14 +805,46 @@ fn native_rectangular_capacity_complete_lifecycle() {
                 let before = runtime.observe_occurrence();
                 let before_exports = exports(runtime, &expected.metadata);
                 let before_project = project_bytes(runtime, carrier);
+                // queryTable stays complete up to 1,000 rows and refuses above
+                // with the typed window-query failure; a bounded window keeps
+                // the large capacity reply legal at any size.
                 let query = serde_json::to_vec(&DesignerRequest::QueryTable {
                     collection: collection.clone(),
                 })
                 .unwrap();
                 let capacity_reply = process_wire_request(&mut resident, &query);
+                if expected.values.len() > 1_000 {
+                    let refused: serde_json::Value =
+                        serde_json::from_slice(&capacity_reply).unwrap();
+                    assert_eq!(refused["status"], "error");
+                    assert_eq!(refused["error"]["code"], "use_window_query");
+                    assert_eq!(refused["error"]["row_count"], expected.values.len());
+                } else {
+                    assert!(
+                        capacity_reply.len() > 65_536,
+                        "fixture must exercise an actual capacity-native reply over 64 KiB"
+                    );
+                }
+                let window = serde_json::to_vec(&DesignerRequest::QueryTableWindow {
+                    expected_revision: before.revision.clone(),
+                    collection: collection.clone(),
+                    view: TableView::default(),
+                    start: 0,
+                    count: 128,
+                })
+                .unwrap();
+                let window_reply = process_wire_request(&mut resident, &window);
+                let window_json: serde_json::Value = serde_json::from_slice(&window_reply).unwrap();
+                assert_eq!(window_json["status"], "ok", "{window_json}");
+                assert_eq!(
+                    window_json["response"]["payload"]["rows"]
+                        .as_array()
+                        .map(Vec::len),
+                    Some(128)
+                );
                 assert!(
-                    capacity_reply.len() > 65_536,
-                    "fixture must exercise an actual capacity-native reply over 64 KiB"
+                    window_reply.len() > 65_536,
+                    "a bounded capacity window must still exceed 64 KiB"
                 );
                 let reply: serde_json::Value = serde_json::from_slice(&process_wire_request(
                     &mut resident,

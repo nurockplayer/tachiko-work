@@ -230,6 +230,19 @@ try {
               });
             });
           };
+          // queryTable refuses above 1,000 rows; page the complete table through
+          // bounded windows so the full-table oracles below still run.
+          const queryAll = async (): Promise<TableProjection> => {
+            const revision = (await client.observeOccurrence()).revision;
+            const first = await client.queryTableWindow(revision, collection, {}, 0, 64);
+            const rows = [...first.rows];
+            while (rows.length < first.total_rows) {
+              const page = await client.queryTableWindow(revision, collection, {}, rows.length, 64);
+              if (page.rows.length === 0) break;
+              rows.push(...page.rows);
+            }
+            return { revision: first.revision, collection: first.collection, columns: first.columns, rows };
+          };
           const options = { delimiter: ",", header: true };
           const selection = { column_types: [["text", "text", "text"]] as ["text", "text", "text"][], extra_columns: [[]] };
           let saved: ArrayBuffer;
@@ -266,7 +279,7 @@ try {
             if (restart) check(size(reopened) > 65_536, "fresh Worker promoted Opened payload");
             const invalidMetadata = structuredClone(metadata);
             invalidMetadata.sheets[0]!.name = "Capacity\tname\n雪&\r";
-            const beforeRefusalTable = await client.queryTable(collection);
+            const beforeRefusalTable = await queryAll();
             const beforeRefusalSaved = await saveCarrier(current.revision);
             let nameFailure: FailureProjection | undefined;
             try {
@@ -279,7 +292,7 @@ try {
             same(nameFailure!.diagnostics.map(d => d.code), ["native_tables_xlsx_name"], "located worksheet-name finding");
             check(nameFailure!.diagnostics[0]!.path.endsWith("/sheet-name"), "worksheet-name diagnostic location");
             same(await client.observeOccurrence(), current, "name refusal preserves occurrence/revision");
-            same(await client.queryTable(collection), beforeRefusalTable, "name refusal preserves complete table");
+            same(await queryAll(), beforeRefusalTable, "name refusal preserves complete table");
             same(await digest(await saveCarrier(current.revision)), await digest(beforeRefusalSaved), "name refusal preserves saved bytes");
             const smallMetadata = structuredClone(metadata);
             smallMetadata.sheets[0]!.name = "Capacity name 雪&\"<'>";
@@ -312,18 +325,18 @@ try {
               originalScope = (await client.observeOccurrence()).scope;
               await checkpoint("imported");
               for (const [r, c, value] of oracle.edits) {
-                const before = await client.queryTable(collection);
+                const before = await queryAll();
                 const target = before.rows[r]!.fields[c]!.target;
                 const published = await timed("edit", () => client.editText(before.revision, target, value), { target, value });
                 same(published.base_revision, before.revision, "base revision");
                 check(published.resulting_revision !== before.revision, "revision advances");
                 const undone = await timed("undo", () => client.trackerCommand!({ type: "undo", expected_revision: published.resulting_revision }), { target, value: expected[r]![c]! });
-                checkTable(await client.queryTable(collection));
+                checkTable(await queryAll());
                 await timed("redo", () => client.trackerCommand!({ type: "redo", expected_revision: undone.resulting_revision }), { target, value });
                 expected[r]![c] = value;
-                checkTable(await client.queryTable(collection));
+                checkTable(await queryAll());
               }
-              const target = (await client.queryTable(collection)).rows[0]!.fields[0]!.target;
+              const target = (await queryAll()).rows[0]!.fields[0]!.target;
               let revision = (await client.observeOccurrence()).revision;
               for (let i = 0; i < 128; i++) {
                 const value = i === 127 ? expected[0]![0]! : `history-${String(i).padStart(3, "0")}`;
@@ -333,7 +346,7 @@ try {
                 revision = published.resulting_revision;
                 if (i === 63 || i === 127) await checkpoint(`history-${i + 1}`);
               }
-              checkTable(await client.queryTable(collection));
+              checkTable(await queryAll());
               same((await client.observeOccurrence()).scope, originalScope, "edits preserve occurrence");
               saved = await timed("save", () => saveCarrier(revision));
               const savedHash = await digest(saved);
@@ -345,15 +358,15 @@ try {
                 try { await action(); } catch { rejected = true; }
                 check(rejected, "invalid operation must reject");
                 same(await client.observeOccurrence(), before, "rejection preserves occurrence/revision");
-                checkTable(await client.queryTable(collection));
+                checkTable(await queryAll());
                 same(await digest(await saveCarrier(revision)), savedHash, "rejection preserves canonical bytes");
                 for (const output of ["csv", "xlsx"] as const) same(await digest((await client.exportSpreadsheet!(revision, metadata!, output, metadata!.sheets[0]!.schema_id)).bytes), exportHashes[output], "rejection preserves spreadsheet export bytes");
                 const undone = await timed("undo", () => client.trackerCommand!({ type: "undo", expected_revision: revision }), { target, value: "history-126" });
                 const prior = structuredClone(expected); prior[0]![0] = "history-126";
-                checkTable(await client.queryTable(collection), prior);
+                checkTable(await queryAll(), prior);
                 const redone = await timed("redo", () => client.trackerCommand!({ type: "redo", expected_revision: undone.resulting_revision }), { target, value: expected[0]![0]! });
                 revision = redone.resulting_revision;
-                checkTable(await client.queryTable(collection));
+                checkTable(await queryAll());
               };
               for (const file of [`source-8407.${format}`, `malformed.${format}`]) {
                 const invalid = await bytes(`fixtures/${file}`);

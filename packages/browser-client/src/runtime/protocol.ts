@@ -92,14 +92,73 @@ export type ColumnProjection = {
   constraint?: FieldConstraint;
 };
 
+export type TableRowProjection = {
+  id: string;
+  key: string;
+  /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
+  blank_fields?: string[];
+  fields: FieldProjection[];
+};
+
 export type TableProjection = {
   tracker_profile?: boolean;
   native_table_profile?: boolean;
   revision: string;
   collection: CollectionSummary;
   columns: ColumnProjection[];
-  /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
-  rows: Array<{ id: string; key: string; blank_fields?: string[]; fields: FieldProjection[] }>;
+  rows: TableRowProjection[];
+};
+
+export type SortDirection = "asc" | "desc";
+
+/** Every comparison takes the column's declared kind; text compares case-insensitively. */
+export type ComparisonOperator = "=" | "<>" | "<" | "<=" | ">" | ">=";
+
+/** One literal member of an `in_set` filter; it must fit the filtered column's type. */
+export type ScalarLiteral = number | string | boolean;
+
+/** One AND-ed view filter. Comparisons and sets match only same-kind values; blanks match `is_blank`. */
+export type ViewFilter =
+  | { kind: "text_equals"; field: string; value: string }
+  | { kind: "text_contains"; field: string; value: string }
+  | { kind: "number_compare"; field: string; op: ComparisonOperator; value: number }
+  | { kind: "date_compare"; field: string; op: ComparisonOperator; value: string }
+  | { kind: "is_blank"; field: string }
+  | { kind: "not_blank"; field: string }
+  | { kind: "in_set"; field: string; values: ScalarLiteral[] };
+
+export type ViewSortKey = { field: string; direction: SortDirection };
+
+/**
+ * Stateless view state owned by the caller, never by the document: sort keys
+ * apply in order with blanks last, filters are AND-ed, and `keep_entities`
+ * (at most 256) stay visible even when a filter excludes them.
+ */
+export type TableView = {
+  sort?: ViewSortKey[];
+  filters?: ViewFilter[];
+  keep_entities?: string[];
+};
+
+/** One bounded window of a table; `count` 0 returns totals and columns only. */
+export type TableWindowProjection = {
+  revision: string;
+  collection: CollectionSummary;
+  columns: ColumnProjection[];
+  /** Deterministic digest of the column definitions; stable across row edits. */
+  columns_revision: string;
+  /** Rows left after filters, plus kept entities. */
+  total_rows: number;
+  unfiltered_rows: number;
+  start: number;
+  rows: TableRowProjection[];
+};
+
+/** Zero-based position in the filtered, sorted view; `index` appears only when found. */
+export type LocatedInViewProjection = {
+  revision: string;
+  result: "found" | "filtered_out";
+  index?: number;
 };
 
 export type FieldBatchProjection = {
@@ -204,6 +263,8 @@ export type FailureProjection = {
   name_failures?: NameFailure[];
   /** Present only when a field constraint refused the request. */
   constraint_failure?: ConstraintFailureProjection;
+  /** Present only for the `use_window_query` refusal: the collection's row count. */
+  row_count?: number;
 };
 
 /** Known runtime failure codes, while allowing forward-compatible additions. */
@@ -284,6 +345,21 @@ export type DesignerRequest =
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_table"; collection: string }
   | {
+      type: "query_table_window";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
+      start: number;
+      count: number;
+    }
+  | {
+      type: "locate_in_view";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
+      entity: string;
+    }
+  | {
       type: "query_fields";
       expected_revision: string;
       fields: FieldTarget[];
@@ -316,6 +392,8 @@ export type DesignerResponse =
   | { type: "bootstrap"; payload: BootstrapProjection }
   | { type: "opened"; payload: OpenedProjection }
   | { type: "table"; payload: TableProjection }
+  | { type: "table_window"; payload: TableWindowProjection }
+  | { type: "located_in_view"; payload: LocatedInViewProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "field_explanation"; payload: FieldExplanationProjection }
   | { type: "published"; payload: PublicationProjection }
