@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, ColumnAddress, ColumnRef, Document, Expression, FieldAddress,
-    FieldRef, FieldType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Value,
+    FieldId, FieldRef, FieldType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
 
@@ -691,14 +691,29 @@ impl RetainedCalculationState {
             .filter_map(|root| document.entities.get(&root.entity))
             .map(|entity| &entity.schema)
             .collect::<BTreeSet<_>>();
-        for root in dirty_roots {
-            for dependent in self.reverse_dependents.get(root).into_iter().flatten() {
-                if matches!(
-                    calculation_value(document, dependent),
-                    Some(Value::Formula(expression))
-                        if !extract_column_totals(expression).is_empty()
-                ) {
-                    roots.insert(dependent.clone());
+        // A total also holds reverse edges from a root row's blank slots, which
+        // are never roots themselves (only stored fields are). Walk every
+        // reverse edge of each root's row, so deleting a row whose totalled
+        // cell is blank still refreshes the total.
+        let root_entities = dirty_roots
+            .iter()
+            .map(|root| &root.entity)
+            .collect::<BTreeSet<_>>();
+        for entity in root_entities {
+            let first = FieldRef::new(entity.clone(), FieldId::from(String::new()));
+            for (_, dependents) in self
+                .reverse_dependents
+                .range(first..)
+                .take_while(|(slot, _)| &slot.entity == entity)
+            {
+                for dependent in dependents {
+                    if matches!(
+                        calculation_value(document, dependent),
+                        Some(Value::Formula(expression))
+                            if !extract_column_totals(expression).is_empty()
+                    ) {
+                        roots.insert(dependent.clone());
+                    }
                 }
             }
         }

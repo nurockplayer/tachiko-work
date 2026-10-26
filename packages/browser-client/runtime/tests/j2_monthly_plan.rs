@@ -1593,5 +1593,36 @@ fn explaining_a_column_total_over_a_blank_cell_lists_only_present_values() {
             },
         })
         .expect("an edit beside a blank contributor publishes");
-    assert!(matches!(edited, DesignerResponse::Published(_)));
+    let DesignerResponse::Published(edited) = edited else {
+        panic!("the edit publishes");
+    };
+
+    // Removing the row whose totalled cell is blank refreshes the total's
+    // dependencies, so explaining it does not ask for the deleted row.
+    let DesignerResponse::Published(removed) = runtime
+        .handle(DesignerRequest::RemoveTableRows {
+            expected_revision: edited.resulting_revision,
+            collection: "plan".to_owned(),
+            entities: vec!["ads".to_owned()],
+        })
+        .expect("the blank row is removable")
+    else {
+        panic!("the removal publishes");
+    };
+    let DesignerResponse::FieldExplanation(explanation) = runtime
+        .handle(DesignerRequest::ExplainField {
+            expected_revision: removed.resulting_revision,
+            target: FieldTarget {
+                entity: "summary".to_owned(),
+                field: "total".to_owned(),
+            },
+        })
+        .expect("the total explains after the blank row is gone")
+    else {
+        panic!("explain returns an explanation");
+    };
+    assert_eq!(
+        explanation.value.calculated,
+        Some(CalculationProjection::Value { value: 91_000.0 })
+    );
 }
