@@ -679,6 +679,67 @@ fn xlsx_number_format_import_is_stored_and_reexported_by_column() {
     assert_eq!(reexported.sheets[0].columns[0].number_format, Some(format));
 }
 
+#[test]
+fn cleared_promoted_xlsx_format_stays_cleared_on_export() {
+    let percent = NumberFormat {
+        decimals: 1,
+        kind: NumberFormatKind::Percent,
+        thousands_separator: false,
+    };
+    let authored = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Rates".into(),
+            has_header: true,
+            columns: vec![SourceColumn {
+                name: "Rate".into(),
+                width: None,
+                number_format: Some(percent.clone()),
+            }],
+            rows: vec![
+                vec![source_cell(SourceValue::Number { value: 0.125 }, None)],
+                vec![source_cell(SourceValue::Number { value: 0.5 }, None)],
+            ],
+        }],
+        ledger: Vec::new(),
+    };
+    let bytes = tachiko_designer_runtime::interop_adapter::export_xlsx(&authored).unwrap();
+    let source = tachiko_designer_runtime::interop_adapter::import_xlsx(&bytes).unwrap();
+    assert_eq!(source.sheets[0].columns[0].number_format, Some(percent));
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let cleared = runtime
+        .handle(DesignerRequest::SetColumnNumberFormat {
+            expected_revision: imported.opened.bootstrap.revision.clone(),
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            field: imported.metadata.sheets[0].columns[0].field_id.clone(),
+            number_format: None,
+        })
+        .unwrap();
+    let DesignerResponse::Published(published) = cleared else {
+        panic!("clearing the format publishes");
+    };
+    let reexported = runtime
+        .export_workbook(&published.resulting_revision, &imported.metadata)
+        .unwrap();
+    let sheet = &reexported.sheets[0];
+    assert_eq!(sheet.columns[0].number_format, None);
+    assert!(
+        sheet
+            .rows
+            .iter()
+            .all(|row| row[0].style.number_format.is_none()),
+        "a cleared promoted format must not return from retained cell styles"
+    );
+    let reimported = tachiko_designer_runtime::interop_adapter::import_xlsx(
+        &tachiko_designer_runtime::interop_adapter::export_xlsx(&reexported).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(reimported.sheets[0].columns[0].number_format, None);
+}
+
 fn export_summary_definition(
     metadata: &InteropMetadata,
     id: &str,

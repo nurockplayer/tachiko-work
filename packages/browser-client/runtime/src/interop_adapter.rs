@@ -1111,7 +1111,7 @@ fn escaped_xml_bytes(value: &str) -> usize {
         .sum()
 }
 
-fn infer_column_number_format(
+pub(crate) fn infer_column_number_format(
     rows: &[Vec<SourceCell>],
     column_index: usize,
 ) -> (Option<tachiko_workspace_engine::NumberFormat>, bool) {
