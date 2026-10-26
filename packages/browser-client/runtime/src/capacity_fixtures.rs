@@ -84,6 +84,7 @@ pub fn capacity_document(spec: FixtureSpec) -> Document {
                 field_type: column_type(column),
                 required: false,
                 constraint: FieldConstraint::None,
+                number_format: None,
             },
         );
     }
@@ -102,6 +103,7 @@ pub fn capacity_document(spec: FixtureSpec) -> Document {
                     field_type,
                     required: false,
                     constraint: FieldConstraint::None,
+                    number_format: None,
                 },
             );
         }

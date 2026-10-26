@@ -10,6 +10,7 @@ fn document() -> Document {
                 id,
                 key: key.into(),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Text,
                 required: false,
                 constraint: FieldConstraint::None,

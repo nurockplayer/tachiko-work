@@ -5,7 +5,8 @@ use tachiko_designer_runtime::{
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    FieldRef, FieldType, Number, NumberFormat, NumberFormatKind, Schema, SchemaId, SchemaKey,
+    Value,
 };
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 
@@ -36,6 +37,7 @@ fn fixture(dependent: bool) -> DesignerRuntime {
                         id,
                         key: FieldKey::from(name),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: name != "missing" && name != "converted",
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -557,6 +559,7 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
                     .map(|name| SourceColumn {
                         name: name.into(),
                         width: None,
+                        number_format: None,
                     })
                     .collect(),
                 rows: vec![
@@ -571,6 +574,7 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
                 columns: vec![SourceColumn {
                     name: "Total".into(),
                     width: None,
+                    number_format: None,
                 }],
                 rows: vec![vec![source_cell(
                     SourceValue::Number { value: 9999.0 },
@@ -607,6 +611,7 @@ fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
                     .map(|name| SourceColumn {
                         name: name.into(),
                         width: None,
+                        number_format: None,
                     })
                     .collect(),
                 rows: vec![vec![
@@ -637,6 +642,161 @@ fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
             extra_columns: vec![vec![]],
         },
     )
+}
+
+#[test]
+fn xlsx_number_format_import_is_stored_and_reexported_by_column() {
+    let format = NumberFormat {
+        decimals: 2,
+        kind: NumberFormatKind::Currency { code: "USD".into() },
+        thousands_separator: true,
+    };
+    let source = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Amounts".into(),
+            has_header: true,
+            columns: vec![SourceColumn {
+                name: "Amount".into(),
+                width: None,
+                number_format: Some(format.clone()),
+            }],
+            rows: vec![vec![source_cell(SourceValue::Number { value: 12.5 }, None)]],
+        }],
+        ledger: Vec::new(),
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert_eq!(
+        imported.opened.table.columns[0].number_format,
+        Some(format.clone())
+    );
+    let reexported = runtime
+        .export_workbook(&imported.opened.bootstrap.revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(reexported.sheets[0].columns[0].number_format, Some(format));
+}
+
+#[test]
+fn cleared_promoted_xlsx_format_stays_cleared_on_export() {
+    let percent = NumberFormat {
+        decimals: 1,
+        kind: NumberFormatKind::Percent,
+        thousands_separator: false,
+    };
+    let authored = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Rates".into(),
+            has_header: true,
+            columns: vec![SourceColumn {
+                name: "Rate".into(),
+                width: None,
+                number_format: Some(percent.clone()),
+            }],
+            rows: vec![
+                vec![source_cell(SourceValue::Number { value: 0.125 }, None)],
+                vec![source_cell(SourceValue::Number { value: 0.5 }, None)],
+                vec![SourceCell {
+                    value: SourceValue::Empty,
+                    formula: None,
+                    style: CellStyle {
+                        number_format: Some("0.0%".into()),
+                        ..CellStyle::default()
+                    },
+                }],
+            ],
+        }],
+        ledger: Vec::new(),
+    };
+    let bytes = tachiko_designer_runtime::interop_adapter::export_xlsx(&authored).unwrap();
+    let source = tachiko_designer_runtime::interop_adapter::import_xlsx(&bytes).unwrap();
+    assert_eq!(source.sheets[0].columns[0].number_format, Some(percent));
+    assert!(
+        source.sheets[0].rows[2][0].style.number_format.is_some(),
+        "the styled blank survives the XLSX round trip, so the test covers it"
+    );
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let cleared = runtime
+        .handle(DesignerRequest::SetColumnNumberFormat {
+            expected_revision: imported.opened.bootstrap.revision.clone(),
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            field: imported.metadata.sheets[0].columns[0].field_id.clone(),
+            number_format: None,
+        })
+        .unwrap();
+    let DesignerResponse::Published(published) = cleared else {
+        panic!("clearing the format publishes");
+    };
+    let reexported = runtime
+        .export_workbook(&published.resulting_revision, &imported.metadata)
+        .unwrap();
+    let sheet = &reexported.sheets[0];
+    assert_eq!(sheet.columns[0].number_format, None);
+    assert!(
+        sheet
+            .rows
+            .iter()
+            .all(|row| row[0].style.number_format.is_none()),
+        "a cleared promoted format must not return from retained cell styles"
+    );
+    let reimported = tachiko_designer_runtime::interop_adapter::import_xlsx(
+        &tachiko_designer_runtime::interop_adapter::export_xlsx(&reexported).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(reimported.sheets[0].columns[0].number_format, None);
+}
+
+#[test]
+fn unpromoted_mixed_formats_survive_row_removal_and_export() {
+    let styled = |value: f64, format: &str| SourceCell {
+        value: SourceValue::Number { value },
+        formula: None,
+        style: CellStyle {
+            number_format: Some(format.into()),
+            ..CellStyle::default()
+        },
+    };
+    let source = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Mixed".into(),
+            has_header: true,
+            columns: vec![SourceColumn {
+                name: "Value".into(),
+                width: None,
+                number_format: None,
+            }],
+            rows: vec![vec![styled(0.5, "0%")], vec![styled(2.0, "0.00")]],
+        }],
+        ledger: Vec::new(),
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let removed = runtime
+        .handle(DesignerRequest::RemoveTableRows {
+            expected_revision: imported.opened.bootstrap.revision.clone(),
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            entities: vec![imported.metadata.sheets[0].rows[1].entity_id.clone()],
+        })
+        .unwrap();
+    let DesignerResponse::Published(published) = removed else {
+        panic!("removing a row publishes");
+    };
+    let reexported = runtime
+        .export_workbook(&published.resulting_revision, &imported.metadata)
+        .unwrap();
+    let sheet = &reexported.sheets[0];
+    assert_eq!(sheet.columns[0].number_format, None);
+    assert_eq!(sheet.rows.len(), 1);
+    assert_eq!(sheet.rows[0][0].style.number_format.as_deref(), Some("0%"));
 }
 
 fn export_summary_definition(
@@ -1138,10 +1298,12 @@ fn import_keeps_text_and_true_absence_until_explicit_selection_and_extra_output_
                 SourceColumn {
                     name: "Identifier".into(),
                     width: None,
+                    number_format: None,
                 },
                 SourceColumn {
                     name: "Ambiguous".into(),
                     width: None,
+                    number_format: None,
                 },
             ],
             rows: vec![

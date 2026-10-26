@@ -65,6 +65,7 @@ pub struct FieldDefinitionPayload {
     pub field_type: FieldType,
     pub required: bool,
     pub constraint: FieldConstraint,
+    pub number_format: Option<tachiko_semantic_core::NumberFormat>,
 }
 
 /// Complete immutable payload for an entity state, excluding its target ID.
@@ -151,6 +152,12 @@ pub enum CanonicalDirectFact {
         field: FieldId,
         before: bool,
         after: bool,
+    },
+    SchemaFieldNumberFormatChanged {
+        schema: SchemaId,
+        field: FieldId,
+        before: Option<tachiko_semantic_core::NumberFormat>,
+        after: Option<tachiko_semantic_core::NumberFormat>,
     },
     SchemaFieldConstraintChanged {
         schema: SchemaId,
@@ -248,6 +255,9 @@ impl CanonicalDirectFact {
             }
             F::SchemaFieldConstraintChanged { schema, field, .. } => {
                 (2, vec![schema.as_str(), field.as_str()], 5)
+            }
+            F::SchemaFieldNumberFormatChanged { schema, field, .. } => {
+                (2, vec![schema.as_str(), field.as_str()], 7)
             }
             F::EntityCreated { entity, .. } => (3, vec![entity.as_str()], 0),
             F::EntityDeleted { entity, .. } => (3, vec![entity.as_str()], 1),
@@ -383,6 +393,7 @@ fn field_payload(field: &FieldDefinition) -> FieldDefinitionPayload {
         field_type: field.field_type.clone(),
         required: field.required,
         constraint: field.constraint.clone(),
+        number_format: field.number_format.clone(),
     }
 }
 
@@ -551,6 +562,14 @@ fn compare_schema(
                         field: field_id.clone(),
                         before: old.required,
                         after: new.required,
+                    });
+                }
+                if old.number_format != new.number_format {
+                    facts.push(F::SchemaFieldNumberFormatChanged {
+                        schema: id.clone(),
+                        field: field_id.clone(),
+                        before: old.number_format.clone(),
+                        after: new.number_format.clone(),
                     });
                 }
                 if old.constraint != new.constraint {

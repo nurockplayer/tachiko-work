@@ -26,7 +26,7 @@ pub use model::{
     ComparisonOperator, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
     FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     FormulaExpressionType, InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES,
-    Number, Schema, SchemaId, SchemaKey, Value,
+    Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey, Value,
 };
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;

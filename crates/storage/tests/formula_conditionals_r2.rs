@@ -52,6 +52,7 @@ fn document_with_conditional() -> Document {
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::None,
+                number_format: None,
             },
         ),
         (
@@ -63,6 +64,7 @@ fn document_with_conditional() -> Document {
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::None,
+                number_format: None,
             },
         ),
         (
@@ -74,6 +76,7 @@ fn document_with_conditional() -> Document {
                 field_type: FieldType::Number,
                 required: true,
                 constraint: FieldConstraint::None,
+                number_format: None,
             },
         ),
     ]);

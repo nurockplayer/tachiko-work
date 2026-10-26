@@ -25,6 +25,7 @@ fn document() -> Document {
                         id: field_id.clone(),
                         key: FieldKey::from("damage"),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

@@ -14,6 +14,7 @@ fn add_power_formula(document: &mut tachiko_workspace_engine::Document) {
             id: FieldId::from("power"),
             key: FieldKey::from("power"),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Number,
             required: true,
             constraint: tachiko_semantic_core::FieldConstraint::None,

@@ -17,6 +17,7 @@ fn document(constraint: FieldConstraint) -> Document {
                     id: "field".into(),
                     key: "status".into(),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Text,
                     required: false,
                     constraint,

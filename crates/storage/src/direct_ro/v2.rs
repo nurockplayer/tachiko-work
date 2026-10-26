@@ -42,6 +42,8 @@ pub(crate) struct FieldDefinitionV2 {
     pub(crate) key: String,
     pub(crate) field_type: FieldTypeV2,
     pub(crate) required: bool,
+    #[serde(default, deserialize_with = "crate::number_format::optional_v2")]
+    pub(crate) number_format: Option<crate::number_format::NumberFormatDto>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -279,6 +281,7 @@ impl FieldDefinitionV2 {
             key: definition.key.to_string(),
             field_type: FieldTypeV2::from_semantic(&definition.field_type),
             required: definition.required,
+            number_format: definition.number_format.as_ref().map(Into::into),
         }
     }
 
@@ -307,6 +310,7 @@ impl FieldDefinitionV2 {
             id: FieldId::from(self.id),
             key: FieldKey::from(self.key),
             display_name: None,
+            number_format: self.number_format.map(Into::into),
             field_type: self.field_type.into_semantic(),
             required: self.required,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -828,6 +832,11 @@ fn write_field_definition(
     write_field_type(output, &field.field_type, indent + 1)?;
     output.push_str(",\n");
     member_bool(output, indent + 1, "required", field.required, false)?;
+    if let Some(format) = &field.number_format {
+        output.push_str(",\n");
+        member_prefix(output, indent + 1, "number_format")?;
+        crate::number_format::write(output, format, indent + 1).map_err(CodecError::Json)?;
+    }
     output.push('\n');
     push_indent(output, indent);
     output.push('}');

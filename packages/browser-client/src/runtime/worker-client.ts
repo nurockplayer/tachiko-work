@@ -16,6 +16,7 @@ import type {
   FieldBatchProjection,
   FieldExplanationProjection,
   FieldConstraintInput,
+  NumberFormat,
   FieldTarget,
   FieldProjection,
   OpenedProjection,
@@ -168,6 +169,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async setColumnConstraint(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_constraint", expected_revision: expectedRevision, collection, field, constraint});
+  }
+
+  async setColumnNumberFormat(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_number_format", expected_revision: expectedRevision, collection, field, number_format: numberFormat});
   }
 
   async bootstrap(): Promise<BootstrapProjection> {
@@ -656,6 +661,27 @@ function validateColumnConstraint(column: ColumnProjection): void {
   throw new Error("Invalid Worker column constraint.");
 }
 
+function validateColumnNumberFormat(column: ColumnProjection): void {
+  const format = column.number_format;
+  if (format === undefined) return;
+  if (format === null || typeof format !== "object") {
+    throw new Error("Invalid Worker column number format.");
+  }
+  const kind = format.kind as { type?: unknown; code?: unknown } | null;
+  // Mirror Rust's closed wire: exact member sets on the format and each kind.
+  const exactKeys = (value: object, keys: string[]) =>
+    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  const validKind = kind !== null && typeof kind === "object" && (
+    ((kind.type === "plain" || kind.type === "percent") && exactKeys(kind, ["type"])) ||
+    (kind.type === "currency" && exactKeys(kind, ["type", "code"]) &&
+      typeof kind.code === "string" && /^[A-Z]{3}$/.test(kind.code)));
+  if (column.field_type !== "number" || !exactKeys(format, ["decimals", "kind", "thousands_separator"]) ||
+      !Number.isInteger(format.decimals) ||
+      format.decimals < 0 || format.decimals > 10 || typeof format.thousands_separator !== "boolean" || !validKind) {
+    throw new Error("Invalid Worker column number format.");
+  }
+}
+
 function validateLocatedInView(located: LocatedInViewProjection): void {
   if (located.result === "found") {
     if (!Number.isInteger(located.index) || located.index! < 0) {
@@ -677,6 +703,7 @@ function validateTablePresence(
       throw new Error("Invalid Worker column display_name_explicit.");
     }
     validateColumnConstraint(column);
+    validateColumnNumberFormat(column);
     return [column.id, {required: column.required, index}];
   }));
   if (columns.size !== table.columns.length) throw new Error("Invalid Worker duplicate column identity.");
