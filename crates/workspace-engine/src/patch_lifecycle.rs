@@ -375,6 +375,14 @@ pub enum SemanticCommand {
     },
     FormulaUpdate(FormulaUpdateCommand),
     FormulaInverseRestore(FormulaInverseRestoreCommand),
+    /// Reinstall one host-cleared formula over an absent optional Number slot.
+    ///
+    /// Formula initialization stays rejected on the generic value path; this
+    /// app-private command exists only so one bounded session Undo can restore
+    /// the formula that a clear removed. It is host-history only and shares the
+    /// `FormulaInverseRestore` trust boundary: no wire decoder produces it, so
+    /// it never widens the generic value path.
+    FormulaRestore(FormulaRestoreCommand),
     /// Persist one complete saved keyed lookup + grouped-sum definition.
     ///
     /// The definition is a document-level structure rather than an inferred
@@ -398,6 +406,15 @@ impl SemanticCommand {
     #[must_use]
     pub fn formula_inverse_restore(field: FieldRef, value: Number) -> Self {
         Self::FormulaInverseRestore(FormulaInverseRestoreCommand::new(field, value))
+    }
+
+    /// Host-history only: the expression must be one the host read from an
+    /// admitted document formula that its own clear removed. No wire decoder
+    /// produces this command, and the candidate still passes full document
+    /// validation, but the engine cannot prove that provenance by itself.
+    #[must_use]
+    pub fn formula_restore(field: FieldRef, expression: Expression) -> Self {
+        Self::FormulaRestore(FormulaRestoreCommand::new(field, expression))
     }
 }
 
@@ -438,10 +455,12 @@ impl FormulaUpdateCommand {
     }
 }
 
-/// One app-private restoration of a scalar that a prior `FormulaUpdate` replaced.
+/// One app-private replacement of a stored formula with a scalar: either the
+/// inverse of a prior `FormulaUpdate` or a host-deliberate scalar edit over a
+/// formula cell.
 ///
 /// This command is deliberately separate from generic `SetFieldValue`: it can
-/// restore only a Number over a currently stored formula through the ordinary
+/// write only a Number over a currently stored formula through the ordinary
 /// lifecycle, and does not make formula cells generally scalar-editable.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FormulaInverseRestoreCommand {
@@ -462,6 +481,50 @@ impl FormulaInverseRestoreCommand {
     #[must_use]
     pub fn value(&self) -> Number {
         self.value
+    }
+}
+
+/// One app-private reinstallation of a formula the host cleared.
+///
+/// The expression can only come from an already-admitted document formula, so
+/// this command never parses or binds authoring text; it stays separate from
+/// generic `SetFieldValue` so an absent slot cannot become a formula through
+/// the ordinary value path.
+///
+/// Host-history only, with the same trust boundary as
+/// [`FormulaInverseRestoreCommand`]: the host constructs it from history it
+/// recorded, no wire decoder produces it, and it is never reachable from
+/// authoring input.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormulaRestoreCommand {
+    target: FieldRef,
+    expression: Expression,
+    references: BTreeSet<FieldRef>,
+}
+
+impl FormulaRestoreCommand {
+    pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
+        let references = tachiko_formula_engine::extract_dependencies(&target, &expression);
+        Self {
+            target,
+            expression,
+            references,
+        }
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &FieldRef {
+        &self.target
+    }
+
+    #[must_use]
+    pub fn expression(&self) -> &Expression {
+        &self.expression
+    }
+
+    #[must_use]
+    pub fn references(&self) -> &BTreeSet<FieldRef> {
+        &self.references
     }
 }
 
@@ -2504,7 +2567,9 @@ impl PatchLifecycle {
                     SemanticCommand::SetFieldValue { .. } | SemanticCommand::UnsetField { .. } => {
                         OperationFamily::SetFieldValue
                     }
-                    SemanticCommand::FormulaUpdate(_) => OperationFamily::FormulaUpdate,
+                    SemanticCommand::FormulaUpdate(_) | SemanticCommand::FormulaRestore(_) => {
+                        OperationFamily::FormulaUpdate
+                    }
                     SemanticCommand::FormulaInverseRestore(_) => {
                         OperationFamily::FormulaInverseRestore
                     }
@@ -3334,6 +3399,17 @@ impl PatchLifecycle {
                         command.value(),
                     )?;
                 }
+                SemanticCommand::FormulaRestore(command) => {
+                    let field = command.target();
+                    let scope = self.field_scope(&candidate, field)?;
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::FormulaUpdate,
+                        mutation_class: MutationClass::Formula,
+                        scope,
+                    });
+                    candidate =
+                        super::formula_restore_candidate(&candidate, field, command.expression())?;
+                }
                 SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
                     // ADR-0036: create and update both require only
                     // `Structure`; an in-place update with the same stable
@@ -3727,6 +3803,25 @@ impl PatchLifecycle {
                 }
                 Ok(())
             }
+            SemanticCommand::FormulaRestore(command) => {
+                self.insert_field_disclosure_for(
+                    OperationFamily::FormulaUpdate,
+                    before,
+                    after,
+                    command.target(),
+                    disclosures,
+                )?;
+                for reference in command.references() {
+                    self.insert_field_disclosure_for(
+                        OperationFamily::FormulaUpdate,
+                        before,
+                        after,
+                        reference,
+                        disclosures,
+                    )?;
+                }
+                Ok(())
+            }
             SemanticCommand::FormulaInverseRestore(command) => {
                 self.insert_field_disclosure_for(
                     OperationFamily::FormulaInverseRestore,
@@ -3815,13 +3910,23 @@ impl PatchLifecycle {
                 // A value-slot initialization is not a schema/identity mutation.
                 // Admit only the existing optional declaration and its exact
                 // SetFieldValue command; arbitrary added fields remain closed.
+                // The one formula exception is the app-private restore of a
+                // formula the host cleared, which can only target an optional
+                // Number slot through its own command.
                 let definition = crate::field_definition(before, field)
                     .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
                 let existing = before.entities[&field.entity].fields.get(&field.field);
+                let formula_restore = definition.field_type == FieldType::Number
+                    && !definition.required
+                    && matches!(value, Value::Formula(_))
+                    && body.commands().iter().any(|command| {
+                        matches!(command, SemanticCommand::FormulaRestore(restore) if restore.target() == field)
+                    });
                 if existing.is_some()
                     || definition.required
-                    || matches!(value, Value::Formula(_))
-                    || families != BTreeSet::from([OperationFamily::SetFieldValue])
+                    || (matches!(value, Value::Formula(_)) && !formula_restore)
+                    || (!formula_restore
+                        && families != BTreeSet::from([OperationFamily::SetFieldValue]))
                 {
                     return Err(PatchLifecycleError::ScopeDerivationFailed);
                 }
@@ -4331,6 +4436,9 @@ fn command_families_for_field(
             SemanticCommand::FormulaUpdate(command) if command.target() == field => {
                 Some(OperationFamily::FormulaUpdate)
             }
+            SemanticCommand::FormulaRestore(command) if command.target() == field => {
+                Some(OperationFamily::FormulaUpdate)
+            }
             SemanticCommand::FormulaInverseRestore(command) if command.target() == field => {
                 Some(OperationFamily::FormulaInverseRestore)
             }
@@ -4382,7 +4490,7 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
                             matches!(
                                 (&field.field_type, value),
                                 (FieldType::Text, Value::Text(_))
-                                    | (FieldType::Number, Value::Number(_))
+                                    | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
                                     | (FieldType::Date, Value::Date(_))
                             )
@@ -4872,6 +4980,7 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
             | SemanticCommand::UnsetField { .. }
             | SemanticCommand::FormulaUpdate(_)
             | SemanticCommand::FormulaInverseRestore(_)
+            | SemanticCommand::FormulaRestore(_)
             | SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
             | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {}
         }
