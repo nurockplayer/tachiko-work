@@ -4154,11 +4154,23 @@ impl PatchLifecycle {
                 continue;
             }
             self.insert_field_disclosure_for(family, document, document, &field, disclosures)?;
-            let value = document
+            let entity = document
                 .entities
                 .get(&field.entity)
-                .and_then(|entity| entity.fields.get(&field.field))
                 .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+            let Some(value) = entity.fields.get(&field.field) else {
+                // A blank slot of a declared field (a column total reads every
+                // row, blanks included) is disclosed but has nothing further
+                // to traverse.
+                let declared = document
+                    .schemas
+                    .get(&entity.schema)
+                    .is_some_and(|schema| schema.fields.contains_key(&field.field));
+                if declared {
+                    continue;
+                }
+                return Err(PatchLifecycleError::ScopeDerivationFailed);
+            };
             if let Value::Formula(expression) = value {
                 pending.extend(expression_references(document, &field, expression));
             }

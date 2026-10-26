@@ -1577,4 +1577,21 @@ fn explaining_a_column_total_over_a_blank_cell_lists_only_present_values() {
         .map(|dependency| dependency.target.entity.as_str())
         .collect::<Vec<_>>();
     assert_eq!(read, ["rent", "tools"]);
+
+    // Editing another contributor publishes: the blank slot is a terminal
+    // dependency in the disclosure traversal, not a missing value.
+    let revision = runtime.observe_occurrence().revision;
+    let edited = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: revision,
+            target: FieldTarget {
+                entity: "rent".to_owned(),
+                field: "expense".to_owned(),
+            },
+            input: ScalarEditInput::Number {
+                input: "81000".to_owned(),
+            },
+        })
+        .expect("an edit beside a blank contributor publishes");
+    assert!(matches!(edited, DesignerResponse::Published(_)));
 }
