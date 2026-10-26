@@ -2470,7 +2470,7 @@ fn parse_styles(
     }
     Ok(styles)
 }
-fn coordinate(address: &str) -> Result<(usize, usize)> {
+pub(crate) fn coordinate(address: &str) -> Result<(usize, usize)> {
     let split = address
         .bytes()
         .position(|b| !b.is_ascii_alphabetic())
@@ -2488,9 +2488,16 @@ fn coordinate(address: &str) -> Result<(usize, usize)> {
     let row = address[split..]
         .parse::<usize>()
         .map_err(|_| InteropError::Invalid("Invalid cell row".into()))?;
-    if col == 0 || row == 0 || row > MAX_TEXT_CAPACITY_ROWS + 1 {
-        return fail("Cell row exceeds 8,406 profile");
+    if col == 0 || row == 0 {
+        return fail("Invalid cell coordinate");
     }
+    // Row 1 is the header, so data rows are `row - 1`.
+    crate::capacity::check_limit(
+        crate::CapacityLimit::TableRows,
+        MAX_TEXT_CAPACITY_ROWS,
+        row - 1,
+        Some("Imported table"),
+    )?;
     Ok((row - 1, col - 1))
 }
 use crate::interop_number_format::NumberFormatKind;
@@ -2926,9 +2933,15 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 .ok_or_else(|| InteropError::Invalid("Missing worksheet row index".into()))?
                 .parse::<usize>()
                 .map_err(|_| InteropError::Invalid("Invalid row index".into()))?;
-            if row_index == 0 || row_index > MAX_TEXT_CAPACITY_ROWS + 1 {
-                return fail("Worksheet row exceeds 8,406 profile");
+            if row_index == 0 {
+                return fail("Invalid row index");
             }
+            crate::capacity::check_limit(
+                crate::CapacityLimit::TableRows,
+                MAX_TEXT_CAPACITY_ROWS,
+                row_index - 1,
+                Some("Imported table"),
+            )?;
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
                 let address = c

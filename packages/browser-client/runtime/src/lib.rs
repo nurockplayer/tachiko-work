@@ -4630,13 +4630,15 @@ impl DesignerRuntime {
         if columns.is_empty() {
             return Err(table_error("table must declare at least one column"));
         }
+        // Validate the table name first: a capacity refusal names its
+        // collection, so it must carry an admitted name.
+        let (name, names) = author_table_names(name, columns)?;
         capacity::check_limit(
             CapacityLimit::TableFields,
             MAX_TABLE_FIELDS,
             columns.len(),
             Some(name),
         )?;
-        let (name, names) = author_table_names(name, columns)?;
         let schema_key = allocate_key(name, "table", &BTreeSet::new())?;
         let mut ids = NewTableIds::new(occurrence_id);
         let document_id = ids.generate(SemanticIdKind::Document);
@@ -5028,7 +5030,7 @@ impl DesignerRuntime {
         }
         capacity::check_limit(
             CapacityLimit::TableRows,
-            MAX_TABLE_ROWS,
+            self.max_table_rows(),
             spec.entities.len().saturating_add(1),
             Some(collection),
         )?;
@@ -5200,7 +5202,7 @@ impl DesignerRuntime {
         })?;
         capacity::check_limit(
             CapacityLimit::TableRows,
-            MAX_TABLE_ROWS,
+            self.max_table_rows(),
             spec.entities.len().max(start.saturating_add(rows.len())),
             Some(collection),
         )?;

@@ -724,3 +724,85 @@ fn text_capacity_usage_refreshes_after_clear_undo_and_redo() {
         .unwrap();
     assert_eq!(query_populated_cells(&mut runtime), 194);
 }
+
+#[test]
+fn xlsx_rows_past_the_text_capacity_profile_are_typed_capacity_refusals() {
+    let maximum = super::interop_adapter::MAX_TEXT_CAPACITY_ROWS;
+    // Row 1 is the header, so the last admitted data row is `maximum + 1`.
+    assert_eq!(
+        super::interop_adapter::coordinate(&format!("A{}", maximum + 1)).unwrap(),
+        (maximum, 0)
+    );
+    match super::interop_adapter::coordinate(&format!("A{}", maximum + 2)) {
+        Err(super::interop_adapter::InteropError::Capacity(error)) => {
+            assert_eq!(error.limit, CapacityLimit::TableRows);
+            assert_eq!(error.maximum, maximum);
+            assert_eq!(error.attempted, maximum + 1);
+            assert_eq!(error.collection.as_deref(), Some("Imported table"));
+        }
+        other => panic!("expected a capacity refusal, got {other:?}"),
+    }
+    assert!(matches!(
+        super::interop_adapter::coordinate("A0"),
+        Err(super::interop_adapter::InteropError::Invalid(_))
+    ));
+}
+
+#[test]
+fn text_capacity_insertion_honors_the_reported_row_limit() {
+    let source = super::interop_adapter::import_csv(
+        csv_with_data_rows(200).as_bytes(),
+        &super::interop_adapter::ImportOptions::default(),
+    )
+    .unwrap();
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Text]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (mut runtime, imported) =
+        import_workbook(&source, &selection, "00000000-0000-4000-8000-000000000538").unwrap();
+    assert!(runtime.text_capacity);
+    let capacity = match runtime
+        .handle(DesignerRequest::QueryCapacity {
+            expected_revision: None,
+        })
+        .unwrap()
+    {
+        DesignerResponse::Capacity(projection) => projection,
+        other => panic!("unexpected reply {other:?}"),
+    };
+    assert_eq!(
+        capacity.limits.table_rows,
+        super::interop_adapter::MAX_TEXT_CAPACITY_ROWS
+    );
+    // 200 rows is past the strict 128-row profile but inside the reported
+    // limit, so one more row is admitted.
+    let reply = runtime.handle(DesignerRequest::InsertRow {
+        expected_revision: capacity.revision,
+        collection: imported.opened.bootstrap.default_collection.clone(),
+        initializers: Vec::new(),
+    });
+    assert!(
+        matches!(reply, Ok(DesignerResponse::Published(_))),
+        "insert at 201 of {} rows: {reply:?}",
+        capacity.limits.table_rows
+    );
+}
+
+#[test]
+fn an_unnamed_oversized_table_is_refused_for_its_name_not_its_capacity() {
+    let columns = (0..33)
+        .map(|index| NewTableColumnInput {
+            required: true,
+            name: format!("c{index}"),
+            field_type: "boolean".into(),
+        })
+        .collect::<Vec<_>>();
+    // A capacity refusal names its collection, so the name is admitted first.
+    let error = DesignerRuntime::new_table("00000000-0000-4000-8000-000000000539", "", &columns)
+        .unwrap_err();
+    assert!(
+        !matches!(error, DesignerError::CapacityExceeded(_)),
+        "{error:?}"
+    );
+}
