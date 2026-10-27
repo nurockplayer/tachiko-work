@@ -593,3 +593,30 @@ fn a_missing_required_value_fails_only_the_selected_if_branch() {
         Some(CalculationFailure::InvalidReferences { .. })
     ));
 }
+
+#[test]
+fn isblank_probe_does_not_make_a_branch_read_unconditional() {
+    let mut document = document();
+    document
+        .entities
+        .get_mut("row")
+        .expect("fixture entity exists")
+        .fields
+        .remove("blank_probe");
+    set_formula(
+        &mut document,
+        "output",
+        "IF(ISBLANK([row.blank_probe]), 5, [row.blank_probe])",
+    );
+    match calculate_complete(&document) {
+        CalculationOutcome::Complete(calculation) => assert_eq!(
+            calculation
+                .value(&owner("output"))
+                .map(Number::get),
+            Some(5.0)
+        ),
+        CalculationOutcome::Failed(failures) => {
+            assert!(!failures.failures().contains_key(&owner("output")));
+        }
+    }
+}

@@ -761,10 +761,10 @@ impl Expression {
         }
     }
 
-    /// References read on every evaluation: everything except IF's
-    /// `then`/`else` branches (the condition is always read). A missing value
-    /// here fails the formula before evaluation; inside a branch it fails only
-    /// when that branch is selected.
+    /// References whose value is read on every evaluation: everything except
+    /// IF's `then`/`else` branches (the condition is always read) and ISBLANK's
+    /// presence-only probe. A missing value here fails the formula before
+    /// evaluation; inside a branch it fails only when that branch is selected.
     #[must_use]
     pub fn unconditional_references(&self, owner: &FieldRef) -> BTreeSet<FieldRef> {
         let mut references = BTreeSet::new();
@@ -778,6 +778,7 @@ impl Expression {
                     references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
                 }
                 Self::If { condition, .. } => pending.push(condition),
+                Self::IsBlank(_) => {}
                 _ => pending.extend(node.children()),
             }
         }
@@ -810,22 +811,11 @@ impl Expression {
     /// Every column total the expression reads, in evaluation order.
     #[must_use]
     pub fn column_totals(&self) -> Vec<&ColumnRef> {
-        self.collect_column_totals(false)
-    }
-
-    /// Column totals read on every evaluation, outside IF's branches.
-    #[must_use]
-    pub fn unconditional_column_totals(&self) -> Vec<&ColumnRef> {
-        self.collect_column_totals(true)
-    }
-
-    fn collect_column_totals(&self, unconditional: bool) -> Vec<&ColumnRef> {
         let mut columns = Vec::new();
         let mut pending = vec![self];
         while let Some(node) = pending.pop() {
             match node {
                 Self::ColumnTotal(column) => columns.push(column),
-                Self::If { condition, .. } if unconditional => pending.push(condition),
                 _ => pending.extend(node.children().into_iter().rev()),
             }
         }

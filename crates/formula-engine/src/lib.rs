@@ -1504,31 +1504,31 @@ fn pregraph_failures(
         }
         if let Value::Formula(expression) = value {
             let unconditional = expression.unconditional_references(field);
-            let mut uses = expression.reference_uses(field);
+            let mut checks = expression
+                .reference_uses(field)
+                .into_iter()
+                .map(|(dependency, numeric)| {
+                    // A value missing only inside an IF branch is decided at
+                    // evaluation, when the branch is actually selected; the
+                    // reference itself must still be well-formed.
+                    let failure = if unconditional.contains(&dependency) {
+                        reference_failure(document, &dependency, numeric)
+                    } else {
+                        structural_reference_failure(document, &dependency, numeric)
+                    };
+                    (dependency, failure)
+                })
+                .collect::<Vec<_>>();
             // A column total reads every non-blank cell of its column; a blank
-            // cell is skipped by the sum, not a missing target. Cells read
-            // outside IF branches are checked like direct references.
-            let unconditional_columns = expression.unconditional_column_totals();
-            let mut unconditional_cells = BTreeSet::new();
+            // cell is skipped by the sum, not a missing target. A present cell
+            // must hold a Number wherever the total sits.
             for column in expression.column_totals() {
                 for cell in column_cells(document, column) {
-                    if unconditional_columns.contains(&column) {
-                        unconditional_cells.insert(cell.clone());
-                    }
-                    uses.push((cell, true));
+                    let failure = reference_failure(document, &cell, true);
+                    checks.push((cell, failure));
                 }
             }
-            for (dependency, numeric) in uses {
-                // A value missing only inside an IF branch is decided at
-                // evaluation, when the branch is actually selected; the
-                // reference itself must still be well-formed.
-                let failure = if unconditional.contains(&dependency)
-                    || unconditional_cells.contains(&dependency)
-                {
-                    reference_failure(document, &dependency, numeric)
-                } else {
-                    structural_reference_failure(document, &dependency, numeric)
-                };
+            for (dependency, failure) in checks {
                 if let Some(failure) = failure {
                     invalid_targets.insert(dependency, failure);
                 }
