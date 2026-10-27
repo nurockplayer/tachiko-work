@@ -132,6 +132,14 @@ fn conditional_formula_recomputes_through_edit_undo_redo_and_v3_reopen() {
         })
         .unwrap();
     assert_eq!(calculated_number(&mut runtime, 2, "r1.n"), Some(5.0));
+    // The Number edit keeps the formula text canonical (value-only publication).
+    assert_eq!(
+        field(&mut runtime, 2)
+            .formula
+            .as_ref()
+            .map(|formula| formula.source.as_str()),
+        Some("IF(([r1.source] > 7), ROUND(([r1.source] * 0.5), 0), 0)")
+    );
 
     runtime
         .handle(DesignerRequest::Undo {
