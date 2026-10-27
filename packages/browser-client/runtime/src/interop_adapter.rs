@@ -3384,7 +3384,16 @@ fn unsupported_formula_function(source: &str) -> bool {
             if !token.is_empty()
                 && !matches!(
                     token.to_ascii_uppercase().as_str(),
-                    "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK" | "TRUE" | "FALSE"
+                    "MIN"
+                        | "MAX"
+                        | "IF"
+                        | "AND"
+                        | "OR"
+                        | "NOT"
+                        | "ROUND"
+                        | "ISBLANK"
+                        | "TRUE"
+                        | "FALSE"
                 )
             {
                 return true;

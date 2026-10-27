@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, ColumnAddress, ColumnRef, Document, Expression, FieldAddress,
-    FieldId, FieldRef, FieldType, FormulaExpressionType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES,
-    Number, Value,
+    FieldId, FieldRef, FieldType, FormulaExpressionType, MAX_EXPRESSION_DEPTH,
+    MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
 
@@ -457,13 +457,25 @@ fn render_bound(
             render_bound(then_value, owner, addresses, columns),
             render_bound(else_value, owner, addresses, columns)
         ),
-        Expression::And(arguments) => render_bound_function("AND", arguments, owner, addresses, columns),
-        Expression::Or(arguments) => render_bound_function("OR", arguments, owner, addresses, columns),
-        Expression::Not(value) => format!("NOT({})", render_bound(value, owner, addresses, columns)),
-        Expression::Round { value, digits } => {
-            format!("ROUND({}, {digits})", render_bound(value, owner, addresses, columns))
+        Expression::And(arguments) => {
+            render_bound_function("AND", arguments, owner, addresses, columns)
         }
-        Expression::IsBlank(value) => format!("ISBLANK({})", render_bound(value, owner, addresses, columns)),
+        Expression::Or(arguments) => {
+            render_bound_function("OR", arguments, owner, addresses, columns)
+        }
+        Expression::Not(value) => {
+            format!("NOT({})", render_bound(value, owner, addresses, columns))
+        }
+        Expression::Round { value, digits } => {
+            format!(
+                "ROUND({}, {digits})",
+                render_bound(value, owner, addresses, columns)
+            )
+        }
+        Expression::IsBlank(value) => format!(
+            "ISBLANK({})",
+            render_bound(value, owner, addresses, columns)
+        ),
     }
 }
 

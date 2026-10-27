@@ -1,7 +1,6 @@
 use tachiko_semantic_core::{
     ColumnAddress, ComparisonOperator, FieldAddress, FieldKey, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number,
-    is_valid_identifier,
+    MAX_EXPRESSION_NODES, Number, is_valid_identifier,
 };
 use thiserror::Error;
 

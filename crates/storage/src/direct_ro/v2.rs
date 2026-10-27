@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use tachiko_semantic_core::{
-    ColumnRef, ComparisonOperator, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, MAX_EXPRESSION_DEPTH,
+    ColumnRef, ComparisonOperator, Date, Document, DocumentId, Entity, EntityId, EntityKey,
+    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, MAX_EXPRESSION_DEPTH,
     MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
 };
 

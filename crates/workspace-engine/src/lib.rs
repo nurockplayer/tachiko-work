@@ -39,13 +39,13 @@ use tachiko_semantic_core::{
 };
 pub use tachiko_semantic_core::{
     ColumnRef, ComparisonOperator, Date, Diagnostic, DiagnosticCode, DiagnosticFact,
-    DiagnosticLocation,
-    DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity,
-    EntityId, EntityKey, Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
-    NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey,
-    SemanticSubject, StableDiagnosticObservation, Value, display_name_failures, trim_display_name,
+    DiagnosticLocation, DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure, Document,
+    DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldConstraint,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    MAX_DISPLAY_NAME_BYTES, Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema,
+    SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
+    display_name_failures, trim_display_name,
 };
 use thiserror::Error;
 

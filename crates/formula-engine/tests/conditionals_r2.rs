@@ -610,9 +610,7 @@ fn isblank_probe_does_not_make_a_branch_read_unconditional() {
     );
     match calculate_complete(&document) {
         CalculationOutcome::Complete(calculation) => assert_eq!(
-            calculation
-                .value(&owner("output"))
-                .map(Number::get),
+            calculation.value(&owner("output")).map(Number::get),
             Some(5.0)
         ),
         CalculationOutcome::Failed(failures) => {
