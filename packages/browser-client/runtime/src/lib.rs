@@ -4752,6 +4752,27 @@ impl DesignerRuntime {
                     } | SemanticCommand::UnsetField { .. }
                 )
             });
+        // Replacing an existing stored Number, Text, Boolean or Date with another
+        // of the same kind keeps collection shape, references and formula text
+        // unchanged, so the structural caches stay valid.
+        let value_only = !commands.is_empty()
+            && commands.iter().all(|command| match command {
+                SemanticCommand::SetFieldValue { field, value } => snapshot
+                    .document()
+                    .entities
+                    .get(&field.entity)
+                    .and_then(|entity| entity.fields.get(&field.field))
+                    .is_some_and(|old| {
+                        matches!(
+                            (old, value),
+                            (Value::Number(_), Value::Number(_))
+                                | (Value::Text(_), Value::Text(_))
+                                | (Value::Boolean(_), Value::Boolean(_))
+                                | (Value::Date(_), Value::Date(_))
+                        )
+                    }),
+                _ => false,
+            });
         // Capacity Text human requests own their proposal evidence for this
         // one call. Other command families retain the existing lifecycle.
         let v2_evidence_transition = document_requires_v2_evidence(snapshot.document())
@@ -4826,7 +4847,7 @@ impl DesignerRuntime {
                 .clone()
         };
         self.capacity_usage = capacity_usage;
-        if !capacity_text_edit {
+        if !capacity_text_edit && !value_only {
             self.refresh_structure();
             if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
                 self.formula_sources = sources;
