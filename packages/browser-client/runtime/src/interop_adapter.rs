@@ -3080,7 +3080,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                         ));
                         value = SourceValue::Empty;
                     } else if unsupported_formula_function(&f.text) {
-                        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"unsupported_formula_function",&location,"Only numeric arithmetic and binary MIN/MAX are admitted; Rust still validates binding",true));
+                        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"unsupported_formula_function",&location,"Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding",true));
                         value = SourceValue::Empty;
                     }
                 }
@@ -3384,7 +3384,7 @@ fn unsupported_formula_function(source: &str) -> bool {
             if !token.is_empty()
                 && !matches!(
                     token.to_ascii_uppercase().as_str(),
-                    "MIN" | "MAX" | "TRUE" | "FALSE"
+                    "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK" | "TRUE" | "FALSE"
                 )
             {
                 return true;
