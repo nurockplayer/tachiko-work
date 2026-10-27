@@ -1260,7 +1260,10 @@ fn translate_a1(
             let token = &source[token_start..cursor];
             if sheet_name.is_none()
                 && !token.contains('!')
-                && (token.eq_ignore_ascii_case("MIN") || token.eq_ignore_ascii_case("MAX"))
+                && matches!(
+                    token.to_ascii_uppercase().as_str(),
+                    "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
+                )
             {
                 output.push_str(&token.to_ascii_lowercase());
                 continue;
@@ -1289,7 +1292,9 @@ fn translate_a1(
                 .checked_sub(usize::from(metadata.sheets[sheet_index].has_header))
                 .ok_or_else(|| tracker_error("formula cannot bind a header cell"))?;
             let reference = metadata_target(metadata, sheet_index, row, column)?;
-            require_copy_number_for_import(document, &reference)?;
+            // The shared binder checks numeric uses after translation, when it
+            // can distinguish an ISBLANK presence probe from a numeric operand.
+            declared_type(document, &reference)?;
             let entity = &document.entities[&reference.entity];
             let field = &document.schemas[&entity.schema].fields[&reference.field];
             output.push('[');
@@ -1324,23 +1329,6 @@ fn translate_a1(
         }
     }
     Ok((output, references))
-}
-
-fn require_copy_number_for_import(
-    document: &Document,
-    reference: &FieldRef,
-) -> Result<(), DesignerError> {
-    if declared_type(document, reference)? != &FieldType::Number
-        || !matches!(
-            stored_value(document, reference)?,
-            Some(Value::Number(_) | Value::Formula(_))
-        )
-    {
-        return Err(tracker_error(
-            "source formula reference must resolve to a present numeric field",
-        ));
-    }
-    Ok(())
 }
 
 fn parse_a1_address(address: &str) -> Result<(usize, usize), DesignerError> {
@@ -2882,7 +2870,49 @@ fn export_expression(
             export_expression(left, owner, addresses)?,
             export_expression(right, owner, addresses)?
         )),
+        Expression::Compare {
+            operator,
+            left,
+            right,
+        } => export_binary(left, operator.as_str(), right, owner, addresses),
+        Expression::If {
+            condition,
+            then_value,
+            else_value,
+        } => Ok(format!(
+            "IF({},{},{})",
+            export_expression(condition, owner, addresses)?,
+            export_expression(then_value, owner, addresses)?,
+            export_expression(else_value, owner, addresses)?
+        )),
+        Expression::And(conditions) => export_function("AND", conditions, owner, addresses),
+        Expression::Or(conditions) => export_function("OR", conditions, owner, addresses),
+        Expression::Not(condition) => Ok(format!(
+            "NOT({})",
+            export_expression(condition, owner, addresses)?
+        )),
+        Expression::Round { value, digits } => Ok(format!(
+            "ROUND({},{digits})",
+            export_expression(value, owner, addresses)?
+        )),
+        Expression::IsBlank(reference) => Ok(format!(
+            "ISBLANK({})",
+            export_expression(reference, owner, addresses)?
+        )),
     }
+}
+
+fn export_function(
+    name: &str,
+    arguments: &[Expression],
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, String>,
+) -> Result<String, DesignerError> {
+    let mut exported = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        exported.push(export_expression(argument, owner, addresses)?);
+    }
+    Ok(format!("{name}({})", exported.join(",")))
 }
 fn export_binary(
     left: &Expression,

@@ -4886,27 +4886,10 @@ fn keyed_grouped_sum_matched_products(
 }
 
 fn expression_names_column(expression: &Expression, schema: &SchemaId, field: &FieldId) -> bool {
-    let mut pending = vec![expression];
-    while let Some(current) = pending.pop() {
-        match current {
-            Expression::ColumnTotal(column) => {
-                if &column.schema == schema && &column.field == field {
-                    return true;
-                }
-            }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                pending.push(right);
-                pending.push(left);
-            }
-            Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => {}
-        }
-    }
-    false
+    expression
+        .column_totals()
+        .into_iter()
+        .any(|column| &column.schema == schema && &column.field == field)
 }
 
 fn expression_references(
@@ -4914,32 +4897,15 @@ fn expression_references(
     owner: &FieldRef,
     expression: &Expression,
 ) -> BTreeSet<FieldRef> {
-    let mut references = BTreeSet::new();
-    let mut pending = vec![expression];
-    while let Some(current) = pending.pop() {
-        match current {
-            Expression::Number(_) => {}
-            Expression::Reference(field) => {
-                references.insert(field.clone());
-            }
-            Expression::SameRowReference(field) => {
-                references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
-            }
-            Expression::ColumnTotal(column) => {
-                for (entity_id, entity) in &document.entities {
-                    if entity.schema == column.schema {
-                        references.insert(FieldRef::new(entity_id.clone(), column.field.clone()));
-                    }
-                }
-            }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                pending.push(right);
-                pending.push(left);
+    let mut references = expression
+        .reference_uses(owner)
+        .into_iter()
+        .map(|(reference, _)| reference)
+        .collect::<BTreeSet<_>>();
+    for column in expression.column_totals() {
+        for (entity_id, entity) in &document.entities {
+            if entity.schema == column.schema {
+                references.insert(FieldRef::new(entity_id.clone(), column.field.clone()));
             }
         }
     }

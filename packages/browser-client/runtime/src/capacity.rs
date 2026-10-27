@@ -236,16 +236,7 @@ fn formula_usage<'a>(
             Expression::ColumnTotal(column) => {
                 columns.insert((&column.schema, &column.field));
             }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                pending.push(right);
-                pending.push(left);
-            }
-            Expression::Number(_) => {}
+            _ => pending.extend(expression.children()),
         }
     }
     // A column total depends on that column in every row of its table. Count

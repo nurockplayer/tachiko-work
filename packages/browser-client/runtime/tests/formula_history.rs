@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
-    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, open_project,
+    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget,
+    ScalarEditInput, open_project,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey,
@@ -111,6 +112,57 @@ fn explanation_wire_preserves_complete_projection_and_stale_refusal() {
     };
     assert_eq!(error.code, "stale_revision");
     assert_eq!(error.current_revision, "resident/1");
+}
+
+#[test]
+fn conditional_formula_recomputes_through_edit_undo_redo_and_v3_reopen() {
+    let mut runtime = fixture();
+    formula(
+        &mut runtime,
+        0,
+        "IF([r1.source]>7,ROUND([r1.source]*50%,0),0)",
+    );
+    assert_eq!(calculated_number(&mut runtime, 1, "r1.n"), Some(0.0));
+
+    runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/1".into(),
+            target: "r1.source".into(),
+            input: ScalarEditInput::Number { input: "10".into() },
+        })
+        .unwrap();
+    assert_eq!(calculated_number(&mut runtime, 2, "r1.n"), Some(5.0));
+
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/2".into(),
+        })
+        .unwrap();
+    assert_eq!(calculated_number(&mut runtime, 3, "r1.n"), Some(0.0));
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/3".into(),
+        })
+        .unwrap();
+    assert_eq!(calculated_number(&mut runtime, 4, "r1.n"), Some(5.0));
+
+    let saved = runtime.export_project_v3("resident/4").unwrap();
+    let mut reopened = None;
+    open_project(
+        &mut reopened,
+        &saved.bytes,
+        "00000000-0000-4000-8000-000000000301",
+    )
+    .unwrap();
+    let mut reopened = reopened.unwrap();
+    assert_eq!(calculated_number(&mut reopened, 0, "r1.n"), Some(5.0));
+    assert_eq!(
+        field(&mut reopened, 0)
+            .formula
+            .as_ref()
+            .map(|formula| formula.source.as_str()),
+        Some("IF(([r1.source] > 7), ROUND(([r1.source] * 0.5), 0), 0)")
+    );
 }
 
 /// Build the smallest numeric document that can switch between scalar and formula meaning.

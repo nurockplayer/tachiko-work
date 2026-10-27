@@ -2,7 +2,9 @@
 
 Decision state: Mixed — ADR-0014 authoring syntax/limits and ADR-0018
 bound-formula, dependency, and deterministic binary64 rules are Accepted;
-implementation mechanisms remain Provisional where marked.
+implementation mechanisms remain Provisional where marked. The Owner-scoped
+formula roadmap R2 extends the language and amends optional Number blank reads
+as recorded in the [R2 decision note](formula-engine-r2-blank-semantics.md).
 
 Implementation state: The engine implements bounded parsing, snapshot binding
 to stable IDs, typed bound ASTs, partial round-trip-proven authoring projection,
@@ -35,7 +37,8 @@ This specification distinguishes three kinds of statement:
 
 ## Accepted authoring language
 
-ADR-0014 owns the authoring grammar. The language contains:
+ADR-0014 owns the base authoring grammar; the R2 task adds the conditional,
+rounding, percent, and blank forms below. The language contains:
 
 - finite decimal and scientific Number literals;
 - bracketed references in `[entity.field]` form;
@@ -45,8 +48,13 @@ ADR-0014 owns the authoring grammar. The language contains:
   [Column totals](#column-totals));
 - binary `+`, `-`, `*`, and `/` with standard precedence;
 - unary `+` and `-`;
-- parentheses; and
-- two-argument `min(left, right)` and `max(left, right)`.
+- parentheses;
+- two-argument `min(left, right)` and `max(left, right)`;
+- Number comparisons `=`, `<>`, `<`, `<=`, `>`, `>=` (below arithmetic in precedence);
+- `IF(condition, then_value, else_value)`, `AND(condition, ...)`, `OR(condition, ...)`, and `NOT(condition)`;
+- `ROUND(value, digits)` with an integer literal precision in `0..=10`;
+- percent literals (`50%` means `0.5`); and
+- `ISBLANK(reference)` as a condition.
 
 Examples:
 
@@ -217,11 +225,46 @@ limits as parser-produced candidates.
 The Accepted Milestone 02 formula result type is `Number` only. Literals,
 references, arithmetic, `min`, and `max` must all bind as Number.
 
-There is no implicit conversion from text, Boolean, reference, missing,
-null-like, container, or error-like values. In particular, the engine has no
-spreadsheet truthiness, string-to-number parsing, blank-to-zero conversion, or
-implicit scalar/container conversion. A missing dependency is an evaluation
-failure, not zero or null.
+R2 adds one narrow conversion: reading a declared, absent **optional Number**
+field as a Number yields semantic positive zero. The stored field remains
+absent. Missing entities, missing schema fields, required missing values, and
+Text/Date/Boolean arithmetic remain typed failures. See the
+[R2 blank semantics decision note](formula-engine-r2-blank-semantics.md) for the
+amendment to the earlier no-blank-conversion rule.
+
+Conditions have a separate internal `Condition` type and never become stored
+`Value::Boolean` or Number results. Comparisons consume Numbers and produce
+conditions. Conditions are valid only in IF's first argument or as arguments to
+AND/OR/NOT; IF's branches and every arithmetic operand must be Numbers.
+ISBLANK requires a reference (absolute or same-row) and observes stored presence
+for any declared field type. Empty Text, numeric zero, and formula cells are
+present, so they are not blank. There is no truthiness or string conversion.
+Invalid placements and invalid ROUND precision refuse as
+`formula_type_mismatch` before publication, even in an untaken branch.
+
+IF evaluates its condition and only its selected branch. Local evaluation and
+failed-dependency propagation ignore the untaken branch; binding, type checking,
+static dependencies, cycle detection, remapping, and invalidation include both
+branches. AND/OR evaluate every condition left-to-right (no short-circuit).
+ISBLANK does not require the referenced formula's calculated value. The complete
+document calculation remains atomic when some independent formula fails.
+
+ROUND decides on the decimal the user sees, not on a scaled binary64 product.
+It takes the shortest decimal text that round-trips to the input Number,
+rounds that decimal half away from zero at the requested place, and parses the
+result back to binary64. Integral inputs are unchanged, and a decimal with no
+more places than requested is returned as is, so large values never drift.
+For example, ROUND(2.675, 2) = 2.68, ROUND(1.005, 2) = 1.01 (binary64 scaling
+would give 1.00), ROUND(0.5, 0) = 1, ROUND(-0.5, 0) = -1, and
+ROUND(1e15, 10) = 1e15.
+Percent spelling shifts the literal's decimal exponent by -2 before binary64
+conversion; canonical projection may write the equivalent Number, e.g. `0.5`.
+
+The new bound operations round-trip in canonical `.roproj/v3` and direct `.ro/v2`.
+Frozen `.roproj/v1/v2` and legacy direct `.ro/v1` refuse them. XLSX formulas use
+IF/AND/OR/NOT/ROUND/ISBLANK and the same comparison operators; percent literals
+may be written as their equivalent Number. Existing arithmetic, binary min/max,
+and same-row references retain their meanings and bounds.
 
 ## Deterministic Number contract
 
@@ -275,9 +318,9 @@ formula edit is likewise reported by semantic diff even when calculated impact
 is unchanged. Cache identity covers both the bound definition and dependency
 outcomes.
 
-The current language has no general comparison operators. If later language
-features need approximate comparison, that must be an explicit operator or
-function with its own contract.
+Number comparisons use exact normalized binary64 equality and numeric order.
+Approximate comparison would require an explicit operator or function with its
+own contract.
 
 The current `min` and `max` are binary operations, not reductions. Future
 formula-language aggregation must specify stable input order and may not
@@ -382,7 +425,8 @@ Fresh full recomputation is the Accepted correctness oracle:
    nodes without an earlier failure;
 3. assign each cyclic member a cycle failure;
 4. process every remaining formula dependency-first: assign dependency failure
-   if a directly required value failed, otherwise evaluate it; and
+   if a directly required value in its selected evaluation path failed,
+   otherwise evaluate it; and
 5. return either the complete normalized value map or a stable-value-node-keyed
    semantic failure map.
 
@@ -573,7 +617,6 @@ stable IDs, and bound AST on rejection.
 - aggregate clauses and general reductions beyond the single saved form
   [column totals](#column-totals) admits; ADR-0036's fixed saved live
   definition remains outside this formula language;
-- conditional expressions and comparisons;
 - lookups and schema-level computed defaults; ADR-0036 admits only its explicit
   exact-Text lookup as a non-formula semantic family;
 - user-defined or extension functions;

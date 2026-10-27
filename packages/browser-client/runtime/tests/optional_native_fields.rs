@@ -359,11 +359,12 @@ fn optional_rows_keep_the_128_row_gate() {
 }
 
 #[test]
-fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
+#[allow(clippy::too_many_lines)] // One end-to-end clear, calculate and undo/redo scenario.
+fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_history() {
     use std::collections::BTreeMap;
     use tachiko_workspace_engine::{
         Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldRef, FieldType,
-        Number, Schema, Value as Stored,
+        Number, Schema,
     };
     let mut doc = Document::empty("doc", "Formula consumer");
     for (schema, fields) in [
@@ -410,8 +411,14 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
             key: "a".into(),
             schema: "items".into(),
             fields: BTreeMap::from([
-                ("label".into(), Stored::Text("before".into())),
-                ("amount".into(), Stored::Number(Number::new(3.0).unwrap())),
+                (
+                    "label".into(),
+                    tachiko_workspace_engine::Value::Text("before".into()),
+                ),
+                (
+                    "amount".into(),
+                    tachiko_workspace_engine::Value::Number(Number::new(3.0).unwrap()),
+                ),
             ]),
         },
     );
@@ -423,7 +430,9 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
             schema: "summary".into(),
             fields: BTreeMap::from([(
                 "total".into(),
-                Stored::Formula(Expression::Reference(FieldRef::new("a", "amount"))),
+                tachiko_workspace_engine::Value::Formula(Expression::Reference(FieldRef::new(
+                    "a", "amount",
+                ))),
             )]),
         },
     );
@@ -438,21 +447,24 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
         .export_project("resident/0")
         .unwrap()
         .bytes;
-    // No display names: this also exercises request-local v2 evidence selection.
-    j.refused(json!({"type":"edit_cells","edits":[
-        {"target":{"entity":"a","field":"label"},"input":{"kind":"text","value":"would publish a prefix"}},
+    // Clearing an optional Number is a successful history operation; its
+    // formula consumer reads zero while the stored input stays absent.
+    j.round_trip(serde_json::from_str(r#"{"type":"edit_cells","edits":[
+        {"target":{"entity":"a","field":"label"},"input":{"kind":"text","value":"published together"}},
         {"target":{"entity":"a","field":"amount"},"input":{"kind":"clear"}}
-    ]}));
-    j.refused(json!({"type":"paste_cells","collection":"items","start_entity":"a","start_field":"amount","rows":[[{"kind":"clear"}]]}));
-    j.refused(json!({"type":"undo"}));
-    j.round_trip(json!({"type":"set_column_requiredness","collection":"items","field":"amount","required":true}));
-    j.round_trip(json!({"type":"set_column_requiredness","collection":"items","field":"amount","required":false}));
+    ]}"#).unwrap());
+    let revision = j.table()["revision"].clone();
+    let fields = j.ok(serde_json::from_str(&format!(r#"{{"type":"query_fields","expected_revision":{revision},"fields":[{{"entity":"sum","field":"total"}}]}}"#)).unwrap());
+    assert_eq!(fields["fields"][0]["calculated"]["value"], 0.0);
+    j.refused(serde_json::from_str(r#"{"type":"set_column_requiredness","collection":"items","field":"amount","required":true}"#).unwrap());
     if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
         std::fs::write(
             format!("{path}.formula"),
-            serde_json::to_vec(
-                &json!({"project":initial,"occurrence_id":OCCURRENCE,"records":j.transcript}),
-            )
+            serde_json::to_vec(&BTreeMap::from([
+                ("project", serde_json::to_value(initial).unwrap()),
+                ("occurrence_id", serde_json::to_value(OCCURRENCE).unwrap()),
+                ("records", serde_json::to_value(j.transcript).unwrap()),
+            ]))
             .unwrap(),
         )
         .unwrap();

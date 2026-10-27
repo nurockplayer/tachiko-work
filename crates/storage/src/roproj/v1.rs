@@ -953,6 +953,17 @@ impl ExpressionV1 {
                     "same-row references are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
                 );
             }
+            Expression::Compare { .. }
+            | Expression::If { .. }
+            | Expression::And(_)
+            | Expression::Or(_)
+            | Expression::Not(_)
+            | Expression::Round { .. }
+            | Expression::IsBlank(_) => {
+                return invalid_representation(
+                    "conditional and rounding formula expressions are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
+                );
+            }
             Expression::ColumnTotal(_) => {
                 return invalid_representation(
                     "column totals are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
@@ -1337,6 +1348,15 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     | Expression::Maximum { left, right } => {
                         stack.push((right, depth + 1));
                         stack.push((left, depth + 1));
+                    }
+                    Expression::Compare { .. }
+                    | Expression::If { .. }
+                    | Expression::And(_)
+                    | Expression::Or(_)
+                    | Expression::Not(_)
+                    | Expression::Round { .. }
+                    | Expression::IsBlank(_) => {
+                        return invalid_representation("conditional and rounding formula expressions are not representable in frozen .roproj/v1".to_owned());
                     }
                     Expression::Number(_)
                     | Expression::Reference(_)

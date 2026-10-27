@@ -492,6 +492,7 @@ fn mix_calculation_failure(hash: &mut u64, failure: &CalculationFailure) {
         }
         CalculationFailure::DivisionByZero => mix_hash(hash, &[4]),
         CalculationFailure::NonFiniteResult => mix_hash(hash, &[5]),
+        CalculationFailure::TypeMismatch => mix_hash(hash, &[7]),
         CalculationFailure::InvalidColumn { columns } => {
             mix_hash(hash, &[6]);
             for (column, failure) in columns {
@@ -2142,6 +2143,7 @@ fn analysis_hash_calculation_failure(hash: &mut u64, failure: &CalculationFailur
         }
         CalculationFailure::DivisionByZero => analysis_hash_text(hash, "division-by-zero"),
         CalculationFailure::NonFiniteResult => analysis_hash_text(hash, "non-finite-result"),
+        CalculationFailure::TypeMismatch => analysis_hash_text(hash, "type-mismatch"),
         CalculationFailure::InvalidColumn { columns } => {
             analysis_hash_text(hash, "invalid-column");
             for (column, failure) in columns {

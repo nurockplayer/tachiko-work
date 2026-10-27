@@ -554,7 +554,7 @@ fn requiredness_and_clear_produce_exact_v2_facts_and_forward_inverses() {
 }
 
 #[test]
-fn strengthening_and_formula_consumer_clear_refuse_without_publication() {
+fn strengthening_refuses_but_optional_formula_input_clear_publishes_zero() {
     let mut optional = document();
     optional
         .schemas
@@ -588,22 +588,41 @@ fn strengthening_and_formula_consumer_clear_refuse_without_publication() {
         "amount".into(),
         Value::Formula(Expression::Reference(FieldRef::new("a", "amount"))),
     );
-    let mut session = ResidentWorkspaceSession::new("scope".into(), formula.clone());
+    let mut session = ResidentWorkspaceSession::new("scope".into(), formula);
+    apply(
+        &mut lifecycle(),
+        &mut session,
+        vec![
+            SemanticCommand::set_field_value(
+                FieldRef::new("a", "label"),
+                Value::Text("changed".into()),
+            ),
+            clear(),
+        ],
+    )
+    .unwrap();
+    let snapshot = session.export_snapshot();
     assert!(
-        apply(
-            &mut lifecycle(),
-            &mut session,
-            vec![
-                SemanticCommand::set_field_value(
-                    FieldRef::new("a", "label"),
-                    Value::Text("changed".into())
-                ),
-                clear()
-            ]
-        )
-        .is_err()
+        !snapshot.document().entities["a"]
+            .fields
+            .contains_key("amount")
     );
-    assert_eq!(session.export_snapshot().document(), &formula);
+    assert_eq!(
+        snapshot.document().entities["a"].fields["label"],
+        Value::Text("changed".into())
+    );
+    let projections = session
+        .query_fields(&[FieldRef::new("b", "amount")])
+        .unwrap()
+        .into_value();
+    assert_eq!(
+        projections[0].calculated_value,
+        Some(
+            tachiko_workspace_engine::formula_operations::FormulaCalculationOutcome::Value(
+                Number::default()
+            )
+        )
+    );
 }
 
 #[test]

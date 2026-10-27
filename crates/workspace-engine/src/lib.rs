@@ -38,13 +38,14 @@ use tachiko_semantic_core::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
-    ColumnRef, Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation,
-    DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity,
-    EntityId, EntityKey, Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
-    NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey,
-    SemanticSubject, StableDiagnosticObservation, Value, display_name_failures, trim_display_name,
+    ColumnRef, ComparisonOperator, Date, Diagnostic, DiagnosticCode, DiagnosticFact,
+    DiagnosticLocation, DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure, Document,
+    DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldConstraint,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    MAX_DISPLAY_NAME_BYTES, Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema,
+    SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
+    display_name_failures, trim_display_name,
 };
 use thiserror::Error;
 
@@ -68,6 +69,7 @@ pub fn issue_175_calculate_complete(document: &Document) -> Issue175CalculationO
 /// The catalog is internal and provisional under ADR-0019; code meanings are
 /// stable observations and do not depend on Rust enum ordinals.
 pub mod diagnostic_codes {
+    pub const FORMULA_TYPE_MISMATCH: DiagnosticCode = DiagnosticCode::new("formula.type_mismatch");
     use tachiko_semantic_core::DiagnosticCode;
 
     pub const FORMULA_STRUCTURAL: DiagnosticCode = DiagnosticCode::new("formula.invalid_structure");
@@ -1675,14 +1677,10 @@ fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, tar
         // schema, so rebasing an entity never rewrites either; a literal has
         // nothing to rebase.
         Expression::Number(_) | Expression::SameRowReference(_) | Expression::ColumnTotal(_) => {}
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            rewrite_expression_entity(left, source, target);
-            rewrite_expression_entity(right, source, target);
+        _ => {
+            for child in expression.children_mut() {
+                rewrite_expression_entity(child, source, target);
+            }
         }
     }
 }
@@ -1706,24 +1704,10 @@ fn expression_references_entity(
     owner: &FieldRef,
     target: &EntityId,
 ) -> bool {
-    match expression {
-        // A column total sums whichever rows the schema currently has, so
-        // removing one row changes its value rather than leaving a dangling
-        // stable target. Removing the schema or the column field is still
-        // refused through the column identity itself.
-        Expression::Number(_) | Expression::ColumnTotal(_) => false,
-        Expression::Reference(reference) => &reference.entity == target,
-        Expression::SameRowReference(_) => &owner.entity == target,
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            expression_references_entity(left, owner, target)
-                || expression_references_entity(right, owner, target)
-        }
-    }
+    expression
+        .reference_uses(owner)
+        .iter()
+        .any(|(reference, _)| &reference.entity == target)
 }
 
 pub(crate) fn field_value_candidate(
@@ -2211,6 +2195,12 @@ fn formula_diagnostics(
         }
         let subject = SemanticSubject::EntityField(formula.clone());
         let diagnostic = match failure {
+            CalculationFailure::TypeMismatch => formula_diagnostic(
+                diagnostic_codes::FORMULA_TYPE_MISMATCH,
+                vec![subject],
+                path,
+                "formula has incompatible Number and condition types".to_owned(),
+            ),
             CalculationFailure::InvalidExpression { error } => formula_diagnostic(
                 diagnostic_codes::FORMULA_STRUCTURAL,
                 vec![subject],
@@ -2460,7 +2450,8 @@ fn formula_prerequisites_available(
         return false;
     }
     match failure {
-        CalculationFailure::InvalidExpression { .. }
+        CalculationFailure::TypeMismatch
+        | CalculationFailure::InvalidExpression { .. }
         | CalculationFailure::InvalidReferences { .. }
         | CalculationFailure::FailedDependencies { .. }
         | CalculationFailure::DivisionByZero
@@ -2627,10 +2618,24 @@ fn drop_expression_iteratively(expression: Expression) {
             | Expression::Multiply { left, right }
             | Expression::Divide { left, right }
             | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
+            | Expression::Maximum { left, right }
+            | Expression::Compare { left, right, .. } => {
                 stack.push(*right);
                 stack.push(*left);
             }
+            Expression::If {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                stack.push(*else_value);
+                stack.push(*then_value);
+                stack.push(*condition);
+            }
+            Expression::And(arguments) | Expression::Or(arguments) => stack.extend(arguments),
+            Expression::Not(value)
+            | Expression::Round { value, .. }
+            | Expression::IsBlank(value) => stack.push(*value),
             Expression::Number(_)
             | Expression::Reference(_)
             | Expression::SameRowReference(_)

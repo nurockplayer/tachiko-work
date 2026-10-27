@@ -710,37 +710,11 @@ fn validate_expression(
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let mut stack = vec![expression];
-    while let Some(node) = stack.pop() {
-        match node {
-            Expression::Number(_) => {}
-            Expression::Reference(reference) => {
-                validate_formula_reference(document, owner, reference, path, diagnostics);
-            }
-            Expression::SameRowReference(field) => {
-                // A same-row reference has the owner's entity, so it is
-                // validated as the owner's own field.
-                validate_formula_reference(
-                    document,
-                    owner,
-                    &FieldRef::new(owner.entity.clone(), field.clone()),
-                    path,
-                    diagnostics,
-                );
-            }
-            Expression::ColumnTotal(column) => {
-                validate_formula_column(document, owner, column, path, diagnostics);
-            }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                stack.push(right);
-                stack.push(left);
-            }
-        }
+    for (reference, numeric) in expression.reference_uses(owner) {
+        validate_formula_reference(document, owner, &reference, numeric, path, diagnostics);
+    }
+    for column in expression.column_totals() {
+        validate_formula_column(document, owner, column, path, diagnostics);
     }
 }
 
@@ -748,6 +722,7 @@ fn validate_formula_reference(
     document: &Document,
     owner: &FieldRef,
     reference: &FieldRef,
+    numeric: bool,
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -799,7 +774,7 @@ fn validate_formula_reference(
         );
         return;
     };
-    if definition.field_type != FieldType::Number {
+    if numeric && definition.field_type != FieldType::Number {
         diagnostics.push(
             core_diagnostic(
                 path,
@@ -1411,39 +1386,40 @@ mod issue_175_research {
         diagnostics: &mut Vec<Diagnostic>,
         cancelled: &mut impl FnMut() -> bool,
     ) -> ValidationControl {
-        let mut stack = vec![expression];
-        let mut nodes = 0_usize;
-        while let Some(node) = stack.pop() {
+        let mut pending = vec![(expression, true)];
+        let mut nodes = 0usize;
+        while let Some((node, numeric)) = pending.pop() {
             if nodes % 64 == 0 {
                 poll_cancellation(cancelled)?;
             }
             nodes += 1;
             match node {
-                Expression::Number(_) => {}
-                Expression::Reference(reference) => {
-                    validate_formula_reference(document, owner, reference, path, diagnostics);
-                }
-                Expression::SameRowReference(field) => {
-                    validate_formula_reference(
-                        document,
-                        owner,
-                        &FieldRef::new(owner.entity.clone(), field.clone()),
-                        path,
-                        diagnostics,
-                    );
-                }
+                Expression::Reference(reference) => validate_formula_reference(
+                    document,
+                    owner,
+                    reference,
+                    numeric,
+                    path,
+                    diagnostics,
+                ),
+                Expression::SameRowReference(field) => validate_formula_reference(
+                    document,
+                    owner,
+                    &FieldRef::new(owner.entity.clone(), field.clone()),
+                    numeric,
+                    path,
+                    diagnostics,
+                ),
                 Expression::ColumnTotal(column) => {
                     validate_formula_column(document, owner, column, path, diagnostics);
                 }
-                Expression::Add { left, right }
-                | Expression::Subtract { left, right }
-                | Expression::Multiply { left, right }
-                | Expression::Divide { left, right }
-                | Expression::Minimum { left, right }
-                | Expression::Maximum { left, right } => {
-                    stack.push(right);
-                    stack.push(left);
-                }
+                Expression::IsBlank(value) => pending.push((value, false)),
+                _ => pending.extend(
+                    node.children()
+                        .into_iter()
+                        .rev()
+                        .map(|child| (child, numeric)),
+                ),
             }
         }
         Ok(())

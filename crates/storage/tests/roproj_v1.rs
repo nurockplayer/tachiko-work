@@ -1126,37 +1126,20 @@ fn balanced_add_json(nodes: usize) -> String {
 }
 
 fn expression_depth(expression: &Expression) -> usize {
-    match expression {
-        Expression::Number(_)
-        | Expression::Reference(_)
-        | Expression::SameRowReference(_)
-        | Expression::ColumnTotal(_) => 1,
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            1 + expression_depth(left).max(expression_depth(right))
-        }
-    }
+    1 + expression
+        .children()
+        .into_iter()
+        .map(expression_depth)
+        .max()
+        .unwrap_or(0)
 }
 
 fn expression_node_count(expression: &Expression) -> usize {
-    match expression {
-        Expression::Number(_)
-        | Expression::Reference(_)
-        | Expression::SameRowReference(_)
-        | Expression::ColumnTotal(_) => 1,
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            1 + expression_node_count(left) + expression_node_count(right)
-        }
-    }
+    1 + expression
+        .children()
+        .into_iter()
+        .map(expression_node_count)
+        .sum::<usize>()
 }
 
 fn field(id: &str, key: &str, field_type: FieldType, required: bool) -> FieldDefinition {

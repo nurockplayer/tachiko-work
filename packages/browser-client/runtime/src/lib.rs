@@ -1590,6 +1590,7 @@ const FORMULA_CYCLE_MESSAGE: &str =
 
 /// Typed formula-authoring refusal projection for one workspace admission
 /// error, or `None` for the generic rejection family.
+#[allow(clippy::too_many_lines)] // One exhaustive bind-error-to-wire-code table.
 fn formula_failure_projection(
     error: &WorkspaceError,
 ) -> Option<(&'static str, String, Vec<DiagnosticProjection>)> {
@@ -1670,6 +1671,19 @@ fn formula_failure_projection(
                 vec![DiagnosticFactProjection {
                     name: "reference".to_owned(),
                     value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::TypeMismatch { message } => (
+                "formula_type_mismatch",
+                format!("Formula type mismatch at character 1: {message}"),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
+                vec![DiagnosticFactProjection {
+                    name: "position".to_owned(),
+                    value: "1".to_owned(),
                 }],
             ),
             FormulaBindError::Complexity(_) | FormulaBindError::Index { .. } => return None,
@@ -4430,7 +4444,7 @@ impl DesignerRuntime {
             .collect::<BTreeSet<_>>();
         let mut references = BTreeSet::new();
         let mut reference_probe = expression.clone();
-        map_copy_references(&mut reference_probe, &mut |reference| {
+        map_copy_references(&mut reference_probe, &mut |reference, _| {
             references.insert(reference.clone());
             Ok(())
         })?;
@@ -4450,12 +4464,12 @@ impl DesignerRuntime {
                 ));
             }
             let (row, column) = copy_position(spec, &target)?;
-            require_copy_number(document, &target)?;
+            require_copy_target_number(document, &target)?;
             let old = &document.entities[&target.entity].fields[&target.field];
             let mut copied = expression.clone();
-            map_copy_references(&mut copied, &mut |reference| {
+            map_copy_references(&mut copied, &mut |reference, numeric| {
                 if fixed.contains(reference) || !spec.entities.contains(&reference.entity) {
-                    return require_copy_number(document, reference);
+                    return require_copy_reference(document, reference, numeric);
                 }
                 let (reference_row, reference_column) = copy_position(spec, reference)?;
                 let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
@@ -4472,7 +4486,7 @@ impl DesignerRuntime {
                             tracker_error("relative reference column is outside the collection")
                         })?,
                 );
-                require_copy_number(document, reference)
+                require_copy_reference(document, reference, numeric)
             })?;
             // `[.field]` resolves against the destination's own row, so the
             // copied formula must prove that row can supply the field now
@@ -6805,27 +6819,41 @@ fn copy_index(
         .ok_or_else(|| tracker_error("relative reference is outside the collection"))
 }
 
-fn require_copy_number(document: &Document, field: &FieldRef) -> Result<(), DesignerError> {
+fn require_copy_reference(
+    document: &Document,
+    field: &FieldRef,
+    numeric: bool,
+) -> Result<(), DesignerError> {
     let entity = document
         .entities
         .get(&field.entity)
         .ok_or_else(|| tracker_error("formula reference entity is unavailable"))?;
-    let numeric = document
+    let definition = document
         .schemas
         .get(&entity.schema)
-        .and_then(|schema| schema.fields.get(&field.field))
-        .is_some_and(|definition| definition.field_type == FieldType::Number);
-    if !numeric
-        || !matches!(
-            entity.fields.get(&field.field),
-            Some(Value::Number(_) | Value::Formula(_))
-        )
-    {
+        .and_then(|schema| schema.fields.get(&field.field));
+    let value = entity.fields.get(&field.field);
+    let numeric_field =
+        definition.is_some_and(|definition| definition.field_type == FieldType::Number);
+    let supported_value = matches!(value, None | Some(Value::Number(_) | Value::Formula(_)));
+    if definition.is_none() || (numeric && (!numeric_field || !supported_value)) {
         return Err(tracker_error(
-            "formula copy requires present numeric targets and references",
+            "formula copy requires declared, supported references",
         ));
     }
     Ok(())
+}
+
+fn require_copy_target_number(document: &Document, field: &FieldRef) -> Result<(), DesignerError> {
+    require_copy_reference(document, field, true)?;
+    if matches!(
+        document.entities[&field.entity].fields.get(&field.field),
+        Some(Value::Number(_) | Value::Formula(_))
+    ) {
+        Ok(())
+    } else {
+        Err(tracker_error("formula copy target must contain a Number"))
+    }
 }
 
 /// Prove the numeric targets that `map_copy_references` does not visit:
@@ -6837,23 +6865,13 @@ fn require_copy_expression_numbers(
     owner: &FieldRef,
     expression: &Expression,
 ) -> Result<(), DesignerError> {
-    match expression {
-        Expression::SameRowReference(field) => require_copy_number(
-            document,
-            &FieldRef::new(owner.entity.clone(), field.clone()),
-        ),
-        Expression::ColumnTotal(column) => require_copy_column_number(document, column),
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            require_copy_expression_numbers(document, owner, left)?;
-            require_copy_expression_numbers(document, owner, right)
-        }
-        Expression::Number(_) | Expression::Reference(_) => Ok(()),
+    for (reference, numeric) in expression.reference_uses(owner) {
+        require_copy_reference(document, &reference, numeric)?;
     }
+    for column in expression.column_totals() {
+        require_copy_column_number(document, column)?;
+    }
+    Ok(())
 }
 
 fn require_copy_column_number(
@@ -6875,7 +6893,7 @@ fn require_copy_column_number(
 
 fn map_copy_references(
     expression: &mut Expression,
-    visit: &mut impl FnMut(&mut FieldRef) -> Result<(), DesignerError>,
+    visit: &mut impl FnMut(&mut FieldRef, bool) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
         // A relative copy keeps `[.field]` unchanged: the destination row is
@@ -6884,15 +6902,17 @@ fn map_copy_references(
         Expression::Number(_) | Expression::SameRowReference(_) | Expression::ColumnTotal(_) => {
             Ok(())
         }
-        Expression::Reference(reference) => visit(reference),
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            map_copy_references(left, visit)?;
-            map_copy_references(right, visit)
+        Expression::Reference(reference) => visit(reference, true),
+        Expression::IsBlank(reference) => match reference.as_mut() {
+            Expression::Reference(reference) => visit(reference, false),
+            Expression::SameRowReference(_) => Ok(()),
+            _ => unreachable!("ISBLANK has a bound reference child"),
+        },
+        _ => {
+            for child in expression.children_mut() {
+                map_copy_references(child, visit)?;
+            }
+            Ok(())
         }
     }
 }
@@ -6966,14 +6986,11 @@ fn map_duplicate_expression(
             }
             Ok(())
         }
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            map_duplicate_expression(left, entities, fields, schemas)?;
-            map_duplicate_expression(right, entities, fields, schemas)
+        _ => {
+            for child in expression.children_mut() {
+                map_duplicate_expression(child, entities, fields, schemas)?;
+            }
+            Ok(())
         }
     }
 }
@@ -7477,16 +7494,7 @@ fn ensure_formula_reference_profile(
                     column.field.as_str(),
                 )?;
             }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                pending.push(right);
-                pending.push(left);
-            }
-            Expression::Number(_) => {}
+            _ => pending.extend(expression.children()),
         }
     }
     Ok(())
@@ -7921,6 +7929,7 @@ fn calculation_projection(outcome: &FormulaCalculationOutcome) -> CalculationPro
 
 fn calculation_failure_code(failure: &CalculationFailure) -> &'static str {
     match failure {
+        CalculationFailure::TypeMismatch => "formula_type_mismatch",
         CalculationFailure::InvalidExpression { .. } => "invalid_expression",
         CalculationFailure::InvalidReferences { .. } => "invalid_references",
         CalculationFailure::InvalidColumn { .. } => "invalid_column",
@@ -7933,6 +7942,9 @@ fn calculation_failure_code(failure: &CalculationFailure) -> &'static str {
 
 fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
     match failure {
+        CalculationFailure::TypeMismatch => {
+            "The formula uses a condition where a Number is required, or has incompatible arguments."
+        }
         CalculationFailure::InvalidExpression { .. } => "The formula structure is invalid.",
         CalculationFailure::InvalidReferences { .. } => {
             "The formula references an unavailable value."
@@ -8207,15 +8219,10 @@ fn expression_references(
         Expression::ColumnTotal(column) => {
             columns.insert(column.clone());
         }
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            expression_references(owner, left, references, columns);
-            expression_references(owner, right, references, columns);
-        }
+        _ => expression
+            .children()
+            .into_iter()
+            .for_each(|child| expression_references(owner, child, references, columns)),
     }
 }
 

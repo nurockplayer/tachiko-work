@@ -61,6 +61,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Number formulas now support IF, exact Number comparisons, AND/OR/NOT,
+  ROUND (literal precision 0..=10, half away from zero), percent literals, and
+  ISBLANK. IF evaluates only the selected branch while tracking dependencies in
+  both branches. Absent optional Number inputs calculate as zero without
+  filling the stored cell; non-Number numeric operands still fail. The new
+  expressions survive canonical v3/direct-ro v2 saves, formula copy, collection
+  duplication, history, and XLSX formula export. Frozen project v1/v2 writers
+  refuse the new operations.
 - Formulas now read column totals with `[schema.field:total]`. A total names a
   column identity rather than rows, so row churn and key renames never retarget
   it; blank cells are skipped, an empty column totals zero, and an unavailable,

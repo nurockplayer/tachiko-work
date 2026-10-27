@@ -246,3 +246,37 @@ fn mutual_reference_is_typed_as_a_cycle_and_keeps_the_accepted_formula() {
     );
     assert_eq!(calculated(&source), Some(3.0));
 }
+
+#[test]
+fn condition_and_round_argument_type_mismatches_are_typed_and_atomic() {
+    let mut runtime = fixture();
+    for source in [
+        "1 < 2",
+        "1 + (1 < 2)",
+        "IF(1, 2, 3)",
+        "IF(1=1, 2, NOT(1=1))",
+        "AND(1=1, 1)",
+        "OR(1=1, 0)",
+        "NOT(1)",
+        "ROUND(1, -1)",
+        "ROUND(1, [r1.m])",
+        "ISBLANK(1)",
+    ] {
+        let before = runtime.export_project_v3("resident/0").unwrap().bytes;
+        let error = update(&mut runtime, 0, "r1.n", source).unwrap_err();
+        let failure = error.failure_projection("resident/0");
+        assert_eq!(failure.code, "formula_type_mismatch", "{source}");
+        assert_eq!(failure.diagnostics[0].code, "formula_type_mismatch");
+        assert!(
+            failure.diagnostics[0]
+                .facts
+                .iter()
+                .any(|fact| fact.name == "position" && fact.value == "1")
+        );
+        assert_eq!(
+            runtime.export_project_v3("resident/0").unwrap().bytes,
+            before
+        );
+        assert_eq!(stored_number(&field(&mut runtime, 0, "r1.n")), Some(2.0));
+    }
+}

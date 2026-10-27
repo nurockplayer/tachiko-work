@@ -101,6 +101,7 @@ fn run_sequence(
     }
 }
 
+#[allow(clippy::too_many_lines)] // One exhaustive check per mutation kind.
 fn apply_specific_check(
     session: &ResidentWorkspaceSession,
     invalidation: &ResidentProjectionInvalidation,
@@ -145,11 +146,29 @@ fn apply_specific_check(
                 ]
             );
         }
-        SpecificCheck::MissingTarget => {
+        SpecificCheck::BlankTarget => {
             let target = field(PRIMARY, TARGET);
             assert_missing_projection_matches_fresh(session, &target, &mutation.name);
-            assert_failed_dependency_chain(session, &mutation.name);
-            assert_independent_formula_is_unavailable(session, &mutation.name);
+            let projections = session
+                .query_fields(&[field(PRIMARY, TARGET_USER), field(PRIMARY, TARGET_TAIL)])
+                .unwrap()
+                .into_value();
+            for projection in projections {
+                let expected = if projection.field == field(PRIMARY, TARGET_USER) {
+                    1.0
+                } else {
+                    2.0
+                };
+                assert_eq!(
+                    projection.calculated_value,
+                    Some(FormulaCalculationOutcome::Value(
+                        Number::new(expected).unwrap()
+                    )),
+                    "blank input at {}",
+                    mutation.name
+                );
+            }
+            assert_independent_formula_is_value(session, &mutation.name);
         }
         SpecificCheck::FailedDependency => {
             assert_failed_dependency_chain(session, &mutation.name);
@@ -238,7 +257,7 @@ enum SpecificCheck {
     RebindOldAndNewClosure,
     RemovedDependency,
     OutputEqualDownstream,
-    MissingTarget,
+    BlankTarget,
     FailedDependency,
     Cycle,
     InvalidExpression,
@@ -361,9 +380,9 @@ fn dependency_mutations() -> Vec<MutationCase> {
 }
 
 fn target_and_presentation_mutations() -> Vec<MutationCase> {
-    use SpecificCheck::{FailedDependency, MissingTarget, None, Recovered};
+    use SpecificCheck::{BlankTarget, FailedDependency, None, Recovered};
     vec![
-        MutationCase::static_case("delete-target-field", MissingTarget, |document| {
+        MutationCase::static_case("delete-target-field", BlankTarget, |document| {
             entity_mut(document, PRIMARY).fields.remove(TARGET);
         }),
         MutationCase::static_case("restore-target-field", Recovered, |document| {
