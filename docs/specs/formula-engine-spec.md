@@ -249,12 +249,14 @@ branches. AND/OR evaluate every condition left-to-right (no short-circuit).
 ISBLANK does not require the referenced formula's calculated value. The complete
 document calculation remains atomic when some independent formula fails.
 
-ROUND scales by the exact integer power of ten in binary64, rounds the scaled
-Number half away from zero, then divides by that power. Integral inputs and
-inputs whose binary64 spacing already exceeds the decimal step are unchanged,
-avoiding overflow or large-value drift. No formatted decimal text participates.
-For example, ROUND(2.675, 2) = 2.68, ROUND(0.5, 0) = 1,
-ROUND(-0.5, 0) = -1, and ROUND(1e15, 10) = 1e15.
+ROUND decides on the decimal the user sees, not on a scaled binary64 product.
+It takes the shortest decimal text that round-trips to the input Number,
+rounds that decimal half away from zero at the requested place, and parses the
+result back to binary64. Integral inputs are unchanged, and a decimal with no
+more places than requested is returned as is, so large values never drift.
+For example, ROUND(2.675, 2) = 2.68, ROUND(1.005, 2) = 1.01 (binary64 scaling
+would give 1.00), ROUND(0.5, 0) = 1, ROUND(-0.5, 0) = -1, and
+ROUND(1e15, 10) = 1e15.
 Percent spelling shifts the literal's decimal exponent by -2 before binary64
 conversion; canonical projection may write the equivalent Number, e.g. `0.5`.
 
