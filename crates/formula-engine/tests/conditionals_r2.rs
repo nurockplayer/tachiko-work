@@ -242,6 +242,7 @@ fn chosen_if_branch_controls_failure_while_dependencies_include_both_branches() 
         "IF([row.input] > 0, [row.then_value], 1 / [row.zero])",
     );
     let dependencies = extract_dependencies(
+        &document,
         &owner("output"),
         match &document.entities["row"].fields["output"] {
             Value::Formula(expression) => expression,
@@ -452,7 +453,7 @@ fn untaken_failed_formula_reference_does_not_fail_the_conditional_node() {
     );
     assert!(!failures.failures().contains_key(&owner("output")));
     assert_eq!(
-        extract_dependencies(&owner("output"), &bound),
+        extract_dependencies(&document, &owner("output"), &bound),
         BTreeSet::from([owner("then_value")])
     );
 }

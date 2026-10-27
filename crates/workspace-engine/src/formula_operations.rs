@@ -601,7 +601,7 @@ impl PatchLifecycle {
                 });
             }
         };
-        let command = FormulaUpdateCommand::new(request.target, expression);
+        let command = FormulaUpdateCommand::new(document, request.target, expression);
         let mut disclosure = BTreeSet::new();
         for field in std::iter::once(command.target()).chain(command.references()) {
             disclosure.insert(
@@ -915,7 +915,10 @@ impl PatchLifecycle {
                 FormulaBindError::NonNumericTarget { reference, .. } => {
                     Some(BTreeSet::from([field.clone(), reference.clone()]))
                 }
-                FormulaBindError::Index { .. } | FormulaBindError::Address { .. } => None,
+                FormulaBindError::Index { .. }
+                | FormulaBindError::Address { .. }
+                | FormulaBindError::Column { .. }
+                | FormulaBindError::NonNumericColumn { .. } => None,
             },
             _ => None,
         };
@@ -1112,7 +1115,8 @@ fn calculation_evidence_subjects(outcome: &FormulaCalculationOutcome) -> BTreeSe
         CalculationFailure::TypeMismatch
         | CalculationFailure::InvalidExpression { .. }
         | CalculationFailure::DivisionByZero
-        | CalculationFailure::NonFiniteResult => BTreeSet::new(),
+        | CalculationFailure::NonFiniteResult
+        | CalculationFailure::InvalidColumn { .. } => BTreeSet::new(),
     }
 }
 

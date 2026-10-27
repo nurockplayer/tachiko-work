@@ -1176,3 +1176,101 @@ fn whole_table(runtime: &mut DesignerRuntime) -> tachiko_designer_runtime::Table
     };
     table
 }
+
+/// Three native-table rows over an optional Number column holding 1, 2 and a
+/// blank, so the whole-collection total is 3 and the blank is skipped.
+const TOTALS: &str = "00000000-0000-4000-8000-000000000b07";
+
+fn totals_document() -> Document {
+    schema_document(
+        vec![
+            field("f01_label", FieldType::Text, false),
+            field("f02_amount", FieldType::Number, false),
+        ],
+        vec![
+            entity(
+                "e01",
+                vec![("f01_label", text("one")), ("f02_amount", number(1.0))],
+            ),
+            entity(
+                "e02",
+                vec![("f01_label", text("two")), ("f02_amount", number(2.0))],
+            ),
+            entity("e03", vec![("f01_label", text("three"))]),
+        ],
+    )
+}
+
+fn totals_runtime() -> DesignerRuntime {
+    DesignerRuntime::from_document(totals_document(), TOTALS)
+        .expect("a Text/Number native table is admitted")
+}
+
+fn amount_total(totals: &BTreeMap<String, Option<f64>>) -> Option<f64> {
+    totals.get("f02_amount").copied().flatten()
+}
+
+#[test]
+fn every_window_carries_the_query_table_column_totals() {
+    let mut runtime = totals_runtime();
+    let expected = whole_table(&mut runtime).column_totals;
+    assert_eq!(amount_total(&expected), Some(3.0));
+
+    for (start, count) in [(0, 1), (1, 1), (0, 0)] {
+        let window = window(&mut runtime, TableView::default(), start, count)
+            .expect("the window is bounded");
+        assert_eq!(
+            window.column_totals, expected,
+            "start {start} with count {count} must carry the whole-collection totals"
+        );
+    }
+}
+
+#[test]
+fn a_filtered_window_still_reports_the_whole_collection_totals() {
+    let mut runtime = totals_runtime();
+    let expected = whole_table(&mut runtime).column_totals;
+
+    let filtered = window(
+        &mut runtime,
+        filtered(compare("f02_amount", ComparisonOperator::Gt, 1.5)),
+        0,
+        256,
+    )
+    .expect("the filtered view is queryable");
+    assert_eq!(row_ids(&filtered), ids(&["e02"]));
+    assert_eq!(filtered.total_rows, 1);
+    assert_eq!(
+        filtered.column_totals, expected,
+        "a view filter must never narrow the footer"
+    );
+}
+
+#[test]
+fn the_column_totals_cache_follows_the_revision() {
+    let mut runtime = totals_runtime();
+    let before = window(&mut runtime, TableView::default(), 0, 1).expect("the window is bounded");
+    assert_eq!(amount_total(&before.column_totals), Some(3.0));
+
+    let revision = runtime.observe_occurrence().revision;
+    let DesignerResponse::Published(publication) = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: revision,
+            target: "e02.f02_amount".into(),
+            input: ScalarEditInput::Number {
+                input: "10".to_owned(),
+            },
+        })
+        .expect("the edit publishes")
+    else {
+        panic!("expected a publication");
+    };
+
+    let after = window(&mut runtime, TableView::default(), 0, 1).expect("the window is bounded");
+    assert_eq!(after.revision, publication.resulting_revision);
+    assert_eq!(
+        amount_total(&after.column_totals),
+        Some(11.0),
+        "the cached totals must not survive an edit"
+    );
+}

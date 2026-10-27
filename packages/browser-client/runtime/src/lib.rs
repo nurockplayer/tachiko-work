@@ -3,6 +3,13 @@
 //! This crate is app-local composition code. Its DTOs and WASM ABI are
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
+mod capacity;
+pub use capacity::{
+    CapacityExceeded, CapacityLimit, CapacityLimits, CapacityProjection, CapacityUsage,
+    TableCapacityUsage,
+};
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_tests;
 #[cfg(test)]
 mod constraints_tests;
 #[cfg(test)]
@@ -28,12 +35,12 @@ use tachiko_storage::{
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey, Expression,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator,
-    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
-    KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
-    SemanticSubject, StarterTemplate, ValidationReport, Value, WorkspaceError, analyze_field,
-    create_document, diagnostic_codes,
+    CalculationFailure, ColumnRef, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey,
+    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError,
+    IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
+    SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
+    WorkspaceError, analyze_field, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -83,12 +90,11 @@ mod wasm;
 #[allow(clippy::cast_possible_truncation)]
 mod wasm;
 
-const MAX_COLLECTIONS: usize = 32;
-const MAX_TABLE_FIELDS: usize = 32;
-const MAX_TABLE_ROWS: usize = 128;
-const MAX_TOTAL_ENTITIES: usize = 1024;
+const MAX_COLLECTIONS: usize = capacity::DEFAULT_LIMITS.collections;
+const MAX_TABLE_FIELDS: usize = capacity::DEFAULT_LIMITS.table_fields;
+const MAX_TABLE_ROWS: usize = capacity::DEFAULT_LIMITS.table_rows;
+const MAX_TOTAL_ENTITIES: usize = capacity::DEFAULT_LIMITS.total_entities;
 const MAX_FIELD_QUERY_TARGETS: usize = 1024;
-const MAX_FORMULAS: usize = 32;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
@@ -228,6 +234,10 @@ pub enum DesignerRequest {
     Redo {
         expected_revision: String,
     },
+    QueryCapacity {
+        #[serde(default)]
+        expected_revision: Option<String>,
+    },
     QueryTable {
         collection: String,
     },
@@ -301,6 +311,7 @@ pub enum DesignerRequest {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DesignerResponse {
     Bootstrap(BootstrapProjection),
+    Capacity(CapacityProjection),
     Opened(Box<OpenedProjection>),
     Table(TableProjection),
     TableWindow(TableWindowProjection),
@@ -355,6 +366,12 @@ pub struct TableProjection {
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     pub rows: Vec<RowProjection>,
+    /// One total per Number column, keyed by column id and observed at the same
+    /// revision as `rows`. A null total means a contributing value is
+    /// unavailable or not a number; blank cells are skipped, as in a formula
+    /// column total.
+    #[serde(default, deserialize_with = "deserialize_column_totals")]
+    pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
 /// One bounded window of a collection table at one revision.
@@ -381,6 +398,11 @@ pub struct TableWindowProjection {
     pub unfiltered_rows: usize,
     pub start: usize,
     pub rows: Vec<RowProjection>,
+    /// Whole-collection totals, one per Number column, identical to
+    /// `TableProjection::column_totals` at the same revision. View filters do
+    /// not apply, and blank cells are skipped.
+    #[serde(default, deserialize_with = "deserialize_column_totals")]
+    pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
 /// Result of locating an entity inside one stateless view order.
@@ -574,6 +596,8 @@ pub enum ConstraintFailureReason {
     FieldValue,
     /// Declaring the constraint would leave existing values invalid.
     ExistingValues,
+    /// The declaration itself is invalid for its column (bounds, ordering limits or kind).
+    Declaration,
 }
 
 /// Structured refusal data for a constraint declaration or constrained edit.
@@ -704,6 +728,12 @@ fn constraint_failure(
             "refused to set the constraint on '{schema}.{}': {offending_rows} existing row(s) are outside it ({requirement})",
             field_ref.field
         ),
+        // Declaration refusals carry their own message from `declaration_failure`
+        // and never reach this path; keep the projection total without panicking.
+        ConstraintFailureReason::Declaration => format!(
+            "invalid constraint declaration for '{schema}.{}' ({requirement})",
+            field_ref.field
+        ),
     };
     Some(DesignerError::FieldConstraintViolation {
         schema,
@@ -711,6 +741,66 @@ fn constraint_failure(
         constraint,
         offending_rows,
         reason,
+        message,
+    })
+}
+
+// The same declaration limits `semantic_core::validation::validate_field_constraint`
+// enforces, checked here so the UI gets a typed refusal before publication.
+const MAX_TEXT_LITERALS: usize = 256;
+const MAX_TEXT_LITERAL_BYTES: usize = 1024;
+const MAX_TEXT_LITERALS_TOTAL_BYTES: usize = 65_536;
+
+/// Refuse a constraint declaration that cannot be valid for its column, so the
+/// UI learns the exact reason instead of the generic semantic rejection.
+fn declaration_failure(
+    schema: &SchemaId,
+    definition: &FieldDefinition,
+    constraint: &tachiko_workspace_engine::FieldConstraint,
+) -> Option<DesignerError> {
+    let message = match (&definition.field_type, constraint) {
+        (_, tachiko_workspace_engine::FieldConstraint::None) => return None,
+        (FieldType::Text, tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values }) => {
+            let total_bytes = values.iter().map(String::len).sum::<usize>();
+            if values.is_empty() {
+                "a text value set needs at least one value".to_owned()
+            } else if values.len() > MAX_TEXT_LITERALS {
+                format!("a text value set holds at most {MAX_TEXT_LITERALS} values")
+            } else if let Some(value) = values
+                .iter()
+                .find(|value| value.len() > MAX_TEXT_LITERAL_BYTES)
+            {
+                let preview = value.chars().take(32).collect::<String>();
+                format!("text value '{preview}…' exceeds {MAX_TEXT_LITERAL_BYTES} bytes")
+            } else if total_bytes > MAX_TEXT_LITERALS_TOTAL_BYTES {
+                format!("a text value set holds at most {MAX_TEXT_LITERALS_TOTAL_BYTES} bytes")
+            } else {
+                return None;
+            }
+        }
+        (
+            FieldType::Number,
+            tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange { min, max },
+        ) => {
+            if min <= max {
+                return None;
+            }
+            format!("constraint min {min} is greater than max {max}")
+        }
+        (_, tachiko_workspace_engine::FieldConstraint::TextLiteralSet { .. }) => {
+            "a text value set applies only to Text columns".to_owned()
+        }
+        (_, tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange { .. }) => {
+            "a number range applies only to Number columns".to_owned()
+        }
+    };
+    Some(DesignerError::FieldConstraintViolation {
+        schema: schema.clone(),
+        field: definition.id.clone(),
+        constraint: constraint_projection(constraint)
+            .expect("non-None constraint has a projection"),
+        offending_rows: 0,
+        reason: ConstraintFailureReason::Declaration,
         message,
     })
 }
@@ -967,6 +1057,19 @@ impl CalculationProjection {
     }
 }
 
+/// Decode a column-total map through JSON first, for the same reason as the
+/// value projections above: the pinned serde routes primitives inside this
+/// reply envelope through a map deserializer, which reaches an `f64` as a map.
+fn deserialize_column_totals<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Option<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    serde_json::from_value(raw).map_err(serde::de::Error::custom)
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DiagnosticProjection {
     pub code: String,
@@ -1001,6 +1104,8 @@ pub struct FailureProjection {
     /// count, so the caller never has to parse the message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row_count: Option<usize>,
+    #[serde(flatten)]
+    pub capacity: Option<CapacityExceeded>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1178,6 +1283,8 @@ pub struct PortableRoVerification {
 
 #[derive(Debug, Error)]
 pub enum DesignerError {
+    #[error(transparent)]
+    CapacityExceeded(#[from] CapacityExceeded),
     #[error("Designer workspace operation failed: {0}")]
     Workspace(#[from] WorkspaceError),
     #[error("canonical project failed complete workspace validation: {source}")]
@@ -1309,6 +1416,10 @@ impl DesignerError {
                 }),
                 _ => None,
             },
+            capacity: match self {
+                Self::CapacityExceeded(capacity) => Some(capacity.clone()),
+                _ => None,
+            },
             row_count: match self {
                 Self::UseWindowQuery { rows, .. } => Some(*rows),
                 _ => None,
@@ -1319,6 +1430,7 @@ impl DesignerError {
     #[allow(clippy::too_many_lines)] // One exhaustive error-to-wire-code table; splitting it hides missing arms.
     fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
+            Self::CapacityExceeded(_) => ("capacity_exceeded", Vec::new()),
             Self::Lifecycle(PatchLifecycleError::Stale) | Self::StaleQuery { .. } => {
                 ("stale_revision", Vec::new())
             }
@@ -1478,6 +1590,7 @@ const FORMULA_CYCLE_MESSAGE: &str =
 
 /// Typed formula-authoring refusal projection for one workspace admission
 /// error, or `None` for the generic rejection family.
+#[allow(clippy::too_many_lines)] // One exhaustive bind-error-to-wire-code table.
 fn formula_failure_projection(
     error: &WorkspaceError,
 ) -> Option<(&'static str, String, Vec<DiagnosticProjection>)> {
@@ -1529,6 +1642,32 @@ fn formula_failure_projection(
                 vec![tachiko_workspace_engine::SemanticSubject::EntityField(
                     field.clone(),
                 )],
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::Column { address, .. } => (
+                "formula_unknown_reference",
+                format!("Formula references an unknown column address '{address}'."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
+                vec![DiagnosticFactProjection {
+                    name: "reference".to_owned(),
+                    value: address.to_string(),
+                }],
+            ),
+            FormulaBindError::NonNumericColumn { address } => (
+                "formula_type_mismatch",
+                format!("Formula column reference '{address}' is not a Number field."),
+                field,
+                vec![tachiko_workspace_engine::SemanticSubject::EntityField(
+                    field.clone(),
+                )],
+                Vec::new(),
                 vec![DiagnosticFactProjection {
                     name: "reference".to_owned(),
                     value: address.to_string(),
@@ -1589,6 +1728,7 @@ impl ConstraintFailureReason {
         match self {
             Self::FieldValue => "field_constraint_violation",
             Self::ExistingValues => "existing_values_violate_constraint",
+            Self::Declaration => "invalid_constraint_declaration",
         }
     }
 }
@@ -1603,6 +1743,7 @@ const _: () = {
 /// One Rust-authoritative occurrence composed for the experimental browser client.
 pub struct DesignerRuntime {
     text_capacity: bool,
+    capacity_usage: CapacityUsage,
     title: String,
     document_scope: DocumentScopeId,
     default_collection: String,
@@ -1618,6 +1759,11 @@ pub struct DesignerRuntime {
     /// view)` window queries. Every entry is revision-scoped because a
     /// publication can change values, presence, or the entity set.
     view_index: ViewIndexCache,
+    /// Whole-collection Number totals for the most recent window reply, held
+    /// as `(revision, collection, totals)` so scrolling one table gives every
+    /// window the same footer without re-reading the collection. Owned data,
+    /// not `Rc`, because native hosts keep the runtime `Send`.
+    totals_cache: Option<(String, String, BTreeMap<String, Option<f64>>)>,
     row_serial: usize,
     row_namespace: String,
     undo: Vec<HistoryEntry>,
@@ -1628,12 +1774,14 @@ pub struct DesignerRuntime {
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 struct HistoryEntry {
     forward: HistoryAction,
     inverse: HistoryAction,
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 enum HistoryAction {
     Commands(Vec<SemanticCommand>),
     FormulaUpdate { target: FieldTarget, source: String },
@@ -2228,9 +2376,11 @@ impl DesignerRuntime {
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
+        let capacity_usage = CapacityUsage::measure(&document);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
             text_capacity,
+            capacity_usage,
             title,
             document_scope,
             default_collection,
@@ -2243,6 +2393,7 @@ impl DesignerRuntime {
             clock: DesignerClock::default(),
             proposal_serial: 0,
             view_index: ViewIndexCache::default(),
+            totals_cache: None,
             row_serial: 0,
             row_namespace: occurrence_id.to_owned(),
             undo: Vec::new(),
@@ -2437,6 +2588,16 @@ impl DesignerRuntime {
             )),
             DesignerRequest::Bootstrap { .. } => {
                 Ok(DesignerResponse::Bootstrap(self.bootstrap_projection()))
+            }
+            DesignerRequest::QueryCapacity { expected_revision } => {
+                if let Some(expected) = expected_revision {
+                    self.check_revision(&expected)?;
+                }
+                Ok(DesignerResponse::Capacity(CapacityProjection {
+                    revision: self.current_revision().to_owned(),
+                    usage: self.capacity_usage.clone(),
+                    limits: capacity::limits_for_profile(self.text_capacity),
+                }))
             }
             DesignerRequest::QueryTable { collection } => Ok(DesignerResponse::Table(
                 self.query_table_compatibility(&collection)?,
@@ -2952,6 +3113,7 @@ impl DesignerRuntime {
                 })
                 .collect()
         };
+        let column_totals = column_totals(spec, &rows);
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
@@ -2959,6 +3121,7 @@ impl DesignerRuntime {
             collection: spec.summary.clone(),
             columns: column_projections(spec),
             rows,
+            column_totals,
         };
         Ok(projection)
     }
@@ -3038,6 +3201,7 @@ impl DesignerRuntime {
         self.check_revision(expected_revision)?;
         let revision = self.current_revision().to_owned();
         let order = self.view_order(collection, view)?;
+        let column_totals = self.window_column_totals(collection)?;
         let spec = self.collection_spec(collection)?;
         let total_rows = order.len();
         let start = start.min(total_rows);
@@ -3055,6 +3219,11 @@ impl DesignerRuntime {
                 .map_err(|error| view_encoding_failure("columns", &error))?
                 .len(),
         );
+        used = used.saturating_add(
+            serde_json::to_vec(&column_totals)
+                .map_err(|error| view_encoding_failure("column_totals", &error))?
+                .len(),
+        );
         let rows = self.build_window_rows(spec, &entities, &mut used)?;
         Ok(TableWindowProjection {
             revision,
@@ -3067,6 +3236,7 @@ impl DesignerRuntime {
             unfiltered_rows: spec.entities.len(),
             start,
             rows,
+            column_totals,
         })
     }
 
@@ -3196,6 +3366,43 @@ impl DesignerRuntime {
             });
         }
         Ok(order)
+    }
+
+    /// Whole-collection Number totals for window replies, cached per revision.
+    fn window_column_totals(
+        &mut self,
+        collection: &str,
+    ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        let revision = self.current_revision().to_owned();
+        if let Some((cached_revision, cached_collection, totals)) = &self.totals_cache {
+            if *cached_revision == revision && cached_collection == collection {
+                return Ok(totals.clone());
+            }
+        }
+        let spec = self.collection_spec(collection)?;
+        let entities = self.session.query_entities(&spec.entities)?;
+        let targets = entities
+            .value()
+            .iter()
+            .flat_map(|entity| {
+                spec.columns
+                    .iter()
+                    .filter(|column| {
+                        column.field_type == FieldType::Number && entity.fields.contains(&column.id)
+                    })
+                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let projected = self
+            .session
+            .query_fields(&targets)?
+            .value()
+            .iter()
+            .map(|field| self.project_field(field))
+            .collect::<Vec<_>>();
+        let totals = column_totals_from_fields(spec, &projected.iter().collect::<Vec<_>>());
+        self.totals_cache = Some((revision, collection.to_owned(), totals.clone()));
+        Ok(totals)
     }
 
     /// Project the window's entities in view order, enforcing the reply byte
@@ -3353,10 +3560,30 @@ impl DesignerRuntime {
         let value = query.fields.remove(0);
         let field = target.as_field_ref();
         let edges = self.session.direct_field_dependencies();
-        let dependencies = edges
+        let mut dependencies = edges
             .get(&field)
             .map(|dependencies| dependencies.iter().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
+        // A column total's edges include every row of its column, blank slots
+        // too (they keep invalidation exact); evaluation skips blanks, so the
+        // explanation lists only the present values it actually read.
+        let owners = dependencies
+            .iter()
+            .map(|dependency| dependency.entity.clone())
+            .collect::<Vec<_>>();
+        let present = self
+            .session
+            .query_entities(&owners)?
+            .value()
+            .iter()
+            .flat_map(|entity| {
+                entity
+                    .fields
+                    .iter()
+                    .map(|field| FieldRef::new(entity.id.clone(), field.clone()))
+            })
+            .collect::<BTreeSet<_>>();
+        dependencies.retain(|dependency| present.contains(dependency));
         let direct_dependencies = self
             .session
             .query_fields(&dependencies)?
@@ -3541,7 +3768,18 @@ impl DesignerRuntime {
             .fields
             .get(&FieldId::from(field.to_owned()))
             .ok_or_else(|| table_error("column is unavailable"))?;
-        let constraint = constraint.into_constraint()?;
+        let mut constraint = constraint.into_constraint()?;
+        // `String` ordering is byte-lexicographic, which is the canonical form
+        // validation and export expect, so sort before deduping.
+        if let tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } =
+            &mut constraint
+        {
+            values.sort();
+            values.dedup();
+        }
+        if let Some(failure) = declaration_failure(&schema_id, definition, &constraint) {
+            return Err(failure);
+        }
         if definition.constraint == constraint {
             return Err(PatchLifecycleError::NoChange.into());
         }
@@ -3575,9 +3813,12 @@ impl DesignerRuntime {
             .schemas
             .get(&schema_id)
             .ok_or_else(|| table_error("native table schema is unavailable"))?;
-        if schema.fields.len() >= MAX_TABLE_FIELDS {
-            return Err(table_error("column capacity is exhausted"));
-        }
+        capacity::check_limit(
+            CapacityLimit::TableFields,
+            MAX_TABLE_FIELDS,
+            schema.fields.len().saturating_add(1),
+            Some(collection),
+        )?;
         let name = author_column_name(name, schema, None)?;
         let occupied = schema
             .fields
@@ -3709,6 +3950,7 @@ impl DesignerRuntime {
         let dependent_cells = dependent_formula_cells(
             snapshot.document(),
             |reference| reference.field == field_id && entities.contains(&reference.entity),
+            |column| column.field == field_id && column.schema == schema.id,
             |entity, removed| *removed == field_id && entities.contains(entity),
         );
         if dependent_cells > 0 {
@@ -3764,9 +4006,12 @@ impl DesignerRuntime {
                 collection: collection.to_owned(),
             }
         })?;
-        if document.schemas.len() >= MAX_COLLECTIONS {
-            return Err(table_error("collection capacity is exhausted"));
-        }
+        capacity::check_limit(
+            CapacityLimit::Collections,
+            MAX_COLLECTIONS,
+            document.schemas.len().saturating_add(1),
+            None,
+        )?;
         let mut failures = Vec::new();
         let name = name_admission::check_name(
             name,
@@ -3798,14 +4043,15 @@ impl DesignerRuntime {
             .map(|schema| schema.key.to_string())
             .collect();
         let target_key = allocate_key(name, "table", &occupied)?;
-        if document
-            .entities
-            .len()
-            .saturating_add(source_spec.entities.len())
-            > MAX_TOTAL_ENTITIES
-        {
-            return Err(table_error("entity capacity is exhausted"));
-        }
+        capacity::check_limit(
+            CapacityLimit::TotalEntities,
+            capacity::limits_for_profile(self.text_capacity).total_entities,
+            document
+                .entities
+                .len()
+                .saturating_add(source_spec.entities.len()),
+            None,
+        )?;
         let source_schema = document
             .schemas
             .get(&SchemaId::from(source_spec.summary.id.clone()))
@@ -3846,6 +4092,7 @@ impl DesignerRuntime {
             }
             fields.insert(field_id, definition);
         }
+        let schema_map = BTreeMap::from([(source_schema.id.clone(), schema_id.clone())]);
         let mut entity_map = BTreeMap::<EntityId, EntityId>::new();
         for source_id in &source_spec.entities {
             let target_id = loop {
@@ -3889,7 +4136,7 @@ impl DesignerRuntime {
                 let target_field = field_map
                     .get(source_field)
                     .ok_or_else(|| table_error("field mapping is incomplete"))?;
-                let value = remap_duplicate_value(value, &entity_map, &field_map)?;
+                let value = remap_duplicate_value(value, &entity_map, &field_map, &schema_map)?;
                 copied.fields.insert(target_field.clone(), value);
             }
             entities.push(copied);
@@ -4241,6 +4488,10 @@ impl DesignerRuntime {
                 );
                 require_copy_reference(document, reference, numeric)
             })?;
+            // `[.field]` resolves against the destination's own row, so the
+            // copied formula must prove that row can supply the field now
+            // rather than on the first evaluation.
+            require_copy_expression_numbers(document, &target, &copied)?;
             let value = Value::Formula(copied);
             if &value != old {
                 forward.push(SemanticCommand::set_field_value(target.clone(), value));
@@ -4431,6 +4682,8 @@ impl DesignerRuntime {
                 }
             }
         }
+        let capacity_usage =
+            capacity::check_document(&candidate, capacity::limits_for_profile(self.text_capacity))?;
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -4572,6 +4825,7 @@ impl DesignerRuntime {
                 .ok_or(DesignerError::MissingInvalidation)?
                 .clone()
         };
+        self.capacity_usage = capacity_usage;
         if !capacity_text_edit {
             self.refresh_structure();
             if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
@@ -4617,7 +4871,9 @@ impl DesignerRuntime {
     }
 
     fn refresh_structure(&mut self) {
-        self.collection_specs = collection_specs(self.session.export_snapshot().document());
+        let snapshot = self.session.export_snapshot();
+        self.capacity_usage = CapacityUsage::measure(snapshot.document());
+        self.collection_specs = collection_specs(snapshot.document());
         self.collections = self
             .collection_specs
             .values()
@@ -4684,10 +4940,18 @@ impl DesignerRuntime {
         name: &str,
         columns: &[NewTableColumnInput],
     ) -> Result<Self, DesignerError> {
-        if columns.is_empty() || columns.len() > MAX_TABLE_FIELDS {
-            return Err(table_error("table must declare 1..32 columns"));
+        if columns.is_empty() {
+            return Err(table_error("table must declare at least one column"));
         }
+        // Validate the table name first: a capacity refusal names its
+        // collection, so it must carry an admitted name.
         let (name, names) = author_table_names(name, columns)?;
+        capacity::check_limit(
+            CapacityLimit::TableFields,
+            MAX_TABLE_FIELDS,
+            columns.len(),
+            Some(name),
+        )?;
         let schema_key = allocate_key(name, "table", &BTreeSet::new())?;
         let mut ids = NewTableIds::new(occurrence_id);
         let document_id = ids.generate(SemanticIdKind::Document);
@@ -5078,9 +5342,12 @@ impl DesignerRuntime {
                 "row insertion is available for native scalar tables",
             ));
         }
-        if spec.entities.len() >= MAX_TABLE_ROWS {
-            return Err(table_error("row capacity is exhausted"));
-        }
+        capacity::check_limit(
+            CapacityLimit::TableRows,
+            self.max_table_rows(),
+            spec.entities.len().saturating_add(1),
+            Some(collection),
+        )?;
         if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
             return Err(tracker_error("row identity allocation is exhausted"));
         }
@@ -5191,6 +5458,7 @@ impl DesignerRuntime {
         let dependent_cells = dependent_formula_cells(
             snapshot.document(),
             |reference| removed.contains(&reference.entity),
+            |_| false,
             |entity, _| removed.contains(entity),
         );
         if dependent_cells > 0 {
@@ -5247,15 +5515,20 @@ impl DesignerRuntime {
                 .position(|entity| entity.as_str() == id)
                 .ok_or_else(|| tracker_error("starting row is unavailable"))
         })?;
+        capacity::check_limit(
+            CapacityLimit::TableRows,
+            self.max_table_rows(),
+            spec.entities.len().max(start.saturating_add(rows.len())),
+            Some(collection),
+        )?;
         if rows.is_empty()
-            || start.saturating_add(rows.len()) > MAX_TABLE_ROWS
             || rows[0].is_empty()
             || rows
                 .iter()
                 .any(|row| row.len() != rows[0].len() || row.len() + column > spec.columns.len())
         {
             return Err(tracker_error(
-                "paste must be a nonempty rectangular range within 128 rows and the declared typed columns",
+                "paste must be a nonempty rectangular range within the declared typed columns",
             ));
         }
         if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
@@ -5474,6 +5747,55 @@ fn cell_edit_value(
             field: field.clone(),
         })
     }
+}
+
+/// Sum each Number column over the table's present values.
+///
+/// This is the footer every table projection carries, so it must agree with a
+/// formula column total: blank cells are skipped rather than failing the sum,
+/// and any other unavailable or non-numeric value makes the whole total null
+/// instead of silently summing a subset.
+fn column_totals(spec: &CollectionSpec, rows: &[RowProjection]) -> BTreeMap<String, Option<f64>> {
+    let fields = rows.iter().flat_map(|row| &row.fields).collect::<Vec<_>>();
+    column_totals_from_fields(spec, &fields)
+}
+
+/// The same totals from bare field projections, so a window can total the
+/// whole collection without building rows for it.
+fn column_totals_from_fields(
+    spec: &CollectionSpec,
+    fields: &[&FieldProjection],
+) -> BTreeMap<String, Option<f64>> {
+    spec.columns
+        .iter()
+        .filter(|column| column.field_type == FieldType::Number)
+        .map(|column| {
+            let id = column.id.to_string();
+            let mut total = 0.0;
+            let mut complete = true;
+            for field in fields.iter().filter(|field| field.target.field == id) {
+                match (&field.calculated, &field.stored) {
+                    (Some(CalculationProjection::Value { value }), _)
+                    | (None, Some(StoredValueProjection::Number { value })) => total += value,
+                    (
+                        Some(
+                            CalculationProjection::Failure { .. }
+                            | CalculationProjection::Unavailable,
+                        ),
+                        _,
+                    )
+                    | (None, Some(_) | None) => {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            (
+                id,
+                complete.then_some(total).filter(|total| total.is_finite()),
+            )
+        })
+        .collect()
 }
 
 fn blank_field_ids(
@@ -6416,6 +6738,7 @@ fn failure_reply(code: &str, message: String, current_revision: &str) -> Designe
             name_failures: Vec::new(),
             constraint_failure: None,
             row_count: None,
+            capacity: None,
         },
     }
 }
@@ -6533,14 +6856,52 @@ fn require_copy_target_number(document: &Document, field: &FieldRef) -> Result<(
     }
 }
 
+/// Prove the numeric targets that `map_copy_references` does not visit:
+/// `[.field]` resolves against the destination row, and a column total names a
+/// schema column the copy keeps unchanged. Either must be valid now rather
+/// than on the first evaluation.
+fn require_copy_expression_numbers(
+    document: &Document,
+    owner: &FieldRef,
+    expression: &Expression,
+) -> Result<(), DesignerError> {
+    for (reference, numeric) in expression.reference_uses(owner) {
+        require_copy_reference(document, &reference, numeric)?;
+    }
+    for column in expression.column_totals() {
+        require_copy_column_number(document, column)?;
+    }
+    Ok(())
+}
+
+fn require_copy_column_number(
+    document: &Document,
+    column: &ColumnRef,
+) -> Result<(), DesignerError> {
+    let numeric = document
+        .schemas
+        .get(&column.schema)
+        .and_then(|schema| schema.fields.get(&column.field))
+        .is_some_and(|definition| definition.field_type == FieldType::Number);
+    if !numeric {
+        return Err(tracker_error(
+            "formula copy requires present numeric targets and references",
+        ));
+    }
+    Ok(())
+}
+
 fn map_copy_references(
     expression: &mut Expression,
     visit: &mut impl FnMut(&mut FieldRef, bool) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
         // A relative copy keeps `[.field]` unchanged: the destination row is
-        // the formula's owner, so no per-row rewrite exists.
-        Expression::Number(_) | Expression::SameRowReference(_) => Ok(()),
+        // the formula's owner, so no per-row rewrite exists. A column total
+        // names a schema column, which no row-level copy changes.
+        Expression::Number(_) | Expression::SameRowReference(_) | Expression::ColumnTotal(_) => {
+            Ok(())
+        }
         Expression::Reference(reference) => visit(reference, true),
         Expression::IsBlank(reference) => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
@@ -6560,6 +6921,7 @@ fn remap_duplicate_value(
     value: &Value,
     entities: &BTreeMap<EntityId, EntityId>,
     fields: &BTreeMap<FieldId, FieldId>,
+    schemas: &BTreeMap<SchemaId, SchemaId>,
 ) -> Result<Value, DesignerError> {
     match value {
         Value::Reference(entity) => Ok(Value::Reference(
@@ -6570,7 +6932,7 @@ fn remap_duplicate_value(
         )),
         Value::Formula(expression) => {
             let mut expression = expression.clone();
-            map_duplicate_expression(&mut expression, entities, fields)?;
+            map_duplicate_expression(&mut expression, entities, fields, schemas)?;
             Ok(Value::Formula(expression))
         }
         Value::Number(number) => Ok(Value::Number(*number)),
@@ -6584,6 +6946,7 @@ fn map_duplicate_expression(
     expression: &mut Expression,
     entities: &BTreeMap<EntityId, EntityId>,
     fields: &BTreeMap<FieldId, FieldId>,
+    schemas: &BTreeMap<SchemaId, SchemaId>,
 ) -> Result<(), DesignerError> {
     match expression {
         Expression::Number(_) => Ok(()),
@@ -6608,9 +6971,24 @@ fn map_duplicate_expression(
             })?;
             Ok(())
         }
+        Expression::ColumnTotal(column) => {
+            // A total of the copied table's own column follows the copy; a
+            // total of any other table keeps pointing at that table.
+            if let Some(schema) = schemas.get(&column.schema) {
+                let field = fields.get(&column.field).cloned().ok_or_else(|| {
+                    table_error(&format!(
+                        "internal column-total field '{}' has no copied field",
+                        column.field
+                    ))
+                })?;
+                column.schema = schema.clone();
+                column.field = field;
+            }
+            Ok(())
+        }
         _ => {
             for child in expression.children_mut() {
-                map_duplicate_expression(child, entities, fields)?;
+                map_duplicate_expression(child, entities, fields, schemas)?;
             }
             Ok(())
         }
@@ -6808,7 +7186,7 @@ fn ensure_capacity_document_encoding(document: &Document) -> Result<(), Designer
         &workbook,
         interop_adapter::OutputProfile::TextCapacity,
     )
-    .map_err(|error| tracker_error(&error.0))?;
+    .map_err(|error| tracker_error(&error.to_string()))?;
     let columns = document
         .schemas
         .values()
@@ -6885,7 +7263,7 @@ fn ensure_capacity_document_identities(document: &Document) -> Result<(), Design
 fn ensure_capacity_document_profile(document: &Document) -> Result<(), DesignerError> {
     ensure_capacity_document_identities(document)?;
     interop_adapter::validate_text_capacity(&capacity_document_workbook(document))
-        .map_err(|error| tracker_error(&error.0))
+        .map_err(|error| tracker_error(&error.to_string()))
 }
 
 /// Cheap static profile gate for v3/.ro bytes, before the complete admission
@@ -6926,6 +7304,7 @@ fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) 
 }
 
 fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(), DesignerError> {
+    capacity::check_document(document, capacity::limits_for_profile(text_capacity))?;
     if text_capacity {
         return ensure_capacity_document_profile(document);
     }
@@ -6936,14 +7315,6 @@ fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(
         document.id.as_str(),
     )?;
     ensure_profile_string(&mut profile_string_bytes, "document title", &document.title)?;
-    if document.schemas.len() > MAX_COLLECTIONS {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!(
-                "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
-                document.schemas.len()
-            ),
-        });
-    }
     for (schema_id, schema) in &document.schemas {
         ensure_profile_string(
             &mut profile_string_bytes,
@@ -6958,14 +7329,6 @@ fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(
         ensure_profile_string(&mut profile_string_bytes, "schema key", schema.key.as_str())?;
         if let Some(name) = &schema.display_name {
             ensure_profile_string(&mut profile_string_bytes, "schema display name", name)?;
-        }
-        if schema.fields.len() > MAX_TABLE_FIELDS {
-            return Err(DesignerError::UnsupportedProject {
-                message: DesignerError::CollectionTooLarge {
-                    collection: schema.key.to_string(),
-                }
-                .to_string(),
-            });
         }
         for (field_id, field) in &schema.fields {
             ensure_profile_string(
@@ -6998,14 +7361,6 @@ fn ensure_cheap_entity_profile(
     document: &Document,
     profile_string_bytes: &mut usize,
 ) -> Result<(), DesignerError> {
-    if document.entities.len() > MAX_TOTAL_ENTITIES {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!(
-                "the project contains {} entities; the bounded maximum is {MAX_TOTAL_ENTITIES}",
-                document.entities.len()
-            ),
-        });
-    }
     let mut collection_profiles = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
         ensure_profile_string(
@@ -7020,18 +7375,9 @@ fn ensure_cheap_entity_profile(
             "entity schema identity",
             entity.schema.as_str(),
         )?;
-        if entity.fields.len() > MAX_TABLE_FIELDS {
-            return Err(DesignerError::UnsupportedProject {
-                message: format!(
-                    "entity '{}' contains {} stored fields; the bounded maximum is {MAX_TABLE_FIELDS}",
-                    entity.id,
-                    entity.fields.len()
-                ),
-            });
-        }
         let profile = collection_profiles
             .entry(entity.schema.clone())
-            .or_insert((0usize, 0usize));
+            .or_insert(0usize);
         for (field_id, value) in &entity.fields {
             ensure_profile_string(
                 profile_string_bytes,
@@ -7051,8 +7397,8 @@ fn ensure_cheap_entity_profile(
                 }
                 Value::Text(text) => {
                     ensure_stored_text_profile(text)?;
-                    profile.1 = profile.1.saturating_add(text.len());
-                    if profile.1 > MAX_PROJECTION_BYTES {
+                    *profile = profile.saturating_add(text.len());
+                    if *profile > MAX_PROJECTION_BYTES {
                         return Err(DesignerError::UnsupportedProject {
                             message: format!(
                                 "a collection contains more than the bounded {MAX_PROJECTION_BYTES}-byte stored-text projection maximum"
@@ -7063,27 +7409,6 @@ fn ensure_cheap_entity_profile(
                 Value::Number(_) | Value::Boolean(_) | Value::Date(_) => {}
             }
         }
-        profile.0 = profile.0.saturating_add(1);
-        if profile.0 > MAX_TABLE_ROWS {
-            return Err(DesignerError::UnsupportedProject {
-                message: format!(
-                    "a collection exceeds the bounded maximum of {MAX_TABLE_ROWS} entities"
-                ),
-            });
-        }
-    }
-    let formula_count = document
-        .entities
-        .values()
-        .flat_map(|entity| entity.fields.values())
-        .filter(|value| matches!(value, Value::Formula(_)))
-        .count();
-    if formula_count > MAX_FORMULAS {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!(
-                "the project contains {formula_count} formulas; the bounded maximum is {MAX_FORMULAS}"
-            ),
-        });
     }
     Ok(())
 }
@@ -7155,6 +7480,18 @@ fn ensure_formula_reference_profile(
                     profile_string_bytes,
                     "formula same-row field identity",
                     field.as_str(),
+                )?;
+            }
+            Expression::ColumnTotal(column) => {
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula column schema identity",
+                    column.schema.as_str(),
+                )?;
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula column field identity",
+                    column.field.as_str(),
                 )?;
             }
             _ => pending.extend(expression.children()),
@@ -7595,6 +7932,7 @@ fn calculation_failure_code(failure: &CalculationFailure) -> &'static str {
         CalculationFailure::TypeMismatch => "formula_type_mismatch",
         CalculationFailure::InvalidExpression { .. } => "invalid_expression",
         CalculationFailure::InvalidReferences { .. } => "invalid_references",
+        CalculationFailure::InvalidColumn { .. } => "invalid_column",
         CalculationFailure::Cycle { .. } => "cycle",
         CalculationFailure::FailedDependencies { .. } => "failed_dependencies",
         CalculationFailure::DivisionByZero => "division_by_zero",
@@ -7610,6 +7948,9 @@ fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
         CalculationFailure::InvalidExpression { .. } => "The formula structure is invalid.",
         CalculationFailure::InvalidReferences { .. } => {
             "The formula references an unavailable value."
+        }
+        CalculationFailure::InvalidColumn { .. } => {
+            "The formula references an unavailable column total."
         }
         CalculationFailure::Cycle { .. } => "The formula is part of a dependency cycle.",
         CalculationFailure::FailedDependencies { .. } => {
@@ -7858,11 +8199,14 @@ fn has_scalar_row_authoring_shape(
 
 /// Every field reference in one formula expression. Same-row references
 /// resolve against `owner`, so a retained `[.field]` formula counts as a
-/// dependent of its own row's field.
+/// dependent of its own row's field. Column totals read a whole column, not a
+/// cell, so they go to `columns`: row churn keeps them valid and only losing
+/// that exact schema's column breaks them.
 fn expression_references(
     owner: &FieldRef,
     expression: &Expression,
     references: &mut BTreeSet<FieldRef>,
+    columns: &mut BTreeSet<ColumnRef>,
 ) {
     match expression {
         Expression::Number(_) => {}
@@ -7872,10 +8216,13 @@ fn expression_references(
         Expression::SameRowReference(field) => {
             references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
         }
+        Expression::ColumnTotal(column) => {
+            columns.insert(column.clone());
+        }
         _ => expression
             .children()
             .into_iter()
-            .for_each(|child| expression_references(owner, child, references)),
+            .for_each(|child| expression_references(owner, child, references, columns)),
     }
 }
 
@@ -7884,6 +8231,7 @@ fn expression_references(
 fn dependent_formula_cells(
     document: &Document,
     removed_reference: impl Fn(&FieldRef) -> bool,
+    removed_column: impl Fn(&ColumnRef) -> bool,
     removed_cell: impl Fn(&EntityId, &FieldId) -> bool,
 ) -> usize {
     document
@@ -7898,12 +8246,14 @@ fn dependent_formula_cells(
                     return false;
                 }
                 let mut references = BTreeSet::new();
+                let mut columns = BTreeSet::new();
                 expression_references(
                     &FieldRef::new(entity.id.clone(), (*field).clone()),
                     expression,
                     &mut references,
+                    &mut columns,
                 );
-                references.iter().any(&removed_reference)
+                references.iter().any(&removed_reference) || columns.iter().any(&removed_column)
             })
         })
         .count()
@@ -8029,12 +8379,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        AuthorizationAction, ColumnInitializer, DesignerError, DesignerRequest, DesignerRuntime,
-        DocumentScopeId, EntityId, FieldDefinition, FieldId, FieldKey, FieldType, Grant, GrantId,
-        GrantRequirement, HistoryAction, KeyedGroupedSumDefinitionInput,
-        MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass, NewTableColumnInput, OperationFamily,
-        PatchLifecycleError, PrincipalId, ProposalId, RowInitializer, ScalarEditInput,
-        ScopedSemanticSubject, SemanticCommand, SemanticScope, Value,
+        AuthorizationAction, ColumnInitializer, ColumnRef, DesignerError, DesignerRequest,
+        DesignerRuntime, DocumentScopeId, EntityId, EntityKey, Expression, FieldDefinition,
+        FieldId, FieldKey, FieldType, Grant, GrantId, GrantRequirement, HistoryAction,
+        KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
+        NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId, ProposalId,
+        RowInitializer, ScalarEditInput, SchemaId, SchemaKey, ScopedSemanticSubject,
+        SemanticCommand, SemanticScope, Value,
     };
 
     #[test]
@@ -9793,6 +10144,96 @@ mod tests {
     }
 
     #[test]
+    fn native_column_rejects_a_retained_column_total_before_publication() {
+        let base =
+            native_column_runtime(&[("Source", "number"), ("Derived", "number")], &["1", "2"]);
+        let ids = native_column_ids(&base);
+        let entity = base.collection_specs["orders"].entities[0].clone();
+        let schema = base.collection_specs["orders"].summary.id.clone();
+        let derived = ids["derived"].clone();
+        let source = ids["source"].clone();
+        let mut document = base.session.export_snapshot().document().clone();
+        document.entities.get_mut(&entity).unwrap().fields.insert(
+            derived.clone(),
+            Value::Formula(super::Expression::ColumnTotal(ColumnRef::new(
+                schema,
+                source.clone(),
+            ))),
+        );
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .native_table_rows = true;
+        // A total reads the whole column, so losing the column loses the
+        // total even though no single row is referenced by address. The
+        // refusal is checked without the frozen v1 export round-trip: a
+        // document holding a column total is not representable in .roproj/v1
+        // at all.
+        let undo_count = runtime.undo.len();
+        let redo_count = runtime.redo.len();
+        let error = runtime
+            .remove_column("resident/0", "orders", source.as_str())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DesignerError::FormulaDependencyInUse {
+                dependent_cells: 1,
+                ..
+            }
+        ));
+        assert_eq!(runtime.current_revision(), "resident/0");
+        assert_eq!(runtime.undo.len(), undo_count);
+        assert_eq!(runtime.redo.len(), redo_count);
+    }
+
+    #[test]
+    fn native_column_removal_ignores_a_total_over_another_tables_same_field_id() {
+        let base =
+            native_column_runtime(&[("Source", "number"), ("Derived", "number")], &["1", "2"]);
+        let ids = native_column_ids(&base);
+        let entity = base.collection_specs["orders"].entities[0].clone();
+        let schema = SchemaId::from(base.collection_specs["orders"].summary.id.clone());
+        let derived = ids["derived"].clone();
+        let source = ids["source"].clone();
+        let mut document = base.session.export_snapshot().document().clone();
+        // A second table whose field ids match the first one's.
+        let plan = SchemaId::from("plan");
+        let mut plan_schema = document.schemas[&schema].clone();
+        plan_schema.id = plan.clone();
+        plan_schema.key = SchemaKey::from("plan");
+        document.schemas.insert(plan.clone(), plan_schema);
+        let mut plan_row = document.entities[&entity].clone();
+        plan_row.id = EntityId::from("plan-row");
+        plan_row.key = EntityKey::from("plan-row");
+        plan_row.schema = plan.clone();
+        document.entities.insert(plan_row.id.clone(), plan_row);
+        document.entities.get_mut(&entity).unwrap().fields.insert(
+            derived,
+            Value::Formula(super::Expression::ColumnTotal(ColumnRef::new(
+                plan,
+                source.clone(),
+            ))),
+        );
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        runtime
+            .collection_specs
+            .get_mut("orders")
+            .unwrap()
+            .native_table_rows = true;
+        // The total reads plan's column; removing orders' same-id column must
+        // not count it as a dependent.
+        runtime
+            .remove_column("resident/0", "orders", source.as_str())
+            .unwrap();
+    }
+
+    #[test]
     fn native_column_inverse_dependency_refusal_preserves_history_and_current_state() {
         let mut runtime = native_column_runtime(
             &[
@@ -10181,7 +10622,13 @@ mod tests {
             let error = runtime
                 .update_formula("resident/0", &"r32.planned".into(), "3")
                 .unwrap_err();
-            assert!(matches!(error, DesignerError::UnsupportedProject { .. }));
+            assert!(matches!(
+                error,
+                DesignerError::CapacityExceeded(capacity)
+                    if capacity.limit == super::CapacityLimit::Formulas
+                        && capacity.maximum == 32
+                        && capacity.attempted == 33
+            ));
             assert!(
                 runtime
                     .lifecycle
@@ -10329,7 +10776,7 @@ mod tests {
                 name: "Capacity overflow".to_owned(),
             })
             .unwrap_err();
-        assert!(matches!(error, DesignerError::InvalidTableOperation { .. }));
+        assert!(matches!(error, DesignerError::CapacityExceeded(_)));
         assert_eq!(runtime.current_revision(), "resident/31");
         assert_eq!(
             runtime.export_test_project("resident/31").unwrap().bytes,
@@ -10344,6 +10791,140 @@ mod tests {
                 .expect("finite Number must serialize")
                 .len(),
             24
+        );
+    }
+
+    fn total_spec() -> super::CollectionSpec {
+        super::CollectionSpec {
+            direct_tracker_rows: false,
+            native_table_rows: false,
+            summary: super::CollectionSummary {
+                id: "s".to_owned(),
+                key: "s".to_owned(),
+                display_name: "S".to_owned(),
+                entity_count: 0,
+            },
+            columns: vec![super::ColumnSpec {
+                id: FieldId::from("amount"),
+                key: "amount".to_owned(),
+                display_name: "Amount".to_owned(),
+                display_name_explicit: false,
+                field_type: FieldType::Number,
+                required: true,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
+                number_format: None,
+            }],
+            entities: Vec::new(),
+        }
+    }
+
+    fn total_row(
+        id: &str,
+        stored: Option<super::StoredValueProjection>,
+        calculated: Option<super::CalculationProjection>,
+    ) -> super::RowProjection {
+        super::RowProjection {
+            id: id.to_owned(),
+            key: id.to_owned(),
+            blank_fields: Vec::new(),
+            fields: vec![super::FieldProjection {
+                blank: false,
+                target: super::FieldTarget {
+                    entity: id.to_owned(),
+                    field: "amount".to_owned(),
+                },
+                address: format!("{id}.amount"),
+                stored,
+                formula: None,
+                calculated,
+                diagnostics: Vec::new(),
+                editable_scalar: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn column_totals_skip_blank_cells_and_refuse_a_partial_sum() {
+        let spec = total_spec();
+        let blank = super::RowProjection {
+            id: "blank".to_owned(),
+            key: "blank".to_owned(),
+            blank_fields: vec!["amount".to_owned()],
+            fields: Vec::new(),
+        };
+        let rows = vec![
+            total_row(
+                "a",
+                Some(super::StoredValueProjection::Number { value: 2.5 }),
+                None,
+            ),
+            total_row(
+                "b",
+                None,
+                Some(super::CalculationProjection::Value { value: 1.5 }),
+            ),
+            blank.clone(),
+        ];
+        assert_eq!(
+            super::column_totals(&spec, &rows),
+            BTreeMap::from([("amount".to_owned(), Some(4.0))])
+        );
+        assert_eq!(
+            super::column_totals(&spec, &[]),
+            BTreeMap::from([("amount".to_owned(), Some(0.0))]),
+            "an empty table totals zero rather than null"
+        );
+
+        for unavailable in [
+            total_row("c", None, Some(super::CalculationProjection::Unavailable)),
+            total_row(
+                "d",
+                None,
+                Some(super::CalculationProjection::Failure {
+                    code: "cycle".to_owned(),
+                    message: "cycle".to_owned(),
+                }),
+            ),
+            total_row(
+                "e",
+                Some(super::StoredValueProjection::Text {
+                    value: "2".to_owned(),
+                }),
+                None,
+            ),
+        ] {
+            let mut rows = rows.clone();
+            rows.push(unavailable);
+            assert_eq!(
+                super::column_totals(&spec, &rows),
+                BTreeMap::from([("amount".to_owned(), None)]),
+                "an unavailable or non-numeric contributor makes the total null"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicated_expressions_move_own_column_totals_and_keep_foreign_ones() {
+        let mut expression = Expression::Add {
+            left: Box::new(Expression::ColumnTotal(ColumnRef::new("plan", "reserve"))),
+            right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
+        };
+        super::map_duplicate_expression(
+            &mut expression,
+            &BTreeMap::new(),
+            &BTreeMap::from([(FieldId::from("reserve"), FieldId::from("reserve_copy"))]),
+            &BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]),
+        )
+        .expect("the duplicated expression maps");
+        assert_eq!(
+            expression,
+            Expression::Add {
+                left: Box::new(Expression::ColumnTotal(ColumnRef::new(
+                    "plan_copy_schema",
+                    "reserve_copy"
+                ))),
+                right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
+            }
         );
     }
 }

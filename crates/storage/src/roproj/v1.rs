@@ -964,6 +964,11 @@ impl ExpressionV1 {
                     "conditional and rounding formula expressions are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
                 );
             }
+            Expression::ColumnTotal(_) => {
+                return invalid_representation(
+                    "column totals are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
+                );
+            }
             Expression::Add { left, right } => {
                 Self::Add(BinaryArgumentsV1::from_semantic(left, right)?)
             }
@@ -1355,7 +1360,8 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     }
                     Expression::Number(_)
                     | Expression::Reference(_)
-                    | Expression::SameRowReference(_) => {}
+                    | Expression::SameRowReference(_)
+                    | Expression::ColumnTotal(_) => {}
                 }
             }
         }

@@ -586,6 +586,10 @@ pub enum Expression {
     // that contains this node, so the node stores only the field identity and
     // keeps meaning "this row" through copies and row-relative moves.
     SameRowReference(FieldId),
+    // The sum of one Number column across every entity of a schema. The node
+    // names the schema and field, never the rows, so adding, deleting or
+    // renaming rows keeps the total meaning the whole column.
+    ColumnTotal(ColumnRef),
     Add {
         left: Box<Self>,
         right: Box<Self>,
@@ -667,7 +671,10 @@ impl Expression {
     #[must_use]
     pub fn children(&self) -> Vec<&Self> {
         match self {
-            Self::Number(_) | Self::Reference(_) | Self::SameRowReference(_) => Vec::new(),
+            Self::Number(_)
+            | Self::Reference(_)
+            | Self::SameRowReference(_)
+            | Self::ColumnTotal(_) => Vec::new(),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -688,7 +695,10 @@ impl Expression {
     /// Mutable children for identity-preserving formula remapping.
     pub fn children_mut(&mut self) -> Vec<&mut Self> {
         match self {
-            Self::Number(_) | Self::Reference(_) | Self::SameRowReference(_) => Vec::new(),
+            Self::Number(_)
+            | Self::Reference(_)
+            | Self::SameRowReference(_)
+            | Self::ColumnTotal(_) => Vec::new(),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -711,7 +721,10 @@ impl Expression {
     pub fn expression_type(&self) -> Option<FormulaExpressionType> {
         use FormulaExpressionType::{Condition, Number};
         match self {
-            Self::Number(_) | Self::Reference(_) | Self::SameRowReference(_) => Some(Number),
+            Self::Number(_)
+            | Self::Reference(_)
+            | Self::SameRowReference(_)
+            | Self::ColumnTotal(_) => Some(Number),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -793,6 +806,31 @@ impl Expression {
         }
         uses
     }
+
+    /// Every column total the expression reads, in evaluation order.
+    #[must_use]
+    pub fn column_totals(&self) -> Vec<&ColumnRef> {
+        self.collect_column_totals(false)
+    }
+
+    /// Column totals read on every evaluation, outside IF's branches.
+    #[must_use]
+    pub fn unconditional_column_totals(&self) -> Vec<&ColumnRef> {
+        self.collect_column_totals(true)
+    }
+
+    fn collect_column_totals(&self, unconditional: bool) -> Vec<&ColumnRef> {
+        let mut columns = Vec::new();
+        let mut pending = vec![self];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::ColumnTotal(column) => columns.push(column),
+                Self::If { condition, .. } if unconditional => pending.push(condition),
+                _ => pending.extend(node.children().into_iter().rev()),
+            }
+        }
+        columns
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -841,6 +879,24 @@ impl fmt::Display for FieldAddress {
     }
 }
 
+/// A stable column identity: one schema field, independent of any row.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnRef {
+    pub schema: SchemaId,
+    pub field: FieldId,
+}
+
+impl ColumnRef {
+    #[must_use]
+    pub fn new(schema: impl Into<SchemaId>, field: impl Into<FieldId>) -> Self {
+        Self {
+            schema: schema.into(),
+            field: field.into(),
+        }
+    }
+}
+
 /// Display-only presentation of a Number; never changes stored or calculated values.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -885,6 +941,36 @@ impl From<NumberFormatKindWire> for NumberFormatKind {
             NumberFormatKindWire::Currency(CurrencyKindWire { code }) => Self::Currency { code },
             NumberFormatKindWire::Percent(_) => Self::Percent,
         }
+    }
+}
+
+impl fmt::Display for ColumnRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.schema, self.field)
+    }
+}
+
+/// A human column address used while authoring a formula.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnAddress {
+    pub schema: SchemaKey,
+    pub field: FieldKey,
+}
+
+impl ColumnAddress {
+    #[must_use]
+    pub fn new(schema: impl Into<SchemaKey>, field: impl Into<FieldKey>) -> Self {
+        Self {
+            schema: schema.into(),
+            field: field.into(),
+        }
+    }
+}
+
+impl fmt::Display for ColumnAddress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.schema, self.field)
     }
 }
 

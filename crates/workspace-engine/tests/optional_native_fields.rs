@@ -775,3 +775,59 @@ fn requiredness_refuses_absent_targets_unsupported_kinds_and_missing_authority()
     assert!(apply(&mut lifecycle, &mut session, vec![required(false)]).is_err());
     assert_eq!(session.export_snapshot().document(), &base);
 }
+
+#[test]
+fn a_column_total_blocks_removing_its_column_from_an_empty_table() {
+    let mut base = document();
+    base.entities.clear();
+    base.schemas.insert(
+        "t".into(),
+        Schema {
+            id: "t".into(),
+            key: "summary".into(),
+            display_name: None,
+            fields: BTreeMap::from([(
+                "total".into(),
+                FieldDefinition {
+                    id: "total".into(),
+                    key: "total".into(),
+                    display_name: None,
+                    field_type: FieldType::Number,
+                    required: true,
+                    constraint: FieldConstraint::None,
+                    number_format: None,
+                },
+            )]),
+        },
+    );
+    base.entities.insert(
+        "summary".into(),
+        Entity {
+            id: "summary".into(),
+            key: "summary".into(),
+            schema: "t".into(),
+            fields: BTreeMap::from([(
+                "total".into(),
+                Value::Formula(Expression::ColumnTotal(
+                    tachiko_workspace_engine::ColumnRef::new("s", "amount"),
+                )),
+            )]),
+        },
+    );
+    assert!(validation_report(&base).is_valid());
+    let (remove, _) = field_removal_pair(&base, "amount");
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut lifecycle = lifecycle();
+    let result = apply(&mut lifecycle, &mut session, vec![remove]);
+    let Err(PatchLifecycleError::CommandRejected { source }) = result else {
+        panic!("removing a totaled column must be refused: {result:?}")
+    };
+    assert!(
+        matches!(
+            source.as_ref(),
+            WorkspaceError::SchemaFieldReferenced { .. }
+        ),
+        "unexpected refusal: {source:?}"
+    );
+    assert_eq!(session.export_snapshot().document(), &base);
+}

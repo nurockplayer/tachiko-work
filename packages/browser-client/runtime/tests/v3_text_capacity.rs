@@ -2,12 +2,12 @@
 //! Text/Number table) saves as `.roproj/v3` and as a portable `.ro`, reopens
 //! as the same text-capacity occurrence, stays editable and re-saves
 //! byte-identically. Documents beyond both profiles refuse with a typed
-//! `unsupported_project` that names both limits, without replacing or
+//! `capacity_exceeded` with the active strict-profile limit, without replacing or
 //! changing the resident occurrence.
 
 use tachiko_designer_runtime::{
-    DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, ScalarEditInput,
-    TableProjection, TableView, inspect_project, open_portable_ro, open_project,
+    CapacityLimit, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
+    ScalarEditInput, TableProjection, TableView, inspect_project, open_portable_ro, open_project,
     verify_portable_ro,
 };
 use tachiko_workspace_engine::{
@@ -123,6 +123,8 @@ fn table(runtime: &mut DesignerRuntime) -> TableProjection {
         collection: collection.expect("the first window carries the collection"),
         columns,
         rows,
+        // Windows carry no totals yet; this assembly only compares rows.
+        column_totals: std::collections::BTreeMap::new(),
     }
 }
 
@@ -271,15 +273,14 @@ fn capacity_table_round_trips_through_a_portable_ro() {
 fn one_row_over_capacity_refuses_typed_and_keeps_the_resident_occurrence() {
     let over = independently_frame_v3(&text_table(CAPACITY_ROWS + 1));
     let error = inspect_project(&over).expect_err("8,407 rows exceed both profiles");
-    assert!(
-        matches!(&error, DesignerError::UnsupportedProject { message }
-            if message.contains("text-capacity profile")),
-        "{error}"
-    );
-    assert_eq!(
-        error.failure_projection("resident/0").code,
-        "unsupported_project"
-    );
+    assert!(matches!(
+        &error,
+        DesignerError::CapacityExceeded(capacity)
+            if capacity.limit == CapacityLimit::TableRows
+                && capacity.maximum == 128
+                && capacity.attempted == CAPACITY_ROWS + 1
+                && capacity.collection.as_deref() == Some("grid")
+    ));
 
     let mut resident = Some(
         DesignerRuntime::from_document(text_table(CAPACITY_ROWS), SOURCE)
@@ -294,7 +295,14 @@ fn one_row_over_capacity_refuses_typed_and_keeps_the_resident_occurrence() {
         .bytes;
     let error = open_project(&mut resident, &over, REOPENED)
         .expect_err("an over-capacity project never replaces the occurrence");
-    assert!(matches!(error, DesignerError::UnsupportedProject { .. }));
+    assert!(matches!(
+        error,
+        DesignerError::CapacityExceeded(capacity)
+            if capacity.limit == CapacityLimit::TableRows
+                && capacity.maximum == 128
+                && capacity.attempted == CAPACITY_ROWS + 1
+                && capacity.collection.as_deref() == Some("grid")
+    ));
     let retained = resident.as_ref().unwrap();
     assert_eq!(retained.observe_occurrence(), before);
     assert_eq!(

@@ -167,6 +167,28 @@ formula itself, in memory and after a v3 save/reopen. A missing field refuses as
 referring to the formula's own field (`[.reserve]` inside `reserve`) as
 `formula_cycle`.
 
+A column total names one Number column and sums it over every row of that
+table. The table projection already carries the same numbers as a footer:
+
+```ts
+const table = await client.queryTable("plan");
+table.column_totals; // { [columnId]: 12000 }, same revision as table.rows
+await client.updateFormula(
+  table.revision,
+  summaryTotal,
+  "[plan.reserve:total] + [plan_copy.reserve:total]",
+);
+// A summary formula reads both tables' footer totals.
+```
+
+`column_totals` has one entry per Number column, keyed by column ID, and is
+`null` when any contributing value is unavailable; blank cells are skipped, as
+in the formula. The reference is identity-based, so renaming the table or the
+field keeps the formula source valid. Referencing a column total from that same
+column (`[plan.reserve:total]` inside a `plan.reserve` cell) refuses as
+`formula_cycle`, and `duplicateCollection` moves a total of the copied table's
+own column onto the copy.
+
 See the
 [formula authoring reference](https://github.com/nurockplayer/tachiko-work/blob/main/docs/engineering/formula-authoring-reference.md).
 ADR-0014 and the formula engine specification remain the language authority.

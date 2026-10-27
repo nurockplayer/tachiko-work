@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The browser runtime reports workbook-wide capacity usage and effective limits
+  through `queryCapacity`. Candidate admissions now share accounting and return
+  a typed `capacity_exceeded` refusal without publishing changes. Existing
+  document limits and the Text/Number capacity exception remain unchanged.
 - Number columns can store a display format with 0–10 decimal places, optional
   grouping, plain/currency/percent presentation, and revision-pinned set/clear
   with Undo/Redo. Table projections, collection copies, explicit v3 saves and
@@ -65,6 +69,16 @@ All notable changes to Tachiko Work are documented in this file.
   expressions survive canonical v3/direct-ro v2 saves, formula copy, collection
   duplication, history, and XLSX formula export. Frozen project v1/v2 writers
   refuse the new operations.
+- Formulas now read column totals with `[schema.field:total]`. A total names a
+  column identity rather than rows, so row churn and key renames never retarget
+  it; blank cells are skipped, an empty column totals zero, and an unavailable,
+  failed or non-numeric contributor makes the total unavailable instead of a
+  partial sum. Unresolvable columns are typed (`InvalidColumn`, plus the
+  `formula_unknown_reference`/`formula_type_mismatch` bind codes) and a total
+  over its own row is `formula_cycle`. Totals save as `.roproj/v3`; frozen v1/v2
+  portable encoding refuses them. Every table projection carries a
+  `column_totals` footer keyed by column id, which the TypeScript client and kit
+  expose and document.
 
 - The Rust runtime, WASM bridge and public TypeScript client now author v3 field
   constraints: closed Text literal lists (also filling `dropdown_options`) and
@@ -72,6 +86,10 @@ All notable changes to Tachiko Work are documented in this file.
   constrained edits publish nothing and reject with a typed
   `constraint_failure` carrying the allowed shape and offending row count, and
   declaring a constraint that existing values violate is refused atomically.
+  Unsorted or duplicate Text values are normalised to their byte-sorted unique
+  set; an empty or oversized literal list, reversed bounds, or a kind that does
+  not match the column is refused before publication with the typed
+  `invalid_constraint_declaration` reason.
   Constrained projects save as `.roproj/v3`, reopen with constraints and values
   intact, and legacy v1/v2 `exportProject` refuses them with
   `legacy_export_unsupported` instead of dropping the declaration. The kit

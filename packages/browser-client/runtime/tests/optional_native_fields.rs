@@ -359,6 +359,7 @@ fn optional_rows_keep_the_128_row_gate() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One end-to-end clear, calculate and undo/redo scenario.
 fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_history() {
     use std::collections::BTreeMap;
     use tachiko_workspace_engine::{
@@ -453,8 +454,7 @@ fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_histo
         {"target":{"entity":"a","field":"amount"},"input":{"kind":"clear"}}
     ]}"#).unwrap());
     let revision = j.table()["revision"].clone();
-    let fields = j.ok(serde_json::from_str(&format!(r#"{{"type":"query_fields","expected_revision":{},"fields":[{{"entity":"sum","field":"total"}}]}}"#,
-        revision)).unwrap());
+    let fields = j.ok(serde_json::from_str(&format!(r#"{{"type":"query_fields","expected_revision":{revision},"fields":[{{"entity":"sum","field":"total"}}]}}"#)).unwrap());
     assert_eq!(fields["fields"][0]["calculated"]["value"], 0.0);
     j.refused(serde_json::from_str(r#"{"type":"set_column_requiredness","collection":"items","field":"amount","required":true}"#).unwrap());
     if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {

@@ -7,9 +7,9 @@ use std::{
 };
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, SourceWorkbook, import_csv};
 use tachiko_designer_runtime::{
-    CleanupOperation, CollectionSummary, ColumnProjection, DesignerRequest, DesignerResponse,
-    DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType, ImportSelection,
-    InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
+    CapacityLimit, CleanupOperation, CollectionSummary, ColumnProjection, DesignerRequest,
+    DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType,
+    ImportSelection, InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
     StoredValueProjection, TableProjection, import_workbook, inspect_imported_project,
     open_imported_project, open_project,
 };
@@ -383,7 +383,9 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         // bytes for the column fallback names in this literal projection.
         // ADR-0045 adds 3 x 16 bytes for explicit column requiredness;
         // default false blank flags and empty blank-field lists stay omitted.
-        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19 + 3 * 16);
+        // The column-total footer adds `,"column_totals":{}` (19 bytes): this
+        // fixture declares only Text columns, so it has no Number total.
+        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19 + 3 * 16 + 19);
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
 
@@ -443,6 +445,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 number_format: None,
             })
             .collect(),
+        column_totals: std::collections::BTreeMap::new(),
         rows: entities
             .into_iter()
             .map(|entity| RowProjection {
@@ -791,10 +794,12 @@ fn enlarged_v3_round_trips_in_capacity_and_beyond_both_profiles_cannot_enter() {
     // admission. This reaches the producer boundary instead of invalid framing.
     let encoded = independently_frame_v3(&candidate);
     let refused = tachiko_designer_runtime::inspect_project(&encoded).unwrap_err();
-    assert_eq!(
-        refused.failure_projection("resident/0").code,
-        "unsupported_project"
-    );
+    let failure = refused.failure_projection("resident/0");
+    assert_eq!(failure.code, "capacity_exceeded");
+    let capacity = failure.capacity.unwrap();
+    assert_eq!(capacity.limit, CapacityLimit::TableRows);
+    assert_eq!(capacity.maximum, 128);
+    assert_eq!(capacity.attempted, 129);
     let mut empty = None;
     assert!(open_project(&mut empty, &encoded, FRESH).is_err());
     assert!(empty.is_none());

@@ -150,4 +150,24 @@ describe("public field-constraint requests", () => {
     expect(requests.at(-1)).toMatchObject({kind: "command", request: {type: "set_column_constraint"}});
     client.close();
   });
+
+  it("surfaces a typed declaration refusal without publishing", async () => {
+    const {client, fail, requests} = fixture();
+    const failure: FailureProjection = {
+      code: "invalid_constraint_declaration",
+      message: "constraint min 10 is greater than max 5",
+      current_revision: "resident/4",
+      diagnostics: [],
+      constraint_failure: {
+        reason: "declaration", schema: "tasks", field: "amount",
+        constraint: {kind: "number_inclusive_range", min: 10, max: 5}, offending_rows: 0,
+      },
+    };
+    const rejected = client.setColumnConstraint("resident/4", "tasks", "amount", {kind: "number_inclusive_range", min: 10, max: 5});
+    fail(failure);
+    await expect(rejected).rejects.toMatchObject({failure});
+    await expect(rejected).rejects.toMatchObject({failure: {constraint_failure: {reason: "declaration", offending_rows: 0}}});
+    expect(requests.at(-1)).toMatchObject({kind: "command", request: {type: "set_column_constraint"}});
+    client.close();
+  });
 });

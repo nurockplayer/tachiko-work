@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, convert::Infallible};
 use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
-    ComparisonOperator, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
+    ColumnRef, ComparisonOperator, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
     FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_EXPRESSION_DEPTH,
@@ -362,6 +362,7 @@ enum ExpressionV3 {
     Number(NumberV3),
     Reference(FieldRefV3),
     SameRowReference(String),
+    ColumnTotal(ColumnRefV3),
     Add(BinaryArgumentsV3),
     Subtract(BinaryArgumentsV3),
     Multiply(BinaryArgumentsV3),
@@ -381,6 +382,13 @@ enum ExpressionV3 {
 #[serde(deny_unknown_fields)]
 struct FieldRefV3 {
     entity: String,
+    field: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColumnRefV3 {
+    schema: String,
     field: String,
 }
 
@@ -978,6 +986,10 @@ impl ExpressionV3 {
                 Self::SameRowReference(field) => {
                     require_id("formula field id", field)?;
                 }
+                Self::ColumnTotal(column) => {
+                    require_id("formula schema id", &column.schema)?;
+                    require_id("formula field id", &column.field)?;
+                }
                 Self::Add(arguments)
                 | Self::Subtract(arguments)
                 | Self::Multiply(arguments)
@@ -1034,6 +1046,10 @@ impl ExpressionV3 {
                 Expression::Reference(FieldRef::new(reference.entity, reference.field))
             }
             Self::SameRowReference(field) => Expression::SameRowReference(FieldId::from(field)),
+            Self::ColumnTotal(column) => Expression::ColumnTotal(ColumnRef::new(
+                SchemaId::from(column.schema),
+                FieldId::from(column.field),
+            )),
             Self::Add(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Add { left, right })?
             }
@@ -1209,6 +1225,10 @@ impl ExpressionV3 {
                 Self::Reference(FieldRefV3::from_semantic(reference))
             }
             Expression::SameRowReference(field) => Self::SameRowReference(field.to_string()),
+            Expression::ColumnTotal(column) => Self::ColumnTotal(ColumnRefV3 {
+                schema: column.schema.to_string(),
+                field: column.field.to_string(),
+            }),
             Expression::Add { left, right } => {
                 Self::Add(BinaryArgumentsV3::from_semantic(left, right))
             }
@@ -1653,6 +1673,14 @@ fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<()
             compact_member_string(output, "op", "same_row_reference", true)?;
             compact_member_string(output, "args", field, false)?;
         }
+        ExpressionV3::ColumnTotal(column) => {
+            compact_member_string(output, "op", "column_total", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "schema", &column.schema, true)?;
+            compact_member_string(output, "field", &column.field, false)?;
+            output.push('}');
+        }
         ExpressionV3::Add(args) => write_binary_expression(output, "add", args)?,
         ExpressionV3::Subtract(args) => write_binary_expression(output, "subtract", args)?,
         ExpressionV3::Multiply(args) => write_binary_expression(output, "multiply", args)?,
@@ -1877,11 +1905,8 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     | Expression::Multiply { left, right }
                     | Expression::Divide { left, right }
                     | Expression::Minimum { left, right }
-                    | Expression::Maximum { left, right } => {
-                        stack.push((right, depth + 1));
-                        stack.push((left, depth + 1));
-                    }
-                    Expression::Compare { left, right, .. } => {
+                    | Expression::Maximum { left, right }
+                    | Expression::Compare { left, right, .. } => {
                         stack.push((right, depth + 1));
                         stack.push((left, depth + 1));
                     }
@@ -1919,7 +1944,8 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     }
                     Expression::Number(_)
                     | Expression::Reference(_)
-                    | Expression::SameRowReference(_) => {}
+                    | Expression::SameRowReference(_)
+                    | Expression::ColumnTotal(_) => {}
                 }
             }
         }

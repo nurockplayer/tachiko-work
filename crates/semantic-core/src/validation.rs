@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity, Document,
-    Expression, FieldConstraint, FieldRef, FieldType, Number, Schema, SemanticSubject, Value,
+    ColumnRef, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity,
+    Document, Expression, FieldConstraint, FieldRef, FieldType, Number, Schema, SemanticSubject,
+    Value,
 };
 
 const CORE_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.semantic-core");
@@ -712,6 +713,9 @@ fn validate_expression(
     for (reference, numeric) in expression.reference_uses(owner) {
         validate_formula_reference(document, owner, &reference, numeric, path, diagnostics);
     }
+    for column in expression.column_totals() {
+        validate_formula_column(document, owner, column, path, diagnostics);
+    }
 }
 
 fn validate_formula_reference(
@@ -788,6 +792,65 @@ fn validate_formula_reference(
     }
 }
 
+fn validate_formula_column(
+    document: &Document,
+    owner: &FieldRef,
+    column: &ColumnRef,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let column_subject = || SemanticSubject::SchemaField {
+        schema: column.schema.clone(),
+        field: column.field.clone(),
+    };
+    let Some(schema) = document.schemas.get(&column.schema) else {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::MISSING_FORMULA_REFERENCE,
+                format!(
+                    "formula column schema stable id '{}' does not exist",
+                    column.schema
+                ),
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_related_subjects(vec![column_subject()]),
+        );
+        return;
+    };
+    let Some(definition) = schema.fields.get(&column.field) else {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::MISSING_FORMULA_REFERENCE,
+                format!(
+                    "formula column field stable id '{}' does not exist",
+                    column.field
+                ),
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_related_subjects(vec![column_subject()]),
+        );
+        return;
+    };
+    if definition.field_type != FieldType::Number {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+                format!("formula column '{column}' does not target a numeric field"),
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_related_subjects(vec![column_subject()])
+            .with_fact(DiagnosticFact::new("expected_kind", "number"))
+            .with_fact(DiagnosticFact::new(
+                "actual_kind",
+                field_type_name(&definition.field_type),
+            )),
+        );
+    }
+}
+
 fn field_type_name(field_type: &FieldType) -> &'static str {
     match field_type {
         FieldType::Number => "number",
@@ -816,8 +879,8 @@ mod issue_175_research {
     use super::{
         Diagnostic, DiagnosticCode, DiagnosticFact, Document, Expression, FieldRef, FieldType,
         Schema, SemanticSubject, Value, core_diagnostic, field_type_name, is_valid_identifier,
-        key_mismatch_diagnostic, validate_field_constraint, validate_formula_reference,
-        validate_stored_value_constraint, value_type_name,
+        key_mismatch_diagnostic, validate_field_constraint, validate_formula_column,
+        validate_formula_reference, validate_stored_value_constraint, value_type_name,
     };
 
     /// Run the accepted semantic validator with a research-only cancellation poll.
@@ -1347,6 +1410,9 @@ mod issue_175_research {
                     path,
                     diagnostics,
                 ),
+                Expression::ColumnTotal(column) => {
+                    validate_formula_column(document, owner, column, path, diagnostics);
+                }
                 Expression::IsBlank(value) => pending.push((value, false)),
                 _ => pending.extend(
                     node.children()

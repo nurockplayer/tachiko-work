@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use tachiko_semantic_core::{
-    ComparisonOperator, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
+    ColumnRef, ComparisonOperator, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, MAX_EXPRESSION_DEPTH,
     MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
 };
@@ -92,6 +92,7 @@ pub(crate) enum ExpressionV2 {
     Number(f64),
     Reference(FieldRefV2),
     SameRowReference(String),
+    ColumnTotal(ColumnRefV2),
     Add(BinaryArgsV2),
     Subtract(BinaryArgsV2),
     Multiply(BinaryArgsV2),
@@ -105,6 +106,13 @@ pub(crate) enum ExpressionV2 {
     Not(Box<ExpressionV2>),
     Round(RoundArgsV2),
     IsBlank(Box<ExpressionV2>),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ColumnRefV2 {
+    pub(crate) schema: String,
+    pub(crate) field: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -455,6 +463,10 @@ impl ExpressionV2 {
                 field: reference.field.to_string(),
             }),
             Expression::SameRowReference(field) => Self::SameRowReference(field.to_string()),
+            Expression::ColumnTotal(column) => Self::ColumnTotal(ColumnRefV2 {
+                schema: column.schema.to_string(),
+                field: column.field.to_string(),
+            }),
             Expression::Add { left, right } => Self::Add(BinaryArgsV2::from_semantic(left, right)),
             Expression::Subtract { left, right } => {
                 Self::Subtract(BinaryArgsV2::from_semantic(left, right))
@@ -538,6 +550,20 @@ impl ExpressionV2 {
                         ));
                     }
                 }
+                Self::ColumnTotal(column) => {
+                    let Some(schema) = schemas.get(&column.schema) else {
+                        return invalid(format!(
+                            "formula column schema '{}' does not exist",
+                            column.schema
+                        ));
+                    };
+                    if !schema.fields.contains_key(&column.field) {
+                        return invalid(format!(
+                            "formula column field '{}' does not exist in schema '{}'",
+                            column.field, column.schema
+                        ));
+                    }
+                }
                 Self::Add(args)
                 | Self::Subtract(args)
                 | Self::Multiply(args)
@@ -592,6 +618,10 @@ impl ExpressionV2 {
                 field: FieldId::from(reference.field),
             }),
             Self::SameRowReference(field) => Expression::SameRowReference(FieldId::from(field)),
+            Self::ColumnTotal(column) => Expression::ColumnTotal(ColumnRef::new(
+                SchemaId::from(column.schema),
+                FieldId::from(column.field),
+            )),
             Self::Add(args) => Expression::Add {
                 left: Box::new(args.left.into_semantic()?),
                 right: Box::new(args.right.into_semantic()?),
@@ -680,11 +710,8 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
             | Expression::Multiply { left, right }
             | Expression::Divide { left, right }
             | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                stack.push((right, depth + 1));
-                stack.push((left, depth + 1));
-            }
-            Expression::Compare { left, right, .. } => {
+            | Expression::Maximum { left, right }
+            | Expression::Compare { left, right, .. } => {
                 stack.push((right, depth + 1));
                 stack.push((left, depth + 1));
             }
@@ -718,7 +745,10 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
                 }
                 stack.push((expression, depth + 1));
             }
-            Expression::Number(_) | Expression::Reference(_) | Expression::SameRowReference(_) => {}
+            Expression::Number(_)
+            | Expression::Reference(_)
+            | Expression::SameRowReference(_)
+            | Expression::ColumnTotal(_) => {}
         }
     }
     Ok(())
@@ -933,6 +963,11 @@ fn write_expression(
             member_string(output, indent + 1, "op", "same_row_reference", true)?;
             member_string(output, indent + 1, "args", field, false)?;
         }
+        ExpressionV2::ColumnTotal(column) => {
+            member_string(output, indent + 1, "op", "column_total", true)?;
+            member_prefix(output, indent + 1, "args")?;
+            write_column_ref(output, column, indent + 1)?;
+        }
         ExpressionV2::Add(args) => write_binary(output, indent, "add", args)?,
         ExpressionV2::Subtract(args) => write_binary(output, indent, "subtract", args)?,
         ExpressionV2::Multiply(args) => write_binary(output, indent, "multiply", args)?,
@@ -1050,6 +1085,20 @@ fn write_field_ref(
     output.push_str("{\n");
     member_string(output, indent + 1, "entity", &reference.entity, true)?;
     member_string(output, indent + 1, "field", &reference.field, false)?;
+    output.push('\n');
+    push_indent(output, indent);
+    output.push('}');
+    Ok(())
+}
+
+fn write_column_ref(
+    output: &mut String,
+    column: &ColumnRefV2,
+    indent: usize,
+) -> Result<(), CodecError> {
+    output.push_str("{\n");
+    member_string(output, indent + 1, "schema", &column.schema, true)?;
+    member_string(output, indent + 1, "field", &column.field, false)?;
     output.push('\n');
     push_indent(output, indent);
     output.push('}');

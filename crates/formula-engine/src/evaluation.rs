@@ -4,7 +4,7 @@ use tachiko_semantic_core::{
     ComparisonOperator, Document, Expression, FieldRef, FieldType, Number,
 };
 
-use crate::CalculationFailure;
+use crate::{CalculationFailure, column_cells};
 
 pub(crate) struct Evaluation<'a> {
     pub(crate) document: &'a Document,
@@ -25,6 +25,9 @@ impl Evaluation<'_> {
                 }
                 Expression::SameRowReference(field) => {
                     references.insert(FieldRef::new(self.owner.entity.clone(), field.clone()));
+                }
+                Expression::ColumnTotal(column) => {
+                    references.extend(column_cells(self.document, column));
                 }
                 Expression::If {
                     condition,
@@ -60,6 +63,21 @@ impl Evaluation<'_> {
             } else {
                 else_value
             }),
+            Expression::ColumnTotal(column) => {
+                // Blank cells are skipped. Every other row already passed the
+                // target checks, so a value missing here is a failed
+                // contributing row rather than an empty column.
+                let mut total = 0.0;
+                for reference in column_cells(self.document, column) {
+                    let Some(value) = self.values.get(&reference) else {
+                        return Err(CalculationFailure::FailedDependencies {
+                            dependencies: BTreeSet::from([reference]),
+                        });
+                    };
+                    total += value.get();
+                }
+                number_result(total)
+            }
             Expression::Round { value, digits } => round(self.number(value)?, *digits),
             Expression::Add { left, right } => {
                 self.binary(left, right, |left, right| number_result(left + right))

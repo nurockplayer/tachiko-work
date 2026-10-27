@@ -101,6 +101,7 @@ fn run_sequence(
     }
 }
 
+#[allow(clippy::too_many_lines)] // One exhaustive check per mutation kind.
 fn apply_specific_check(
     session: &ResidentWorkspaceSession,
     invalidation: &ResidentProjectionInvalidation,
@@ -539,7 +540,7 @@ fn assert_revision_oracles(session: &ResidentWorkspaceSession, context: &str) {
             projection.formula_definition.as_ref().map(|expression| {
                 (
                     projection.field.clone(),
-                    extract_dependencies(&projection.field, expression),
+                    extract_dependencies(document, &projection.field, expression),
                 )
             })
         })
