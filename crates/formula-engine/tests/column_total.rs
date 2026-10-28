@@ -525,3 +525,178 @@ fn a_row_moved_into_the_schema_joins_the_total_incrementally() {
     let _ = retained.update(&document, &row_roots(&document, "tools"));
     assert_eq!(retained.outcome(), calculate_complete(&document));
 }
+
+#[test]
+fn column_aggregate_suffixes_are_case_insensitive_and_canonical() {
+    for suffix in ["average", "count", "min", "max"] {
+        let input = format!("[plan.reserve:{}]", suffix.to_ascii_uppercase());
+        let parsed = parse_expression(&input).unwrap();
+        assert_eq!(
+            format_unbound_expression(&parsed),
+            format!("[plan.reserve:{suffix}]")
+        );
+        let bound = bind_expression(&document(), &owner("summary", "total"), &parsed).unwrap();
+        assert_eq!(
+            project_expression(&document(), &owner("summary", "total"), &bound).unwrap(),
+            format!("[plan.reserve:{suffix}]")
+        );
+    }
+    let error = parse_expression("[plan.reserve:unknown]").unwrap_err();
+    assert!(error.position > 0);
+}
+
+#[test]
+fn column_aggregates_skip_blanks_and_report_empty_and_failed_values() {
+    use tachiko_semantic_core::ColumnAggregateFunction;
+    let mut doc = document();
+    doc.entities
+        .get_mut("rent")
+        .unwrap()
+        .fields
+        .insert("reserve".into(), number(3.0));
+    doc.entities
+        .get_mut("ads")
+        .unwrap()
+        .fields
+        .insert("reserve".into(), number(9.0));
+    let mut blank = plan_row("blank", "blank", number(1.0));
+    blank.fields.remove("reserve");
+    doc.entities.insert("blank".into(), blank);
+    for (function, expected) in [
+        (ColumnAggregateFunction::Average, 6.0),
+        (ColumnAggregateFunction::Count, 2.0),
+        (ColumnAggregateFunction::Minimum, 3.0),
+        (ColumnAggregateFunction::Maximum, 9.0),
+    ] {
+        let expression = Expression::ColumnAggregate {
+            function,
+            column: column("plan", "reserve"),
+        };
+        doc.entities
+            .get_mut("summary")
+            .unwrap()
+            .fields
+            .insert("total".into(), Value::Formula(expression));
+        let CalculationOutcome::Complete(result) = calculate_complete(&doc) else {
+            panic!("aggregate should calculate")
+        };
+        assert_eq!(
+            result.value(&owner("summary", "total")),
+            Some(Number::new(expected).unwrap())
+        );
+        let mut empty = doc.clone();
+        for row in ["rent", "ads"] {
+            empty
+                .entities
+                .get_mut(row)
+                .unwrap()
+                .fields
+                .remove("reserve");
+        }
+        match calculate_complete(&empty) {
+            CalculationOutcome::Complete(result) if function == ColumnAggregateFunction::Count => {
+                assert_eq!(
+                    result.value(&owner("summary", "total")),
+                    Some(Number::new(0.0).unwrap())
+                );
+            }
+            CalculationOutcome::Failed(failures) if function != ColumnAggregateFunction::Count => {
+                assert_eq!(
+                    failures.failures().get(&owner("summary", "total")),
+                    Some(&CalculationFailure::EmptyAggregate)
+                );
+            }
+            _ => panic!("unexpected empty aggregate outcome"),
+        }
+        let mut non_numeric = doc.clone();
+        non_numeric
+            .entities
+            .get_mut("rent")
+            .unwrap()
+            .fields
+            .insert("reserve".into(), Value::Text("n/a".to_owned()));
+        let CalculationOutcome::Failed(failures) = calculate_complete(&non_numeric) else {
+            panic!("non-Number contributor must fail aggregate")
+        };
+        assert!(matches!(
+            failures.failures().get(&owner("summary", "total")),
+            Some(CalculationFailure::FailedDependencies { .. })
+        ));
+        let mut failed = doc.clone();
+        failed.entities.get_mut("rent").unwrap().fields.insert(
+            "reserve".into(),
+            Value::Formula(Expression::Divide {
+                left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+                right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+            }),
+        );
+        let CalculationOutcome::Failed(failures) = calculate_complete(&failed) else {
+            panic!("failed contributor must fail aggregate")
+        };
+        assert!(matches!(
+            failures.failures().get(&owner("summary", "total")),
+            Some(CalculationFailure::FailedDependencies { .. })
+        ));
+    }
+}
+
+#[test]
+fn aggregate_recalculates_when_rows_are_added_and_removed() {
+    let mut doc = document();
+    doc.entities.get_mut("summary").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(Expression::ColumnAggregate {
+            function: tachiko_semantic_core::ColumnAggregateFunction::Count,
+            column: column("plan", "reserve"),
+        }),
+    );
+    let (mut retained, _) = RetainedCalculationState::rebuild(&doc);
+    doc.entities
+        .insert("tools".into(), plan_row("tools", "Tools", number(1.0)));
+    let _ = retained.update(&doc, &row_roots(&doc, "tools"));
+    assert_eq!(retained.outcome(), calculate_complete(&doc));
+    let CalculationOutcome::Complete(result) = retained.outcome() else {
+        panic!("count should calculate")
+    };
+    assert_eq!(
+        result.value(&owner("summary", "total")),
+        Some(Number::new(3.0).unwrap())
+    );
+    let roots = row_roots(&doc, "tools");
+    doc.entities.remove("tools");
+    let _ = retained.update(&doc, &roots);
+    assert_eq!(retained.outcome(), calculate_complete(&doc));
+    let CalculationOutcome::Complete(result) = retained.outcome() else {
+        panic!("count should calculate")
+    };
+    assert_eq!(
+        result.value(&owner("summary", "total")),
+        Some(Number::new(2.0).unwrap())
+    );
+}
+
+#[test]
+fn average_of_large_finite_values_does_not_overflow() {
+    let mut doc = document();
+    for row in ["rent", "ads"] {
+        doc.entities
+            .get_mut(row)
+            .unwrap()
+            .fields
+            .insert("reserve".into(), number(1e308));
+    }
+    doc.entities.get_mut("summary").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(Expression::ColumnAggregate {
+            function: tachiko_semantic_core::ColumnAggregateFunction::Average,
+            column: column("plan", "reserve"),
+        }),
+    );
+    let CalculationOutcome::Complete(result) = calculate_complete(&doc) else {
+        panic!("finite average should calculate")
+    };
+    assert_eq!(
+        result.value(&owner("summary", "total")),
+        Some(Number::new(1e308).unwrap())
+    );
+}

@@ -6,6 +6,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Column formulas support `:average`, `:count`, `:min`, and `:max` over Number columns, with typed empty-aggregate failures.
+
 - The browser runtime reports workbook-wide capacity usage and effective limits
   through `queryCapacity`. Candidate admissions now share accounting and return
   a typed `capacity_exceeded` refusal without publishing changes. Existing

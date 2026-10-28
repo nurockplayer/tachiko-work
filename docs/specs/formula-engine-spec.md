@@ -44,6 +44,7 @@ rounding, percent, and blank forms below. The language contains:
 - bracketed references in `[entity.field]` form;
 - same-row references in `[.field]` form (see
   [Same-row references](#same-row-references));
+- column aggregates `[schema.field:average]`, `:count`, `:min`, and `:max`;
 - column totals in `[schema.field:total]` form (see
   [Column totals](#column-totals));
 - binary `+`, `-`, `*`, and `/` with standard precedence;
@@ -80,6 +81,16 @@ label. A missing key is an unknown-reference failure, a non-Number field is a
 type-mismatch failure, and referring to the formula's own field is a dependency
 cycle. Relative formula copies and collection duplication keep the shorthand
 unchanged, so it continues to mean the destination formula's own row.
+
+### Column aggregates
+
+The `average`, `count`, `min`, and `max` column suffixes use the same identity,
+Number-column validation, dependencies, cycle detection, and blank skipping as
+column totals. Suffixes are case-insensitive on input and lowercase in canonical
+text. Count returns the number of present Number values, including zero for an
+empty column. Average divides the sum by that count; min and max select the
+smallest and largest present values. A failed or non-Number contributor causes `failed_dependencies`. Average, min, and max over no present values fail with
+`aggregate_empty`.
 
 ### Column totals
 

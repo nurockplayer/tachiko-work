@@ -112,3 +112,30 @@ fn frozen_formats_refuse_to_silently_drop_the_column() {
         );
     }
 }
+
+#[test]
+fn column_aggregates_round_trip_and_frozen_formats_refuse_them() {
+    use tachiko_semantic_core::ColumnAggregateFunction;
+    for function in [
+        ColumnAggregateFunction::Average,
+        ColumnAggregateFunction::Count,
+        ColumnAggregateFunction::Minimum,
+        ColumnAggregateFunction::Maximum,
+    ] {
+        let mut document = document();
+        document.entities.get_mut("summary").unwrap().fields.insert(
+            "total".into(),
+            Value::Formula(Expression::ColumnAggregate {
+                function,
+                column: ColumnRef::new("plan", "reserve"),
+            }),
+        );
+        let encoded = to_canonical_string(&document).unwrap();
+        assert_eq!(from_str(&encoded).unwrap(), document);
+        let tree = encode_roproj_v3(&document).unwrap();
+        assert_eq!(decode_roproj_v3(&tree).unwrap(), document);
+        assert!(encode_roproj_v1(&document).is_err());
+        assert!(encode_roproj_v2(&document).is_err());
+        assert!(from_str(&encoded.replace(function.wire_name(), "unknown_function")).is_err());
+    }
+}

@@ -1115,6 +1115,7 @@ fn calculation_evidence_subjects(outcome: &FormulaCalculationOutcome) -> BTreeSe
         CalculationFailure::TypeMismatch
         | CalculationFailure::InvalidExpression { .. }
         | CalculationFailure::DivisionByZero
+        | CalculationFailure::EmptyAggregate
         | CalculationFailure::NonFiniteResult
         | CalculationFailure::InvalidColumn { .. } => BTreeSet::new(),
     }

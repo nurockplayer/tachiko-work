@@ -2853,7 +2853,7 @@ fn export_expression(
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         // Column totals have no per-cell interop spelling, so an export that
         // meets one refuses rather than emitting a formula that means less.
-        Expression::ColumnTotal(_) => Err(tracker_error(
+        Expression::ColumnTotal(_) | Expression::ColumnAggregate { .. } => Err(tracker_error(
             "column totals are outside the export mapping",
         )),
         Expression::Add { left, right } => export_binary(left, "+", right, owner, addresses),

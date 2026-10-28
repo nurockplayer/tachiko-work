@@ -1410,7 +1410,7 @@ mod issue_175_research {
                     path,
                     diagnostics,
                 ),
-                Expression::ColumnTotal(column) => {
+                Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                     validate_formula_column(document, owner, column, path, diagnostics);
                 }
                 Expression::IsBlank(value) => pending.push((value, false)),

@@ -577,6 +577,45 @@ pub const MAX_EXPRESSION_NODES: usize = 256;
 /// Maximum root-to-leaf node depth admitted in a semantic formula expression.
 pub const MAX_EXPRESSION_DEPTH: usize = 64;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnAggregateFunction {
+    Average,
+    Count,
+    Minimum,
+    Maximum,
+}
+
+impl ColumnAggregateFunction {
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Average => "average",
+            Self::Count => "count",
+            Self::Minimum => "minimum",
+            Self::Maximum => "maximum",
+        }
+    }
+
+    /// The function named by a `[schema.field:<suffix>]` spelling, any case.
+    #[must_use]
+    pub fn from_suffix(suffix: &str) -> Option<Self> {
+        [Self::Average, Self::Count, Self::Minimum, Self::Maximum]
+            .into_iter()
+            .find(|function| suffix.eq_ignore_ascii_case(function.suffix()))
+    }
+
+    #[must_use]
+    pub const fn suffix(self) -> &'static str {
+        match self {
+            Self::Average => "average",
+            Self::Count => "count",
+            Self::Minimum => "min",
+            Self::Maximum => "max",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "op", content = "args", rename_all = "snake_case")]
 pub enum Expression {
@@ -590,6 +629,10 @@ pub enum Expression {
     // names the schema and field, never the rows, so adding, deleting or
     // renaming rows keeps the total meaning the whole column.
     ColumnTotal(ColumnRef),
+    ColumnAggregate {
+        function: ColumnAggregateFunction,
+        column: ColumnRef,
+    },
     Add {
         left: Box<Self>,
         right: Box<Self>,
@@ -674,7 +717,8 @@ impl Expression {
             Self::Number(_)
             | Self::Reference(_)
             | Self::SameRowReference(_)
-            | Self::ColumnTotal(_) => Vec::new(),
+            | Self::ColumnTotal(_)
+            | Self::ColumnAggregate { .. } => Vec::new(),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -698,7 +742,8 @@ impl Expression {
             Self::Number(_)
             | Self::Reference(_)
             | Self::SameRowReference(_)
-            | Self::ColumnTotal(_) => Vec::new(),
+            | Self::ColumnTotal(_)
+            | Self::ColumnAggregate { .. } => Vec::new(),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -724,7 +769,8 @@ impl Expression {
             Self::Number(_)
             | Self::Reference(_)
             | Self::SameRowReference(_)
-            | Self::ColumnTotal(_) => Some(Number),
+            | Self::ColumnTotal(_)
+            | Self::ColumnAggregate { .. } => Some(Number),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -815,7 +861,9 @@ impl Expression {
         let mut pending = vec![self];
         while let Some(node) = pending.pop() {
             match node {
-                Self::ColumnTotal(column) => columns.push(column),
+                Self::ColumnTotal(column) | Self::ColumnAggregate { column, .. } => {
+                    columns.push(column);
+                }
                 _ => pending.extend(node.children().into_iter().rev()),
             }
         }

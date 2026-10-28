@@ -102,6 +102,10 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "column_total",
             "args": {"schema": column.schema.as_str(), "field": column.field.as_str()}
         }),
+        Expression::ColumnAggregate { function, column } => serde_json::json!({
+            "op": "column_aggregate", "args": {"function": function.wire_name(),
+                "column": {"schema": column.schema.as_str(), "field": column.field.as_str()}}
+        }),
         Expression::Add { left, right } => serde_json::json!({
             "op": "add",
             "args": {"left": expression_json(left), "right": expression_json(right)}

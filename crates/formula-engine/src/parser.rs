@@ -1,6 +1,6 @@
 use tachiko_semantic_core::{
-    ColumnAddress, ComparisonOperator, FieldAddress, FieldKey, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number, is_valid_identifier,
+    ColumnAddress, ColumnAggregateFunction, ComparisonOperator, FieldAddress, FieldKey,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, is_valid_identifier,
 };
 use thiserror::Error;
 
@@ -15,6 +15,10 @@ pub enum UnboundExpression {
     SameRowReference(FieldKey),
     // `[schema.field:total]`: the sum of one Number column over a schema.
     ColumnTotal(ColumnAddress),
+    ColumnAggregate {
+        function: ColumnAggregateFunction,
+        column: ColumnAddress,
+    },
     Add {
         left: Box<Self>,
         right: Box<Self>,
@@ -151,6 +155,9 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
         UnboundExpression::ColumnTotal(column) => {
             format!("[{}.{}:total]", column.schema, column.field)
         }
+        UnboundExpression::ColumnAggregate { function, column } => {
+            format!("[{}.{}:{}]", column.schema, column.field, function.suffix())
+        }
         UnboundExpression::Add { left, right } => format_binary(left, "+", right),
         UnboundExpression::Subtract { left, right } => format_binary(left, "-", right),
         UnboundExpression::Multiply { left, right } => format_binary(left, "*", right),
@@ -271,7 +278,8 @@ fn push_children<'expression>(
         UnboundExpression::Number(_)
         | UnboundExpression::Reference(_)
         | UnboundExpression::SameRowReference(_)
-        | UnboundExpression::ColumnTotal(_) => {}
+        | UnboundExpression::ColumnTotal(_)
+        | UnboundExpression::ColumnAggregate { .. } => {}
     }
 }
 
@@ -518,9 +526,15 @@ impl<'input> Parser<'input> {
 
         // `[schema.field:total]` keeps the column identity so the total never
         // depends on which rows happen to exist.
-        let (inner, column_total) = match inner.strip_suffix(":total") {
-            Some(column) => (column, true),
-            None => (inner, false),
+        // `None` is a cell reference, `Some(None)` the total, and
+        // `Some(Some(function))` another column aggregate.
+        let (inner, column) = match inner.rsplit_once(':') {
+            Some((column, suffix)) if suffix.eq_ignore_ascii_case("total") => (column, Some(None)),
+            Some((column, suffix)) => match ColumnAggregateFunction::from_suffix(suffix) {
+                Some(function) => (column, Some(Some(function))),
+                None => (inner, None),
+            },
+            None => (inner, None),
         };
         let Some(dot) = inner.find('.') else {
             self.position = close;
@@ -544,10 +558,13 @@ impl<'input> Parser<'input> {
 
         self.position = close + 1;
         self.record_node(start)?;
-        Ok(if column_total {
-            UnboundExpression::ColumnTotal(ColumnAddress::new(entity, field))
-        } else {
-            UnboundExpression::Reference(FieldAddress::new(entity, field))
+        Ok(match column {
+            Some(None) => UnboundExpression::ColumnTotal(ColumnAddress::new(entity, field)),
+            Some(Some(function)) => UnboundExpression::ColumnAggregate {
+                function,
+                column: ColumnAddress::new(entity, field),
+            },
+            None => UnboundExpression::Reference(FieldAddress::new(entity, field)),
         })
     }
 

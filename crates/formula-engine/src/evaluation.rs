@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
-    ComparisonOperator, Document, Expression, FieldRef, FieldType, Number,
+    ColumnAggregateFunction, ComparisonOperator, Document, Expression, FieldRef, FieldType, Number,
 };
 
 use crate::{CalculationFailure, column_cells};
@@ -26,7 +26,7 @@ impl Evaluation<'_> {
                 Expression::SameRowReference(field) => {
                     references.insert(FieldRef::new(self.owner.entity.clone(), field.clone()));
                 }
-                Expression::ColumnTotal(column) => {
+                Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                     references.extend(column_cells(self.document, column));
                 }
                 Expression::If {
@@ -77,6 +77,35 @@ impl Evaluation<'_> {
                     total += value.get();
                 }
                 number_result(total)
+            }
+            Expression::ColumnAggregate { function, column } => {
+                let mut count = 0.0;
+                let mut mean = 0.0;
+                let mut minimum = f64::INFINITY;
+                let mut maximum = f64::NEG_INFINITY;
+                for reference in column_cells(self.document, column) {
+                    let Some(value) = self.values.get(&reference) else {
+                        return Err(CalculationFailure::FailedDependencies {
+                            dependencies: BTreeSet::from([reference]),
+                        });
+                    };
+                    let value = value.get();
+                    count += 1.0;
+                    // A running mean cannot overflow where the sum would.
+                    mean = mean * ((count - 1.0) / count) + value / count;
+                    minimum = minimum.min(value);
+                    maximum = maximum.max(value);
+                }
+                if count < 1.0 && *function != ColumnAggregateFunction::Count {
+                    return Err(CalculationFailure::EmptyAggregate);
+                }
+                let result = match function {
+                    ColumnAggregateFunction::Average => mean,
+                    ColumnAggregateFunction::Count => count,
+                    ColumnAggregateFunction::Minimum => minimum,
+                    ColumnAggregateFunction::Maximum => maximum,
+                };
+                number_result(result)
             }
             Expression::Round { value, digits } => round(self.number(value)?, *digits),
             Expression::Add { left, right } => {

@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use tachiko_semantic_core::{
-    ColumnRef, ComparisonOperator, Date, Document, DocumentId, Entity, EntityId, EntityKey,
-    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
+    ColumnAggregateFunction, ColumnRef, ComparisonOperator, Date, Document, DocumentId, Entity,
+    EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 pub(crate) const FORMAT_VERSION: u32 = 2;
@@ -93,6 +93,7 @@ pub(crate) enum ExpressionV2 {
     Reference(FieldRefV2),
     SameRowReference(String),
     ColumnTotal(ColumnRefV2),
+    ColumnAggregate(ColumnAggregateArgsV2),
     Add(BinaryArgsV2),
     Subtract(BinaryArgsV2),
     Multiply(BinaryArgsV2),
@@ -106,6 +107,13 @@ pub(crate) enum ExpressionV2 {
     Not(Box<ExpressionV2>),
     Round(RoundArgsV2),
     IsBlank(Box<ExpressionV2>),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ColumnAggregateArgsV2 {
+    function: ColumnAggregateFunction,
+    column: ColumnRefV2,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -467,6 +475,15 @@ impl ExpressionV2 {
                 schema: column.schema.to_string(),
                 field: column.field.to_string(),
             }),
+            Expression::ColumnAggregate { function, column } => {
+                Self::ColumnAggregate(ColumnAggregateArgsV2 {
+                    function: *function,
+                    column: ColumnRefV2 {
+                        schema: column.schema.to_string(),
+                        field: column.field.to_string(),
+                    },
+                })
+            }
             Expression::Add { left, right } => Self::Add(BinaryArgsV2::from_semantic(left, right)),
             Expression::Subtract { left, right } => {
                 Self::Subtract(BinaryArgsV2::from_semantic(left, right))
@@ -550,7 +567,8 @@ impl ExpressionV2 {
                         ));
                     }
                 }
-                Self::ColumnTotal(column) => {
+                Self::ColumnTotal(column)
+                | Self::ColumnAggregate(ColumnAggregateArgsV2 { column, .. }) => {
                     let Some(schema) = schemas.get(&column.schema) else {
                         return invalid(format!(
                             "formula column schema '{}' does not exist",
@@ -622,6 +640,13 @@ impl ExpressionV2 {
                 SchemaId::from(column.schema),
                 FieldId::from(column.field),
             )),
+            Self::ColumnAggregate(args) => Expression::ColumnAggregate {
+                function: args.function,
+                column: ColumnRef::new(
+                    SchemaId::from(args.column.schema),
+                    FieldId::from(args.column.field),
+                ),
+            },
             Self::Add(args) => Expression::Add {
                 left: Box::new(args.left.into_semantic()?),
                 right: Box::new(args.right.into_semantic()?),
@@ -748,7 +773,8 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
             Expression::Number(_)
             | Expression::Reference(_)
             | Expression::SameRowReference(_)
-            | Expression::ColumnTotal(_) => {}
+            | Expression::ColumnTotal(_)
+            | Expression::ColumnAggregate { .. } => {}
         }
     }
     Ok(())
@@ -968,6 +994,7 @@ fn write_expression(
             member_prefix(output, indent + 1, "args")?;
             write_column_ref(output, column, indent + 1)?;
         }
+        ExpressionV2::ColumnAggregate(args) => write_column_aggregate(output, args, indent)?,
         ExpressionV2::Add(args) => write_binary(output, indent, "add", args)?,
         ExpressionV2::Subtract(args) => write_binary(output, indent, "subtract", args)?,
         ExpressionV2::Multiply(args) => write_binary(output, indent, "multiply", args)?,
@@ -1087,6 +1114,29 @@ fn write_field_ref(
     member_string(output, indent + 1, "field", &reference.field, false)?;
     output.push('\n');
     push_indent(output, indent);
+    output.push('}');
+    Ok(())
+}
+
+fn write_column_aggregate(
+    output: &mut String,
+    args: &ColumnAggregateArgsV2,
+    indent: usize,
+) -> Result<(), CodecError> {
+    member_string(output, indent + 1, "op", "column_aggregate", true)?;
+    member_prefix(output, indent + 1, "args")?;
+    output.push_str("{\n");
+    member_string(
+        output,
+        indent + 2,
+        "function",
+        args.function.wire_name(),
+        true,
+    )?;
+    member_prefix(output, indent + 2, "column")?;
+    write_column_ref(output, &args.column, indent + 2)?;
+    output.push('\n');
+    push_indent(output, indent + 1);
     output.push('}');
     Ok(())
 }

@@ -991,6 +991,7 @@ fn calculation_failure_output(failure: &CalculationFailure) -> serde_json::Value
             "dependencies": dependencies,
         }),
         CalculationFailure::DivisionByZero => json!({ "kind": "division_by_zero" }),
+        CalculationFailure::EmptyAggregate => json!({ "kind": "aggregate_empty" }),
         CalculationFailure::NonFiniteResult => json!({ "kind": "non_finite_result" }),
         CalculationFailure::InvalidColumn { columns } => json!({
             "kind": "invalid_column",
