@@ -8,6 +8,8 @@ pub use capacity::{
     CapacityExceeded, CapacityLimit, CapacityLimits, CapacityProjection, CapacityUsage,
     TableCapacityUsage,
 };
+#[cfg(test)]
+mod authored_input_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_tests;
 #[cfg(test)]
@@ -8338,6 +8340,79 @@ fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
     }
 }
 
+/// A Number typed or pasted by a person: Rust's own decimal spelling, also
+/// with comma thousands groups (`1,300.5`) or a trailing percent (`12%` is
+/// 0.12), as other spreadsheets accept. Stored values stay plain numbers.
+fn authored_number(input: &str) -> Option<Number> {
+    let text = input.trim();
+    let (text, scale) = match text.strip_suffix('%') {
+        Some(rest) => (rest.trim_end(), 100.0),
+        None => (text, 1.0),
+    };
+    let plain = if text.contains(',') {
+        ungrouped_decimal(text)?
+    } else {
+        text.to_owned()
+    };
+    let value = plain.parse::<f64>().ok()? / scale;
+    Number::new(value).ok()
+}
+
+/// `1,234,567.89` without its separators; `None` unless every group after the
+/// first has exactly three digits, so `1,30` or `12,3456` stay refused.
+fn ungrouped_decimal(text: &str) -> Option<String> {
+    let (sign, unsigned) = match text.strip_prefix(['-', '+']) {
+        Some(rest) => (&text[..1], rest),
+        None => ("", text),
+    };
+    let (integer, fraction) = unsigned
+        .split_once('.')
+        .map_or((unsigned, None), |(integer, fraction)| {
+            (integer, Some(fraction))
+        });
+    let mut groups = integer.split(',');
+    let first = groups.next()?;
+    if first.is_empty() || first.len() > 3 || !first.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let mut plain = format!("{sign}{first}");
+    for group in groups {
+        if group.len() != 3 || !group.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        plain.push_str(group);
+    }
+    if let Some(fraction) = fraction {
+        plain.push('.');
+        plain.push_str(fraction);
+    }
+    Some(plain)
+}
+
+/// A Date typed or pasted by a person: year first, as `2026-10-07`,
+/// `2026-10-7`, `2026/10/7`, `2026.10.7` or `2026年10月7日`. Day-first and
+/// month-first spellings stay refused because their order is ambiguous.
+fn authored_date(input: &str) -> Option<Date> {
+    let text = input.trim();
+    if let Ok(date) = Date::parse(text) {
+        return Some(date);
+    }
+    let parts: Vec<&str> = match text.strip_suffix('日') {
+        Some(rest) => rest.split(['年', '月']).collect(),
+        None => text.split(['-', '/', '.']).collect(),
+    };
+    let [year, month, day] = parts.as_slice() else {
+        return None;
+    };
+    let digits = |part: &str, widths: std::ops::RangeInclusive<usize>| {
+        widths.contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    if !digits(year, 4..=4) || !digits(month, 1..=2) || !digits(day, 1..=2) {
+        return None;
+    }
+    Date::parse(&format!("{year}-{month:0>2}-{day:0>2}")).ok()
+}
+
 fn parse_scalar(
     old: &Value,
     input: &ScalarEditInput,
@@ -8346,19 +8421,18 @@ fn parse_scalar(
     match (old, input) {
         // A scalar edit replaces a formula with the typed scalar, which is how
         // a Sheet user overwrites a calculated cell.
-        (Value::Number(_) | Value::Formula(_), ScalarEditInput::Number { input }) => input
-            .parse::<f64>()
-            .ok()
-            .and_then(|value| Number::new(value).ok())
-            .map(Value::Number)
-            .ok_or_else(|| DesignerError::InvalidNumberInput {
-                input: input.clone(),
-            }),
+        (Value::Number(_) | Value::Formula(_), ScalarEditInput::Number { input }) => {
+            authored_number(input).map(Value::Number).ok_or_else(|| {
+                DesignerError::InvalidNumberInput {
+                    input: input.clone(),
+                }
+            })
+        }
         (Value::Text(_), ScalarEditInput::Text { value }) => Ok(Value::Text(value.clone())),
         (Value::Boolean(_), ScalarEditInput::Boolean { value }) => Ok(Value::Boolean(*value)),
-        (Value::Date(_), ScalarEditInput::Date { value }) => Date::parse(value)
+        (Value::Date(_), ScalarEditInput::Date { value }) => authored_date(value)
             .map(Value::Date)
-            .map_err(|_| DesignerError::InvalidDateInput {
+            .ok_or_else(|| DesignerError::InvalidDateInput {
                 input: value.clone(),
             }),
         _ => Err(DesignerError::UnsupportedScalarEdit {
@@ -8372,19 +8446,16 @@ fn parse_column_initializer(
     input: &ScalarEditInput,
 ) -> Result<Value, DesignerError> {
     match (field_type, input) {
-        (FieldType::Number, ScalarEditInput::Number { input }) => input
-            .parse::<f64>()
-            .ok()
-            .and_then(|value| Number::new(value).ok())
+        (FieldType::Number, ScalarEditInput::Number { input }) => authored_number(input)
             .map(Value::Number)
             .ok_or_else(|| DesignerError::InvalidNumberInput {
                 input: input.clone(),
             }),
         (FieldType::Text, ScalarEditInput::Text { value }) => Ok(Value::Text(value.clone())),
         (FieldType::Boolean, ScalarEditInput::Boolean { value }) => Ok(Value::Boolean(*value)),
-        (FieldType::Date, ScalarEditInput::Date { value }) => Date::parse(value)
+        (FieldType::Date, ScalarEditInput::Date { value }) => authored_date(value)
             .map(Value::Date)
-            .map_err(|_| DesignerError::InvalidDateInput {
+            .ok_or_else(|| DesignerError::InvalidDateInput {
                 input: value.clone(),
             }),
         _ => Err(table_error("initializer type must match the column type")),
