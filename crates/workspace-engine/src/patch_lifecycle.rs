@@ -27,7 +27,7 @@ use thiserror::Error;
 use super::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
-    apply_field_value_candidate, field_value_candidate, finalize_edit, unset_field_candidate,
+    apply_field_value_candidate, finalize_edit, unset_field_candidate,
 };
 
 #[cfg(test)]
@@ -3417,21 +3417,8 @@ impl PatchLifecycle {
                         mutation_class: MutationClass::Formula,
                         scope,
                     });
-                    // A blank optional Number cell takes an authored formula
-                    // through the same narrow install as a restored one.
-                    let absent = candidate
-                        .entities
-                        .get(&field.entity)
-                        .is_some_and(|entity| !entity.fields.contains_key(&field.field));
-                    candidate = if absent {
-                        super::formula_restore_candidate(&candidate, field, command.expression())?
-                    } else {
-                        field_value_candidate(
-                            &candidate,
-                            field,
-                            &Value::Formula(command.expression().clone()),
-                        )?
-                    };
+                    candidate =
+                        super::formula_update_candidate(&candidate, field, command.expression())?;
                 }
                 SemanticCommand::FormulaInverseRestore(command) => {
                     let field = command.target();

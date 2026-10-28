@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use tachiko_workspace_engine::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
-    FieldType, Number, Schema, SchemaId, SchemaKey, SemanticValueKind, Value,
+    Document, DocumentId, Entity, EntityId, Expression, FieldAddress, FieldDefinition, FieldId,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticValueKind, Value,
     capability_discovery::{
         FieldCapabilities, FieldCapabilityApplicability, FieldCapabilityInapplicability,
         FieldCapabilityInput, FieldCapabilityKind, FieldCapabilityQueryOutcome,
@@ -19,7 +19,7 @@ use tachiko_workspace_engine::{
         SemanticPatchBody, SemanticRevision, SemanticScope, TrustedInstant,
     },
     resident_session::ResidentWorkspaceSession,
-    validate_field_value_suggestion,
+    set_formula, validate_field_value_suggestion,
 };
 
 const NOW: TrustedInstant = TrustedInstant::new(10);
@@ -388,6 +388,16 @@ fn assert_missing_formula_admission(document: &Document, target: FieldRef, autho
         NOW,
     );
     assert_eq!(proposed.is_ok(), authorable);
+    // The direct authoring API (`tachiko formula set`) agrees.
+    assert_eq!(
+        set_formula(
+            document,
+            &FieldAddress::new(target.entity.as_str(), target.field.as_str()),
+            "1"
+        )
+        .is_ok(),
+        authorable
+    );
     if authorable {
         // Formula grants alone disclose it; no SetFieldValue grant is needed.
         lifecycle
