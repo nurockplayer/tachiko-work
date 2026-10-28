@@ -3996,8 +3996,15 @@ impl PatchLifecycle {
                 {
                     return Err(PatchLifecycleError::ScopeDerivationFailed);
                 }
-                self.insert_field_disclosure(before, after, field, disclosures)?;
-                self.insert_value_disclosures(before, after, field, value, disclosures)
+                // A formula into a blank slot discloses under its own family,
+                // as it does over a present value.
+                let family = if formula_restore {
+                    OperationFamily::FormulaUpdate
+                } else {
+                    OperationFamily::SetFieldValue
+                };
+                self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
+                self.insert_value_disclosures_for(family, before, after, field, value, disclosures)
             }
             SemanticChange::FieldRemoved { field, value } => {
                 let mut families = command_families_for_field(body, field);

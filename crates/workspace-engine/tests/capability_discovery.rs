@@ -374,24 +374,33 @@ fn assert_blank_formula_capability(capabilities: &FieldCapabilities, authorable:
 fn assert_missing_formula_admission(document: &Document, target: FieldRef, authorable: bool) {
     let mut lifecycle = lifecycle();
     grant_formula_propose(&mut lifecycle);
-    assert_eq!(
+    let proposed = lifecycle.propose_formula_update(
+        &DocumentScopeId::from("game-occurrence"),
+        document,
+        &SemanticRevision::from("r1"),
+        FormulaUpdateRequest::new(
+            ProposalId::from("missing-formula"),
+            SemanticRevision::from("r1"),
+            target.clone(),
+            "1",
+            PrincipalId::from("agent"),
+        ),
+        NOW,
+    );
+    assert_eq!(proposed.is_ok(), authorable);
+    if authorable {
+        // Formula grants alone disclose it; no SetFieldValue grant is needed.
         lifecycle
-            .propose_formula_update(
+            .preview(
                 &DocumentScopeId::from("game-occurrence"),
                 document,
                 &SemanticRevision::from("r1"),
-                FormulaUpdateRequest::new(
-                    ProposalId::from("missing-formula"),
-                    SemanticRevision::from("r1"),
-                    target.clone(),
-                    "1",
-                    PrincipalId::from("agent")
-                ),
-                NOW
+                &ProposalId::from("missing-formula"),
+                &PrincipalId::from("agent"),
+                NOW,
             )
-            .is_ok(),
-        authorable
-    );
+            .unwrap();
+    }
     assert!(
         validate_field_value_suggestion(
             document,
