@@ -806,3 +806,45 @@ fn added_columns_follow_existing_columns_before_and_after_v3_reopen() {
         ["date", "item", "category", "amount", "tax", "note"]
     );
 }
+
+#[test]
+fn appended_field_ids_sort_after_any_existing_id_spelling() {
+    let runtime = DesignerRuntime::new_table(OCCURRENCE, "Plan", &columns(&["item"])).unwrap();
+    let snapshot = runtime.session.export_snapshot();
+    let template = snapshot.document().schemas.values().next().unwrap().clone();
+    let definition = template.fields.values().next().unwrap().clone();
+    let with_ids = |ids: &[&str]| {
+        let mut schema = template.clone();
+        schema.fields = ids
+            .iter()
+            .map(|id| (FieldId::from(*id), definition.clone()))
+            .collect();
+        schema
+    };
+    let max = char::MAX.to_string();
+    let prefixed = format!("{max}native_table_field_0001_ns/column");
+    let generated = "native_table_field_9999_ns".to_owned();
+    for ids in [
+        vec![],
+        vec!["native_table_field_0003_ns", "native_table_field_0004_ns"],
+        vec!["item", "total"],
+        vec!["été", "~z"],
+        vec![prefixed.as_str(), "item"],
+        vec![max.as_str()],
+        vec![generated.as_str()],
+    ] {
+        let schema = with_ids(&ids);
+        let serial = super::last_native_field_serial(&schema) + 1;
+        let id = super::appended_field_id(&schema, serial, "ns");
+        assert!(
+            schema.fields.keys().all(|existing| existing < &id),
+            "{id:?} must sort after {ids:?}"
+        );
+    }
+    // The usual case keeps the plain generated spelling.
+    let schema = with_ids(&["native_table_field_0003_ns"]);
+    assert_eq!(
+        super::appended_field_id(&schema, 4, "ns").as_str(),
+        "native_table_field_0004_ns/column"
+    );
+}
