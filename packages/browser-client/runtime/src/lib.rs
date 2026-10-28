@@ -3848,8 +3848,12 @@ impl DesignerRuntime {
                 "initializers must name each current row exactly once",
             ));
         }
+        // Columns project in field-id order and the proposal serial restarts
+        // with every opened occurrence, so the new id must also follow every
+        // generated column id already in the schema to land at the end.
         let serial = self
             .proposal_serial
+            .max(last_native_field_serial(schema))
             .checked_add(1)
             .ok_or_else(|| table_error("column identity allocation is exhausted"))?;
         let id = FieldId::from(format!(
@@ -8310,6 +8314,20 @@ fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
             "{kind} must use letters, numbers, '-' or '_'"
         )))
     }
+}
+
+/// Highest serial among the schema's generated `native_table_field_NNNN_…`
+/// ids; other id spellings do not take part.
+fn last_native_field_serial(schema: &Schema) -> u64 {
+    schema
+        .fields
+        .keys()
+        .filter_map(|id| {
+            let digits = id.as_str().strip_prefix("native_table_field_")?;
+            digits.split('_').next()?.parse::<u64>().ok()
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {

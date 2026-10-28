@@ -763,3 +763,46 @@ fn empty_table_name_publication_wire_invalidates_presentation() {
         &Vec::<serde_json::Value>::new()
     );
 }
+
+#[test]
+fn added_columns_follow_existing_columns_before_and_after_v3_reopen() {
+    fn keys(runtime: &DesignerRuntime) -> Vec<String> {
+        let table = runtime.query_table("plan").unwrap();
+        table.columns.into_iter().map(|column| column.key).collect()
+    }
+    let mut runtime = DesignerRuntime::new_table(
+        OCCURRENCE,
+        "Plan",
+        &columns(&["date", "item", "category", "amount"]),
+    )
+    .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .add_column(&revision, "plan", "tax", "text", &[])
+        .unwrap();
+    assert_eq!(
+        keys(&runtime),
+        ["date", "item", "category", "amount", "tax"]
+    );
+
+    // A reopened occurrence restarts its proposal serial under a new namespace.
+    let export = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    let mut reopened = None;
+    open_project(
+        &mut reopened,
+        &export.bytes,
+        "00000000-0000-4000-8000-000000000530",
+    )
+    .unwrap();
+    let mut reopened = reopened.unwrap();
+    let revision = reopened.current_revision().to_owned();
+    reopened
+        .add_column(&revision, "plan", "note", "text", &[])
+        .unwrap();
+    assert_eq!(
+        keys(&reopened),
+        ["date", "item", "category", "amount", "tax", "note"]
+    );
+}
