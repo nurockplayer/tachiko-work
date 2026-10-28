@@ -3852,14 +3852,20 @@ impl DesignerRuntime {
                 "initializers must name each current row exactly once",
             ));
         }
+        // Columns project in field-id order and the proposal serial restarts
+        // with every opened occurrence; start above every generated serial so
+        // the usual id stays readable, and let `appended_field_id` guarantee
+        // the order.
         let serial = self
             .proposal_serial
+            .max(last_native_field_serial(schema))
             .checked_add(1)
             .ok_or_else(|| table_error("column identity allocation is exhausted"))?;
-        let id = FieldId::from(format!(
-            "native_table_field_{serial:04}_{}/column",
-            self.row_namespace
-        ));
+        // The column shares its edit's proposal serial, which `record_edit`
+        // takes next; keeping the counter there means a removed column's
+        // serial is never handed out again (snapshot diffs key columns by id).
+        self.proposal_serial = serial - 1;
+        let id = appended_field_id(schema, serial, &self.row_namespace);
         let field = FieldDefinition {
             id: id.clone(),
             key: FieldKey::from(key),
@@ -8326,6 +8332,44 @@ fn native_table_key(label: &str, kind: &str) -> Result<String, DesignerError> {
             "{kind} must use letters, numbers, '-' or '_'"
         )))
     }
+}
+
+/// Highest serial among the schema's generated `native_table_field_NNNN_…`
+/// ids, including ones `appended_field_id` prefixed; other spellings do not
+/// take part.
+fn last_native_field_serial(schema: &Schema) -> u64 {
+    schema
+        .fields
+        .keys()
+        .filter_map(|id| {
+            let digits = id
+                .as_str()
+                .trim_start_matches(char::MAX)
+                .strip_prefix("native_table_field_")?;
+            digits.split('_').next()?.parse::<u64>().ok()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// A new column id that sorts after every field id in the schema, so the
+/// column projects last whatever spelling the existing ids use (any non-empty
+/// string is a valid stable id). The generated spelling is used as is when it
+/// already sorts last; otherwise it is prefixed with `char::MAX`, which no
+/// other character exceeds.
+fn appended_field_id(schema: &Schema, serial: u64, namespace: &str) -> FieldId {
+    let generated = format!("native_table_field_{serial:04}_{namespace}/column");
+    let Some(last) = schema.fields.keys().next_back() else {
+        return FieldId::from(generated);
+    };
+    let last = last.as_str();
+    let lead: String = last.chars().take_while(|c| *c == char::MAX).collect();
+    let candidate = format!("{lead}{generated}");
+    if candidate.as_str() > last {
+        return FieldId::from(candidate);
+    }
+    // `last` has exactly `lead` leading `char::MAX`, so one more sorts after it.
+    FieldId::from(format!("{lead}{}{generated}", char::MAX))
 }
 
 fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
