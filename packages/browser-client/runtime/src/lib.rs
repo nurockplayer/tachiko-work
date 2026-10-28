@@ -17,6 +17,8 @@ mod constraints_tests;
 #[cfg(test)]
 mod display_names_tests;
 #[cfg(test)]
+mod formula_blank_tests;
+#[cfg(test)]
 mod number_format_tests;
 
 mod name_admission;
@@ -4218,8 +4220,13 @@ impl DesignerRuntime {
             .document()
             .entities
             .get(&field.entity)
-            .and_then(|entity| entity.fields.get(&field.field))
-            .ok_or_else(|| tracker_error("formula target is unavailable"))?;
+            .ok_or_else(|| tracker_error("formula target is unavailable"))?
+            .fields
+            .get(&field.field);
+        // A formula written into a blank cell undoes back to the blank cell.
+        let Some(previous) = previous else {
+            return Ok(HistoryAction::Commands(vec![value_command(&field, None)]));
+        };
         match previous {
             Value::Number(value) => Ok(HistoryAction::FormulaInverseRestore {
                 target: target.clone(),
@@ -4473,7 +4480,7 @@ impl DesignerRuntime {
             }
             let (row, column) = copy_position(spec, &target)?;
             require_copy_target_number(document, &target)?;
-            let old = &document.entities[&target.entity].fields[&target.field];
+            let old = document.entities[&target.entity].fields.get(&target.field);
             let mut copied = expression.clone();
             map_copy_references(&mut copied, &mut |reference, numeric| {
                 if fixed.contains(reference) || !spec.entities.contains(&reference.entity) {
@@ -4500,6 +4507,13 @@ impl DesignerRuntime {
             // copied formula must prove that row can supply the field now
             // rather than on the first evaluation.
             require_copy_expression_numbers(document, &target, &copied)?;
+            let Some(old) = old else {
+                // A blank target takes the formula through the restore install
+                // and undoes back to the blank cell.
+                forward.push(SemanticCommand::formula_restore(target.clone(), copied));
+                inverse.push(value_command(&target, None));
+                continue;
+            };
             let value = Value::Formula(copied);
             if &value != old {
                 forward.push(SemanticCommand::set_field_value(target.clone(), value));
@@ -6877,7 +6891,7 @@ fn require_copy_target_number(document: &Document, field: &FieldRef) -> Result<(
     require_copy_reference(document, field, true)?;
     if matches!(
         document.entities[&field.entity].fields.get(&field.field),
-        Some(Value::Number(_) | Value::Formula(_))
+        None | Some(Value::Number(_) | Value::Formula(_))
     ) {
         Ok(())
     } else {

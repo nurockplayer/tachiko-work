@@ -1371,9 +1371,26 @@ pub fn set_formula(
 ) -> Result<EditPreview, WorkspaceError> {
     let field = document.resolve_field(address)?;
     let expression = bind_formula_update(document, &field, input)?;
-    let value = Value::Formula(expression);
-    let edited = field_value_candidate(document, &field, &value)?;
+    let edited = formula_update_candidate(document, &field, &expression)?;
     finalize_edit(document, edited)
+}
+
+/// Install an authored formula: over the current value, or into a blank
+/// optional Number cell through the same narrow install as a restored one.
+pub(crate) fn formula_update_candidate(
+    document: &Document,
+    field: &FieldRef,
+    expression: &Expression,
+) -> Result<Document, WorkspaceError> {
+    let absent = document
+        .entities
+        .get(&field.entity)
+        .is_some_and(|entity| !entity.fields.contains_key(&field.field));
+    if absent {
+        formula_restore_candidate(document, field, expression)
+    } else {
+        field_value_candidate(document, field, &Value::Formula(expression.clone()))
+    }
 }
 
 /// Admit formula authoring into one complete typed bound expression without
@@ -1936,9 +1953,11 @@ pub(crate) fn formula_update_target_rule(
     field: &FieldRef,
 ) -> Result<(), WorkspaceError> {
     let definition = field_definition(document, field)?;
-    if !document.entities[&field.entity]
-        .fields
-        .contains_key(&field.field)
+    // A blank optional cell is a valid target; a required one cannot be blank.
+    if definition.required
+        && !document.entities[&field.entity]
+            .fields
+            .contains_key(&field.field)
     {
         return Err(WorkspaceError::MissingField {
             field: field.clone(),

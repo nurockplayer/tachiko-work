@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use tachiko_workspace_engine::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
-    FieldType, Number, Schema, SchemaId, SchemaKey, SemanticValueKind, Value,
+    Document, DocumentId, Entity, EntityId, Expression, FieldAddress, FieldDefinition, FieldId,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticValueKind, Value,
     capability_discovery::{
         FieldCapabilities, FieldCapabilityApplicability, FieldCapabilityInapplicability,
         FieldCapabilityInput, FieldCapabilityKind, FieldCapabilityQueryOutcome,
@@ -19,7 +19,7 @@ use tachiko_workspace_engine::{
         SemanticPatchBody, SemanticRevision, SemanticScope, TrustedInstant,
     },
     resident_session::ResidentWorkspaceSession,
-    validate_field_value_suggestion,
+    set_formula, validate_field_value_suggestion,
 };
 
 const NOW: TrustedInstant = TrustedInstant::new(10);
@@ -350,26 +350,67 @@ fn value_for_kind(kind: SemanticValueKind) -> Value {
     }
 }
 
-fn assert_missing_formula_rejected(document: &Document, target: FieldRef) {
+/// A blank optional Number slot can take a formula; other blank types cannot.
+fn assert_blank_formula_capability(capabilities: &FieldCapabilities, authorable: bool) {
+    assert_eq!(
+        capability(
+            capabilities,
+            OperationFamily::FormulaUpdate,
+            FieldCapabilityInput::Formula
+        )
+        .applicability,
+        if authorable {
+            FieldCapabilityApplicability::Applicable
+        } else {
+            FieldCapabilityApplicability::Inapplicable {
+                reason: FieldCapabilityInapplicability::NonNumericFormulaField,
+            }
+        }
+    );
+}
+
+/// Formula authoring may fill a blank optional Number slot; the generic value
+/// path still refuses to initialize any absent slot as a formula.
+fn assert_missing_formula_admission(document: &Document, target: FieldRef, authorable: bool) {
     let mut lifecycle = lifecycle();
     grant_formula_propose(&mut lifecycle);
-    assert!(
+    let proposed = lifecycle.propose_formula_update(
+        &DocumentScopeId::from("game-occurrence"),
+        document,
+        &SemanticRevision::from("r1"),
+        FormulaUpdateRequest::new(
+            ProposalId::from("missing-formula"),
+            SemanticRevision::from("r1"),
+            target.clone(),
+            "1",
+            PrincipalId::from("agent"),
+        ),
+        NOW,
+    );
+    assert_eq!(proposed.is_ok(), authorable);
+    // The direct authoring API (`tachiko formula set`) agrees.
+    assert_eq!(
+        set_formula(
+            document,
+            &FieldAddress::new(target.entity.as_str(), target.field.as_str()),
+            "1"
+        )
+        .is_ok(),
+        authorable
+    );
+    if authorable {
+        // Formula grants alone disclose it; no SetFieldValue grant is needed.
         lifecycle
-            .propose_formula_update(
+            .preview(
                 &DocumentScopeId::from("game-occurrence"),
                 document,
                 &SemanticRevision::from("r1"),
-                FormulaUpdateRequest::new(
-                    ProposalId::from("missing-formula"),
-                    SemanticRevision::from("r1"),
-                    target.clone(),
-                    "1",
-                    PrincipalId::from("agent")
-                ),
-                NOW
+                &ProposalId::from("missing-formula"),
+                &PrincipalId::from("agent"),
+                NOW,
             )
-            .is_err()
-    );
+            .unwrap();
+    }
     assert!(
         validate_field_value_suggestion(
             document,
@@ -446,11 +487,9 @@ fn absent_optional_discovery_matches_all_typed_initializers_and_preserves_absenc
             );
             assert_eq!(result.is_ok(), input_kind == kind, "{result:?}");
         }
+        let authorable = field_type == FieldType::Number;
+        assert_blank_formula_capability(&capabilities, authorable);
         for (family, input) in [
-            (
-                OperationFamily::FormulaUpdate,
-                FieldCapabilityInput::Formula,
-            ),
             (
                 OperationFamily::FormulaReasoning,
                 FieldCapabilityInput::None,
@@ -467,7 +506,7 @@ fn absent_optional_discovery_matches_all_typed_initializers_and_preserves_absenc
                 }
             );
         }
-        assert_missing_formula_rejected(&document, target);
+        assert_missing_formula_admission(&document, target, authorable);
         assert!(!document.entities["row"].fields.contains_key("optional"));
     }
     let capabilities = capabilities_for(&document(), &field_ref("amount"));
