@@ -729,3 +729,46 @@ fn average_keeps_the_remainder_of_near_cancelling_values() {
         Some(Number::new(1.0 / 3.0).unwrap())
     );
 }
+
+#[test]
+fn average_handles_cancelling_and_extreme_columns() {
+    for (values, expected) in [
+        (vec![100.0, 100.0, -200.0], 0.0),
+        (vec![1e16, 1e16, -1e16], 1e16 / 3.0),
+        (vec![f64::MAX, f64::MAX, f64::MAX], f64::MAX),
+        (
+            vec![
+                f64::MIN_POSITIVE / 4.0,
+                f64::MIN_POSITIVE / 4.0,
+                f64::MIN_POSITIVE / 4.0,
+            ],
+            f64::MIN_POSITIVE / 4.0,
+        ),
+    ] {
+        let mut doc = document();
+        doc.entities
+            .insert("fees".into(), plan_row("fees", "Fees", number(values[2])));
+        for (row, value) in [("rent", values[0]), ("ads", values[1])] {
+            doc.entities
+                .get_mut(row)
+                .unwrap()
+                .fields
+                .insert("reserve".into(), number(value));
+        }
+        doc.entities.get_mut("summary").unwrap().fields.insert(
+            "total".into(),
+            Value::Formula(Expression::ColumnAggregate {
+                function: tachiko_semantic_core::ColumnAggregateFunction::Average,
+                column: column("plan", "reserve"),
+            }),
+        );
+        let CalculationOutcome::Complete(result) = calculate_complete(&doc) else {
+            panic!("average of {values:?} should calculate")
+        };
+        assert_eq!(
+            result.value(&owner("summary", "total")),
+            Some(Number::new(expected).unwrap()),
+            "{values:?}"
+        );
+    }
+}

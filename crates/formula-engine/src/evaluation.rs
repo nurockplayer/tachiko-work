@@ -275,14 +275,16 @@ fn round_decimal(value: f64, digits: usize) -> f64 {
 }
 
 /// The compensated sum over the count, so near-cancelling values keep their
-/// small remainder; a sum beyond f64 falls back to summing scaled values.
+/// small remainder. A sum beyond f64 is taken again at 2^-64 scale: powers of
+/// two scale exactly, and the count stays below 2^64, so it cannot overflow.
 fn average(values: &[f64]) -> f64 {
     let count = value_count(values.len());
     let sum = compensated_sum(values.iter().copied());
     if sum.is_finite() {
         sum / count
     } else {
-        compensated_sum(values.iter().map(|value| value / count))
+        let scale = 2f64.powi(64);
+        compensated_sum(values.iter().map(|value| value / scale)) / count * scale
     }
 }
 
