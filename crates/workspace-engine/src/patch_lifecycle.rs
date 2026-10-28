@@ -383,8 +383,9 @@ pub enum SemanticCommand {
     /// Reinstall one host-cleared formula over an absent optional Number slot.
     ///
     /// Formula initialization stays rejected on the generic value path; this
-    /// app-private command exists only so one bounded session Undo can restore
-    /// the formula that a clear removed. It is host-history only and shares the
+    /// app-private command exists so one bounded session Undo can restore the
+    /// formula that a clear removed, and so the host can copy an admitted
+    /// formula into a blank cell. It is host-only and shares the
     /// `FormulaInverseRestore` trust boundary: no wire decoder produces it, so
     /// it never widens the generic value path.
     FormulaRestore(FormulaRestoreCommand),
@@ -490,17 +491,18 @@ impl FormulaInverseRestoreCommand {
     }
 }
 
-/// One app-private reinstallation of a formula the host cleared.
+/// One app-private installation of an admitted formula into a blank cell: a
+/// formula the host cleared, or a host copy of a document formula.
 ///
 /// The expression can only come from an already-admitted document formula, so
 /// this command never parses or binds authoring text; it stays separate from
 /// generic `SetFieldValue` so an absent slot cannot become a formula through
 /// the ordinary value path.
 ///
-/// Host-history only, with the same trust boundary as
+/// Host-only, with the same trust boundary as
 /// [`FormulaInverseRestoreCommand`]: the host constructs it from history it
-/// recorded, no wire decoder produces it, and it is never reachable from
-/// authoring input.
+/// recorded or from a formula already in the document, no wire decoder
+/// produces it, and it is never reachable from authoring input.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FormulaRestoreCommand {
     target: FieldRef,
@@ -3415,11 +3417,21 @@ impl PatchLifecycle {
                         mutation_class: MutationClass::Formula,
                         scope,
                     });
-                    candidate = field_value_candidate(
-                        &candidate,
-                        field,
-                        &Value::Formula(command.expression().clone()),
-                    )?;
+                    // A blank optional Number cell takes an authored formula
+                    // through the same narrow install as a restored one.
+                    let absent = candidate
+                        .entities
+                        .get(&field.entity)
+                        .is_some_and(|entity| !entity.fields.contains_key(&field.field));
+                    candidate = if absent {
+                        super::formula_restore_candidate(&candidate, field, command.expression())?
+                    } else {
+                        field_value_candidate(
+                            &candidate,
+                            field,
+                            &Value::Formula(command.expression().clone()),
+                        )?
+                    };
                 }
                 SemanticCommand::FormulaInverseRestore(command) => {
                     let field = command.target();
@@ -3961,17 +3973,20 @@ impl PatchLifecycle {
                 // A value-slot initialization is not a schema/identity mutation.
                 // Admit only the existing optional declaration and its exact
                 // SetFieldValue command; arbitrary added fields remain closed.
-                // The one formula exception is the app-private restore of a
-                // formula the host cleared, which can only target an optional
-                // Number slot through its own command.
+                // The formula exceptions are an authored formula update and
+                // the app-private restore of a formula the host cleared; both
+                // can only target an optional Number slot through their own
+                // commands.
                 let definition = crate::field_definition(before, field)
                     .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
                 let existing = before.entities[&field.entity].fields.get(&field.field);
                 let formula_restore = definition.field_type == FieldType::Number
                     && !definition.required
                     && matches!(value, Value::Formula(_))
-                    && body.commands().iter().any(|command| {
-                        matches!(command, SemanticCommand::FormulaRestore(restore) if restore.target() == field)
+                    && body.commands().iter().any(|command| match command {
+                        SemanticCommand::FormulaRestore(restore) => restore.target() == field,
+                        SemanticCommand::FormulaUpdate(update) => update.target() == field,
+                        _ => false,
                     });
                 if existing.is_some()
                     || definition.required

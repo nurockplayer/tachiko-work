@@ -1936,9 +1936,11 @@ pub(crate) fn formula_update_target_rule(
     field: &FieldRef,
 ) -> Result<(), WorkspaceError> {
     let definition = field_definition(document, field)?;
-    if !document.entities[&field.entity]
-        .fields
-        .contains_key(&field.field)
+    // A blank optional cell is a valid target; a required one cannot be blank.
+    if definition.required
+        && !document.entities[&field.entity]
+            .fields
+            .contains_key(&field.field)
     {
         return Err(WorkspaceError::MissingField {
             field: field.clone(),
