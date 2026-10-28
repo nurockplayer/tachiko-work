@@ -700,3 +700,32 @@ fn average_of_large_finite_values_does_not_overflow() {
         Some(Number::new(1e308).unwrap())
     );
 }
+
+#[test]
+fn average_keeps_the_remainder_of_near_cancelling_values() {
+    let mut doc = document();
+    doc.entities
+        .insert("fees".into(), plan_row("fees", "Fees", number(-1e16)));
+    for (row, value) in [("rent", 1e16), ("ads", 1.0)] {
+        doc.entities
+            .get_mut(row)
+            .unwrap()
+            .fields
+            .insert("reserve".into(), number(value));
+    }
+    doc.entities.get_mut("summary").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(Expression::ColumnAggregate {
+            function: tachiko_semantic_core::ColumnAggregateFunction::Average,
+            column: column("plan", "reserve"),
+        }),
+    );
+    let CalculationOutcome::Complete(result) = calculate_complete(&doc) else {
+        panic!("average should calculate")
+    };
+    // (1e16 + 1 - 1e16) / 3; a running mean returned -0.5 here.
+    assert_eq!(
+        result.value(&owner("summary", "total")),
+        Some(Number::new(1.0 / 3.0).unwrap())
+    );
+}

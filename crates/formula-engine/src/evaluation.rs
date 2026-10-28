@@ -79,33 +79,29 @@ impl Evaluation<'_> {
                 number_result(total)
             }
             Expression::ColumnAggregate { function, column } => {
-                let mut count = 0.0;
-                let mut mean = 0.0;
-                let mut minimum = f64::INFINITY;
-                let mut maximum = f64::NEG_INFINITY;
+                let mut values = Vec::new();
                 for reference in column_cells(self.document, column) {
                     let Some(value) = self.values.get(&reference) else {
                         return Err(CalculationFailure::FailedDependencies {
                             dependencies: BTreeSet::from([reference]),
                         });
                     };
-                    let value = value.get();
-                    count += 1.0;
-                    // A running mean cannot overflow where the sum would.
-                    mean = mean * ((count - 1.0) / count) + value / count;
-                    minimum = minimum.min(value);
-                    maximum = maximum.max(value);
+                    values.push(value.get());
                 }
-                if count < 1.0 && *function != ColumnAggregateFunction::Count {
+                let count = value_count(values.len());
+                if values.is_empty() && *function != ColumnAggregateFunction::Count {
                     return Err(CalculationFailure::EmptyAggregate);
                 }
-                let result = match function {
-                    ColumnAggregateFunction::Average => mean,
+                number_result(match function {
+                    ColumnAggregateFunction::Average => average(&values),
                     ColumnAggregateFunction::Count => count,
-                    ColumnAggregateFunction::Minimum => minimum,
-                    ColumnAggregateFunction::Maximum => maximum,
-                };
-                number_result(result)
+                    ColumnAggregateFunction::Minimum => {
+                        values.iter().copied().fold(f64::INFINITY, f64::min)
+                    }
+                    ColumnAggregateFunction::Maximum => {
+                        values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                    }
+                })
             }
             Expression::Round { value, digits } => round(self.number(value)?, *digits),
             Expression::Add { left, right } => {
@@ -276,6 +272,38 @@ fn round_decimal(value: f64, digits: usize) -> f64 {
     } else {
         magnitude.copysign(value)
     }
+}
+
+/// The compensated sum over the count, so near-cancelling values keep their
+/// small remainder; a sum beyond f64 falls back to summing scaled values.
+fn average(values: &[f64]) -> f64 {
+    let count = value_count(values.len());
+    let sum = compensated_sum(values.iter().copied());
+    if sum.is_finite() {
+        sum / count
+    } else {
+        compensated_sum(values.iter().map(|value| value / count))
+    }
+}
+
+// Columns hold far fewer than 2^32 rows, so the count converts exactly.
+fn value_count(len: usize) -> f64 {
+    f64::from(u32::try_from(len).unwrap_or(u32::MAX))
+}
+
+// Neumaier's compensated summation.
+fn compensated_sum(values: impl Iterator<Item = f64>) -> f64 {
+    let (mut sum, mut compensation) = (0.0_f64, 0.0_f64);
+    for value in values {
+        let next = sum + value;
+        compensation += if sum.abs() >= value.abs() {
+            (sum - next) + value
+        } else {
+            (value - next) + sum
+        };
+        sum = next;
+    }
+    sum + compensation
 }
 
 fn number_result(value: f64) -> Result<Number, CalculationFailure> {
