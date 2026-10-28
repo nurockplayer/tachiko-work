@@ -3857,6 +3857,10 @@ impl DesignerRuntime {
             .max(last_native_field_serial(schema))
             .checked_add(1)
             .ok_or_else(|| table_error("column identity allocation is exhausted"))?;
+        // The column shares its edit's proposal serial, which `record_edit`
+        // takes next; keeping the counter there means a removed column's
+        // serial is never handed out again (snapshot diffs key columns by id).
+        self.proposal_serial = serial - 1;
         let id = appended_field_id(schema, serial, &self.row_namespace);
         let field = FieldDefinition {
             id: id.clone(),

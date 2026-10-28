@@ -808,6 +808,33 @@ fn added_columns_follow_existing_columns_before_and_after_v3_reopen() {
 }
 
 #[test]
+fn a_removed_column_id_is_not_reused_by_the_next_added_column() {
+    fn ids(runtime: &DesignerRuntime) -> Vec<String> {
+        let table = runtime.query_table("plan").unwrap();
+        table.columns.into_iter().map(|column| column.id).collect()
+    }
+    let mut runtime = DesignerRuntime::new_table(
+        OCCURRENCE,
+        "Plan",
+        &columns(&["date", "item", "category", "amount"]),
+    )
+    .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .add_column(&revision, "plan", "tax", "text", &[])
+        .unwrap();
+    let tax = ids(&runtime).pop().unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime.remove_column(&revision, "plan", &tax).unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .add_column(&revision, "plan", "note", "text", &[])
+        .unwrap();
+    let note = ids(&runtime).pop().unwrap();
+    assert_ne!(note, tax);
+}
+
+#[test]
 fn appended_field_ids_sort_after_any_existing_id_spelling() {
     let runtime = DesignerRuntime::new_table(OCCURRENCE, "Plan", &columns(&["item"])).unwrap();
     let snapshot = runtime.session.export_snapshot();
