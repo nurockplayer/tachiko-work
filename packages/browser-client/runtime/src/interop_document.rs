@@ -1393,6 +1393,13 @@ pub(crate) enum ImportedOutput<'a> {
     Xlsx,
 }
 
+/// A durable column order (R4a) outranks the source presentation order.
+fn sort_by_field_order(schema: &Schema, columns: &mut [InteropColumnMetadata]) {
+    if let Some(order) = &schema.field_order {
+        columns.sort_by_key(|column| order.iter().position(|id| id.as_str() == column.field_id));
+    }
+}
+
 /// Reconcile source presentation with current stable identities. Source slots
 /// remain useful for Undo; they never recreate removed fields or entities.
 fn current_import_metadata(
@@ -1476,6 +1483,7 @@ fn current_import_metadata(
                 width: None,
             });
         }
+        sort_by_field_order(schema, &mut sheet.columns);
         if sheet.columns != source_columns
             || sheet
                 .rows
@@ -2662,6 +2670,24 @@ fn native_budget_metadata(
     Ok(InteropMetadata { version: 1, sheets })
 }
 
+/// The stock Tracker columns in their durable order (R4a), each with its stock
+/// index: row styles arrive in task, estimate, done order and move with them.
+fn tracker_column_order(schema: &Schema) -> Vec<(&str, usize)> {
+    const STOCK: [&str; 3] = ["task", "estimate", "done"];
+    let ids = schema.field_order.as_ref().map_or_else(
+        || STOCK.to_vec(),
+        |order| order.iter().map(FieldId::as_str).collect(),
+    );
+    ids.into_iter()
+        .filter_map(|id| {
+            STOCK
+                .iter()
+                .position(|stock| *stock == id)
+                .map(|index| (id, index))
+        })
+        .collect()
+}
+
 fn native_tracker_metadata(
     document: &Document,
     presentation: &NativeTrackerExportPresentation,
@@ -2731,13 +2757,14 @@ fn native_tracker_metadata(
             "native Tracker export must map every accepted row exactly once",
         ));
     }
+    let order = tracker_column_order(schema);
     Ok(InteropMetadata {
         version: 1,
         sheets: vec![InteropSheetMetadata {
             schema_id: "tracker".to_owned(),
             name: "Tracker".to_owned(),
             has_header: true,
-            columns: fields
+            columns: order
                 .iter()
                 .map(|(id, _)| InteropColumnMetadata {
                     field_id: (*id).to_owned(),
@@ -2750,7 +2777,10 @@ fn native_tracker_metadata(
                 .iter()
                 .map(|row| InteropRowMetadata {
                     entity_id: row.entity_id.clone(),
-                    styles: row.styles.clone(),
+                    styles: order
+                        .iter()
+                        .map(|(_, stock)| row.styles[*stock].clone())
+                        .collect(),
                 })
                 .collect(),
         }],

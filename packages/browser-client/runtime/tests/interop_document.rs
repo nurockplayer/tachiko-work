@@ -1511,3 +1511,59 @@ fn ignoring_formula_caches_does_not_admit_invalid_or_unsupported_calculations() 
         }
     }
 }
+
+#[test]
+fn imported_export_follows_a_moved_column() {
+    let source = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Items".into(),
+            has_header: true,
+            columns: ["Note", "Amount"]
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .to_vec(),
+            rows: vec![vec![
+                source_cell(
+                    SourceValue::Text {
+                        value: "pen".into(),
+                    },
+                    None,
+                ),
+                source_cell(SourceValue::Number { value: 3.0 }, None),
+            ]],
+        }],
+        ledger: Vec::new(),
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Text, ImportFieldType::Number]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let DesignerResponse::Published(published) = runtime
+        .handle(DesignerRequest::MoveColumn {
+            expected_revision: imported.opened.bootstrap.revision.clone(),
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            field: imported.metadata.sheets[0].columns[1].field_id.clone(),
+            to_index: 0,
+        })
+        .unwrap()
+    else {
+        panic!("moving a column publishes");
+    };
+    let exported = runtime
+        .export_workbook(&published.resulting_revision, &imported.metadata)
+        .unwrap();
+    let headers = exported.sheets[0]
+        .columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(headers, ["Amount", "Note"]);
+    assert!(matches!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { .. }
+    ));
+}
