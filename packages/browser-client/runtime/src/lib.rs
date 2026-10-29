@@ -5441,14 +5441,25 @@ impl DesignerRuntime {
         expected: &str,
         collection: &str,
     ) -> Result<PublicationProjection, DesignerError> {
-        self.tracker_spec(collection)?;
-        self.paste_cells(
-            expected,
-            collection,
-            None,
-            "task",
-            &[vec![String::new(), "0".to_owned(), "false".to_owned()]],
-        )
+        // Defaults follow the projected column order, which a move can change.
+        let columns = self
+            .tracker_spec(collection)?
+            .columns
+            .iter()
+            .map(|column| column.id.to_string())
+            .collect::<Vec<_>>();
+        let defaults = columns
+            .iter()
+            .map(|id| match id.as_str() {
+                "estimate" => "0".to_owned(),
+                "done" => "false".to_owned(),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>();
+        let start = columns
+            .first()
+            .ok_or_else(|| tracker_error("the Tracker has no columns"))?;
+        self.paste_cells(expected, collection, None, start, &[defaults])
     }
 
     fn remove_rows(

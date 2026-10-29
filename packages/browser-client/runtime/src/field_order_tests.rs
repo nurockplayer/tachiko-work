@@ -178,6 +178,21 @@ fn tracker_moves_use_the_projected_positions() {
         column_ids(&runtime, "tracker"),
         ["done", "task", "estimate"]
     );
+    // Id order is a real arrangement here, not the tracker default.
+    move_column(&mut runtime, "tracker", "task", 2).unwrap();
+    assert_eq!(
+        column_ids(&runtime, "tracker"),
+        ["done", "estimate", "task"]
+    );
+    // Appending a row still gives each column its own default.
+    let rows = runtime.query_table("tracker").unwrap().rows.len();
+    runtime
+        .handle(DesignerRequest::AppendRow {
+            expected_revision: runtime.current_revision().into(),
+            collection: "tracker".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.query_table("tracker").unwrap().rows.len(), rows + 1);
 }
 
 #[test]
