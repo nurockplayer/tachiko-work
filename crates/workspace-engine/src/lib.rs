@@ -305,6 +305,9 @@ pub struct SchemaInspection {
     pub id: SchemaId,
     pub key: SchemaKey,
     pub display_name: Option<String>,
+    /// Fields are listed in column order; this keeps an explicit order
+    /// distinguishable from the default one, even when it equals id order.
+    pub field_order: Option<Vec<FieldId>>,
     pub fields: Vec<FieldDefinition>,
 }
 
@@ -340,7 +343,7 @@ impl Serialize for SchemaInspection {
                 "the frozen schema inspection transport cannot represent display names",
             ));
         }
-        if !self.fields.windows(2).all(|pair| pair[0].id < pair[1].id) {
+        if self.field_order.is_some() {
             return Err(S::Error::custom(
                 "the frozen schema inspection transport cannot represent a field order",
             ));
@@ -760,6 +763,7 @@ pub fn inspect_document(
             id: schema.id.clone(),
             key: schema.key.clone(),
             display_name: schema.display_name.clone(),
+            field_order: schema.field_order.clone(),
             fields: schema.ordered_fields().cloned().collect(),
         })
         .collect();

@@ -151,6 +151,7 @@ fn formula_document(input: Number, expression: Expression) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("numbers"),
                 display_name: None,
@@ -219,6 +220,7 @@ fn date_document(value: Date) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("dates"),
                 display_name: None,
@@ -654,6 +656,7 @@ fn complete_oracle_record() -> Record {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("oracle-schema"),
                 display_name: None,
@@ -1094,6 +1097,7 @@ fn oracle_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
+                field_order: None,
                 id: "schema".into(),
                 key: "schema".into(),
                 display_name: None,
@@ -1365,6 +1369,7 @@ fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
+                field_order: None,
                 id: "schema".into(),
                 key: "schema".into(),
                 display_name: None,
@@ -1592,6 +1597,7 @@ fn analysis_document() -> Document {
         schemas: BTreeMap::from([(
             schema.clone(),
             Schema {
+                field_order: None,
                 id: schema,
                 key: SchemaKey::from("analysis-weapons"),
                 display_name: None,
@@ -2834,6 +2840,7 @@ fn constraint_text_literal_record() -> Record {
     document.schemas.insert(
         "schema".into(),
         Schema {
+            field_order: None,
             id: "schema".into(),
             key: "items".into(),
             display_name: None,
