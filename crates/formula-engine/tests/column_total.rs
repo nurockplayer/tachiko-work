@@ -740,6 +740,15 @@ fn average_handles_cancelling_and_extreme_columns() {
             vec![f64::MAX, f64::MAX, -f64::MAX, -f64::MAX, 1e-305],
             1e-305 / 5.0,
         ),
+        {
+            // The large part itself cancels to one ulp of its smallest member.
+            let exact = f64::MIN_POSITIVE * 2f64.powi(64);
+            let above = f64::from_bits(exact.to_bits() + 1);
+            (
+                vec![f64::MAX, f64::MAX, -f64::MAX, -f64::MAX, above, -exact],
+                (above - exact) / 6.0,
+            )
+        },
         (
             vec![
                 f64::MIN_POSITIVE / 4.0,

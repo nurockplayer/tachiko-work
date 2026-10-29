@@ -293,7 +293,14 @@ fn average(values: &[f64]) -> f64 {
             .map(|value| value / scale),
     );
     let small = compensated_sum(values.iter().copied().filter(|value| value.abs() < exact));
-    large / count * scale + small / count
+    // Unscale before dividing whenever that cannot overflow, so a large part
+    // that cancels to a tiny remainder does not underflow in the division.
+    let large = if large.abs() < f64::MAX / scale {
+        large * scale / count
+    } else {
+        large / count * scale
+    };
+    large + small / count
 }
 
 // Columns hold far fewer than 2^32 rows, so the count converts exactly.
