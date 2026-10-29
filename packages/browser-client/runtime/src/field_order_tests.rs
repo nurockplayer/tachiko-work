@@ -34,7 +34,7 @@ fn move_column(
     to_index: u32,
 ) -> Result<DesignerResponse, DesignerError> {
     runtime.handle(DesignerRequest::MoveColumn {
-        expected: runtime.current_revision().into(),
+        expected_revision: runtime.current_revision().into(),
         collection: collection.into(),
         field: field.into(),
         to_index,
@@ -140,4 +140,21 @@ fn field_order_survives_export_and_reopen() {
     open_project(&mut reopened, &export.bytes, OCCURRENCE).unwrap();
     let reopened = reopened.unwrap();
     assert_eq!(column_ids(&reopened, &collection), expected);
+}
+
+#[test]
+fn csv_export_follows_the_field_order() {
+    let (mut runtime, collection) = fixture();
+    let initial = column_ids(&runtime, &collection);
+    move_column(&mut runtime, &collection, &initial[0], 2).unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let workbook = runtime
+        .export_native_tables_csv_workbook(&revision, &collection)
+        .unwrap();
+    let headers = workbook.sheets[0]
+        .columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(headers, ["Amount", "Note", "Label"]);
 }

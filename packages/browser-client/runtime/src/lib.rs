@@ -183,7 +183,7 @@ pub enum DesignerRequest {
         number_format: Option<tachiko_workspace_engine::NumberFormat>,
     },
     MoveColumn {
-        expected: String,
+        expected_revision: String,
         collection: String,
         field: String,
         to_index: u32,
@@ -2504,12 +2504,12 @@ impl DesignerRuntime {
                 number_format,
             )?)),
             DesignerRequest::MoveColumn {
-                expected,
+                expected_revision,
                 collection,
                 field,
                 to_index,
             } => Ok(DesignerResponse::Published(self.move_column(
-                &expected,
+                &expected_revision,
                 &collection,
                 &field,
                 to_index,

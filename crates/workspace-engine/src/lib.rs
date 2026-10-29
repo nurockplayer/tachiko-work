@@ -340,6 +340,15 @@ impl Serialize for SchemaInspection {
                 "the frozen schema inspection transport cannot represent display names",
             ));
         }
+        if !self
+            .fields
+            .windows(2)
+            .all(|pair| pair[0].id < pair[1].id)
+        {
+            return Err(S::Error::custom(
+                "the frozen schema inspection transport cannot represent a field order",
+            ));
+        }
         let fields = self
             .fields
             .iter()
@@ -603,6 +612,8 @@ pub enum WorkspaceError {
     UnsupportedNumberFormatMerge,
     #[error("the selected merge contract does not support durable field order")]
     UnsupportedFieldOrderMerge,
+    #[error("the field order for schema {schema} must name every field exactly once")]
+    InvalidFieldOrder { schema: SchemaId },
     #[error("invalid number format: {source}")]
     InvalidNumberFormat {
         #[source]
@@ -753,7 +764,7 @@ pub fn inspect_document(
             id: schema.id.clone(),
             key: schema.key.clone(),
             display_name: schema.display_name.clone(),
-            fields: schema.fields.values().cloned().collect(),
+            fields: schema.ordered_fields().cloned().collect(),
         })
         .collect();
     let entities = document

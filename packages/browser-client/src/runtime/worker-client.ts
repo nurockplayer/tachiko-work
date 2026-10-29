@@ -182,7 +182,7 @@ export class WorkerDesignerClient implements DesignerClient {
   }
 
   async moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection> {
-    return this.trackerCommand({type: "move_column", expected, collection, field, to_index: toIndex});
+    return this.trackerCommand({type: "move_column", expected_revision: expected, collection, field, to_index: toIndex});
   }
 
   async bootstrap(): Promise<BootstrapProjection> {

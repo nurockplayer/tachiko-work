@@ -3364,6 +3364,19 @@ impl PatchLifecycle {
                             schema: schema.clone(),
                         }
                     })?;
+                    // A proposed order must name every field once; only a
+                    // redundant id order is normalised (to None), never repaired.
+                    if let Some(order) = order {
+                        let unique = order.iter().collect::<std::collections::BTreeSet<_>>();
+                        if order.len() != definition.fields.len()
+                            || unique.len() != order.len()
+                            || !order.iter().all(|id| definition.fields.contains_key(id))
+                        {
+                            return Err(WorkspaceError::InvalidFieldOrder {
+                                schema: schema.clone(),
+                            });
+                        }
+                    }
                     definition.field_order.clone_from(order);
                     definition.normalize_field_order();
                     writes.insert(AssociatedWriteRequirement {
