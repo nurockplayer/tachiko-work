@@ -43,6 +43,8 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   setColumnConstraint(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection>;
   /** Replace or clear one Number column's durable display format. */
   setColumnNumberFormat(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection>;
+  /** Move one column to a zero-based index; the order is durable document state. */
+  moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;
   exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
   openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;

@@ -317,6 +317,15 @@ new migration edge is selected.
 
 ## `.roproj/v3` bounded constraint pipeline
 
+### Field-order persistence (R4a)
+
+The optional schema-level `field_order` is written by `.roproj/v3` and direct
+`.ro/v2` only when present, after `display_name` (v3) or `key` (direct v2).
+Decoders validate it as an exact non-identity permutation of the schema's
+fields and refuse anything else. The frozen `.roproj/v1` and `.roproj/v2`
+writers return `FormatError::UnsupportedFieldOrder` for a reordered document;
+they never drop the order silently.
+
 ### Number-format persistence (R3)
 
 The optional Number-only `number_format` declaration is preserved by the

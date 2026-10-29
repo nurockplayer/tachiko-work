@@ -181,6 +181,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return this.trackerCommand({type: "set_column_number_format", expected_revision: expectedRevision, collection, field, number_format: numberFormat});
   }
 
+  async moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "move_column", expected, collection, field, to_index: toIndex});
+  }
+
   async bootstrap(): Promise<BootstrapProjection> {
     return expectResponse(
       "bootstrap",

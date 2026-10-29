@@ -156,6 +156,26 @@ Entities have:
 - references
 - validation rules
 
+### Per-schema field order (R4a)
+
+A Schema MAY carry `field_order`, an ordered list of its field IDs. Omission
+(`None`) means field-id order, so format-free documents keep their bytes and
+hashes. When present, the list MUST be an exact permutation of the schema's
+field IDs and MUST differ from id order; otherwise validation emits
+`core.invalid_field_order`. Presentation consumers use the order; stored values,
+formulas and constraints are unaffected.
+
+Adding a field appends it after the existing order. Removing a field drops its
+ID from the order. Normalisation (drop stale IDs, append missing IDs in id
+order, then clear an identity order) runs after each such change.
+
+`set_schema_field_order` (the `SetSchemaFieldOrder` command) replaces the
+facet through the ordinary schema lifecycle with an exact inverse for Undo/Redo.
+The v2 canonical delta carries `SchemaFieldOrderChanged`. In merge v2 one side
+that changes the order wins; both sides changing it to different orders is a
+conflict on facet `FieldOrder`. Frozen v1 merge and semantic-delta/v1 refuse a
+reordered document with a typed error.
+
 ## Typed References
 
 References are not plain strings.

@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Columns can be reordered with `moveColumn`. The order is durable document
+  state: it is saved, undone and redone, diffed and merged, and used by table
+  projections and exports. A new column is appended last. Format-free documents
+  keep their bytes; frozen v1/v2 project exports and the frozen merge and diff
+  contracts refuse a reordered document with a typed error.
+
 - Column formulas support `:average`, `:count`, `:min`, and `:max` over Number columns, with typed empty-aggregate failures.
 
 - The browser runtime reports workbook-wide capacity usage and effective limits
