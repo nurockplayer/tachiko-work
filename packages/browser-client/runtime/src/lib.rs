@@ -17,9 +17,10 @@ mod constraints_tests;
 #[cfg(test)]
 mod display_names_tests;
 #[cfg(test)]
+mod field_order_tests;
+#[cfg(test)]
 mod formula_blank_tests;
 #[cfg(test)]
-mod field_order_tests;
 mod number_format_tests;
 
 mod name_admission;
@@ -3792,7 +3793,15 @@ impl DesignerRuntime {
         self.check_revision(expected)?;
         // Display-only like number formats: the order does not depend on the row
         // authoring shape, so it stays available after formula cells are added.
-        let schema_id = SchemaId::from(self.collection_spec(collection)?.summary.id.clone());
+        let spec = self.collection_spec(collection)?;
+        let schema_id = SchemaId::from(spec.summary.id.clone());
+        // Positions are the projected ones (the built-in tracker shows
+        // task, estimate, done without an explicit order).
+        let shown = spec
+            .columns
+            .iter()
+            .map(|column| column.id.clone())
+            .collect::<Vec<_>>();
         let snapshot = self.session.export_snapshot();
         let schema = snapshot
             .document()
@@ -3800,10 +3809,7 @@ impl DesignerRuntime {
             .get(&schema_id)
             .ok_or_else(|| table_error("column is unavailable"))?;
         let field_id = FieldId::from(field.to_owned());
-        let mut ids = schema
-            .ordered_fields()
-            .map(|definition| definition.id.clone())
-            .collect::<Vec<_>>();
+        let mut ids = shown.clone();
         let from = ids
             .iter()
             .position(|id| id == &field_id)
@@ -3811,6 +3817,9 @@ impl DesignerRuntime {
         let moved = ids.remove(from);
         let index = usize::try_from(to_index).map_or(ids.len(), |index| index.min(ids.len()));
         ids.insert(index, moved);
+        if ids == shown {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
         let mut next = schema.clone();
         next.field_order = Some(ids);
         next.normalize_field_order();
@@ -4016,6 +4025,7 @@ impl DesignerRuntime {
             return Err(table_error("a native table needs at least one column"));
         }
         let field_id = FieldId::from(field.to_owned());
+        let previous_order = schema.field_order.clone();
         let definition = schema
             .fields
             .get(&field_id)
@@ -4059,11 +4069,18 @@ impl DesignerRuntime {
             field: definition.clone(),
             values: values.clone(),
         }];
-        let inverse = vec![SemanticCommand::AppendSchemaField {
-            schema: schema_id,
+        let mut inverse = vec![SemanticCommand::AppendSchemaField {
+            schema: schema_id.clone(),
             field: definition,
             values,
         }];
+        // An append lands last; Undo puts the column back where it was.
+        if previous_order.is_some() {
+            inverse.push(SemanticCommand::SetSchemaFieldOrder {
+                schema: schema_id,
+                order: previous_order,
+            });
+        }
         self.record_edit(expected, forward, inverse)
     }
 
@@ -4185,13 +4202,21 @@ impl DesignerRuntime {
             };
             entity_map.insert(source_id.clone(), target_id);
         }
-        let schema = Schema {
-            field_order: None,
+        let mut schema = Schema {
+            // The copy keeps the source's projected column order.
+            field_order: Some(
+                source_spec
+                    .columns
+                    .iter()
+                    .filter_map(|column| field_map.get(&column.id).cloned())
+                    .collect(),
+            ),
             id: schema_id.clone(),
             key: SchemaKey::from(target_key.clone()),
             display_name: Some(name.to_owned()),
             fields,
         };
+        schema.normalize_field_order();
         let mut entities = Vec::with_capacity(source_spec.entities.len());
         for source_id in &source_spec.entities {
             let source = document.entities.get(source_id).ok_or_else(|| {

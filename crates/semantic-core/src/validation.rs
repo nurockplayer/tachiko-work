@@ -903,8 +903,8 @@ mod issue_175_research {
         Diagnostic, DiagnosticCode, DiagnosticFact, Document, Expression, FieldRef, FieldType,
         Schema, SemanticSubject, Value, core_diagnostic, field_type_name, is_valid_identifier,
         key_mismatch_diagnostic, validate_field_constraint, validate_field_order,
-        validate_formula_column,
-        validate_formula_reference, validate_stored_value_constraint, value_type_name,
+        validate_formula_column, validate_formula_reference, validate_stored_value_constraint,
+        value_type_name,
     };
 
     /// Run the accepted semantic validator with a research-only cancellation poll.

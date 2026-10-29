@@ -340,11 +340,7 @@ impl Serialize for SchemaInspection {
                 "the frozen schema inspection transport cannot represent display names",
             ));
         }
-        if !self
-            .fields
-            .windows(2)
-            .all(|pair| pair[0].id < pair[1].id)
-        {
+        if !self.fields.windows(2).all(|pair| pair[0].id < pair[1].id) {
             return Err(S::Error::custom(
                 "the frozen schema inspection transport cannot represent a field order",
             ));

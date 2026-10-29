@@ -692,17 +692,25 @@ fn add_field_order_conflicts(
     conflicts: &mut Vec<MergeConflictV2>,
 ) {
     for (schema_id, b) in &base.schemas {
-        let (Some(l), Some(r)) = (left.schemas.get(schema_id), right.schemas.get(schema_id)) else {
-            continue;
+        let (l, r) = (left.schemas.get(schema_id), right.schemas.get(schema_id));
+        let conflicting = match (l, r) {
+            (Some(l), Some(r)) => choose(&b.field_order, &l.field_order, &r.field_order).is_none(),
+            // A side that deletes the schema conflicts with an order change on
+            // the other side; the frozen merge cannot see order-only edits.
+            (None, Some(kept)) | (Some(kept), None) => kept.field_order != b.field_order,
+            (None, None) => false,
         };
-        if choose(&b.field_order, &l.field_order, &r.field_order).is_none() {
+        if conflicting {
+            let order = |schema: Option<&Schema>| {
+                schema.map(|schema| MergeValueV2::FieldOrder(schema.field_order.clone()))
+            };
             conflicts.push(MergeConflictV2::new(
                 &base.id,
                 ConflictTarget::Schema(schema_id.clone()),
                 ConflictFacetV2::FieldOrder,
                 Some(MergeValueV2::FieldOrder(b.field_order.clone())),
-                Some(MergeValueV2::FieldOrder(l.field_order.clone())),
-                Some(MergeValueV2::FieldOrder(r.field_order.clone())),
+                order(l),
+                order(r),
             ));
         }
     }
@@ -722,13 +730,9 @@ fn apply_selected_field_orders(
             left.schemas.get(schema_id),
             right.schemas.get(schema_id),
         ) {
-            (Some(b), Some(l), Some(r)) => {
-                choose(&b.field_order, &l.field_order, &r.field_order)
-                    .expect("conflict-free field order")
-            }
-            (_, l, r) => l
-                .or(r)
-                .and_then(|source| source.field_order.clone()),
+            (Some(b), Some(l), Some(r)) => choose(&b.field_order, &l.field_order, &r.field_order)
+                .expect("conflict-free field order"),
+            (_, l, r) => l.or(r).and_then(|source| source.field_order.clone()),
         };
         schema.field_order = selected;
         schema.normalize_field_order();

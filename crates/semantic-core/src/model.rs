@@ -437,15 +437,12 @@ impl Schema {
     pub fn ordered_fields(&self) -> impl Iterator<Item = &FieldDefinition> + '_ {
         let listed: &[FieldId] = self.field_order.as_deref().unwrap_or(&[]);
         let fields = &self.fields;
-        listed
-            .iter()
-            .filter_map(move |id| fields.get(id))
-            .chain(
-                fields
-                    .iter()
-                    .filter(move |(id, _)| !listed.contains(id))
-                    .map(|(_, field)| field),
-            )
+        listed.iter().filter_map(move |id| fields.get(id)).chain(
+            fields
+                .iter()
+                .filter(move |(id, _)| !listed.contains(id))
+                .map(|(_, field)| field),
+        )
     }
 
     /// Drops ids no longer in `fields`, appends missing ids in id order, and clears the order

@@ -4716,7 +4716,9 @@ fn reject_legacy_field_orders(
             .any(|command| matches!(command, SemanticCommand::SetSchemaFieldOrder { .. }))
     {
         return Err(PatchLifecycleError::CommandRejected {
-            source: Box::new(WorkspaceError::Diff(super::DiffError::UnsupportedFieldOrder)),
+            source: Box::new(WorkspaceError::Diff(
+                super::DiffError::UnsupportedFieldOrder,
+            )),
         });
     }
     Ok(())

@@ -300,3 +300,24 @@ fn field_order_conflicting_changes_conflict() {
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].facet(), ConflictFacetV2::FieldOrder);
 }
+
+#[test]
+fn deleting_a_schema_conflicts_with_reordering_it() {
+    let base = ordered_document(None);
+    let reordered = ordered_document(Some(vec!["value", "other"]));
+    let mut deleted = base.clone();
+    deleted.schemas.remove("schema");
+    deleted
+        .entities
+        .retain(|_, entity| entity.schema.as_str() != "schema");
+    for (left, right) in [(&deleted, &reordered), (&reordered, &deleted)] {
+        let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, left, right) else {
+            panic!("expected a delete/reorder conflict");
+        };
+        assert!(
+            conflicts
+                .iter()
+                .any(|conflict| conflict.facet() == ConflictFacetV2::FieldOrder)
+        );
+    }
+}

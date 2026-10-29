@@ -1,17 +1,16 @@
 use super::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, NewTableColumnInput,
-    open_project,
+    PatchLifecycleError, open_project,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000604";
 
 fn fixture() -> (DesignerRuntime, String) {
-    let columns = ["Label", "Amount", "Note"]
-        .map(|name| NewTableColumnInput {
-            name: name.into(),
-            field_type: "text".into(),
-            required: false,
-        });
+    let columns = ["Label", "Amount", "Note"].map(|name| NewTableColumnInput {
+        name: name.into(),
+        field_type: "text".into(),
+        required: false,
+    });
     let runtime = DesignerRuntime::new_table(OCCURRENCE, "Order", &columns).unwrap();
     let collection = runtime.collection_specs.keys().next().unwrap().clone();
     (runtime, collection)
@@ -124,7 +123,11 @@ fn added_column_lands_last_and_removed_column_leaves_the_order_consistent() {
         .unwrap();
     assert_eq!(
         column_ids(&runtime, &collection),
-        vec![moved_order[0].clone(), moved_order[2].clone(), added[3].clone()]
+        vec![
+            moved_order[0].clone(),
+            moved_order[2].clone(),
+            added[3].clone()
+        ]
     );
 }
 
@@ -157,4 +160,67 @@ fn csv_export_follows_the_field_order() {
         .map(|column| column.name.clone())
         .collect::<Vec<_>>();
     assert_eq!(headers, ["Amount", "Note", "Label"]);
+}
+
+#[test]
+fn tracker_moves_use_the_projected_positions() {
+    let mut runtime = DesignerRuntime::tracker(OCCURRENCE).unwrap();
+    assert_eq!(
+        column_ids(&runtime, "tracker"),
+        ["task", "estimate", "done"]
+    );
+    assert!(matches!(
+        move_column(&mut runtime, "tracker", "task", 0),
+        Err(DesignerError::Lifecycle(PatchLifecycleError::NoChange))
+    ));
+    move_column(&mut runtime, "tracker", "done", 0).unwrap();
+    assert_eq!(
+        column_ids(&runtime, "tracker"),
+        ["done", "task", "estimate"]
+    );
+}
+
+#[test]
+fn undoing_a_removed_column_restores_its_position() {
+    let (mut runtime, collection) = fixture();
+    let initial = column_ids(&runtime, &collection);
+    move_column(&mut runtime, &collection, &initial[2], 0).unwrap();
+    let moved = column_ids(&runtime, &collection);
+    runtime
+        .handle(DesignerRequest::RemoveColumn {
+            expected_revision: runtime.current_revision().into(),
+            collection: collection.clone(),
+            field: moved[1].clone(),
+        })
+        .unwrap();
+    undo(&mut runtime);
+    assert_eq!(column_ids(&runtime, &collection), moved);
+}
+
+#[test]
+fn a_duplicated_collection_keeps_the_column_order() {
+    let (mut runtime, collection) = fixture();
+    let initial = column_ids(&runtime, &collection);
+    move_column(&mut runtime, &collection, &initial[2], 0).unwrap();
+    let names = |runtime: &DesignerRuntime, collection: &str| {
+        runtime
+            .query_table(collection)
+            .unwrap()
+            .columns
+            .into_iter()
+            .map(|column| column.display_name)
+            .collect::<Vec<_>>()
+    };
+    let expected = names(&runtime, &collection);
+    let DesignerResponse::Duplicated(copy) = runtime
+        .handle(DesignerRequest::DuplicateCollection {
+            expected_revision: runtime.current_revision().into(),
+            collection: collection.clone(),
+            name: "Copy".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected a duplicated collection");
+    };
+    assert_eq!(names(&runtime, &copy.collection.key), expected);
 }
