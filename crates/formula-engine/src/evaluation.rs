@@ -274,25 +274,25 @@ fn round_decimal(value: f64, digits: usize) -> f64 {
     }
 }
 
-/// The compensated sum over the count, so near-cancelling values keep their
-/// small remainder. A sum beyond f64 is taken again in two parts: values that
-/// scale exactly are summed at 2^-64 (the count stays below 2^64, so this part
+/// The exactly rounded sum over the count, so cancelling values keep their
+/// remainder. A sum beyond f64 is taken again in two parts: values that scale
+/// exactly are summed at 2^-64 (the count stays below 2^64, so this part
 /// cannot overflow), and the rest unscaled, so tiny values are not lost.
 fn average(values: &[f64]) -> f64 {
     let count = value_count(values.len());
-    let sum = compensated_sum(values.iter().copied());
+    let sum = exact_sum(values.iter().copied());
     if sum.is_finite() {
         return sum / count;
     }
     let scale = 2f64.powi(64);
     let exact = f64::MIN_POSITIVE * scale;
-    let large = compensated_sum(
+    let large = exact_sum(
         values
             .iter()
             .filter(|value| value.abs() >= exact)
             .map(|value| value / scale),
     );
-    let small = compensated_sum(values.iter().copied().filter(|value| value.abs() < exact));
+    let small = exact_sum(values.iter().copied().filter(|value| value.abs() < exact));
     // Unscale before dividing whenever that cannot overflow, so a large part
     // that cancels to a tiny remainder does not underflow in the division.
     let large = if large.abs() < f64::MAX / scale {
@@ -308,19 +308,54 @@ fn value_count(len: usize) -> f64 {
     f64::from(u32::try_from(len).unwrap_or(u32::MAX))
 }
 
-// Neumaier's compensated summation.
-fn compensated_sum(values: impl Iterator<Item = f64>) -> f64 {
-    let (mut sum, mut compensation) = (0.0_f64, 0.0_f64);
-    for value in values {
-        let next = sum + value;
-        compensation += if sum.abs() >= value.abs() {
-            (sum - next) + value
-        } else {
-            (value - next) + sum
-        };
-        sum = next;
+/// Shewchuk's exact summation with a correctly rounded result (the algorithm
+/// of Python's `math.fsum`): non-overlapping partials hold the sum exactly.
+/// A non-finite result means the sum left f64.
+#[allow(clippy::float_cmp)] // exactness tests on error terms are the algorithm
+fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
+    let mut partials: Vec<f64> = Vec::new();
+    for mut value in values {
+        let mut kept = 0;
+        for index in 0..partials.len() {
+            let mut partial = partials[index];
+            if value.abs() < partial.abs() {
+                std::mem::swap(&mut value, &mut partial);
+            }
+            let high = value + partial;
+            let low = partial - (high - value);
+            if low != 0.0 {
+                partials[kept] = low;
+                kept += 1;
+            }
+            value = high;
+        }
+        partials.truncate(kept);
+        partials.push(value);
     }
-    sum + compensation
+    let Some(mut high) = partials.pop() else {
+        return 0.0;
+    };
+    let mut low = 0.0;
+    while let Some(partial) = partials.pop() {
+        let previous = high;
+        high = previous + partial;
+        low = partial - (high - previous);
+        if low != 0.0 {
+            break;
+        }
+    }
+    // Round half to even across the remaining partials.
+    if partials
+        .last()
+        .is_some_and(|next| (low < 0.0 && *next < 0.0) || (low > 0.0 && *next > 0.0))
+    {
+        let doubled = low * 2.0;
+        let rounded = high + doubled;
+        if doubled == rounded - high {
+            high = rounded;
+        }
+    }
+    high
 }
 
 fn number_result(value: f64) -> Result<Number, CalculationFailure> {

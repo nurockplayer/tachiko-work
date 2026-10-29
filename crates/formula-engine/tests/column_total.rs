@@ -734,6 +734,7 @@ fn average_keeps_the_remainder_of_near_cancelling_values() {
 fn average_handles_cancelling_and_extreme_columns() {
     for (values, expected) in [
         (vec![100.0, 100.0, -200.0], 0.0),
+        (vec![1e40, 1e20, 1.0, -1e40, -1e20], 0.2),
         (vec![1e16, 1e16, -1e16], 1e16 / 3.0),
         (vec![f64::MAX, f64::MAX, f64::MAX], f64::MAX),
         (
