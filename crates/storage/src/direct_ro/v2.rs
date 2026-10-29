@@ -32,6 +32,8 @@ pub(crate) struct DocumentV2 {
 pub(crate) struct SchemaV2 {
     pub(crate) id: String,
     pub(crate) key: String,
+    #[serde(default)]
+    pub(crate) field_order: Option<Vec<String>>,
     pub(crate) fields: BTreeMap<String, FieldDefinitionV2>,
 }
 
@@ -247,6 +249,10 @@ impl SchemaV2 {
         Self {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
+            field_order: schema
+                .field_order
+                .as_ref()
+                .map(|order| order.iter().map(ToString::to_string).collect()),
             fields: schema
                 .fields
                 .iter()
@@ -273,12 +279,26 @@ impl SchemaV2 {
             validate_stable_id("field store key", field_id)?;
             field.validate(field_id, schemas)?;
         }
+        if let Some(order) = &self.field_order {
+            let distinct = order.iter().collect::<std::collections::BTreeSet<_>>();
+            if order.len() != self.fields.len()
+                || distinct.len() != order.len()
+                || !order.iter().all(|id| self.fields.contains_key(id))
+            {
+                return invalid("field_order must list every schema field exactly once".to_owned());
+            }
+            if order.iter().eq(self.fields.keys()) {
+                return invalid("field_order must differ from field id order".to_owned());
+            }
+        }
         Ok(())
     }
 
     fn into_semantic(self) -> Schema {
         Schema {
-            field_order: None,
+            field_order: self
+                .field_order
+                .map(|order| order.into_iter().map(FieldId::from).collect()),
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: None,
@@ -869,6 +889,17 @@ fn write_schema(output: &mut String, schema: &SchemaV2, indent: usize) -> Result
     output.push_str("{\n");
     member_string(output, indent + 1, "id", &schema.id, true)?;
     member_string(output, indent + 1, "key", &schema.key, true)?;
+    if let Some(order) = &schema.field_order {
+        member_prefix(output, indent + 1, "field_order")?;
+        output.push('[');
+        for (index, id) in order.iter().enumerate() {
+            if index > 0 {
+                output.push_str(", ");
+            }
+            write_json_string(output, id)?;
+        }
+        output.push_str("],\n");
+    }
     member_prefix(output, indent + 1, "fields")?;
     write_map(output, &schema.fields, indent + 1, write_field_definition)?;
     output.push('\n');

@@ -339,6 +339,7 @@ pub fn encode(document: &Document) -> Result<CanonicalRoProjectV1, FormatError> 
     super::super::reject_display_names(document)?;
     super::super::reject_field_constraints(document)?;
     super::super::reject_number_formats(document)?;
+    super::super::reject_field_orders(document)?;
     if !document.keyed_grouped_sum_definitions.is_empty() {
         return invalid_representation(
             "saved keyed grouped-sum definitions require .roproj/v2".to_owned(),

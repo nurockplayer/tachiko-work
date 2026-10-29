@@ -255,3 +255,48 @@ fn frozen_v1_still_refuses_constraint_bearing_documents() {
         MergeOutcomeV2::Merged(_)
     ));
 }
+
+fn ordered_document(order: Option<Vec<&str>>) -> Document {
+    let mut document = basic_document();
+    let schema = document.schemas.get_mut("schema").unwrap();
+    schema.fields.insert("other".into(), number_field("other"));
+    schema.field_order = order.map(|ids| ids.into_iter().map(FieldId::from).collect());
+    document
+}
+
+fn merged_order(outcome: MergeOutcomeV2) -> Option<Vec<FieldId>> {
+    let MergeOutcomeV2::Merged(candidate) = outcome else {
+        panic!("expected a conflict-free merge");
+    };
+    candidate.schemas["schema"].field_order.clone()
+}
+
+#[test]
+fn field_order_one_sided_change_merges_and_equal_changes_merge() {
+    let base = ordered_document(None);
+    let reordered = ordered_document(Some(vec!["value", "other"]));
+    assert_eq!(
+        merged_order(merge_v2(&base, &reordered, &base)),
+        Some(vec![FieldId::from("value"), FieldId::from("other")])
+    );
+    assert_eq!(
+        merged_order(merge_v2(&base, &base, &reordered)),
+        Some(vec![FieldId::from("value"), FieldId::from("other")])
+    );
+    assert_eq!(
+        merged_order(merge_v2(&base, &reordered, &reordered)),
+        Some(vec![FieldId::from("value"), FieldId::from("other")])
+    );
+}
+
+#[test]
+fn field_order_conflicting_changes_conflict() {
+    let base = ordered_document(None);
+    let left = ordered_document(Some(vec!["value", "other"]));
+    let right = ordered_document(Some(vec!["other", "value"]));
+    let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, &left, &right) else {
+        panic!("expected a field-order conflict");
+    };
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].facet(), ConflictFacetV2::FieldOrder);
+}

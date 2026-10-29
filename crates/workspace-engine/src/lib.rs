@@ -601,6 +601,8 @@ pub enum WorkspaceError {
     UnsupportedDisplayNameRepresentation,
     #[error("the selected merge contract does not support durable number formats")]
     UnsupportedNumberFormatMerge,
+    #[error("the selected merge contract does not support durable field order")]
+    UnsupportedFieldOrderMerge,
     #[error("invalid number format: {source}")]
     InvalidNumberFormat {
         #[source]
@@ -1040,6 +1042,7 @@ pub fn merge_documents(
             Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
         }
         MergeOutcome::UnsupportedNumberFormat => Err(WorkspaceError::UnsupportedNumberFormatMerge),
+        MergeOutcome::UnsupportedFieldOrder => Err(WorkspaceError::UnsupportedFieldOrderMerge),
         MergeOutcome::UnsupportedDisplayName => {
             Err(WorkspaceError::UnsupportedDisplayNameRepresentation)
         }

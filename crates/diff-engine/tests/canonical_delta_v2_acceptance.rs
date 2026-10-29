@@ -51,6 +51,7 @@ fn field_payload(definition: &FieldDefinition) -> FieldDefinitionPayload {
 
 fn schema_payload(schema: &Schema) -> SchemaDefinitionPayload {
     SchemaDefinitionPayload {
+        field_order: None,
         key: schema.key.clone(),
         display_name: None,
         fields: schema

@@ -28,6 +28,7 @@ pub enum MergeOutcome {
     UnsupportedFieldConstraintChange,
     UnsupportedDisplayName,
     UnsupportedNumberFormat,
+    UnsupportedFieldOrder,
 }
 
 /// Conflict-free structural result awaiting workspace finalization.
@@ -501,6 +502,12 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
         .any(|document| document.has_number_formats())
     {
         return MergeOutcome::UnsupportedNumberFormat;
+    }
+    if [base, ours, theirs]
+        .iter()
+        .any(|document| document.has_field_orders())
+    {
+        return MergeOutcome::UnsupportedFieldOrder;
     }
     if [base, ours, theirs]
         .iter()

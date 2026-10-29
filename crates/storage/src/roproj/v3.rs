@@ -1,6 +1,9 @@
 //! Storage-owned `.roproj/v3` DTOs and canonical tree codec.
 
-use std::{collections::BTreeMap, convert::Infallible};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    convert::Infallible,
+};
 
 use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -213,6 +216,8 @@ struct SchemaV3 {
     key: String,
     #[serde(default, deserialize_with = "optional_name")]
     display_name: Option<String>,
+    #[serde(default)]
+    field_order: Option<Vec<String>>,
     fields: Vec<FieldDefinitionV3>,
 }
 
@@ -822,14 +827,40 @@ impl SchemaV3 {
                 return invalid_representation(format!("duplicate field id '{id_text}'"));
             }
         }
+        let field_order = field_order_from_wire(self.field_order, &fields)?;
         Ok(Schema {
-            field_order: None,
+            field_order,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: self.display_name,
             fields,
         })
     }
+}
+
+/// Admits a stored field order only when it is an exact permutation of the fields
+/// that differs from id order, the canonical form `Schema::normalize_field_order` keeps.
+fn field_order_from_wire(
+    order: Option<Vec<String>>,
+    fields: &BTreeMap<FieldId, FieldDefinition>,
+) -> Result<Option<Vec<FieldId>>, FormatError> {
+    let Some(order) = order else {
+        return Ok(None);
+    };
+    let ids = order.into_iter().map(FieldId::from).collect::<Vec<_>>();
+    let distinct = ids.iter().collect::<BTreeSet<_>>();
+    if ids.len() != fields.len()
+        || distinct.len() != ids.len()
+        || !ids.iter().all(|id| fields.contains_key(id))
+    {
+        return invalid_representation(
+            "field_order must list every schema field exactly once".to_owned(),
+        );
+    }
+    if ids.iter().eq(fields.keys()) {
+        return invalid_representation("field_order must differ from field id order".to_owned());
+    }
+    Ok(Some(ids))
 }
 
 impl FieldDefinitionV3 {
@@ -1154,6 +1185,10 @@ impl SchemaV3 {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
             display_name: schema.display_name.clone(),
+            field_order: schema
+                .field_order
+                .as_ref()
+                .map(|order| order.iter().map(ToString::to_string).collect()),
             fields,
         })
     }
@@ -1487,6 +1522,17 @@ fn write_schema(output: &mut String, schema: &SchemaV3, indent: usize) -> Result
     pretty_member_string(output, indent + 1, "key", &schema.key, true)?;
     if let Some(name) = &schema.display_name {
         pretty_member_string(output, indent + 1, "display_name", name, true)?;
+    }
+    if let Some(order) = &schema.field_order {
+        pretty_member_prefix(output, indent + 1, "field_order")?;
+        output.push('[');
+        for (index, id) in order.iter().enumerate() {
+            if index > 0 {
+                output.push_str(", ");
+            }
+            write_json_string(output, id)?;
+        }
+        output.push_str("],\n");
     }
     pretty_member_prefix(output, indent + 1, "fields")?;
     if schema.fields.is_empty() {
