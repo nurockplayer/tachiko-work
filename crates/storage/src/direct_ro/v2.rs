@@ -287,9 +287,6 @@ impl SchemaV2 {
             {
                 return invalid("field_order must list every schema field exactly once".to_owned());
             }
-            if order.iter().eq(self.fields.keys()) {
-                return invalid("field_order must differ from field id order".to_owned());
-            }
         }
         Ok(())
     }

@@ -130,9 +130,9 @@ exact bytes and round-trip evidence; this authority PR creates no fixture.
 ### Optional Schema field order (R4a)
 
 Schema admits an optional `field_order` array of field IDs after
-`display_name` and before `fields`. It is omitted when the order is id order.
-Decode requires an exact permutation of the schema's fields that differs from
-id order; anything else fails admission. See the
+`display_name` and before `fields`. It is omitted when the schema has no
+explicit order. Decode requires an exact permutation of the schema's fields;
+anything else fails admission. See the
 [semantic declaration](semantic-data-model.md#per-schema-field-order-r4a).
 
 ### Optional Number display format (R3)

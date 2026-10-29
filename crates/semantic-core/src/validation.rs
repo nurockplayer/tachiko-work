@@ -614,13 +614,11 @@ fn validate_field_order(schema: &Schema, schema_path: &str, diagnostics: &mut Ve
         && order
             .iter()
             .all(|id| schema.fields.contains_key(id) && seen.insert(id));
-    let redundant = order.iter().eq(schema.fields.keys());
-    if !is_permutation || redundant {
+    if !is_permutation {
         diagnostics.push(core_diagnostic(
             format!("{schema_path}.field_order"),
             DiagnosticCode::INVALID_FIELD_ORDER,
-            "field order must be a permutation of the schema fields that differs from id order"
-                .to_owned(),
+            "field order must name every schema field exactly once".to_owned(),
             vec![SemanticSubject::Schema(schema.id.clone())],
         ));
     }

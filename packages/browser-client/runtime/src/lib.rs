@@ -4075,12 +4075,10 @@ impl DesignerRuntime {
             values,
         }];
         // An append lands last; Undo puts the column back where it was.
-        if previous_order.is_some() {
-            inverse.push(SemanticCommand::SetSchemaFieldOrder {
-                schema: schema_id,
-                order: previous_order,
-            });
-        }
+        inverse.push(SemanticCommand::SetSchemaFieldOrder {
+            schema: schema_id,
+            order: previous_order,
+        });
         self.record_edit(expected, forward, inverse)
     }
 
@@ -4676,8 +4674,7 @@ impl DesignerRuntime {
                         .schemas
                         .get_mut(schema)
                         .ok_or_else(|| table_error("native table schema is unavailable"))?;
-                    definition.fields.insert(field.id.clone(), field.clone());
-                    definition.normalize_field_order();
+                    definition.insert_field_last(field.clone());
                     for (entity, value) in values {
                         candidate
                             .entities
@@ -10512,7 +10509,9 @@ mod tests {
         let schema_id =
             super::SchemaId::from(runtime.collection_specs["orders"].summary.id.clone());
         let field = FieldDefinition {
-            id: "legacy-quantity-field".into(),
+            // Sorts after the native ids, so the append needs no explicit order
+            // (which the frozen v1 path would refuse).
+            id: "zz-legacy-quantity-field".into(),
             key: "quantity".into(),
             display_name: None,
             number_format: None,

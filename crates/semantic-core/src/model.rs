@@ -445,8 +445,20 @@ impl Schema {
         )
     }
 
-    /// Drops ids no longer in `fields`, appends missing ids in id order, and clears the order
-    /// when the result equals id order, so `None` stays the canonical form of id order.
+    /// Adds a field after every existing column. When the order is implicit and
+    /// the new id sorts before an existing one, the current order is made
+    /// explicit first so no existing column moves.
+    pub fn insert_field_last(&mut self, field: FieldDefinition) {
+        if self.field_order.is_none() && self.fields.keys().any(|id| id > &field.id) {
+            self.field_order = Some(self.fields.keys().cloned().collect());
+        }
+        self.fields.insert(field.id.clone(), field);
+        self.normalize_field_order();
+    }
+
+    /// Drops ids no longer in `fields` and appends missing ids in id order.
+    /// An explicit order equal to id order is kept: `None` is the client's
+    /// default presentation, which need not be id order.
     pub fn normalize_field_order(&mut self) {
         let Some(order) = self.field_order.as_mut() else {
             return;
@@ -456,9 +468,6 @@ impl Schema {
             if !order.contains(id) {
                 order.push(id.clone());
             }
-        }
-        if order.iter().eq(self.fields.keys()) {
-            self.field_order = None;
         }
     }
 }

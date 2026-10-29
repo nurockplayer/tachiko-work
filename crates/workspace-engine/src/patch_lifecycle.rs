@@ -2918,8 +2918,7 @@ impl PatchLifecycle {
             .schemas
             .get_mut(schema_id)
             .expect("checked schema");
-        definition.fields.insert(field.id.clone(), field.clone());
-        definition.normalize_field_order();
+        definition.insert_field_last(field.clone());
         for (entity, value) in values {
             candidate
                 .entities
@@ -3364,8 +3363,8 @@ impl PatchLifecycle {
                             schema: schema.clone(),
                         }
                     })?;
-                    // A proposed order must name every field once; only a
-                    // redundant id order is normalised (to None), never repaired.
+                    // A proposed order must name every field once; it is
+                    // never repaired.
                     if let Some(order) = order {
                         let unique = order.iter().collect::<std::collections::BTreeSet<_>>();
                         if order.len() != definition.fields.len()

@@ -53,7 +53,7 @@ fn ordered_fields_follow_the_order_and_none_is_id_order() {
 }
 
 #[test]
-fn normalize_drops_stale_ids_appends_missing_and_clears_identity() {
+fn normalize_drops_stale_ids_and_appends_missing() {
     let mut stale = schema(Some(vec!["c", "zz", "a"]));
     stale.fields.remove(&FieldId::from("b"));
     stale.fields.insert("d".into(), field("d"));
@@ -65,7 +65,10 @@ fn normalize_drops_stale_ids_appends_missing_and_clears_identity() {
 
     let mut identity = schema(Some(vec!["a", "b", "c"]));
     identity.normalize_field_order();
-    assert_eq!(identity.field_order, None);
+    assert_eq!(
+        identity.field_order,
+        Some(vec!["a".into(), "b".into(), "c".into()])
+    );
 
     let mut none = schema(None);
     none.normalize_field_order();
@@ -73,11 +76,24 @@ fn normalize_drops_stale_ids_appends_missing_and_clears_identity() {
 }
 
 #[test]
-fn validation_rejects_duplicates_missing_extra_and_redundant_orders() {
+fn validation_rejects_duplicates_missing_and_extra_ids() {
     assert_eq!(invalid_order_count(schema(Some(vec!["a", "a", "c"]))), 1);
     assert_eq!(invalid_order_count(schema(Some(vec!["c", "a"]))), 1);
     assert_eq!(invalid_order_count(schema(Some(vec!["c", "a", "x"]))), 1);
-    assert_eq!(invalid_order_count(schema(Some(vec!["a", "b", "c"]))), 1);
+    assert_eq!(invalid_order_count(schema(Some(vec!["a", "b", "c"]))), 0);
     assert_eq!(invalid_order_count(schema(Some(vec!["c", "a", "b"]))), 0);
     assert_eq!(invalid_order_count(schema(None)), 0);
+}
+
+#[test]
+fn a_field_with_a_lower_id_still_lands_last() {
+    let mut implicit = schema(None);
+    implicit.fields.remove(&FieldId::from("a"));
+    implicit.insert_field_last(field("a"));
+    assert_eq!(ids(&implicit), ["b", "c", "a"]);
+
+    let mut highest = schema(None);
+    highest.insert_field_last(field("d"));
+    assert_eq!(highest.field_order, None);
+    assert_eq!(ids(&highest), ["a", "b", "c", "d"]);
 }

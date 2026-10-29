@@ -838,8 +838,7 @@ impl SchemaV3 {
     }
 }
 
-/// Admits a stored field order only when it is an exact permutation of the fields
-/// that differs from id order, the canonical form `Schema::normalize_field_order` keeps.
+/// Admits a stored field order only when it is an exact permutation of the fields.
 fn field_order_from_wire(
     order: Option<Vec<String>>,
     fields: &BTreeMap<FieldId, FieldDefinition>,
@@ -856,9 +855,6 @@ fn field_order_from_wire(
         return invalid_representation(
             "field_order must list every schema field exactly once".to_owned(),
         );
-    }
-    if ids.iter().eq(fields.keys()) {
-        return invalid_representation("field_order must differ from field id order".to_owned());
     }
     Ok(Some(ids))
 }
