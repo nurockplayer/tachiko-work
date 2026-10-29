@@ -38,9 +38,9 @@ use tachiko_semantic_core::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
-    ColumnRef, ComparisonOperator, Date, Diagnostic, DiagnosticCode, DiagnosticFact,
-    DiagnosticLocation, DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure, Document,
-    DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldConstraint,
+    ColumnAggregateFunction, ColumnRef, ComparisonOperator, Date, Diagnostic, DiagnosticCode,
+    DiagnosticFact, DiagnosticLocation, DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure,
+    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldConstraint,
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
     KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
     MAX_DISPLAY_NAME_BYTES, Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema,
@@ -80,6 +80,8 @@ pub mod diagnostic_codes {
         DiagnosticCode::new("formula.failed_dependency");
     pub const FORMULA_DIVISION_BY_ZERO: DiagnosticCode =
         DiagnosticCode::new("formula.division_by_zero");
+    pub const FORMULA_AGGREGATE_EMPTY: DiagnosticCode =
+        DiagnosticCode::new("formula.aggregate_empty");
     pub const FORMULA_NON_FINITE_RESULT: DiagnosticCode =
         DiagnosticCode::new("formula.non_finite_result");
     pub const MERGE_UNMATERIALIZED_QUALIFIED_FIELD: DiagnosticCode =
@@ -1693,7 +1695,10 @@ fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, tar
         // A same-row reference follows its owner and a column total names a
         // schema, so rebasing an entity never rewrites either; a literal has
         // nothing to rebase.
-        Expression::Number(_) | Expression::SameRowReference(_) | Expression::ColumnTotal(_) => {}
+        Expression::Number(_)
+        | Expression::SameRowReference(_)
+        | Expression::ColumnTotal(_)
+        | Expression::ColumnAggregate { .. } => {}
         _ => {
             for child in expression.children_mut() {
                 rewrite_expression_entity(child, source, target);
@@ -2258,6 +2263,12 @@ fn formula_diagnostics(
             CalculationFailure::FailedDependencies { .. } => {
                 unreachable!("failed dependencies are projected after primary failures")
             }
+            CalculationFailure::EmptyAggregate => formula_diagnostic(
+                diagnostic_codes::FORMULA_AGGREGATE_EMPTY,
+                vec![subject],
+                path,
+                format!("formula '{formula}' reads an empty aggregate"),
+            ),
             CalculationFailure::DivisionByZero => formula_diagnostic(
                 diagnostic_codes::FORMULA_DIVISION_BY_ZERO,
                 vec![subject],
@@ -2474,6 +2485,7 @@ fn formula_prerequisites_available(
         | CalculationFailure::InvalidReferences { .. }
         | CalculationFailure::FailedDependencies { .. }
         | CalculationFailure::DivisionByZero
+        | CalculationFailure::EmptyAggregate
         | CalculationFailure::NonFiniteResult
         | CalculationFailure::InvalidColumn { .. } => true,
         CalculationFailure::Cycle { members } => members
@@ -2658,7 +2670,8 @@ fn drop_expression_iteratively(expression: Expression) {
             Expression::Number(_)
             | Expression::Reference(_)
             | Expression::SameRowReference(_)
-            | Expression::ColumnTotal(_) => {}
+            | Expression::ColumnTotal(_)
+            | Expression::ColumnAggregate { .. } => {}
         }
     }
 }

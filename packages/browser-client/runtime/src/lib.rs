@@ -6942,9 +6942,10 @@ fn map_copy_references(
         // A relative copy keeps `[.field]` unchanged: the destination row is
         // the formula's owner, so no per-row rewrite exists. A column total
         // names a schema column, which no row-level copy changes.
-        Expression::Number(_) | Expression::SameRowReference(_) | Expression::ColumnTotal(_) => {
-            Ok(())
-        }
+        Expression::Number(_)
+        | Expression::SameRowReference(_)
+        | Expression::ColumnTotal(_)
+        | Expression::ColumnAggregate { .. } => Ok(()),
         Expression::Reference(reference) => visit(reference, true),
         Expression::IsBlank(reference) => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
@@ -7014,7 +7015,7 @@ fn map_duplicate_expression(
             })?;
             Ok(())
         }
-        Expression::ColumnTotal(column) => {
+        Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
             // A total of the copied table's own column follows the copy; a
             // total of any other table keeps pointing at that table.
             if let Some(schema) = schemas.get(&column.schema) {
@@ -7525,7 +7526,7 @@ fn ensure_formula_reference_profile(
                     field.as_str(),
                 )?;
             }
-            Expression::ColumnTotal(column) => {
+            Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 ensure_profile_string(
                     profile_string_bytes,
                     "formula column schema identity",
@@ -7979,6 +7980,7 @@ fn calculation_failure_code(failure: &CalculationFailure) -> &'static str {
         CalculationFailure::Cycle { .. } => "cycle",
         CalculationFailure::FailedDependencies { .. } => "failed_dependencies",
         CalculationFailure::DivisionByZero => "division_by_zero",
+        CalculationFailure::EmptyAggregate => "aggregate_empty",
         CalculationFailure::NonFiniteResult => "non_finite_result",
     }
 }
@@ -8000,6 +8002,7 @@ fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
             "A formula dependency could not be calculated."
         }
         CalculationFailure::DivisionByZero => "The formula divides by zero.",
+        CalculationFailure::EmptyAggregate => "The column has no values to aggregate.",
         CalculationFailure::NonFiniteResult => "The formula result is not a finite number.",
     }
 }
@@ -8259,7 +8262,7 @@ fn expression_references(
         Expression::SameRowReference(field) => {
             references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
         }
-        Expression::ColumnTotal(column) => {
+        Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
             columns.insert(column.clone());
         }
         _ => expression
@@ -11051,6 +11054,28 @@ mod tests {
                 "an unavailable or non-numeric contributor makes the total null"
             );
         }
+    }
+
+    #[test]
+    fn duplicated_expressions_remap_column_aggregates() {
+        let mut expression = Expression::ColumnAggregate {
+            function: tachiko_workspace_engine::ColumnAggregateFunction::Average,
+            column: ColumnRef::new("plan", "reserve"),
+        };
+        super::map_duplicate_expression(
+            &mut expression,
+            &BTreeMap::new(),
+            &BTreeMap::from([(FieldId::from("reserve"), FieldId::from("reserve_copy"))]),
+            &BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]),
+        )
+        .unwrap();
+        assert_eq!(
+            expression,
+            Expression::ColumnAggregate {
+                function: tachiko_workspace_engine::ColumnAggregateFunction::Average,
+                column: ColumnRef::new("plan_copy_schema", "reserve_copy"),
+            }
+        );
     }
 
     #[test]

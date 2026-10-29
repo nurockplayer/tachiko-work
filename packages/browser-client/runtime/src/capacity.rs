@@ -233,7 +233,7 @@ fn formula_usage<'a>(
             Expression::SameRowReference(field) => {
                 dependencies.insert((owner, field));
             }
-            Expression::ColumnTotal(column) => {
+            Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 columns.insert((&column.schema, &column.field));
             }
             _ => pending.extend(expression.children()),

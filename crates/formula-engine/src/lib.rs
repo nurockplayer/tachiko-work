@@ -198,6 +198,10 @@ fn bind_node(
         UnboundExpression::ColumnTotal(address) => {
             Expression::ColumnTotal(bind_column_reference(document, index, address)?)
         }
+        UnboundExpression::ColumnAggregate { function, column } => Expression::ColumnAggregate {
+            function: *function,
+            column: bind_column_reference(document, index, column)?,
+        },
         UnboundExpression::Add { left, right } => Expression::Add {
             left: Box::new(bind_node(document, index, owner, left)?),
             right: Box::new(bind_node(document, index, owner, right)?),
@@ -419,6 +423,15 @@ fn render_bound(
         Expression::ColumnTotal(column) => {
             let address = &columns[column];
             format!("[{}.{}:total]", address.schema, address.field)
+        }
+        Expression::ColumnAggregate { function, column } => {
+            let address = &columns[column];
+            format!(
+                "[{}.{}:{}]",
+                address.schema,
+                address.field,
+                function.suffix()
+            )
         }
         Expression::Add { left, right } => {
             render_bound_binary(left, "+", right, owner, addresses, columns)
@@ -1090,6 +1103,11 @@ impl CalculationFailures {
                     field = dependency;
                     failure = dependency_failure;
                 }
+                CalculationFailure::EmptyAggregate => {
+                    return CalculationError::EmptyAggregate {
+                        formula: field.clone(),
+                    };
+                }
                 CalculationFailure::DivisionByZero => {
                     return CalculationError::DivisionByZero {
                         formula: field.clone(),
@@ -1203,6 +1221,7 @@ pub enum CalculationFailure {
         dependencies: BTreeSet<FieldRef>,
     },
     DivisionByZero,
+    EmptyAggregate,
     NonFiniteResult,
     InvalidColumn {
         columns: BTreeMap<ColumnRef, ColumnFailure>,
@@ -1278,6 +1297,8 @@ pub enum CalculationError {
     NonNumericReference { reference: FieldRef },
     #[error("formula '{formula}' divided by zero")]
     DivisionByZero { formula: FieldRef },
+    #[error("formula '{formula}' reads an empty aggregate")]
+    EmptyAggregate { formula: FieldRef },
     #[error("formula dependency cycle: {path:?}")]
     Cycle { path: Vec<FieldRef> },
     #[error("calculation for '{field}' produced a non-finite result")]
@@ -1534,11 +1555,15 @@ fn pregraph_failures(
             // A column total reads every non-blank cell of its column; a blank
             // cell is skipped by the sum, not a missing target. A present cell
             // must hold a Number wherever the total sits.
-            for column in expression.column_totals() {
-                for cell in column_cells(document, column) {
-                    let failure = reference_failure(document, &cell, true);
-                    checks.push((cell, failure));
+            let mut pending = vec![expression];
+            while let Some(node) = pending.pop() {
+                if let Expression::ColumnTotal(column) = node {
+                    for cell in column_cells(document, column) {
+                        let failure = reference_failure(document, &cell, true);
+                        checks.push((cell, failure));
+                    }
                 }
+                pending.extend(node.children());
             }
             for (dependency, failure) in checks {
                 if let Some(failure) = failure {

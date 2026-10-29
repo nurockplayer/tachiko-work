@@ -5,12 +5,12 @@ use std::{collections::BTreeMap, convert::Infallible};
 use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
-    ColumnRef, ComparisonOperator, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
-    FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
-    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value, validate_document,
-    validate_keyed_grouped_sum_definitions,
+    ColumnAggregateFunction, ColumnRef, ComparisonOperator, Document, DocumentId, Entity, EntityId,
+    EntityKey, Expression, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
+    validate_document, validate_keyed_grouped_sum_definitions,
 };
 
 use crate::{
@@ -363,6 +363,7 @@ enum ExpressionV3 {
     Reference(FieldRefV3),
     SameRowReference(String),
     ColumnTotal(ColumnRefV3),
+    ColumnAggregate(ColumnAggregateArgsV3),
     Add(BinaryArgumentsV3),
     Subtract(BinaryArgumentsV3),
     Multiply(BinaryArgumentsV3),
@@ -383,6 +384,13 @@ enum ExpressionV3 {
 struct FieldRefV3 {
     entity: String,
     field: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColumnAggregateArgsV3 {
+    function: ColumnAggregateFunction,
+    column: ColumnRefV3,
 }
 
 #[derive(Deserialize)]
@@ -986,7 +994,8 @@ impl ExpressionV3 {
                 Self::SameRowReference(field) => {
                     require_id("formula field id", field)?;
                 }
-                Self::ColumnTotal(column) => {
+                Self::ColumnTotal(column)
+                | Self::ColumnAggregate(ColumnAggregateArgsV3 { column, .. }) => {
                     require_id("formula schema id", &column.schema)?;
                     require_id("formula field id", &column.field)?;
                 }
@@ -1050,6 +1059,13 @@ impl ExpressionV3 {
                 SchemaId::from(column.schema),
                 FieldId::from(column.field),
             )),
+            Self::ColumnAggregate(args) => Expression::ColumnAggregate {
+                function: args.function,
+                column: ColumnRef::new(
+                    SchemaId::from(args.column.schema),
+                    FieldId::from(args.column.field),
+                ),
+            },
             Self::Add(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Add { left, right })?
             }
@@ -1229,6 +1245,15 @@ impl ExpressionV3 {
                 schema: column.schema.to_string(),
                 field: column.field.to_string(),
             }),
+            Expression::ColumnAggregate { function, column } => {
+                Self::ColumnAggregate(ColumnAggregateArgsV3 {
+                    function: *function,
+                    column: ColumnRefV3 {
+                        schema: column.schema.to_string(),
+                        field: column.field.to_string(),
+                    },
+                })
+            }
             Expression::Add { left, right } => {
                 Self::Add(BinaryArgumentsV3::from_semantic(left, right))
             }
@@ -1681,6 +1706,17 @@ fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<()
             compact_member_string(output, "field", &column.field, false)?;
             output.push('}');
         }
+        ExpressionV3::ColumnAggregate(args) => {
+            compact_member_string(output, "op", "column_aggregate", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "function", args.function.wire_name(), true)?;
+            compact_member_prefix(output, "column")?;
+            output.push('{');
+            compact_member_string(output, "schema", &args.column.schema, true)?;
+            compact_member_string(output, "field", &args.column.field, false)?;
+            output.push_str("}}");
+        }
         ExpressionV3::Add(args) => write_binary_expression(output, "add", args)?,
         ExpressionV3::Subtract(args) => write_binary_expression(output, "subtract", args)?,
         ExpressionV3::Multiply(args) => write_binary_expression(output, "multiply", args)?,
@@ -1945,7 +1981,8 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::Number(_)
                     | Expression::Reference(_)
                     | Expression::SameRowReference(_)
-                    | Expression::ColumnTotal(_) => {}
+                    | Expression::ColumnTotal(_)
+                    | Expression::ColumnAggregate { .. } => {}
                 }
             }
         }

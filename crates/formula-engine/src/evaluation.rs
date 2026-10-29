@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
-    ComparisonOperator, Document, Expression, FieldRef, FieldType, Number,
+    ColumnAggregateFunction, ComparisonOperator, Document, Expression, FieldRef, FieldType, Number,
 };
 
 use crate::{CalculationFailure, column_cells};
@@ -26,7 +26,7 @@ impl Evaluation<'_> {
                 Expression::SameRowReference(field) => {
                     references.insert(FieldRef::new(self.owner.entity.clone(), field.clone()));
                 }
-                Expression::ColumnTotal(column) => {
+                Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                     references.extend(column_cells(self.document, column));
                 }
                 Expression::If {
@@ -77,6 +77,31 @@ impl Evaluation<'_> {
                     total += value.get();
                 }
                 number_result(total)
+            }
+            Expression::ColumnAggregate { function, column } => {
+                let mut values = Vec::new();
+                for reference in column_cells(self.document, column) {
+                    let Some(value) = self.values.get(&reference) else {
+                        return Err(CalculationFailure::FailedDependencies {
+                            dependencies: BTreeSet::from([reference]),
+                        });
+                    };
+                    values.push(value.get());
+                }
+                let count = value_count(values.len());
+                if values.is_empty() && *function != ColumnAggregateFunction::Count {
+                    return Err(CalculationFailure::EmptyAggregate);
+                }
+                number_result(match function {
+                    ColumnAggregateFunction::Average => average(&values),
+                    ColumnAggregateFunction::Count => count,
+                    ColumnAggregateFunction::Minimum => {
+                        values.iter().copied().fold(f64::INFINITY, f64::min)
+                    }
+                    ColumnAggregateFunction::Maximum => {
+                        values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                    }
+                })
             }
             Expression::Round { value, digits } => round(self.number(value)?, *digits),
             Expression::Add { left, right } => {
@@ -247,6 +272,90 @@ fn round_decimal(value: f64, digits: usize) -> f64 {
     } else {
         magnitude.copysign(value)
     }
+}
+
+/// The exactly rounded sum over the count, so cancelling values keep their
+/// remainder. A sum beyond f64 is taken again in two parts: values that scale
+/// exactly are summed at 2^-64 (the count stays below 2^64, so this part
+/// cannot overflow), and the rest unscaled, so tiny values are not lost.
+fn average(values: &[f64]) -> f64 {
+    let count = value_count(values.len());
+    let sum = exact_sum(values.iter().copied());
+    if sum.is_finite() {
+        return sum / count;
+    }
+    let scale = 2f64.powi(64);
+    let exact = f64::MIN_POSITIVE * scale;
+    let large = exact_sum(
+        values
+            .iter()
+            .filter(|value| value.abs() >= exact)
+            .map(|value| value / scale),
+    );
+    let small = exact_sum(values.iter().copied().filter(|value| value.abs() < exact));
+    // Unscale before dividing whenever that cannot overflow, so a large part
+    // that cancels to a tiny remainder does not underflow in the division.
+    let large = if large.abs() < f64::MAX / scale {
+        large * scale / count
+    } else {
+        large / count * scale
+    };
+    large + small / count
+}
+
+// Columns hold far fewer than 2^32 rows, so the count converts exactly.
+fn value_count(len: usize) -> f64 {
+    f64::from(u32::try_from(len).unwrap_or(u32::MAX))
+}
+
+/// Shewchuk's exact summation with a correctly rounded result (the algorithm
+/// of Python's `math.fsum`): non-overlapping partials hold the sum exactly.
+/// A non-finite result means the sum left f64.
+#[allow(clippy::float_cmp)] // exactness tests on error terms are the algorithm
+fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
+    let mut partials: Vec<f64> = Vec::new();
+    for mut value in values {
+        let mut kept = 0;
+        for index in 0..partials.len() {
+            let mut partial = partials[index];
+            if value.abs() < partial.abs() {
+                std::mem::swap(&mut value, &mut partial);
+            }
+            let high = value + partial;
+            let low = partial - (high - value);
+            if low != 0.0 {
+                partials[kept] = low;
+                kept += 1;
+            }
+            value = high;
+        }
+        partials.truncate(kept);
+        partials.push(value);
+    }
+    let Some(mut high) = partials.pop() else {
+        return 0.0;
+    };
+    let mut low = 0.0;
+    while let Some(partial) = partials.pop() {
+        let previous = high;
+        high = previous + partial;
+        low = partial - (high - previous);
+        if low != 0.0 {
+            break;
+        }
+    }
+    // Round half to even across the remaining partials.
+    if partials
+        .last()
+        .is_some_and(|next| (low < 0.0 && *next < 0.0) || (low > 0.0 && *next > 0.0))
+    {
+        let doubled = low * 2.0;
+        let rounded = high + doubled;
+        if doubled == rounded - high {
+            high = rounded;
+        }
+    }
+    high
 }
 
 fn number_result(value: f64) -> Result<Number, CalculationFailure> {

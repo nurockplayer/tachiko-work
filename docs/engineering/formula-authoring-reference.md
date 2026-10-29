@@ -22,6 +22,7 @@ revision unchanged.
 | Field reference | `[rent.expense]` |
 | Same-row field reference (the formula owner's own row) | `[.expense]` |
 | Column total (sum of one Number column over a table) | `[plan.reserve:total]` |
+| Column aggregates | `[plan.reserve:average]`, `[plan.reserve:count]`, `[plan.reserve:min]`, `[plan.reserve:max]` |
 | Binary `+`, `-`, `*`, `/` with standard precedence | `[rent.expense] * [settings.rate]` |
 | Unary `+` and `-` | `-[enemy.defense] + 2` |
 | Parentheses | `([rent.expense] + 100) * 2` |
@@ -98,6 +99,15 @@ Because the entity is implicit:
 The shorthand is stored in `.roproj/v3` and direct-ro/v2 as a distinct
 same-entity reference. The frozen `.roproj/v1` and `.roproj/v2` formats refuse
 to encode it rather than silently dropping the row meaning.
+
+## Column aggregates
+
+Use `[schema.field:average]`, `:count`, `:min`, or `:max` to read a Number
+column across all rows. Suffixes accept any case and print lowercase. Blank
+cells are skipped; failed or non-Number contributors fail the calculation.
+Count returns zero for an empty column; the other aggregates report
+`aggregate_empty`. Column identity, cycle, copy and row-change rules match column
+totals.
 
 ## Column totals `[schema.field:total]`
 

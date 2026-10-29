@@ -1626,3 +1626,57 @@ fn explaining_a_column_total_over_a_blank_cell_lists_only_present_values() {
         Some(CalculationProjection::Value { value: 91_000.0 })
     );
 }
+
+#[test]
+fn column_average_survives_history_and_v3_reopen() {
+    let mut runtime = open_fixture();
+    update(&mut runtime, "resident/0", "rent.reserve", SAME_ROW_RESERVE);
+    copy(
+        &mut runtime,
+        "resident/1",
+        "rent.reserve",
+        &["ads.reserve", "tools.reserve"],
+        &[],
+    );
+    assert_eq!(
+        update(
+            &mut runtime,
+            "resident/2",
+            "summary.total",
+            "[plan.reserve:AVERAGE]"
+        ),
+        "resident/3"
+    );
+    let summary = table(&mut runtime, "summary");
+    assert_eq!(first_row_number(&summary, "total"), Some(4_000.0));
+    assert_eq!(
+        first_row_source(&summary, "total"),
+        "[plan.reserve:average]"
+    );
+    assert_eq!(undo(&mut runtime, "resident/3"), "resident/4");
+    assert_eq!(
+        published(
+            &mut runtime,
+            DesignerRequest::Redo {
+                expected_revision: "resident/4".to_owned()
+            }
+        ),
+        "resident/5"
+    );
+    assert_eq!(
+        first_row_number(&table(&mut runtime, "summary"), "total"),
+        Some(4_000.0)
+    );
+    let saved = runtime.export_project_v3("resident/5").unwrap();
+    let mut reopened = None;
+    tachiko_designer_runtime::open_project(&mut reopened, &saved.bytes, RESAVED).unwrap();
+    let mut reopened = reopened.unwrap();
+    assert_eq!(
+        first_row_number(&table(&mut reopened, "summary"), "total"),
+        Some(4_000.0)
+    );
+    assert_eq!(
+        first_row_source(&table(&mut reopened, "summary"), "total"),
+        "[plan.reserve:average]"
+    );
+}
