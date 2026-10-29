@@ -445,13 +445,11 @@ impl Schema {
         )
     }
 
-    /// Adds a field after every existing column. When the order is implicit and
-    /// the new id sorts before an existing one, the current order is made
-    /// explicit first so no existing column moves.
-    pub fn insert_field_last(&mut self, field: FieldDefinition) {
-        if self.field_order.is_none() && self.fields.keys().any(|id| id > &field.id) {
-            self.field_order = Some(self.fields.keys().cloned().collect());
-        }
+    /// Adds a field. Without an explicit order columns are in id order, so the
+    /// field takes its id position (a Remove/Append pair restores a document
+    /// exactly; native authoring allocates ids that sort last). With an
+    /// explicit order the field is appended after every listed column.
+    pub fn insert_field(&mut self, field: FieldDefinition) {
         self.fields.insert(field.id.clone(), field);
         self.normalize_field_order();
     }

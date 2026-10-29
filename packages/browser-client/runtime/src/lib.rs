@@ -4682,7 +4682,7 @@ impl DesignerRuntime {
                         .schemas
                         .get_mut(schema)
                         .ok_or_else(|| table_error("native table schema is unavailable"))?;
-                    definition.insert_field_last(field.clone());
+                    definition.insert_field(field.clone());
                     for (entity, value) in values {
                         candidate
                             .entities
@@ -10517,9 +10517,7 @@ mod tests {
         let schema_id =
             super::SchemaId::from(runtime.collection_specs["orders"].summary.id.clone());
         let field = FieldDefinition {
-            // Sorts after the native ids, so the append needs no explicit order
-            // (which the frozen v1 path would refuse).
-            id: "zz-legacy-quantity-field".into(),
+            id: "legacy-quantity-field".into(),
             key: "quantity".into(),
             display_name: None,
             number_format: None,

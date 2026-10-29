@@ -2918,7 +2918,7 @@ impl PatchLifecycle {
             .schemas
             .get_mut(schema_id)
             .expect("checked schema");
-        definition.insert_field_last(field.clone());
+        definition.insert_field(field.clone());
         for (entity, value) in values {
             candidate
                 .entities

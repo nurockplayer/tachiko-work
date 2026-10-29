@@ -86,14 +86,15 @@ fn validation_rejects_duplicates_missing_and_extra_ids() {
 }
 
 #[test]
-fn a_field_with_a_lower_id_still_lands_last() {
+fn an_inserted_field_takes_its_id_position_unless_the_order_is_explicit() {
     let mut implicit = schema(None);
     implicit.fields.remove(&FieldId::from("a"));
-    implicit.insert_field_last(field("a"));
-    assert_eq!(ids(&implicit), ["b", "c", "a"]);
+    implicit.insert_field(field("a"));
+    assert_eq!(implicit.field_order, None);
+    assert_eq!(ids(&implicit), ["a", "b", "c"]);
 
-    let mut highest = schema(None);
-    highest.insert_field_last(field("d"));
-    assert_eq!(highest.field_order, None);
-    assert_eq!(ids(&highest), ["a", "b", "c", "d"]);
+    let mut explicit = schema(Some(vec!["c", "b"]));
+    explicit.fields.remove(&FieldId::from("a"));
+    explicit.insert_field(field("a"));
+    assert_eq!(ids(&explicit), ["c", "b", "a"]);
 }

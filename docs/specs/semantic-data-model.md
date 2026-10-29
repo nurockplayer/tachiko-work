@@ -166,9 +166,12 @@ the schema's field IDs; otherwise validation emits `core.invalid_field_order`.
 An explicit list equal to id order is valid and distinct from omission. Presentation consumers use the order; stored values,
 formulas and constraints are unaffected.
 
-Adding a field appends it after the existing columns; when the order is
-omitted and the new ID sorts before an existing one, the current id order is
-made explicit first. Removing a field drops its ID from the order.
+Adding a field under an explicit order appends it after the listed columns;
+without one the field takes its id position, so a RemoveSchemaField /
+AppendSchemaField pair restores a document exactly (native authoring allocates
+field IDs that sort last). Under an explicit order an exact inverse of a removal
+also restores the previous order with `SetSchemaFieldOrder`. Removing a field
+drops its ID from the order.
 Normalisation (drop stale IDs, append missing IDs in id order) runs after each
 such change.
 
