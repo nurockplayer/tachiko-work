@@ -737,6 +737,10 @@ fn average_handles_cancelling_and_extreme_columns() {
         (vec![1e16, 1e16, -1e16], 1e16 / 3.0),
         (vec![f64::MAX, f64::MAX, f64::MAX], f64::MAX),
         (
+            vec![f64::MAX, f64::MAX, -f64::MAX, -f64::MAX, 1e-305],
+            1e-305 / 5.0,
+        ),
+        (
             vec![
                 f64::MIN_POSITIVE / 4.0,
                 f64::MIN_POSITIVE / 4.0,
@@ -746,8 +750,11 @@ fn average_handles_cancelling_and_extreme_columns() {
         ),
     ] {
         let mut doc = document();
-        doc.entities
-            .insert("fees".into(), plan_row("fees", "Fees", number(values[2])));
+        for (index, value) in values.iter().enumerate().skip(2) {
+            let id = format!("extra{index}");
+            doc.entities
+                .insert(id.as_str().into(), plan_row(&id, &id, number(*value)));
+        }
         for (row, value) in [("rent", values[0]), ("ads", values[1])] {
             doc.entities
                 .get_mut(row)
