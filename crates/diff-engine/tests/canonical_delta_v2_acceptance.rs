@@ -76,6 +76,7 @@ fn document() -> Document {
         schemas: BTreeMap::from([(
             "schema".into(),
             Schema {
+                field_order: None,
                 id: "schema".into(),
                 key: "table".into(),
                 display_name: None,

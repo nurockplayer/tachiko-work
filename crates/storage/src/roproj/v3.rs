@@ -823,6 +823,7 @@ impl SchemaV3 {
             }
         }
         Ok(Schema {
+            field_order: None,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: self.display_name,

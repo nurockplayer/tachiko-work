@@ -261,6 +261,7 @@ fn synthetic_document(entity_count: usize) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("retained_records"),
                 display_name: None,
@@ -313,6 +314,7 @@ fn oracle_chain_document(entity_count: usize, cycle: bool) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("oracle_chain"),
                 display_name: None,

@@ -29,6 +29,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            field_order: None,
             id: "s".into(),
             key: "scalar".into(),
             display_name: None,
@@ -46,6 +47,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         "other".into(),
         Schema {
+            field_order: None,
             id: "other".into(),
             key: "other".into(),
             display_name: None,

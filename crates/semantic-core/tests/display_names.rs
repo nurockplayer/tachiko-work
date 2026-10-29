@@ -18,6 +18,7 @@ fn document() -> Document {
         )
     });
     let schema = Schema {
+        field_order: None,
         id: "table".into(),
         key: "table".into(),
         display_name: None,

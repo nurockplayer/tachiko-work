@@ -145,6 +145,7 @@ fn chain_document(cycle: bool) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("oracle_chain"),
                 display_name: None,

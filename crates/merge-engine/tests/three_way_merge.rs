@@ -17,6 +17,7 @@ fn balance_document(damage: f64, attack_interval: f64) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("weapon"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
                 display_name: None,
@@ -128,6 +129,7 @@ fn with_marker_schema(mut document: Document) -> Document {
     document.schemas.insert(
         SchemaId::from("marker"),
         Schema {
+            field_order: None,
             id: SchemaId::from("marker"),
             key: SchemaKey::from("marker"),
             display_name: None,
@@ -287,6 +289,7 @@ fn one_sided_schema_addition_merges() {
     ours.schemas.insert(
         SchemaId::from("armor"),
         Schema {
+            field_order: None,
             id: SchemaId::from("armor"),
             key: SchemaKey::from("armor"),
             display_name: None,
@@ -308,6 +311,7 @@ fn identical_two_sided_schema_addition_merges() {
     changed.schemas.insert(
         SchemaId::from("armor"),
         Schema {
+            field_order: None,
             id: SchemaId::from("armor"),
             key: SchemaKey::from("armor"),
             display_name: None,
@@ -329,6 +333,7 @@ fn independent_schema_additions_merge() {
     ours.schemas.insert(
         SchemaId::from("armor"),
         Schema {
+            field_order: None,
             id: SchemaId::from("armor"),
             key: SchemaKey::from("armor"),
             display_name: None,
@@ -339,6 +344,7 @@ fn independent_schema_additions_merge() {
     theirs.schemas.insert(
         SchemaId::from("potion"),
         Schema {
+            field_order: None,
             id: SchemaId::from("potion"),
             key: SchemaKey::from("potion"),
             display_name: None,

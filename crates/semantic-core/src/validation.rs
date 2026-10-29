@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     ColumnRef, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity,
@@ -11,6 +11,7 @@ const CORE_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.seman
 impl DiagnosticCode {
     pub const EMPTY_STABLE_ID: Self = Self::new("core.empty_stable_id");
     pub const EMPTY_KEY: Self = Self::new("core.empty_key");
+    pub const INVALID_FIELD_ORDER: Self = Self::new("core.invalid_field_order");
     pub const INVALID_KEY: Self = Self::new("core.invalid_key");
     pub const DUPLICATE_KEY: Self = Self::new("core.duplicate_key");
     pub const EMPTY_TITLE: Self = Self::new("core.empty_title");
@@ -254,6 +255,7 @@ fn validate_names(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
 fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
     for (schema_id, schema) in &document.schemas {
         let schema_path = format!("schemas.{schema_id}");
+        validate_field_order(schema, &schema_path, diagnostics);
         if schema_id != &schema.id {
             diagnostics.push(key_mismatch_diagnostic(
                 format!("{schema_path}.id"),
@@ -603,6 +605,27 @@ fn validate_field_constraint(
     }
 }
 
+fn validate_field_order(schema: &Schema, schema_path: &str, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(order) = &schema.field_order else {
+        return;
+    };
+    let mut seen = BTreeSet::new();
+    let is_permutation = order.len() == schema.fields.len()
+        && order
+            .iter()
+            .all(|id| schema.fields.contains_key(id) && seen.insert(id));
+    let redundant = order.iter().eq(schema.fields.keys());
+    if !is_permutation || redundant {
+        diagnostics.push(core_diagnostic(
+            format!("{schema_path}.field_order"),
+            DiagnosticCode::INVALID_FIELD_ORDER,
+            "field order must be a permutation of the schema fields that differs from id order"
+                .to_owned(),
+            vec![SemanticSubject::Schema(schema.id.clone())],
+        ));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_value(
     document: &Document,
@@ -879,7 +902,8 @@ mod issue_175_research {
     use super::{
         Diagnostic, DiagnosticCode, DiagnosticFact, Document, Expression, FieldRef, FieldType,
         Schema, SemanticSubject, Value, core_diagnostic, field_type_name, is_valid_identifier,
-        key_mismatch_diagnostic, validate_field_constraint, validate_formula_column,
+        key_mismatch_diagnostic, validate_field_constraint, validate_field_order,
+        validate_formula_column,
         validate_formula_reference, validate_stored_value_constraint, value_type_name,
     };
 
@@ -956,6 +980,7 @@ mod issue_175_research {
         for (schema_id, schema) in &document.schemas {
             poll_cancellation(cancelled)?;
             let schema_path = format!("schemas.{schema_id}");
+            validate_field_order(schema, &schema_path, diagnostics);
             if schema_id != &schema.id {
                 diagnostics.push(key_mismatch_diagnostic(
                     format!("{schema_path}.id"),
@@ -1442,6 +1467,7 @@ mod issue_175_research {
             document.schemas.insert(
                 SchemaId::from("schema-store-id"),
                 Schema {
+                    field_order: None,
                     id: SchemaId::from("schema-declared-id"),
                     key: "Invalid Schema Key".into(),
                     display_name: None,
@@ -1555,6 +1581,7 @@ mod issue_175_research {
             document.schemas.insert(
                 SchemaId::from("schema"),
                 Schema {
+                    field_order: None,
                     id: SchemaId::from("schema"),
                     key: "items".into(),
                     display_name: None,

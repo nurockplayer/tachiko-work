@@ -1033,6 +1033,7 @@ fn build_import_sheet(
 ) -> Result<(), DesignerError> {
     let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
     let mut schema = Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from(format!("sheet_{}", index + 1)),
         display_name: None,

@@ -2152,6 +2152,7 @@ fn mixed_document(entity_count: usize, text_char_count: usize) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("records"),
                 display_name: None,
@@ -2204,6 +2205,7 @@ fn dependency_chain_document(entity_count: usize, cycle: bool) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("chain"),
                 display_name: None,
@@ -2523,6 +2525,7 @@ fn single_schema_document(
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from(schema_key),
                 display_name: None,
@@ -2575,6 +2578,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
         (
             cold_schema_id.clone(),
             Schema {
+                field_order: None,
                 id: cold_schema_id.clone(),
                 key: SchemaKey::from("late_cold"),
                 display_name: None,
@@ -2584,6 +2588,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
         (
             hot_schema_id.clone(),
             Schema {
+                field_order: None,
                 id: hot_schema_id.clone(),
                 key: SchemaKey::from("late_hot"),
                 display_name: None,
@@ -3393,6 +3398,7 @@ fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("formula_poll"),
                 display_name: None,

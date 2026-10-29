@@ -4116,6 +4116,7 @@ impl DesignerRuntime {
             entity_map.insert(source_id.clone(), target_id);
         }
         let schema = Schema {
+            field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from(target_key.clone()),
             display_name: Some(name.to_owned()),
@@ -4939,6 +4940,7 @@ impl DesignerRuntime {
     pub fn tracker(occurrence_id: &str) -> Result<Self, DesignerError> {
         let mut document = Document::empty(occurrence_id, "Driver Tracker");
         let schema = Schema {
+            field_order: None,
             id: SchemaId::from("tracker"),
             key: SchemaKey::from("tracker"),
             display_name: None,
@@ -5021,6 +5023,7 @@ impl DesignerRuntime {
             );
         }
         let schema = Schema {
+            field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from(schema_key),
             display_name: Some(name.to_owned()),
@@ -6311,6 +6314,7 @@ fn budget_schema<const COUNT: usize>(
     fields: [(&str, FieldType); COUNT],
 ) -> Schema {
     Schema {
+        field_order: None,
         id,
         key: SchemaKey::from(key),
         display_name: None,

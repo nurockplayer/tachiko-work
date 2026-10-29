@@ -278,6 +278,7 @@ impl SchemaV2 {
 
     fn into_semantic(self) -> Schema {
         Schema {
+            field_order: None,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: None,

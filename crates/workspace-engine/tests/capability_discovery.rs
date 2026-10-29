@@ -66,6 +66,7 @@ fn document() -> Document {
             (
                 source_schema.clone(),
                 Schema {
+                    field_order: None,
                     id: source_schema.clone(),
                     key: SchemaKey::from("source"),
                     display_name: None,
@@ -96,6 +97,7 @@ fn document() -> Document {
             (
                 target_schema.clone(),
                 Schema {
+                    field_order: None,
                     id: target_schema,
                     key: SchemaKey::from("target"),
                     display_name: None,

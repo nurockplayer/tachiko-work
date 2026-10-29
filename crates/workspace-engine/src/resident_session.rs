@@ -970,6 +970,7 @@ mod tests {
             constraint: tachiko_semantic_core::FieldConstraint::None,
         };
         let schema = tachiko_semantic_core::Schema {
+            field_order: None,
             id: "s".into(),
             key: "table".into(),
             display_name: None,

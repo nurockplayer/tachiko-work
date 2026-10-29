@@ -1200,6 +1200,7 @@ fn oracle_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("metrics"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("metrics"),
                 key: SchemaKey::from("metrics"),
                 display_name: None,

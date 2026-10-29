@@ -670,6 +670,7 @@ fn merge_schema(
     );
 
     Some(Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: key?,
         display_name: None,

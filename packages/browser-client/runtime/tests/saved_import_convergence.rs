@@ -25,6 +25,7 @@ const SECOND: &str = "00000000-0000-4000-8000-000000000163";
 fn native_document(rows: usize) -> Document {
     let mut document = Document::empty("d", "capacity");
     let schema = Schema {
+        field_order: None,
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
         display_name: None,

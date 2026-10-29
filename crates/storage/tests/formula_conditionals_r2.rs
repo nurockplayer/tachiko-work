@@ -83,6 +83,7 @@ fn document_with_conditional() -> Document {
     document.schemas.insert(
         SchemaId::from("sheet"),
         Schema {
+            field_order: None,
             id: SchemaId::from("sheet"),
             key: SchemaKey::from("sheet"),
             display_name: None,

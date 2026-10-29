@@ -16,6 +16,7 @@ fn number_document(number: Number) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("schema"),
                 display_name: None,

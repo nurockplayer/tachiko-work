@@ -100,6 +100,7 @@ fn schema_document(
     document.schemas.insert(
         schema.clone(),
         Schema {
+            field_order: None,
             id: schema.clone(),
             key: SchemaKey::from("rows"),
             display_name: None,

@@ -2938,6 +2938,7 @@ fn game_balance_schemas(
         schemas.insert(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from(schema_key),
                 display_name: None,

@@ -5129,6 +5129,7 @@ mod tests {
         if append {
             SemanticCommand::AppendCollection {
                 schema: Schema {
+                    field_order: None,
                     id: SchemaId::from(schema_id),
                     key: SchemaKey::from(schema_id),
                     display_name: None,
@@ -5232,6 +5233,7 @@ mod tests {
         document.schemas.insert(
             orders.clone(),
             Schema {
+                field_order: None,
                 id: orders.clone(),
                 key: SchemaKey::from("orders"),
                 display_name: None,
@@ -5266,6 +5268,7 @@ mod tests {
         document.schemas.insert(
             products.clone(),
             Schema {
+                field_order: None,
                 id: products.clone(),
                 key: SchemaKey::from("products"),
                 display_name: None,

@@ -8,6 +8,7 @@ use tachiko_semantic_core::{
 
 fn balance_document() -> Document {
     let schema = Schema {
+        field_order: None,
         id: SchemaId::from("weapon"),
         key: SchemaKey::from("weapon"),
         display_name: None,
@@ -389,6 +390,7 @@ fn long_acyclic_dependency_chains_are_stack_safe() {
         schemas: BTreeMap::from([(
             SchemaId::from("chain"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("chain"),
                 key: SchemaKey::from("chain"),
                 display_name: None,
@@ -532,6 +534,7 @@ fn generated_dags_match_an_independent_oracle_and_survive_key_renames() {
             schemas: BTreeMap::from([(
                 SchemaId::from("schema"),
                 Schema {
+                    field_order: None,
                     id: SchemaId::from("schema"),
                     key: SchemaKey::from("numbers"),
                     display_name: None,

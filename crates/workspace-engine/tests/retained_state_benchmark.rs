@@ -122,6 +122,7 @@ fn synthetic_document(entity_count: usize) -> Document {
     let schemas = BTreeMap::from([(
         schema_id.clone(),
         Schema {
+            field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from("synthetic_records"),
             display_name: None,

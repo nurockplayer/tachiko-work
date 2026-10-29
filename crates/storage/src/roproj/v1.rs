@@ -673,6 +673,7 @@ impl SchemaV1 {
             }
         }
         Ok(Schema {
+            field_order: None,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: None,
@@ -690,6 +691,7 @@ impl SchemaV1 {
             })
             .collect::<Result<_, FormatError>>()?;
         Ok(Schema {
+            field_order: None,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: None,

@@ -68,6 +68,7 @@ fn document() -> Document {
     values.insert(FieldId::from("then_value"), number(42.0));
 
     let schema = Schema {
+        field_order: None,
         id: SchemaId::from("schema"),
         key: SchemaKey::from("row"),
         display_name: None,

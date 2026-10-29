@@ -396,6 +396,10 @@ pub struct Schema {
     )]
     pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, FieldDefinition>,
+    /// Presentation order of `fields`. `None` means field-id order. `Some` must be an exact
+    /// permutation of `fields` and must differ from id order (see `normalize_field_order`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_order: Option<Vec<FieldId>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -427,6 +431,39 @@ impl Schema {
     pub fn effective_name(&self) -> &str {
         self.display_name.as_deref().unwrap_or(self.key.as_str())
     }
+
+    /// Fields in presentation order. Ids listed in `field_order` come first in that order;
+    /// any field the order does not name follows in id order.
+    pub fn ordered_fields(&self) -> impl Iterator<Item = &FieldDefinition> + '_ {
+        let listed: &[FieldId] = self.field_order.as_deref().unwrap_or(&[]);
+        let fields = &self.fields;
+        listed
+            .iter()
+            .filter_map(move |id| fields.get(id))
+            .chain(
+                fields
+                    .iter()
+                    .filter(move |(id, _)| !listed.contains(id))
+                    .map(|(_, field)| field),
+            )
+    }
+
+    /// Drops ids no longer in `fields`, appends missing ids in id order, and clears the order
+    /// when the result equals id order, so `None` stays the canonical form of id order.
+    pub fn normalize_field_order(&mut self) {
+        let Some(order) = self.field_order.as_mut() else {
+            return;
+        };
+        order.retain(|id| self.fields.contains_key(id));
+        for id in self.fields.keys() {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+        if order.iter().eq(self.fields.keys()) {
+            self.field_order = None;
+        }
+    }
 }
 
 impl FieldDefinition {
@@ -443,6 +480,13 @@ impl Document {
             .values()
             .flat_map(|schema| schema.fields.values())
             .any(|field| field.number_format.is_some())
+    }
+
+    #[must_use]
+    pub fn has_field_orders(&self) -> bool {
+        self.schemas
+            .values()
+            .any(|schema| schema.field_order.is_some())
     }
 
     #[must_use]

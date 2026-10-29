@@ -16,6 +16,7 @@ fn fixture(dependent: bool) -> DesignerRuntime {
     document.schemas.insert(
         schema.clone(),
         Schema {
+            field_order: None,
             id: schema.clone(),
             key: SchemaKey::from("items"),
             display_name: None,
