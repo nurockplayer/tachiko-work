@@ -224,3 +224,26 @@ fn a_duplicated_collection_keeps_the_column_order() {
     };
     assert_eq!(names(&runtime, &copy.collection.key), expected);
 }
+
+#[test]
+fn undoing_an_added_column_restores_the_previous_order() {
+    let (mut runtime, collection) = fixture();
+    let initial = column_ids(&runtime, &collection);
+    move_column(&mut runtime, &collection, &initial[2], 0).unwrap();
+    let schemas =
+        |runtime: &DesignerRuntime| runtime.session.export_snapshot().document().schemas.clone();
+    let before = schemas(&runtime);
+    runtime
+        .handle(DesignerRequest::AddColumn {
+            expected_revision: runtime.current_revision().into(),
+            collection: collection.clone(),
+            name: "Extra".into(),
+            field_type: "text".into(),
+            required: false,
+            initializers: Vec::new(),
+        })
+        .unwrap();
+    assert_ne!(schemas(&runtime), before);
+    undo(&mut runtime);
+    assert_eq!(schemas(&runtime), before);
+}

@@ -714,6 +714,25 @@ fn add_field_order_conflicts(
             ));
         }
     }
+    // Both sides adding the same schema with different orders: the subject
+    // conflict alone does not show the orders, so report the facet too.
+    for (schema_id, l) in &left.schemas {
+        if base.schemas.contains_key(schema_id) {
+            continue;
+        }
+        if let Some(r) = right.schemas.get(schema_id) {
+            if l.field_order != r.field_order {
+                conflicts.push(MergeConflictV2::new(
+                    &base.id,
+                    ConflictTarget::Schema(schema_id.clone()),
+                    ConflictFacetV2::FieldOrder,
+                    None,
+                    Some(MergeValueV2::FieldOrder(l.field_order.clone())),
+                    Some(MergeValueV2::FieldOrder(r.field_order.clone())),
+                ));
+            }
+        }
+    }
 }
 
 /// Takes the one side that changed each order; a schema present on one side only

@@ -321,3 +321,21 @@ fn deleting_a_schema_conflicts_with_reordering_it() {
         );
     }
 }
+
+#[test]
+fn concurrent_schema_additions_report_differing_orders() {
+    let mut base = ordered_document(None);
+    base.schemas.remove("schema");
+    base.entities
+        .retain(|_, entity| entity.schema.as_str() != "schema");
+    let left = ordered_document(Some(vec!["value", "other"]));
+    let right = ordered_document(Some(vec!["other", "value"]));
+    let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, &left, &right) else {
+        panic!("expected a concurrent-addition conflict");
+    };
+    assert!(
+        conflicts
+            .iter()
+            .any(|conflict| conflict.facet() == ConflictFacetV2::FieldOrder)
+    );
+}

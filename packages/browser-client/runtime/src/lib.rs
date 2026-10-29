@@ -3954,16 +3954,24 @@ impl DesignerRuntime {
             required,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
         };
+        let previous_order = schema.field_order.clone();
         let forward = vec![SemanticCommand::AppendSchemaField {
             schema: schema_id.clone(),
             field: field.clone(),
             values: values.clone(),
         }];
-        let inverse = vec![SemanticCommand::RemoveSchemaField {
-            schema: schema_id,
-            field,
-            values,
-        }];
+        // An append may make an implicit order explicit; Undo restores it.
+        let inverse = vec![
+            SemanticCommand::RemoveSchemaField {
+                schema: schema_id.clone(),
+                field,
+                values,
+            },
+            SemanticCommand::SetSchemaFieldOrder {
+                schema: schema_id,
+                order: previous_order,
+            },
+        ];
         self.record_edit(expected, forward, inverse)
     }
 
