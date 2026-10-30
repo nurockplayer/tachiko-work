@@ -204,6 +204,7 @@ fn duplicate(
             expected_revision: expected.to_owned(),
             collection: collection.to_owned(),
             name: name.to_owned(),
+ column_names: BTreeMap::new(),
         })
         .expect("the collection duplicate is accepted")
     else {

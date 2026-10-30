@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use super::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, NewTableColumnInput,
     PatchLifecycleError, open_project,
@@ -235,6 +236,7 @@ fn a_duplicated_collection_keeps_the_column_order() {
             expected_revision: runtime.current_revision().into(),
             collection: collection.clone(),
             name: "Copy".into(),
+ column_names: BTreeMap::new(),
         })
         .unwrap()
     else {
