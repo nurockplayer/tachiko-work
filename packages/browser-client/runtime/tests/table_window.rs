@@ -12,8 +12,9 @@ use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
     ComparisonOperator, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
-    LocateInViewResult, LocatedInViewProjection, ScalarEditInput, ScalarLiteral, SortDirection,
-    TableView, TableWindowProjection, ViewFilter, ViewSortKey, process_wire_request,
+    ColumnTotalsProjection, LocateInViewResult, LocatedInViewProjection, ScalarEditInput,
+    ScalarLiteral, SortDirection, TableView, TableWindowProjection, ViewFilter, ViewSortKey,
+    process_wire_request,
 };
 use tachiko_workspace_engine::{
     Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
@@ -1273,5 +1274,229 @@ fn the_column_totals_cache_follows_the_revision() {
         amount_total(&after.column_totals),
         Some(11.0),
         "the cached totals must not survive an edit"
+    );
+}
+
+fn column_totals(
+    runtime: &mut DesignerRuntime,
+    entities: &[&str],
+) -> Result<ColumnTotalsProjection, DesignerError> {
+    let expected_revision = runtime.observe_occurrence().revision;
+    match runtime.handle(DesignerRequest::QueryColumnTotals {
+        expected_revision,
+        collection: "rows".to_owned(),
+        entities: ids(entities),
+    })? {
+        DesignerResponse::ColumnTotals(totals) => Ok(totals),
+        other => panic!("expected column totals, got {other:?}"),
+    }
+}
+
+fn amount_of(totals: &ColumnTotalsProjection) -> Option<f64> {
+    amount_total(&totals.column_totals)
+}
+
+/// Forty fractional Number values, so a sum that changed its addition order
+/// would show up in the last bits instead of cancelling out.
+fn fractional_runtime() -> DesignerRuntime {
+    let entities = (0_u16..40)
+        .map(|row| {
+            entity(
+                &format!("e{row:02}"),
+                vec![
+                    ("f01_label", text(&format!("row {row}"))),
+                    ("f02_amount", number(0.1 * f64::from(row))),
+                ],
+            )
+        })
+        .collect();
+    DesignerRuntime::from_document(
+        schema_document(
+            vec![
+                field("f01_label", FieldType::Text, false),
+                field("f02_amount", FieldType::Number, false),
+            ],
+            entities,
+        ),
+        TOTALS,
+    )
+    .expect("a Text/Number native table is admitted")
+}
+
+/// The totals table plus a second collection holding one foreign entity.
+fn two_collection_runtime() -> DesignerRuntime {
+    let mut document = totals_document();
+    let other = SchemaId::from("other");
+    document.schemas.insert(
+        other.clone(),
+        Schema {
+            field_order: None,
+            id: other.clone(),
+            key: SchemaKey::from("other"),
+            display_name: None,
+            fields: [field("f02_amount", FieldType::Number, false)]
+                .into_iter()
+                .collect(),
+        },
+    );
+    let (id, mut foreign) = entity("x01", vec![("f02_amount", number(5.0))]);
+    foreign.schema = other;
+    document.entities.insert(id, foreign);
+    DesignerRuntime::from_document(document, TOTALS).expect("two collections are admitted")
+}
+
+#[test]
+fn naming_every_entity_matches_the_window_footer_exactly() {
+    let mut runtime = fractional_runtime();
+    let every = (0..40).map(|row| format!("e{row:02}")).collect::<Vec<_>>();
+    let every_refs = every.iter().map(String::as_str).collect::<Vec<_>>();
+    let named = column_totals(&mut runtime, &every_refs).expect("every entity is a member");
+    let footer = window(&mut runtime, TableView::default(), 0, 0)
+        .expect("count 0 is legal")
+        .column_totals;
+    assert_eq!(named.rows, 40);
+    assert_eq!(
+        named.column_totals, footer,
+        "the full set must match the footer bit for bit"
+    );
+}
+
+#[test]
+fn a_subset_sums_only_its_own_entities() {
+    let mut runtime = fractional_runtime();
+    let subset = column_totals(&mut runtime, &["e31", "e05", "e30"])
+        .expect("the members are in the collection");
+    let expected = [5_u16, 30, 31]
+        .iter()
+        .fold(0.0, |total, row| total + 0.1 * f64::from(*row));
+    let got = amount_of(&subset).expect("the column total is present");
+    assert_eq!(subset.rows, 3);
+    assert!(
+        (got - expected).abs() < 1e-9,
+        "subset sum {got} must equal {expected}"
+    );
+}
+
+#[test]
+fn a_filtered_window_total_equals_the_rows_it_shows() {
+    let mut runtime = totals_runtime();
+    let shown = window(
+        &mut runtime,
+        filtered(compare("f02_amount", ComparisonOperator::Gt, 1.5)),
+        0,
+        256,
+    )
+    .expect("the filtered view is queryable");
+    let shown_ids = row_ids(&shown);
+    let refs = shown_ids.iter().map(String::as_str).collect::<Vec<_>>();
+    let named = column_totals(&mut runtime, &refs).expect("the shown rows are members");
+    assert_eq!(shown_ids, ids(&["e02"]));
+    assert_eq!(named.rows, 1);
+    assert_eq!(amount_of(&named), Some(2.0));
+    assert_eq!(amount_total(&shown.column_totals), Some(3.0));
+}
+
+#[test]
+fn blank_cells_are_skipped_and_an_empty_set_totals_to_zero() {
+    let mut runtime = totals_runtime();
+    let blank_only = column_totals(&mut runtime, &["e03"]).expect("e03 is a member");
+    assert_eq!(amount_of(&blank_only), Some(0.0));
+    let empty = column_totals(&mut runtime, &[]).expect("an empty set is legal");
+    assert_eq!(empty.rows, 0);
+    assert_eq!(amount_of(&empty), Some(0.0));
+}
+
+#[test]
+fn unknown_duplicate_foreign_oversized_and_stale_sets_are_refused_unchanged() {
+    let mut runtime = two_collection_runtime();
+    let before = runtime.observe_occurrence().revision;
+
+    let unknown = column_totals(&mut runtime, &["e01", "e99"]).unwrap_err();
+    assert!(matches!(
+        unknown,
+        DesignerError::InvalidView { ref message } if message.contains("e99")
+    ));
+    let duplicate = column_totals(&mut runtime, &["e01", "e01"]).unwrap_err();
+    assert!(matches!(
+        duplicate,
+        DesignerError::InvalidView { ref message } if message.contains("e01")
+    ));
+    let foreign = column_totals(&mut runtime, &["e01", "x01"]).unwrap_err();
+    assert!(matches!(
+        foreign,
+        DesignerError::InvalidView { ref message } if message.contains("x01")
+    ));
+    // One more than the 1,000-row table bound.
+    let oversized = ["e01"; 1001];
+    let too_many = column_totals(&mut runtime, &oversized).unwrap_err();
+    assert!(matches!(too_many, DesignerError::InvalidView { .. }));
+    let stale = runtime.handle(DesignerRequest::QueryColumnTotals {
+        expected_revision: "revision/not-current".to_owned(),
+        collection: "rows".to_owned(),
+        entities: ids(&["e01"]),
+    });
+    assert!(matches!(stale, Err(DesignerError::StaleQuery { .. })));
+
+    assert_eq!(
+        runtime.observe_occurrence().revision,
+        before,
+        "a refused request must change nothing"
+    );
+}
+
+#[test]
+fn column_totals_follow_the_revision_after_an_edit() {
+    let mut runtime = totals_runtime();
+    let before = column_totals(&mut runtime, &["e01", "e02", "e03"]).expect("the set is valid");
+    assert_eq!(amount_of(&before), Some(3.0));
+
+    let revision = runtime.observe_occurrence().revision;
+    let DesignerResponse::Published(publication) = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: revision,
+            target: "e02.f02_amount".into(),
+            input: ScalarEditInput::Number {
+                input: "10".to_owned(),
+            },
+        })
+        .expect("the edit publishes")
+    else {
+        panic!("expected a publication");
+    };
+
+    let after = column_totals(&mut runtime, &["e01", "e02", "e03"]).expect("the set is valid");
+    assert_eq!(after.revision, publication.resulting_revision);
+    assert_eq!(amount_of(&after), Some(11.0));
+    let without_edited_row = column_totals(&mut runtime, &["e01", "e03"]).expect("the set is valid");
+    assert_eq!(amount_of(&without_edited_row), Some(1.0));
+}
+
+#[test]
+fn column_totals_wire_request_uses_the_documented_envelope() {
+    let mut runtime = Some(totals_runtime());
+    let revision = runtime
+        .as_ref()
+        .expect("the occurrence is installed")
+        .observe_occurrence()
+        .revision;
+    let request = wire_json(&format!(
+        r#"{{
+        "type": "query_column_totals",
+        "expected_revision": {revision},
+        "collection": "rows",
+        "entities": ["e02", "e03"]
+    }}"#,
+        revision = wire_string(&revision)
+    ));
+    let reply: serde_json::Value = serde_json::from_slice(&process_wire_request(
+        &mut runtime,
+        &serde_json::to_vec(&request).expect("the request encodes"),
+    ))
+    .expect("the reply is JSON");
+    assert_eq!(reply["response"]["type"], "column_totals");
+    assert_eq!(reply["response"]["payload"]["rows"], 2);
+    assert_eq!(
+        reply["response"]["payload"]["column_totals"]["f02_amount"],
+        2.0
     );
 }
