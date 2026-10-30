@@ -292,7 +292,7 @@ fn sole_required_field_removal_keeps_its_existing_append_inverse() {
     round_trip(&mut lifecycle(), &mut session, vec![remove], vec![append]);
 }
 
-fn non_native_optional_document(kind: FieldType, value: &Value, sparse: bool) -> Document {
+fn optional_kind_document(kind: FieldType, value: &Value, sparse: bool) -> Document {
     let mut base = document();
     for field in base.schemas.get_mut("s").unwrap().fields.values_mut() {
         field.required = false;
@@ -329,68 +329,60 @@ fn assert_optional_field_type_refusal(
 }
 
 #[test]
-fn non_native_optional_removal_refuses_like_its_append_inverse_without_publication() {
+fn optional_boolean_and_date_removal_round_trips_like_text_and_number() {
     for (kind, value) in [
         (FieldType::Boolean, Value::Boolean(false)),
         (FieldType::Date, Value::Date("2026-10-20".parse().unwrap())),
     ] {
         for sparse in [false, true] {
-            let base = non_native_optional_document(kind.clone(), &value, sparse);
+            let base = optional_kind_document(kind.clone(), &value, sparse);
             for target in ["label", "amount"] {
                 let (remove, append) = field_removal_pair(&base, target);
-                let mut restoration_base = base.clone();
-                restoration_base
-                    .schemas
-                    .get_mut("s")
-                    .unwrap()
-                    .fields
-                    .remove(target);
-                for entity in restoration_base.entities.values_mut() {
-                    entity.fields.remove(target);
-                }
-                let mut inverse_session =
-                    ResidentWorkspaceSession::new("scope".into(), restoration_base.clone());
-                assert_optional_field_type_refusal(
-                    apply(&mut lifecycle(), &mut inverse_session, vec![append]),
-                    target,
-                );
-                assert_eq!(
-                    inverse_session.export_snapshot().document(),
-                    &restoration_base
-                );
-                assert_eq!(inverse_session.revision().as_str(), "resident/0");
-
                 let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
-                assert_optional_field_type_refusal(
-                    apply(&mut lifecycle(), &mut session, vec![remove.clone()]),
-                    target,
-                );
-                assert_eq!(session.export_snapshot().document(), &base);
-                assert_eq!(session.revision().as_str(), "resident/0");
-                // A valid prefix must not publish when the removal is refused.
-                let prefix = SemanticCommand::SetSchemaFieldDisplayName {
-                    schema: "s".into(),
-                    field: if target == "label" { "amount" } else { "label" }.into(),
-                    display_name: Some("Changed".into()),
-                };
-                assert_optional_field_type_refusal(
-                    apply(&mut lifecycle(), &mut session, vec![prefix, remove]),
-                    target,
-                );
-                assert_eq!(session.export_snapshot().document(), &base);
-                assert_eq!(session.revision().as_str(), "resident/0");
+                round_trip(&mut lifecycle(), &mut session, vec![remove], vec![append]);
             }
         }
     }
 }
 
 #[test]
-fn required_field_removal_from_non_native_schema_keeps_its_append_inverse() {
+fn optional_reference_append_inverse_refuses_without_publication() {
+    let base = optional_kind_document(
+        FieldType::Reference { schema: "s".into() },
+        &Value::Reference("a".into()),
+        true,
+    );
+    let (_, append) = field_removal_pair(&base, "amount");
+    let mut restoration_base = base.clone();
+    restoration_base
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .remove("amount");
+    for entity in restoration_base.entities.values_mut() {
+        entity.fields.remove("amount");
+    }
+    let mut inverse_session =
+        ResidentWorkspaceSession::new("scope".into(), restoration_base.clone());
+    assert_optional_field_type_refusal(
+        apply(&mut lifecycle(), &mut inverse_session, vec![append]),
+        "amount",
+    );
+    assert_eq!(
+        inverse_session.export_snapshot().document(),
+        &restoration_base
+    );
+    assert_eq!(inverse_session.revision().as_str(), "resident/0");
+}
+
+#[test]
+fn required_field_removal_from_optional_boolean_and_date_schema_keeps_its_append_inverse() {
     for (kind, value) in [
         (FieldType::Boolean, Value::Boolean(false)),
         (FieldType::Date, Value::Date("2026-10-20".parse().unwrap())),
     ] {
-        let mut base = non_native_optional_document(kind, &value, false);
+        let mut base = optional_kind_document(kind, &value, false);
         base.schemas
             .get_mut("s")
             .unwrap()
@@ -427,9 +419,11 @@ fn optional_append_still_checks_values_and_the_complete_resulting_shape() {
         .fields
         .get_mut("amount")
         .unwrap()
-        .field_type = FieldType::Boolean;
+        .field_type = FieldType::Reference { schema: "s".into() };
     for entity in imported.entities.values_mut() {
-        entity.fields.insert("amount".into(), Value::Boolean(false));
+        entity
+            .fields
+            .insert("amount".into(), Value::Reference("a".into()));
     }
     let SemanticCommand::AppendSchemaField { values, .. } = &mut append else {
         unreachable!()
@@ -762,9 +756,11 @@ fn requiredness_refuses_absent_targets_unsupported_kinds_and_missing_authority()
         .fields
         .get_mut("amount")
         .unwrap()
-        .field_type = FieldType::Boolean;
+        .field_type = FieldType::Reference { schema: "s".into() };
     for entity in unsupported.entities.values_mut() {
-        entity.fields.insert("amount".into(), Value::Boolean(false));
+        entity
+            .fields
+            .insert("amount".into(), Value::Reference("a".into()));
     }
     let mut session = ResidentWorkspaceSession::new("scope".into(), unsupported.clone());
     assert!(apply(&mut lifecycle(), &mut session, vec![required(false)]).is_err());
