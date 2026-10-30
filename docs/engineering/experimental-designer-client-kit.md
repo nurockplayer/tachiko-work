@@ -151,11 +151,12 @@ document) refuses with
 `query_too_large` rather than serialising an oversized response; ask for
 fewer rows or fewer columns.
 
-## Optional native Text and Number columns
+## Optional native columns
 
 Under [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md),
 `newTable(name, columns)` accepts `required?: boolean` per column. Omission
-defaults to `true`; only Text and Number may be declared optional. The same
+defaults to `true`; any scalar column (Text, Number, Date or Yes/No) may be
+declared optional ([#598](https://github.com/nurockplayer/tachiko-work/issues/598)). The same
 property is accepted by the `add_column` command through `trackerCommand`.
 An optional added column needs no `initializers`; a supplied subset fills only
 those entities. `insert_row` may omit optional initializers, leaving those slots

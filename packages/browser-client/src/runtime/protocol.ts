@@ -424,7 +424,7 @@ export type ScalarEditInput =
 /** Raw strings parse as the declared scalar type; only an explicit clear removes a value. */
 export type PasteCellInput = string | ScalarEditInput;
 
-/** required defaults to true; optional native authoring admits Text/Number only. */
+/** required defaults to true; optional native authoring admits every scalar type (#598). */
 export type NewTableColumnInput = {name: string; field_type: string; required?: boolean};
 
 export type FormulaCopy = {

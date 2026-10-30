@@ -6,9 +6,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Optional Date and Boolean fields are native: a field can be declared optional
+  when creating a table or adding a column, rows can be inserted with blanks,
+  values can be cleared, and requiredness can change (strengthening refuses
+  while blanks exist), with the same rules as optional Text and Number fields.
+  Blank stays distinct from `false` and from any date; formulas stay strict.
+  Imports with optional Date and Boolean columns project as native tables.
+  No storage-format change (ADR-0045 amendment, Work #598).
+
 - `queryColumnTotals` sums Number columns over the entity ids a caller names,
   so a filtered view can total exactly the rows it shows. The request is
-  revision-pinned, capped at 1,000 unique ids of the collection and summed in
+  revision-pinned, takes unique ids of the collection only and is summed in
   collection order; naming every entity gives the whole-collection footer.
   Unknown, duplicate or foreign ids refuse with no change.
 

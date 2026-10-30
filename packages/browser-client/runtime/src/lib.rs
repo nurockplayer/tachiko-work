@@ -22,6 +22,8 @@ mod field_order_tests;
 mod formula_blank_tests;
 #[cfg(test)]
 mod number_format_tests;
+#[cfg(test)]
+mod optional_date_boolean_tests;
 
 mod name_admission;
 use name_admission::{NameFailure, allocate_key, author_column_name, author_table_names};
@@ -3488,17 +3490,20 @@ impl DesignerRuntime {
         collection: &str,
         entities: &[String],
     ) -> Result<ColumnTotalsProjection, DesignerError> {
-        if entities.len() > MAX_TABLE_ROWS {
-            return Err(DesignerError::InvalidView {
-                message: format!(
-                    "column totals over {} entities exceed the bounded maximum of {MAX_TABLE_ROWS}",
-                    entities.len()
-                ),
-            });
-        }
         self.check_revision(expected_revision)?;
         let revision = self.current_revision().to_owned();
         let spec = self.collection_spec(collection)?;
+        // Every id must be a distinct entity of the collection, so the
+        // collection size bounds the set before any lookup.
+        if entities.len() > spec.entities.len() {
+            return Err(DesignerError::InvalidView {
+                message: format!(
+                    "column totals name {} entities; collection {collection} has {}",
+                    entities.len(),
+                    spec.entities.len()
+                ),
+            });
+        }
         let known = spec.entities.iter().collect::<BTreeSet<_>>();
         let mut requested = BTreeSet::new();
         for entity in entities {
@@ -3801,9 +3806,12 @@ impl DesignerRuntime {
             .fields
             .get(&field)
             .ok_or_else(|| table_error("column is unavailable"))?;
-        if !matches!(definition.field_type, FieldType::Text | FieldType::Number) {
+        if !matches!(
+            definition.field_type,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        ) {
             return Err(table_error(
-                "requiredness changes support only Text and Number",
+                "requiredness changes support only scalar columns",
             ));
         }
         if definition.required == required {
@@ -5957,11 +5965,16 @@ fn columns_revision(columns: &[ColumnProjection]) -> Result<String, DesignerErro
 }
 
 fn admit_native_requiredness(kind: &FieldType, required: bool) -> Result<(), DesignerError> {
-    if required || matches!(kind, FieldType::Text | FieldType::Number) {
+    if required
+        || matches!(
+            kind,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        )
+    {
         Ok(())
     } else {
         Err(table_error(
-            "optional native columns support only Text and Number",
+            "optional native columns support only scalar columns",
         ))
     }
 }
@@ -6015,16 +6028,24 @@ fn cell_edit_value(
                 field: field.clone(),
             });
         }
-        if column.required || !matches!(column.field_type, FieldType::Text | FieldType::Number) {
-            return Err(table_error(
-                "clear requires an optional Text or Number column",
-            ));
+        if column.required
+            || !matches!(
+                column.field_type,
+                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            )
+        {
+            return Err(table_error("clear requires an optional column"));
         }
         return Ok(None);
     }
     if let Some(old) = old {
         parse_scalar(old, input, field).map(Some)
-    } else if !column.required && matches!(column.field_type, FieldType::Text | FieldType::Number) {
+    } else if !column.required
+        && matches!(
+            column.field_type,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        )
+    {
         parse_column_initializer(&column.field_type, input).map(Some)
     } else {
         Err(DesignerError::UnsupportedScalarEdit {
@@ -6110,10 +6131,16 @@ fn blank_field_projection(
         formula: None,
         calculated: None,
         diagnostics: Vec::new(),
-        editable_scalar: match column.field_type {
-            FieldType::Text if native_table_rows && !column.required => Some(ScalarKind::Text),
-            FieldType::Number if native_table_rows && !column.required => Some(ScalarKind::Number),
-            _ => None,
+        editable_scalar: if native_table_rows && !column.required {
+            match column.field_type {
+                FieldType::Text => Some(ScalarKind::Text),
+                FieldType::Number => Some(ScalarKind::Number),
+                FieldType::Boolean => Some(ScalarKind::Boolean),
+                FieldType::Date => Some(ScalarKind::Date),
+                FieldType::Reference { .. } => None,
+            }
+        } else {
+            None
         },
     }
 }
@@ -8460,11 +8487,10 @@ fn has_scalar_row_authoring_shape(
 ) -> bool {
     (1..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
         && schema.fields.values().all(|field| {
-            (field.required || matches!(field.field_type, FieldType::Text | FieldType::Number))
-                && matches!(
-                    field.field_type,
-                    FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
-                )
+            matches!(
+                field.field_type,
+                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            )
         })
         && entities.iter().all(|id| {
             document.entities.get(id).is_some_and(|entity| {

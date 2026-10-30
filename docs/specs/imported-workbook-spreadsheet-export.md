@@ -11,8 +11,8 @@ The machine-readable profile is
 ## Identity and current structure
 
 Imported tables qualify for native authoring structurally when every field is
-scalar and every optional field is Text or Number. Origin is irrelevant. Optional
-Date/Boolean imports remain non-native. Classification changes no stored field,
+scalar and every optional field is Text, Number, Date or Boolean (ADR-0045, as
+amended 2026-10-30). Origin is irrelevant. Classification changes no stored field,
 requiredness or value.
 
 Export reads one revision-pinned immutable snapshot. Historical metadata is

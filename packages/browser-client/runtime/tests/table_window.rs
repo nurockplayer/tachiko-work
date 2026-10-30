@@ -1425,10 +1425,13 @@ fn unknown_duplicate_foreign_oversized_and_stale_sets_are_refused_unchanged() {
         foreign,
         DesignerError::InvalidView { ref message } if message.contains("x01")
     ));
-    // One more than the 1,000-row table bound.
+    // More ids than the collection has entities.
     let oversized = ["e01"; 1001];
     let too_many = column_totals(&mut runtime, &oversized).unwrap_err();
-    assert!(matches!(too_many, DesignerError::InvalidView { .. }));
+    assert!(matches!(
+        too_many,
+        DesignerError::InvalidView { ref message } if message.contains("has")
+    ));
     let stale = runtime.handle(DesignerRequest::QueryColumnTotals {
         expected_revision: "revision/not-current".to_owned(),
         collection: "rows".to_owned(),
@@ -1498,5 +1501,22 @@ fn column_totals_wire_request_uses_the_documented_envelope() {
     assert_eq!(
         reply["response"]["payload"]["column_totals"]["f02_amount"],
         2.0
+    );
+}
+
+#[test]
+fn column_totals_accept_every_row_of_a_large_collection() {
+    // A filter can show far more rows than the strict 128-row table profile.
+    let mut runtime = DesignerRuntime::from_document(grid_document(1_001, 3, 8), OVER)
+        .expect("1,001 rows are a legal text-capacity rectangle");
+    let all = (0..1_001)
+        .map(|row| format!("r{row:05}"))
+        .collect::<Vec<_>>();
+    let all = all.iter().map(String::as_str).collect::<Vec<_>>();
+    let totals = column_totals(&mut runtime, &all).expect("every entity is a valid set");
+    assert_eq!(totals.rows, 1_001);
+    assert!(
+        totals.column_totals.is_empty(),
+        "a Text-only table has no totals"
     );
 }
