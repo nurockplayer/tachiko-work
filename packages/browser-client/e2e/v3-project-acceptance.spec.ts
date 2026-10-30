@@ -596,7 +596,8 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       const column_totals = { [boundaryFieldIds[2]!]: quantity + 5, [boundaryFieldIds[3]!]: 400 };
       return {
         bootstrap: { title: "Imported workbook", revision, default_collection: "sheet_1", collections: [collection], keyed_grouped_sum_definition_ids: ids },
-        table: { revision, collection, columns, rows, column_totals },
+        // An all-optional scalar import with a Date column is native since #598.
+        table: { revision, native_table_profile: true, collection, columns, rows, column_totals },
       };
     };
     // Column-total values are `Option<f64>` on the wire, so serde prints them
