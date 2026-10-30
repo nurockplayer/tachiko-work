@@ -385,3 +385,16 @@ fn independent_field_removals_are_not_order_edits() {
         }
     }
 }
+
+#[test]
+fn a_one_sided_move_of_a_new_field_survives_the_merge() {
+    let base = ordered_document(Some(vec!["value", "other"]));
+    let mut right = base.clone();
+    let schema = right.schemas.get_mut("schema").unwrap();
+    schema.fields.insert("added".into(), number_field("added"));
+    schema.field_order = Some(["added", "value", "other"].map(FieldId::from).to_vec());
+    assert_eq!(
+        merged_order(merge_v2(&base, &base, &right)),
+        Some(["added", "value", "other"].map(FieldId::from).to_vec())
+    );
+}

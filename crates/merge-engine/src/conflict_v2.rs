@@ -695,7 +695,8 @@ fn add_field_order_conflicts(
         let (l, r) = (left.schemas.get(schema_id), right.schemas.get(schema_id));
         let conflicting = match (l, r) {
             (Some(l), Some(r)) => {
-                order_edited(b, l) && order_edited(b, r) && !orders_agree(b, l, r)
+                // Two edits merge only when they are the same order.
+                order_edited(b, l) && order_edited(b, r) && l.field_order != r.field_order
             }
             // A side that deletes the schema conflicts with an order change on
             // the other side; the frozen merge cannot see order-only edits.
@@ -737,32 +738,27 @@ fn add_field_order_conflicts(
     }
 }
 
-/// A schema's column order restricted to the fields every compared schema
-/// still has, so adding or removing fields is never an order edit.
-fn relative_order(schema: &Schema, others: &[&Schema]) -> Vec<FieldId> {
-    schema
-        .ordered_fields()
-        .filter(|definition| {
-            others
-                .iter()
-                .all(|other| other.fields.contains_key(&definition.id))
-        })
-        .map(|definition| definition.id.clone())
-        .collect()
-}
-
-/// A side edited the order when it changed whether the order is explicit or
-/// reordered fields it shares with the base.
+/// A side edited the order when it changed whether the order is explicit, or
+/// when its explicit order differs from the base order it would have without
+/// a move: the base order restricted to the side's fields, then the side's
+/// new fields in its own order. Adding or removing fields is not an edit.
 fn order_edited(base: &Schema, side: &Schema) -> bool {
-    base.field_order.is_some() != side.field_order.is_some()
-        || relative_order(base, &[side]) != relative_order(side, &[base])
-}
-
-/// Two order edits agree when they are equally explicit and order the fields
-/// common to all three schemas the same way.
-fn orders_agree(base: &Schema, left: &Schema, right: &Schema) -> bool {
-    left.field_order.is_some() == right.field_order.is_some()
-        && relative_order(left, &[base, right]) == relative_order(right, &[base, left])
+    match (&base.field_order, &side.field_order) {
+        (None, None) => false,
+        (Some(base_order), Some(side_order)) => {
+            let unmoved = base_order
+                .iter()
+                .filter(|id| side.fields.contains_key(*id))
+                .chain(
+                    side_order
+                        .iter()
+                        .filter(|id| !base.fields.contains_key(*id)),
+                )
+                .collect::<Vec<_>>();
+            !side_order.iter().eq(unmoved)
+        }
+        _ => true,
+    }
 }
 
 /// Takes the one side that changed each order; a schema present on one side only
