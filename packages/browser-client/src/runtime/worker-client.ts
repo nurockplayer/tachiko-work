@@ -156,8 +156,9 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns}));
   }
 
-  async duplicateCollection(expectedRevision: string, collection: string, name: string): Promise<DuplicateCollectionProjection> {
-    return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name}));
+  async duplicateCollection(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection> {
+    const columns = columnNames === undefined ? {} : {column_names: columnNames};
+    return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name, ...columns}));
   }
 
   /** Return complete entity and schema presentation invalidation from Rust. */
