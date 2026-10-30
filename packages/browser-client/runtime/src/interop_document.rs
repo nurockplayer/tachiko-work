@@ -945,14 +945,20 @@ fn validate_selection(
     let capacity_selection = workbook.sheets.first().is_some_and(|sheet| {
         selection.column_types.len() == 1
             && selection.column_types[0].len() == sheet.columns.len()
-            && selection.column_types[0]
-                .iter()
-                .all(|kind| matches!(kind, ImportFieldType::Text | ImportFieldType::Number))
+            && selection.column_types[0].iter().all(|kind| {
+                matches!(
+                    kind,
+                    ImportFieldType::Text
+                        | ImportFieldType::Number
+                        | ImportFieldType::Date
+                        | ImportFieldType::Boolean
+                )
+            })
             && selection.extra_columns == vec![Vec::new()]
     });
     if capacity && (!super::interop_adapter::text_capacity_shape(workbook) || !capacity_selection) {
         return Err(tracker_error(
-            "8,406-row capacity requires selected Text/Number fields and no extra columns",
+            "8,406-row capacity requires selected Text, Number, Date or Boolean fields and no extra columns",
         ));
     }
     if workbook.ledger.iter().any(|finding| finding.blocking) {

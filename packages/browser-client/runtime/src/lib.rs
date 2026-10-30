@@ -7476,8 +7476,10 @@ fn is_text_capacity_document(document: &Document) -> bool {
             <= interop_adapter::MAX_TEXT_CAPACITY_CELLS
         && document.keyed_grouped_sum_definitions.is_empty()
         && schema.fields.values().all(|field| {
-            matches!(field.field_type, FieldType::Text | FieldType::Number)
-                && field.constraint == tachiko_workspace_engine::FieldConstraint::None
+            matches!(
+                field.field_type,
+                FieldType::Text | FieldType::Number | FieldType::Date | FieldType::Boolean
+            ) && field.constraint == tachiko_workspace_engine::FieldConstraint::None
         })
         && document.entities.values().all(|entity| {
             entity.schema == schema.id
@@ -7487,6 +7489,8 @@ fn is_text_capacity_document(document: &Document) -> bool {
                             (&field.field_type, value),
                             (FieldType::Text, Value::Text(_))
                                 | (FieldType::Number, Value::Number(_))
+                                | (FieldType::Date, Value::Date(_))
+                                | (FieldType::Boolean, Value::Boolean(_))
                         )
                     })
                 })
@@ -7542,10 +7546,16 @@ fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWor
                                 Some(Value::Number(value)) => {
                                     SourceValue::Number { value: value.get() }
                                 }
-                                None => SourceValue::Empty,
-                                Some(_) => {
-                                    unreachable!("capacity shape contains only Text and Number")
+                                Some(Value::Date(value)) => SourceValue::Date {
+                                    value: value.to_string(),
+                                },
+                                Some(Value::Boolean(value)) => {
+                                    SourceValue::Boolean { value: *value }
                                 }
+                                None => SourceValue::Empty,
+                                Some(_) => unreachable!(
+                                    "capacity shape contains only Text, Number, Date and Boolean"
+                                ),
                             },
                             ..SourceCell::default()
                         })

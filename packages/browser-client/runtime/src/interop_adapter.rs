@@ -1135,7 +1135,7 @@ fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
                 }
                 SourceValue::Empty => {
                     write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
-                        .expect("capacity XML sinks are infallible")
+                        .expect("capacity XML sinks are infallible");
                 }
             }
         }
