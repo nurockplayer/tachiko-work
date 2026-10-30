@@ -1275,7 +1275,8 @@ fn independent_opened_projection(
         table: TableProjection {
             revision: revision.to_owned(),
             tracker_profile: None,
-            native_table_profile: None,
+            // All-optional scalar imports (Date included) are native since #598.
+            native_table_profile: Some(true),
             collection,
             columns,
             rows,
