@@ -48,7 +48,12 @@ fn duplicate_of_imported_csv_gives_the_copy_its_header_names() {
     let source_key = imported.opened.table.collection.key.clone();
     let source = table(&mut runtime, &source_key);
     let source_labels = labels(&source);
-    assert!(source.columns.iter().all(|column| column.display_name_explicit.is_none()));
+    assert!(
+        source
+            .columns
+            .iter()
+            .all(|column| column.display_name_explicit.is_none())
+    );
     let headers = ["Note", "Amount", "Other"];
     let column_names = source
         .columns

@@ -165,7 +165,12 @@ fn number_format_save_reopen_duplicate_and_remove() {
     let reopened = reopened.unwrap();
     assert_eq!(reopened.session.export_snapshot().document(), &expected);
     let copy = runtime
-        .duplicate_collection(&revision, &collection, "Copy", &std::collections::BTreeMap::new())
+        .duplicate_collection(
+            &revision,
+            &collection,
+            "Copy",
+            &std::collections::BTreeMap::new(),
+        )
         .unwrap();
     let copied = runtime
         .query_table(&copy.collection.key)

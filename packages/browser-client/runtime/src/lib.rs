@@ -8764,10 +8764,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        AuthorizationAction, ColumnInitializer, ColumnRef, DesignerError, DesignerRequest, DesignerResponse,
-        DesignerRuntime, DocumentScopeId, EntityId, EntityKey, Expression, FieldDefinition,
-        FieldId, FieldKey, FieldType, Grant, GrantId, GrantRequirement, HistoryAction,
-        KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
+        AuthorizationAction, ColumnInitializer, ColumnRef, DesignerError, DesignerRequest,
+        DesignerResponse, DesignerRuntime, DocumentScopeId, EntityId, EntityKey, Expression,
+        FieldDefinition, FieldId, FieldKey, FieldType, Grant, GrantId, GrantRequirement,
+        HistoryAction, KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
         NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId, ProposalId,
         RowInitializer, ScalarEditInput, SchemaId, SchemaKey, ScopedSemanticSubject,
         SemanticCommand, SemanticScope, TableProjection, Value,
@@ -10958,7 +10958,7 @@ mod tests {
                 expected_revision: "resident/0".to_owned(),
                 collection: "budget_summary".to_owned(),
                 name: "October Summary".to_owned(),
- column_names: BTreeMap::new(),
+                column_names: BTreeMap::new(),
             })
             .unwrap_err();
         assert!(matches!(
@@ -11161,7 +11161,7 @@ mod tests {
                 expected_revision: "resident/31".to_owned(),
                 collection: "source".to_owned(),
                 name: "Capacity overflow".to_owned(),
- column_names: BTreeMap::new(),
+                column_names: BTreeMap::new(),
             })
             .unwrap_err();
         assert!(matches!(error, DesignerError::CapacityExceeded(_)));
@@ -11262,7 +11262,10 @@ mod tests {
                 ("Memo".to_owned(), Some(true)),
             ]
         );
-        assert_eq!(column_labels(&runtime.query_table("source").unwrap()), source_labels);
+        assert_eq!(
+            column_labels(&runtime.query_table("source").unwrap()),
+            source_labels
+        );
 
         runtime
             .handle(DesignerRequest::Undo {

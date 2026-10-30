@@ -62,7 +62,7 @@ fn duplicate_collection_remaps_internal_formula_refs_and_keeps_external_refs() {
             expected_revision: "resident/1".into(),
             collection: "budget_summary".into(),
             name: "October Summary".into(),
- column_names: BTreeMap::new(),
+            column_names: BTreeMap::new(),
         })
         .unwrap();
     let copy = table(&mut runtime, "table_1");
@@ -156,7 +156,7 @@ fn duplicate_collection_rejects_stale_revision_without_mutating_bytes() {
                 expected_revision: "resident/1".into(),
                 collection: "budget_summary".into(),
                 name: "October Summary".into(),
- column_names: BTreeMap::new(),
+                column_names: BTreeMap::new(),
             })
             .is_err()
     );
@@ -171,7 +171,7 @@ fn duplicate_collection_does_not_reuse_identities_after_undo() {
             expected_revision: "resident/0".into(),
             collection: "budget_summary".into(),
             name: "January Summary".into(),
- column_names: BTreeMap::new(),
+            column_names: BTreeMap::new(),
         })
         .unwrap();
     let first = table(&mut runtime, "table_1");
@@ -186,7 +186,7 @@ fn duplicate_collection_does_not_reuse_identities_after_undo() {
             expected_revision: "resident/2".into(),
             collection: "budget_summary".into(),
             name: "February Summary".into(),
- column_names: BTreeMap::new(),
+            column_names: BTreeMap::new(),
         })
         .unwrap();
     let second = table(&mut runtime, "table_1");

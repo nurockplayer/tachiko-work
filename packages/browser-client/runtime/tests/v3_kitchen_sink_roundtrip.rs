@@ -317,7 +317,7 @@ fn duplicate(runtime: &mut DesignerRuntime, expected: &str) -> String {
             expected_revision: expected.to_owned(),
             collection: "orders".to_owned(),
             name: "Orders copy".to_owned(),
- column_names: BTreeMap::new(),
+            column_names: BTreeMap::new(),
         },
     ) else {
         panic!("expected a duplicate projection");
