@@ -578,3 +578,75 @@ fn a_formula_outside_the_column_range_is_a_typed_constraint_refusal() {
     }
     assert_eq!(fixture.runtime.current_revision(), before);
 }
+
+#[test]
+fn a_formula_that_pushes_a_dependent_field_out_of_range_names_that_field() {
+    let number = |name: &str| NewTableColumnInput {
+        required: false,
+        name: name.into(),
+        field_type: "number".into(),
+    };
+    let mut runtime =
+        DesignerRuntime::new_table(OCCURRENCE, "Expenses", &[number("Amount"), number("Tax")])
+            .unwrap();
+    let collection = runtime.collection_specs.keys().next().unwrap().clone();
+    let columns = runtime.query_table(&collection).unwrap().columns;
+    let (amount, tax) = (columns[0].id.clone(), columns[1].id.clone());
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .insert_row(
+            &revision,
+            &collection,
+            &[RowInitializer {
+                field: amount.clone(),
+                input: ScalarEditInput::Number {
+                    input: "3200".into(),
+                },
+            }],
+        )
+        .unwrap();
+    let row = runtime.query_table(&collection).unwrap().rows[0].id.clone();
+    let target = |field: &str| FieldTarget {
+        entity: row.clone(),
+        field: field.to_owned(),
+    };
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .update_formula(&revision, &target(&tax), "[.amount]*0.1")
+        .unwrap();
+    let expected_revision = runtime.current_revision().to_owned();
+    published(runtime.handle(DesignerRequest::SetColumnConstraint {
+        expected_revision,
+        collection: collection.clone(),
+        field: tax.clone(),
+        constraint: range(0.0, 1000.0),
+    }))
+    .unwrap();
+    let before = runtime.current_revision().to_owned();
+    // Amount has no constraint; its new formula makes the dependent Tax 2000.
+    match runtime
+        .update_formula(&before, &target(&amount), "20000")
+        .unwrap_err()
+    {
+        DesignerError::FieldConstraintViolation {
+            field,
+            constraint,
+            offending_rows,
+            reason,
+            ..
+        } => {
+            assert_eq!(field.as_str(), tax);
+            assert_eq!(
+                constraint,
+                FieldConstraintProjection::NumberInclusiveRange {
+                    min: 0.0,
+                    max: 1000.0
+                }
+            );
+            assert_eq!(offending_rows, 1);
+            assert_eq!(reason, ConstraintFailureReason::FieldValue);
+        }
+        other => panic!("unexpected refusal {other:?}"),
+    }
+    assert_eq!(runtime.current_revision(), before);
+}
