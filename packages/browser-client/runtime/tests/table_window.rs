@@ -11,10 +11,9 @@
 use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
-    ComparisonOperator, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
-    ColumnTotalsProjection, LocateInViewResult, LocatedInViewProjection, ScalarEditInput,
-    ScalarLiteral, SortDirection, TableView, TableWindowProjection, ViewFilter, ViewSortKey,
-    process_wire_request,
+    ColumnTotalsProjection, ComparisonOperator, DesignerError, DesignerRequest, DesignerResponse,
+    DesignerRuntime, LocateInViewResult, LocatedInViewProjection, ScalarEditInput, ScalarLiteral,
+    SortDirection, TableView, TableWindowProjection, ViewFilter, ViewSortKey, process_wire_request,
 };
 use tachiko_workspace_engine::{
     Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
@@ -1467,7 +1466,8 @@ fn column_totals_follow_the_revision_after_an_edit() {
     let after = column_totals(&mut runtime, &["e01", "e02", "e03"]).expect("the set is valid");
     assert_eq!(after.revision, publication.resulting_revision);
     assert_eq!(amount_of(&after), Some(11.0));
-    let without_edited_row = column_totals(&mut runtime, &["e01", "e03"]).expect("the set is valid");
+    let without_edited_row =
+        column_totals(&mut runtime, &["e01", "e03"]).expect("the set is valid");
     assert_eq!(amount_of(&without_edited_row), Some(1.0));
 }
 

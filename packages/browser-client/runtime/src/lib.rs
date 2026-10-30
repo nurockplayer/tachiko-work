@@ -2674,9 +2674,11 @@ impl DesignerRuntime {
                 expected_revision,
                 collection,
                 entities,
-            } => Ok(DesignerResponse::ColumnTotals(
-                self.query_column_totals(&expected_revision, &collection, &entities)?,
-            )),
+            } => Ok(DesignerResponse::ColumnTotals(self.query_column_totals(
+                &expected_revision,
+                &collection,
+                &entities,
+            )?)),
             DesignerRequest::QueryFields {
                 expected_revision,
                 fields,
