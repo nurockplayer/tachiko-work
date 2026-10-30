@@ -255,25 +255,13 @@ fn blank_boolean_is_not_zero_and_blank_date_is_probed_by_isblank() {
 
     // A blank Boolean is not a Number: arithmetic on it is a type mismatch, never 0.
     let revision = runtime.current_revision().to_owned();
-    let outcome = runtime.update_formula(&revision, &target, "[.done] + 1");
-    if let Err(error) = outcome {
-        assert_eq!(
-            error.failure_projection(&revision).code,
-            "formula_type_mismatch"
-        );
-    } else {
-        let cells = &table(&runtime, &collection).rows[0].fields;
-        let field = cells.iter().find(|f| f.target.field == calc).unwrap();
-        assert!(
-            matches!(
-                &field.calculated,
-                Some(CalculationProjection::Failure { code, .. })
-                    if code == "formula_type_mismatch"
-            ),
-            "blank Boolean must not calculate: {:?}",
-            field.calculated
-        );
-    }
+    let error = runtime
+        .update_formula(&revision, &target, "[.done] + 1")
+        .expect_err("a blank Boolean never reads as 0");
+    assert_eq!(
+        error.failure_projection(&revision).code,
+        "formula_type_mismatch"
+    );
 
     // ISBLANK probes presence on any type; a blank Date and a blank Boolean are blank.
     let revision = runtime.current_revision().to_owned();
