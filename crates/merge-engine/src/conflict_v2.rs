@@ -694,10 +694,12 @@ fn add_field_order_conflicts(
     for (schema_id, b) in &base.schemas {
         let (l, r) = (left.schemas.get(schema_id), right.schemas.get(schema_id));
         let conflicting = match (l, r) {
-            (Some(l), Some(r)) => choose(&b.field_order, &l.field_order, &r.field_order).is_none(),
+            (Some(l), Some(r)) => {
+                order_edited(b, l) && order_edited(b, r) && order_key(b, l) != order_key(b, r)
+            }
             // A side that deletes the schema conflicts with an order change on
             // the other side; the frozen merge cannot see order-only edits.
-            (None, Some(kept)) | (Some(kept), None) => kept.field_order != b.field_order,
+            (None, Some(kept)) | (Some(kept), None) => order_edited(b, kept),
             (None, None) => false,
         };
         if conflicting {
@@ -735,6 +737,22 @@ fn add_field_order_conflicts(
     }
 }
 
+/// A side's order relative to the base fields, and whether it is explicit.
+/// Adding or removing fields is not an order edit.
+fn order_key(base: &Schema, side: &Schema) -> (bool, Vec<FieldId>) {
+    (
+        side.field_order.is_some(),
+        side.ordered_fields()
+            .filter(|definition| base.fields.contains_key(&definition.id))
+            .map(|definition| definition.id.clone())
+            .collect(),
+    )
+}
+
+fn order_edited(base: &Schema, side: &Schema) -> bool {
+    order_key(base, side) != order_key(base, base)
+}
+
 /// Takes the one side that changed each order; a schema present on one side only
 /// keeps that side's order, and the result is normalised against the merged fields.
 fn apply_selected_field_orders(
@@ -749,8 +767,22 @@ fn apply_selected_field_orders(
             left.schemas.get(schema_id),
             right.schemas.get(schema_id),
         ) {
-            (Some(b), Some(l), Some(r)) => choose(&b.field_order, &l.field_order, &r.field_order)
-                .expect("conflict-free field order"),
+            (Some(b), Some(l), Some(r)) => {
+                let (pick, other) = if order_edited(b, r) && !order_edited(b, l) {
+                    (r, l)
+                } else {
+                    (l, r)
+                };
+                // Fields the other side added follow, in that side's order.
+                pick.field_order.clone().map(|mut order| {
+                    for definition in other.ordered_fields() {
+                        if !order.contains(&definition.id) {
+                            order.push(definition.id.clone());
+                        }
+                    }
+                    order
+                })
+            }
             (_, l, r) => l.or(r).and_then(|source| source.field_order.clone()),
         };
         schema.field_order = selected;

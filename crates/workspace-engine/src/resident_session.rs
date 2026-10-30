@@ -816,9 +816,22 @@ fn collect_schema_projection_changes(
         {
             changes.address_index_changed = true;
         }
-        if before_schema.map(|schema| (&schema.id, &schema.key, &schema.display_name))
-            != after_schema.map(|schema| (&schema.id, &schema.key, &schema.display_name))
-        {
+        // The column order (R4a) is schema presentation too.
+        if before_schema.map(|schema| {
+            (
+                &schema.id,
+                &schema.key,
+                &schema.display_name,
+                &schema.field_order,
+            )
+        }) != after_schema.map(|schema| {
+            (
+                &schema.id,
+                &schema.key,
+                &schema.display_name,
+                &schema.field_order,
+            )
+        }) {
             changes.schemas.insert(schema_id.clone());
         }
         let field_ids = before_schema

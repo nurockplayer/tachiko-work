@@ -339,3 +339,23 @@ fn concurrent_schema_additions_report_differing_orders() {
             .any(|conflict| conflict.facet() == ConflictFacetV2::FieldOrder)
     );
 }
+
+#[test]
+fn independent_additions_to_an_ordered_schema_merge() {
+    let base = ordered_document(Some(vec!["value", "other"]));
+    let mut left = base.clone();
+    let mut right = base.clone();
+    for (document, id) in [(&mut left, "left_added"), (&mut right, "right_added")] {
+        let schema = document.schemas.get_mut("schema").unwrap();
+        schema.fields.insert(id.into(), number_field(id));
+        schema.normalize_field_order();
+    }
+    assert_eq!(
+        merged_order(merge_v2(&base, &left, &right)),
+        Some(
+            ["value", "other", "left_added", "right_added"]
+                .map(FieldId::from)
+                .to_vec()
+        )
+    );
+}

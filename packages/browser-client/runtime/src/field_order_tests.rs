@@ -61,10 +61,13 @@ fn move_column_moves_projection_and_undo_redo_restores_it() {
     assert_eq!(initial.len(), 3);
     let moved = initial[0].clone();
     let moved_order = vec![initial[1].clone(), initial[2].clone(), moved.clone()];
-    assert!(matches!(
-        move_column(&mut runtime, &collection, &moved, 2).unwrap(),
-        DesignerResponse::Published(_)
-    ));
+    let DesignerResponse::Published(publication) =
+        move_column(&mut runtime, &collection, &moved, 2).unwrap()
+    else {
+        panic!("a move publishes");
+    };
+    // The reordered schema is invalidated, so clients refresh its columns.
+    assert_eq!(publication.schemas.len(), 1);
     assert_eq!(column_ids(&runtime, &collection), moved_order);
     undo(&mut runtime);
     assert_eq!(column_ids(&runtime, &collection), initial);
