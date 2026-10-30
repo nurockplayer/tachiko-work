@@ -14,6 +14,12 @@ All notable changes to Tachiko Work are documented in this file.
   Imports with optional Date and Boolean columns project as native tables.
   No storage-format change (ADR-0045 amendment, Work #598).
 
+- `queryColumnTotals` sums Number columns over the entity ids a caller names,
+  so a filtered view can total exactly the rows it shows. The request is
+  revision-pinned, takes unique ids of the collection only and is summed in
+  collection order; naming every entity gives the whole-collection footer.
+  Unknown, duplicate or foreign ids refuse with no change.
+
 - `duplicateCollection` accepts optional `columnNames`, keyed by source field
   ID, so a copy's columns can carry their own names in the same command. The
   names are validated before publication and undo with the copy as one step.

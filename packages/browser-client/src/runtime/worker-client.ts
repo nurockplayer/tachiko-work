@@ -35,6 +35,7 @@ import type {
   TableView,
   TableWindowProjection,
   LocatedInViewProjection,
+  ColumnTotalsProjection,
   WorkerReply,
   WorkerRequest,
 } from "./protocol.ts";
@@ -389,6 +390,22 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async queryColumnTotals(
+    expectedRevision: string,
+    collection: string,
+    entities: string[],
+  ): Promise<ColumnTotalsProjection> {
+    return expectResponse(
+      "column_totals",
+      await this.#command({
+        type: "query_column_totals",
+        expected_revision: expectedRevision,
+        collection,
+        entities,
+      }),
+    );
+  }
+
   async queryFields(
     expectedRevision: string,
     fields: FieldTarget[],
@@ -573,6 +590,10 @@ function expectResponse(
   response: DesignerResponse,
 ): LocatedInViewProjection;
 function expectResponse(
+  type: "column_totals",
+  response: DesignerResponse,
+): ColumnTotalsProjection;
+function expectResponse(
   type: "fields",
   response: DesignerResponse,
 ): FieldBatchProjection;
@@ -607,6 +628,7 @@ function expectResponse(
     case "table": validateTablePresence(response.payload); break;
     case "table_window": validateTablePresence(response.payload); break;
     case "located_in_view": validateLocatedInView(response.payload); break;
+    case "column_totals": validateColumnTotals(response.payload); break;
     case "opened": validateTablePresence(response.payload.table); break;
     case "imported": validateTablePresence(response.payload.opened.table); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
@@ -730,6 +752,17 @@ function validateColumnNumberFormat(column: ColumnProjection): void {
       !Number.isInteger(format.decimals) ||
       format.decimals < 0 || format.decimals > 10 || typeof format.thousands_separator !== "boolean" || !validKind) {
     throw new Error("Invalid Worker column number format.");
+  }
+}
+
+function validateColumnTotals(totals: ColumnTotalsProjection): void {
+  if (!Number.isInteger(totals.rows) || totals.rows < 0) {
+    throw new Error("Invalid Worker column totals row count.");
+  }
+  for (const total of Object.values(totals.column_totals)) {
+    if (total !== null && !Number.isFinite(total)) {
+      throw new Error("Invalid Worker column total.");
+    }
   }
 }
 

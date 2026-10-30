@@ -22,6 +22,7 @@ import type {
   TableView,
   TableWindowProjection,
   LocatedInViewProjection,
+  ColumnTotalsProjection,
   FailureProjection,
   FieldConstraintInput,
   NumberFormat,
@@ -84,6 +85,12 @@ export interface DesignerClient {
     view: TableView,
     entity: string,
   ): Promise<LocatedInViewProjection>;
+  /** Number totals over exactly these entities; unknown, duplicate or foreign ids refuse. */
+  queryColumnTotals(
+    expectedRevision: string,
+    collection: string,
+    entities: string[],
+  ): Promise<ColumnTotalsProjection>;
   queryFields(
     expectedRevision: string,
     fields: FieldTarget[],

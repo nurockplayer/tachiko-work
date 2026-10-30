@@ -280,6 +280,13 @@ pub enum DesignerRequest {
         view: TableView,
         entity: String,
     },
+    /// Number totals over exactly the named entities, summed in collection
+    /// order. Naming every entity of the collection gives the window footer.
+    QueryColumnTotals {
+        expected_revision: String,
+        collection: String,
+        entities: Vec<String>,
+    },
     QueryFields {
         expected_revision: String,
         fields: Vec<FieldTarget>,
@@ -333,6 +340,7 @@ pub enum DesignerResponse {
     Table(TableProjection),
     TableWindow(TableWindowProjection),
     LocatedInView(LocatedInViewProjection),
+    ColumnTotals(ColumnTotalsProjection),
     Fields(FieldBatchProjection),
     FieldExplanation(FieldExplanationProjection),
     Published(PublicationProjection),
@@ -438,6 +446,18 @@ pub struct LocatedInViewProjection {
 pub enum LocateInViewResult {
     Found,
     FilteredOut,
+}
+
+/// Number totals over one named set of entities, at one revision.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ColumnTotalsProjection {
+    pub revision: String,
+    /// How many entities the totals cover.
+    pub rows: usize,
+    /// One entry per Number column, with the same rules as
+    /// `TableWindowProjection::column_totals`.
+    #[serde(deserialize_with = "deserialize_column_totals")]
+    pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
 /// One stateless table view: ordered sort keys, AND-ed filters and up to 256
@@ -2657,6 +2677,15 @@ impl DesignerRuntime {
                 &view,
                 &entity,
             )?)),
+            DesignerRequest::QueryColumnTotals {
+                expected_revision,
+                collection,
+                entities,
+            } => Ok(DesignerResponse::ColumnTotals(self.query_column_totals(
+                &expected_revision,
+                &collection,
+                &entities,
+            )?)),
             DesignerRequest::QueryFields {
                 expected_revision,
                 fields,
@@ -3415,8 +3444,23 @@ impl DesignerRuntime {
                 return Ok(totals.clone());
             }
         }
-        let spec = self.collection_spec(collection)?;
-        let entities = self.session.query_entities(&spec.entities)?;
+        let totals = {
+            let spec = self.collection_spec(collection)?;
+            self.totals_for_entities(spec, &spec.entities)?
+        };
+        self.totals_cache = Some((revision, collection.to_owned(), totals.clone()));
+        Ok(totals)
+    }
+
+    /// Sums each Number column over `members`, which are collection entities
+    /// in collection order. Blank cells are skipped; any unavailable or
+    /// non-finite value nulls that column. An empty set totals to `0`.
+    fn totals_for_entities(
+        &self,
+        spec: &CollectionSpec,
+        members: &[EntityId],
+    ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        let entities = self.session.query_entities(members)?;
         let targets = entities
             .value()
             .iter()
@@ -3436,9 +3480,62 @@ impl DesignerRuntime {
             .iter()
             .map(|field| self.project_field(field))
             .collect::<Vec<_>>();
-        let totals = column_totals_from_fields(spec, &projected.iter().collect::<Vec<_>>());
-        self.totals_cache = Some((revision, collection.to_owned(), totals.clone()));
-        Ok(totals)
+        Ok(column_totals_from_fields(
+            spec,
+            &projected.iter().collect::<Vec<_>>(),
+        ))
+    }
+
+    /// Totals over exactly the named entities, refusing unknown, duplicated
+    /// or oversized sets before any sum is taken. Members are summed in
+    /// collection order, so naming every entity matches the window footer.
+    fn query_column_totals(
+        &self,
+        expected_revision: &str,
+        collection: &str,
+        entities: &[String],
+    ) -> Result<ColumnTotalsProjection, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let revision = self.current_revision().to_owned();
+        let spec = self.collection_spec(collection)?;
+        // Every id must be a distinct entity of the collection, so the
+        // collection size bounds the set before any lookup.
+        if entities.len() > spec.entities.len() {
+            return Err(DesignerError::InvalidView {
+                message: format!(
+                    "column totals name {} entities; collection {collection} has {}",
+                    entities.len(),
+                    spec.entities.len()
+                ),
+            });
+        }
+        let known = spec.entities.iter().collect::<BTreeSet<_>>();
+        let mut requested = BTreeSet::new();
+        for entity in entities {
+            let id = EntityId::from(entity.as_str());
+            if !known.contains(&id) {
+                return Err(DesignerError::InvalidView {
+                    message: format!("entity {entity} is not in collection {collection}"),
+                });
+            }
+            if !requested.insert(id) {
+                return Err(DesignerError::InvalidView {
+                    message: format!("entity {entity} is listed more than once"),
+                });
+            }
+        }
+        let members = spec
+            .entities
+            .iter()
+            .filter(|id| requested.contains(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let column_totals = self.totals_for_entities(spec, &members)?;
+        Ok(ColumnTotalsProjection {
+            revision,
+            rows: members.len(),
+            column_totals,
+        })
     }
 
     /// Project the window's entities in view order, enforcing the reply byte
@@ -6479,7 +6576,10 @@ pub(crate) fn ensure_wire_reply_size(
             response: DesignerResponse::Fields(_) | DesignerResponse::FieldExplanation(_),
         } => MAX_PROJECTION_BYTES,
         DesignerWireReply::Ok {
-            response: DesignerResponse::TableWindow(_) | DesignerResponse::LocatedInView(_),
+            response:
+                DesignerResponse::TableWindow(_)
+                | DesignerResponse::LocatedInView(_)
+                | DesignerResponse::ColumnTotals(_),
         } => table_window_byte_limit(text_capacity),
         DesignerWireReply::Ok { .. } if text_capacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
         _ => MAX_PROJECTION_BYTES,
