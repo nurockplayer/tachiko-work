@@ -4348,7 +4348,30 @@ impl DesignerRuntime {
         }
     }
 
+    /// A formula whose result breaks its column's constraint, or a dependent
+    /// field's, gets the same typed refusal as a scalar edit (#578).
     fn publish_formula_update(
+        &mut self,
+        expected_revision: &str,
+        target: &FieldTarget,
+        source: &str,
+        inverse: Option<&mut Option<HistoryAction>>,
+    ) -> Result<(PublicationProjection, String), DesignerError> {
+        self.publish_formula_update_unmapped(expected_revision, target, source, inverse)
+            .map_err(|error| match &error {
+                DesignerError::Lifecycle(PatchLifecycleError::ValidationFailed { report }) => {
+                    constraint_failure(
+                        self.session.export_snapshot().document(),
+                        &BTreeSet::new(),
+                        report,
+                    )
+                    .unwrap_or(error)
+                }
+                _ => error,
+            })
+    }
+
+    fn publish_formula_update_unmapped(
         &mut self,
         expected_revision: &str,
         target: &FieldTarget,
