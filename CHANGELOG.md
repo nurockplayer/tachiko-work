@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Imports over 64 rows can select Date and Yes/No columns (Work #610): the
+  large-import profile admits them with the existing conversion rules
+  (`YYYY-MM-DD`, `true`/`false`, blanks stay absent), keeps its row, column,
+  cell and byte limits, and writes XLSX dates with a `yyyy-mm-dd` format so
+  spreadsheet apps show them as dates.
+
 - Optional Date and Boolean fields are native: a field can be declared optional
   when creating a table or adding a column, rows can be inserted with blanks,
   values can be cleared, and requiredness can change (strengthening refuses
