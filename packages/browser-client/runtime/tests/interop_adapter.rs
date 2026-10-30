@@ -2226,6 +2226,10 @@ fn capacity_xlsx_reads_serial_dates_with_the_date_format() {
             "s=\"1\" t=\"d\"><v>2026-02-02</v>",
             "s=\"1\" t=\"n\"><v>46055</v>",
         )
+        .replace(
+            "s=\"1\" t=\"d\"><v>2026-03-03</v>",
+            "s=\"1\" t=\"n\"><v>2958465</v>",
+        )
     });
     let book = import_xlsx(&serial).unwrap();
     assert!(
@@ -2237,6 +2241,12 @@ fn capacity_xlsx_reads_serial_dates_with_the_date_format() {
         book.sheets[0].rows[1][1].value,
         SourceValue::Date {
             value: "2026-02-02".into()
+        }
+    );
+    assert_eq!(
+        book.sheets[0].rows[2][1].value,
+        SourceValue::Date {
+            value: "9999-12-31".into()
         }
     );
 }

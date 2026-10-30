@@ -2633,7 +2633,9 @@ fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
     if !date1904 && value == 60.0 {
         return fail("Excel 1900 serial 60 is not a Gregorian date");
     }
-    if !(-700_000.0..=2_900_000.0).contains(&value) {
+    // 2,958,465 is 9999-12-31 in the 1900 system; Date::parse refuses
+    // anything that lands beyond year 9999.
+    if !(-700_000.0..=2_958_465.0).contains(&value) {
         return fail("Date serial is outside Gregorian profile");
     }
     let serial = value as i64;

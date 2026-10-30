@@ -77,8 +77,16 @@ fn native_tracker_outbound_profile_covers_every_admitted_row_boundary() {
             .expect("every admitted Tracker size should export");
         let sheet = &workbook.sheets[0];
         assert_eq!(sheet.rows.len(), count);
-        assert_eq!(export_csv(sheet).is_ok(), count <= 64);
-        assert_eq!(export_xlsx(&workbook).is_ok(), count <= 64);
+        // A plain Text/Number/Yes-No rectangle over 64 rows uses the
+        // large-table profile (Work #610); a styled one stays capped at 64.
+        assert!(export_csv(sheet).is_ok());
+        assert!(export_xlsx(&workbook).is_ok());
+        let mut styled = workbook.clone();
+        if let Some(cell) = styled.sheets[0].rows.first_mut().map(|row| &mut row[0]) {
+            cell.style.bold = true;
+        }
+        assert_eq!(export_csv(&styled.sheets[0]).is_ok(), count <= 64);
+        assert_eq!(export_xlsx(&styled).is_ok(), count <= 64);
     }
 
     let mut runtime = DesignerRuntime::tracker(OCCURRENCE).unwrap();
@@ -198,13 +206,15 @@ fn native_tracker_exports_all_128_rows_without_import_provenance_or_mutation() {
         .collect::<Vec<_>>();
     assert!((estimates.iter().sum::<f64>() - 8256.0).abs() < f64::EPSILON);
     assert!(sheet.rows.iter().enumerate().all(|(index, row)| matches!(row[2].value, SourceValue::Boolean { value } if value == ((128 - index) % 2 == 0))));
+    let mut styled = workbook.clone();
+    styled.sheets[0].rows[0][0].style.bold = true;
     assert!(
-        export_csv(sheet).is_err(),
-        "shared CSV output remains capped at 64 rows"
+        export_csv(&styled.sheets[0]).is_err(),
+        "shared CSV output of a styled sheet remains capped at 64 rows"
     );
     assert!(
-        export_xlsx(&workbook).is_err(),
-        "shared XLSX output remains capped at 64 rows"
+        export_xlsx(&styled).is_err(),
+        "shared XLSX output of a styled sheet remains capped at 64 rows"
     );
     assert_eq!(
         runtime
