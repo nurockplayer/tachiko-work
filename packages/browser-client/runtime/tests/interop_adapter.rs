@@ -2250,3 +2250,31 @@ fn capacity_xlsx_reads_serial_dates_with_the_date_format() {
         }
     );
 }
+
+#[test]
+fn capacity_xlsx_reads_iso_dates_without_the_date_format() {
+    let bytes = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let unstyled = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "s=\"1\" t=\"d\"><v>2026-02-02</v>",
+            "t=\"d\"><v>2026-02-02</v>",
+        )
+        .replace(
+            "s=\"1\" t=\"d\"><v>2026-03-03</v>",
+            "s=\"0\" t=\"d\"><v>2026-03-03</v>",
+        )
+    });
+    let book = import_xlsx(&unstyled).unwrap();
+    assert!(
+        !book.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        book.ledger
+    );
+    assert_eq!(
+        book.sheets[0].rows[1][1].value,
+        SourceValue::Date {
+            value: "2026-02-02".into()
+        }
+    );
+    assert_eq!(book.sheets[0].rows[2][1].style, CellStyle::default());
+}

@@ -2327,7 +2327,9 @@ fn capacity_plain_values(node: &Xml) -> bool {
                 // A spreadsheet app may store the date as a serial number.
                 None | Some("n") if node.attr("s") == Some("1") => one_value,
                 None | Some("n") => default_style && (node.children.is_empty() || one_value),
-                Some("d") => node.attr("s") == Some("1") && one_value,
+                // An ISO date may carry the date format or the default style,
+                // as the sheet shape admits both.
+                Some("d") => (default_style || node.attr("s") == Some("1")) && one_value,
                 _ => false,
             }
         }
