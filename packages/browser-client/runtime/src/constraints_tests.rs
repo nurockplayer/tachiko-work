@@ -540,3 +540,41 @@ fn constrained_documents_export_only_to_v3_and_reopen_equally() {
     ));
     assert_eq!(reopened.current_revision(), revision);
 }
+
+#[test]
+fn a_formula_outside_the_column_range_is_a_typed_constraint_refusal() {
+    let mut fixture = Fixture::new();
+    let amount = fixture.amount.clone();
+    fixture.set(&amount, range(0.0, 100.0)).unwrap();
+    let before = fixture.runtime.current_revision().to_owned();
+    let target = FieldTarget {
+        entity: fixture.row.clone(),
+        field: amount.clone(),
+    };
+    let error = fixture
+        .runtime
+        .update_formula(&before, &target, "101")
+        .unwrap_err();
+    match error {
+        DesignerError::FieldConstraintViolation {
+            field,
+            constraint,
+            offending_rows,
+            reason,
+            ..
+        } => {
+            assert_eq!(field.as_str(), amount);
+            assert_eq!(
+                constraint,
+                FieldConstraintProjection::NumberInclusiveRange {
+                    min: 0.0,
+                    max: 100.0
+                }
+            );
+            assert_eq!(offending_rows, 1);
+            assert_eq!(reason, ConstraintFailureReason::FieldValue);
+        }
+        other => panic!("unexpected refusal {other:?}"),
+    }
+    assert_eq!(fixture.runtime.current_revision(), before);
+}

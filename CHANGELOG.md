@@ -29,6 +29,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- A formula whose result falls outside its column's constraint, or makes a
+  dependent formula field do so, is refused with the typed
+  `field_constraint_violation` (`constraint_failure` names the field, the
+  constraint and the offending row count) instead of a generic lifecycle
+  failure (#578). The update is still refused atomically.
+
 - Capacity metadata acceptance now states the imported export name policy:
   CSV round-trips quoted Unicode/XML-sensitive headers despite an un-emitted
   worksheet name containing controls; XLSX refuses that name with a located
