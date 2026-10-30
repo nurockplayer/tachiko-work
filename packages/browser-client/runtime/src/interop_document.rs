@@ -945,14 +945,20 @@ fn validate_selection(
     let capacity_selection = workbook.sheets.first().is_some_and(|sheet| {
         selection.column_types.len() == 1
             && selection.column_types[0].len() == sheet.columns.len()
-            && selection.column_types[0]
-                .iter()
-                .all(|kind| matches!(kind, ImportFieldType::Text | ImportFieldType::Number))
+            && selection.column_types[0].iter().all(|kind| {
+                matches!(
+                    kind,
+                    ImportFieldType::Text
+                        | ImportFieldType::Number
+                        | ImportFieldType::Date
+                        | ImportFieldType::Boolean
+                )
+            })
             && selection.extra_columns == vec![Vec::new()]
     });
     if capacity && (!super::interop_adapter::text_capacity_shape(workbook) || !capacity_selection) {
         return Err(tracker_error(
-            "8,406-row capacity requires selected Text/Number fields and no extra columns",
+            "8,406-row capacity requires selected Text, Number, Date or Boolean fields and no extra columns",
         ));
     }
     if workbook.ledger.iter().any(|finding| finding.blocking) {
@@ -1142,6 +1148,14 @@ fn build_import_sheet(
                 // the column's); retaining the source copy would bring a later
                 // cleared format back on export.
                 style.number_format = None;
+            }
+            if source.rows.len() > MAX_DATA_ROWS
+                && matches!(cell.value, SourceValue::Date { .. })
+                && style == super::interop_adapter::capacity_date_style()
+            {
+                // The large-import writer adds this one date format to every
+                // Date cell itself; capacity metadata keeps default styles.
+                style = CellStyle::default();
             }
             styles.push(style);
         }

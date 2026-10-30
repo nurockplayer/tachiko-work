@@ -7469,15 +7469,26 @@ fn is_text_capacity_document(document: &Document) -> bool {
         return false;
     };
     let columns = schema.fields.len();
-    document.schemas.len() == 1
+    // The stock Tracker keeps its own 128-row delivery profile; Date and
+    // Yes/No admission (Work #610) does not move it to the large-table one.
+    let stock_tracker = schema.id.as_str() == "tracker"
+        && schema.key.as_str() == "tracker"
+        && schema
+            .fields
+            .values()
+            .any(|field| matches!(field.field_type, FieldType::Date | FieldType::Boolean));
+    !stock_tracker
+        && document.schemas.len() == 1
         && (1..=interop_adapter::MAX_COLUMNS).contains(&columns)
         && document.entities.len() <= interop_adapter::MAX_TEXT_CAPACITY_ROWS
         && document.entities.len().saturating_mul(columns)
             <= interop_adapter::MAX_TEXT_CAPACITY_CELLS
         && document.keyed_grouped_sum_definitions.is_empty()
         && schema.fields.values().all(|field| {
-            matches!(field.field_type, FieldType::Text | FieldType::Number)
-                && field.constraint == tachiko_workspace_engine::FieldConstraint::None
+            matches!(
+                field.field_type,
+                FieldType::Text | FieldType::Number | FieldType::Date | FieldType::Boolean
+            ) && field.constraint == tachiko_workspace_engine::FieldConstraint::None
         })
         && document.entities.values().all(|entity| {
             entity.schema == schema.id
@@ -7487,6 +7498,8 @@ fn is_text_capacity_document(document: &Document) -> bool {
                             (&field.field_type, value),
                             (FieldType::Text, Value::Text(_))
                                 | (FieldType::Number, Value::Number(_))
+                                | (FieldType::Date, Value::Date(_))
+                                | (FieldType::Boolean, Value::Boolean(_))
                         )
                     })
                 })
@@ -7542,10 +7555,16 @@ fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWor
                                 Some(Value::Number(value)) => {
                                     SourceValue::Number { value: value.get() }
                                 }
-                                None => SourceValue::Empty,
-                                Some(_) => {
-                                    unreachable!("capacity shape contains only Text and Number")
+                                Some(Value::Date(value)) => SourceValue::Date {
+                                    value: value.to_string(),
+                                },
+                                Some(Value::Boolean(value)) => {
+                                    SourceValue::Boolean { value: *value }
                                 }
+                                None => SourceValue::Empty,
+                                Some(_) => unreachable!(
+                                    "capacity shape contains only Text, Number, Date and Boolean"
+                                ),
                             },
                             ..SourceCell::default()
                         })
@@ -7667,7 +7686,7 @@ fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) 
     let capacity = capacity.map_or_else(
         || {
             format!(
-                "only one Text/Number table within {} rows, {} columns and {} cells qualifies",
+                "only one Text, Number, Date or Yes/No table within {} rows, {} columns and {} cells qualifies",
                 interop_adapter::MAX_TEXT_CAPACITY_ROWS,
                 interop_adapter::MAX_COLUMNS,
                 interop_adapter::MAX_TEXT_CAPACITY_CELLS
