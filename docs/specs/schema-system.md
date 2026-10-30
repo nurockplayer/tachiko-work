@@ -194,8 +194,9 @@ present entry keeps its exact scalar type. One field's requiredness may change
 in either direction: relaxation introduces no missing-required-field failure,
 and strengthening rejects unless every entity already holds a value. Blank is
 the omitted value, distinct from empty Text, `0`, and `false`; no default,
-null placeholder, or coercion is introduced. Existing documents, including
-imported optional Date/Boolean fields, are not reclassified.
+null placeholder, or coercion is introduced. Optional Date and Boolean fields
+take the same authority (ADR-0045 amendment of 2026-10-30). Existing documents,
+including imported optional fields, are not reclassified.
 
 ## Future schema vocabulary
 
