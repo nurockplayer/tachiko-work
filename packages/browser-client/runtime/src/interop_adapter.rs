@@ -98,6 +98,14 @@ pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
         })
 }
 
+/// The one non-default cell style the capacity profile writes: an ISO date.
+fn capacity_date_style() -> CellStyle {
+    CellStyle {
+        number_format: Some("yyyy-mm-dd".into()),
+        ..CellStyle::default()
+    }
+}
+
 fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
     sheet.has_header
         && !sheet.columns.is_empty()
@@ -109,13 +117,16 @@ fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
             row.len() == sheet.columns.len()
                 && row.iter().all(|cell| {
                     cell.formula.is_none()
-                        && matches!(
-                            cell.value,
+                        && match &cell.value {
                             SourceValue::Empty
-                                | SourceValue::Text { .. }
-                                | SourceValue::Number { .. }
-                        )
-                        && cell.style == CellStyle::default()
+                            | SourceValue::Text { .. }
+                            | SourceValue::Number { .. }
+                            | SourceValue::Boolean { .. } => cell.style == CellStyle::default(),
+                            SourceValue::Date { .. } => {
+                                cell.style == CellStyle::default()
+                                    || cell.style == capacity_date_style()
+                            }
+                        }
                 })
         })
 }
@@ -191,8 +202,20 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
                 SourceValue::Number { .. } => {
                     return fail("Text capacity refuses nonfinite Number");
                 }
-                SourceValue::Boolean { .. } | SourceValue::Date { .. } => {
-                    return fail("Text capacity contains a value outside Text/Number");
+                SourceValue::Date { value } => {
+                    if tachiko_workspace_engine::Date::parse(value).is_err()
+                        || !("1900-01-01"..="9999-12-31").contains(&value.as_str())
+                    {
+                        return fail(
+                            "Text capacity Date must be a YYYY-MM-DD date from 1900-01-01 through 9999-12-31",
+                        );
+                    }
+                    csv_bytes += csv_text_bytes(value);
+                    continue;
+                }
+                SourceValue::Boolean { value } => {
+                    csv_bytes += csv_text_bytes(if *value { "true" } else { "false" });
+                    continue;
                 }
             };
             if is_text {
@@ -228,7 +251,8 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
         return fail("Text capacity expanded XLSX exceeds 8 MiB");
     }
     // Worksheet nodes: row + (c,is,t) for populated Text cells. Empty and
-    // Number cells use fewer nodes. Other parts are independent XML documents.
+    // Number cells use fewer nodes; a Date or Boolean cell adds only c and v,
+    // so the 3-per-cell bound still holds. Other parts are independent XML documents.
     if 2 + (sheet.rows.len() + 1) * (1 + 3 * sheet.columns.len()) > 100_000 {
         return fail("Text capacity XML exceeds 100000 nodes");
     }
@@ -1097,9 +1121,21 @@ fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
                     "<c r=\"{column}{number}\" s=\"0\" t=\"n\"><v>{value}</v></c>"
                 )
                 .expect("capacity XML sinks are infallible"),
-                SourceValue::Empty | SourceValue::Boolean { .. } | SourceValue::Date { .. } => {
-                    write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
+                SourceValue::Boolean { value } => write!(
+                    output,
+                    "<c r=\"{column}{number}\" s=\"0\" t=\"b\"><v>{}</v></c>",
+                    u8::from(*value)
+                )
+                .expect("capacity XML sinks are infallible"),
+                SourceValue::Date { value } => {
+                    write!(output, "<c r=\"{column}{number}\" s=\"1\" t=\"d\"><v>")
                         .expect("capacity XML sinks are infallible");
+                    output.text(value);
+                    write!(output, "</v></c>").expect("capacity XML sinks are infallible");
+                }
+                SourceValue::Empty => {
+                    write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
+                        .expect("capacity XML sinks are infallible")
                 }
             }
         }
@@ -2171,7 +2207,7 @@ fn builtin_format(id: u32) -> Option<String> {
 }
 fn capacity_styles_xml() -> String {
     format!(
-        "<styleSheet xmlns=\"{MAIN}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"
+        "<styleSheet xmlns=\"{MAIN}\"><numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd\"/></numFmts><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs></styleSheet>"
     )
 }
 
@@ -2262,16 +2298,19 @@ fn capacity_plain_values(node: &Xml) -> bool {
                 && node.attr("rel:id").is_some()
         }
         "c" => {
-            matches!(node.attr("s"), None | Some("0"))
-                && match node.attr("t") {
-                    Some("inlineStr") => node.children.len() == 1 && node.children[0].name == "is",
-                    Some("str" | "s") => node.children.len() == 1 && node.children[0].name == "v",
-                    None | Some("n") => {
-                        node.children.is_empty()
-                            || (node.children.len() == 1 && node.children[0].name == "v")
-                    }
-                    _ => false,
+            let default_style = matches!(node.attr("s"), None | Some("0"));
+            let one_value = node.children.len() == 1 && node.children[0].name == "v";
+            match node.attr("t") {
+                Some("inlineStr") => {
+                    default_style && node.children.len() == 1 && node.children[0].name == "is"
                 }
+                // A Boolean uses the default style; only a Date carries the
+                // one non-default style (the canonical yyyy-mm-dd format).
+                Some("str" | "s" | "b") => default_style && one_value,
+                None | Some("n") => default_style && (node.children.is_empty() || one_value),
+                Some("d") => node.attr("s") == Some("1") && one_value,
+                _ => false,
+            }
         }
         "t" => node.attrs.values().all(|value| value == "preserve"),
         "sst" => node

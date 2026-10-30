@@ -1,8 +1,8 @@
 use std::io::{Cursor, Read, Write};
 use tachiko_designer_runtime::interop_adapter::{
-    FidelityCategory, ImportOptions, MAX_COLUMNS, MAX_DATA_ROWS, MAX_EXPANDED_BYTES, MAX_FORMULAS,
-    MAX_SHEETS, MAX_SOURCE_BYTES, MAX_ZIP_ENTRIES, SourceValue, SourceWorkbook, export_csv,
-    export_xlsx, import_csv, import_xlsx,
+    CellStyle, FidelityCategory, ImportOptions, MAX_COLUMNS, MAX_DATA_ROWS, MAX_EXPANDED_BYTES,
+    MAX_FORMULAS, MAX_SHEETS, MAX_SOURCE_BYTES, MAX_ZIP_ENTRIES, SourceValue, SourceWorkbook,
+    export_csv, export_xlsx, import_csv, import_xlsx,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 fn simple() -> SourceWorkbook {
@@ -2097,5 +2097,109 @@ fn all_language_builtin_formats_match_explicit_patterns_and_scalar_boundaries() 
                 Some(pattern)
             );
         }
+    }
+}
+
+/// Work #610: a large-import workbook with Date and Yes/No cells, some blank.
+fn typed_capacity_book(rows: usize) -> SourceWorkbook {
+    let source = format!("Item,When,Amount,Paid\n{}", "x,y,1,z\n".repeat(rows));
+    let mut book = import_csv(source.as_bytes(), &ImportOptions::default()).unwrap();
+    fill_typed(&mut book, true);
+    book
+}
+
+/// Item (optional), When, Amount, Paid in that order.
+fn fill_typed(book: &mut SourceWorkbook, item: bool) {
+    let offset = usize::from(item);
+    for (index, row) in book.sheets[0].rows.iter_mut().enumerate() {
+        if item {
+            row[0].value = SourceValue::Text {
+                value: format!("item-{index}"),
+            };
+        }
+        row[offset].value = if index % 7 == 0 {
+            SourceValue::Empty
+        } else {
+            SourceValue::Date {
+                value: format!("2026-{:02}-{:02}", index % 12 + 1, index % 28 + 1),
+            }
+        };
+        row[offset + 1].value = SourceValue::Number {
+            value: f64::from(u32::try_from(index).unwrap()) + 0.25,
+        };
+        row[offset + 2].value = if index % 11 == 0 {
+            SourceValue::Empty
+        } else {
+            SourceValue::Boolean {
+                value: index % 2 == 0,
+            }
+        };
+    }
+}
+
+fn worksheet_xml(bytes: &[u8]) -> String {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut entry = archive.by_name("xl/worksheets/sheet1.xml").unwrap();
+    let mut contents = String::new();
+    entry.read_to_string(&mut contents).unwrap();
+    contents
+}
+
+#[test]
+fn capacity_xlsx_carries_dates_and_yes_no_and_reads_them_back() {
+    let book = typed_capacity_book(100);
+    let bytes = export_xlsx(&book).unwrap();
+    let xml = worksheet_xml(&bytes);
+    assert!(
+        xml.contains("s=\"1\" t=\"d\"><v>2026-02-02</v>"),
+        "dates carry the date style"
+    );
+    assert!(
+        xml.contains("s=\"0\" t=\"b\"><v>0</v>"),
+        "Yes/No uses the default style"
+    );
+    let parsed = import_xlsx(&bytes).unwrap();
+    let date_style = CellStyle {
+        number_format: Some("yyyy-mm-dd".into()),
+        ..CellStyle::default()
+    };
+    for (expected, actual) in book.sheets[0].rows.iter().zip(&parsed.sheets[0].rows) {
+        for (expected, actual) in expected.iter().zip(actual) {
+            assert_eq!(actual.value, expected.value);
+            let style = if matches!(actual.value, SourceValue::Date { .. }) {
+                &date_style
+            } else {
+                &CellStyle::default()
+            };
+            assert_eq!(&actual.style, style);
+        }
+    }
+    assert_eq!(
+        export_xlsx(&parsed).unwrap(),
+        bytes,
+        "re-export is byte-identical"
+    );
+}
+
+#[test]
+fn capacity_exports_typed_cells_at_the_row_limit() {
+    // 8,406 x 3 is the largest typed rectangle within 25,218 cells.
+    let source = format!("When,Amount,Paid\n{}", "y,1,z\n".repeat(8406));
+    let mut book = import_csv(source.as_bytes(), &ImportOptions::default()).unwrap();
+    fill_typed(&mut book, false);
+    let xlsx = export_xlsx(&book).unwrap();
+    assert_eq!(import_xlsx(&xlsx).unwrap().sheets[0].rows.len(), 8406);
+    let csv = String::from_utf8(export_csv(&book.sheets[0]).unwrap()).unwrap();
+    assert!(csv.contains("2026-02-02,1.25,false"), "{}", &csv[..200]);
+    assert!(csv.contains(",true"));
+}
+
+#[test]
+fn capacity_refuses_dates_outside_excel_range_or_calendar() {
+    for bad in ["1899-12-31", "2026-02-30"] {
+        let mut book = typed_capacity_book(100);
+        book.sheets[0].rows[3][1].value = SourceValue::Date { value: bad.into() };
+        // The large-import writer refuses it, and the shared writer cannot take 100 rows.
+        assert!(export_xlsx(&book).is_err(), "{bad} must not export");
     }
 }
