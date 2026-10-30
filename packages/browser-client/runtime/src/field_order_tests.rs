@@ -2,6 +2,7 @@ use super::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, NewTableColumnInput,
     PatchLifecycleError, open_project,
 };
+use std::collections::BTreeMap;
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000604";
 
@@ -235,6 +236,7 @@ fn a_duplicated_collection_keeps_the_column_order() {
             expected_revision: runtime.current_revision().into(),
             collection: collection.clone(),
             name: "Copy".into(),
+            column_names: BTreeMap::new(),
         })
         .unwrap()
     else {

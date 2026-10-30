@@ -212,6 +212,9 @@ pub enum DesignerRequest {
         expected_revision: String,
         collection: String,
         name: String,
+        /// Copy column names keyed by source field id. Empty keeps the source names.
+        #[serde(default)]
+        column_names: BTreeMap<String, String>,
     },
     EditCells {
         expected_revision: String,
@@ -2572,10 +2575,12 @@ impl DesignerRuntime {
                 expected_revision,
                 collection,
                 name,
+                column_names,
             } => Ok(DesignerResponse::Duplicated(self.duplicate_collection(
                 &expected_revision,
                 &collection,
                 &name,
+                &column_names,
             )?)),
             DesignerRequest::EditCells {
                 expected_revision,
@@ -4202,6 +4207,7 @@ impl DesignerRuntime {
         expected_revision: &str,
         collection: &str,
         name: &str,
+        column_names: &BTreeMap<String, String>,
     ) -> Result<DuplicateCollectionProjection, DesignerError> {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
@@ -4324,6 +4330,11 @@ impl DesignerRuntime {
             display_name: Some(name.to_owned()),
             fields,
         };
+        for (field, name) in copied_column_names(&schema, column_names, &field_map)? {
+            if let Some(definition) = schema.fields.get_mut(&field) {
+                definition.display_name = Some(name);
+            }
+        }
         schema.normalize_field_order();
         let mut entities = Vec::with_capacity(source_spec.entities.len());
         for source_id in &source_spec.entities {
@@ -7233,6 +7244,56 @@ fn map_copy_references(
     }
 }
 
+/// Admits the column names a copy is given, before anything is published.
+/// Each name passes the `rename_column` spelling rule, and the copy's effective
+/// column names must stay unique, so a duplicate or blank name refuses the whole copy.
+fn copied_column_names(
+    schema: &Schema,
+    column_names: &BTreeMap<String, String>,
+    field_map: &BTreeMap<FieldId, FieldId>,
+) -> Result<BTreeMap<FieldId, String>, DesignerError> {
+    let mut named = BTreeMap::new();
+    for (source_field, name) in column_names {
+        let target = field_map
+            .get(&FieldId::from(source_field.clone()))
+            .ok_or_else(|| table_error("column name target is not a column of this table"))?;
+        let name = author_column_name(name, schema, Some(target))?;
+        named.insert(target.clone(), name);
+    }
+    let effective = schema
+        .fields
+        .values()
+        .map(|field| {
+            let name = named
+                .get(&field.id)
+                .cloned()
+                .unwrap_or_else(|| field.effective_name().to_owned());
+            (field.id.clone(), name)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut counts = BTreeMap::<&str, usize>::new();
+    for name in effective.values() {
+        *counts.entry(name.as_str()).or_default() += 1;
+    }
+    let mut failures = Vec::new();
+    for field in named.keys() {
+        let name = &effective[field];
+        if counts[name.as_str()] > 1 {
+            failures.push(NameFailure {
+                reason: "duplicate_display_name".to_owned(),
+                inputs: Vec::new(),
+                subjects: vec![tachiko_workspace_engine::SemanticSubject::SchemaField {
+                    schema: schema.id.clone(),
+                    field: field.clone(),
+                }],
+                effective_name: Some(name.clone()),
+            });
+        }
+    }
+    name_admission::refuse(failures)?;
+    Ok(named)
+}
+
 fn remap_duplicate_value(
     value: &Value,
     entities: &BTreeMap<EntityId, EntityId>,
@@ -8804,12 +8865,12 @@ mod tests {
 
     use super::{
         AuthorizationAction, ColumnInitializer, ColumnRef, DesignerError, DesignerRequest,
-        DesignerRuntime, DocumentScopeId, EntityId, EntityKey, Expression, FieldDefinition,
-        FieldId, FieldKey, FieldType, Grant, GrantId, GrantRequirement, HistoryAction,
-        KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
+        DesignerResponse, DesignerRuntime, DocumentScopeId, EntityId, EntityKey, Expression,
+        FieldDefinition, FieldId, FieldKey, FieldType, Grant, GrantId, GrantRequirement,
+        HistoryAction, KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
         NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId, ProposalId,
         RowInitializer, ScalarEditInput, SchemaId, SchemaKey, ScopedSemanticSubject,
-        SemanticCommand, SemanticScope, Value,
+        SemanticCommand, SemanticScope, TableProjection, Value,
     };
 
     #[test]
@@ -10997,6 +11058,7 @@ mod tests {
                 expected_revision: "resident/0".to_owned(),
                 collection: "budget_summary".to_owned(),
                 name: "October Summary".to_owned(),
+                column_names: BTreeMap::new(),
             })
             .unwrap_err();
         assert!(matches!(
@@ -11189,6 +11251,7 @@ mod tests {
                     expected_revision: format!("resident/{index}"),
                     collection: "source".to_owned(),
                     name: format!("Copy {index}"),
+                    column_names: BTreeMap::new(),
                 })
                 .unwrap();
         }
@@ -11198,6 +11261,7 @@ mod tests {
                 expected_revision: "resident/31".to_owned(),
                 collection: "source".to_owned(),
                 name: "Capacity overflow".to_owned(),
+                column_names: BTreeMap::new(),
             })
             .unwrap_err();
         assert!(matches!(error, DesignerError::CapacityExceeded(_)));
@@ -11206,6 +11270,174 @@ mod tests {
             runtime.export_test_project("resident/31").unwrap().bytes,
             before.bytes
         );
+    }
+
+    fn duplicate_names_test_runtime() -> DesignerRuntime {
+        DesignerRuntime::new_table(
+            "00000000-0000-4000-8000-000000000000",
+            "Source",
+            &[
+                super::NewTableColumnInput {
+                    required: true,
+                    name: "Value".to_owned(),
+                    field_type: "number".to_owned(),
+                },
+                super::NewTableColumnInput {
+                    required: false,
+                    name: "Note".to_owned(),
+                    field_type: "text".to_owned(),
+                },
+            ],
+        )
+        .unwrap()
+    }
+
+    fn column_labels(table: &TableProjection) -> Vec<(String, Option<bool>)> {
+        table
+            .columns
+            .iter()
+            .map(|column| (column.display_name.clone(), column.display_name_explicit))
+            .collect()
+    }
+
+    fn column_id(table: &TableProjection, name: &str) -> String {
+        table
+            .columns
+            .iter()
+            .find(|column| column.display_name == name)
+            .unwrap()
+            .id
+            .clone()
+    }
+
+    fn assert_copy_refused(
+        runtime: &mut DesignerRuntime,
+        revision: &str,
+        column_names: BTreeMap<String, String>,
+    ) -> DesignerError {
+        let before = runtime.export_test_project(revision).unwrap();
+        let error = runtime
+            .handle(DesignerRequest::DuplicateCollection {
+                expected_revision: revision.to_owned(),
+                collection: "source".to_owned(),
+                name: "Refused".to_owned(),
+                column_names,
+            })
+            .unwrap_err();
+        assert_eq!(runtime.current_revision(), revision);
+        assert_eq!(
+            runtime.export_test_project(revision).unwrap().bytes,
+            before.bytes
+        );
+        error
+    }
+
+    #[test]
+    fn duplicate_collection_names_copied_columns_as_one_undoable_command() {
+        let mut runtime = duplicate_names_test_runtime();
+        let source = runtime.query_table("source").unwrap();
+        let value = column_id(&source, "Value");
+        let note = column_id(&source, "Note");
+        let source_labels = column_labels(&source);
+        let names = BTreeMap::from([
+            (value.clone(), "Amount".to_owned()),
+            (note.clone(), "Memo".to_owned()),
+        ]);
+        let DesignerResponse::Duplicated(copy) = runtime
+            .handle(DesignerRequest::DuplicateCollection {
+                expected_revision: "resident/0".to_owned(),
+                collection: "source".to_owned(),
+                name: "Copy".to_owned(),
+                column_names: names,
+            })
+            .unwrap()
+        else {
+            panic!("expected a duplicated collection");
+        };
+        let copied = runtime.query_table(&copy.collection.key).unwrap();
+        assert_eq!(
+            column_labels(&copied),
+            vec![
+                ("Amount".to_owned(), Some(true)),
+                ("Memo".to_owned(), Some(true)),
+            ]
+        );
+        assert_eq!(
+            column_labels(&runtime.query_table("source").unwrap()),
+            source_labels
+        );
+
+        runtime
+            .handle(DesignerRequest::Undo {
+                expected_revision: "resident/1".to_owned(),
+            })
+            .unwrap();
+        assert!(runtime.query_table(&copy.collection.key).is_err());
+        runtime
+            .handle(DesignerRequest::Redo {
+                expected_revision: "resident/2".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(
+            column_labels(&runtime.query_table(&copy.collection.key).unwrap()),
+            vec![
+                ("Amount".to_owned(), Some(true)),
+                ("Memo".to_owned(), Some(true)),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_collection_without_names_keeps_the_source_column_names() {
+        let mut runtime = duplicate_names_test_runtime();
+        let source_labels = column_labels(&runtime.query_table("source").unwrap());
+        let DesignerResponse::Duplicated(copy) = runtime
+            .handle(DesignerRequest::DuplicateCollection {
+                expected_revision: "resident/0".to_owned(),
+                collection: "source".to_owned(),
+                name: "Copy".to_owned(),
+                column_names: BTreeMap::new(),
+            })
+            .unwrap()
+        else {
+            panic!("expected a duplicated collection");
+        };
+        assert_eq!(
+            column_labels(&runtime.query_table(&copy.collection.key).unwrap()),
+            source_labels
+        );
+    }
+
+    #[test]
+    fn duplicate_collection_refuses_bad_column_names_without_publication() {
+        let mut runtime = duplicate_names_test_runtime();
+        let source = runtime.query_table("source").unwrap();
+        let value = column_id(&source, "Value");
+        let note = column_id(&source, "Note");
+        let unknown = BTreeMap::from([("missing-field".to_owned(), "Amount".to_owned())]);
+        assert!(matches!(
+            assert_copy_refused(&mut runtime, "resident/0", unknown),
+            DesignerError::InvalidTableOperation { .. }
+        ));
+        let duplicate = BTreeMap::from([
+            (value.clone(), "Same".to_owned()),
+            (note.clone(), "Same".to_owned()),
+        ]);
+        assert!(matches!(
+            assert_copy_refused(&mut runtime, "resident/0", duplicate),
+            DesignerError::NameAdmission { .. }
+        ));
+        // The copy inherits the source name "Note" for its Note column.
+        let inherited = BTreeMap::from([(value.clone(), "Note".to_owned())]);
+        assert!(matches!(
+            assert_copy_refused(&mut runtime, "resident/0", inherited),
+            DesignerError::NameAdmission { .. }
+        ));
+        let blank = BTreeMap::from([(value, "   ".to_owned())]);
+        assert!(matches!(
+            assert_copy_refused(&mut runtime, "resident/0", blank),
+            DesignerError::NameAdmission { .. }
+        ));
     }
 
     #[test]

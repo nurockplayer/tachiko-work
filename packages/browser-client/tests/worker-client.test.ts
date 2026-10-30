@@ -243,3 +243,29 @@ describe("selected v3 Worker export", () => {
     expect(await client.exportProjectV3("resident/17")).toEqual({ revision: "resident/17", bytes });
   });
 });
+
+describe("duplicate collection column names", () => {
+  it("sends the copy's column names with the duplicate request", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const duplicated = { publication: { revision: "resident/2" }, collection: { id: "table_1", key: "table_1", entity_count: 0 } };
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: { id: number; kind: string; request: Record<string, unknown> }) => {
+        expect(request.kind).toBe("command");
+        expect(request.request).toEqual({
+          type: "duplicate_collection",
+          expected_revision: "resident/1",
+          collection: "items",
+          name: "Copy",
+          column_names: { column_1: "Amount" },
+        });
+        receive?.({ data: { id: request.id, status: "ok", response: { type: "duplicated", payload: duplicated } } } as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    await expect(client.duplicateCollection("resident/1", "items", "Copy", { column_1: "Amount" })).resolves.toEqual(duplicated);
+  });
+});

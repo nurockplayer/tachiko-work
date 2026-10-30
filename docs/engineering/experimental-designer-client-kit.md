@@ -209,6 +209,16 @@ marker before relying on omission to mean fallback in older kits. The client
 preserves `true` or omission and rejects every other defined value; Rust emits
 only `true` or omission. Storage formats and rename semantics are unchanged.
 
+`duplicateCollection(expectedRevision, collection, name, columnNames?)` can name
+the copy's columns in the same command. `columnNames` maps each source column's
+stable field ID to the copy's display name; a name passes the same spelling rule
+as renaming a column. A blank name, two copy columns with the same effective name, or a
+source ID that is not a column of the table refuses without publication. The
+names are part of the copy's single history step, so one Undo removes the copy
+with its names and Redo restores both. Omitting `columnNames` or passing `{}`
+keeps the source names. An imported CSV or XLSX table has no stored names; pass
+the header text to give the copy its headers.
+
 Table columns always project `required: boolean`. Each row's `fields` array
 contains **only present values**. `blank_fields?: string[]` names absent declared
 FieldIds in column order; omission means `[]`. Join by stable ID rather than

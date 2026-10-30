@@ -8,6 +8,7 @@
 //! refuses them instead of dropping them. The reopened project must also leave
 //! as CSV/XLSX with truthful disclosure.
 
+use std::collections::BTreeMap;
 use tachiko_designer_runtime::interop_adapter::{FidelityCategory, SourceValue, SourceWorkbook};
 use tachiko_designer_runtime::{
     BootstrapProjection, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
@@ -316,6 +317,7 @@ fn duplicate(runtime: &mut DesignerRuntime, expected: &str) -> String {
             expected_revision: expected.to_owned(),
             collection: "orders".to_owned(),
             name: "Orders copy".to_owned(),
+            column_names: BTreeMap::new(),
         },
     ) else {
         panic!("expected a duplicate projection");
