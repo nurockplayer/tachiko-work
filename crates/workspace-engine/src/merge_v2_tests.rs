@@ -24,6 +24,7 @@ fn document_with_keyed_sum() -> Document {
     document.schemas.insert(
         "orders".into(),
         Schema {
+            field_order: None,
             id: "orders".into(),
             key: "orders".into(),
             display_name: None,
@@ -36,6 +37,7 @@ fn document_with_keyed_sum() -> Document {
     document.schemas.insert(
         "products".into(),
         Schema {
+            field_order: None,
             id: "products".into(),
             key: "products".into(),
             display_name: None,

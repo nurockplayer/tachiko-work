@@ -8,6 +8,7 @@ fn document(constraint: FieldConstraint) -> Document {
     document.schemas.insert(
         "schema".into(),
         Schema {
+            field_order: None,
             id: "schema".into(),
             key: "items".into(),
             display_name: None,

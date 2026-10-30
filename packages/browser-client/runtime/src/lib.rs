@@ -17,6 +17,8 @@ mod constraints_tests;
 #[cfg(test)]
 mod display_names_tests;
 #[cfg(test)]
+mod field_order_tests;
+#[cfg(test)]
 mod formula_blank_tests;
 #[cfg(test)]
 mod number_format_tests;
@@ -180,6 +182,12 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         number_format: Option<tachiko_workspace_engine::NumberFormat>,
+    },
+    MoveColumn {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        to_index: u32,
     },
     SetColumnConstraint {
         expected_revision: String,
@@ -664,6 +672,7 @@ fn document_requires_v2_evidence(document: &Document) -> bool {
     document.has_display_names()
         || document_has_constraints(document)
         || document.has_number_formats()
+        || document.has_field_orders()
 }
 
 /// Turn a constrained-value validation failure into the private typed refusal
@@ -2495,6 +2504,17 @@ impl DesignerRuntime {
                 &field,
                 number_format,
             )?)),
+            DesignerRequest::MoveColumn {
+                expected_revision,
+                collection,
+                field,
+                to_index,
+            } => Ok(DesignerResponse::Published(self.move_column(
+                &expected_revision,
+                &collection,
+                &field,
+                to_index,
+            )?)),
             DesignerRequest::SetColumnConstraint {
                 expected_revision,
                 collection,
@@ -2903,6 +2923,11 @@ impl DesignerRuntime {
         if snapshot.document().has_number_formats() {
             return Err(DesignerError::LegacyExportUnsupported {
                 message: "number formats require exportProjectV3 or exportCanonicalTree".to_owned(),
+            });
+        }
+        if snapshot.document().has_field_orders() {
+            return Err(DesignerError::LegacyExportUnsupported {
+                message: "column order requires exportProjectV3 or exportCanonicalTree".to_owned(),
             });
         }
         if document_has_constraints(snapshot.document()) {
@@ -3758,6 +3783,60 @@ impl DesignerRuntime {
         )
     }
 
+    fn move_column(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        to_index: u32,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        // Display-only like number formats: the order does not depend on the row
+        // authoring shape, so it stays available after formula cells are added.
+        let spec = self.collection_spec(collection)?;
+        let schema_id = SchemaId::from(spec.summary.id.clone());
+        // Positions are the projected ones (the built-in tracker shows
+        // task, estimate, done without an explicit order).
+        let shown = spec
+            .columns
+            .iter()
+            .map(|column| column.id.clone())
+            .collect::<Vec<_>>();
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot
+            .document()
+            .schemas
+            .get(&schema_id)
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        let field_id = FieldId::from(field.to_owned());
+        let mut ids = shown.clone();
+        let from = ids
+            .iter()
+            .position(|id| id == &field_id)
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        let moved = ids.remove(from);
+        let index = usize::try_from(to_index).map_or(ids.len(), |index| index.min(ids.len()));
+        ids.insert(index, moved);
+        if ids == shown {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        let mut next = schema.clone();
+        next.field_order = Some(ids);
+        next.normalize_field_order();
+        if next.field_order == schema.field_order {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        let command = |order| SemanticCommand::SetSchemaFieldOrder {
+            schema: schema_id.clone(),
+            order,
+        };
+        self.record_edit(
+            expected,
+            vec![command(next.field_order)],
+            vec![command(schema.field_order.clone())],
+        )
+    }
+
     fn set_column_constraint(
         &mut self,
         expected: &str,
@@ -3875,16 +3954,24 @@ impl DesignerRuntime {
             required,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
         };
+        let previous_order = schema.field_order.clone();
         let forward = vec![SemanticCommand::AppendSchemaField {
             schema: schema_id.clone(),
             field: field.clone(),
             values: values.clone(),
         }];
-        let inverse = vec![SemanticCommand::RemoveSchemaField {
-            schema: schema_id,
-            field,
-            values,
-        }];
+        // An append may make an implicit order explicit; Undo restores it.
+        let inverse = vec![
+            SemanticCommand::RemoveSchemaField {
+                schema: schema_id.clone(),
+                field,
+                values,
+            },
+            SemanticCommand::SetSchemaFieldOrder {
+                schema: schema_id,
+                order: previous_order,
+            },
+        ];
         self.record_edit(expected, forward, inverse)
     }
 
@@ -3946,6 +4033,7 @@ impl DesignerRuntime {
             return Err(table_error("a native table needs at least one column"));
         }
         let field_id = FieldId::from(field.to_owned());
+        let previous_order = schema.field_order.clone();
         let definition = schema
             .fields
             .get(&field_id)
@@ -3989,11 +4077,16 @@ impl DesignerRuntime {
             field: definition.clone(),
             values: values.clone(),
         }];
-        let inverse = vec![SemanticCommand::AppendSchemaField {
-            schema: schema_id,
+        let mut inverse = vec![SemanticCommand::AppendSchemaField {
+            schema: schema_id.clone(),
             field: definition,
             values,
         }];
+        // An append lands last; Undo puts the column back where it was.
+        inverse.push(SemanticCommand::SetSchemaFieldOrder {
+            schema: schema_id,
+            order: previous_order,
+        });
         self.record_edit(expected, forward, inverse)
     }
 
@@ -4115,12 +4208,21 @@ impl DesignerRuntime {
             };
             entity_map.insert(source_id.clone(), target_id);
         }
-        let schema = Schema {
+        let mut schema = Schema {
+            // The copy keeps the source's projected column order.
+            field_order: Some(
+                source_spec
+                    .columns
+                    .iter()
+                    .filter_map(|column| field_map.get(&column.id).cloned())
+                    .collect(),
+            ),
             id: schema_id.clone(),
             key: SchemaKey::from(target_key.clone()),
             display_name: Some(name.to_owned()),
             fields,
         };
+        schema.normalize_field_order();
         let mut entities = Vec::with_capacity(source_spec.entities.len());
         for source_id in &source_spec.entities {
             let source = document.entities.get(source_id).ok_or_else(|| {
@@ -4576,12 +4678,11 @@ impl DesignerRuntime {
                     field,
                     values,
                 } => {
-                    candidate
+                    let definition = candidate
                         .schemas
                         .get_mut(schema)
-                        .ok_or_else(|| table_error("native table schema is unavailable"))?
-                        .fields
-                        .insert(field.id.clone(), field.clone());
+                        .ok_or_else(|| table_error("native table schema is unavailable"))?;
+                    definition.insert_field(field.clone());
                     for (entity, value) in values {
                         candidate
                             .entities
@@ -4596,12 +4697,12 @@ impl DesignerRuntime {
                     field,
                     values,
                 } => {
-                    candidate
+                    let definition = candidate
                         .schemas
                         .get_mut(schema)
-                        .ok_or_else(|| table_error("native table schema is unavailable"))?
-                        .fields
-                        .remove(&field.id);
+                        .ok_or_else(|| table_error("native table schema is unavailable"))?;
+                    definition.fields.remove(&field.id);
+                    definition.normalize_field_order();
                     for entity in values.keys() {
                         candidate
                             .entities
@@ -4656,6 +4757,14 @@ impl DesignerRuntime {
                             Value::Number(command.value()),
                         );
                     }
+                }
+                SemanticCommand::SetSchemaFieldOrder { schema, order } => {
+                    let definition = candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| table_error("column is unavailable"))?;
+                    definition.field_order.clone_from(order);
+                    definition.normalize_field_order();
                 }
                 SemanticCommand::SetFieldNumberFormat {
                     schema,
@@ -4803,12 +4912,14 @@ impl DesignerRuntime {
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
                 | SemanticCommand::SetFieldConstraint { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
+                | SemanticCommand::SetSchemaFieldOrder { .. }
                 | SemanticCommand::UnsetField { .. } => true,
                 SemanticCommand::AppendSchemaField { field, .. } => {
                     field.display_name.is_some() || field.number_format.is_some()
                 }
                 SemanticCommand::AppendCollection { schema, .. } => {
                     schema.display_name.is_some()
+                        || schema.field_order.is_some()
                         || schema.fields.values().any(|field| {
                             field.display_name.is_some() || field.number_format.is_some()
                         })
@@ -4939,6 +5050,7 @@ impl DesignerRuntime {
     pub fn tracker(occurrence_id: &str) -> Result<Self, DesignerError> {
         let mut document = Document::empty(occurrence_id, "Driver Tracker");
         let schema = Schema {
+            field_order: None,
             id: SchemaId::from("tracker"),
             key: SchemaKey::from("tracker"),
             display_name: None,
@@ -5021,6 +5133,7 @@ impl DesignerRuntime {
             );
         }
         let schema = Schema {
+            field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from(schema_key),
             display_name: Some(name.to_owned()),
@@ -5328,14 +5441,25 @@ impl DesignerRuntime {
         expected: &str,
         collection: &str,
     ) -> Result<PublicationProjection, DesignerError> {
-        self.tracker_spec(collection)?;
-        self.paste_cells(
-            expected,
-            collection,
-            None,
-            "task",
-            &[vec![String::new(), "0".to_owned(), "false".to_owned()]],
-        )
+        // Defaults follow the projected column order, which a move can change.
+        let columns = self
+            .tracker_spec(collection)?
+            .columns
+            .iter()
+            .map(|column| column.id.to_string())
+            .collect::<Vec<_>>();
+        let defaults = columns
+            .iter()
+            .map(|id| match id.as_str() {
+                "estimate" => "0".to_owned(),
+                "done" => "false".to_owned(),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>();
+        let start = columns
+            .first()
+            .ok_or_else(|| tracker_error("the Tracker has no columns"))?;
+        self.paste_cells(expected, collection, None, start, &[defaults])
     }
 
     fn remove_rows(
@@ -6311,6 +6435,7 @@ fn budget_schema<const COUNT: usize>(
     fields: [(&str, FieldType); COUNT],
 ) -> Schema {
     Schema {
+        field_order: None,
         id,
         key: SchemaKey::from(key),
         display_name: None,
@@ -7074,8 +7199,8 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                     native_table_rows: has_scalar_row_authoring_shape(document, schema, &entities),
                     summary,
                     columns: {
-                        let mut fields = schema.fields.values().collect::<Vec<_>>();
-                        if schema.key.as_str() == "tracker" {
+                        let mut fields = schema.ordered_fields().collect::<Vec<_>>();
+                        if schema.field_order.is_none() && schema.key.as_str() == "tracker" {
                             fields.sort_by_key(|field| match field.id.as_str() {
                                 "task" => 0,
                                 "estimate" => 1,

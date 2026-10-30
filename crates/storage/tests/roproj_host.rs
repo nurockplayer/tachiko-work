@@ -1061,6 +1061,7 @@ fn bounded_document() -> Document {
             (
                 SchemaId::from("schema-a"),
                 Schema {
+                    field_order: None,
                     id: "schema-a".into(),
                     key: SchemaKey::from("record"),
                     display_name: None,
@@ -1095,6 +1096,7 @@ fn bounded_document() -> Document {
             (
                 SchemaId::from("schema-z"),
                 Schema {
+                    field_order: None,
                     id: "schema-z".into(),
                     key: SchemaKey::from("unused"),
                     display_name: None,
@@ -1142,6 +1144,7 @@ fn numeric_bridge_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema-numeric"),
             Schema {
+                field_order: None,
                 id: "schema-numeric".into(),
                 key: SchemaKey::from("numeric"),
                 display_name: None,

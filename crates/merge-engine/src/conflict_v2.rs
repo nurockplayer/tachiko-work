@@ -27,6 +27,7 @@ pub enum ConflictFacetV2 {
     StoredValue,
     Constraint,
     DisplayName,
+    FieldOrder,
 }
 
 impl ConflictFacetV2 {
@@ -49,6 +50,7 @@ impl ConflictFacetV2 {
             (ConflictTarget::SchemaField { .. }, Self::FieldType)
             | (ConflictTarget::Entity(_), Self::Schema)
             | (ConflictTarget::Schema(_), Self::DisplayName) => Some(2),
+            (ConflictTarget::Schema(_), Self::FieldOrder) => Some(6),
             (ConflictTarget::SchemaField { .. }, Self::Requiredness) => Some(3),
             (ConflictTarget::SchemaField { .. }, Self::Constraint) => Some(4),
             (ConflictTarget::SchemaField { .. }, Self::DisplayName) => Some(5),
@@ -153,6 +155,7 @@ pub enum MergeValueV2 {
     FieldValue(Value),
     Constraint(FieldConstraint),
     DisplayName(Option<String>),
+    FieldOrder(Option<Vec<FieldId>>),
 }
 
 /// Explicit v2 absence/presence evidence.
@@ -276,9 +279,9 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
         return MergeOutcomeV2::UnsupportedKeyedGroupedSumDefinitionChange;
     }
 
-    let base_v1 = without_constraints(base);
-    let left_v1 = without_constraints(left);
-    let right_v1 = without_constraints(right);
+    let base_v1 = without_field_orders(&without_constraints(base));
+    let left_v1 = without_field_orders(&without_constraints(left));
+    let right_v1 = without_field_orders(&without_constraints(right));
     let (candidate, mut conflicts) = match merge(&base_v1, &left_v1, &right_v1) {
         MergeOutcome::Merged(candidate) => (Some(candidate), Vec::new()),
         MergeOutcome::Conflicted(conflicts) => (
@@ -296,6 +299,9 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
             unreachable!("v2 rejects number formats before invoking v1")
         }
         MergeOutcome::UnsupportedDisplayName => unreachable!("v2 strips names before invoking v1"),
+        MergeOutcome::UnsupportedFieldOrder => {
+            unreachable!("v2 strips field orders before invoking v1")
+        }
         MergeOutcome::UnsupportedFieldConstraintChange => {
             unreachable!("v2 merge removes constraints before invoking frozen v1")
         }
@@ -304,6 +310,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
     add_complete_subject_conflicts(base, left, right, &mut conflicts);
     add_constraint_conflicts(base, left, right, &mut conflicts);
     add_name_conflicts(base, left, right, &mut conflicts);
+    add_field_order_conflicts(base, left, right, &mut conflicts);
     conflicts.sort_by(|left, right| {
         left.target
             .canonical_cmp(&right.target)
@@ -323,6 +330,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
     let mut candidate = candidate.expect("v1 conflict-free result must retain a candidate");
     apply_selected_constraints(base, left, right, &mut candidate);
     apply_selected_names(base, left, right, &mut candidate);
+    apply_selected_field_orders(base, left, right, &mut candidate);
     MergeOutcomeV2::Merged(candidate)
 }
 
@@ -337,6 +345,14 @@ fn without_constraints(document: &Document) -> Document {
             field.constraint = FieldConstraint::None;
             field.display_name = None;
         }
+    }
+    document
+}
+
+fn without_field_orders(document: &Document) -> Document {
+    let mut document = document.clone();
+    for schema in document.schemas.values_mut() {
+        schema.field_order = None;
     }
     document
 }
@@ -666,6 +682,119 @@ fn add_name_conflicts(
                 conflicts,
             );
         }
+    }
+}
+
+fn add_field_order_conflicts(
+    base: &Document,
+    left: &Document,
+    right: &Document,
+    conflicts: &mut Vec<MergeConflictV2>,
+) {
+    for (schema_id, b) in &base.schemas {
+        let (l, r) = (left.schemas.get(schema_id), right.schemas.get(schema_id));
+        let conflicting = match (l, r) {
+            (Some(l), Some(r)) => {
+                // Two edits merge only when they are the same order.
+                order_edited(b, l) && order_edited(b, r) && l.field_order != r.field_order
+            }
+            // A side that deletes the schema conflicts with an order change on
+            // the other side; the frozen merge cannot see order-only edits.
+            (None, Some(kept)) | (Some(kept), None) => order_edited(b, kept),
+            (None, None) => false,
+        };
+        if conflicting {
+            let order = |schema: Option<&Schema>| {
+                schema.map(|schema| MergeValueV2::FieldOrder(schema.field_order.clone()))
+            };
+            conflicts.push(MergeConflictV2::new(
+                &base.id,
+                ConflictTarget::Schema(schema_id.clone()),
+                ConflictFacetV2::FieldOrder,
+                Some(MergeValueV2::FieldOrder(b.field_order.clone())),
+                order(l),
+                order(r),
+            ));
+        }
+    }
+    // Both sides adding the same schema with different orders: the subject
+    // conflict alone does not show the orders, so report the facet too.
+    for (schema_id, l) in &left.schemas {
+        if base.schemas.contains_key(schema_id) {
+            continue;
+        }
+        if let Some(r) = right.schemas.get(schema_id) {
+            if l.field_order != r.field_order {
+                conflicts.push(MergeConflictV2::new(
+                    &base.id,
+                    ConflictTarget::Schema(schema_id.clone()),
+                    ConflictFacetV2::FieldOrder,
+                    None,
+                    Some(MergeValueV2::FieldOrder(l.field_order.clone())),
+                    Some(MergeValueV2::FieldOrder(r.field_order.clone())),
+                ));
+            }
+        }
+    }
+}
+
+/// A side edited the order when it changed whether the order is explicit, or
+/// when its explicit order differs from the base order it would have without
+/// a move: the base order restricted to the side's fields, then the side's
+/// new fields in its own order. Adding or removing fields is not an edit.
+fn order_edited(base: &Schema, side: &Schema) -> bool {
+    match (&base.field_order, &side.field_order) {
+        (None, None) => false,
+        (Some(base_order), Some(side_order)) => {
+            let unmoved = base_order
+                .iter()
+                .filter(|id| side.fields.contains_key(*id))
+                .chain(
+                    side_order
+                        .iter()
+                        .filter(|id| !base.fields.contains_key(*id)),
+                )
+                .collect::<Vec<_>>();
+            !side_order.iter().eq(unmoved)
+        }
+        _ => true,
+    }
+}
+
+/// Takes the one side that changed each order; a schema present on one side only
+/// keeps that side's order, and the result is normalised against the merged fields.
+fn apply_selected_field_orders(
+    base: &Document,
+    left: &Document,
+    right: &Document,
+    candidate: &mut MergeCandidate,
+) {
+    for (schema_id, schema) in &mut candidate.document.schemas {
+        let selected = match (
+            base.schemas.get(schema_id),
+            left.schemas.get(schema_id),
+            right.schemas.get(schema_id),
+        ) {
+            (Some(b), Some(l), Some(r)) => {
+                let (pick, other) = if order_edited(b, r) && !order_edited(b, l) {
+                    (r, l)
+                } else {
+                    (l, r)
+                };
+                // Fields the other side added follow, in that side's order.
+                pick.field_order.clone().map(|mut order| {
+                    for definition in other.ordered_fields() {
+                        if !order.contains(&definition.id) {
+                            order.push(definition.id.clone());
+                        }
+                    }
+                    order
+                })
+            }
+            (_, l, r) => l.or(r).and_then(|source| source.field_order.clone()),
+        };
+        schema.field_order = selected;
+        schema.normalize_field_order();
     }
 }
 

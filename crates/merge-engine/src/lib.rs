@@ -28,6 +28,7 @@ pub enum MergeOutcome {
     UnsupportedFieldConstraintChange,
     UnsupportedDisplayName,
     UnsupportedNumberFormat,
+    UnsupportedFieldOrder,
 }
 
 /// Conflict-free structural result awaiting workspace finalization.
@@ -504,6 +505,12 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
     }
     if [base, ours, theirs]
         .iter()
+        .any(|document| document.has_field_orders())
+    {
+        return MergeOutcome::UnsupportedFieldOrder;
+    }
+    if [base, ours, theirs]
+        .iter()
         .any(|document| document.has_display_names())
     {
         return MergeOutcome::UnsupportedDisplayName;
@@ -670,6 +677,7 @@ fn merge_schema(
     );
 
     Some(Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: key?,
         display_name: None,

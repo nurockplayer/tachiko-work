@@ -67,6 +67,19 @@ uppercase ISO-4217 letters), or `{ type: "percent" }`. `decimals` is an integer
 from 0 through 10. A column projection includes `number_format` only when a
 format is stored.
 
+Columns can be reordered with `moveColumn`. `toIndex` is a zero-based position
+after the column is removed from its current place, clamped to the last column.
+The order is durable document state: it is saved, undone, diffed and exported,
+and a new column is appended last. Projections list columns in this order.
+
+```ts
+await client.moveColumn(table.revision, "tasks", "amount", 0);
+```
+
+Spreadsheet exports follow the moved order. Native Tracker and Budget export
+presentations give one style per column in the table's projected column order
+at the export revision, as `queryTable` returns it; build them after a move.
+
 Publication replies include `schemas` and `schema_fields` (stable schema ID or
 `{schema, field}` ID pairs) for presentation invalidation, independently of
 `entities`, `fields`, and `affected_calculations`. Refresh affected collection

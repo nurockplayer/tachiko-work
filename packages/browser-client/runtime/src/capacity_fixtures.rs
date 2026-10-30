@@ -68,6 +68,7 @@ pub fn capacity_document(spec: FixtureSpec) -> Document {
     let mut rng = SplitMix64(spec.seed);
     let mut document = Document::empty("capacity-benchmark", "Capacity Fixture");
     let mut schema = Schema {
+        field_order: None,
         id: SchemaId::from("grid"),
         key: SchemaKey::from("grid"),
         display_name: None,

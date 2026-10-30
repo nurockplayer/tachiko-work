@@ -563,6 +563,7 @@ fn constraint_write_requires_schema_class_even_when_other_classes_are_granted() 
 fn keyed_definition_document() -> Document {
     fn schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
         Schema {
+            field_order: None,
             id: id.into(),
             key: id.into(),
             display_name: None,
@@ -1403,6 +1404,7 @@ fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
     document.schemas.insert(
         "items".into(),
         Schema {
+            field_order: None,
             id: "items".into(),
             key: "items".into(),
             display_name: None,

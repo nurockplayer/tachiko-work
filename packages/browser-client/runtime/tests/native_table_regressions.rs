@@ -69,6 +69,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("inventory"),
                 display_name: None,

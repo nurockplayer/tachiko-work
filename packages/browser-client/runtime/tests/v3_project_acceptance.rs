@@ -411,6 +411,7 @@ fn fixture_document(
         },
     ];
     let schema = Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("sheet_1"),
         display_name: None,
@@ -2210,6 +2211,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
         let schema_id = SchemaId::from(new_schema_id);
         let field_id = FieldId::from(new_field_id);
         let schema = Schema {
+            field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from("reset"),
             display_name: Some("reset".to_owned()),

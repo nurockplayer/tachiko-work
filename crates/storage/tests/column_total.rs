@@ -36,6 +36,7 @@ fn document() -> Document {
     document.schemas.insert(
         "plan".into(),
         Schema {
+            field_order: None,
             id: "plan".into(),
             key: "plan".into(),
             display_name: None,
@@ -48,6 +49,7 @@ fn document() -> Document {
     document.schemas.insert(
         "summary".into(),
         Schema {
+            field_order: None,
             id: "summary".into(),
             key: "summary".into(),
             display_name: None,

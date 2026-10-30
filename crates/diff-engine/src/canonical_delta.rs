@@ -55,6 +55,7 @@ pub struct SchemaDefinitionPayload {
     pub key: SchemaKey,
     pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, FieldDefinitionPayload>,
+    pub field_order: Option<Vec<FieldId>>,
 }
 
 /// Complete immutable payload for a field definition, excluding its target ID.
@@ -118,6 +119,11 @@ pub enum CanonicalDirectFact {
         schema: SchemaId,
         before: Option<String>,
         after: Option<String>,
+    },
+    SchemaFieldOrderChanged {
+        schema: SchemaId,
+        before: Option<Vec<FieldId>>,
+        after: Option<Vec<FieldId>>,
     },
     SchemaFieldDisplayNameChanged {
         schema: SchemaId,
@@ -235,6 +241,7 @@ impl CanonicalDirectFact {
             F::SchemaDeleted { schema, .. } => (1, vec![schema.as_str()], 1),
             F::SchemaKeyChanged { schema, .. } => (1, vec![schema.as_str()], 2),
             F::SchemaDisplayNameChanged { schema, .. } => (1, vec![schema.as_str()], 3),
+            F::SchemaFieldOrderChanged { schema, .. } => (1, vec![schema.as_str()], 4),
             F::SchemaFieldDisplayNameChanged { schema, field, .. } => {
                 (2, vec![schema.as_str(), field.as_str()], 6)
             }
@@ -383,6 +390,7 @@ fn schema_payload(schema: &tachiko_semantic_core::Schema) -> SchemaDefinitionPay
             .iter()
             .map(|(id, field)| (id.clone(), field_payload(field)))
             .collect(),
+        field_order: schema.field_order.clone(),
     }
 }
 
@@ -512,6 +520,13 @@ fn compare_schema(
             schema: id.clone(),
             before: before.display_name.clone(),
             after: after.display_name.clone(),
+        });
+    }
+    if before.field_order != after.field_order {
+        facts.push(F::SchemaFieldOrderChanged {
+            schema: id.clone(),
+            before: before.field_order.clone(),
+            after: after.field_order.clone(),
         });
     }
     let fields = before

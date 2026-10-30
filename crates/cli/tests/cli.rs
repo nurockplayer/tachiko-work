@@ -142,6 +142,7 @@ fn balance_document(damage: f64) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("weapon"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
                 display_name: None,

@@ -12,6 +12,7 @@ fn fixture() -> Document {
         document.schemas.insert(
             id.into(),
             Schema {
+                field_order: None,
                 id: id.into(),
                 key: id.into(),
                 display_name: None,

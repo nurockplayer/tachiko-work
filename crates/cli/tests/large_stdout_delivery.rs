@@ -43,6 +43,7 @@ fn large_document() -> Document {
     let schema_id = SchemaId::from("record-schema");
     let field_id = FieldId::from("payload-field");
     let schema = Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("record"),
         display_name: None,

@@ -314,3 +314,36 @@ fn native_tracker_preserves_scalar_meaning_and_refuses_formula_like_csv_text() {
     assert!(export_csv(sheet).is_err());
     assert!(export_xlsx(&workbook).is_ok());
 }
+
+#[test]
+fn native_tracker_export_follows_a_moved_column() {
+    let mut runtime = DesignerRuntime::tracker(OCCURRENCE).unwrap();
+    let revision = populate(&mut runtime, 2);
+    let DesignerResponse::Published(publication) = runtime
+        .handle(DesignerRequest::MoveColumn {
+            expected_revision: revision,
+            collection: "tracker".to_owned(),
+            field: "done".to_owned(),
+            to_index: 0,
+        })
+        .expect("a Tracker column should move")
+    else {
+        panic!("expected a published move");
+    };
+    let mapped = presentation(&mut runtime, false);
+    let workbook = runtime
+        .export_native_tracker_workbook(&publication.resulting_revision, &mapped)
+        .expect("a reordered Tracker should export");
+    let sheet = &workbook.sheets[0];
+    let headers = sheet
+        .columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(headers, ["done", "task", "estimate"]);
+    assert!(matches!(
+        sheet.rows[0][0].value,
+        SourceValue::Boolean { .. }
+    ));
+    assert!(matches!(sheet.rows[0][1].value, SourceValue::Text { .. }));
+}

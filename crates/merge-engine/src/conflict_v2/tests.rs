@@ -25,6 +25,7 @@ fn number_field(id: &str) -> FieldDefinition {
 
 fn basic_document() -> Document {
     let schema = Schema {
+        field_order: None,
         id: "schema".into(),
         key: "items".into(),
         display_name: None,
@@ -195,6 +196,7 @@ fn schema_qualified_value_transition_preserves_unmaterialized_evidence() {
         base.schemas.insert(
             id.into(),
             Schema {
+                field_order: None,
                 id: id.into(),
                 key: id.into(),
                 display_name: None,
@@ -252,4 +254,147 @@ fn frozen_v1_still_refuses_constraint_bearing_documents() {
         merge_v2(&constrained, &constrained, &constrained),
         MergeOutcomeV2::Merged(_)
     ));
+}
+
+fn ordered_document(order: Option<Vec<&str>>) -> Document {
+    let mut document = basic_document();
+    let schema = document.schemas.get_mut("schema").unwrap();
+    schema.fields.insert("other".into(), number_field("other"));
+    schema.field_order = order.map(|ids| ids.into_iter().map(FieldId::from).collect());
+    document
+}
+
+fn merged_order(outcome: MergeOutcomeV2) -> Option<Vec<FieldId>> {
+    let MergeOutcomeV2::Merged(candidate) = outcome else {
+        panic!("expected a conflict-free merge");
+    };
+    candidate.schemas["schema"].field_order.clone()
+}
+
+#[test]
+fn field_order_one_sided_change_merges_and_equal_changes_merge() {
+    let base = ordered_document(None);
+    let reordered = ordered_document(Some(vec!["value", "other"]));
+    assert_eq!(
+        merged_order(merge_v2(&base, &reordered, &base)),
+        Some(vec![FieldId::from("value"), FieldId::from("other")])
+    );
+    assert_eq!(
+        merged_order(merge_v2(&base, &base, &reordered)),
+        Some(vec![FieldId::from("value"), FieldId::from("other")])
+    );
+    assert_eq!(
+        merged_order(merge_v2(&base, &reordered, &reordered)),
+        Some(vec![FieldId::from("value"), FieldId::from("other")])
+    );
+}
+
+#[test]
+fn field_order_conflicting_changes_conflict() {
+    let base = ordered_document(None);
+    let left = ordered_document(Some(vec!["value", "other"]));
+    let right = ordered_document(Some(vec!["other", "value"]));
+    let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, &left, &right) else {
+        panic!("expected a field-order conflict");
+    };
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].facet(), ConflictFacetV2::FieldOrder);
+}
+
+#[test]
+fn deleting_a_schema_conflicts_with_reordering_it() {
+    let base = ordered_document(None);
+    let reordered = ordered_document(Some(vec!["value", "other"]));
+    let mut deleted = base.clone();
+    deleted.schemas.remove("schema");
+    deleted
+        .entities
+        .retain(|_, entity| entity.schema.as_str() != "schema");
+    for (left, right) in [(&deleted, &reordered), (&reordered, &deleted)] {
+        let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, left, right) else {
+            panic!("expected a delete/reorder conflict");
+        };
+        assert!(
+            conflicts
+                .iter()
+                .any(|conflict| conflict.facet() == ConflictFacetV2::FieldOrder)
+        );
+    }
+}
+
+#[test]
+fn concurrent_schema_additions_report_differing_orders() {
+    let mut base = ordered_document(None);
+    base.schemas.remove("schema");
+    base.entities
+        .retain(|_, entity| entity.schema.as_str() != "schema");
+    let left = ordered_document(Some(vec!["value", "other"]));
+    let right = ordered_document(Some(vec!["other", "value"]));
+    let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, &left, &right) else {
+        panic!("expected a concurrent-addition conflict");
+    };
+    assert!(
+        conflicts
+            .iter()
+            .any(|conflict| conflict.facet() == ConflictFacetV2::FieldOrder)
+    );
+}
+
+#[test]
+fn independent_additions_to_an_ordered_schema_merge() {
+    let base = ordered_document(Some(vec!["value", "other"]));
+    let mut left = base.clone();
+    let mut right = base.clone();
+    for (document, id) in [(&mut left, "left_added"), (&mut right, "right_added")] {
+        let schema = document.schemas.get_mut("schema").unwrap();
+        schema.fields.insert(id.into(), number_field(id));
+        schema.normalize_field_order();
+    }
+    assert_eq!(
+        merged_order(merge_v2(&base, &left, &right)),
+        Some(
+            ["value", "other", "left_added", "right_added"]
+                .map(FieldId::from)
+                .to_vec()
+        )
+    );
+}
+
+#[test]
+fn independent_field_removals_are_not_order_edits() {
+    for order in [None, Some(vec!["value", "other"])] {
+        let base = ordered_document(order);
+        let mut left = base.clone();
+        let mut right = base.clone();
+        for (document, id) in [(&mut left, "value"), (&mut right, "other")] {
+            let schema = document.schemas.get_mut("schema").unwrap();
+            schema.fields.remove(id);
+            schema.normalize_field_order();
+            for entity in document.entities.values_mut() {
+                entity.fields.remove(id);
+            }
+        }
+        let outcome = merge_v2(&base, &left, &right);
+        if let MergeOutcomeV2::Conflicted(conflicts) = &outcome {
+            assert!(
+                conflicts
+                    .iter()
+                    .all(|conflict| conflict.facet() != ConflictFacetV2::FieldOrder),
+                "removals must not be reported as order edits"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_one_sided_move_of_a_new_field_survives_the_merge() {
+    let base = ordered_document(Some(vec!["value", "other"]));
+    let mut right = base.clone();
+    let schema = right.schemas.get_mut("schema").unwrap();
+    schema.fields.insert("added".into(), number_field("added"));
+    schema.field_order = Some(["added", "value", "other"].map(FieldId::from).to_vec());
+    assert_eq!(
+        merged_order(merge_v2(&base, &base, &right)),
+        Some(["added", "value", "other"].map(FieldId::from).to_vec())
+    );
 }

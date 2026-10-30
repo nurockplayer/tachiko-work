@@ -18,6 +18,7 @@ fn human_tracker_key_does_not_claim_stock_profile_or_block_generic_scalar_edit()
     document.schemas.insert(
         schema_id.clone(),
         Schema {
+            field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from("tracker"),
             display_name: None,

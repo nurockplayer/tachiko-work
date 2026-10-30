@@ -402,6 +402,7 @@ export type TrackerCommand =
   | { type: "set_column_requiredness"; expected_revision: string; collection: string; field: string; required: boolean }
   | { type: "set_column_constraint"; expected_revision: string; collection: string; field: string; constraint: FieldConstraintInput }
   | { type: "set_column_number_format"; expected_revision: string; collection: string; field: string; number_format: NumberFormat | null }
+  | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "rename_column"; expected_revision: string; collection: string; field: string; name: string }
   | { type: "remove_column"; expected_revision: string; collection: string; field: string }
   | { type: "undo" | "redo"; expected_revision: string };

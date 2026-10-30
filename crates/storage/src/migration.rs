@@ -166,6 +166,7 @@ fn rewrite_document(
             Ok((
                 stable_schema_id.clone(),
                 SchemaV2 {
+                    field_order: None,
                     id: stable_schema_id,
                     key: legacy_schema.0,
                     fields,

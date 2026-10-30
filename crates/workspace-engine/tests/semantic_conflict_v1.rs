@@ -38,6 +38,7 @@ fn definition(id: &str, field_type: FieldType, required: bool) -> FieldDefinitio
 
 fn schema(id: &str, fields: impl IntoIterator<Item = FieldDefinition>) -> Schema {
     Schema {
+        field_order: None,
         id: SchemaId::from(id),
         key: SchemaKey::from(human_key(id)),
         display_name: None,

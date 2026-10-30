@@ -396,6 +396,10 @@ pub struct Schema {
     )]
     pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, FieldDefinition>,
+    /// Presentation order of `fields`. `None` means field-id order. `Some` must be an exact
+    /// permutation of `fields` and must differ from id order (see `normalize_field_order`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_order: Option<Vec<FieldId>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -427,6 +431,43 @@ impl Schema {
     pub fn effective_name(&self) -> &str {
         self.display_name.as_deref().unwrap_or(self.key.as_str())
     }
+
+    /// Fields in presentation order. Ids listed in `field_order` come first in that order;
+    /// any field the order does not name follows in id order.
+    pub fn ordered_fields(&self) -> impl Iterator<Item = &FieldDefinition> + '_ {
+        let listed: &[FieldId] = self.field_order.as_deref().unwrap_or(&[]);
+        let fields = &self.fields;
+        listed.iter().filter_map(move |id| fields.get(id)).chain(
+            fields
+                .iter()
+                .filter(move |(id, _)| !listed.contains(id))
+                .map(|(_, field)| field),
+        )
+    }
+
+    /// Adds a field. Without an explicit order columns are in id order, so the
+    /// field takes its id position (a Remove/Append pair restores a document
+    /// exactly; native authoring allocates ids that sort last). With an
+    /// explicit order the field is appended after every listed column.
+    pub fn insert_field(&mut self, field: FieldDefinition) {
+        self.fields.insert(field.id.clone(), field);
+        self.normalize_field_order();
+    }
+
+    /// Drops ids no longer in `fields` and appends missing ids in id order.
+    /// An explicit order equal to id order is kept: `None` is the client's
+    /// default presentation, which need not be id order.
+    pub fn normalize_field_order(&mut self) {
+        let Some(order) = self.field_order.as_mut() else {
+            return;
+        };
+        order.retain(|id| self.fields.contains_key(id));
+        for id in self.fields.keys() {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+    }
 }
 
 impl FieldDefinition {
@@ -443,6 +484,13 @@ impl Document {
             .values()
             .flat_map(|schema| schema.fields.values())
             .any(|field| field.number_format.is_some())
+    }
+
+    #[must_use]
+    pub fn has_field_orders(&self) -> bool {
+        self.schemas
+            .values()
+            .any(|schema| schema.field_order.is_some())
     }
 
     #[must_use]

@@ -240,6 +240,8 @@ pub enum DiffError {
     UnsupportedDisplayName,
     #[error("tachiko.semantic-delta/v1 does not support durable number formats")]
     UnsupportedNumberFormat,
+    #[error("tachiko.semantic-delta/v1 does not support durable field order")]
+    UnsupportedFieldOrder,
     #[error("could not calculate the original document: {0}")]
     BeforeCalculation(#[source] CalculationError),
     #[error("could not calculate the changed document: {0}")]
@@ -254,6 +256,9 @@ pub enum DiffError {
 pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {
     if before.has_number_formats() || after.has_number_formats() {
         return Err(DiffError::UnsupportedNumberFormat);
+    }
+    if before.has_field_orders() || after.has_field_orders() {
+        return Err(DiffError::UnsupportedFieldOrder);
     }
     if before.has_display_names() || after.has_display_names() {
         return Err(DiffError::UnsupportedDisplayName);

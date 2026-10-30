@@ -367,6 +367,7 @@ pub fn encode(document: &Document) -> Result<CanonicalRoProjectV2, FormatError> 
     super::super::reject_display_names(document)?;
     super::super::reject_field_constraints(document)?;
     super::super::reject_number_formats(document)?;
+    super::super::reject_field_orders(document)?;
     super::super::check_document(document)?;
     validate_semantic_expression_limits(document)?;
     validate_keyed_grouped_sum_definitions(document).map_err(|error| {
@@ -803,6 +804,7 @@ impl SchemaV2 {
             }
         }
         Ok(Schema {
+            field_order: None,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: None,
@@ -820,6 +822,7 @@ impl SchemaV2 {
             })
             .collect::<Result<_, FormatError>>()?;
         Ok(Schema {
+            field_order: None,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: None,
@@ -1706,6 +1709,7 @@ mod tests {
         document.schemas.insert(
             SchemaId::from("schema"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("schema"),
                 key: SchemaKey::from("items"),
                 display_name: None,

@@ -20,6 +20,7 @@ fn keyed_grouped_sum_document() -> Document {
     document.schemas.insert(
         orders.clone(),
         Schema {
+            field_order: None,
             id: orders.clone(),
             key: SchemaKey::from("orders"),
             display_name: None,
@@ -54,6 +55,7 @@ fn keyed_grouped_sum_document() -> Document {
     document.schemas.insert(
         products.clone(),
         Schema {
+            field_order: None,
             id: products.clone(),
             key: SchemaKey::from("products"),
             display_name: None,

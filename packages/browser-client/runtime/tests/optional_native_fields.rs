@@ -397,6 +397,7 @@ fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_histo
         doc.schemas.insert(
             schema.into(),
             Schema {
+                field_order: None,
                 id: schema.into(),
                 key: schema.into(),
                 display_name: None,

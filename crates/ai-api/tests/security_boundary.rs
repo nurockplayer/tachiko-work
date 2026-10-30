@@ -47,6 +47,7 @@ fn security_document(note: &str) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("enemy"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("enemy"),
                 key: SchemaKey::from("enemy"),
                 display_name: None,

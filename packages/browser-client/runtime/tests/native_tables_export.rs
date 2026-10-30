@@ -59,6 +59,7 @@ fn add_table(
         );
     }
     let schema = Schema {
+        field_order: None,
         id: SchemaId::from(id),
         key: SchemaKey::from(key),
         display_name: Some(name.into()),

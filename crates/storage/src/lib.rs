@@ -125,6 +125,8 @@ pub enum FormatError {
     UnsupportedDisplayName,
     #[error("this frozen representation does not support durable number formats; use .roproj/v3")]
     UnsupportedNumberFormat,
+    #[error("this frozen representation does not support durable field order; use .roproj/v3")]
+    UnsupportedFieldOrder,
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
     #[error(
@@ -506,6 +508,13 @@ fn check_document(document: &Document) -> Result<(), FormatError> {
 pub(crate) fn reject_number_formats(document: &Document) -> Result<(), FormatError> {
     if document.has_number_formats() {
         return Err(FormatError::UnsupportedNumberFormat);
+    }
+    Ok(())
+}
+
+pub(crate) fn reject_field_orders(document: &Document) -> Result<(), FormatError> {
+    if document.has_field_orders() {
+        return Err(FormatError::UnsupportedFieldOrder);
     }
     Ok(())
 }

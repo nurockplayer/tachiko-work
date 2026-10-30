@@ -22,6 +22,7 @@ fn mixed_document() -> Document {
     document.schemas.insert(
         SchemaId::from("notes"),
         Schema {
+            field_order: None,
             id: SchemaId::from("notes"),
             key: SchemaKey::from("notes"),
             display_name: None,

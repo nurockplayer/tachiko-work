@@ -75,6 +75,7 @@ fn conflict_v2_refuses_all_definition_changing_requests_atomically() {
         empty.schemas.insert(
             id.into(),
             Schema {
+                field_order: None,
                 id: id.into(),
                 key: id.into(),
                 display_name: Some(format!("Table {id}")),

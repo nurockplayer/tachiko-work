@@ -80,6 +80,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         "schema".into(),
         Schema {
+            field_order: None,
             id: "schema".into(),
             key: "items".into(),
             display_name: None,
@@ -453,6 +454,7 @@ fn definition_migration_fixture() -> Document {
     document.schemas.insert(
         "orders-schema".into(),
         Schema {
+            field_order: None,
             id: "orders-schema".into(),
             key: "orders".into(),
             display_name: None,
@@ -465,6 +467,7 @@ fn definition_migration_fixture() -> Document {
     document.schemas.insert(
         "products-schema".into(),
         Schema {
+            field_order: None,
             id: "products-schema".into(),
             key: "products".into(),
             display_name: None,

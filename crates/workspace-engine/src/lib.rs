@@ -305,6 +305,9 @@ pub struct SchemaInspection {
     pub id: SchemaId,
     pub key: SchemaKey,
     pub display_name: Option<String>,
+    /// Fields are listed in column order; this keeps an explicit order
+    /// distinguishable from the default one, even when it equals id order.
+    pub field_order: Option<Vec<FieldId>>,
     pub fields: Vec<FieldDefinition>,
 }
 
@@ -338,6 +341,11 @@ impl Serialize for SchemaInspection {
         {
             return Err(S::Error::custom(
                 "the frozen schema inspection transport cannot represent display names",
+            ));
+        }
+        if self.field_order.is_some() {
+            return Err(S::Error::custom(
+                "the frozen schema inspection transport cannot represent a field order",
             ));
         }
         let fields = self
@@ -601,6 +609,10 @@ pub enum WorkspaceError {
     UnsupportedDisplayNameRepresentation,
     #[error("the selected merge contract does not support durable number formats")]
     UnsupportedNumberFormatMerge,
+    #[error("the selected merge contract does not support durable field order")]
+    UnsupportedFieldOrderMerge,
+    #[error("the field order for schema {schema} must name every field exactly once")]
+    InvalidFieldOrder { schema: SchemaId },
     #[error("invalid number format: {source}")]
     InvalidNumberFormat {
         #[source]
@@ -751,7 +763,8 @@ pub fn inspect_document(
             id: schema.id.clone(),
             key: schema.key.clone(),
             display_name: schema.display_name.clone(),
-            fields: schema.fields.values().cloned().collect(),
+            field_order: schema.field_order.clone(),
+            fields: schema.ordered_fields().cloned().collect(),
         })
         .collect();
     let entities = document
@@ -1040,6 +1053,7 @@ pub fn merge_documents(
             Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
         }
         MergeOutcome::UnsupportedNumberFormat => Err(WorkspaceError::UnsupportedNumberFormatMerge),
+        MergeOutcome::UnsupportedFieldOrder => Err(WorkspaceError::UnsupportedFieldOrderMerge),
         MergeOutcome::UnsupportedDisplayName => {
             Err(WorkspaceError::UnsupportedDisplayNameRepresentation)
         }
@@ -2938,6 +2952,7 @@ fn game_balance_schemas(
         schemas.insert(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from(schema_key),
                 display_name: None,

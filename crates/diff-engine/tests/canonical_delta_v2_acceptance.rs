@@ -51,6 +51,7 @@ fn field_payload(definition: &FieldDefinition) -> FieldDefinitionPayload {
 
 fn schema_payload(schema: &Schema) -> SchemaDefinitionPayload {
     SchemaDefinitionPayload {
+        field_order: None,
         key: schema.key.clone(),
         display_name: None,
         fields: schema
@@ -76,6 +77,7 @@ fn document() -> Document {
         schemas: BTreeMap::from([(
             "schema".into(),
             Schema {
+                field_order: None,
                 id: "schema".into(),
                 key: "table".into(),
                 display_name: None,

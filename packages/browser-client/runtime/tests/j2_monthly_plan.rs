@@ -64,6 +64,7 @@ fn plan_document() -> Document {
     document.schemas.insert(
         plan_id.clone(),
         Schema {
+            field_order: None,
             id: plan_id.clone(),
             key: SchemaKey::from("plan"),
             display_name: Some("Plan".to_owned()),
@@ -78,6 +79,7 @@ fn plan_document() -> Document {
     document.schemas.insert(
         settings_id.clone(),
         Schema {
+            field_order: None,
             id: settings_id.clone(),
             key: SchemaKey::from("settings"),
             display_name: Some("Settings".to_owned()),
@@ -110,6 +112,7 @@ fn plan_document() -> Document {
     document.schemas.insert(
         summary_id.clone(),
         Schema {
+            field_order: None,
             id: summary_id.clone(),
             key: SchemaKey::from("summary"),
             display_name: Some("Summary".to_owned()),
@@ -1333,6 +1336,7 @@ fn shared_field_id_document() -> Document {
         (
             id.clone(),
             Schema {
+                field_order: None,
                 id: id.clone(),
                 key: SchemaKey::from(id.as_str()),
                 display_name: None,

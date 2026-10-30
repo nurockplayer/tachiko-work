@@ -362,6 +362,11 @@ pub enum SemanticCommand {
         field: FieldId,
         number_format: Option<super::NumberFormat>,
     },
+    /// Replace the durable presentation order of one schema's fields; `None` is id order.
+    SetSchemaFieldOrder {
+        schema: SchemaId,
+        order: Option<Vec<FieldId>>,
+    },
     SetFieldConstraint {
         schema: SchemaId,
         field: FieldId,
@@ -2559,6 +2564,7 @@ impl PatchLifecycle {
                     | SemanticCommand::SetSchemaFieldDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldRequiredness { .. }
                     | SemanticCommand::SetFieldNumberFormat { .. }
+                    | SemanticCommand::SetSchemaFieldOrder { .. }
                     | SemanticCommand::SetFieldConstraint { .. } => {
                         OperationFamily::SchemaFieldMutation
                     }
@@ -2817,6 +2823,14 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    fn schema_scope(&self, schema: &SchemaId) -> ScopedSemanticSubject {
+        ScopedSemanticSubject::new(
+            self.document_scope.clone(),
+            self.document.clone(),
+            SemanticScope::Schema(schema.clone()),
+        )
+    }
+
     fn schema_field_scope(&self, schema: &SchemaId, field: &FieldId) -> ScopedSemanticSubject {
         ScopedSemanticSubject::new(
             self.document_scope.clone(),
@@ -2900,12 +2914,11 @@ impl PatchLifecycle {
                 });
             }
         }
-        candidate
+        let definition = candidate
             .schemas
             .get_mut(schema_id)
-            .expect("checked schema")
-            .fields
-            .insert(field.id.clone(), field.clone());
+            .expect("checked schema");
+        definition.insert_field(field.clone());
         for (entity, value) in values {
             candidate
                 .entities
@@ -3059,12 +3072,12 @@ impl PatchLifecycle {
                 field: FieldRef::new(schema_id.to_string(), field.id.clone()),
             });
         }
-        candidate
+        let definition = candidate
             .schemas
             .get_mut(schema_id)
-            .expect("checked schema")
-            .fields
-            .remove(&field.id);
+            .expect("checked schema");
+        definition.fields.remove(&field.id);
+        definition.normalize_field_order();
         for entity in &entities {
             candidate
                 .entities
@@ -3344,6 +3357,33 @@ impl PatchLifecycle {
                         scope: self.schema_field_scope(schema, field),
                     });
                 }
+                SemanticCommand::SetSchemaFieldOrder { schema, order } => {
+                    let definition = candidate.schemas.get_mut(schema).ok_or_else(|| {
+                        WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        }
+                    })?;
+                    // A proposed order must name every field once; it is
+                    // never repaired.
+                    if let Some(order) = order {
+                        let unique = order.iter().collect::<std::collections::BTreeSet<_>>();
+                        if order.len() != definition.fields.len()
+                            || unique.len() != order.len()
+                            || !order.iter().all(|id| definition.fields.contains_key(id))
+                        {
+                            return Err(WorkspaceError::InvalidFieldOrder {
+                                schema: schema.clone(),
+                            });
+                        }
+                    }
+                    definition.field_order.clone_from(order);
+                    definition.normalize_field_order();
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_scope(schema),
+                    });
+                }
                 SemanticCommand::SetFieldConstraint {
                     schema,
                     field,
@@ -3512,6 +3552,7 @@ impl PatchLifecycle {
             );
         }
         reject_legacy_number_formats(base, &candidate, body)?;
+        reject_legacy_field_orders(base, &candidate, body)?;
         if contains_constraint_command(body)
             || document_has_field_constraints(base)
             || document_has_field_constraints(&candidate)
@@ -3761,6 +3802,7 @@ impl PatchLifecycle {
             | SemanticCommand::RenameSchemaField { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }
+            | SemanticCommand::SetSchemaFieldOrder { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. } => {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
                 Ok(())
@@ -4660,6 +4702,27 @@ fn duplicate_constraint_write(body: &SemanticPatchBody) -> Option<(SchemaId, Fie
     None
 }
 
+fn reject_legacy_field_orders(
+    base: &Document,
+    candidate: &Document,
+    body: &SemanticPatchBody,
+) -> Result<(), PatchLifecycleError> {
+    if base.has_field_orders()
+        || candidate.has_field_orders()
+        || body
+            .commands()
+            .iter()
+            .any(|command| matches!(command, SemanticCommand::SetSchemaFieldOrder { .. }))
+    {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(
+                super::DiffError::UnsupportedFieldOrder,
+            )),
+        });
+    }
+    Ok(())
+}
+
 fn reject_legacy_number_formats(
     base: &Document,
     candidate: &Document,
@@ -4774,6 +4837,7 @@ fn formula_projection_document(document: &Document) -> Document {
     document.keyed_grouped_sum_definitions.clear();
     for schema in document.schemas.values_mut() {
         schema.display_name = None;
+        schema.field_order = None;
         for field in schema.fields.values_mut() {
             field.constraint = FieldConstraint::None;
             field.number_format = None;
@@ -5070,6 +5134,7 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
             | SemanticCommand::RemoveEntity { .. }
             | SemanticCommand::RenameSchemaField { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }
+            | SemanticCommand::SetSchemaFieldOrder { .. }
             | SemanticCommand::SetFieldConstraint { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. }
             | SemanticCommand::SetFieldValue { .. }
@@ -5129,6 +5194,7 @@ mod tests {
         if append {
             SemanticCommand::AppendCollection {
                 schema: Schema {
+                    field_order: None,
                     id: SchemaId::from(schema_id),
                     key: SchemaKey::from(schema_id),
                     display_name: None,
@@ -5232,6 +5298,7 @@ mod tests {
         document.schemas.insert(
             orders.clone(),
             Schema {
+                field_order: None,
                 id: orders.clone(),
                 key: SchemaKey::from("orders"),
                 display_name: None,
@@ -5266,6 +5333,7 @@ mod tests {
         document.schemas.insert(
             products.clone(),
             Schema {
+                field_order: None,
                 id: products.clone(),
                 key: SchemaKey::from("products"),
                 display_name: None,

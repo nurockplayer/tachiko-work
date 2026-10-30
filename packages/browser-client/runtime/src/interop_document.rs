@@ -705,6 +705,8 @@ pub struct NativeTrackerExportPresentation {
 #[serde(deny_unknown_fields)]
 pub struct NativeTrackerExportRow {
     pub entity_id: String,
+    /// One style per column, in the table's projected column order at the
+    /// export revision (as `queryTable` returns it; R4a moves change it).
     pub styles: Vec<CellStyle>,
 }
 
@@ -1033,6 +1035,7 @@ fn build_import_sheet(
 ) -> Result<(), DesignerError> {
     let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
     let mut schema = Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from(format!("sheet_{}", index + 1)),
         display_name: None,
@@ -1392,6 +1395,13 @@ pub(crate) enum ImportedOutput<'a> {
     Xlsx,
 }
 
+/// A durable column order (R4a) outranks the source presentation order.
+fn sort_by_field_order(schema: &Schema, columns: &mut [InteropColumnMetadata]) {
+    if let Some(order) = &schema.field_order {
+        columns.sort_by_key(|column| order.iter().position(|id| id.as_str() == column.field_id));
+    }
+}
+
 /// Reconcile source presentation with current stable identities. Source slots
 /// remain useful for Undo; they never recreate removed fields or entities.
 fn current_import_metadata(
@@ -1475,6 +1485,7 @@ fn current_import_metadata(
                 width: None,
             });
         }
+        sort_by_field_order(schema, &mut sheet.columns);
         if sheet.columns != source_columns
             || sheet
                 .rows
@@ -1880,6 +1891,14 @@ fn validate_metadata_envelope(
     Ok(capacity)
 }
 
+/// Capacity columns follow id order (the stored source) or the durable column
+/// order (R4a), which reconciled exports use.
+fn capacity_columns_in_order(sheet: &InteropSheetMetadata, schema: &Schema) -> bool {
+    let columns = || sheet.columns.iter().map(|column| column.field_id.as_str());
+    columns().eq(schema.fields.keys().map(FieldId::as_str))
+        || columns().eq(schema.ordered_fields().map(|field| field.id.as_str()))
+}
+
 fn validate_capacity_metadata(
     document: &Document,
     metadata: &InteropMetadata,
@@ -1899,11 +1918,7 @@ fn validate_capacity_metadata(
             .iter()
             .map(|row| row.entity_id.as_str())
             .eq(document.entities.keys().map(EntityId::as_str))
-        || !sheet
-            .columns
-            .iter()
-            .map(|column| column.field_id.as_str())
-            .eq(schema.fields.keys().map(FieldId::as_str))
+        || !capacity_columns_in_order(sheet, schema)
     {
         return Err(tracker_error(
             "capacity metadata must preserve canonical row and column identity order",
@@ -2661,6 +2676,14 @@ fn native_budget_metadata(
     Ok(InteropMetadata { version: 1, sheets })
 }
 
+/// The stock Tracker columns in their durable order (R4a).
+fn tracker_column_order(schema: &Schema) -> Vec<&str> {
+    schema.field_order.as_ref().map_or_else(
+        || vec!["task", "estimate", "done"],
+        |order| order.iter().map(FieldId::as_str).collect(),
+    )
+}
+
 fn native_tracker_metadata(
     document: &Document,
     presentation: &NativeTrackerExportPresentation,
@@ -2730,15 +2753,16 @@ fn native_tracker_metadata(
             "native Tracker export must map every accepted row exactly once",
         ));
     }
+    let order = tracker_column_order(schema);
     Ok(InteropMetadata {
         version: 1,
         sheets: vec![InteropSheetMetadata {
             schema_id: "tracker".to_owned(),
             name: "Tracker".to_owned(),
             has_header: true,
-            columns: fields
+            columns: order
                 .iter()
-                .map(|(id, _)| InteropColumnMetadata {
+                .map(|id| InteropColumnMetadata {
                     field_id: (*id).to_owned(),
                     name: (*id).to_owned(),
                     width: None,
