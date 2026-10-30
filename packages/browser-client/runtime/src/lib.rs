@@ -6037,6 +6037,8 @@ fn blank_field_projection(
         editable_scalar: match column.field_type {
             FieldType::Text if native_table_rows && !column.required => Some(ScalarKind::Text),
             FieldType::Number if native_table_rows && !column.required => Some(ScalarKind::Number),
+            FieldType::Boolean if native_table_rows && !column.required => Some(ScalarKind::Boolean),
+            FieldType::Date if native_table_rows && !column.required => Some(ScalarKind::Date),
             _ => None,
         },
     }
