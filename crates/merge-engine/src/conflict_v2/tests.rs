@@ -359,3 +359,29 @@ fn independent_additions_to_an_ordered_schema_merge() {
         )
     );
 }
+
+#[test]
+fn independent_field_removals_are_not_order_edits() {
+    for order in [None, Some(vec!["value", "other"])] {
+        let base = ordered_document(order);
+        let mut left = base.clone();
+        let mut right = base.clone();
+        for (document, id) in [(&mut left, "value"), (&mut right, "other")] {
+            let schema = document.schemas.get_mut("schema").unwrap();
+            schema.fields.remove(id);
+            schema.normalize_field_order();
+            for entity in document.entities.values_mut() {
+                entity.fields.remove(id);
+            }
+        }
+        let outcome = merge_v2(&base, &left, &right);
+        if let MergeOutcomeV2::Conflicted(conflicts) = &outcome {
+            assert!(
+                conflicts
+                    .iter()
+                    .all(|conflict| conflict.facet() != ConflictFacetV2::FieldOrder),
+                "removals must not be reported as order edits"
+            );
+        }
+    }
+}
