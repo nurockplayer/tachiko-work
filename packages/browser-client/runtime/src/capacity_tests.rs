@@ -503,10 +503,12 @@ fn v3_reopen_refusal_preserves_the_resident_occurrence_and_history() {
     let before_undo = format!("{:?}", runtime.as_ref().unwrap().undo);
     let before_redo = format!("{:?}", runtime.as_ref().unwrap().redo);
 
+    // A one-column Yes/No table may use the large-table profile (Work #610),
+    // so refuse one row beyond that profile as well.
     let (template_runtime, _, field) = boolean_table();
     let mut document = template_runtime.session.export_snapshot().into_document();
     let schema = document.schemas.keys().next().unwrap().clone();
-    for row in 0..=DEFAULT_LIMITS.table_rows {
+    for row in 0..=crate::interop_adapter::MAX_TEXT_CAPACITY_ROWS {
         let id = super::EntityId::from(format!("capacity_row_{row}"));
         let entity = super::Entity {
             id: id.clone(),
@@ -526,7 +528,10 @@ fn v3_reopen_refusal_preserves_the_resident_occurrence_and_history() {
         DesignerError::CapacityExceeded(error) => {
             assert_eq!(error.limit, CapacityLimit::TableRows);
             assert_eq!(error.maximum, DEFAULT_LIMITS.table_rows);
-            assert_eq!(error.attempted, DEFAULT_LIMITS.table_rows + 1);
+            assert_eq!(
+                error.attempted,
+                crate::interop_adapter::MAX_TEXT_CAPACITY_ROWS + 1
+            );
         }
         other => panic!("expected capacity refusal, got {other:?}"),
     }

@@ -179,7 +179,7 @@ pub(crate) fn capacity_header_bytes(sheet: &SourceSheet) -> usize {
 pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     if !text_capacity_shape(workbook) {
         return fail(
-            "Text capacity requires one headered, default-style Text/Number table within 8,406 rows, 16 columns, and 25,218 cells",
+            "Text capacity requires one headered Text, Number, Date or Yes/No table with default styles within 8,406 rows, 16 columns, and 25,218 cells",
         );
     }
     let sheet = &workbook.sheets[0];

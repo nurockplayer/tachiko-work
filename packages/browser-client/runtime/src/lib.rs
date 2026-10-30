@@ -7677,7 +7677,7 @@ fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) 
     let capacity = capacity.map_or_else(
         || {
             format!(
-                "only one Text/Number table within {} rows, {} columns and {} cells qualifies",
+                "only one Text, Number, Date or Yes/No table within {} rows, {} columns and {} cells qualifies",
                 interop_adapter::MAX_TEXT_CAPACITY_ROWS,
                 interop_adapter::MAX_COLUMNS,
                 interop_adapter::MAX_TEXT_CAPACITY_CELLS
