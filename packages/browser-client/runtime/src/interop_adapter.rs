@@ -2211,7 +2211,10 @@ fn builtin_format(id: u32) -> Option<String> {
 fn capacity_styles(xml: &Xml) -> Result<bool> {
     Ok(
         same_plain_tree(xml, &parse_xml(capacity_styles_xml().as_bytes())?)
-            || same_plain_tree(xml, &parse_xml(capacity_styles_xml_before_dates().as_bytes())?),
+            || same_plain_tree(
+                xml,
+                &parse_xml(capacity_styles_xml_before_dates().as_bytes())?,
+            ),
     )
 }
 fn capacity_styles_xml_before_dates() -> String {

@@ -8,7 +8,7 @@ use tachiko_designer_runtime::{
     interop_adapter::{
         ImportOptions, SourceValue, export_csv, export_xlsx, import_csv, import_xlsx,
     },
-    open_imported_project,
+    open_imported_project, open_portable_ro, open_project,
 };
 use tachiko_workspace_engine::Date;
 
@@ -316,6 +316,31 @@ fn typed_capacity_xlsx_reimports_as_dates() {
         import_xlsx(&second).unwrap().sheets[0].rows,
         reread.sheets[0].rows
     );
+}
+
+/// A saved project (`.roproj/v3` or portable `.ro`) with Date and Yes/No
+/// columns reopens through the large-table profile, as Text/Number ones do
+/// since Work #588.
+#[test]
+fn typed_capacity_project_saves_and_reopens() {
+    let source = import_csv(&csv(6_304, true), &ImportOptions::default()).unwrap();
+    let (mut runtime, imported) = import_workbook(&source, &selection(true), ORIGINAL).unwrap();
+    let collection = imported.opened.bootstrap.default_collection.clone();
+    let live = table(&mut runtime, &collection);
+    let revision = runtime.observe_occurrence().revision;
+
+    let saved = runtime.export_project_v3(&revision).unwrap();
+    let mut slot = None;
+    open_project(&mut slot, &saved.bytes, FRESH).expect("the saved v3 project reopens");
+    let mut reopened = slot.unwrap();
+    let reopened_table = table(&mut reopened, &collection);
+    assert_eq!(reopened_table.rows, live.rows);
+    assert_eq!(reopened_table.columns, live.columns);
+
+    let portable = runtime.export_portable_ro(&revision).unwrap();
+    let mut slot = None;
+    open_portable_ro(&mut slot, &portable.bytes, FRESH).expect("the .ro reopens");
+    assert_eq!(table(slot.as_mut().unwrap(), &collection).rows, live.rows);
 }
 
 #[test]

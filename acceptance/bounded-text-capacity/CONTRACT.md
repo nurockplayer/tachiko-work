@@ -38,8 +38,11 @@ capacity budget only for the existing eligible three-Text shape, or for a valid
 new Text/Number shape with **more than 64 data rows**. Since Work #610 that
 shape may also hold Date (`YYYY-MM-DD`, 1900-01-01 through 9999-12-31) and
 Boolean columns, written to XLSX as `t="d"` with one fixed `yyyy-mm-dd` cell
-format and `t="b"`; the row, column, cell and byte limits are unchanged. V3 remains excluded from
-enlarged retry. The previous resident's eligibility cannot authorize a new
+format and `t="b"`; the row, column, cell and byte limits are unchanged. This
+paragraph's original V3 exclusion was superseded by Work #588: a saved
+`.roproj/v3` or portable `.ro` project of this shape reopens in the enlarged
+profile after the ordinary profile refuses it (`tests/v3_text_capacity.rs`),
+and since #610 that includes Date and Yes/No columns. The previous resident's eligibility cannot authorize a new
 candidate or replacement.
 
 Small legacy three-Text capacity continues to work. Small new wide-Text or mixed
