@@ -118,6 +118,20 @@ const located = await client.locateInView(revision, collection, view, pinnedRow.
 // located = { revision, result: "found", index: 12 } or { result: "filtered_out" }
 ```
 
+To total exactly the rows a view shows, pass their entity ids to
+`queryColumnTotals`. It sums each Number column over the named entities, in
+collection order, and returns `{ revision, rows, column_totals }` with the same
+null and blank-cell rules as the window footer. Naming every entity of the
+collection gives the footer's totals exactly. The request accepts at most 1,000
+unique ids of that collection; an unknown, duplicate or foreign id, or a stale
+revision, refuses with no change. Use it for the footer of a filtered view:
+the window's `column_totals` always cover the whole collection.
+
+```ts
+const shownIds = visibleRows.map((row) => row.id); // at most 1,000
+const shown = await client.queryColumnTotals(revision, collection, shownIds);
+```
+
 `count` is 0..=256 and `0` returns the columns and totals only. `start` clamps
 past the end instead of failing, so a shrinking view never turns a scroll into an
 error. The reply repeats `revision`, `collection`, `columns`, a

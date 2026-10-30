@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- `queryColumnTotals` sums Number columns over the entity ids a caller names,
+  so a filtered view can total exactly the rows it shows. The request is
+  revision-pinned, capped at 1,000 unique ids of the collection and summed in
+  collection order; naming every entity gives the whole-collection footer.
+  Unknown, duplicate or foreign ids refuse with no change.
+
 - Columns can be reordered with `moveColumn`. The order is durable document
   state: it is saved, undone and redone, diffed and merged, and used by table
   projections and exports. A new column is appended last. Format-free documents
