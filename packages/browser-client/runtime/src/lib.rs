@@ -7469,7 +7469,16 @@ fn is_text_capacity_document(document: &Document) -> bool {
         return false;
     };
     let columns = schema.fields.len();
-    document.schemas.len() == 1
+    // The stock Tracker keeps its own 128-row delivery profile; Date and
+    // Yes/No admission (Work #610) does not move it to the large-table one.
+    let stock_tracker = schema.id.as_str() == "tracker"
+        && schema.key.as_str() == "tracker"
+        && schema
+            .fields
+            .values()
+            .any(|field| matches!(field.field_type, FieldType::Date | FieldType::Boolean));
+    !stock_tracker
+        && document.schemas.len() == 1
         && (1..=interop_adapter::MAX_COLUMNS).contains(&columns)
         && document.entities.len() <= interop_adapter::MAX_TEXT_CAPACITY_ROWS
         && document.entities.len().saturating_mul(columns)

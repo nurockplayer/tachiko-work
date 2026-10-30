@@ -837,3 +837,43 @@ fn a_column_total_counts_one_dependency_edge_per_row_of_its_table() {
     assert_eq!(usage.formula_ast_nodes, 1);
     assert_eq!(usage.dependency_edges, 3);
 }
+
+#[test]
+fn stock_tracker_keeps_its_128_row_limit_when_reopened() {
+    let tracker = DesignerRuntime::tracker("00000000-0000-4000-8000-000000000533").unwrap();
+    let mut document = tracker.session.export_snapshot().into_document();
+    let schema = document.schemas.keys().next().unwrap().clone();
+    document.entities.clear();
+    for row in 0..=DEFAULT_LIMITS.table_rows {
+        let id = super::EntityId::from(format!("tracker_row_{row}"));
+        document.entities.insert(
+            id.clone(),
+            super::Entity {
+                id,
+                key: super::EntityKey::from(format!("tracker_row_{row}")),
+                schema: schema.clone(),
+                fields: std::collections::BTreeMap::from([
+                    (FieldId::from("task"), Value::Text(format!("task {row}"))),
+                    (
+                        FieldId::from("estimate"),
+                        Value::Number(tachiko_workspace_engine::Number::new(1.0).unwrap()),
+                    ),
+                    (FieldId::from("done"), Value::Boolean(row % 2 == 0)),
+                ]),
+            },
+        );
+    }
+    assert!(!super::is_text_capacity_document(&document));
+    let mut slot = None;
+    match open_project(
+        &mut slot,
+        &v3_bundle(&document),
+        "00000000-0000-4000-8000-000000000534",
+    ) {
+        Err(DesignerError::CapacityExceeded(error)) => {
+            assert_eq!(error.limit, CapacityLimit::TableRows);
+            assert_eq!(error.maximum, DEFAULT_LIMITS.table_rows);
+        }
+        other => panic!("a 129-row Tracker must refuse, got {:?}", other.map(|_| ())),
+    }
+}

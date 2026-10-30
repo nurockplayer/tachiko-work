@@ -42,7 +42,8 @@ format and `t="b"`; the row, column, cell and byte limits are unchanged. This
 paragraph's original V3 exclusion was superseded by Work #588: a saved
 `.roproj/v3` or portable `.ro` project of this shape reopens in the enlarged
 profile after the ordinary profile refuses it (`tests/v3_text_capacity.rs`),
-and since #610 that includes Date and Yes/No columns. The previous resident's eligibility cannot authorize a new
+and since #610 that includes Date and Yes/No columns. The stock Tracker
+(`tracker` schema with its Yes/No `done` field) keeps its own 128-row profile. The previous resident's eligibility cannot authorize a new
 candidate or replacement.
 
 Small legacy three-Text capacity continues to work. Small new wide-Text or mixed
