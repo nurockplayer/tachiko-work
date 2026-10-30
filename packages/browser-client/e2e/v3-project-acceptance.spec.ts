@@ -178,7 +178,8 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
       }, "complete Bootstrap oracle changed");
       equal(opened.table.revision, input.revision, "table revision changed");
       equal(opened.table.collection, collection, "complete table collection changed");
-      equal(opened.table.native_table_profile, input.date ? undefined : true, "literal native scalar profile changed");
+      // All-optional scalar imports, Date included, are native since #598.
+      equal(opened.table.native_table_profile, true, "literal native scalar profile changed");
       equal(opened.table.columns, literalIds.fields.map((id: string, i: number) => ({
         id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.date ? "date" : "text"][i],
         required: false, // Imported schema declarations are optional; every fixture cell is present.
@@ -531,7 +532,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       const values = [["PEN", "Stationery", input.quantity, 200, input.dateValue], ["NOTE", "Paper", 5, 200, "2026-09-27"]];
       const expected = {
         bootstrap: { title: "Imported workbook", revision: input.revision, default_collection: "sheet_1", collections: [collection], keyed_grouped_sum_definition_ids: input.catalogue },
-        table: { revision: input.revision, ...(input.dateType === false ? { native_table_profile: true } : {}), collection, columns: fields.map((id, i) => ({ id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.dateType === false ? "text" : "date"][i], required: false })),
+        table: { revision: input.revision, native_table_profile: true, collection, columns: fields.map((id, i) => ({ id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.dateType === false ? "text" : "date"][i], required: false })),
           rows: rows.map((id, ri) => ({ id, key: `sheet_1_row_${ri + 1}`, fields: fields.map((field, fi) => {
             const kind = fi < 2 ? "text" : fi < 4 ? "number" : input.dateType === false ? "text" : "date";
             return { target: { entity: id, field }, address: `sheet_1_row_${ri + 1}.column_${fi + 1}`, stored: { kind, value: values[ri]![fi] }, formula: null, calculated: null, diagnostics: [], editable_scalar: kind };
