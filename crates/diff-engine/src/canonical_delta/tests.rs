@@ -386,3 +386,38 @@ fn saved_definition_ranks_append_without_moving_names_or_constraints() {
         4
     );
 }
+
+#[test]
+fn a_reorder_alone_is_one_field_order_fact_with_both_orders() {
+    let mut before = Document::empty("doc", "title");
+    before.schemas.insert(
+        "s".into(),
+        numeric_or_text_schema("s", &[("a", FieldType::Number), ("b", FieldType::Text)]),
+    );
+    let mut after = before.clone();
+    let reordered = Some(vec![FieldId::from("b"), FieldId::from("a")]);
+    after
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .field_order
+        .clone_from(&reordered);
+    let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after).unwrap();
+    assert_eq!(
+        delta.facts(),
+        [Fact::SchemaFieldOrderChanged {
+            schema: SchemaId::from("s"),
+            before: None,
+            after: reordered.clone(),
+        }]
+    );
+    let reverse = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &after, &before).unwrap();
+    assert_eq!(
+        reverse.facts(),
+        [Fact::SchemaFieldOrderChanged {
+            schema: SchemaId::from("s"),
+            before: reordered,
+            after: None,
+        }]
+    );
+}

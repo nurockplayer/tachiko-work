@@ -705,6 +705,8 @@ pub struct NativeTrackerExportPresentation {
 #[serde(deny_unknown_fields)]
 pub struct NativeTrackerExportRow {
     pub entity_id: String,
+    /// One style per column, in the table's projected column order at the
+    /// export revision (as `queryTable` returns it; R4a moves change it).
     pub styles: Vec<CellStyle>,
 }
 
@@ -2674,22 +2676,12 @@ fn native_budget_metadata(
     Ok(InteropMetadata { version: 1, sheets })
 }
 
-/// The stock Tracker columns in their durable order (R4a), each with its stock
-/// index: row styles arrive in task, estimate, done order and move with them.
-fn tracker_column_order(schema: &Schema) -> Vec<(&str, usize)> {
-    const STOCK: [&str; 3] = ["task", "estimate", "done"];
-    let ids = schema.field_order.as_ref().map_or_else(
-        || STOCK.to_vec(),
+/// The stock Tracker columns in their durable order (R4a).
+fn tracker_column_order(schema: &Schema) -> Vec<&str> {
+    schema.field_order.as_ref().map_or_else(
+        || vec!["task", "estimate", "done"],
         |order| order.iter().map(FieldId::as_str).collect(),
-    );
-    ids.into_iter()
-        .filter_map(|id| {
-            STOCK
-                .iter()
-                .position(|stock| *stock == id)
-                .map(|index| (id, index))
-        })
-        .collect()
+    )
 }
 
 fn native_tracker_metadata(
@@ -2770,7 +2762,7 @@ fn native_tracker_metadata(
             has_header: true,
             columns: order
                 .iter()
-                .map(|(id, _)| InteropColumnMetadata {
+                .map(|id| InteropColumnMetadata {
                     field_id: (*id).to_owned(),
                     name: (*id).to_owned(),
                     width: None,
@@ -2781,10 +2773,7 @@ fn native_tracker_metadata(
                 .iter()
                 .map(|row| InteropRowMetadata {
                     entity_id: row.entity_id.clone(),
-                    styles: order
-                        .iter()
-                        .map(|(_, stock)| row.styles[*stock].clone())
-                        .collect(),
+                    styles: row.styles.clone(),
                 })
                 .collect(),
         }],

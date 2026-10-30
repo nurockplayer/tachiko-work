@@ -76,6 +76,10 @@ and a new column is appended last. Projections list columns in this order.
 await client.moveColumn(table.revision, "tasks", "amount", 0);
 ```
 
+Spreadsheet exports follow the moved order. Native Tracker and Budget export
+presentations give one style per column in the table's projected column order
+at the export revision, as `queryTable` returns it; build them after a move.
+
 Publication replies include `schemas` and `schema_fields` (stable schema ID or
 `{schema, field}` ID pairs) for presentation invalidation, independently of
 `entities`, `fields`, and `affected_calculations`. Refresh affected collection
