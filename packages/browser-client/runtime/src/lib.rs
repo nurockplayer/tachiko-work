@@ -6034,12 +6034,16 @@ fn blank_field_projection(
         formula: None,
         calculated: None,
         diagnostics: Vec::new(),
-        editable_scalar: match column.field_type {
-            FieldType::Text if native_table_rows && !column.required => Some(ScalarKind::Text),
-            FieldType::Number if native_table_rows && !column.required => Some(ScalarKind::Number),
-            FieldType::Boolean if native_table_rows && !column.required => Some(ScalarKind::Boolean),
-            FieldType::Date if native_table_rows && !column.required => Some(ScalarKind::Date),
-            _ => None,
+        editable_scalar: if native_table_rows && !column.required {
+            match column.field_type {
+                FieldType::Text => Some(ScalarKind::Text),
+                FieldType::Number => Some(ScalarKind::Number),
+                FieldType::Boolean => Some(ScalarKind::Boolean),
+                FieldType::Date => Some(ScalarKind::Date),
+                FieldType::Reference { .. } => None,
+            }
+        } else {
+            None
         },
     }
 }
