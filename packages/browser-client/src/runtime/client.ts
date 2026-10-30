@@ -85,7 +85,7 @@ export interface DesignerClient {
     view: TableView,
     entity: string,
   ): Promise<LocatedInViewProjection>;
-  /** Number totals over exactly these entities; unknown, duplicate or more than 1,000 ids refuse. */
+  /** Number totals over exactly these entities; unknown, duplicate or foreign ids refuse. */
   queryColumnTotals(
     expectedRevision: string,
     collection: string,
