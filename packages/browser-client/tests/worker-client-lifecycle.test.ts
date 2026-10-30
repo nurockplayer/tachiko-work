@@ -143,6 +143,22 @@ describe("Designer Worker request lifecycle", () => {
     await expect(malformed).rejects.toThrow("Invalid Worker located-in-view result.");
   });
 
+  it("forwards column-total requests and validates their replies", async () => {
+    const worker = transport();
+    const pending = worker.client.queryColumnTotals("resident/7", "items", ["row-1", "row-9"]);
+    expect(worker.request(0)).toMatchObject({
+      kind: "command",
+      request: {type: "query_column_totals", expected_revision: "resident/7", collection: "items", entities: ["row-1", "row-9"]},
+    });
+    const totals = {revision: "resident/7", rows: 2, column_totals: {amount: 4.5, blank: null}};
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "column_totals", payload: totals}});
+    await expect(pending).resolves.toEqual(totals);
+
+    const malformed = worker.client.queryColumnTotals("resident/7", "items", ["row-1"]);
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "column_totals", payload: {revision: "resident/7", rows: 1, column_totals: {amount: Number.NaN}}}});
+    await expect(malformed).rejects.toThrow("Invalid Worker column total.");
+  });
+
   it("ignores unknown and duplicate replies without consuming another pending request", async () => {
     const worker = transport();
     const first = worker.client.queryTable("first");

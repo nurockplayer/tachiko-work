@@ -187,6 +187,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "queryTable",
     "queryTableWindow",
     "locateInView",
+    "queryColumnTotals",
     "queryFields",
     "explainField",
     "createKeyedGroupedSum",

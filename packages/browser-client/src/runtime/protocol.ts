@@ -202,6 +202,13 @@ export type LocatedInViewProjection = {
   index?: number;
 };
 
+/** Number totals over the named entities at one revision; blank cells are skipped, as in `column_totals`. */
+export type ColumnTotalsProjection = {
+  revision: string;
+  rows: number;
+  column_totals: Record<string, number | null>;
+};
+
 export type FieldBatchProjection = {
   revision: string;
   fields: FieldProjection[];
@@ -456,6 +463,12 @@ export type DesignerRequest =
       entity: string;
     }
   | {
+      type: "query_column_totals";
+      expected_revision: string;
+      collection: string;
+      entities: string[];
+    }
+  | {
       type: "query_fields";
       expected_revision: string;
       fields: FieldTarget[];
@@ -491,6 +504,7 @@ export type DesignerResponse =
   | { type: "table"; payload: TableProjection }
   | { type: "table_window"; payload: TableWindowProjection }
   | { type: "located_in_view"; payload: LocatedInViewProjection }
+  | { type: "column_totals"; payload: ColumnTotalsProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "field_explanation"; payload: FieldExplanationProjection }
   | { type: "published"; payload: PublicationProjection }
