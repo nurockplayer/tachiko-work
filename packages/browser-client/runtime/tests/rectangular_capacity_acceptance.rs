@@ -909,3 +909,36 @@ fn native_rectangular_capacity_complete_lifecycle() {
         }
     }
 }
+
+#[test]
+fn imported_capacity_export_follows_a_moved_column() {
+    let (bytes, selection, expected) = fixture(100, 3, false);
+    let source = import_csv(&bytes, &ImportOptions::default()).unwrap();
+    let (mut runtime, imported) = import_workbook(&source, &selection, ORIGINAL).unwrap();
+    publish(
+        &mut runtime,
+        DesignerRequest::MoveColumn {
+            expected_revision: imported.opened.bootstrap.revision.clone(),
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            field: expected.columns[2].clone(),
+            to_index: 0,
+        },
+    );
+    let workbook = runtime
+        .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
+        .expect("a reordered capacity import exports");
+    let headers = workbook.sheets[0]
+        .columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        headers,
+        [
+            expected.headers[2].clone(),
+            expected.headers[0].clone(),
+            expected.headers[1].clone()
+        ]
+    );
+    assert!(export_csv(&workbook.sheets[0]).is_ok());
+}

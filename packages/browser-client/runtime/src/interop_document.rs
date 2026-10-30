@@ -1889,6 +1889,14 @@ fn validate_metadata_envelope(
     Ok(capacity)
 }
 
+/// Capacity columns follow id order (the stored source) or the durable column
+/// order (R4a), which reconciled exports use.
+fn capacity_columns_in_order(sheet: &InteropSheetMetadata, schema: &Schema) -> bool {
+    let columns = || sheet.columns.iter().map(|column| column.field_id.as_str());
+    columns().eq(schema.fields.keys().map(FieldId::as_str))
+        || columns().eq(schema.ordered_fields().map(|field| field.id.as_str()))
+}
+
 fn validate_capacity_metadata(
     document: &Document,
     metadata: &InteropMetadata,
@@ -1908,11 +1916,7 @@ fn validate_capacity_metadata(
             .iter()
             .map(|row| row.entity_id.as_str())
             .eq(document.entities.keys().map(EntityId::as_str))
-        || !sheet
-            .columns
-            .iter()
-            .map(|column| column.field_id.as_str())
-            .eq(schema.fields.keys().map(FieldId::as_str))
+        || !capacity_columns_in_order(sheet, schema)
     {
         return Err(tracker_error(
             "capacity metadata must preserve canonical row and column identity order",
