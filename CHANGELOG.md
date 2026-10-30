@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- `duplicateCollection` accepts optional `columnNames`, keyed by source field
+  ID, so a copy's columns can carry their own names in the same command. The
+  names are validated before publication and undo with the copy as one step.
+  Imported CSV and XLSX tables can be copied with their header names. Without
+  `columnNames` the copy is unchanged.
+
 - Columns can be reordered with `moveColumn`. The order is durable document
   state: it is saved, undone and redone, diffed and merged, and used by table
   projections and exports. A new column is appended last. Format-free documents
