@@ -2205,6 +2205,20 @@ fn builtin_format(id: u32) -> Option<String> {
         _ => Some(format!("unsupported_builtin_{id}")),
     }
 }
+/// The large-import style tree, or the one Text/Number files exported before
+/// Work #610 carry (no date format; a cell naming style 1 refuses as out of
+/// bounds).
+fn capacity_styles(xml: &Xml) -> Result<bool> {
+    Ok(
+        same_plain_tree(xml, &parse_xml(capacity_styles_xml().as_bytes())?)
+            || same_plain_tree(xml, &parse_xml(capacity_styles_xml_before_dates().as_bytes())?),
+    )
+}
+fn capacity_styles_xml_before_dates() -> String {
+    format!(
+        "<styleSheet xmlns=\"{MAIN}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"
+    )
+}
 fn capacity_styles_xml() -> String {
     format!(
         "<styleSheet xmlns=\"{MAIN}\"><numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd\"/></numFmts><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs></styleSheet>"
@@ -2307,6 +2321,8 @@ fn capacity_plain_values(node: &Xml) -> bool {
                 // A Boolean uses the default style; only a Date carries the
                 // one non-default style (the canonical yyyy-mm-dd format).
                 Some("str" | "s" | "b") => default_style && one_value,
+                // A spreadsheet app may store the date as a serial number.
+                None | Some("n") if node.attr("s") == Some("1") => one_value,
                 None | Some("n") => default_style && (node.children.is_empty() || one_value),
                 Some("d") => node.attr("s") == Some("1") && one_value,
                 _ => false,
@@ -2410,7 +2426,7 @@ fn capacity_plain_parts(parts: &BTreeMap<String, Vec<u8>>) -> Result<bool> {
             return Ok(false);
         }
         if path == "xl/styles.xml" {
-            if !same_plain_tree(&xml, &parse_xml(capacity_styles_xml().as_bytes())?) {
+            if !capacity_styles(&xml)? {
                 return Ok(false);
             }
         } else if !capacity_plain_node(&xml) || !capacity_plain_bindings(path, &xml, parts) {
@@ -2554,7 +2570,7 @@ fn parse_styles(
             alignment: horizontal,
         });
     }
-    if same_plain_tree(&xml, &parse_xml(capacity_styles_xml().as_bytes())?) {
+    if capacity_styles(&xml)? {
         ledger.push(finding(
             FidelityCategory::NativeEquivalent,
             "plain_styles",

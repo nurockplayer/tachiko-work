@@ -2203,3 +2203,40 @@ fn capacity_refuses_dates_outside_excel_range_or_calendar() {
         assert!(export_xlsx(&book).is_err(), "{bad} must not export");
     }
 }
+
+const STYLES_BEFORE_DATES: &str = "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>";
+
+#[test]
+fn capacity_xlsx_exported_before_dates_still_imports() {
+    let bytes = export_xlsx(&capacity_book()).unwrap();
+    let old = mutate(&bytes, "xl/styles.xml", |_| STYLES_BEFORE_DATES.into());
+    assert!(capacity_source_admits(&old));
+    // Without the date format, a cell naming style 1 has nothing to refer to.
+    let typed = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let dated = mutate(&typed, "xl/styles.xml", |_| STYLES_BEFORE_DATES.into());
+    assert!(import_xlsx(&dated).is_err());
+}
+
+#[test]
+fn capacity_xlsx_reads_serial_dates_with_the_date_format() {
+    let bytes = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let serial = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+        assert!(xml.contains("s=\"1\" t=\"d\"><v>2026-02-02</v>"));
+        xml.replace(
+            "s=\"1\" t=\"d\"><v>2026-02-02</v>",
+            "s=\"1\" t=\"n\"><v>46055</v>",
+        )
+    });
+    let book = import_xlsx(&serial).unwrap();
+    assert!(
+        !book.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        book.ledger
+    );
+    assert_eq!(
+        book.sheets[0].rows[1][1].value,
+        SourceValue::Date {
+            value: "2026-02-02".into()
+        }
+    );
+}
