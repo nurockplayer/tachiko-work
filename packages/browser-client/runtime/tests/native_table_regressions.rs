@@ -275,8 +275,32 @@ fn scalar_row_authoring_survives_respelled_opaque_ids_and_reopen() {
 
 #[test]
 fn legacy_looking_ids_do_not_grant_scalar_row_authoring_without_the_shape() {
-    let mut runtime = DesignerRuntime::from_document(scalar_document(true, false), OCCURRENCE)
-        .expect("a document with optional scalar fields must still admit normally");
+    // Optional scalar fields are native since #598; an optional Reference field
+    // is what keeps this table out of the native shape.
+    let mut document = scalar_document(true, false);
+    let schema_id = SchemaId::from("native_table_schema_0002_spoof");
+    let reference = FieldId::from("native_table_field_0008_spoof");
+    document
+        .schemas
+        .get_mut(&schema_id)
+        .expect("fixture schema")
+        .fields
+        .insert(
+            reference.clone(),
+            FieldDefinition {
+                id: reference,
+                key: FieldKey::from("supplier"),
+                display_name: None,
+                number_format: None,
+                field_type: FieldType::Reference {
+                    schema: schema_id.clone(),
+                },
+                required: false,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
+            },
+        );
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE)
+        .expect("a document with an optional Reference field must still admit normally");
     let initial = table(&mut runtime, "inventory");
     assert_ne!(initial.native_table_profile, Some(true));
 

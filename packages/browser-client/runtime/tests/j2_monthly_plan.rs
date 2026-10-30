@@ -832,7 +832,7 @@ fn formula_cell_keeps_column_lifecycle_and_required_clear_refusal() {
     assert!(
         failure
             .message
-            .contains("clear requires an optional Text or Number column")
+            .contains("clear requires an optional column")
     );
     assert_eq!(runtime.observe_occurrence().revision, "resident/4");
 }

@@ -6,6 +6,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Optional Date and Boolean fields are native: a field can be declared optional
+  when creating a table or adding a column, rows can be inserted with blanks,
+  values can be cleared, and requiredness can change (strengthening refuses
+  while blanks exist), with the same rules as optional Text and Number fields.
+  Blank stays distinct from `false` and from any date; formulas stay strict.
+  Imports with optional Date and Boolean columns project as native tables.
+  No storage-format change (ADR-0045 amendment, Work #598).
+
 - `duplicateCollection` accepts optional `columnNames`, keyed by source field
   ID, so a copy's columns can carry their own names in the same command. The
   names are validated before publication and undo with the copy as one step.

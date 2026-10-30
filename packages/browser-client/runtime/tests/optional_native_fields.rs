@@ -54,9 +54,9 @@ impl Journey {
             .iter()
             .any(|column| column["field_type"] == "date")
         {
-            // The legacy canonical-v1 export does not carry Date. Its existing
-            // private v2 project carrier still proves exact snapshot equality.
-            runtime.export_project(revision).unwrap().bytes
+            // The legacy canonical-v1 export does not carry Date, and an added
+            // column may carry a column order; .roproj/v3 carries both.
+            runtime.export_project_v3(revision).unwrap().bytes
         } else {
             runtime.export_canonical_tree(revision).unwrap().bytes
         }
@@ -207,9 +207,22 @@ fn wire_journey_preserves_sparse_values_and_atomic_history() {
         .clone();
     j.round_trip(json!({"type":"remove_column","collection":"items","field":partial}));
     j.refused(json!({"type":"add_column","collection":"items","name":"required_missing","field_type":"text","initializers":[]}));
+    // Optional Date and Yes/No columns start blank like Text and Number (#598).
     for kind in ["boolean", "date"] {
-        j.refused(json!({"type":"add_column","collection":"items","name":"outside","field_type":kind,"required":false}));
-        j.refused(json!({"type":"new_table","occurrence_id":OCCURRENCE,"name":"outside","columns":[{"name":"x","field_type":kind,"required":false}]}));
+        j.round_trip(json!({"type":"add_column","collection":"items","name":format!("optional_{kind}"),"field_type":kind,"required":false}));
+        let table = j.table();
+        let added = table["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|column| column["key"] == format!("optional_{kind}").as_str())
+            .unwrap()["id"]
+            .clone();
+        assert_eq!(table["native_table_profile"], true);
+        for row in table["rows"].as_array().unwrap() {
+            assert!(row["blank_fields"].as_array().unwrap().contains(&added));
+        }
+        j.round_trip(json!({"type":"remove_column","collection":"items","field":added}));
     }
     j.refused(json!({"type":"paste_cells","collection":"items","start_entity":null,"start_field":note,"rows":[["missing required label"]]}));
     // The actual WASM ABI replays these exact requests against native replies.
@@ -583,8 +596,9 @@ fn blank_editability_matches_native_authoring_for_imported_collections() {
         _ => panic!("unexpected scalar kind"),
     };
     for (kind, field_type, source, native) in [
-        ("boolean", ImportFieldType::Boolean, "true", false),
-        ("date", ImportFieldType::Date, "2026-10-20", false),
+        // Optional Date and Yes/No imports are native since #598.
+        ("boolean", ImportFieldType::Boolean, "true", true),
+        ("date", ImportFieldType::Date, "2026-10-20", true),
         ("text", ImportFieldType::Text, "anchor", true),
     ] {
         let csv = format!("note,amount,other\n,,{source}\npresent,1,\n");
@@ -675,7 +689,8 @@ fn blank_editability_matches_native_authoring_for_imported_collections() {
                 "field":date_field,
                 "required":true
             }));
-            assert_eq!(error["error"]["code"], "invalid_table_operation");
+            // The column still has a blank cell, so it cannot become required.
+            assert_eq!(error["error"]["code"], "required_values_missing");
         }
         if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
             std::fs::write(

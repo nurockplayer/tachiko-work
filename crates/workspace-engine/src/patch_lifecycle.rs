@@ -2854,9 +2854,7 @@ impl PatchLifecycle {
         if !matches!(
             field.field_type,
             FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
-        ) || (!field.required
-            && !matches!(field.field_type, FieldType::Text | FieldType::Number))
-        {
+        ) {
             return Err(WorkspaceError::TypeMismatch {
                 field: FieldRef::new("schema", field.id.clone()),
             });
@@ -2969,10 +2967,7 @@ impl PatchLifecycle {
             });
         }
         // The inverse optional append must admit this exact restored shape.
-        if !field.required
-            && (!matches!(field.field_type, FieldType::Text | FieldType::Number)
-                || !has_native_scalar_shape(candidate, schema))
-        {
+        if !field.required && !has_native_scalar_shape(candidate, schema) {
             return Err(WorkspaceError::TypeMismatch {
                 field: FieldRef::new("schema", field.id.clone()),
             });
@@ -3293,8 +3288,10 @@ impl PatchLifecycle {
                             field: field.clone(),
                         }
                     })?;
-                    if !matches!(definition.field_type, FieldType::Text | FieldType::Number)
-                        || !has_native_scalar_shape(&candidate, record)
+                    if !matches!(
+                        definition.field_type,
+                        FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                    ) || !has_native_scalar_shape(&candidate, record)
                     {
                         return Err(WorkspaceError::TypeMismatch {
                             field: FieldRef::new("schema", field.clone()),
@@ -4588,7 +4585,7 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
             matches!(
                 field.field_type,
                 FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
-            ) && (field.required || matches!(field.field_type, FieldType::Text | FieldType::Number))
+            )
         })
         && document
             .entities
