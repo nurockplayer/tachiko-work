@@ -99,7 +99,7 @@ pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
 }
 
 /// The one non-default cell style the capacity profile writes: an ISO date.
-fn capacity_date_style() -> CellStyle {
+pub(crate) fn capacity_date_style() -> CellStyle {
     CellStyle {
         number_format: Some("yyyy-mm-dd".into()),
         ..CellStyle::default()

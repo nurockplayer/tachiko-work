@@ -295,6 +295,30 @@ fn typed_6304_by_4_complete_lifecycle() {
 }
 
 #[test]
+fn typed_capacity_xlsx_reimports_as_dates() {
+    let source = import_csv(&csv(200, true), &ImportOptions::default()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection(true), ORIGINAL).unwrap();
+    let [_, xlsx] = exports(&runtime, &imported.metadata);
+    let reread = import_xlsx(&xlsx).unwrap();
+    let (runtime, again) = import_workbook(&reread, &selection(true), FRESH)
+        .expect("the large-import XLSX must import again with Date selected");
+    assert_eq!(again.opened.table.rows.len(), 200);
+    let types = |table: &TableProjection| {
+        table
+            .columns
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(types(&again.opened.table), types(&imported.opened.table));
+    let [_, second] = exports(&runtime, &again.metadata);
+    assert_eq!(
+        import_xlsx(&second).unwrap().sheets[0].rows,
+        reread.sheets[0].rows
+    );
+}
+
+#[test]
 fn typed_8406_by_3_imports_and_exports() {
     let source = import_csv(&csv(8_406, false), &ImportOptions::default()).unwrap();
     let (runtime, imported) = import_workbook(&source, &selection(false), ORIGINAL)

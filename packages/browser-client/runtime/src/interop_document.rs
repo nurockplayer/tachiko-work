@@ -1149,6 +1149,14 @@ fn build_import_sheet(
                 // cleared format back on export.
                 style.number_format = None;
             }
+            if source.rows.len() > MAX_DATA_ROWS
+                && matches!(cell.value, SourceValue::Date { .. })
+                && style == super::interop_adapter::capacity_date_style()
+            {
+                // The large-import writer adds this one date format to every
+                // Date cell itself; capacity metadata keeps default styles.
+                style = CellStyle::default();
+            }
             styles.push(style);
         }
         styles.resize_with(sheet.columns.len(), CellStyle::default);
