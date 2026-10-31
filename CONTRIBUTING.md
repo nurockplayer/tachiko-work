@@ -128,6 +128,12 @@ compiler cache is never required for correctness. The worktree GC command is
 dry-run by default and may be applied only after its live-state proof reports a
 proven terminal worktree.
 
+To run one targeted command on a GitHub-hosted runner instead of your own
+machine, dispatch the `Remote check` workflow on a branch:
+`gh workflow run remote-check.yml --ref <branch> -f command='<command>'`. It
+restores a dependency cache that pushes to `main` keep warm. It is a
+convenience for local iteration, not a gate: pull requests still need CI.
+
 The clean commit is required because Cargo source packaging rejects dirty
 package inputs. The full gate selects stable for bare and nested Rust commands,
 regardless of an inherited `RUSTUP_TOOLCHAIN`, and separately checks exact Rust
