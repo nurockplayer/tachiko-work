@@ -1379,7 +1379,7 @@ fn formula_coordinate_translation_handles_unicode_quotes_scientific_literals_and
     for invalid in [
         "A1",
         "A10000",
-        "SUM(A2:A4)",
+        "SUM(A2:A3)",
         "'Missing'!A2",
         "'unfinished!A2",
     ] {

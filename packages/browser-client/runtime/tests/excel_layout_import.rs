@@ -384,3 +384,175 @@ fn import_options_wire_shape_stays_compact_for_existing_callers() {
     assert_eq!(parsed.header_rows, vec![Some(3)]);
     assert!(!parsed.keep_summary_rows);
 }
+
+fn text(value: &str) -> SourceCell {
+    SourceCell {
+        value: SourceValue::Text {
+            value: value.into(),
+        },
+        formula: None,
+        style: CellStyle::default(),
+    }
+}
+
+fn mutate(bytes: &[u8], name: &str, change: impl FnOnce(String) -> String) -> Vec<u8> {
+    use std::io::{Cursor, Read, Write};
+    use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut entries = Vec::new();
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).unwrap();
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).unwrap();
+        entries.push((file.name().to_owned(), contents));
+    }
+    let target = entries.iter_mut().find(|(path, _)| path == name).unwrap();
+    target.1 = change(target.1.clone());
+    let mut result = Cursor::new(Vec::new());
+    {
+        let mut writer = ZipWriter::new(&mut result);
+        for (path, contents) in entries {
+            writer
+                .start_file(
+                    path,
+                    SimpleFileOptions::default()
+                        .compression_method(zip::CompressionMethod::Deflated),
+                )
+                .unwrap();
+            writer.write_all(contents.as_bytes()).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+    result.into_inner()
+}
+
+#[test]
+fn a_tachiko_export_of_the_household_workbook_imports_again() {
+    let source = import_xlsx_with(&household(), &ImportOptions::default()).unwrap();
+    let months = vec![
+        ImportFieldType::Date,
+        ImportFieldType::Text,
+        ImportFieldType::Number,
+        ImportFieldType::Boolean,
+    ];
+    let selection = ImportSelection {
+        column_types: vec![
+            months.clone(),
+            months,
+            vec![ImportFieldType::Text, ImportFieldType::Number],
+        ],
+        extra_columns: vec![Vec::new(), Vec::new(), Vec::new()],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook(&imported.opened.bootstrap.revision, &imported.metadata)
+        .unwrap();
+    let bytes = export_xlsx(&exported).unwrap();
+    let reimported = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
+    let blocking: Vec<_> = reimported
+        .ledger
+        .iter()
+        .filter(|finding| finding.blocking)
+        .collect();
+    assert!(blocking.is_empty(), "{blocking:?}");
+    let (mut runtime, _) = import_workbook(&reimported, &selection, OCCURRENCE).unwrap();
+    let DesignerResponse::Table(summary) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: "sheet_3".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected the Summary table");
+    };
+    assert_eq!(summary.rows.len(), 2);
+    let spent: Vec<f64> = summary
+        .rows
+        .iter()
+        .map(|row| calculated(row.fields[1].calculated.as_ref().unwrap()))
+        .collect();
+    assert_eq!(spent, [450.0, 450.0]);
+    assert_eq!(
+        summary.rows[0].fields[1].formula.as_ref().unwrap().source,
+        "[sheet_1.column_3:total]"
+    );
+    assert_eq!(
+        summary.rows[1].fields[1].formula.as_ref().unwrap().source,
+        "[sheet_2.column_3:total]"
+    );
+}
+
+#[test]
+fn a_partial_aggregate_range_in_a_data_row_stays_refused() {
+    let bytes = mutate(&household(), "xl/worksheets/sheet3.xml", |xml| {
+        xml.replace(">Jan!C10</f>", ">SUM(Jan!C2:C5)</f>")
+    });
+    let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
+    assert!(
+        workbook.ledger.iter().any(|finding| {
+            finding.code == "unsupported_formula_function"
+                && finding.location == "Summary!B2"
+                && finding.blocking
+        }),
+        "{:?}",
+        workbook.ledger
+    );
+}
+
+fn expense_book(last: &str) -> Vec<u8> {
+    let sheet = SourceSheet {
+        name: "Expenses".into(),
+        has_header: true,
+        columns: ["Description", "Amount"]
+            .into_iter()
+            .map(|name| SourceColumn {
+                name: name.into(),
+                width: None,
+                number_format: None,
+            })
+            .collect(),
+        rows: vec![
+            vec![text("Paper"), number(10.0)],
+            vec![text("Toner"), number(20.0)],
+            vec![text(last), formula("SUM(B2:B3)")],
+        ],
+        layout: SourceLayout::default(),
+    };
+    export_xlsx(&SourceWorkbook {
+        sheets: vec![sheet],
+        ledger: Vec::new(),
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_final_record_is_not_taken_for_a_total_row() {
+    let workbook =
+        import_xlsx_with(&expense_book("Reimbursement"), &ImportOptions::default()).unwrap();
+    let sheet = &workbook.sheets[0];
+    assert_eq!(sheet.layout.summary_row, None);
+    assert_eq!(sheet.rows.len(), 3);
+    assert!(
+        workbook.ledger.iter().any(|finding| {
+            finding.code == "unsupported_formula_function"
+                && finding.location == "Expenses!B4"
+                && finding.blocking
+        }),
+        "{:?}",
+        workbook.ledger
+    );
+
+    let workbook = import_xlsx_with(&expense_book("Total"), &ImportOptions::default()).unwrap();
+    let sheet = &workbook.sheets[0];
+    assert_eq!(sheet.rows.len(), 2);
+    assert_eq!(
+        sheet.layout.summary_row,
+        Some(SummaryRow {
+            row: 4,
+            cells: vec![SummaryCell {
+                column: 1,
+                aggregate: SummaryAggregate::Total,
+                formula: "SUM(B2:B3)".into(),
+            }],
+        })
+    );
+}

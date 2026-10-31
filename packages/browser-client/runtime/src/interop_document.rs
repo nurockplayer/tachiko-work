@@ -602,7 +602,7 @@ fn deduplicate(
 use super::interop_adapter::{
     CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS, MAX_SHEETS,
     OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
-    SourceWorkbook, SummaryRow,
+    SourceWorkbook, SummaryAggregate, SummaryRow, call_argument, whole_column_argument,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use std::collections::BTreeMap;
@@ -1280,15 +1280,53 @@ fn translate_a1(
                 cursor += next.len_utf8();
             }
             let token = &source[token_start..cursor];
-            if sheet_name.is_none()
-                && !token.contains('!')
-                && matches!(
-                    token.to_ascii_uppercase().as_str(),
+            if sheet_name.is_none() && !token.contains('!') {
+                let name = token.to_ascii_uppercase();
+                let aggregate = match name.as_str() {
+                    "SUM" => Some(SummaryAggregate::Total),
+                    "AVERAGE" => Some(SummaryAggregate::Average),
+                    "COUNT" => Some(SummaryAggregate::Count),
+                    "MIN" => Some(SummaryAggregate::Min),
+                    "MAX" => Some(SummaryAggregate::Max),
+                    _ => None,
+                };
+                if let Some(aggregate) = aggregate {
+                    let call = skip_spaces(source, cursor);
+                    if source[call..].starts_with('(') {
+                        let (argument, consumed) = call_argument(&source[call..])
+                            .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+                        match whole_column_argument(argument, current_sheet, sources) {
+                            Some((sheet_index, column)) => {
+                                output.push_str(&column_aggregate_source(
+                                    aggregate,
+                                    column,
+                                    sheet_index,
+                                    metadata,
+                                    document,
+                                    &mut references,
+                                )?);
+                                cursor = call + consumed;
+                                continue;
+                            }
+                            None if !matches!(name.as_str(), "MIN" | "MAX")
+                                || argument.contains(':') =>
+                            {
+                                return Err(tracker_error(
+                                    "aggregate range must cover one whole data column",
+                                ));
+                            }
+                            // A binary MIN/MAX keeps today's handling below.
+                            None => {}
+                        }
+                    }
+                }
+                if matches!(
+                    name.as_str(),
                     "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
-                )
-            {
-                output.push_str(&token.to_ascii_lowercase());
-                continue;
+                ) {
+                    output.push_str(&name.to_ascii_lowercase());
+                    continue;
+                }
             }
             let (sheet_name, address) = if let Some(name) = sheet_name {
                 (Some(name), token)
@@ -1317,20 +1355,14 @@ fn translate_a1(
             if let Some(summary) = layout.summary_row.as_ref().filter(|summary| {
                 usize::try_from(summary.row).is_ok_and(|row| row == sheet_row + 1)
             }) {
-                output.push_str(&summary_cell_source(
-                    summary,
+                output.push_str(&column_aggregate_source(
+                    summary_cell_aggregate(summary, column)?,
                     column,
                     sheet_index,
                     metadata,
                     document,
+                    &mut references,
                 )?);
-                // Binding after every cell formula of the column keeps a
-                // formula column bound before a total that reads it.
-                let sheet = &metadata.sheets[sheet_index];
-                let field_id = &sheet.columns[column].field_id;
-                for row in &sheet.rows {
-                    references.insert(FieldRef::new(row.entity_id.clone(), field_id.clone()));
-                }
                 continue;
             }
             let above = usize::try_from(layout.rows_above_header)
@@ -1378,22 +1410,41 @@ fn translate_a1(
     Ok((output, references))
 }
 
-/// The semantic spelling of one imported summary-row cell: the column total a
-/// source formula reads, as `[schema.field:total]`.
-fn summary_cell_source(
+fn skip_spaces(source: &str, mut cursor: usize) -> usize {
+    while let Some(character) = source[cursor..].chars().next() {
+        if !character.is_whitespace() {
+            break;
+        }
+        cursor += character.len_utf8();
+    }
+    cursor
+}
+
+/// The aggregate a source formula reads from one imported summary-row cell.
+fn summary_cell_aggregate(
     summary: &SummaryRow,
+    column: usize,
+) -> Result<SummaryAggregate, DesignerError> {
+    summary
+        .cells
+        .iter()
+        .find(|cell| usize::try_from(cell.column).is_ok_and(|index| index == column))
+        .map(|cell| cell.aggregate)
+        .ok_or_else(|| {
+            tracker_error("formula refers to a cell of a summary row that is not imported")
+        })
+}
+
+/// The semantic spelling of one sheet column's aggregate, as
+/// `[schema.field:total]`, binding every row of that column.
+fn column_aggregate_source(
+    aggregate: SummaryAggregate,
     column: usize,
     sheet_index: usize,
     metadata: &InteropMetadata,
     document: &Document,
+    references: &mut BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
-    let cell = summary
-        .cells
-        .iter()
-        .find(|cell| usize::try_from(cell.column).is_ok_and(|index| index == column))
-        .ok_or_else(|| {
-            tracker_error("formula refers to a cell of a summary row that is not imported")
-        })?;
     let sheet = metadata
         .sheets
         .get(sheet_index)
@@ -1411,11 +1462,16 @@ fn summary_cell_source(
         .fields
         .get(&FieldId::from(field_id.clone()))
         .ok_or_else(|| tracker_error("formula field is unavailable"))?;
+    // Binding after every cell formula of the column keeps a formula column
+    // bound before a total that reads it.
+    for row in &sheet.rows {
+        references.insert(FieldRef::new(row.entity_id.clone(), field_id.clone()));
+    }
     Ok(format!(
         "[{}.{}:{}]",
         schema.key.as_str(),
         field.key.as_str(),
-        cell.aggregate.suffix()
+        aggregate.suffix()
     ))
 }
 

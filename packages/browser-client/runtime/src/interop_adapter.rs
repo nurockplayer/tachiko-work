@@ -3253,7 +3253,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                             true,
                         ));
                         value = SourceValue::Empty;
-                    } else if unsupported_formula_function(&f.text, false) {
+                    } else if unsupported_formula_function(&f.text, true) {
                         ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"unsupported_formula_function",&location,"Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding",true));
                         value = SourceValue::Empty;
                     }
@@ -3450,6 +3450,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
             layout,
         });
     }
+    refuse_foreign_aggregates(&mut sheets, &mut ledger);
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
     let plain = capacity_plain_parts(&parts)?;
     // Parser-derived classification replaces the existing record with a shorter
@@ -3519,6 +3520,48 @@ fn rows_above_header(rows: &[Vec<SourceCell>], width: usize) -> usize {
     }
 }
 
+/// Cell text that labels a trailing Total row, after trimming and ASCII lowercasing.
+const SUMMARY_LABELS: &[&str] = &[
+    "total",
+    "totals",
+    "grand total",
+    "sum",
+    "subtotal",
+    "sub-total",
+    "sub total",
+    "average",
+    "avg",
+    "mean",
+    "count",
+    "min",
+    "max",
+    "minimum",
+    "maximum",
+    "合計",
+    "合计",
+    "總計",
+    "总计",
+    "総計",
+    "小計",
+    "小计",
+    "平均",
+    "計",
+    "计",
+    "件数",
+    "個数",
+    "筆數",
+    "笔数",
+];
+
+fn summary_label(value: &str) -> bool {
+    let value = value.trim();
+    let value = value
+        .strip_suffix(':')
+        .or_else(|| value.strip_suffix('：'))
+        .unwrap_or(value);
+    SUMMARY_LABELS.contains(&value.to_ascii_lowercase().as_str())
+}
+
 /// `rows` holds data rows only; `header_row` is the 1-based source row of the header.
 fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Vec<SummaryCell>)> {
     let last = rows.len().checked_sub(1)?;
@@ -3540,8 +3583,12 @@ fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Ve
                 aggregate,
                 formula: formula.to_owned(),
             });
-        } else if !matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. }) {
-            return None;
+        } else {
+            match &cell.value {
+                SourceValue::Empty => {}
+                SourceValue::Text { value } if value.is_empty() || summary_label(value) => {}
+                _ => return None,
+            }
         }
     }
     if cells.is_empty() {
@@ -3603,6 +3650,243 @@ fn cell_reference(source: &str) -> Option<(String, usize)> {
         return None;
     }
     Some((letters.to_owned(), rest.parse().ok()?))
+}
+
+fn skip_whitespace(source: &str, mut cursor: usize) -> usize {
+    while let Some(character) = source[cursor..].chars().next() {
+        if !character.is_whitespace() {
+            break;
+        }
+        cursor += character.len_utf8();
+    }
+    cursor
+}
+
+/// Byte length of the `$?COL$?ROW` reference at the start of `source`, with
+/// leading whitespace included and trailing whitespace excluded.
+fn cell_reference_span(source: &str) -> Option<usize> {
+    let mut cursor = source.len() - source.trim_start().len();
+    if source[cursor..].starts_with('$') {
+        cursor += 1;
+    }
+    let letters = source[cursor..]
+        .bytes()
+        .take_while(u8::is_ascii_alphabetic)
+        .count();
+    if letters == 0 {
+        return None;
+    }
+    cursor += letters;
+    if source[cursor..].starts_with('$') {
+        cursor += 1;
+    }
+    let digits = source[cursor..]
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .count();
+    if digits == 0 {
+        return None;
+    }
+    Some(cursor + digits)
+}
+
+/// 0-based column of an A1 column name.
+fn column_index(letters: &str) -> Option<usize> {
+    letters
+        .bytes()
+        .try_fold(0usize, |index, letter| {
+            index.checked_mul(26)?.checked_add(usize::from(
+                letter.to_ascii_uppercase().checked_sub(b'A')? + 1,
+            ))
+        })?
+        .checked_sub(1)
+}
+
+/// The balanced argument of the call at the start of `source` (`(...)`), with
+/// quoted text and nested calls skipped; returns it and the bytes through `)`.
+pub(crate) fn call_argument(source: &str) -> Option<(&str, usize)> {
+    let body = source.strip_prefix('(')?;
+    let mut depth = 0usize;
+    let mut cursor = 0;
+    let mut quote = None;
+    while let Some(character) = body[cursor..].chars().next() {
+        cursor += character.len_utf8();
+        match quote {
+            Some(open) if character == open => {
+                if open == '\'' && body[cursor..].starts_with('\'') {
+                    cursor += 1;
+                } else {
+                    quote = None;
+                }
+            }
+            Some(_) => {}
+            None => match character {
+                '\'' | '"' => quote = Some(character),
+                '(' => depth += 1,
+                ')' if depth == 0 => return Some((&body[..cursor - 1], cursor + 1)),
+                ')' => depth -= 1,
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// `argument` is the exact argument of an aggregate call. It must be one range
+/// covering exactly one whole data column of a sheet; returns that sheet and column.
+pub(crate) fn whole_column_argument(
+    argument: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+) -> Option<(usize, usize)> {
+    let mut cursor = skip_whitespace(argument, 0);
+    let mut named = None;
+    if argument[cursor..].starts_with('\'') {
+        cursor += 1;
+        let mut name = String::new();
+        loop {
+            let character = argument[cursor..].chars().next()?;
+            cursor += character.len_utf8();
+            if character != '\'' {
+                name.push(character);
+            } else if argument[cursor..].starts_with('\'') {
+                name.push('\'');
+                cursor += 1;
+            } else {
+                break;
+            }
+        }
+        if !argument[cursor..].starts_with('!') {
+            return None;
+        }
+        cursor += 1;
+        named = Some(name);
+    } else {
+        let start = cursor;
+        while let Some(character) = argument[cursor..].chars().next() {
+            if !(character.is_ascii_alphanumeric() || character == '_' || character == '.') {
+                break;
+            }
+            cursor += character.len_utf8();
+        }
+        if cursor > start && argument[cursor..].starts_with('!') {
+            named = Some(argument[start..cursor].to_owned());
+            cursor += 1;
+        } else {
+            cursor = start;
+        }
+    }
+    let span = cell_reference_span(&argument[cursor..])?;
+    let (start_column, start_row) = cell_reference(&argument[cursor..cursor + span])?;
+    cursor = skip_whitespace(argument, cursor + span);
+    if !argument[cursor..].starts_with(':') {
+        return None;
+    }
+    cursor = skip_whitespace(argument, cursor + 1);
+    let span = cell_reference_span(&argument[cursor..])?;
+    let (end_column, end_row) = cell_reference(&argument[cursor..cursor + span])?;
+    if !argument[skip_whitespace(argument, cursor + span)..].is_empty() {
+        return None;
+    }
+    let target = match named {
+        Some(name) => sheets
+            .iter()
+            .position(|sheet| sheet.name.eq_ignore_ascii_case(&name))?,
+        None => current,
+    };
+    let sheet = sheets.get(target)?;
+    let above = usize::try_from(sheet.layout.rows_above_header).ok()?;
+    if sheet.rows.is_empty()
+        || !start_column.eq_ignore_ascii_case(&end_column)
+        || (start_row != above + 1 && start_row != above + 2)
+        || end_row != above + 1 + sheet.rows.len()
+    {
+        return None;
+    }
+    Some((target, column_index(&start_column)?))
+}
+
+/// Every SUM, AVERAGE or COUNT call, and every MIN/MAX call whose argument holds
+/// a range, must cover exactly one whole data column of a sheet.
+fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]) -> bool {
+    let mut cursor = 0;
+    while cursor < formula.len() {
+        let Some(character) = formula[cursor..].chars().next() else {
+            return false;
+        };
+        if character == '\'' || character == '"' {
+            cursor += character.len_utf8();
+            loop {
+                let Some(next) = formula[cursor..].chars().next() else {
+                    return false;
+                };
+                cursor += next.len_utf8();
+                if next != character {
+                    continue;
+                }
+                if character == '\'' && formula[cursor..].starts_with('\'') {
+                    cursor += 1;
+                } else {
+                    break;
+                }
+            }
+        } else if character.is_ascii_alphabetic() || character == '_' || character == '.' {
+            let start = cursor;
+            while let Some(next) = formula[cursor..].chars().next() {
+                if !(next.is_ascii_alphanumeric() || next == '_' || next == '.') {
+                    break;
+                }
+                cursor += next.len_utf8();
+            }
+            let name = formula[start..cursor].to_ascii_uppercase();
+            let required = matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT");
+            if required || matches!(name.as_str(), "MIN" | "MAX") {
+                let call = skip_whitespace(formula, cursor);
+                if formula[call..].starts_with('(') {
+                    let Some((argument, consumed)) = call_argument(&formula[call..]) else {
+                        return false;
+                    };
+                    if (required || argument.contains(':'))
+                        && whole_column_argument(argument, current, sheets).is_none()
+                    {
+                        return false;
+                    }
+                    cursor = call + consumed;
+                }
+            }
+        } else {
+            cursor += character.len_utf8();
+        }
+    }
+    true
+}
+
+/// A data-row aggregate outside the whole-column profile is refused as before.
+fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<FidelityFinding>) {
+    let mut refused = Vec::new();
+    for (sheet_index, sheet) in sheets.iter().enumerate() {
+        for (row_index, row) in sheet.rows.iter().enumerate() {
+            for (column, cell) in row.iter().enumerate() {
+                if let Some(formula) = cell.formula.as_deref() {
+                    if !whole_column_aggregates(formula, sheet_index, sheets) {
+                        refused.push((sheet_index, row_index, column));
+                    }
+                }
+            }
+        }
+    }
+    for (sheet_index, row_index, column) in refused {
+        let sheet = &mut sheets[sheet_index];
+        let above = usize::try_from(sheet.layout.rows_above_header).unwrap_or(usize::MAX);
+        let location = format!(
+            "{}!{}{}",
+            sheet.name,
+            column_name(column),
+            above + 2 + row_index
+        );
+        sheet.rows[row_index][column].value = SourceValue::Empty;
+        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled, "unsupported_formula_function", &location, "Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding", true));
+    }
 }
 
 /// Every parsed source uses the same representation predicate as output. Existing
