@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DesignerRuntimeError } from "../src/runtime/client.ts";
-import type { FailureProjection, FieldExplanationProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
+import type { FailureProjection, FieldExplanationProjection, GroupTotalsProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
 import { WorkerDesignerClient } from "../src/runtime/worker-client.ts";
 
 // This fixture supplies transport events only. Request correlation and promise
@@ -157,6 +157,34 @@ describe("Designer Worker request lifecycle", () => {
     const malformed = worker.client.queryColumnTotals("resident/7", "items", ["row-1"]);
     worker.reply({id: worker.request(1).id, status: "ok", response: {type: "column_totals", payload: {revision: "resident/7", rows: 1, column_totals: {amount: Number.NaN}}}});
     await expect(malformed).rejects.toThrow("Invalid Worker column total.");
+  });
+
+  it("forwards group-total requests and validates their replies", async () => {
+    const worker = transport();
+    const dimensions = [{field: "category"}, {field: "when", bucket: "month" as const}];
+    const scope = {kind: "except" as const, entities: ["row-1"]};
+    const pending = worker.client.queryGroupTotals("resident/7", "items", dimensions, ["amount"], scope);
+    expect(worker.request(0)).toMatchObject({
+      kind: "command",
+      request: {type: "query_group_totals", expected_revision: "resident/7", collection: "items", dimensions, measures: ["amount"], scope},
+    });
+    const totals: GroupTotalsProjection = {
+      revision: "resident/7",
+      dimensions: [{field: "category", bucket: "value"}, {field: "when", bucket: "month"}],
+      measures: ["amount"],
+      rows: 2,
+      totals: [4.5],
+      groups: [
+        {keys: [{kind: "text", value: "Food"}, {kind: "month", value: "2026-03"}], rows: 1, totals: [4.5]},
+        {keys: [{kind: "blank"}, {kind: "blank"}], rows: 1, totals: [0]},
+      ],
+    };
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "group_totals", payload: totals}});
+    await expect(pending).resolves.toEqual(totals);
+
+    const malformed = worker.client.queryGroupTotals("resident/7", "items", dimensions, ["amount"], scope);
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "group_totals", payload: {...totals, groups: [{keys: [{kind: "text", value: "Food"}, {kind: "month", value: "2026-03"}], rows: 1, totals: [Number.NaN]}]}}});
+    await expect(malformed).rejects.toThrow("Invalid Worker group total.");
   });
 
   it("ignores unknown and duplicate replies without consuming another pending request", async () => {

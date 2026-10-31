@@ -26,6 +26,14 @@ All notable changes to Tachiko Work are documented in this file.
   collection order; naming every entity gives the whole-collection footer.
   Unknown, duplicate or foreign ids refuse with no change.
 
+- `queryGroupTotals` sums Number columns grouped by one or two Text, Date or
+  Yes/No columns over the rows a scope names (`all`, `entities` or `except`).
+  Text keys match exactly, so case and empty text form their own groups; each
+  dimension has one blank group, sorted last, and groups are ordered by key
+  ascending. A group counts rows with blank measures but skips their cells, and
+  an unavailable contributor nulls the total rather than leaving a partial sum.
+  At most 200 groups and a 64 KiB reply refuse with a typed error and no change.
+
 - `duplicateCollection` accepts optional `columnNames`, keyed by source field
   ID, so a copy's columns can carry their own names in the same command. The
   names are validated before publication and undo with the copy as one step.

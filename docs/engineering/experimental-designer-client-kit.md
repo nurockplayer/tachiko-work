@@ -151,6 +151,66 @@ document) refuses with
 `query_too_large` rather than serialising an oversized response; ask for
 fewer rows or fewer columns.
 
+## Grouped totals
+
+`queryGroupTotals` sums Number columns grouped by one or two Text, Date or
+Yes/No columns over the rows one scope covers. The request names the grouping
+dimensions, the Number measures and the scope; the runtime resolves every scope
+to collection order before summing.
+
+```ts
+const totals = await client.queryGroupTotals(
+  revision,
+  collection,
+  [
+    { field: categoryColumn.id },
+    { field: dateColumn.id, bucket: "month" }, // "value" | "month" | "year"
+  ],
+  [amountColumn.id], // one to four Number columns, request order kept
+  { kind: "all" }, // or {kind: "entities", entities: [...]}, {kind: "except", entities: [...]}
+);
+```
+
+`scope` is `all`, `entities` (exactly these rows) or `except` (every row but
+these); send the smaller list. The reply echoes `dimensions` and `measures`,
+reports `rows` in scope and one `totals` entry per measure over the whole
+scope, plus `groups` ordered by their keys ascending:
+
+```ts
+type GroupTotalsProjection = {
+  revision: string;
+  dimensions: GroupDimension[];
+  measures: string[];
+  rows: number;
+  totals: (number | null)[];
+  groups: { keys: GroupKey[]; rows: number; totals: (number | null)[] }[];
+};
+type GroupKey =
+  | { kind: "boolean"; value: boolean }
+  | { kind: "date"; value: string } // "YYYY-MM-DD"
+  | { kind: "month"; value: string } // "YYYY-MM"
+  | { kind: "year"; value: string } // "YYYY"
+  | { kind: "text"; value: string }
+  | { kind: "blank" };
+```
+
+Text keys use exact equality: no trim and no case folding, so `"Food"` and
+`"food"` are different groups and an empty text is its own group, distinct from
+blank. Each dimension has one blank group, which sorts last. Groups are ordered
+by key ascending: Boolean `false` before `true`, Date/Month/Year
+chronologically, Text by Unicode scalar value, and blank after every present
+value. A `bucket` other than `"value"` is meaningful only for a Date column;
+Text and Yes/No columns always group by exact value.
+
+Each group's `rows` counts every member, including rows whose measure cell is
+blank; blank measure cells are skipped when summing. A total is `null` only
+when an unavailable contributor nulls it — there are never partial sums.
+
+At most 200 groups and a 64 KiB reply payload (the projection itself, measured
+as JSON) are allowed; requests are limited to 64 KiB. Refusals use
+`group_limit_exceeded`, `result_size_exceeded`, `invalid_group_query`,
+`stale_revision` and `missing_collection`, with no change.
+
 ## Optional native columns
 
 Under [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md),

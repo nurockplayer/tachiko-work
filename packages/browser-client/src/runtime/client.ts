@@ -23,6 +23,9 @@ import type {
   TableWindowProjection,
   LocatedInViewProjection,
   ColumnTotalsProjection,
+  GroupDimension,
+  GroupScope,
+  GroupTotalsProjection,
   FailureProjection,
   FieldConstraintInput,
   NumberFormat,
@@ -91,6 +94,14 @@ export interface DesignerClient {
     collection: string,
     entities: string[],
   ): Promise<ColumnTotalsProjection>;
+  /** Number totals grouped by one or two columns over the rows one scope covers. */
+  queryGroupTotals(
+    expectedRevision: string,
+    collection: string,
+    dimensions: GroupDimension[],
+    measures: string[],
+    scope: GroupScope,
+  ): Promise<GroupTotalsProjection>;
   queryFields(
     expectedRevision: string,
     fields: FieldTarget[],
