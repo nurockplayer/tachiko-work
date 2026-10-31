@@ -2172,6 +2172,10 @@ fn worksheet_relationship_finding(path: &str, bytes: &[u8]) -> Result<FidelityFi
         false,
     ))
 }
+fn is_general_format(fmt: &str) -> bool {
+    fmt.eq_ignore_ascii_case("General")
+}
+
 fn builtin_format(id: u32) -> Option<String> {
     match id {
         0 => None,
@@ -2539,10 +2543,13 @@ fn parse_styles(
         };
         let fmt_id = u32::try_from(index("numFmtId")?)
             .map_err(|_| InteropError::Invalid("Invalid number format".into()))?;
+        // A custom "General" (older Work exports wrote one) is the default
+        // format, like built-in 0.
         let number_format = formats
             .get(&fmt_id)
             .cloned()
-            .or_else(|| builtin_format(fmt_id));
+            .or_else(|| builtin_format(fmt_id))
+            .filter(|fmt| !is_general_format(fmt));
         let font = fonts.get(index("fontId")?).copied();
         let fill = fills.get(index("fillId")?).copied();
         let border = borders.get(index("borderId")?).copied();
@@ -3760,6 +3767,7 @@ pub(crate) fn export_xlsx_for_profile(
     );
     let mut borders = String::new();
     let mut fmts = String::new();
+    let mut custom_formats = 0;
     let mut xfs = String::new();
     for (i, style) in styles.iter().enumerate() {
         fonts.push_str(&format!(
@@ -3768,17 +3776,29 @@ pub(crate) fn export_xlsx_for_profile(
         ));
         fills.push_str(&style.fill.as_ref().map_or_else(||"<fill><patternFill patternType=\"none\"/></fill>".into(),|rgb|format!("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"{}\"/><bgColor indexed=\"64\"/></patternFill></fill>",if rgb.len()==6{format!("FF{rgb}")}else{rgb.clone()})));
         borders.push_str(if style.border{"<border><left style=\"thin\"/><right style=\"thin\"/><top style=\"thin\"/><bottom style=\"thin\"/><diagonal/></border>"}else{"<border><left/><right/><top/><bottom/><diagonal/></border>"});
-        let fmt = style.number_format.as_deref().unwrap_or("General");
-        fmts.push_str(&format!(
-            "<numFmt numFmtId=\"{}\" formatCode=\"{}\"/>",
-            164 + i,
-            capacity_attribute(fmt)
-        ));
-        xfs.push_str(&format!("<xf numFmtId=\"{}\" fontId=\"{i}\" fillId=\"{}\" borderId=\"{i}\" xfId=\"0\" applyNumberFormat=\"1\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"{}\" wrapText=\"{}\"/></xf>",164+i,i+2,escape(style.alignment.as_deref().unwrap_or("general")),u8::from(style.wrap)));
+        // General is built-in format 0. Redefining it as a custom format
+        // makes Numbers show 1.5 as 2 (#615).
+        let fmt_id = match style.number_format.as_deref() {
+            Some(fmt) if !is_general_format(fmt) => {
+                let id = 164 + custom_formats;
+                custom_formats += 1;
+                fmts.push_str(&format!(
+                    "<numFmt numFmtId=\"{id}\" formatCode=\"{}\"/>",
+                    capacity_attribute(fmt)
+                ));
+                id
+            }
+            _ => 0,
+        };
+        xfs.push_str(&format!("<xf numFmtId=\"{}\" fontId=\"{i}\" fillId=\"{}\" borderId=\"{i}\" xfId=\"0\" applyNumberFormat=\"1\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"{}\" wrapText=\"{}\"/></xf>",fmt_id,i+2,escape(style.alignment.as_deref().unwrap_or("general")),u8::from(style.wrap)));
     }
     let style_xml = format!(
-        "<styleSheet xmlns=\"{MAIN}\"><numFmts count=\"{}\">{fmts}</numFmts><fonts count=\"{}\">{fonts}</fonts><fills count=\"{}\">{fills}</fills><borders count=\"{}\">{borders}</borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"{}\">{xfs}</cellXfs></styleSheet>",
-        styles.len(),
+        "<styleSheet xmlns=\"{MAIN}\">{}<fonts count=\"{}\">{fonts}</fonts><fills count=\"{}\">{fills}</fills><borders count=\"{}\">{borders}</borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"{}\">{xfs}</cellXfs></styleSheet>",
+        if custom_formats == 0 {
+            String::new()
+        } else {
+            format!("<numFmts count=\"{custom_formats}\">{fmts}</numFmts>")
+        },
         styles.len(),
         styles.len() + 2,
         styles.len(),
