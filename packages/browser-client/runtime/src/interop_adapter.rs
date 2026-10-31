@@ -714,6 +714,24 @@ pub(crate) fn native_tables_compatibility(
     Ok(NativeTablesCompatibility::default())
 }
 
+/// Strips the optional `:$COL$ROW` end of a whole-column reference.
+fn strip_column_range(source: &str) -> Option<&str> {
+    let Some(end) = source.strip_prefix(":$") else {
+        return Some(source);
+    };
+    let columns = end.bytes().take_while(u8::is_ascii_uppercase).count();
+    if columns == 0 {
+        return None;
+    }
+    let end = &end[columns..];
+    let row = end.strip_prefix('$')?;
+    let digits = row.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    Some(&row[digits..])
+}
+
 /// Inventory the closed formula wire grammar, independently of its cached
 /// result. Quoted worksheet references are names, never strings or numbers.
 /// A future serializer token outside this grammar refuses until it is governed.
@@ -772,7 +790,13 @@ fn compatible_formula(
                 return Err(refuse());
             }
             remaining = &remaining[rows..];
-        } else if remaining.starts_with("MIN(")
+            // A column reference is followed by an optional whole-column range
+            // end in the same `$COL$ROW` shape.
+            remaining = strip_column_range(remaining).ok_or_else(refuse)?;
+        } else if remaining.starts_with("SUM(")
+            || remaining.starts_with("AVERAGE(")
+            || remaining.starts_with("COUNT(")
+            || remaining.starts_with("MIN(")
             || remaining.starts_with("MAX(")
             || remaining.starts_with("IF(")
             || remaining.starts_with("AND(")
@@ -3229,7 +3253,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                             true,
                         ));
                         value = SourceValue::Empty;
-                    } else if unsupported_formula_function(&f.text) {
+                    } else if unsupported_formula_function(&f.text, false) {
                         ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"unsupported_formula_function",&location,"Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding",true));
                         value = SourceValue::Empty;
                     }
@@ -3709,7 +3733,7 @@ fn value_text(value: &SourceValue) -> String {
         SourceValue::Boolean { value } => value.to_string(),
     }
 }
-fn unsupported_formula_function(source: &str) -> bool {
+fn unsupported_formula_function(source: &str, column_aggregates: bool) -> bool {
     // Inventory function names only, without parsing or evaluating expression semantics.
     let mut token = String::new();
     let mut quoted = false;
@@ -3725,9 +3749,10 @@ fn unsupported_formula_function(source: &str) -> bool {
         if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
             token.push(c);
         } else if c == '(' {
-            if !token.is_empty()
-                && !matches!(
-                    token.to_ascii_uppercase().as_str(),
+            if !token.is_empty() {
+                let name = token.to_ascii_uppercase();
+                let allowed = matches!(
+                    name.as_str(),
                     "MIN"
                         | "MAX"
                         | "IF"
@@ -3738,9 +3763,11 @@ fn unsupported_formula_function(source: &str) -> bool {
                         | "ISBLANK"
                         | "TRUE"
                         | "FALSE"
-                )
-            {
-                return true;
+                ) || (column_aggregates
+                    && matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT"));
+                if !allowed {
+                    return true;
+                }
             }
             token.clear();
         } else if !c.is_whitespace() {
@@ -3920,7 +3947,7 @@ pub(crate) fn validate_output_for_profile(
                     formulas += 1;
                     if formula.contains('[')
                         || formula.to_ascii_uppercase().contains("DDE(")
-                        || unsupported_formula_function(formula)
+                        || unsupported_formula_function(formula, true)
                     {
                         return fail("Unsafe or unsupported export formula");
                     }

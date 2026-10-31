@@ -2,9 +2,39 @@
 use std::fs;
 
 use tachiko_designer_runtime::interop_adapter::{
-    FidelityCategory, ImportOptions, SourceLayout, SummaryAggregate, SummaryCell, SummaryRow,
+    CellStyle, FidelityCategory, ImportOptions, SourceCell, SourceColumn, SourceLayout,
+    SourceSheet, SourceValue, SourceWorkbook, SummaryAggregate, SummaryCell, SummaryRow,
     export_xlsx, import_csv, import_xlsx_with,
 };
+use tachiko_designer_runtime::{
+    CalculationProjection, DesignerRequest, DesignerResponse, ImportFieldType, ImportSelection,
+    import_workbook,
+};
+
+const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
+
+fn number(value: f64) -> SourceCell {
+    SourceCell {
+        value: SourceValue::Number { value },
+        formula: None,
+        style: CellStyle::default(),
+    }
+}
+
+fn formula(source: &str) -> SourceCell {
+    SourceCell {
+        value: SourceValue::Number { value: 0.0 },
+        formula: Some(source.into()),
+        style: CellStyle::default(),
+    }
+}
+
+fn calculated(value: &CalculationProjection) -> f64 {
+    match value {
+        CalculationProjection::Value { value } => *value,
+        other => panic!("expected a calculated value, got {other:?}"),
+    }
+}
 
 fn invoice() -> Vec<u8> {
     fs::read(concat!(
@@ -206,6 +236,142 @@ fn exported_workbook_keeps_the_header_in_row_one() {
             .ledger
             .iter()
             .any(|finding| finding.code == "rows_above_header_skipped")
+    );
+}
+
+#[test]
+fn invoice_formulas_bind_and_export_from_the_imported_columns() {
+    let source = import_xlsx_with(&invoice(), &ImportOptions::default()).unwrap();
+    let selection = ImportSelection {
+        column_types: vec![vec![
+            ImportFieldType::Text,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+        ]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let amounts: Vec<f64> = imported
+        .opened
+        .table
+        .rows
+        .iter()
+        .map(|row| calculated(row.fields[3].calculated.as_ref().unwrap()))
+        .collect();
+    assert_eq!(amounts, [35.0, 96.0, 24.0, 12.9, 30.0]);
+    let exported = runtime
+        .export_workbook(&imported.opened.bootstrap.revision, &imported.metadata)
+        .unwrap();
+    let formula = exported.sheets[0].rows[0][3]
+        .formula
+        .as_deref()
+        .expect("the Amount formula is exported");
+    for reference in ["$B$2", "$C$2"] {
+        assert!(formula.contains(reference), "{reference} in {formula}");
+    }
+    export_xlsx(&exported).expect("the exported invoice is an XLSX workbook");
+}
+
+#[test]
+fn household_summary_cells_bind_column_totals_and_export_as_sum_ranges() {
+    let source = import_xlsx_with(&household(), &ImportOptions::default()).unwrap();
+    let months = vec![
+        ImportFieldType::Date,
+        ImportFieldType::Text,
+        ImportFieldType::Number,
+        ImportFieldType::Boolean,
+    ];
+    let selection = ImportSelection {
+        column_types: vec![
+            months.clone(),
+            months,
+            vec![ImportFieldType::Text, ImportFieldType::Number],
+        ],
+        extra_columns: vec![Vec::new(), Vec::new(), Vec::new()],
+    };
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let DesignerResponse::Table(summary) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: "sheet_3".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected the Summary table");
+    };
+    assert_eq!(summary.rows.len(), 2);
+    let spent: Vec<f64> = summary
+        .rows
+        .iter()
+        .map(|row| calculated(row.fields[1].calculated.as_ref().unwrap()))
+        .collect();
+    assert_eq!(spent, [450.0, 450.0]);
+    assert_eq!(
+        summary.rows[0].fields[1].formula.as_ref().unwrap().source,
+        "[sheet_1.column_3:total]"
+    );
+    assert_eq!(
+        summary.rows[1].fields[1].formula.as_ref().unwrap().source,
+        "[sheet_2.column_3:total]"
+    );
+    let exported = runtime
+        .export_workbook(&imported.opened.bootstrap.revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[2].rows[0][1].formula.as_deref(),
+        Some("SUM('Jan'!$C$2:$C$9)")
+    );
+    assert_eq!(
+        exported.sheets[2].rows[1][1].formula.as_deref(),
+        Some("SUM('Feb'!$C$2:$C$9)")
+    );
+    export_xlsx(&exported).expect("the exported household workbook is XLSX");
+}
+
+#[test]
+fn a_summary_row_reference_outside_its_imported_cells_fails() {
+    let source = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Totals".into(),
+            has_header: true,
+            columns: ["Amount", "Other"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows: vec![
+                vec![formula("B4"), number(1.0)],
+                vec![number(2.0), number(3.0)],
+            ],
+            layout: SourceLayout {
+                rows_above_header: 0,
+                summary_row: Some(SummaryRow {
+                    row: 4,
+                    cells: vec![SummaryCell {
+                        column: 0,
+                        aggregate: SummaryAggregate::Total,
+                        formula: "SUM(A2:A3)".into(),
+                    }],
+                }),
+            },
+        }],
+        ledger: Vec::new(),
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number, ImportFieldType::Number]],
+        extra_columns: vec![Vec::new()],
+    };
+    let Err(error) = import_workbook(&source, &selection, OCCURRENCE) else {
+        panic!("a summary cell outside the imported cells must fail");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("summary row that is not imported"),
+        "{error}"
     );
 }
 
