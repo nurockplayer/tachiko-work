@@ -36,6 +36,10 @@ import type {
   TableWindowProjection,
   LocatedInViewProjection,
   ColumnTotalsProjection,
+  GroupDimension,
+  GroupKey,
+  GroupScope,
+  GroupTotalsProjection,
   WorkerReply,
   WorkerRequest,
 } from "./protocol.ts";
@@ -406,6 +410,26 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async queryGroupTotals(
+    expectedRevision: string,
+    collection: string,
+    dimensions: GroupDimension[],
+    measures: string[],
+    scope: GroupScope,
+  ): Promise<GroupTotalsProjection> {
+    return expectResponse(
+      "group_totals",
+      await this.#command({
+        type: "query_group_totals",
+        expected_revision: expectedRevision,
+        collection,
+        dimensions,
+        measures,
+        scope,
+      }),
+    );
+  }
+
   async queryFields(
     expectedRevision: string,
     fields: FieldTarget[],
@@ -594,6 +618,10 @@ function expectResponse(
   response: DesignerResponse,
 ): ColumnTotalsProjection;
 function expectResponse(
+  type: "group_totals",
+  response: DesignerResponse,
+): GroupTotalsProjection;
+function expectResponse(
   type: "fields",
   response: DesignerResponse,
 ): FieldBatchProjection;
@@ -629,6 +657,7 @@ function expectResponse(
     case "table_window": validateTablePresence(response.payload); break;
     case "located_in_view": validateLocatedInView(response.payload); break;
     case "column_totals": validateColumnTotals(response.payload); break;
+    case "group_totals": validateGroupTotals(response.payload); break;
     case "opened": validateTablePresence(response.payload.table); break;
     case "imported": validateTablePresence(response.payload.opened.table); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
@@ -763,6 +792,56 @@ function validateColumnTotals(totals: ColumnTotalsProjection): void {
     if (total !== null && !Number.isFinite(total)) {
       throw new Error("Invalid Worker column total.");
     }
+  }
+}
+
+function validateGroupTotals(totals: GroupTotalsProjection): void {
+  if (!Number.isInteger(totals.rows) || totals.rows < 0) {
+    throw new Error("Invalid Worker group totals row count.");
+  }
+  validateGroupTotalValues(totals.totals, totals.measures.length);
+  for (const group of totals.groups) {
+    if (!Number.isInteger(group.rows) || group.rows < 0) {
+      throw new Error("Invalid Worker group row count.");
+    }
+    if (group.keys.length !== totals.dimensions.length) {
+      throw new Error("Invalid Worker group key count.");
+    }
+    group.keys.forEach(validateGroupKey);
+    validateGroupTotalValues(group.totals, totals.measures.length);
+  }
+}
+
+function validateGroupTotalValues(values: (number | null)[], measures: number): void {
+  if (values.length !== measures) {
+    throw new Error("Invalid Worker group total count.");
+  }
+  for (const total of values) {
+    if (total !== null && !Number.isFinite(total)) {
+      throw new Error("Invalid Worker group total.");
+    }
+  }
+}
+
+function validateGroupKey(key: GroupKey): void {
+  if (key === null || typeof key !== "object") {
+    throw new Error("Invalid Worker group key.");
+  }
+  switch (key.kind) {
+    case "boolean":
+      if (typeof key.value !== "boolean") throw new Error("Invalid Worker group key value.");
+      return;
+    case "date":
+    case "month":
+    case "year":
+    case "text":
+      if (typeof key.value !== "string") throw new Error("Invalid Worker group key value.");
+      return;
+    case "blank":
+      if (Object.hasOwn(key, "value")) throw new Error("Invalid Worker group key value.");
+      return;
+    default:
+      throw new Error("Invalid Worker group key kind.");
   }
 }
 

@@ -209,6 +209,47 @@ export type ColumnTotalsProjection = {
   column_totals: Record<string, number | null>;
 };
 
+/** How a Date grouping dimension is bucketed; any non-Date column always groups by exact value. */
+export type GroupBucket = "value" | "month" | "year";
+
+/** One grouping column of a grouped-totals query; `bucket` defaults to `"value"`. */
+export type GroupDimension = {
+  field: string;
+  bucket?: GroupBucket;
+};
+
+/** Which rows a grouped-totals query covers; every form resolves to collection order. */
+export type GroupScope =
+  | { kind: "all" }
+  | { kind: "entities"; entities: string[] }
+  | { kind: "except"; entities: string[] };
+
+/** One typed grouping key; `blank` carries no value and sorts after every present value. */
+export type GroupKey =
+  | { kind: "boolean"; value: boolean }
+  | { kind: "date"; value: string }
+  | { kind: "month"; value: string }
+  | { kind: "year"; value: string }
+  | { kind: "text"; value: string }
+  | { kind: "blank" };
+
+/** One group of a grouped-totals reply. */
+export type GroupTotalsRow = {
+  keys: GroupKey[];
+  rows: number;
+  totals: (number | null)[];
+};
+
+/** Number totals grouped by one or two keys over the rows of one scope, at one revision. */
+export type GroupTotalsProjection = {
+  revision: string;
+  dimensions: GroupDimension[];
+  measures: string[];
+  rows: number;
+  totals: (number | null)[];
+  groups: GroupTotalsRow[];
+};
+
 export type FieldBatchProjection = {
   revision: string;
   fields: FieldProjection[];
@@ -469,6 +510,14 @@ export type DesignerRequest =
       entities: string[];
     }
   | {
+      type: "query_group_totals";
+      expected_revision: string;
+      collection: string;
+      dimensions: GroupDimension[];
+      measures: string[];
+      scope: GroupScope;
+    }
+  | {
       type: "query_fields";
       expected_revision: string;
       fields: FieldTarget[];
@@ -505,6 +554,7 @@ export type DesignerResponse =
   | { type: "table_window"; payload: TableWindowProjection }
   | { type: "located_in_view"; payload: LocatedInViewProjection }
   | { type: "column_totals"; payload: ColumnTotalsProjection }
+  | { type: "group_totals"; payload: GroupTotalsProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "field_explanation"; payload: FieldExplanationProjection }
   | { type: "published"; payload: PublicationProjection }
