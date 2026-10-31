@@ -1105,3 +1105,43 @@ fn an_8_406_row_document_groups_category_by_month() {
     assert_eq!(reconciled.rows, 8_406);
     assert_eq!(reconciled.column_totals["f03_amount"], totals.totals[0]);
 }
+
+#[test]
+fn one_date_column_can_be_grouped_by_year_then_month() {
+    let mut runtime = group_runtime();
+    let nested = group_totals(
+        &mut runtime,
+        vec![
+            bucket_dimension("f02_when", GroupBucket::Year),
+            bucket_dimension("f02_when", GroupBucket::Month),
+        ],
+        &["f03_amount"],
+        all_rows(),
+    )
+    .expect("year then month of one Date column is valid");
+    let months = group_totals(
+        &mut runtime,
+        vec![bucket_dimension("f02_when", GroupBucket::Month)],
+        &["f03_amount"],
+        all_rows(),
+    )
+    .expect("a month grouping is valid");
+    // Every row keeps both keys: the second dimension is never blank unless
+    // the date itself is.
+    assert_eq!(nested.groups.len(), months.groups.len());
+    for (pair, single) in nested.groups.iter().zip(&months.groups) {
+        match (&pair.keys[0], &pair.keys[1], &single.keys[0]) {
+            (
+                GroupKey::Year { value: year },
+                GroupKey::Month { value: month },
+                GroupKey::Month { value: alone },
+            ) => {
+                assert_eq!(month, alone);
+                assert!(month.starts_with(year.as_str()), "{month} is in {year}");
+            }
+            (GroupKey::Blank, GroupKey::Blank, GroupKey::Blank) => {}
+            other => panic!("year and month keys disagree: {other:?}"),
+        }
+        assert_eq!((pair.rows, &pair.totals), (single.rows, &single.totals));
+    }
+}

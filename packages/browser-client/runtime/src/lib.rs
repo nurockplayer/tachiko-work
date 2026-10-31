@@ -3712,11 +3712,12 @@ impl DesignerRuntime {
             let Some(&member) = index_of.get(field.target.entity.as_str()) else {
                 continue;
             };
-            if let Some(position) = dimension_columns
-                .iter()
-                .position(|(column, _)| column.id.as_str() == field.target.field)
-            {
-                slots[member][position] = Some(field);
+            // The same Date column may be grouped twice (by year, then by
+            // month), so every matching dimension gets the field.
+            for (position, (column, _)) in dimension_columns.iter().enumerate() {
+                if column.id.as_str() == field.target.field {
+                    slots[member][position] = Some(field);
+                }
             }
             if let Some(position) = measure_columns
                 .iter()
