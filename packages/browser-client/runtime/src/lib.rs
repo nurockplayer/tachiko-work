@@ -106,6 +106,8 @@ const MAX_FIELD_QUERY_TARGETS: usize = 1024;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
+/// Largest number of groups one grouped-totals reply may carry.
+const MAX_GROUPS: usize = 200;
 pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 16 * 1024 * 1024;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) const MAX_SPREADSHEET_METADATA_REQUEST_BYTES: usize = 4 * 1024 * 1024;
@@ -144,6 +146,36 @@ const PROJECT_BUNDLE_V1_MAGIC: &[u8; 8] = b"TWDPROJ1";
 /// This is an app-host envelope, not a `.roproj/v2` or public storage format.
 const PROJECT_RECORD_V2_MAGIC: &[u8; 8] = b"TWDPROJ2";
 const MOONFALL_BOOLEAN_FIXTURE_COLLECTION: &str = "weapons";
+
+/// One grouping column of a grouped-totals query. `bucket` is meaningful only
+/// for a Date column; Text and Yes/No columns always group by exact value.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroupDimension {
+    pub field: String,
+    #[serde(default)]
+    pub bucket: GroupBucket,
+}
+
+/// How a Date grouping column is bucketed. Any non-Date column uses `Value`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupBucket {
+    #[default]
+    Value,
+    Month,
+    Year,
+}
+
+/// Which rows a grouped-totals query covers. Every form is resolved to
+/// collection order before any sum is taken.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GroupScope {
+    All,
+    Entities { entities: Vec<String> },
+    Except { entities: Vec<String> },
+}
 
 /// App-private requests accepted by the Designer runtime adapter.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -287,6 +319,15 @@ pub enum DesignerRequest {
         collection: String,
         entities: Vec<String>,
     },
+    /// Number totals grouped by one or two Text, Date or Yes/No columns over
+    /// the rows in `scope`, at one revision.
+    QueryGroupTotals {
+        expected_revision: String,
+        collection: String,
+        dimensions: Vec<GroupDimension>,
+        measures: Vec<String>,
+        scope: GroupScope,
+    },
     QueryFields {
         expected_revision: String,
         fields: Vec<FieldTarget>,
@@ -341,6 +382,7 @@ pub enum DesignerResponse {
     TableWindow(TableWindowProjection),
     LocatedInView(LocatedInViewProjection),
     ColumnTotals(ColumnTotalsProjection),
+    GroupTotals(GroupTotalsProjection),
     Fields(FieldBatchProjection),
     FieldExplanation(FieldExplanationProjection),
     Published(PublicationProjection),
@@ -458,6 +500,49 @@ pub struct ColumnTotalsProjection {
     /// `TableWindowProjection::column_totals`.
     #[serde(deserialize_with = "deserialize_column_totals")]
     pub column_totals: BTreeMap<String, Option<f64>>,
+}
+
+/// Number totals grouped by one or two keys over the rows of one scope, at
+/// one revision. The request's dimensions and measures are echoed so a client
+/// can bind the reply to its query.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GroupTotalsProjection {
+    pub revision: String,
+    pub dimensions: Vec<GroupDimension>,
+    pub measures: Vec<String>,
+    /// How many entities the scope covers, equal to the sum of `groups[*].rows`.
+    pub rows: usize,
+    /// One total per measure over the whole scope, in request order.
+    #[serde(deserialize_with = "deserialize_totals")]
+    pub totals: Vec<Option<f64>>,
+    /// Groups ordered by `keys` ascending; a blank key sorts last per
+    /// dimension.
+    pub groups: Vec<GroupTotalsRow>,
+}
+
+/// One group of a grouped-totals reply.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GroupTotalsRow {
+    /// One key per request dimension.
+    pub keys: Vec<GroupKey>,
+    /// Every member of the group, including those whose measure is blank.
+    pub rows: usize,
+    /// One total per measure, in request order.
+    #[serde(deserialize_with = "deserialize_totals")]
+    pub totals: Vec<Option<f64>>,
+}
+
+/// One typed grouping key. The variant order is the sort order, so `Blank`
+/// is declared last and blank groups sort after every present value.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GroupKey {
+    Boolean { value: bool },
+    Date { value: String },
+    Month { value: String },
+    Year { value: String },
+    Text { value: String },
+    Blank,
 }
 
 /// One stateless table view: ordered sort keys, AND-ed filters and up to 256
@@ -1108,6 +1193,15 @@ where
     serde_json::from_value(raw).map_err(serde::de::Error::custom)
 }
 
+/// The `Vec` counterpart of [`deserialize_column_totals`], for grouped totals.
+fn deserialize_totals<'de, D>(deserializer: D) -> Result<Vec<Option<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    serde_json::from_value(raw).map_err(serde::de::Error::custom)
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DiagnosticProjection {
     pub code: String,
@@ -1384,6 +1478,14 @@ pub enum DesignerError {
     UnsupportedScalarEdit { field: FieldRef },
     #[error("requested revision '{requested}' is stale; current revision is '{current}'")]
     StaleQuery { requested: String, current: String },
+    #[error("the grouped totals query is invalid: {message}")]
+    InvalidGroupQuery { message: String },
+    #[error(
+        "totals would have {groups} groups; at most {maximum} fit — group by a column with fewer distinct values or narrow the rows"
+    )]
+    GroupLimitExceeded { groups: usize, maximum: usize },
+    #[error("grouped totals reply is {bytes} bytes; the bounded maximum is {maximum}")]
+    GroupTotalsTooLarge { bytes: usize, maximum: usize },
     #[error("successful publication did not yield matching invalidation facts")]
     MissingInvalidation,
     #[error("tracker operation rejected: {message}")]
@@ -1552,6 +1654,9 @@ impl DesignerError {
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
             Self::UnsupportedScalarEdit { .. } => ("unsupported_edit", Vec::new()),
+            Self::InvalidGroupQuery { .. } => ("invalid_group_query", Vec::new()),
+            Self::GroupLimitExceeded { .. } => ("group_limit_exceeded", Vec::new()),
+            Self::GroupTotalsTooLarge { .. } => ("result_size_exceeded", Vec::new()),
             Self::Storage(_)
             | Self::InvalidProjectWorkspace { .. }
             | Self::InvalidProjectTransfer { .. } => ("invalid_project", Vec::new()),
@@ -2686,6 +2791,19 @@ impl DesignerRuntime {
                 &collection,
                 &entities,
             )?)),
+            DesignerRequest::QueryGroupTotals {
+                expected_revision,
+                collection,
+                dimensions,
+                measures,
+                scope,
+            } => Ok(DesignerResponse::GroupTotals(self.query_group_totals(
+                &expected_revision,
+                &collection,
+                &dimensions,
+                &measures,
+                &scope,
+            )?)),
             DesignerRequest::QueryFields {
                 expected_revision,
                 fields,
@@ -3536,6 +3654,131 @@ impl DesignerRuntime {
             rows: members.len(),
             column_totals,
         })
+    }
+
+    /// Group one to four Number-column totals by one or two Text, Date or
+    /// Yes/No columns over the rows of `scope`. A read: nothing is persisted
+    /// and the revision never changes.
+    #[allow(clippy::too_many_lines)] // One bounded query path; splitting hides the order guarantees.
+    fn query_group_totals(
+        &self,
+        expected_revision: &str,
+        collection: &str,
+        dimensions: &[GroupDimension],
+        measures: &[String],
+        scope: &GroupScope,
+    ) -> Result<GroupTotalsProjection, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let revision = self.current_revision().to_owned();
+        let spec = self.collection_spec(collection)?;
+        let dimension_columns = group_dimension_columns(spec, collection, dimensions)?;
+        let measure_columns = group_measure_columns(spec, collection, measures)?;
+        let members = scope_members(spec, collection, scope)?;
+
+        let needed = dimension_columns
+            .iter()
+            .map(|(column, _)| column.id.clone())
+            .chain(measure_columns.iter().map(|column| column.id.clone()))
+            .collect::<BTreeSet<_>>();
+        let entities = self.session.query_entities(&members)?;
+        let mut targets = Vec::new();
+        for entity in entities.value() {
+            for column in &spec.columns {
+                if needed.contains(&column.id) && entity.fields.contains(&column.id) {
+                    targets.push(FieldRef::new(entity.id.clone(), column.id.clone()));
+                }
+            }
+        }
+        let projected = self
+            .session
+            .query_fields(&targets)?
+            .value()
+            .iter()
+            .map(|field| self.project_field(field))
+            .collect::<Vec<_>>();
+
+        // `query_entities` returns stable-identity order, which is collection
+        // order, so slots and sums stay in that order.
+        let index_of = entities
+            .value()
+            .iter()
+            .enumerate()
+            .map(|(index, entity)| (entity.id.as_str(), index))
+            .collect::<BTreeMap<_, _>>();
+        let dimension_count = dimension_columns.len();
+        let mut slots: Vec<Vec<Option<&FieldProjection>>> =
+            vec![vec![None; dimension_count + measure_columns.len()]; members.len()];
+        for field in &projected {
+            let Some(&member) = index_of.get(field.target.entity.as_str()) else {
+                continue;
+            };
+            if let Some(position) = dimension_columns
+                .iter()
+                .position(|(column, _)| column.id.as_str() == field.target.field)
+            {
+                slots[member][position] = Some(field);
+            }
+            if let Some(position) = measure_columns
+                .iter()
+                .position(|column| column.id.as_str() == field.target.field)
+            {
+                slots[member][dimension_count + position] = Some(field);
+            }
+        }
+
+        let mut scope_totals = vec![NumberTotal::EMPTY; measure_columns.len()];
+        let mut groups: BTreeMap<Vec<GroupKey>, (usize, Vec<NumberTotal>)> = BTreeMap::new();
+        for (member, _) in entities.value().iter().enumerate() {
+            let mut keys = Vec::with_capacity(dimension_count);
+            for (position, (_, bucket)) in dimension_columns.iter().enumerate() {
+                let stored = slots[member][position].and_then(|field| field.stored.as_ref());
+                keys.push(group_key(*bucket, stored));
+            }
+            let (rows, totals) = groups
+                .entry(keys)
+                .or_insert_with(|| (0, vec![NumberTotal::EMPTY; measure_columns.len()]));
+            *rows += 1;
+            for (position, total) in totals.iter_mut().enumerate() {
+                if let Some(field) = slots[member][dimension_count + position] {
+                    total.add(field);
+                    scope_totals[position].add(field);
+                }
+            }
+        }
+
+        if groups.len() > MAX_GROUPS {
+            return Err(DesignerError::GroupLimitExceeded {
+                groups: groups.len(),
+                maximum: MAX_GROUPS,
+            });
+        }
+        let projection = GroupTotalsProjection {
+            revision,
+            dimensions: dimensions.to_vec(),
+            measures: measures.to_vec(),
+            rows: members.len(),
+            totals: scope_totals.into_iter().map(NumberTotal::value).collect(),
+            groups: groups
+                .into_iter()
+                .map(|(keys, (rows, totals))| GroupTotalsRow {
+                    keys,
+                    rows,
+                    totals: totals.into_iter().map(NumberTotal::value).collect(),
+                })
+                .collect(),
+        };
+        let bytes = serde_json::to_vec(&projection)
+            .map_err(|error| {
+                invalid_group_query(format!("grouped totals did not encode: {error}"))
+            })?
+            .len();
+        if bytes > MAX_PROJECTION_BYTES {
+            return Err(DesignerError::GroupTotalsTooLarge {
+                bytes,
+                maximum: MAX_PROJECTION_BYTES,
+            });
+        }
+        Ok(projection)
     }
 
     /// Project the window's entities in view order, enforcing the reply byte
@@ -6087,31 +6330,214 @@ fn column_totals_from_fields(
         .filter(|column| column.field_type == FieldType::Number)
         .map(|column| {
             let id = column.id.to_string();
-            let mut total = 0.0;
-            let mut complete = true;
+            let mut total = NumberTotal::EMPTY;
             for field in fields.iter().filter(|field| field.target.field == id) {
-                match (&field.calculated, &field.stored) {
-                    (Some(CalculationProjection::Value { value }), _)
-                    | (None, Some(StoredValueProjection::Number { value })) => total += value,
-                    (
-                        Some(
-                            CalculationProjection::Failure { .. }
-                            | CalculationProjection::Unavailable,
-                        ),
-                        _,
-                    )
-                    | (None, Some(_) | None) => {
-                        complete = false;
-                        break;
-                    }
-                }
+                total.add(field);
             }
-            (
-                id,
-                complete.then_some(total).filter(|total| total.is_finite()),
-            )
+            (id, total.value())
         })
         .collect()
+}
+
+/// One Number column's running total under the footer rule, shared by the
+/// whole-table footer, the named-entity query and grouped totals so their
+/// rules cannot drift: a blank cell is skipped, a calculated value or stored
+/// Number adds, and any failed, unavailable or non-numeric value makes the
+/// whole total null instead of a partial sum.
+#[derive(Clone, Copy)]
+struct NumberTotal {
+    total: f64,
+    complete: bool,
+}
+
+impl NumberTotal {
+    const EMPTY: Self = Self {
+        total: 0.0,
+        complete: true,
+    };
+
+    fn add(&mut self, field: &FieldProjection) {
+        match (&field.calculated, &field.stored) {
+            (Some(CalculationProjection::Value { value }), _)
+            | (None, Some(StoredValueProjection::Number { value })) => self.total += value,
+            (
+                Some(CalculationProjection::Failure { .. } | CalculationProjection::Unavailable),
+                _,
+            )
+            | (None, Some(_) | None) => self.complete = false,
+        }
+    }
+
+    fn value(self) -> Option<f64> {
+        self.complete
+            .then_some(self.total)
+            .filter(|total| total.is_finite())
+    }
+}
+
+fn invalid_group_query(message: String) -> DesignerError {
+    DesignerError::InvalidGroupQuery { message }
+}
+
+/// Resolve the request's grouping columns, one to two of them, each a Text,
+/// Date or Yes/No column of `spec`. Month and year buckets need a Date.
+fn group_dimension_columns<'a>(
+    spec: &'a CollectionSpec,
+    collection: &str,
+    dimensions: &[GroupDimension],
+) -> Result<Vec<(&'a ColumnSpec, GroupBucket)>, DesignerError> {
+    if !(1..=2).contains(&dimensions.len()) {
+        return Err(invalid_group_query(format!(
+            "grouped totals take 1 or 2 dimensions; got {}",
+            dimensions.len()
+        )));
+    }
+    let mut resolved: Vec<(&ColumnSpec, GroupBucket)> = Vec::with_capacity(dimensions.len());
+    for dimension in dimensions {
+        let column = spec
+            .columns
+            .iter()
+            .find(|column| column.id.as_str() == dimension.field)
+            .ok_or_else(|| {
+                invalid_group_query(format!(
+                    "field '{}' is not a column of collection {collection}",
+                    dimension.field
+                ))
+            })?;
+        match column.field_type {
+            FieldType::Text | FieldType::Boolean => {
+                if dimension.bucket != GroupBucket::Value {
+                    return Err(invalid_group_query(format!(
+                        "dimension '{}' is not a Date column; month and year buckets need a Date",
+                        dimension.field
+                    )));
+                }
+            }
+            FieldType::Date => {}
+            _ => {
+                return Err(invalid_group_query(format!(
+                    "dimension '{}' is a Number column; group by Text, Date or Yes/No",
+                    dimension.field
+                )));
+            }
+        }
+        if resolved
+            .iter()
+            .any(|(existing, bucket)| existing.id == column.id && *bucket == dimension.bucket)
+        {
+            return Err(invalid_group_query(format!(
+                "dimension '{}' is listed more than once",
+                dimension.field
+            )));
+        }
+        resolved.push((column, dimension.bucket));
+    }
+    Ok(resolved)
+}
+
+/// Resolve the request's one to four distinct Number measures, in request
+/// order, so reply totals follow it.
+fn group_measure_columns<'a>(
+    spec: &'a CollectionSpec,
+    collection: &str,
+    measures: &[String],
+) -> Result<Vec<&'a ColumnSpec>, DesignerError> {
+    if !(1..=4).contains(&measures.len()) {
+        return Err(invalid_group_query(format!(
+            "grouped totals take 1 to 4 measures; got {}",
+            measures.len()
+        )));
+    }
+    let mut resolved: Vec<&ColumnSpec> = Vec::with_capacity(measures.len());
+    for measure in measures {
+        let column = spec
+            .columns
+            .iter()
+            .find(|column| column.id.as_str() == measure.as_str())
+            .ok_or_else(|| {
+                invalid_group_query(format!(
+                    "field '{measure}' is not a column of collection {collection}"
+                ))
+            })?;
+        if column.field_type != FieldType::Number {
+            return Err(invalid_group_query(format!(
+                "measure '{measure}' is not a Number column"
+            )));
+        }
+        if resolved.iter().any(|existing| existing.id == column.id) {
+            return Err(invalid_group_query(format!(
+                "measure '{measure}' is listed more than once"
+            )));
+        }
+        resolved.push(column);
+    }
+    Ok(resolved)
+}
+
+/// Resolve `scope` to collection-order members, checking every named entity
+/// the same way `query_column_totals` does.
+fn scope_members(
+    spec: &CollectionSpec,
+    collection: &str,
+    scope: &GroupScope,
+) -> Result<Vec<EntityId>, DesignerError> {
+    let (entities, keep) = match scope {
+        GroupScope::All => return Ok(spec.entities.clone()),
+        GroupScope::Entities { entities } => (entities, true),
+        GroupScope::Except { entities } => (entities, false),
+    };
+    if entities.len() > spec.entities.len() {
+        return Err(invalid_group_query(format!(
+            "grouped totals name {} entities; collection {collection} has {}",
+            entities.len(),
+            spec.entities.len()
+        )));
+    }
+    let known = spec.entities.iter().collect::<BTreeSet<_>>();
+    let mut requested = BTreeSet::new();
+    for entity in entities {
+        let id = EntityId::from(entity.as_str());
+        if !known.contains(&id) {
+            return Err(invalid_group_query(format!(
+                "entity {entity} is not in collection {collection}"
+            )));
+        }
+        if !requested.insert(id) {
+            return Err(invalid_group_query(format!(
+                "entity {entity} is listed more than once"
+            )));
+        }
+    }
+    Ok(spec
+        .entities
+        .iter()
+        .filter(|id| requested.contains(*id) == keep)
+        .cloned()
+        .collect())
+}
+
+/// One grouping key from the stored value. Empty text is a present key of its
+/// own; a member without the field is blank.
+fn group_key(bucket: GroupBucket, stored: Option<&StoredValueProjection>) -> GroupKey {
+    match stored {
+        Some(StoredValueProjection::Text { value }) => GroupKey::Text {
+            value: value.clone(),
+        },
+        Some(StoredValueProjection::Boolean { value }) => GroupKey::Boolean { value: *value },
+        Some(StoredValueProjection::Date { value }) => match bucket {
+            GroupBucket::Value => GroupKey::Date {
+                value: value.to_string(),
+            },
+            GroupBucket::Month => GroupKey::Month {
+                value: format!("{:04}-{:02}", value.year(), value.month()),
+            },
+            GroupBucket::Year => GroupKey::Year {
+                value: format!("{:04}", value.year()),
+            },
+        },
+        Some(StoredValueProjection::Number { .. } | StoredValueProjection::Reference { .. })
+        | None => GroupKey::Blank,
+    }
 }
 
 fn blank_field_ids(
@@ -6579,7 +7005,8 @@ pub(crate) fn ensure_wire_reply_size(
             response:
                 DesignerResponse::TableWindow(_)
                 | DesignerResponse::LocatedInView(_)
-                | DesignerResponse::ColumnTotals(_),
+                | DesignerResponse::ColumnTotals(_)
+                | DesignerResponse::GroupTotals(_),
         } => table_window_byte_limit(text_capacity),
         DesignerWireReply::Ok { .. } if text_capacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
         _ => MAX_PROJECTION_BYTES,
