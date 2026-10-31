@@ -9167,13 +9167,18 @@ fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
 }
 
 /// A Number typed or pasted by a person: Rust's own decimal spelling, also
-/// with comma thousands groups (`1,300.5`) or a trailing percent (`12%` is
-/// 0.12), as other spreadsheets accept. Stored values stay plain numbers.
+/// with comma thousands groups (`1,300.5`), a trailing percent (`12%` is
+/// 0.12) or one currency marker either side (`$1,234.50`, `12 €`, `USD 12`),
+/// as other spreadsheets accept. Stored values stay plain numbers.
 fn authored_number(input: &str) -> Option<Number> {
     let text = input.trim();
+    let (text, had_currency) = without_currency(text)?;
+    if had_currency && text.trim_end().ends_with('%') {
+        return None;
+    }
     let (text, scale) = match text.strip_suffix('%') {
         Some(rest) => (rest.trim_end(), 100.0),
-        None => (text, 1.0),
+        None => (text.as_str(), 1.0),
     };
     let plain = if text.contains(',') {
         ungrouped_decimal(text)?
@@ -9182,6 +9187,74 @@ fn authored_number(input: &str) -> Option<Number> {
     };
     let value = plain.parse::<f64>().ok()? / scale;
     Number::new(value).ok()
+}
+
+/// Currency markers a person may type around a Number, longest first. The
+/// ISO 4217-shaped case (exactly three ASCII uppercase letters) is handled
+/// separately.
+const CURRENCY_MARKERS: [&str; 12] = [
+    "US$", "NT$", "HK$", "A$", "C$", "$", "€", "£", "¥", "￥", "₩", "₹",
+];
+
+/// `text` with at most one currency marker stripped from its start or its end,
+/// and with a leading sign moved onto the number (`-$5` is `-5`). A sign on
+/// both sides of the marker (`-$-5`) and a marker with no number stay `None`;
+/// `false` means no marker was found.
+fn without_currency(text: &str) -> Option<(String, bool)> {
+    let (sign, body) = match text.strip_prefix(['-', '+']) {
+        Some(rest) => (&text[..1], rest.trim_start()),
+        None => ("", text),
+    };
+    if let Some(rest) = strip_currency_marker(body, true) {
+        let number = rest.trim_start();
+        if number.is_empty() || (!sign.is_empty() && number.starts_with(['-', '+'])) {
+            return None;
+        }
+        return Some((format!("{sign}{number}"), true));
+    }
+    if let Some(rest) = strip_currency_marker(body, false) {
+        let number = rest.trim_end();
+        if number.is_empty() {
+            return None;
+        }
+        return Some((format!("{sign}{number}"), true));
+    }
+    Some((text.to_owned(), false))
+}
+
+/// `text` without one marker at its start (`leading`) or end, which must be a
+/// listed symbol or three ASCII uppercase letters set apart from the number.
+fn strip_currency_marker(text: &str, leading: bool) -> Option<&str> {
+    for marker in CURRENCY_MARKERS {
+        let rest = if leading {
+            text.strip_prefix(marker)
+        } else {
+            text.strip_suffix(marker)
+        };
+        if rest.is_some() {
+            return rest;
+        }
+    }
+    let bytes = text.as_bytes();
+    let code = if leading {
+        bytes.get(..3)?
+    } else {
+        bytes.get(bytes.len().checked_sub(3)?..)?
+    };
+    if !code.iter().all(u8::is_ascii_uppercase) {
+        return None;
+    }
+    let rest = if leading {
+        &text[code.len()..]
+    } else {
+        &text[..text.len() - code.len()]
+    };
+    let apart = if leading {
+        rest.is_empty() || rest.starts_with(|c: char| !c.is_ascii_uppercase())
+    } else {
+        rest.is_empty() || rest.ends_with(|c: char| !c.is_ascii_uppercase())
+    };
+    apart.then_some(rest)
 }
 
 /// `1,234,567.89` without its separators; `None` unless every group after the
