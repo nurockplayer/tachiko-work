@@ -14,6 +14,37 @@ fn capacity_book() -> SourceWorkbook {
     import_csv(source.as_bytes(), &ImportOptions::default()).unwrap()
 }
 
+/// The first cell style of a plain export: General is built-in format 0 (#615).
+const FIRST_DEFAULT_XF: &str = "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"2\"";
+
+fn first_xf_with_format(id: u32) -> String {
+    format!("<xf numFmtId=\"{id}\" fontId=\"0\" fillId=\"2\"")
+}
+
+/// Declare one custom number format, next to any the export already has.
+fn with_custom_format(styles: &str, id: u32, pattern: &str) -> String {
+    let format = format!("<numFmt numFmtId=\"{id}\" formatCode=\"{pattern}\"/>");
+    if let Some(start) = styles.find("<numFmts count=\"") {
+        let count_start = start + "<numFmts count=\"".len();
+        let count_end = count_start + styles[count_start..].find('"').unwrap();
+        let count: usize = styles[count_start..count_end].parse().unwrap();
+        let body = styles[count_end..].find('>').unwrap() + count_end + 1;
+        format!(
+            "{}{}{}{}",
+            &styles[..count_start],
+            count + 1,
+            &styles[count_end..body],
+            format
+        ) + &styles[body..]
+    } else {
+        styles.replacen(
+            "<fonts",
+            &format!("<numFmts count=\"1\">{format}</numFmts><fonts"),
+            1,
+        )
+    }
+}
+
 #[test]
 fn capacity_xlsx_worksheet_compression_is_independent_of_metadata() {
     let mut book = capacity_book();
@@ -608,7 +639,7 @@ fn accounting_number_formats_preserve_defined_patterns_without_inventing_currenc
         (40, "#,##0.00;[Red](#,##0.00)"),
     ] {
         let input = mutate(&bytes, "xl/styles.xml", |s| {
-            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+            s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id))
         });
         let imported = import_xlsx(&input).unwrap();
         assert!(!imported.ledger.iter().any(|f| f.blocking));
@@ -622,7 +653,7 @@ fn accounting_number_formats_preserve_defined_patterns_without_inventing_currenc
     // formatCode establishes presentation. No USD inference is permitted.
     for id in [5, 6, 7, 8, 41, 42, 43, 44] {
         let undefined = mutate(&bytes, "xl/styles.xml", |s| {
-            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+            s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id))
         });
         let rejected = import_xlsx(&undefined).unwrap();
         assert!(
@@ -634,11 +665,11 @@ fn accounting_number_formats_preserve_defined_patterns_without_inventing_currenc
         assert!(export_xlsx(&rejected).is_err());
         let pattern = "[$¥-411]#,##0.000;[Red](#,##0.000)";
         let defined = mutate(&bytes, "xl/styles.xml", |s| {
-            s.replace("numFmtId=\"164\"", &format!("numFmtId=\"{id}\""))
-                .replace(
-                    "formatCode=\"General\"",
-                    &format!("formatCode=\"{pattern}\""),
-                )
+            with_custom_format(
+                &s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id)),
+                id,
+                pattern,
+            )
         });
         let imported = import_xlsx(&defined).unwrap();
         assert!(!imported.ledger.iter().any(|f| f.blocking));
@@ -1181,7 +1212,7 @@ fn integral_time_only_formats_never_become_dates_or_numbers() {
     let bytes = export_xlsx(&book).unwrap();
     for id in 18..=22 {
         let changed = mutate(&bytes, "xl/styles.xml", |s| {
-            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+            s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id))
         });
         let imported = import_xlsx(&changed).unwrap();
         if id == 22 {
@@ -2045,7 +2076,7 @@ fn all_language_builtin_formats_match_explicit_patterns_and_scalar_boundaries() 
             source.sheets[0].rows[0][1].value = SourceValue::Number { value };
             let bytes = export_xlsx(&source).unwrap();
             let builtin = mutate(&bytes, "xl/styles.xml", |xml| {
-                xml.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+                xml.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id))
             });
             source.sheets[0].rows[0][1].style.number_format = Some(pattern.into());
             let explicit = source_with_format(&source);
@@ -2078,9 +2109,10 @@ fn all_language_builtin_formats_match_explicit_patterns_and_scalar_boundaries() 
                     let reopened = import_xlsx(&export_xlsx(book).unwrap()).unwrap();
                     assert!(!reopened.ledger.iter().any(|f| f.blocking));
                     assert_eq!(reopened.sheets[0].rows[0][1].value, expected);
+                    // General is the default format: it reads back as none (#615).
                     assert_eq!(
                         reopened.sheets[0].rows[0][1].style.number_format.as_deref(),
-                        Some(pattern)
+                        Some(pattern).filter(|pattern| *pattern != "General")
                     );
                 }
             }
@@ -2094,7 +2126,7 @@ fn all_language_builtin_formats_match_explicit_patterns_and_scalar_boundaries() 
             );
             assert_eq!(
                 explicit.sheets[0].rows[0][1].style.number_format.as_deref(),
-                Some(pattern)
+                Some(pattern).filter(|pattern| *pattern != "General")
             );
         }
     }
@@ -2277,4 +2309,51 @@ fn capacity_xlsx_reads_iso_dates_without_the_date_format() {
         }
     );
     assert_eq!(book.sheets[0].rows[2][1].style, CellStyle::default());
+}
+
+#[test]
+fn general_is_written_as_built_in_format_zero() {
+    // Numbers reads a custom formatCode="General" as a whole-number format and
+    // shows 1.5 as 2 (#615); Excel and Numbers both read built-in 0 as General.
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 1.5 };
+    book.sheets[0].rows[0][1].style.number_format = None;
+    let bytes = export_xlsx(&book).unwrap();
+    let styles = part_text(&bytes, "xl/styles.xml");
+    assert!(!styles.contains("formatCode=\"General\""), "{styles}");
+    assert!(styles.contains(FIRST_DEFAULT_XF), "{styles}");
+    let reopened = import_xlsx(&bytes).unwrap();
+    assert_eq!(reopened.sheets[0].rows[0][1].style.number_format, None);
+    assert_eq!(
+        export_xlsx(&reopened).unwrap(),
+        bytes,
+        "the round trip is byte-stable"
+    );
+
+    // Exports written before #615 declared General as custom format 164; they
+    // still read as the default format, and re-export with built-in 0.
+    let legacy = mutate(&bytes, "xl/styles.xml", |s| {
+        with_custom_format(
+            &s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(164)),
+            164,
+            "General",
+        )
+    });
+    let legacy = import_xlsx(&legacy).unwrap();
+    assert_eq!(legacy.sheets[0].rows[0][1].style.number_format, None);
+    assert!(
+        !part_text(&export_xlsx(&legacy).unwrap(), "xl/styles.xml")
+            .contains("formatCode=\"General\"")
+    );
+}
+
+fn part_text(bytes: &[u8], name: &str) -> String {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name(name)
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    text
 }

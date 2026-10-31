@@ -63,6 +63,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- XLSX exports of tables up to 64 rows write unformatted Number cells with
+  the built-in General format (`numFmtId="0"`) instead of a custom
+  `formatCode="General"`, which Apple Numbers showed as a whole number (1.5
+  as 2). Older exports with the custom General still read as the default
+  format (#615).
 - A formula whose result falls outside its column's constraint, or makes a
   dependent formula field do so, is refused with the typed
   `field_constraint_violation` (`constraint_failure` names the field, the
