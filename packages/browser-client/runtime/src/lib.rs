@@ -9189,11 +9189,16 @@ fn authored_number(input: &str) -> Option<Number> {
     Number::new(value).ok()
 }
 
-/// Currency markers a person may type around a Number, longest first. The
-/// ISO 4217-shaped case (exactly three ASCII uppercase letters) is handled
-/// separately.
-const CURRENCY_MARKERS: [&str; 12] = [
+/// Currency symbols a person may type around a Number, longest first.
+const CURRENCY_SYMBOLS: [&str; 12] = [
     "US$", "NT$", "HK$", "A$", "C$", "$", "€", "£", "¥", "￥", "₩", "₹",
+];
+
+/// ISO 4217 codes accepted around a Number. The list is closed so an
+/// identifier such as `SKU123` is not read as a currency amount.
+const CURRENCY_CODES: [&str; 25] = [
+    "AUD", "BRL", "CAD", "CHF", "CNY", "DKK", "EUR", "GBP", "HKD", "IDR", "INR", "JPY", "KRW",
+    "MXN", "MYR", "NOK", "NZD", "PHP", "SEK", "SGD", "THB", "TWD", "USD", "VND", "ZAR",
 ];
 
 /// `text` with at most one currency marker stripped from its start or its end,
@@ -9222,39 +9227,26 @@ fn without_currency(text: &str) -> Option<(String, bool)> {
     Some((text.to_owned(), false))
 }
 
-/// `text` without one marker at its start (`leading`) or end, which must be a
-/// listed symbol or three ASCII uppercase letters set apart from the number.
+/// `text` without one marker at its start (`leading`) or end: a listed
+/// symbol, or a listed code not joined to another letter (`USDX 5` stays).
 fn strip_currency_marker(text: &str, leading: bool) -> Option<&str> {
-    for marker in CURRENCY_MARKERS {
-        let rest = if leading {
+    let strip = |marker: &str| {
+        if leading {
             text.strip_prefix(marker)
         } else {
             text.strip_suffix(marker)
-        };
-        if rest.is_some() {
-            return rest;
         }
+    };
+    if let Some(rest) = CURRENCY_SYMBOLS.into_iter().find_map(strip) {
+        return Some(rest);
     }
-    let bytes = text.as_bytes();
-    let code = if leading {
-        bytes.get(..3)?
+    let rest = CURRENCY_CODES.into_iter().find_map(strip)?;
+    let next = if leading {
+        rest.chars().next()
     } else {
-        bytes.get(bytes.len().checked_sub(3)?..)?
+        rest.chars().next_back()
     };
-    if !code.iter().all(u8::is_ascii_uppercase) {
-        return None;
-    }
-    let rest = if leading {
-        &text[code.len()..]
-    } else {
-        &text[..text.len() - code.len()]
-    };
-    let apart = if leading {
-        rest.is_empty() || rest.starts_with(|c: char| !c.is_ascii_uppercase())
-    } else {
-        rest.is_empty() || rest.ends_with(|c: char| !c.is_ascii_uppercase())
-    };
-    apart.then_some(rest)
+    (!next.is_some_and(char::is_alphabetic)).then_some(rest)
 }
 
 /// `1,234,567.89` without its separators; `None` unless every group after the

@@ -64,6 +64,11 @@ fn authored_numbers_accept_one_currency_marker() {
         "usd 5",
         "US 5",
         "INF",
+        "SKU123",
+        "INV 456",
+        "XYZ 5",
+        "USDX 5",
+        "5 USDT",
         "฿5",
     ] {
         assert_eq!(authored_number(input), None, "{input}");
