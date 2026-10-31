@@ -23,7 +23,53 @@ fn authored_numbers_accept_grouping_and_percent_and_refuse_bad_groups() {
         );
     }
     for input in [
-        "", "%", "1,30", "12,3456", ",100", "1,,000", "1.000,5", "$5", "abc", "inf", "1,000,",
+        "", "%", "1,30", "12,3456", ",100", "1,,000", "1.000,5", "abc", "inf", "1,000,",
+    ] {
+        assert_eq!(authored_number(input), None, "{input}");
+    }
+}
+
+#[test]
+fn authored_numbers_accept_one_currency_marker() {
+    for (input, expected) in [
+        ("$1,234.50", 1234.5),
+        ("¥1,200", 1200.0),
+        ("NT$300", 300.0),
+        ("US$ 12", 12.0),
+        ("12 €", 12.0),
+        ("1,234.50 €", 1234.5),
+        ("USD 12.5", 12.5),
+        ("12 TWD", 12.0),
+        ("-$5", -5.0),
+        ("$-5", -5.0),
+        ("₩1,000", 1000.0),
+        ("￥30", 30.0),
+    ] {
+        assert_eq!(
+            authored_number(input),
+            Some(Number::new(expected).unwrap()),
+            "{input}"
+        );
+    }
+    for input in [
+        "€12,50",
+        "1.234,50 €",
+        "$12 USD",
+        "$12%",
+        "($5)",
+        "$",
+        "USD",
+        "-$-5",
+        "$$5",
+        "usd 5",
+        "US 5",
+        "INF",
+        "SKU123",
+        "INV 456",
+        "XYZ 5",
+        "USDX 5",
+        "5 USDT",
+        "฿5",
     ] {
         assert_eq!(authored_number(input), None, "{input}");
     }

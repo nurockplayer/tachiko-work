@@ -9170,13 +9170,18 @@ fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
 }
 
 /// A Number typed or pasted by a person: Rust's own decimal spelling, also
-/// with comma thousands groups (`1,300.5`) or a trailing percent (`12%` is
-/// 0.12), as other spreadsheets accept. Stored values stay plain numbers.
+/// with comma thousands groups (`1,300.5`), a trailing percent (`12%` is
+/// 0.12) or one currency marker either side (`$1,234.50`, `12 €`, `USD 12`),
+/// as other spreadsheets accept. Stored values stay plain numbers.
 fn authored_number(input: &str) -> Option<Number> {
     let text = input.trim();
+    let (text, had_currency) = without_currency(text)?;
+    if had_currency && text.trim_end().ends_with('%') {
+        return None;
+    }
     let (text, scale) = match text.strip_suffix('%') {
         Some(rest) => (rest.trim_end(), 100.0),
-        None => (text, 1.0),
+        None => (text.as_str(), 1.0),
     };
     let plain = if text.contains(',') {
         ungrouped_decimal(text)?
@@ -9185,6 +9190,66 @@ fn authored_number(input: &str) -> Option<Number> {
     };
     let value = plain.parse::<f64>().ok()? / scale;
     Number::new(value).ok()
+}
+
+/// Currency symbols a person may type around a Number, longest first.
+const CURRENCY_SYMBOLS: [&str; 12] = [
+    "US$", "NT$", "HK$", "A$", "C$", "$", "€", "£", "¥", "￥", "₩", "₹",
+];
+
+/// ISO 4217 codes accepted around a Number. The list is closed so an
+/// identifier such as `SKU123` is not read as a currency amount.
+const CURRENCY_CODES: [&str; 25] = [
+    "AUD", "BRL", "CAD", "CHF", "CNY", "DKK", "EUR", "GBP", "HKD", "IDR", "INR", "JPY", "KRW",
+    "MXN", "MYR", "NOK", "NZD", "PHP", "SEK", "SGD", "THB", "TWD", "USD", "VND", "ZAR",
+];
+
+/// `text` with at most one currency marker stripped from its start or its end,
+/// and with a leading sign moved onto the number (`-$5` is `-5`). A sign on
+/// both sides of the marker (`-$-5`) and a marker with no number stay `None`;
+/// `false` means no marker was found.
+fn without_currency(text: &str) -> Option<(String, bool)> {
+    let (sign, body) = match text.strip_prefix(['-', '+']) {
+        Some(rest) => (&text[..1], rest.trim_start()),
+        None => ("", text),
+    };
+    if let Some(rest) = strip_currency_marker(body, true) {
+        let number = rest.trim_start();
+        if number.is_empty() || (!sign.is_empty() && number.starts_with(['-', '+'])) {
+            return None;
+        }
+        return Some((format!("{sign}{number}"), true));
+    }
+    if let Some(rest) = strip_currency_marker(body, false) {
+        let number = rest.trim_end();
+        if number.is_empty() {
+            return None;
+        }
+        return Some((format!("{sign}{number}"), true));
+    }
+    Some((text.to_owned(), false))
+}
+
+/// `text` without one marker at its start (`leading`) or end: a listed
+/// symbol, or a listed code not joined to another letter (`USDX 5` stays).
+fn strip_currency_marker(text: &str, leading: bool) -> Option<&str> {
+    let strip = |marker: &str| {
+        if leading {
+            text.strip_prefix(marker)
+        } else {
+            text.strip_suffix(marker)
+        }
+    };
+    if let Some(rest) = CURRENCY_SYMBOLS.into_iter().find_map(strip) {
+        return Some(rest);
+    }
+    let rest = CURRENCY_CODES.into_iter().find_map(strip)?;
+    let next = if leading {
+        rest.chars().next()
+    } else {
+        rest.chars().next_back()
+    };
+    (!next.is_some_and(char::is_alphabetic)).then_some(rest)
 }
 
 /// `1,234,567.89` without its separators; `None` unless every group after the
