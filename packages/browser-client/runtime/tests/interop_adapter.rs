@@ -682,6 +682,62 @@ fn accounting_number_formats_preserve_defined_patterns_without_inventing_currenc
 }
 
 #[test]
+fn excel_currency_number_formats_map_to_currency_columns() {
+    use tachiko_workspace_engine::{NumberFormat, NumberFormatKind};
+
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 1234.5 };
+    let bytes = export_xlsx(&book).unwrap();
+    let usd = mutate(&bytes, "xl/styles.xml", |s| {
+        with_custom_format(
+            &s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(164)),
+            164,
+            "&quot;$&quot;#,##0.00",
+        )
+    });
+    let imported = import_xlsx(&usd).unwrap();
+    assert!(!imported.ledger.iter().any(|f| f.blocking));
+    assert_eq!(
+        imported.sheets[0].columns[1].number_format,
+        Some(NumberFormat {
+            decimals: 2,
+            kind: NumberFormatKind::Currency { code: "USD".into() },
+            thousands_separator: true,
+        })
+    );
+    let mapped = imported
+        .ledger
+        .iter()
+        .find(|f| f.code == "number_format_currency_mapped")
+        .expect("a mapped currency pattern is disclosed");
+    assert_eq!(mapped.category, FidelityCategory::Converted);
+    assert!(!mapped.blocking);
+    assert!(
+        mapped.message.contains(r##""$"#,##0.00"##) && mapped.message.contains("USD"),
+        "{}",
+        mapped.message
+    );
+
+    // An ambiguous ¥ without a locale stays unmapped, and the message names it.
+    let ambiguous = mutate(&bytes, "xl/styles.xml", |s| {
+        with_custom_format(
+            &s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(164)),
+            164,
+            "¥#,##0",
+        )
+    });
+    let imported = import_xlsx(&ambiguous).unwrap();
+    assert_eq!(imported.sheets[0].columns[1].number_format, None);
+    let unmapped = imported
+        .ledger
+        .iter()
+        .find(|f| f.code == "number_format_not_mapped")
+        .expect("the ambiguous pattern is disclosed");
+    assert!(!unmapped.blocking);
+    assert!(unmapped.message.contains("¥#,##0"), "{}", unmapped.message);
+}
+
+#[test]
 fn decoded_attributes_reject_illegal_characters_including_namespaces() {
     let bytes = export_xlsx(&simple()).unwrap();
     for reference in ["&#0;", "&#1;", "&#xFFFE;", "&#65535;"] {

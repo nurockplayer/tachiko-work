@@ -1156,15 +1156,30 @@ fn escaped_xml_bytes(value: &str) -> usize {
         .sum()
 }
 
+#[derive(Debug, Default)]
+struct InferredColumnNumberFormat {
+    format: Option<tachiko_workspace_engine::NumberFormat>,
+    rejected: bool,
+    /// First source pattern that maps to no Tachiko format, for the finding.
+    unmapped_pattern: Option<String>,
+    /// First Excel currency pattern and the code it named, when one was used.
+    currency_mapped: Option<(String, String)>,
+}
+
 fn infer_column_number_format(
     rows: &[Vec<SourceCell>],
     column_index: usize,
-) -> (Option<tachiko_workspace_engine::NumberFormat>, bool) {
+) -> InferredColumnNumberFormat {
+    use crate::interop_number_format::{from_excel, from_excel_currency};
+    use tachiko_workspace_engine::NumberFormatKind as EngineNumberFormatKind;
+
     let mut observed = None;
     let mut has_explicit = false;
     let mut numeric_without_style = false;
     let mut non_numeric_value = false;
     let mut invalid = false;
+    let mut unmapped_pattern = None;
+    let mut currency_mapped = None;
     for cell in rows.iter().filter_map(|row| row.get(column_index)) {
         let numeric = cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. });
         numeric_without_style |= numeric && cell.style.number_format.is_none();
@@ -1178,21 +1193,40 @@ fn infer_column_number_format(
             continue;
         };
         has_explicit = true;
-        match crate::interop_number_format::from_excel(pattern) {
+        if let Some(format) = from_excel(pattern) {
+            if observed.as_ref().is_none_or(|prior| *prior == format) {
+                observed = Some(format);
+            } else {
+                invalid = true;
+            }
+            continue;
+        }
+        match from_excel_currency(pattern) {
             Some(format) if observed.as_ref().is_none_or(|prior| *prior == format) => {
+                if currency_mapped.is_none() {
+                    if let EngineNumberFormatKind::Currency { code } = &format.kind {
+                        currency_mapped = Some((pattern.to_owned(), code.clone()));
+                    }
+                }
                 observed = Some(format);
             }
-            _ => invalid = true,
+            _ => {
+                invalid = true;
+                if unmapped_pattern.is_none() {
+                    unmapped_pattern = Some(pattern.to_owned());
+                }
+            }
         }
     }
     invalid |= has_explicit && numeric_without_style;
     // A column format is only carried by Number columns; a text or other non-Number
     // value keeps the source value and drops the format as a non-blocking finding.
     invalid |= observed.is_some() && non_numeric_value;
-    if invalid {
-        (None, has_explicit)
-    } else {
-        (observed, false)
+    InferredColumnNumberFormat {
+        format: if invalid { None } else { observed },
+        rejected: invalid,
+        unmapped_pattern,
+        currency_mapped: if invalid { None } else { currency_mapped },
     }
 }
 
@@ -3206,14 +3240,28 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             });
         }
         for (column_index, column) in columns.iter_mut().enumerate() {
-            let (format, rejected) = infer_column_number_format(&rows, column_index);
-            column.number_format = format;
-            if rejected {
+            let inferred = infer_column_number_format(&rows, column_index);
+            let location = format!("{name}:column {}", column_index + 1);
+            column.number_format = inferred.format;
+            if inferred.rejected {
+                let message = inferred.unmapped_pattern.map_or_else(
+                    || "XLSX numeric formatting is mixed, outside the exact Tachiko number-format vocabulary, or applied to non-numeric values; the field keeps its default format and source styling is not promoted.".to_owned(),
+                    |pattern| format!("XLSX number format \"{pattern}\" is mixed, outside the Tachiko number-format vocabulary, or applied to non-numeric values; the field keeps its default format and source styling is not promoted."),
+                );
                 ledger.push(finding(
                     FidelityCategory::LossyOnExport,
                     "number_format_not_mapped",
-                    &format!("{name}:column {}", column_index + 1),
-                    "XLSX numeric formatting is mixed, outside the exact Tachiko number-format vocabulary, or applied to non-numeric values; the field keeps its default format and source styling is not promoted.",
+                    &location,
+                    &message,
+                    false,
+                ));
+            }
+            if let Some((pattern, code)) = inferred.currency_mapped {
+                ledger.push(finding(
+                    FidelityCategory::Converted,
+                    "number_format_currency_mapped",
+                    &location,
+                    &format!("XLSX number format \"{pattern}\" mapped to {code} currency"),
                     false,
                 ));
             }
@@ -5191,9 +5239,12 @@ mod column_number_format_inference_tests {
             })
             .collect::<Vec<_>>();
         rows.push(cell(SourceValue::Empty, Some("General")));
-        let (format, rejected) = infer_column_number_format(&rows, 0);
-        assert!(format.is_some(), "the numeric cells agree on #,##0.00");
-        assert!(!rejected);
+        let inferred = infer_column_number_format(&rows, 0);
+        assert!(
+            inferred.format.is_some(),
+            "the numeric cells agree on #,##0.00"
+        );
+        assert!(!inferred.rejected);
     }
 
     #[test]
@@ -5202,8 +5253,8 @@ mod column_number_format_inference_tests {
             cell(SourceValue::Number { value: 1.0 }, Some("#,##0.00")),
             cell(SourceValue::Number { value: 2.0 }, Some("0%")),
         ];
-        let (format, rejected) = infer_column_number_format(&rows, 0);
-        assert!(format.is_none());
-        assert!(rejected);
+        let inferred = infer_column_number_format(&rows, 0);
+        assert!(inferred.format.is_none());
+        assert!(inferred.rejected);
     }
 }
