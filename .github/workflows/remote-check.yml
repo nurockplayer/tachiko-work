@@ -77,4 +77,5 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           REMOTE_CHECK_COMMAND: ${{ inputs.command }}
-        run: bash -c "$REMOTE_CHECK_COMMAND"
+        # -e and pipefail so `false; echo done` or `cargo test | tee log` fail the run.
+        run: bash -eo pipefail -c "$REMOTE_CHECK_COMMAND"
