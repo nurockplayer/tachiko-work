@@ -1,0 +1,80 @@
+name: Remote check
+
+# Runs one targeted command on a hosted runner so local development does not
+# spend the developer machine's CPU on cargo builds. Dispatch it on a branch
+# (`gh workflow run remote-check.yml --ref <branch> -f command='...'`); pushes
+# to main only warm the shared dependency cache that dispatched runs restore.
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: Shell command run with bash from the repository root
+        required: true
+        type: string
+      toolchain:
+        description: Rust toolchain
+        required: false
+        default: 1.99.0
+        type: string
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remote-check-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: Remote check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install pnpm
+        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+        with:
+          node-version-file: false
+          version: 12.11.2
+          install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: ${{ inputs.toolchain || '1.99.0' }}
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      # Only main saves, so scratch branches never evict the warm cache.
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: remote-check
+          workspaces: |
+            . -> target
+            packages/browser-client/runtime -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Warm the dependency cache
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          cargo test --workspace --all-targets --locked --no-run
+          cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --all-targets --locked --no-run
+
+      # The command arrives through the environment, never interpolated into
+      # the script, so its text cannot change this step's own shell code.
+      - name: Run the requested command
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          REMOTE_CHECK_COMMAND: ${{ inputs.command }}
+        run: bash -c "$REMOTE_CHECK_COMMAND"
