@@ -422,6 +422,7 @@ fn csv_explicit_reimport_preserves_lexical_scalars_and_discloses_missing_empty_a
         &ImportOptions {
             delimiter: ',',
             header: true,
+            ..ImportOptions::default()
         },
     )
     .unwrap();

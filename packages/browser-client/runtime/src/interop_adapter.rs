@@ -1208,6 +1208,63 @@ pub struct SourceSheet {
     pub columns: Vec<SourceColumn>,
     /// Data rows exclude the header and retain every intervening empty source row/column.
     pub rows: Vec<Vec<SourceCell>>,
+    #[serde(default, skip_serializing_if = "SourceLayout::is_default")]
+    pub layout: SourceLayout,
+}
+/// Where the imported grid sat in the source worksheet.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceLayout {
+    /// Source rows above the header that were not imported (title or blank rows).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rows_above_header: u32,
+    /// A trailing summary row recognised and left out of the data rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_row: Option<SummaryRow>,
+}
+impl SourceLayout {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference.
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryRow {
+    /// 1-based source row.
+    pub row: u32,
+    pub cells: Vec<SummaryCell>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryCell {
+    /// 0-based column.
+    pub column: u32,
+    pub aggregate: SummaryAggregate,
+    /// Source formula text, as in `SourceCell::formula`.
+    pub formula: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryAggregate {
+    Total,
+    Average,
+    Count,
+    Min,
+    Max,
+}
+impl SummaryAggregate {
+    #[must_use]
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Total => "total",
+            Self::Average => "average",
+            Self::Count => "count",
+            Self::Min => "min",
+            Self::Max => "max",
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceColumn {
@@ -1273,12 +1330,21 @@ pub struct FidelityFinding {
 pub struct ImportOptions {
     pub delimiter: char,
     pub header: bool,
+    /// XLSX only: 1-based source row of each sheet's header, by sheet position.
+    /// A missing or `None` entry detects it (title and blank rows above are skipped).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_rows: Vec<Option<u32>>,
+    /// XLSX only: import a recognised summary row as an ordinary data row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_summary_rows: bool,
 }
 impl Default for ImportOptions {
     fn default() -> Self {
         Self {
             delimiter: ',',
             header: true,
+            header_rows: Vec::new(),
+            keep_summary_rows: false,
         }
     }
 }
@@ -1321,6 +1387,9 @@ fn source_bound(bytes: &[u8]) -> Result<()> {
 /// Rejects invalid UTF-8, quoting, headers or profile bounds.
 #[allow(clippy::too_many_lines)] // One bounded delimiter state machine.
 pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
+    if !options.header_rows.is_empty() || options.keep_summary_rows {
+        return fail("header_rows and keep_summary_rows apply to XLSX only");
+    }
     source_bound(bytes)?;
     if ![',', ';', '\t'].contains(&options.delimiter) {
         return fail("Unsupported CSV delimiter");
@@ -1438,6 +1507,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
             has_header: options.header,
             columns,
             rows,
+            layout: SourceLayout::default(),
         }],
         ledger: vec![
             finding(
@@ -2929,8 +2999,16 @@ fn inventory_hidden(
 /// Inspect all bounded worksheets and produce the sole fidelity admission ledger.
 /// # Errors
 /// Rejects malformed archives/XML, unresolved relationships and resource limits.
-#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
 pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
+    import_xlsx_with(bytes, &ImportOptions::default())
+}
+
+/// Inspect all bounded worksheets under explicit import options.
+/// # Errors
+/// Rejects malformed archives/XML, unresolved relationships, resource limits and
+/// header or summary-row options that do not fit the workbook.
+#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
+pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
     let parts = archive(bytes)?;
     let mut ledger = Vec::new();
     let workbook = xml_part(&parts, "xl/workbook.xml", "workbook", MAIN)?;
@@ -2975,11 +3053,14 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     if sheet_nodes.is_empty() || sheet_nodes.len() > MAX_SHEETS {
         return fail("Workbook must have 1..=4 sheets");
     }
+    if options.header_rows.len() > sheet_nodes.len() {
+        return fail("header_rows has more entries than the workbook has sheets");
+    }
     let mut sheets = Vec::new();
     let mut worksheet_paths = BTreeSet::new();
     let mut formula_count = 0;
     let mut names = BTreeSet::new();
-    for sheet in sheet_nodes {
+    for (sheet_index, sheet) in sheet_nodes.into_iter().enumerate() {
         let name = sheet
             .attr("name")
             .ok_or_else(|| InteropError::Invalid("Missing worksheet name".into()))?
@@ -3169,13 +3250,73 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         for row in &mut rows {
             row.resize(width, SourceCell::default());
         }
+        let above = match options.header_rows.get(sheet_index).copied().flatten() {
+            Some(row) => {
+                let row = usize::try_from(row).unwrap_or(usize::MAX);
+                if row == 0 || row > rows.len() {
+                    return fail(format!("Header row {row} is outside worksheet {name}"));
+                }
+                row - 1
+            }
+            None => rows_above_header(&rows, width),
+        };
+        if above > 0 {
+            // The skipped rows are not imported, so their cell findings cannot block.
+            let mut excluded = BTreeSet::new();
+            for row in 1..=above {
+                for column in 0..width {
+                    excluded.insert(format!("{name}!{}{}", column_name(column), row));
+                }
+            }
+            ledger.retain(|finding| !excluded.contains(&finding.location));
+            rows.drain(..above);
+            ledger.push(finding(
+                FidelityCategory::LossyOnExport,
+                "rows_above_header_skipped",
+                &format!("{name}!1:{above}"),
+                "Rows above the header (title or blank rows) are not imported; export writes the header in row 1",
+                false,
+            ));
+        }
         let header = rows.remove(0);
+        let mut layout = SourceLayout {
+            rows_above_header: u32::try_from(above)
+                .map_err(|_| InteropError::Invalid("Header offset exceeds the row bound".into()))?,
+            summary_row: None,
+        };
+        if !options.keep_summary_rows {
+            if let Some((kept, cells)) = summary_row(&rows, above + 1) {
+                let source_row = above + 1 + rows.len();
+                // The excluded rows' findings describe cells that do not become data.
+                let mut excluded = BTreeSet::new();
+                for i in kept..rows.len() {
+                    for column in 0..width {
+                        excluded.insert(format!("{name}!{}{}", column_name(column), above + 2 + i));
+                    }
+                }
+                ledger.retain(|f| !excluded.contains(&f.location));
+                ledger.push(finding(
+                    FidelityCategory::LossyOnExport,
+                    "summary_row_excluded",
+                    &format!("{name}!{source_row}"),
+                    "This row totals the column above it (SUM, AVERAGE, COUNT, MIN or MAX), so it is not imported as a data row. Tachiko shows column totals; export does not write this row. Choose keep_summary_rows to import it as data.",
+                    false,
+                ));
+                rows.truncate(kept);
+                layout.summary_row = Some(SummaryRow {
+                    row: u32::try_from(source_row).map_err(|_| {
+                        InteropError::Invalid("Summary row exceeds the row bound".into())
+                    })?,
+                    cells,
+                });
+            }
+        }
         let mut capacity_plain = header.iter().all(|cell| cell.style == CellStyle::default());
         let mut headers = BTreeSet::new();
         let mut columns = Vec::new();
         for (i, c) in header.into_iter().enumerate() {
             if c.style != CellStyle::default() {
-                ledger.push(finding(FidelityCategory::LossyOnExport,"header_style_not_preserved",&format!("{name}!{}1",column_name(i)),"Header text is retained; source header styling remains in original source bytes",false));
+                ledger.push(finding(FidelityCategory::LossyOnExport,"header_style_not_preserved",&format!("{name}!{}{}",column_name(i),above+1),"Header text is retained; source header styling remains in original source bytes",false));
             }
             let title = match c.value {
                 SourceValue::Text { value } if !value.is_empty() && c.formula.is_none() => value,
@@ -3183,7 +3324,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     ledger.push(finding(
                         FidelityCategory::UnsupportedSafeDisabled,
                         "invalid_header",
-                        &format!("{name}!{}1", column_name(i)),
+                        &format!("{name}!{}{}", column_name(i), above + 1),
                         "XLSX profile requires a nonempty Text, nonformula header",
                         true,
                     ));
@@ -3282,6 +3423,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             has_header: true,
             columns,
             rows,
+            layout,
         });
     }
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
@@ -3304,6 +3446,139 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         return Ok(workbook);
     }
     Ok(finish_source_admission(workbook))
+}
+
+/// Leading title rows are skipped only when a complete header follows them.
+const MAX_DETECTED_ROWS_ABOVE_HEADER: usize = 10;
+
+fn present(cell: &SourceCell) -> bool {
+    cell.formula.is_some() || !matches!(cell.value, SourceValue::Empty)
+}
+
+/// A title row holds no cell, or exactly one non-formula Text cell in column A.
+fn title_or_blank(row: &[SourceCell]) -> bool {
+    let mut present = row.iter().enumerate().filter(|(_, cell)| present(cell));
+    match (present.next(), present.next()) {
+        (None, _) => true,
+        (Some((column, cell)), None) => {
+            column == 0
+                && cell.formula.is_none()
+                && matches!(&cell.value, SourceValue::Text { value } if !value.is_empty())
+        }
+        _ => false,
+    }
+}
+
+fn rows_above_header(rows: &[Vec<SourceCell>], width: usize) -> usize {
+    if width < 2 {
+        return 0;
+    }
+    let lead = rows
+        .iter()
+        .take(MAX_DETECTED_ROWS_ABOVE_HEADER + 1)
+        .take_while(|row| title_or_blank(row))
+        .count();
+    if lead == 0 || lead > MAX_DETECTED_ROWS_ABOVE_HEADER {
+        return 0;
+    }
+    // Detected rows are only skipped when a complete header follows them.
+    match rows.get(lead) {
+        Some(row)
+            if row.iter().all(|cell| {
+                cell.formula.is_none()
+                    && matches!(&cell.value, SourceValue::Text { value } if !value.is_empty())
+            }) =>
+        {
+            lead
+        }
+        _ => 0,
+    }
+}
+
+/// `rows` holds data rows only; `header_row` is the 1-based source row of the header.
+fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Vec<SummaryCell>)> {
+    let last = rows.len().checked_sub(1)?;
+    let mut kept = last;
+    while kept > 0 && !rows[kept - 1].iter().any(present) {
+        kept -= 1;
+    }
+    if kept == 0 {
+        return None;
+    }
+    let last_data = header_row + kept;
+    let own_row = header_row + 1 + last;
+    let mut cells = Vec::new();
+    for (column, cell) in rows[last].iter().enumerate() {
+        if let Some(formula) = cell.formula.as_deref() {
+            let aggregate = column_aggregate(formula, column, header_row, last_data, own_row)?;
+            cells.push(SummaryCell {
+                column: u32::try_from(column).ok()?,
+                aggregate,
+                formula: formula.to_owned(),
+            });
+        } else if !matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. }) {
+            return None;
+        }
+    }
+    if cells.is_empty() {
+        return None;
+    }
+    Some((kept, cells))
+}
+
+fn column_aggregate(
+    formula: &str,
+    column: usize,
+    header_row: usize,
+    last_data: usize,
+    own_row: usize,
+) -> Option<SummaryAggregate> {
+    let source = formula.trim();
+    let source = source.strip_prefix('=').map_or(source, str::trim_start);
+    let (name, rest) = source.split_once('(')?;
+    let aggregate = match name.trim().to_ascii_uppercase().as_str() {
+        "SUM" => SummaryAggregate::Total,
+        "AVERAGE" => SummaryAggregate::Average,
+        "COUNT" => SummaryAggregate::Count,
+        "MIN" => SummaryAggregate::Min,
+        "MAX" => SummaryAggregate::Max,
+        _ => return None,
+    };
+    let range = rest.trim_end().strip_suffix(')')?;
+    let (start, end) = range.split_once(':')?;
+    let (start_column, start_row) = cell_reference(start)?;
+    let (end_column, end_row) = cell_reference(end)?;
+    let expected = column_name(column);
+    if !start_column.eq_ignore_ascii_case(&expected) || !end_column.eq_ignore_ascii_case(&expected)
+    {
+        return None;
+    }
+    if start_row != header_row && start_row != header_row + 1 {
+        return None;
+    }
+    if end_row < last_data || end_row >= own_row {
+        return None;
+    }
+    Some(aggregate)
+}
+
+fn cell_reference(source: &str) -> Option<(String, usize)> {
+    let mut source = source.trim();
+    if let Some(rest) = source.strip_prefix('$') {
+        source = rest;
+    }
+    let letters_len = source
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(source.len());
+    if letters_len == 0 {
+        return None;
+    }
+    let (letters, rest) = source.split_at(letters_len);
+    let rest = rest.strip_prefix('$').unwrap_or(rest);
+    if rest.is_empty() || !rest.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((letters.to_owned(), rest.parse().ok()?))
 }
 
 /// Every parsed source uses the same representation predicate as output. Existing
@@ -4061,9 +4336,10 @@ mod capacity_proof_tests {
     use std::fmt::Write;
 
     use super::{
-        CapacityXmlCount, ImportOptions, SourceColumn, SourceValue, capacity_auxiliary_xml_reserve,
-        capacity_header_bytes, capacity_header_limit, capacity_worksheet, export_xlsx, import_csv,
-        import_xlsx, plain_tag, st_xstring, validate_text_capacity,
+        CapacityXmlCount, ImportOptions, SourceColumn, SourceLayout, SourceValue,
+        capacity_auxiliary_xml_reserve, capacity_header_bytes, capacity_header_limit,
+        capacity_worksheet, export_xlsx, import_csv, import_xlsx, plain_tag, st_xstring,
+        validate_text_capacity,
     };
 
     #[test]
@@ -4084,6 +4360,7 @@ mod capacity_proof_tests {
                 })
                 .collect(),
             rows: Vec::new(),
+            layout: SourceLayout::default(),
         };
         assert_eq!(capacity_header_bytes(&wide_headers), 55);
         let mut csv = String::from("label,amount\n");
@@ -4201,11 +4478,11 @@ mod capacity_proof_tests {
 mod native_tables_output_tests {
     use super::{
         FidelityCategory, MAX_NATIVE_TABLES_EXPANDED_BYTES, MAX_NATIVE_TABLES_OUTPUT_BYTES,
-        NativeTablesCheck, OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue,
-        SourceWorkbook, date_from_serial, export_csv_for_profile, export_xlsx_for_profile,
-        import_xlsx, native_tables_caseless_key, native_tables_compatibility,
-        native_tables_trim_worksheet_name, validate_native_tables_csv, validate_native_tables_xlsx,
-        validate_output_for_profile,
+        NativeTablesCheck, OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet,
+        SourceValue, SourceWorkbook, date_from_serial, export_csv_for_profile,
+        export_xlsx_for_profile, import_xlsx, native_tables_caseless_key,
+        native_tables_compatibility, native_tables_trim_worksheet_name, validate_native_tables_csv,
+        validate_native_tables_xlsx, validate_output_for_profile,
     };
     use std::collections::BTreeSet;
     use std::io::{Cursor, Read, Write};
@@ -4223,6 +4500,7 @@ mod native_tables_output_tests {
                 })
                 .collect(),
             rows: vec![vec![SourceCell::default(); columns]; rows],
+            layout: SourceLayout::default(),
         }
     }
 

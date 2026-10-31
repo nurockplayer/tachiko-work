@@ -15,7 +15,7 @@ use serde::Deserialize;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
     OutputProfile, SourceWorkbook, export_csv, export_csv_for_profile, export_xlsx,
-    export_xlsx_for_profile, import_csv, import_xlsx,
+    export_xlsx_for_profile, import_csv, import_xlsx_with,
 };
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply, FailureProjection,
@@ -442,7 +442,7 @@ fn import_source(
     }
     match format {
         SpreadsheetFormat::Csv => import_csv(source, options),
-        SpreadsheetFormat::Xlsx => import_xlsx(source),
+        SpreadsheetFormat::Xlsx => import_xlsx_with(source, options),
     }
     .map_err(interop_error)
 }

@@ -2012,6 +2012,7 @@ fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() 
                     &ImportOptions {
                         delimiter: ',',
                         header: true,
+                        ..ImportOptions::default()
                     },
                 )
                 .unwrap();

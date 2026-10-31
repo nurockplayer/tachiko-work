@@ -2,7 +2,7 @@
 //! blank, clear, requiredness, export and import authority as optional Text and
 //! Number (ADR-0045 amendment). Blank stays distinct from `false` and any date.
 use super::interop_adapter::{
-    CellStyle, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
+    CellStyle, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue, SourceWorkbook,
 };
 use super::{
     CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget,
@@ -302,6 +302,7 @@ fn blank_optional_workbook(columns: &[&str], rows: &[Vec<SourceValue>]) -> Sourc
                 .iter()
                 .map(|row| row.iter().cloned().map(cell).collect())
                 .collect(),
+            layout: SourceLayout::default(),
         }],
     }
 }

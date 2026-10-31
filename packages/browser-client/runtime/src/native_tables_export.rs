@@ -6,10 +6,10 @@ use tachiko_workspace_engine::{Document, FieldRef, FieldType, Value};
 
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, NativeTablesCheck, OutputProfile, SourceCell, SourceColumn,
-    SourceSheet, SourceWorkbook, csv_formula_text, export_csv_for_profile, export_xlsx_for_profile,
-    native_tables_caseless_key, native_tables_compatibility, native_tables_trim_worksheet_name,
-    native_tables_xlsx_number_findings, validate_native_tables_csv, validate_native_tables_xlsx,
-    validate_output_for_profile,
+    SourceLayout, SourceSheet, SourceWorkbook, csv_formula_text, export_csv_for_profile,
+    export_xlsx_for_profile, native_tables_caseless_key, native_tables_compatibility,
+    native_tables_trim_worksheet_name, native_tables_xlsx_number_findings,
+    validate_native_tables_csv, validate_native_tables_xlsx, validate_output_for_profile,
 };
 use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
@@ -394,6 +394,7 @@ fn project_sheet(
         has_header: true,
         columns,
         rows,
+        layout: SourceLayout::default(),
     })
 }
 

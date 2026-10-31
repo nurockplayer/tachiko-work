@@ -600,7 +600,8 @@ fn deduplicate(
 
 use super::interop_adapter::{
     CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS, MAX_SHEETS,
-    OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
+    OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
+    SourceWorkbook,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use std::collections::BTreeMap;
@@ -1964,6 +1965,7 @@ fn validate_capacity_metadata(
             })
             .collect(),
         rows: Vec::new(),
+        layout: SourceLayout::default(),
     };
     let workbook = SourceWorkbook {
         sheets: vec![header],
@@ -2157,6 +2159,7 @@ impl DesignerRuntime {
                     })
                     .collect(),
                 rows,
+                layout: SourceLayout::default(),
             }],
             ledger: vec![FidelityFinding {
                 category: FidelityCategory::Converted,
@@ -2295,6 +2298,7 @@ impl DesignerRuntime {
                     })
                     .collect(),
                 rows,
+                layout: SourceLayout::default(),
             });
         }
         let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
