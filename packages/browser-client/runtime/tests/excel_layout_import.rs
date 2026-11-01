@@ -541,6 +541,11 @@ fn a_final_record_is_not_taken_for_a_total_row() {
         workbook.ledger
     );
 
+    // Without any label the row stays data too (review of #621).
+    let workbook = import_xlsx_with(&expense_book(""), &ImportOptions::default()).unwrap();
+    assert_eq!(workbook.sheets[0].layout.summary_row, None);
+    assert_eq!(workbook.sheets[0].rows.len(), 3);
+
     let workbook = import_xlsx_with(&expense_book("Total"), &ImportOptions::default()).unwrap();
     let sheet = &workbook.sheets[0];
     assert_eq!(sheet.rows.len(), 2);

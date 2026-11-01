@@ -3575,6 +3575,9 @@ fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Ve
     let last_data = header_row + kept;
     let own_row = header_row + 1 + last;
     let mut cells = Vec::new();
+    // A label such as "Total" is required: an unlabelled last row that sums
+    // the column above may be an ordinary record, so it stays data.
+    let mut labelled = false;
     for (column, cell) in rows[last].iter().enumerate() {
         if let Some(formula) = cell.formula.as_deref() {
             let aggregate = column_aggregate(formula, column, header_row, last_data, own_row)?;
@@ -3586,12 +3589,13 @@ fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Ve
         } else {
             match &cell.value {
                 SourceValue::Empty => {}
-                SourceValue::Text { value } if value.is_empty() || summary_label(value) => {}
+                SourceValue::Text { value } if value.is_empty() => {}
+                SourceValue::Text { value } if summary_label(value) => labelled = true,
                 _ => return None,
             }
         }
     }
-    if cells.is_empty() {
+    if cells.is_empty() || !labelled {
         return None;
     }
     Some((kept, cells))
