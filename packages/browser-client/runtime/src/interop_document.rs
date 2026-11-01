@@ -3046,8 +3046,13 @@ fn export_expression(
             let name = match function {
                 ColumnAggregateFunction::Average => "AVERAGE",
                 ColumnAggregateFunction::Count => "COUNT",
-                ColumnAggregateFunction::Minimum => "MIN",
-                ColumnAggregateFunction::Maximum => "MAX",
+                // Excel's range MIN/MAX is 0 over an all-blank column where
+                // Tachiko's fails, and import refuses it, so neither exports.
+                ColumnAggregateFunction::Minimum | ColumnAggregateFunction::Maximum => {
+                    return Err(tracker_error(
+                        "column minimum and maximum are outside the export mapping",
+                    ));
+                }
             };
             export_column(name, column, columns)
         }

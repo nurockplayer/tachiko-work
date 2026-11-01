@@ -326,6 +326,24 @@ fn household_summary_cells_bind_column_totals_and_export_as_sum_ranges() {
         Some("SUM('Feb'!$C$2:$C$9)")
     );
     export_xlsx(&exported).expect("the exported household workbook is XLSX");
+
+    // A column minimum has no exact Excel spelling, so export refuses it.
+    let summary = &imported.metadata.sheets[2];
+    runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: imported.opened.bootstrap.revision.clone(),
+            target: tachiko_designer_runtime::FieldTarget {
+                entity: summary.rows[0].entity_id.clone(),
+                field: summary.columns[1].field_id.clone(),
+            },
+            source: "[sheet_1.column_3:min]".into(),
+        })
+        .unwrap();
+    assert!(
+        runtime
+            .export_workbook("resident/1", &imported.metadata)
+            .is_err()
+    );
 }
 
 #[test]
