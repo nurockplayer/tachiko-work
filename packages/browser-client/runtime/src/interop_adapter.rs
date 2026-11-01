@@ -3585,6 +3585,9 @@ fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Ve
     for (column, cell) in rows[last].iter().enumerate() {
         if let Some(formula) = cell.formula.as_deref() {
             let aggregate = column_aggregate(formula, column, header_row, last_data, own_row)?;
+            if !numeric_column(&rows[..last], column) {
+                return None;
+            }
             cells.push(SummaryCell {
                 column: u32::try_from(column).ok()?,
                 aggregate,
@@ -3811,7 +3814,21 @@ pub(crate) fn whole_column_argument(
     {
         return None;
     }
-    Some((target, column_index(&start_column)?))
+    let column = column_index(&start_column)?;
+    numeric_column(&sheet.rows, column).then_some((target, column))
+}
+
+/// Excel's SUM/AVERAGE/COUNT skip text, Yes/No and dates in a range, while a
+/// column aggregate would count them once converted, so only a column of
+/// numbers and blanks keeps the same meaning.
+fn numeric_column(rows: &[Vec<SourceCell>], column: usize) -> bool {
+    rows.iter().all(|row| {
+        row.get(column).is_none_or(|cell| match &cell.value {
+            SourceValue::Empty | SourceValue::Number { .. } => true,
+            SourceValue::Text { value } => value.is_empty(),
+            _ => false,
+        })
+    })
 }
 
 /// Every SUM, AVERAGE or COUNT call, and every MIN/MAX call whose argument holds

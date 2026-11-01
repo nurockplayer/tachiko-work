@@ -682,3 +682,29 @@ fn an_incomplete_header_is_not_taken_for_a_title() {
             .any(|finding| finding.code == "rows_above_header_skipped")
     );
 }
+
+#[test]
+fn a_column_holding_text_keeps_its_total_refused() {
+    // Review of #621: Excel's SUM skips the text "3" while a Number column
+    // total would count it once converted, so neither shape binds.
+    let bytes = mutate(&household(), "xl/worksheets/sheet1.xml", |xml| {
+        let start = xml.find("<c r=\"C2\"").unwrap();
+        let end = start + xml[start..].find("</c>").unwrap() + 4;
+        format!(
+            "{}<c r=\"C2\" t=\"inlineStr\"><is><t>3</t></is></c>{}",
+            &xml[..start],
+            &xml[end..]
+        )
+    });
+    let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
+    assert_eq!(workbook.sheets[0].layout.summary_row, None);
+    assert!(
+        workbook.ledger.iter().any(|finding| {
+            finding.code == "unsupported_formula_function"
+                && finding.location == "Jan!C10"
+                && finding.blocking
+        }),
+        "{:?}",
+        workbook.ledger
+    );
+}
