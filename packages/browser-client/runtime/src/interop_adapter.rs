@@ -714,6 +714,24 @@ pub(crate) fn native_tables_compatibility(
     Ok(NativeTablesCompatibility::default())
 }
 
+/// Strips the optional `:$COL$ROW` end of a whole-column reference.
+fn strip_column_range(source: &str) -> Option<&str> {
+    let Some(end) = source.strip_prefix(":$") else {
+        return Some(source);
+    };
+    let columns = end.bytes().take_while(u8::is_ascii_uppercase).count();
+    if columns == 0 {
+        return None;
+    }
+    let end = &end[columns..];
+    let row = end.strip_prefix('$')?;
+    let digits = row.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    Some(&row[digits..])
+}
+
 /// Inventory the closed formula wire grammar, independently of its cached
 /// result. Quoted worksheet references are names, never strings or numbers.
 /// A future serializer token outside this grammar refuses until it is governed.
@@ -772,7 +790,13 @@ fn compatible_formula(
                 return Err(refuse());
             }
             remaining = &remaining[rows..];
-        } else if remaining.starts_with("MIN(")
+            // A column reference is followed by an optional whole-column range
+            // end in the same `$COL$ROW` shape.
+            remaining = strip_column_range(remaining).ok_or_else(refuse)?;
+        } else if remaining.starts_with("SUM(")
+            || remaining.starts_with("AVERAGE(")
+            || remaining.starts_with("COUNT(")
+            || remaining.starts_with("MIN(")
             || remaining.starts_with("MAX(")
             || remaining.starts_with("IF(")
             || remaining.starts_with("AND(")
@@ -1242,6 +1266,59 @@ pub struct SourceSheet {
     pub columns: Vec<SourceColumn>,
     /// Data rows exclude the header and retain every intervening empty source row/column.
     pub rows: Vec<Vec<SourceCell>>,
+    #[serde(default, skip_serializing_if = "SourceLayout::is_default")]
+    pub layout: SourceLayout,
+}
+/// Where the imported grid sat in the source worksheet.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceLayout {
+    /// Source rows above the header that were not imported (title or blank rows).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rows_above_header: u32,
+    /// A trailing summary row recognised and left out of the data rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_row: Option<SummaryRow>,
+}
+impl SourceLayout {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference.
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryRow {
+    /// 1-based source row.
+    pub row: u32,
+    pub cells: Vec<SummaryCell>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryCell {
+    /// 0-based column.
+    pub column: u32,
+    pub aggregate: SummaryAggregate,
+    /// Source formula text, as in `SourceCell::formula`.
+    pub formula: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryAggregate {
+    Total,
+    Average,
+    Count,
+}
+impl SummaryAggregate {
+    #[must_use]
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Total => "total",
+            Self::Average => "average",
+            Self::Count => "count",
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceColumn {
@@ -1307,12 +1384,21 @@ pub struct FidelityFinding {
 pub struct ImportOptions {
     pub delimiter: char,
     pub header: bool,
+    /// XLSX only: 1-based source row of each sheet's header, by sheet position.
+    /// A missing or `None` entry detects it (title and blank rows above are skipped).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_rows: Vec<Option<u32>>,
+    /// XLSX only: import a recognised summary row as an ordinary data row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_summary_rows: bool,
 }
 impl Default for ImportOptions {
     fn default() -> Self {
         Self {
             delimiter: ',',
             header: true,
+            header_rows: Vec::new(),
+            keep_summary_rows: false,
         }
     }
 }
@@ -1355,6 +1441,9 @@ fn source_bound(bytes: &[u8]) -> Result<()> {
 /// Rejects invalid UTF-8, quoting, headers or profile bounds.
 #[allow(clippy::too_many_lines)] // One bounded delimiter state machine.
 pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
+    if !options.header_rows.is_empty() || options.keep_summary_rows {
+        return fail("header_rows and keep_summary_rows apply to XLSX only");
+    }
     source_bound(bytes)?;
     if ![',', ';', '\t'].contains(&options.delimiter) {
         return fail("Unsupported CSV delimiter");
@@ -1472,6 +1561,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
             has_header: options.header,
             columns,
             rows,
+            layout: SourceLayout::default(),
         }],
         ledger: vec![
             finding(
@@ -2963,8 +3053,16 @@ fn inventory_hidden(
 /// Inspect all bounded worksheets and produce the sole fidelity admission ledger.
 /// # Errors
 /// Rejects malformed archives/XML, unresolved relationships and resource limits.
-#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
 pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
+    import_xlsx_with(bytes, &ImportOptions::default())
+}
+
+/// Inspect all bounded worksheets under explicit import options.
+/// # Errors
+/// Rejects malformed archives/XML, unresolved relationships, resource limits and
+/// header or summary-row options that do not fit the workbook.
+#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
+pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
     let parts = archive(bytes)?;
     let mut ledger = Vec::new();
     let workbook = xml_part(&parts, "xl/workbook.xml", "workbook", MAIN)?;
@@ -3009,11 +3107,14 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     if sheet_nodes.is_empty() || sheet_nodes.len() > MAX_SHEETS {
         return fail("Workbook must have 1..=4 sheets");
     }
+    if options.header_rows.len() > sheet_nodes.len() {
+        return fail("header_rows has more entries than the workbook has sheets");
+    }
     let mut sheets = Vec::new();
     let mut worksheet_paths = BTreeSet::new();
     let mut formula_count = 0;
     let mut names = BTreeSet::new();
-    for sheet in sheet_nodes {
+    for (sheet_index, sheet) in sheet_nodes.into_iter().enumerate() {
         let name = sheet
             .attr("name")
             .ok_or_else(|| InteropError::Invalid("Missing worksheet name".into()))?
@@ -3182,7 +3283,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                             true,
                         ));
                         value = SourceValue::Empty;
-                    } else if unsupported_formula_function(&f.text) {
+                    } else if unsupported_formula_function(&f.text, true) {
                         ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"unsupported_formula_function",&location,"Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding",true));
                         value = SourceValue::Empty;
                     }
@@ -3203,13 +3304,73 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         for row in &mut rows {
             row.resize(width, SourceCell::default());
         }
+        let above = match options.header_rows.get(sheet_index).copied().flatten() {
+            Some(row) => {
+                let row = usize::try_from(row).unwrap_or(usize::MAX);
+                if row == 0 || row > rows.len() {
+                    return fail(format!("Header row {row} is outside worksheet {name}"));
+                }
+                row - 1
+            }
+            None => rows_above_header(&rows, width),
+        };
+        if above > 0 {
+            // The skipped rows are not imported, so their cell findings cannot block.
+            let mut excluded = BTreeSet::new();
+            for row in 1..=above {
+                for column in 0..width {
+                    excluded.insert(format!("{name}!{}{}", column_name(column), row));
+                }
+            }
+            ledger.retain(|finding| !excluded.contains(&finding.location));
+            rows.drain(..above);
+            ledger.push(finding(
+                FidelityCategory::LossyOnExport,
+                "rows_above_header_skipped",
+                &format!("{name}!1:{above}"),
+                "Rows above the header (title or blank rows) are not imported; export writes the header in row 1",
+                false,
+            ));
+        }
         let header = rows.remove(0);
+        let mut layout = SourceLayout {
+            rows_above_header: u32::try_from(above)
+                .map_err(|_| InteropError::Invalid("Header offset exceeds the row bound".into()))?,
+            summary_row: None,
+        };
+        if !options.keep_summary_rows {
+            if let Some((kept, cells)) = summary_row(&rows, above + 1) {
+                let source_row = above + 1 + rows.len();
+                // The excluded rows' findings describe cells that do not become data.
+                let mut excluded = BTreeSet::new();
+                for i in kept..rows.len() {
+                    for column in 0..width {
+                        excluded.insert(format!("{name}!{}{}", column_name(column), above + 2 + i));
+                    }
+                }
+                ledger.retain(|f| !excluded.contains(&f.location));
+                ledger.push(finding(
+                    FidelityCategory::LossyOnExport,
+                    "summary_row_excluded",
+                    &format!("{name}!{source_row}"),
+                    "This row totals the column above it (SUM, AVERAGE or COUNT), so it is not imported as a data row. Tachiko shows column totals; export does not write this row. Choose keep_summary_rows to import it as data.",
+                    false,
+                ));
+                rows.truncate(kept);
+                layout.summary_row = Some(SummaryRow {
+                    row: u32::try_from(source_row).map_err(|_| {
+                        InteropError::Invalid("Summary row exceeds the row bound".into())
+                    })?,
+                    cells,
+                });
+            }
+        }
         let mut capacity_plain = header.iter().all(|cell| cell.style == CellStyle::default());
         let mut headers = BTreeSet::new();
         let mut columns = Vec::new();
         for (i, c) in header.into_iter().enumerate() {
             if c.style != CellStyle::default() {
-                ledger.push(finding(FidelityCategory::LossyOnExport,"header_style_not_preserved",&format!("{name}!{}1",column_name(i)),"Header text is retained; source header styling remains in original source bytes",false));
+                ledger.push(finding(FidelityCategory::LossyOnExport,"header_style_not_preserved",&format!("{name}!{}{}",column_name(i),above+1),"Header text is retained; source header styling remains in original source bytes",false));
             }
             let title = match c.value {
                 SourceValue::Text { value } if !value.is_empty() && c.formula.is_none() => value,
@@ -3217,7 +3378,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     ledger.push(finding(
                         FidelityCategory::UnsupportedSafeDisabled,
                         "invalid_header",
-                        &format!("{name}!{}1", column_name(i)),
+                        &format!("{name}!{}{}", column_name(i), above + 1),
                         "XLSX profile requires a nonempty Text, nonformula header",
                         true,
                     ));
@@ -3330,8 +3491,10 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             has_header: true,
             columns,
             rows,
+            layout,
         });
     }
+    refuse_foreign_aggregates(&mut sheets, &mut ledger);
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
     let plain = capacity_plain_parts(&parts)?;
     // Parser-derived classification replaces the existing record with a shorter
@@ -3352,6 +3515,479 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         return Ok(workbook);
     }
     Ok(finish_source_admission(workbook))
+}
+
+/// Leading title rows are skipped only when a complete header follows them.
+const MAX_DETECTED_ROWS_ABOVE_HEADER: usize = 10;
+
+fn present(cell: &SourceCell) -> bool {
+    cell.formula.is_some() || !matches!(cell.value, SourceValue::Empty)
+}
+
+/// A title row holds no cell, or exactly one non-formula Text cell in column A.
+fn title_or_blank(row: &[SourceCell]) -> bool {
+    let mut present = row.iter().enumerate().filter(|(_, cell)| present(cell));
+    match (present.next(), present.next()) {
+        (None, _) => true,
+        (Some((column, cell)), None) => {
+            column == 0
+                && cell.formula.is_none()
+                && matches!(&cell.value, SourceValue::Text { value } if !value.is_empty())
+        }
+        _ => false,
+    }
+}
+
+fn rows_above_header(rows: &[Vec<SourceCell>], width: usize) -> usize {
+    if width < 2 {
+        return 0;
+    }
+    let lead = rows
+        .iter()
+        .take(MAX_DETECTED_ROWS_ABOVE_HEADER + 1)
+        .take_while(|row| title_or_blank(row))
+        .count();
+    if lead == 0 || lead > MAX_DETECTED_ROWS_ABOVE_HEADER {
+        return 0;
+    }
+    // A title directly above the header could be an incomplete header such as
+    // `Name | (blank)` over a first record, so a blank row must separate them;
+    // other layouts choose `header_rows` explicitly.
+    if rows[lead - 1].iter().any(present) {
+        return 0;
+    }
+    // Detected rows are only skipped when a complete header follows them.
+    match rows.get(lead) {
+        Some(row)
+            if row.iter().all(|cell| {
+                cell.formula.is_none()
+                    && matches!(&cell.value, SourceValue::Text { value } if !value.is_empty())
+            }) =>
+        {
+            lead
+        }
+        _ => 0,
+    }
+}
+
+/// Cell text that labels a trailing Total row, after trimming and ASCII lowercasing.
+const SUMMARY_LABELS: &[&str] = &[
+    "total",
+    "totals",
+    "grand total",
+    "sum",
+    "subtotal",
+    "sub-total",
+    "sub total",
+    "average",
+    "avg",
+    "mean",
+    "count",
+    "min",
+    "max",
+    "minimum",
+    "maximum",
+    "合計",
+    "合计",
+    "總計",
+    "总计",
+    "総計",
+    "小計",
+    "小计",
+    "平均",
+    "計",
+    "计",
+    "件数",
+    "個数",
+    "筆數",
+    "笔数",
+];
+
+fn summary_label(value: &str) -> bool {
+    let value = value.trim();
+    let value = value
+        .strip_suffix(':')
+        .or_else(|| value.strip_suffix('：'))
+        .unwrap_or(value);
+    SUMMARY_LABELS.contains(&value.to_ascii_lowercase().as_str())
+}
+
+/// `rows` holds data rows only; `header_row` is the 1-based source row of the header.
+fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Vec<SummaryCell>)> {
+    let last = rows.len().checked_sub(1)?;
+    let mut kept = last;
+    while kept > 0 && !rows[kept - 1].iter().any(present) {
+        kept -= 1;
+    }
+    if kept == 0 {
+        return None;
+    }
+    // The aggregate must cover every row above it, blank ones included, so the
+    // column total it becomes means the same rows.
+    let last_data = header_row + last;
+    let own_row = header_row + 1 + last;
+    let mut cells = Vec::new();
+    // A label such as "Total" is required: an unlabelled last row that sums
+    // the column above may be an ordinary record, so it stays data.
+    let mut labelled = false;
+    for (column, cell) in rows[last].iter().enumerate() {
+        if let Some(formula) = cell.formula.as_deref() {
+            let aggregate = column_aggregate(formula, column, header_row, last_data, own_row)?;
+            if !numeric_column(&rows[..last], column) {
+                return None;
+            }
+            cells.push(SummaryCell {
+                column: u32::try_from(column).ok()?,
+                aggregate,
+                formula: formula.to_owned(),
+            });
+        } else {
+            match &cell.value {
+                SourceValue::Empty => {}
+                SourceValue::Text { value } if value.is_empty() => {}
+                SourceValue::Text { value } if summary_label(value) => labelled = true,
+                _ => return None,
+            }
+        }
+    }
+    if cells.is_empty() || !labelled {
+        return None;
+    }
+    // Blank rows between the data and the summary stay data rows, as other
+    // intervening blank rows do; only the summary row itself is left out.
+    Some((last, cells))
+}
+
+fn column_aggregate(
+    formula: &str,
+    column: usize,
+    header_row: usize,
+    last_data: usize,
+    own_row: usize,
+) -> Option<SummaryAggregate> {
+    let source = formula.trim();
+    let source = source.strip_prefix('=').map_or(source, str::trim_start);
+    let (name, rest) = source.split_once('(')?;
+    let aggregate = match name.trim().to_ascii_uppercase().as_str() {
+        "SUM" => SummaryAggregate::Total,
+        "AVERAGE" => SummaryAggregate::Average,
+        "COUNT" => SummaryAggregate::Count,
+        _ => return None,
+    };
+    let range = rest.trim_end().strip_suffix(')')?;
+    let (start, end) = range.split_once(':')?;
+    let (start_column, start_row) = cell_reference(start)?;
+    let (end_column, end_row) = cell_reference(end)?;
+    let expected = column_name(column);
+    if !start_column.eq_ignore_ascii_case(&expected) || !end_column.eq_ignore_ascii_case(&expected)
+    {
+        return None;
+    }
+    if start_row != header_row && start_row != header_row + 1 {
+        return None;
+    }
+    if end_row < last_data || end_row >= own_row {
+        return None;
+    }
+    Some(aggregate)
+}
+
+fn cell_reference(source: &str) -> Option<(String, usize)> {
+    let mut source = source.trim();
+    if let Some(rest) = source.strip_prefix('$') {
+        source = rest;
+    }
+    let letters_len = source
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(source.len());
+    if letters_len == 0 {
+        return None;
+    }
+    let (letters, rest) = source.split_at(letters_len);
+    let rest = rest.strip_prefix('$').unwrap_or(rest);
+    if rest.is_empty() || !rest.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((letters.to_owned(), rest.parse().ok()?))
+}
+
+fn skip_whitespace(source: &str, mut cursor: usize) -> usize {
+    while let Some(character) = source[cursor..].chars().next() {
+        if !character.is_whitespace() {
+            break;
+        }
+        cursor += character.len_utf8();
+    }
+    cursor
+}
+
+/// Byte length of the `$?COL$?ROW` reference at the start of `source`, with
+/// leading whitespace included and trailing whitespace excluded.
+fn cell_reference_span(source: &str) -> Option<usize> {
+    let mut cursor = source.len() - source.trim_start().len();
+    if source[cursor..].starts_with('$') {
+        cursor += 1;
+    }
+    let letters = source[cursor..]
+        .bytes()
+        .take_while(u8::is_ascii_alphabetic)
+        .count();
+    if letters == 0 {
+        return None;
+    }
+    cursor += letters;
+    if source[cursor..].starts_with('$') {
+        cursor += 1;
+    }
+    let digits = source[cursor..]
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .count();
+    if digits == 0 {
+        return None;
+    }
+    Some(cursor + digits)
+}
+
+/// 0-based column of an A1 column name.
+fn column_index(letters: &str) -> Option<usize> {
+    letters
+        .bytes()
+        .try_fold(0usize, |index, letter| {
+            index.checked_mul(26)?.checked_add(usize::from(
+                letter.to_ascii_uppercase().checked_sub(b'A')? + 1,
+            ))
+        })?
+        .checked_sub(1)
+}
+
+/// The balanced argument of the call at the start of `source` (`(...)`), with
+/// quoted text and nested calls skipped; returns it and the bytes through `)`.
+pub(crate) fn call_argument(source: &str) -> Option<(&str, usize)> {
+    let body = source.strip_prefix('(')?;
+    let mut depth = 0usize;
+    let mut cursor = 0;
+    let mut quote = None;
+    while let Some(character) = body[cursor..].chars().next() {
+        cursor += character.len_utf8();
+        match quote {
+            Some(open) if character == open => {
+                if open == '\'' && body[cursor..].starts_with('\'') {
+                    cursor += 1;
+                } else {
+                    quote = None;
+                }
+            }
+            Some(_) => {}
+            None => match character {
+                '\'' | '"' => quote = Some(character),
+                '(' => depth += 1,
+                ')' if depth == 0 => return Some((&body[..cursor - 1], cursor + 1)),
+                ')' => depth -= 1,
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// `argument` is the exact argument of an aggregate call. It must be one range
+/// covering exactly one whole data column of a sheet; returns that sheet and column.
+pub(crate) fn whole_column_argument(
+    argument: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+) -> Option<(usize, usize)> {
+    let mut cursor = skip_whitespace(argument, 0);
+    let mut named = None;
+    if argument[cursor..].starts_with('\'') {
+        cursor += 1;
+        let mut name = String::new();
+        loop {
+            let character = argument[cursor..].chars().next()?;
+            cursor += character.len_utf8();
+            if character != '\'' {
+                name.push(character);
+            } else if argument[cursor..].starts_with('\'') {
+                name.push('\'');
+                cursor += 1;
+            } else {
+                break;
+            }
+        }
+        if !argument[cursor..].starts_with('!') {
+            return None;
+        }
+        cursor += 1;
+        named = Some(name);
+    } else {
+        let start = cursor;
+        while let Some(character) = argument[cursor..].chars().next() {
+            if !(character.is_ascii_alphanumeric() || character == '_' || character == '.') {
+                break;
+            }
+            cursor += character.len_utf8();
+        }
+        if cursor > start && argument[cursor..].starts_with('!') {
+            named = Some(argument[start..cursor].to_owned());
+            cursor += 1;
+        } else {
+            cursor = start;
+        }
+    }
+    let span = cell_reference_span(&argument[cursor..])?;
+    let (start_column, start_row) = cell_reference(&argument[cursor..cursor + span])?;
+    cursor = skip_whitespace(argument, cursor + span);
+    if !argument[cursor..].starts_with(':') {
+        return None;
+    }
+    cursor = skip_whitespace(argument, cursor + 1);
+    let span = cell_reference_span(&argument[cursor..])?;
+    let (end_column, end_row) = cell_reference(&argument[cursor..cursor + span])?;
+    if !argument[skip_whitespace(argument, cursor + span)..].is_empty() {
+        return None;
+    }
+    let target = match named {
+        Some(name) => sheets
+            .iter()
+            .position(|sheet| sheet.name.eq_ignore_ascii_case(&name))?,
+        None => current,
+    };
+    let sheet = sheets.get(target)?;
+    let above = usize::try_from(sheet.layout.rows_above_header).ok()?;
+    if sheet.rows.is_empty()
+        || !start_column.eq_ignore_ascii_case(&end_column)
+        || (start_row != above + 1 && start_row != above + 2)
+        || end_row != above + 1 + sheet.rows.len()
+    {
+        return None;
+    }
+    let column = column_index(&start_column)?;
+    numeric_column(&sheet.rows, column).then_some((target, column))
+}
+
+/// Excel's SUM/AVERAGE/COUNT skip text, Yes/No and dates in a range, while a
+/// column aggregate would count them once converted, so only a column of
+/// numbers and blanks keeps the same meaning.
+fn numeric_column(rows: &[Vec<SourceCell>], column: usize) -> bool {
+    rows.iter().all(|row| {
+        row.get(column).is_none_or(|cell| match &cell.value {
+            SourceValue::Empty | SourceValue::Number { .. } => true,
+            SourceValue::Text { value } => value.is_empty(),
+            _ => false,
+        })
+    })
+}
+
+/// Every SUM, AVERAGE or COUNT call, and every MIN/MAX call whose argument holds
+/// a range, must cover exactly one whole data column of a sheet.
+fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]) -> bool {
+    let mut cursor = 0;
+    while cursor < formula.len() {
+        let Some(character) = formula[cursor..].chars().next() else {
+            return false;
+        };
+        if character == '\'' || character == '"' {
+            cursor += character.len_utf8();
+            loop {
+                let Some(next) = formula[cursor..].chars().next() else {
+                    return false;
+                };
+                cursor += next.len_utf8();
+                if next != character {
+                    continue;
+                }
+                if character == '\'' && formula[cursor..].starts_with('\'') {
+                    cursor += 1;
+                } else {
+                    break;
+                }
+            }
+        } else if character.is_ascii_alphabetic() || character == '_' || character == '.' {
+            let start = cursor;
+            while let Some(next) = formula[cursor..].chars().next() {
+                if !(next.is_ascii_alphanumeric() || next == '_' || next == '.') {
+                    break;
+                }
+                cursor += next.len_utf8();
+            }
+            let name = formula[start..cursor].to_ascii_uppercase();
+            let required = matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT");
+            // Excel's MIN/MAX of an all-blank range is 0 while a Tachiko column
+            // min/max fails, so a range MIN/MAX is never translated.
+            if required || matches!(name.as_str(), "MIN" | "MAX") {
+                let call = skip_whitespace(formula, cursor);
+                if formula[call..].starts_with('(') {
+                    let Some((argument, consumed)) = call_argument(&formula[call..]) else {
+                        return false;
+                    };
+                    if !required {
+                        // A range directly inside MIN/MAX is refused; nested
+                        // calls such as MIN(SUM(B2:B9),1) are scanned in turn.
+                        if top_level_colon(argument) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if whole_column_argument(argument, current, sheets).is_none() {
+                        return false;
+                    }
+                    cursor = call + consumed;
+                }
+            }
+        } else {
+            cursor += character.len_utf8();
+        }
+    }
+    true
+}
+
+/// Whether a call argument has a `:` outside nested calls and quoted text.
+fn top_level_colon(argument: &str) -> bool {
+    let mut depth = 0usize;
+    let mut quote = None;
+    for character in argument.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => {}
+            None => match character {
+                '\'' | '"' => quote = Some(character),
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                ':' if depth == 0 => return true,
+                _ => {}
+            },
+        }
+    }
+    false
+}
+
+/// A data-row aggregate outside the whole-column profile is refused as before.
+fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<FidelityFinding>) {
+    let mut refused = Vec::new();
+    for (sheet_index, sheet) in sheets.iter().enumerate() {
+        for (row_index, row) in sheet.rows.iter().enumerate() {
+            for (column, cell) in row.iter().enumerate() {
+                if let Some(formula) = cell.formula.as_deref() {
+                    if !whole_column_aggregates(formula, sheet_index, sheets) {
+                        refused.push((sheet_index, row_index, column));
+                    }
+                }
+            }
+        }
+    }
+    for (sheet_index, row_index, column) in refused {
+        let sheet = &mut sheets[sheet_index];
+        let above = usize::try_from(sheet.layout.rows_above_header).unwrap_or(usize::MAX);
+        let location = format!(
+            "{}!{}{}",
+            sheet.name,
+            column_name(column),
+            above + 2 + row_index
+        );
+        sheet.rows[row_index][column].value = SourceValue::Empty;
+        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled, "unsupported_formula_function", &location, "Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding", true));
+    }
 }
 
 /// Every parsed source uses the same representation predicate as output. Existing
@@ -3482,7 +4118,7 @@ fn value_text(value: &SourceValue) -> String {
         SourceValue::Boolean { value } => value.to_string(),
     }
 }
-fn unsupported_formula_function(source: &str) -> bool {
+fn unsupported_formula_function(source: &str, column_aggregates: bool) -> bool {
     // Inventory function names only, without parsing or evaluating expression semantics.
     let mut token = String::new();
     let mut quoted = false;
@@ -3498,9 +4134,10 @@ fn unsupported_formula_function(source: &str) -> bool {
         if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
             token.push(c);
         } else if c == '(' {
-            if !token.is_empty()
-                && !matches!(
-                    token.to_ascii_uppercase().as_str(),
+            if !token.is_empty() {
+                let name = token.to_ascii_uppercase();
+                let allowed = matches!(
+                    name.as_str(),
                     "MIN"
                         | "MAX"
                         | "IF"
@@ -3511,9 +4148,11 @@ fn unsupported_formula_function(source: &str) -> bool {
                         | "ISBLANK"
                         | "TRUE"
                         | "FALSE"
-                )
-            {
-                return true;
+                ) || (column_aggregates
+                    && matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT"));
+                if !allowed {
+                    return true;
+                }
             }
             token.clear();
         } else if !c.is_whitespace() {
@@ -3693,7 +4332,7 @@ pub(crate) fn validate_output_for_profile(
                     formulas += 1;
                     if formula.contains('[')
                         || formula.to_ascii_uppercase().contains("DDE(")
-                        || unsupported_formula_function(formula)
+                        || unsupported_formula_function(formula, true)
                     {
                         return fail("Unsafe or unsupported export formula");
                     }
@@ -4109,9 +4748,10 @@ mod capacity_proof_tests {
     use std::fmt::Write;
 
     use super::{
-        CapacityXmlCount, ImportOptions, SourceColumn, SourceValue, capacity_auxiliary_xml_reserve,
-        capacity_header_bytes, capacity_header_limit, capacity_worksheet, export_xlsx, import_csv,
-        import_xlsx, plain_tag, st_xstring, validate_text_capacity,
+        CapacityXmlCount, ImportOptions, SourceColumn, SourceLayout, SourceValue,
+        capacity_auxiliary_xml_reserve, capacity_header_bytes, capacity_header_limit,
+        capacity_worksheet, export_xlsx, import_csv, import_xlsx, plain_tag, st_xstring,
+        validate_text_capacity,
     };
 
     #[test]
@@ -4132,6 +4772,7 @@ mod capacity_proof_tests {
                 })
                 .collect(),
             rows: Vec::new(),
+            layout: SourceLayout::default(),
         };
         assert_eq!(capacity_header_bytes(&wide_headers), 55);
         let mut csv = String::from("label,amount\n");
@@ -4249,11 +4890,11 @@ mod capacity_proof_tests {
 mod native_tables_output_tests {
     use super::{
         FidelityCategory, MAX_NATIVE_TABLES_EXPANDED_BYTES, MAX_NATIVE_TABLES_OUTPUT_BYTES,
-        NativeTablesCheck, OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue,
-        SourceWorkbook, date_from_serial, export_csv_for_profile, export_xlsx_for_profile,
-        import_xlsx, native_tables_caseless_key, native_tables_compatibility,
-        native_tables_trim_worksheet_name, validate_native_tables_csv, validate_native_tables_xlsx,
-        validate_output_for_profile,
+        NativeTablesCheck, OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet,
+        SourceValue, SourceWorkbook, date_from_serial, export_csv_for_profile,
+        export_xlsx_for_profile, import_xlsx, native_tables_caseless_key,
+        native_tables_compatibility, native_tables_trim_worksheet_name, validate_native_tables_csv,
+        validate_native_tables_xlsx, validate_output_for_profile,
     };
     use std::collections::BTreeSet;
     use std::io::{Cursor, Read, Write};
@@ -4271,6 +4912,7 @@ mod native_tables_output_tests {
                 })
                 .collect(),
             rows: vec![vec![SourceCell::default(); columns]; rows],
+            layout: SourceLayout::default(),
         }
     }
 

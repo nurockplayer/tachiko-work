@@ -95,7 +95,8 @@ use tachiko_workspace_engine::patch_lifecycle::{
     ProposalRequest, SemanticPatchBody, SemanticRevision,
 };
 use tachiko_workspace_engine::{
-    Date, Document, EntityId, FieldId, FieldRef, FieldType, Number, Value,
+    ColumnAggregateFunction, ColumnRef, Date, Document, EntityId, FieldId, FieldRef, FieldType,
+    Number, Value,
 };
 
 impl DesignerRuntime {
@@ -600,7 +601,8 @@ fn deduplicate(
 
 use super::interop_adapter::{
     CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS, MAX_SHEETS,
-    OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
+    OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
+    SourceWorkbook, SummaryAggregate, SummaryRow, call_argument, whole_column_argument,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use std::collections::BTreeMap;
@@ -808,6 +810,7 @@ pub fn import_workbook(
         let (source, references) = translate_a1(
             &source,
             &metadata,
+            &workbook.sheets,
             sheet_index,
             runtime.session.export_snapshot().document(),
         )?;
@@ -1240,9 +1243,11 @@ fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, Designe
     Ok(name)
 }
 
+#[allow(clippy::too_many_lines)] // One token loop over the bounded A1 profile.
 fn translate_a1(
     source: &str,
     metadata: &InteropMetadata,
+    sources: &[SourceSheet],
     current_sheet: usize,
     document: &Document,
 ) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
@@ -1275,15 +1280,47 @@ fn translate_a1(
                 cursor += next.len_utf8();
             }
             let token = &source[token_start..cursor];
-            if sheet_name.is_none()
-                && !token.contains('!')
-                && matches!(
-                    token.to_ascii_uppercase().as_str(),
+            if sheet_name.is_none() && !token.contains('!') {
+                let name = token.to_ascii_uppercase();
+                let aggregate = match name.as_str() {
+                    "SUM" => Some(SummaryAggregate::Total),
+                    "AVERAGE" => Some(SummaryAggregate::Average),
+                    "COUNT" => Some(SummaryAggregate::Count),
+                    _ => None,
+                };
+                if let Some(aggregate) = aggregate {
+                    let call = skip_spaces(source, cursor);
+                    if source[call..].starts_with('(') {
+                        let (argument, consumed) = call_argument(&source[call..])
+                            .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+                        match whole_column_argument(argument, current_sheet, sources) {
+                            Some((sheet_index, column)) => {
+                                output.push_str(&column_aggregate_source(
+                                    aggregate,
+                                    column,
+                                    sheet_index,
+                                    metadata,
+                                    document,
+                                    &mut references,
+                                )?);
+                                cursor = call + consumed;
+                                continue;
+                            }
+                            None => {
+                                return Err(tracker_error(
+                                    "aggregate range must cover one whole data column",
+                                ));
+                            }
+                        }
+                    }
+                }
+                if matches!(
+                    name.as_str(),
                     "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
-                )
-            {
-                output.push_str(&token.to_ascii_lowercase());
-                continue;
+                ) {
+                    output.push_str(&name.to_ascii_lowercase());
+                    continue;
+                }
             }
             let (sheet_name, address) = if let Some(name) = sheet_name {
                 (Some(name), token)
@@ -1305,9 +1342,28 @@ fn translate_a1(
                 return Err(tracker_error("invalid source formula token"));
             }
             let (column, sheet_row) = parse_a1_address(address)?;
+            let layout = &sources
+                .get(sheet_index)
+                .ok_or_else(|| tracker_error("formula worksheet is unavailable"))?
+                .layout;
+            if let Some(summary) = layout.summary_row.as_ref().filter(|summary| {
+                usize::try_from(summary.row).is_ok_and(|row| row == sheet_row + 1)
+            }) {
+                output.push_str(&column_aggregate_source(
+                    summary_cell_aggregate(summary, column)?,
+                    column,
+                    sheet_index,
+                    metadata,
+                    document,
+                    &mut references,
+                )?);
+                continue;
+            }
+            let above = usize::try_from(layout.rows_above_header)
+                .map_err(|_| tracker_error("header offset exceeds the row bound"))?;
             let row = sheet_row
-                .checked_sub(usize::from(metadata.sheets[sheet_index].has_header))
-                .ok_or_else(|| tracker_error("formula cannot bind a header cell"))?;
+                .checked_sub(above + usize::from(metadata.sheets[sheet_index].has_header))
+                .ok_or_else(|| tracker_error("formula cannot bind a header or title cell"))?;
             let reference = metadata_target(metadata, sheet_index, row, column)?;
             // The shared binder checks numeric uses after translation, when it
             // can distinguish an ISBLANK presence probe from a numeric operand.
@@ -1346,6 +1402,71 @@ fn translate_a1(
         }
     }
     Ok((output, references))
+}
+
+fn skip_spaces(source: &str, mut cursor: usize) -> usize {
+    while let Some(character) = source[cursor..].chars().next() {
+        if !character.is_whitespace() {
+            break;
+        }
+        cursor += character.len_utf8();
+    }
+    cursor
+}
+
+/// The aggregate a source formula reads from one imported summary-row cell.
+fn summary_cell_aggregate(
+    summary: &SummaryRow,
+    column: usize,
+) -> Result<SummaryAggregate, DesignerError> {
+    summary
+        .cells
+        .iter()
+        .find(|cell| usize::try_from(cell.column).is_ok_and(|index| index == column))
+        .map(|cell| cell.aggregate)
+        .ok_or_else(|| {
+            tracker_error("formula refers to a cell of a summary row that is not imported")
+        })
+}
+
+/// The semantic spelling of one sheet column's aggregate, as
+/// `[schema.field:total]`, binding every row of that column.
+fn column_aggregate_source(
+    aggregate: SummaryAggregate,
+    column: usize,
+    sheet_index: usize,
+    metadata: &InteropMetadata,
+    document: &Document,
+    references: &mut BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
+    let sheet = metadata
+        .sheets
+        .get(sheet_index)
+        .ok_or_else(|| tracker_error("formula worksheet is unavailable"))?;
+    let field_id = &sheet
+        .columns
+        .get(column)
+        .ok_or_else(|| tracker_error("formula column is outside source data"))?
+        .field_id;
+    let schema = document
+        .schemas
+        .get(&SchemaId::from(sheet.schema_id.clone()))
+        .ok_or_else(|| tracker_error("formula worksheet schema is unavailable"))?;
+    let field = schema
+        .fields
+        .get(&FieldId::from(field_id.clone()))
+        .ok_or_else(|| tracker_error("formula field is unavailable"))?;
+    // Binding after every cell formula of the column keeps a formula column
+    // bound before a total that reads it.
+    for row in &sheet.rows {
+        references.insert(FieldRef::new(row.entity_id.clone(), field_id.clone()));
+    }
+    Ok(format!(
+        "[{}.{}:{}]",
+        schema.key.as_str(),
+        field.key.as_str(),
+        aggregate.suffix()
+    ))
 }
 
 fn parse_a1_address(address: &str) -> Result<(usize, usize), DesignerError> {
@@ -1964,6 +2085,7 @@ fn validate_capacity_metadata(
             })
             .collect(),
         rows: Vec::new(),
+        layout: SourceLayout::default(),
     };
     let workbook = SourceWorkbook {
         sheets: vec![header],
@@ -2157,6 +2279,7 @@ impl DesignerRuntime {
                     })
                     .collect(),
                 rows,
+                layout: SourceLayout::default(),
             }],
             ledger: vec![FidelityFinding {
                 category: FidelityCategory::Converted,
@@ -2199,6 +2322,9 @@ impl DesignerRuntime {
         // The caller holds the exact immutable snapshot already used for
         // metadata admission. No second owned document is needed here.
         let mut addresses = BTreeMap::new();
+        // One whole-column range per exported column, so a column total keeps
+        // meaning every exported row instead of the rows present today.
+        let mut columns = BTreeMap::new();
         // Capacity admission excludes formulas, the sole consumers of A1
         // addresses. Other profiles retain their full reference index.
         for sheet in metadata
@@ -2206,12 +2332,34 @@ impl DesignerRuntime {
             .iter()
             .filter(|_| profile != OutputProfile::TextCapacity && !values_only)
         {
-            let present = sheet.rows.iter().filter(|row| {
-                document
-                    .entities
-                    .contains_key(&EntityId::from(row.entity_id.clone()))
-            });
-            for (row_index, row) in present.enumerate() {
+            let present: Vec<_> = sheet
+                .rows
+                .iter()
+                .filter(|row| {
+                    document
+                        .entities
+                        .contains_key(&EntityId::from(row.entity_id.clone()))
+                })
+                .collect();
+            let first = 1 + usize::from(sheet.has_header);
+            let last = present.len() + usize::from(sheet.has_header);
+            for (column, definition) in sheet.columns.iter().enumerate() {
+                let letters = column_letters(column);
+                // An exported table without rows maps its columns to no range.
+                let range = if present.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "'{}'!${letters}${first}:${letters}${last}",
+                        sheet.name.replace('\'', "''")
+                    )
+                };
+                columns.insert(
+                    ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
+                    range,
+                );
+            }
+            for (row_index, row) in present.iter().enumerate() {
                 for (column, definition) in sheet.columns.iter().enumerate() {
                     addresses.insert(
                         FieldRef::new(row.entity_id.clone(), definition.field_id.clone()),
@@ -2246,7 +2394,9 @@ impl DesignerRuntime {
                         let formula = if values_only {
                             None
                         } else {
-                            Some(export_expression(expression, &target, &addresses)?)
+                            Some(export_expression(
+                                expression, &target, &addresses, &columns,
+                            )?)
                         };
                         if formula
                             .as_ref()
@@ -2295,6 +2445,7 @@ impl DesignerRuntime {
                     })
                     .collect(),
                 rows,
+                layout: SourceLayout::default(),
             });
         }
         let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
@@ -2878,6 +3029,7 @@ fn export_expression(
     expression: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
     match expression {
         Expression::Number(number) => Ok(number.get().to_string()),
@@ -2889,53 +3041,90 @@ fn export_expression(
             .get(reference)
             .cloned()
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
-        // Column totals have no per-cell interop spelling, so an export that
-        // meets one refuses rather than emitting a formula that means less.
-        Expression::ColumnTotal(_) | Expression::ColumnAggregate { .. } => Err(tracker_error(
-            "column totals are outside the export mapping",
-        )),
-        Expression::Add { left, right } => export_binary(left, "+", right, owner, addresses),
-        Expression::Subtract { left, right } => export_binary(left, "-", right, owner, addresses),
-        Expression::Multiply { left, right } => export_binary(left, "*", right, owner, addresses),
-        Expression::Divide { left, right } => export_binary(left, "/", right, owner, addresses),
+        Expression::ColumnTotal(column) => export_column("SUM", column, columns),
+        Expression::ColumnAggregate { function, column } => {
+            let name = match function {
+                ColumnAggregateFunction::Average => "AVERAGE",
+                ColumnAggregateFunction::Count => "COUNT",
+                // Excel's range MIN/MAX is 0 over an all-blank column where
+                // Tachiko's fails, and import refuses it, so neither exports.
+                ColumnAggregateFunction::Minimum | ColumnAggregateFunction::Maximum => {
+                    return Err(tracker_error(
+                        "column minimum and maximum are outside the export mapping",
+                    ));
+                }
+            };
+            export_column(name, column, columns)
+        }
+        Expression::Add { left, right } => {
+            export_binary(left, "+", right, owner, addresses, columns)
+        }
+        Expression::Subtract { left, right } => {
+            export_binary(left, "-", right, owner, addresses, columns)
+        }
+        Expression::Multiply { left, right } => {
+            export_binary(left, "*", right, owner, addresses, columns)
+        }
+        Expression::Divide { left, right } => {
+            export_binary(left, "/", right, owner, addresses, columns)
+        }
         Expression::Minimum { left, right } => Ok(format!(
             "MIN({},{})",
-            export_expression(left, owner, addresses)?,
-            export_expression(right, owner, addresses)?
+            export_expression(left, owner, addresses, columns)?,
+            export_expression(right, owner, addresses, columns)?
         )),
         Expression::Maximum { left, right } => Ok(format!(
             "MAX({},{})",
-            export_expression(left, owner, addresses)?,
-            export_expression(right, owner, addresses)?
+            export_expression(left, owner, addresses, columns)?,
+            export_expression(right, owner, addresses, columns)?
         )),
         Expression::Compare {
             operator,
             left,
             right,
-        } => export_binary(left, operator.as_str(), right, owner, addresses),
+        } => export_binary(left, operator.as_str(), right, owner, addresses, columns),
         Expression::If {
             condition,
             then_value,
             else_value,
         } => Ok(format!(
             "IF({},{},{})",
-            export_expression(condition, owner, addresses)?,
-            export_expression(then_value, owner, addresses)?,
-            export_expression(else_value, owner, addresses)?
+            export_expression(condition, owner, addresses, columns)?,
+            export_expression(then_value, owner, addresses, columns)?,
+            export_expression(else_value, owner, addresses, columns)?
         )),
-        Expression::And(conditions) => export_function("AND", conditions, owner, addresses),
-        Expression::Or(conditions) => export_function("OR", conditions, owner, addresses),
+        Expression::And(conditions) => {
+            export_function("AND", conditions, owner, addresses, columns)
+        }
+        Expression::Or(conditions) => export_function("OR", conditions, owner, addresses, columns),
         Expression::Not(condition) => Ok(format!(
             "NOT({})",
-            export_expression(condition, owner, addresses)?
+            export_expression(condition, owner, addresses, columns)?
         )),
         Expression::Round { value, digits } => Ok(format!(
             "ROUND({},{digits})",
-            export_expression(value, owner, addresses)?
+            export_expression(value, owner, addresses, columns)?
         )),
         Expression::IsBlank(reference) => Ok(format!(
             "ISBLANK({})",
-            export_expression(reference, owner, addresses)?
+            export_expression(reference, owner, addresses, columns)?
+        )),
+    }
+}
+
+/// A column total exports as the aggregate over the column's whole exported
+/// range, the same meaning the semantic node keeps.
+fn export_column(
+    name: &str,
+    column: &ColumnRef,
+    columns: &BTreeMap<ColumnRef, String>,
+) -> Result<String, DesignerError> {
+    match columns.get(column).map(String::as_str) {
+        Some(range) if !range.is_empty() => Ok(format!("{name}({range})")),
+        // A column of a table outside this export, or of an exported table
+        // without rows, has no range that would follow rows added later.
+        _ => Err(tracker_error(
+            "column totals are outside the export mapping",
         )),
     }
 }
@@ -2945,10 +3134,11 @@ fn export_function(
     arguments: &[Expression],
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
     let mut exported = Vec::with_capacity(arguments.len());
     for argument in arguments {
-        exported.push(export_expression(argument, owner, addresses)?);
+        exported.push(export_expression(argument, owner, addresses, columns)?);
     }
     Ok(format!("{name}({})", exported.join(",")))
 }
@@ -2958,11 +3148,12 @@ fn export_binary(
     right: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
     Ok(format!(
         "({}{}{})",
-        export_expression(left, owner, addresses)?,
+        export_expression(left, owner, addresses, columns)?,
         operator,
-        export_expression(right, owner, addresses)?
+        export_expression(right, owner, addresses, columns)?
     ))
 }

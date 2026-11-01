@@ -529,8 +529,8 @@ mod tests {
     #[test]
     fn xlsx_column_format_uses_display_code_and_csv_keeps_raw_number() {
         use crate::interop_adapter::{
-            SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook, export_csv,
-            export_xlsx, import_xlsx,
+            SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue, SourceWorkbook,
+            export_csv, export_xlsx, import_xlsx,
         };
         use tachiko_workspace_engine::NumberFormat;
 
@@ -552,6 +552,7 @@ mod tests {
                     value: SourceValue::Number { value: 0.125 },
                     ..SourceCell::default()
                 }]],
+                layout: SourceLayout::default(),
             }],
             ledger: Vec::new(),
         };

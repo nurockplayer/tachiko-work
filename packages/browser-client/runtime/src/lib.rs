@@ -7947,7 +7947,9 @@ fn is_text_capacity_eligible_document(document: &Document) -> bool {
 }
 
 fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWorkbook {
-    use interop_adapter::{SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook};
+    use interop_adapter::{
+        SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue, SourceWorkbook,
+    };
     let schema = &document
         .schemas
         .values()
@@ -7999,6 +8001,7 @@ fn capacity_document_workbook(document: &Document) -> interop_adapter::SourceWor
                         .collect()
                 })
                 .collect(),
+            layout: SourceLayout::default(),
         }],
         ledger: Vec::new(),
     }

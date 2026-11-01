@@ -514,8 +514,8 @@ fn deduplicate_history_restores_removed_entity_identity_on_undo_and_redo() {
 }
 
 use tachiko_designer_runtime::interop_adapter::{
-    CellStyle, FidelityCategory, FidelityFinding, SourceCell, SourceColumn, SourceSheet,
-    SourceValue, SourceWorkbook,
+    CellStyle, FidelityCategory, FidelityFinding, SourceCell, SourceColumn, SourceLayout,
+    SourceSheet, SourceValue, SourceWorkbook,
 };
 use tachiko_designer_runtime::{
     ImportFieldType, ImportSelection, InteropMetadata, KeyedGroupedSumDefinitionInput,
@@ -568,6 +568,7 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
                     row(7.0, None, "duplicate"),
                     row(10.0, Some("A4/B4"), "keep"),
                 ],
+                layout: SourceLayout::default(),
             },
             SourceSheet {
                 name: "Calculations".into(),
@@ -581,6 +582,7 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
                     SourceValue::Number { value: 9999.0 },
                     Some("'Data'!C2+MIN('Data'!$C$4,5)"),
                 )]],
+                layout: SourceLayout::default(),
             },
         ],
     };
@@ -631,6 +633,7 @@ fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
                     source_cell(SourceValue::Number { value: 2.0 }, None),
                     source_cell(SourceValue::Number { value: 3.0 }, None),
                 ]],
+                layout: SourceLayout::default(),
             }],
         },
         ImportSelection {
@@ -662,6 +665,7 @@ fn xlsx_number_format_import_is_stored_and_reexported_by_column() {
                 number_format: Some(format.clone()),
             }],
             rows: vec![vec![source_cell(SourceValue::Number { value: 12.5 }, None)]],
+            layout: SourceLayout::default(),
         }],
         ledger: Vec::new(),
     };
@@ -708,6 +712,7 @@ fn cleared_promoted_xlsx_format_stays_cleared_on_export() {
                     },
                 }],
             ],
+            layout: SourceLayout::default(),
         }],
         ledger: Vec::new(),
     };
@@ -773,6 +778,7 @@ fn unpromoted_mixed_formats_survive_row_removal_and_export() {
                 number_format: None,
             }],
             rows: vec![vec![styled(0.5, "0%")], vec![styled(2.0, "0.00")]],
+            layout: SourceLayout::default(),
         }],
         ledger: Vec::new(),
     };
@@ -1324,6 +1330,7 @@ fn import_keeps_text_and_true_absence_until_explicit_selection_and_extra_output_
                 ],
                 vec![source_cell(SourceValue::Empty, None)],
             ],
+            layout: SourceLayout::default(),
         }],
     };
     let mut selection = ImportSelection {
@@ -1372,7 +1379,7 @@ fn formula_coordinate_translation_handles_unicode_quotes_scientific_literals_and
     for invalid in [
         "A1",
         "A10000",
-        "SUM(A2:A4)",
+        "SUM(A2:A3)",
         "'Missing'!A2",
         "'unfinished!A2",
     ] {
@@ -1534,6 +1541,7 @@ fn imported_export_follows_a_moved_column() {
                 ),
                 source_cell(SourceValue::Number { value: 3.0 }, None),
             ]],
+            layout: SourceLayout::default(),
         }],
         ledger: Vec::new(),
     };

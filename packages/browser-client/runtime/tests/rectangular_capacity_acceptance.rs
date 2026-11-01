@@ -9,8 +9,8 @@ use tachiko_designer_runtime::{
     InteropMetadata, OccurrenceProjection, ScalarEditInput, StoredValueProjection, TableProjection,
     TableView, import_workbook,
     interop_adapter::{
-        ImportOptions, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
-        export_csv, export_xlsx, import_csv, import_xlsx,
+        ImportOptions, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
+        SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
     },
     open_imported_project, process_wire_request,
 };
@@ -48,6 +48,7 @@ fn native_explicit_320_by_2_number_confirmation() {
                         .to_vec()
                 })
                 .collect(),
+            layout: SourceLayout::default(),
         }],
         ledger: vec![],
     };
