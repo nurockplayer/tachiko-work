@@ -3248,11 +3248,6 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                     }
                 };
                 let mut source = formula.map(|f| f.text.clone());
-                if formula.is_some() && c.child("v").is_none() {
-                    // A `t="str"` formula without `<v>` reads as empty text, but
-                    // the file holds no calculated value at all.
-                    value = SourceValue::Empty;
-                }
                 if let Some(f) = formula {
                     formula_count += 1;
                     if formula_count > MAX_FORMULAS {
@@ -4006,7 +4001,14 @@ fn keep_cached_value(
     ledger: &mut Vec<FidelityFinding>,
 ) {
     let original = formula.as_deref().unwrap_or_default();
-    if matches!(value, SourceValue::Empty) {
+    // A `t="str"` formula without `<v>`, or with an empty `<v/>` placeholder,
+    // reads as empty text; treat it as no calculated value rather than keep "".
+    let cached = match value {
+        SourceValue::Empty => false,
+        SourceValue::Text { value } => !value.is_empty(),
+        _ => true,
+    };
+    if !cached {
         ledger.push(finding(
             FidelityCategory::UnsupportedSafeDisabled,
             "unsupported_formula_function",
@@ -4014,6 +4016,7 @@ fn keep_cached_value(
             &format!("={original} cannot be calculated in Tachiko and the file holds no calculated value to keep. {ADMITTED_FORMULAS}."),
             true,
         ));
+        *value = SourceValue::Empty;
         return;
     }
     ledger.push(finding(

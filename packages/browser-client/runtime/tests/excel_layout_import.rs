@@ -538,17 +538,19 @@ fn assert_kept_value_at_summary_b2(formula: &str) {
 
 #[test]
 fn an_unsupported_formula_without_a_calculated_value_stays_refused() {
-    // Review of #625: a text-typed (`t="str"`) cell without `<v>` too.
-    for cell_type in ["t=\"n\"", "t=\"str\""] {
-        assert_refused_without_cache(cell_type);
+    // Review of #625: a text-typed (`t="str"`) cell without `<v>` or with an
+    // empty `<v/>` placeholder too.
+    for cached in ["t=\"n\">", "t=\"str\">", "t=\"str\"><v/>"] {
+        assert_refused_without_cache(cached);
     }
 }
 
-fn assert_refused_without_cache(cell_type: &str) {
+fn assert_refused_without_cache(cached: &str) {
+    let (cell_type, placeholder) = cached.split_at(cached.find('>').unwrap() + 1);
     let bytes = mutate(&household(), "xl/worksheets/sheet3.xml", |xml| {
         xml.replace(
             "t=\"n\"><f aca=\"false\">Jan!C10</f><v>450</v>",
-            &format!("{cell_type}><f aca=\"false\">VLOOKUP(1,Jan!B2:C9,2)</f>"),
+            &format!("{cell_type}<f aca=\"false\">VLOOKUP(1,Jan!B2:C9,2)</f>{placeholder}"),
         )
     });
     let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
