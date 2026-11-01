@@ -3568,7 +3568,9 @@ fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Ve
     if kept == 0 {
         return None;
     }
-    let last_data = header_row + kept;
+    // The aggregate must cover every row above it, blank ones included, so the
+    // column total it becomes means the same rows.
+    let last_data = header_row + last;
     let own_row = header_row + 1 + last;
     let mut cells = Vec::new();
     // A label such as "Total" is required: an unlabelled last row that sums

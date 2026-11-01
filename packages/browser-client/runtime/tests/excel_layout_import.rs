@@ -588,8 +588,7 @@ fn a_final_record_is_not_taken_for_a_total_row() {
     );
 }
 
-#[test]
-fn blank_rows_before_a_total_row_stay_data_rows() {
+fn blank_row_before_total(total: &str) -> SourceWorkbook {
     let sheet = SourceSheet {
         name: "Expenses".into(),
         has_header: true,
@@ -605,7 +604,7 @@ fn blank_rows_before_a_total_row_stay_data_rows() {
             vec![text("Paper"), number(10.0)],
             vec![text("Toner"), number(20.0)],
             vec![SourceCell::default(), SourceCell::default()],
-            vec![text("Total"), formula("SUM(B2:B3)")],
+            vec![text("Total"), formula(total)],
         ],
         layout: SourceLayout::default(),
     };
@@ -614,14 +613,24 @@ fn blank_rows_before_a_total_row_stay_data_rows() {
         ledger: Vec::new(),
     })
     .unwrap();
-    let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
-    let sheet = &workbook.sheets[0];
+    import_xlsx_with(&bytes, &ImportOptions::default()).unwrap()
+}
+
+#[test]
+fn blank_rows_before_a_total_row_stay_data_rows() {
     // Review of #621: a formula elsewhere may still read the blank row.
+    let workbook = blank_row_before_total("SUM(B2:B4)");
+    let sheet = &workbook.sheets[0];
     assert_eq!(sheet.rows.len(), 3);
     assert_eq!(
         sheet.layout.summary_row.as_ref().map(|row| row.row),
         Some(5)
     );
+    // A total that skips the blank row would mean other rows than the column
+    // total it would become, so the row stays data (and the SUM is refused).
+    let workbook = blank_row_before_total("SUM(B2:B3)");
+    assert_eq!(workbook.sheets[0].layout.summary_row, None);
+    assert_eq!(workbook.sheets[0].rows.len(), 4);
 }
 
 #[test]
