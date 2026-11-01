@@ -1534,7 +1534,7 @@ fn typed_multiple_sheet_writer_roundtrip() {
     assert!(!again.ledger.iter().any(|f| f.blocking));
 }
 #[test]
-fn shared_selfclosing_and_unsupported_functions_are_blocking() {
+fn shared_selfclosing_blocks_and_unsupported_functions_keep_their_value() {
     let mut book = simple();
     book.sheets[0].rows[0][1].value = SourceValue::Number { value: 777.0 };
     book.sheets[0].rows[0][1].formula = Some("MIN(1,2)".into());
@@ -1547,8 +1547,14 @@ fn shared_selfclosing_and_unsupported_functions_are_blocking() {
         imported
             .ledger
             .iter()
-            .any(|f| f.blocking && f.code == "unsupported_formula_function")
+            .any(|f| !f.blocking && f.code == "unsupported_formula_kept_value")
     );
+    assert!(!imported.ledger.iter().any(|f| f.blocking));
+    assert_eq!(
+        imported.sheets[0].rows[0][1].value,
+        SourceValue::Number { value: 777.0 }
+    );
+    assert_eq!(imported.sheets[0].rows[0][1].formula, None);
     let bytes = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
         s.replace("<f>SUM(1,2)</f>", "<f t=\"shared\" si=\"0\"/>")
     });
