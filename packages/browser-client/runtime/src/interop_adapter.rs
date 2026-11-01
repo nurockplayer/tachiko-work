@@ -3284,8 +3284,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                         ));
                         value = SourceValue::Empty;
                     } else if unsupported_formula_function(&f.text, true) {
-                        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"unsupported_formula_function",&location,"Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding",true));
-                        value = SourceValue::Empty;
+                        keep_cached_value(&mut value, &mut source, &location, &mut ledger);
                     }
                 }
                 if matches!(value, SourceValue::Date { .. }) {
@@ -3985,9 +3984,41 @@ fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<Fideli
             column_name(column),
             above + 2 + row_index
         );
-        sheet.rows[row_index][column].value = SourceValue::Empty;
-        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled, "unsupported_formula_function", &location, "Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding", true));
+        let cell = &mut sheet.rows[row_index][column];
+        keep_cached_value(&mut cell.value, &mut cell.formula, &location, ledger);
     }
+}
+
+const ADMITTED_FORMULAS: &str = "Tachiko calculates numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND, ISBLANK and SUM, AVERAGE or COUNT over one whole column";
+
+/// A formula Tachiko does not calculate keeps Excel's last calculated value as
+/// a plain value, with the original formula named in the finding. Without a
+/// cached value nothing is guessed: the cell stays a blocking refusal.
+fn keep_cached_value(
+    value: &mut SourceValue,
+    formula: &mut Option<String>,
+    location: &str,
+    ledger: &mut Vec<FidelityFinding>,
+) {
+    let original = formula.as_deref().unwrap_or_default();
+    if matches!(value, SourceValue::Empty) {
+        ledger.push(finding(
+            FidelityCategory::UnsupportedSafeDisabled,
+            "unsupported_formula_function",
+            location,
+            &format!("={original} cannot be calculated in Tachiko and the file holds no calculated value to keep. {ADMITTED_FORMULAS}."),
+            true,
+        ));
+        return;
+    }
+    ledger.push(finding(
+        FidelityCategory::LossyOnExport,
+        "unsupported_formula_kept_value",
+        location,
+        &format!("Kept Excel's last calculated value of ={original}; it will not recalculate in Tachiko, and export writes the value. {ADMITTED_FORMULAS}."),
+        false,
+    ));
+    *formula = None;
 }
 
 /// Every parsed source uses the same representation predicate as output. Existing

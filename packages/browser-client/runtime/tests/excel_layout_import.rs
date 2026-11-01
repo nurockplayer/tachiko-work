@@ -166,14 +166,21 @@ fn contacts_sheet_without_totals_is_unchanged() {
     for location in ["Contacts!A6", "Contacts!D6"] {
         assert!(
             workbook.ledger.iter().any(|finding| {
-                finding.code == "unsupported_formula_function"
+                finding.code == "unsupported_formula_kept_value"
                     && finding.location == location
-                    && finding.blocking
+                    && !finding.blocking
             }),
             "{location}: {:?}",
             workbook.ledger
         );
     }
+    // With the uncalculated cells kept as values the sheet now imports.
+    let blocking: Vec<_> = workbook
+        .ledger
+        .iter()
+        .filter(|finding| finding.blocking)
+        .collect();
+    assert!(blocking.is_empty(), "{blocking:?}");
 }
 
 #[test]
@@ -212,9 +219,9 @@ fn explicit_header_rows_override_detection_and_reject_out_of_range() {
     assert_eq!(jan.rows.len(), 9);
     assert_eq!(jan.layout.summary_row, None);
     assert!(kept.ledger.iter().any(|finding| {
-        finding.code == "unsupported_formula_function"
+        finding.code == "unsupported_formula_kept_value"
             && finding.location == "Jan!C10"
-            && finding.blocking
+            && !finding.blocking
     }));
 
     let csv = ImportOptions {
@@ -500,17 +507,39 @@ fn a_tachiko_export_of_the_household_workbook_imports_again() {
 }
 
 #[test]
-fn a_partial_aggregate_range_in_a_data_row_stays_refused() {
+fn a_partial_aggregate_range_in_a_data_row_keeps_its_value() {
     // MIN/MAX over a whole column also stay refused: Excel gives 0 for an
     // all-blank range where a Tachiko column min/max fails (review of #621).
     for formula in ["SUM(Jan!C2:C5)", "MIN(Jan!C2:C9)", "MAX(Jan!C2:C9)"] {
-        assert_refused_at_summary_b2(formula);
+        assert_kept_value_at_summary_b2(formula);
     }
 }
 
-fn assert_refused_at_summary_b2(formula: &str) {
+fn assert_kept_value_at_summary_b2(formula: &str) {
     let bytes = mutate(&household(), "xl/worksheets/sheet3.xml", |xml| {
         xml.replace(">Jan!C10</f>", &format!(">{formula}</f>"))
+    });
+    let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
+    assert!(
+        workbook.ledger.iter().any(|finding| {
+            finding.code == "unsupported_formula_kept_value"
+                && finding.location == "Summary!B2"
+                && !finding.blocking
+                && finding.message.contains(&format!("={formula}"))
+        }),
+        "{:?}",
+        workbook.ledger
+    );
+    // Excel's last calculated value stays as a plain value.
+    let cell = &workbook.sheets[2].rows[0][1];
+    assert_eq!(cell.value, SourceValue::Number { value: 450.0 });
+    assert_eq!(cell.formula, None);
+}
+
+#[test]
+fn an_unsupported_formula_without_a_calculated_value_stays_refused() {
+    let bytes = mutate(&household(), "xl/worksheets/sheet3.xml", |xml| {
+        xml.replace(">Jan!C10</f><v>450</v>", ">VLOOKUP(1,Jan!B2:C9,2)</f>")
     });
     let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
     assert!(
@@ -522,6 +551,7 @@ fn assert_refused_at_summary_b2(formula: &str) {
         "{:?}",
         workbook.ledger
     );
+    assert_eq!(workbook.sheets[2].rows[0][1].value, SourceValue::Empty);
 }
 
 fn expense_book(last: &str) -> Vec<u8> {
@@ -559,9 +589,9 @@ fn a_final_record_is_not_taken_for_a_total_row() {
     assert_eq!(sheet.rows.len(), 3);
     assert!(
         workbook.ledger.iter().any(|finding| {
-            finding.code == "unsupported_formula_function"
+            finding.code == "unsupported_formula_kept_value"
                 && finding.location == "Expenses!B4"
-                && finding.blocking
+                && !finding.blocking
         }),
         "{:?}",
         workbook.ledger
@@ -684,7 +714,7 @@ fn an_incomplete_header_is_not_taken_for_a_title() {
 }
 
 #[test]
-fn a_column_holding_text_keeps_its_total_refused() {
+fn a_column_holding_text_keeps_its_total_as_a_value() {
     // Review of #621: Excel's SUM skips the text "3" while a Number column
     // total would count it once converted, so neither shape binds.
     let bytes = mutate(&household(), "xl/worksheets/sheet1.xml", |xml| {
@@ -700,9 +730,9 @@ fn a_column_holding_text_keeps_its_total_refused() {
     assert_eq!(workbook.sheets[0].layout.summary_row, None);
     assert!(
         workbook.ledger.iter().any(|finding| {
-            finding.code == "unsupported_formula_function"
+            finding.code == "unsupported_formula_kept_value"
                 && finding.location == "Jan!C10"
-                && finding.blocking
+                && !finding.blocking
         }),
         "{:?}",
         workbook.ledger
