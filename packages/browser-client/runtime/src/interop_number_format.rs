@@ -279,7 +279,8 @@ pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<St
             }
             '0' | '#' | '?' => Some(Token::Number),
             '@' | '.' | ',' | '/' | ':' | '%' | '+' | '-' | '(' | ')' | ' ' | '$' | '¥' | '￥'
-            | '€' | '£' | '!' | '^' | '&' | '\'' | '~' | '{' | '}' | '=' | '<' | '>' => None,
+            | '€' | '£' | '₩' | '₹' | '!' | '^' | '&' | '\'' | '~' | '{' | '}' | '=' | '<'
+            | '>' => None,
             _ if c.is_ascii_alphabetic() => {
                 let rest: String = chars[i..].iter().collect::<String>().to_ascii_lowercase();
                 if rest.starts_with("general") {
@@ -513,6 +514,15 @@ mod tests {
             "$$0",
         ] {
             assert_eq!(super::from_excel_currency(pattern), None, "{pattern}");
+        }
+        // Every bare symbol the mapper accepts must also pass classification,
+        // or the cell is rejected before column inference sees it.
+        for pattern in ["$0", "€0", "£0", "¥0", "￥0", "₩0", "₹0"] {
+            assert_eq!(
+                super::classify(Some(pattern)),
+                Ok(super::NumberFormatKind::Number),
+                "{pattern}"
+            );
         }
     }
 
