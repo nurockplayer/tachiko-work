@@ -3248,6 +3248,11 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                     }
                 };
                 let mut source = formula.map(|f| f.text.clone());
+                if formula.is_some() && c.child("v").is_none() {
+                    // A `t="str"` formula without `<v>` reads as empty text, but
+                    // the file holds no calculated value at all.
+                    value = SourceValue::Empty;
+                }
                 if let Some(f) = formula {
                     formula_count += 1;
                     if formula_count > MAX_FORMULAS {

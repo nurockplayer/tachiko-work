@@ -538,8 +538,18 @@ fn assert_kept_value_at_summary_b2(formula: &str) {
 
 #[test]
 fn an_unsupported_formula_without_a_calculated_value_stays_refused() {
+    // Review of #625: a text-typed (`t="str"`) cell without `<v>` too.
+    for cell_type in ["t=\"n\"", "t=\"str\""] {
+        assert_refused_without_cache(cell_type);
+    }
+}
+
+fn assert_refused_without_cache(cell_type: &str) {
     let bytes = mutate(&household(), "xl/worksheets/sheet3.xml", |xml| {
-        xml.replace(">Jan!C10</f><v>450</v>", ">VLOOKUP(1,Jan!B2:C9,2)</f>")
+        xml.replace(
+            "t=\"n\"><f aca=\"false\">Jan!C10</f><v>450</v>",
+            &format!("{cell_type}><f aca=\"false\">VLOOKUP(1,Jan!B2:C9,2)</f>"),
+        )
     });
     let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
     assert!(
