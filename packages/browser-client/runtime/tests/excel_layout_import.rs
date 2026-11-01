@@ -587,3 +587,53 @@ fn a_final_record_is_not_taken_for_a_total_row() {
         })
     );
 }
+
+#[test]
+fn blank_rows_before_a_total_row_stay_data_rows() {
+    let sheet = SourceSheet {
+        name: "Expenses".into(),
+        has_header: true,
+        columns: ["Description", "Amount"]
+            .into_iter()
+            .map(|name| SourceColumn {
+                name: name.into(),
+                width: None,
+                number_format: None,
+            })
+            .collect(),
+        rows: vec![
+            vec![text("Paper"), number(10.0)],
+            vec![text("Toner"), number(20.0)],
+            vec![SourceCell::default(), SourceCell::default()],
+            vec![text("Total"), formula("SUM(B2:B3)")],
+        ],
+        layout: SourceLayout::default(),
+    };
+    let bytes = export_xlsx(&SourceWorkbook {
+        sheets: vec![sheet],
+        ledger: Vec::new(),
+    })
+    .unwrap();
+    let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
+    let sheet = &workbook.sheets[0];
+    // Review of #621: a formula elsewhere may still read the blank row.
+    assert_eq!(sheet.rows.len(), 3);
+    assert_eq!(
+        sheet.layout.summary_row.as_ref().map(|row| row.row),
+        Some(5)
+    );
+}
+
+#[test]
+fn a_range_nested_inside_min_is_checked_as_its_own_call() {
+    let bytes = mutate(&household(), "xl/worksheets/sheet3.xml", |xml| {
+        xml.replace(">Jan!C10</f>", ">MIN(SUM(Jan!C2:C9),1)</f>")
+    });
+    let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
+    let blocking: Vec<_> = workbook
+        .ledger
+        .iter()
+        .filter(|finding| finding.blocking)
+        .collect();
+    assert!(blocking.is_empty(), "{blocking:?}");
+}

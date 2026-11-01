@@ -3594,7 +3594,9 @@ fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Ve
     if cells.is_empty() || !labelled {
         return None;
     }
-    Some((kept, cells))
+    // Blank rows between the data and the summary stay data rows, as other
+    // intervening blank rows do; only the summary row itself is left out.
+    Some((last, cells))
 }
 
 fn column_aggregate(
@@ -3846,10 +3848,15 @@ fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]
                     let Some((argument, consumed)) = call_argument(&formula[call..]) else {
                         return false;
                     };
-                    if !required && argument.contains(':') {
-                        return false;
+                    if !required {
+                        // A range directly inside MIN/MAX is refused; nested
+                        // calls such as MIN(SUM(B2:B9),1) are scanned in turn.
+                        if top_level_colon(argument) {
+                            return false;
+                        }
+                        continue;
                     }
-                    if required && whole_column_argument(argument, current, sheets).is_none() {
+                    if whole_column_argument(argument, current, sheets).is_none() {
                         return false;
                     }
                     cursor = call + consumed;
@@ -3860,6 +3867,26 @@ fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]
         }
     }
     true
+}
+
+/// Whether a call argument has a `:` outside nested calls and quoted text.
+fn top_level_colon(argument: &str) -> bool {
+    let mut depth = 0usize;
+    let mut quote = None;
+    for character in argument.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => {}
+            None => match character {
+                '\'' | '"' => quote = Some(character),
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                ':' if depth == 0 => return true,
+                _ => {}
+            },
+        }
+    }
+    false
 }
 
 /// A data-row aggregate outside the whole-column profile is refused as before.
