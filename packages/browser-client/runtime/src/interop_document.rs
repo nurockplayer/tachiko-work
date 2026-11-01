@@ -3120,10 +3120,9 @@ fn export_column(
     columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
     match columns.get(column).map(String::as_str) {
-        Some("") if name == "SUM" || name == "COUNT" => Ok("0".to_owned()),
         Some(range) if !range.is_empty() => Ok(format!("{name}({range})")),
-        // A column of a table outside this export, or an average/min/max over
-        // an exported table without rows, has no exact spelling.
+        // A column of a table outside this export, or of an exported table
+        // without rows, has no range that would follow rows added later.
         _ => Err(tracker_error(
             "column totals are outside the export mapping",
         )),
