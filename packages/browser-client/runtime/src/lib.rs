@@ -9196,7 +9196,7 @@ const CURRENCY_SYMBOLS: [&str; 12] = [
 
 /// ISO 4217 codes accepted around a Number. The list is closed so an
 /// identifier such as `SKU123` is not read as a currency amount.
-const CURRENCY_CODES: [&str; 25] = [
+pub(crate) const CURRENCY_CODES: [&str; 25] = [
     "AUD", "BRL", "CAD", "CHF", "CNY", "DKK", "EUR", "GBP", "HKD", "IDR", "INR", "JPY", "KRW",
     "MXN", "MYR", "NOK", "NZD", "PHP", "SEK", "SGD", "THB", "TWD", "USD", "VND", "ZAR",
 ];

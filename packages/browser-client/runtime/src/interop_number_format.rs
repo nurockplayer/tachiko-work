@@ -23,6 +23,17 @@ pub(crate) fn from_excel(pattern: &str) -> Option<NumberFormat> {
     } else {
         (StoredNumberFormatKind::Plain, pattern)
     };
+    let (thousands_separator, decimals) = numeric_part(numeric)?;
+    Some(NumberFormat {
+        decimals,
+        kind,
+        thousands_separator,
+    })
+}
+
+/// The exact numeric vocabulary shared by stored and Excel-currency patterns:
+/// `0` / `#,##0`, optionally `.` with one to ten zeros.
+fn numeric_part(numeric: &str) -> Option<(bool, u8)> {
     let (thousands_separator, numeric) = if let Some(rest) = numeric.strip_prefix("#,##0") {
         (true, rest)
     } else {
@@ -37,11 +48,145 @@ pub(crate) fn from_excel(pattern: &str) -> Option<NumberFormat> {
         }
         u8::try_from(places.len()).ok()?
     };
-    Some(NumberFormat {
-        decimals,
-        kind,
-        thousands_separator,
-    })
+    Some((thousands_separator, decimals))
+}
+
+/// Map a single-section Excel currency pattern to the currency it names.
+/// Ambiguous symbols (`¥`/`￥` without a locale) and amounts of unknown
+/// identity stay unmapped rather than guessing.
+pub(crate) fn from_excel_currency(pattern: &str) -> Option<NumberFormat> {
+    if pattern.contains([';', '_', '*']) {
+        return None;
+    }
+    [token_prefix(pattern), token_suffix(pattern)]
+        .into_iter()
+        .flatten()
+        .find_map(|(code, numeric)| {
+            let (thousands_separator, decimals) = numeric_part(numeric)?;
+            Some(NumberFormat {
+                decimals,
+                kind: StoredNumberFormatKind::Currency {
+                    code: code.to_owned(),
+                },
+                thousands_separator,
+            })
+        })
+}
+
+/// One currency token at the start of `pattern`, followed by an optional
+/// single space, and the remaining numeric part.
+fn token_prefix(pattern: &str) -> Option<(&'static str, &str)> {
+    let (code, rest) = if let Some(rest) = pattern.strip_prefix('"') {
+        let end = rest.find('"')?;
+        (currency_code(&rest[..end], None)?, &rest[end + 1..])
+    } else if let Some(rest) = pattern.strip_prefix("[$") {
+        let end = rest.find(']')?;
+        if rest[..end].contains('[') {
+            return None;
+        }
+        let (symbol, lcid) = split_currency_locale(&rest[..end]);
+        (currency_code(symbol, lcid)?, &rest[end + 1..])
+    } else if let Some(rest) = pattern.strip_prefix('\\') {
+        let symbol = rest.chars().next()?;
+        if !is_bare_currency_symbol(symbol) {
+            return None;
+        }
+        (
+            currency_code(&symbol.to_string(), None)?,
+            &rest[symbol.len_utf8()..],
+        )
+    } else {
+        let symbol = pattern.chars().next()?;
+        if !is_bare_currency_symbol(symbol) {
+            return None;
+        }
+        (
+            currency_code(&symbol.to_string(), None)?,
+            &pattern[symbol.len_utf8()..],
+        )
+    };
+    Some((code, rest.strip_prefix(' ').unwrap_or(rest)))
+}
+
+/// One currency token at the end of `pattern`, preceded by an optional single
+/// space, and the leading numeric part.
+fn token_suffix(pattern: &str) -> Option<(&'static str, &str)> {
+    if let Some(body) = pattern.strip_suffix(']') {
+        let start = body.rfind("[$")?;
+        let content = &body[start + 2..];
+        if content.contains('[') {
+            return None;
+        }
+        let (symbol, lcid) = split_currency_locale(content);
+        Some((
+            currency_code(symbol, lcid)?,
+            without_one_space(&body[..start]),
+        ))
+    } else if let Some(body) = pattern.strip_suffix('"') {
+        let start = body.rfind('"')?;
+        Some((
+            currency_code(&body[start + 1..], None)?,
+            without_one_space(&body[..start]),
+        ))
+    } else {
+        let (index, symbol) = pattern.char_indices().next_back()?;
+        if !is_bare_currency_symbol(symbol) {
+            return None;
+        }
+        let start = if pattern[..index].ends_with('\\') {
+            index - 1
+        } else {
+            index
+        };
+        Some((
+            currency_code(&symbol.to_string(), None)?,
+            without_one_space(&pattern[..start]),
+        ))
+    }
+}
+
+fn without_one_space(text: &str) -> &str {
+    text.strip_suffix(' ').unwrap_or(text)
+}
+
+fn is_bare_currency_symbol(symbol: char) -> bool {
+    matches!(symbol, '$' | '€' | '£' | '¥' | '￥' | '₩' | '₹')
+}
+
+/// Split `$SYM-LCID` into its symbol and hexadecimal locale id.
+fn split_currency_locale(content: &str) -> (&str, Option<&str>) {
+    content
+        .rsplit_once('-')
+        .map_or((content, None), |(symbol, lcid)| (symbol, Some(lcid)))
+}
+
+/// The Issue's symbol table, then the closed ISO-code list.
+fn currency_code(symbol: &str, lcid: Option<&str>) -> Option<&'static str> {
+    let matches_lcid = |value: &str| lcid.is_some_and(|lcid| lcid.eq_ignore_ascii_case(value));
+    match symbol {
+        "$" if lcid.is_none() => Some("USD"),
+        "$" if matches_lcid("409") => Some("USD"),
+        "$" if matches_lcid("404") => Some("TWD"),
+        "$" if matches_lcid("C04") => Some("HKD"),
+        "$" if matches_lcid("1004") => Some("SGD"),
+        "$" if matches_lcid("C09") => Some("AUD"),
+        "$" if matches_lcid("1009") => Some("CAD"),
+        "¥" | "￥" if matches_lcid("411") => Some("JPY"),
+        "¥" | "￥" if matches_lcid("804") => Some("CNY"),
+        "$" | "¥" | "￥" => None,
+        "US$" => Some("USD"),
+        "NT$" => Some("TWD"),
+        "HK$" => Some("HKD"),
+        "A$" => Some("AUD"),
+        "C$" => Some("CAD"),
+        "€" => Some("EUR"),
+        "£" => Some("GBP"),
+        "₩" => Some("KRW"),
+        "₹" => Some("INR"),
+        code => crate::CURRENCY_CODES
+            .into_iter()
+            .find(|known| *known == code),
+    }
 }
 
 pub(crate) fn to_excel(format: &NumberFormat) -> String {
@@ -134,7 +279,8 @@ pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<St
             }
             '0' | '#' | '?' => Some(Token::Number),
             '@' | '.' | ',' | '/' | ':' | '%' | '+' | '-' | '(' | ')' | ' ' | '$' | '¥' | '￥'
-            | '€' | '£' | '!' | '^' | '&' | '\'' | '~' | '{' | '}' | '=' | '<' | '>' => None,
+            | '€' | '£' | '₩' | '₹' | '!' | '^' | '&' | '\'' | '~' | '{' | '}' | '=' | '<'
+            | '>' => None,
             _ if c.is_ascii_alphabetic() => {
                 let rest: String = chars[i..].iter().collect::<String>().to_ascii_lowercase();
                 if rest.starts_with("general") {
@@ -318,6 +464,65 @@ mod tests {
             "\"usd\" 0.00",
         ] {
             assert_eq!(super::from_excel(unsupported), None, "{unsupported}");
+        }
+    }
+
+    #[test]
+    fn excel_currency_patterns_map_to_their_named_currency() {
+        use tachiko_workspace_engine::NumberFormat;
+
+        fn currency(code: &str, decimals: u8, thousands_separator: bool) -> NumberFormat {
+            NumberFormat {
+                decimals,
+                kind: tachiko_workspace_engine::NumberFormatKind::Currency { code: code.into() },
+                thousands_separator,
+            }
+        }
+
+        for (pattern, expected) in [
+            (r##""$"#,##0.00"##, currency("USD", 2, true)),
+            ("$#,##0.00", currency("USD", 2, true)),
+            (r"\$0", currency("USD", 0, false)),
+            ("[$$-409]#,##0", currency("USD", 0, true)),
+            ("[$NT$-404]#,##0", currency("TWD", 0, true)),
+            ("[$$-404]0.00", currency("TWD", 2, false)),
+            ("[$¥-411]#,##0", currency("JPY", 0, true)),
+            ("[$¥-804]0.00", currency("CNY", 2, false)),
+            ("#,##0.00 [$€-1]", currency("EUR", 2, true)),
+            ("#,##0.00 €", currency("EUR", 2, true)),
+            ("£#,##0", currency("GBP", 0, true)),
+            (r#""TWD" #,##0"#, currency("TWD", 0, true)),
+            (r#"#,##0 "EUR""#, currency("EUR", 0, true)),
+            ("[$USD] 0.00", currency("USD", 2, false)),
+        ] {
+            assert_eq!(
+                super::from_excel_currency(pattern),
+                Some(expected),
+                "{pattern}"
+            );
+        }
+        for pattern in [
+            "¥#,##0",
+            "[$$-411]0",
+            r##""$"#,##0.00_);("$"#,##0.00)"##,
+            "[Red]$0",
+            "$0.##",
+            "$0.00E+00",
+            r#""SKU" 0"#,
+            "$",
+            "0",
+            "$$0",
+        ] {
+            assert_eq!(super::from_excel_currency(pattern), None, "{pattern}");
+        }
+        // Every bare symbol the mapper accepts must also pass classification,
+        // or the cell is rejected before column inference sees it.
+        for pattern in ["$0", "€0", "£0", "¥0", "￥0", "₩0", "₹0"] {
+            assert_eq!(
+                super::classify(Some(pattern)),
+                Ok(super::NumberFormatKind::Number),
+                "{pattern}"
+            );
         }
     }
 
