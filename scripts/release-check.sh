@@ -33,6 +33,7 @@ cargo fmt --all --check
 echo "==> Codex repository tooling"
 bash scripts/codex-worktree-gc-check.sh
 bash scripts/codex-cargo-check.sh
+bash scripts/pre-push-check-test.sh
 
 echo "==> ADR-0016 workspace dependency graph"
 node scripts/workspace-dependency-check.mjs

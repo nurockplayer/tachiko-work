@@ -74,7 +74,10 @@ Origin: [Issue #141](https://github.com/nurockplayer/tachiko-work/issues/141)
 - The **delivery agent** owns production implementation after one concrete Issue
   is genuinely Ready: focused implementation, unit tests and supplementary
   coverage, necessary documentation, pull-request creation, review fixes,
-  exact-head validation, merge, and post-merge recalibration.
+  exact-head validation, merge, and post-merge recalibration. Before pushing,
+  the delivery agent may use `bash scripts/pre-push-check.sh` as an advisory
+  local check for common late-failing Rust and documentation gates; it does not
+  replace hosted CI or exact-head validation.
 - GitHub Issues, pull requests, reviews, and Projects remain the shared
   coordination and audit surface.
 
