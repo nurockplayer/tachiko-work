@@ -1286,8 +1286,6 @@ fn translate_a1(
                     "SUM" => Some(SummaryAggregate::Total),
                     "AVERAGE" => Some(SummaryAggregate::Average),
                     "COUNT" => Some(SummaryAggregate::Count),
-                    "MIN" => Some(SummaryAggregate::Min),
-                    "MAX" => Some(SummaryAggregate::Max),
                     _ => None,
                 };
                 if let Some(aggregate) = aggregate {
@@ -1308,15 +1306,11 @@ fn translate_a1(
                                 cursor = call + consumed;
                                 continue;
                             }
-                            None if !matches!(name.as_str(), "MIN" | "MAX")
-                                || argument.contains(':') =>
-                            {
+                            None => {
                                 return Err(tracker_error(
                                     "aggregate range must cover one whole data column",
                                 ));
                             }
-                            // A binary MIN/MAX keeps today's handling below.
-                            None => {}
                         }
                     }
                 }

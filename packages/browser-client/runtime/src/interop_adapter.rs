@@ -1275,8 +1275,6 @@ pub enum SummaryAggregate {
     Total,
     Average,
     Count,
-    Min,
-    Max,
 }
 impl SummaryAggregate {
     #[must_use]
@@ -1285,8 +1283,6 @@ impl SummaryAggregate {
             Self::Total => "total",
             Self::Average => "average",
             Self::Count => "count",
-            Self::Min => "min",
-            Self::Max => "max",
         }
     }
 }
@@ -3323,7 +3319,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                     FidelityCategory::LossyOnExport,
                     "summary_row_excluded",
                     &format!("{name}!{source_row}"),
-                    "This row totals the column above it (SUM, AVERAGE, COUNT, MIN or MAX), so it is not imported as a data row. Tachiko shows column totals; export does not write this row. Choose keep_summary_rows to import it as data.",
+                    "This row totals the column above it (SUM, AVERAGE or COUNT), so it is not imported as a data row. Tachiko shows column totals; export does not write this row. Choose keep_summary_rows to import it as data.",
                     false,
                 ));
                 rows.truncate(kept);
@@ -3615,8 +3611,6 @@ fn column_aggregate(
         "SUM" => SummaryAggregate::Total,
         "AVERAGE" => SummaryAggregate::Average,
         "COUNT" => SummaryAggregate::Count,
-        "MIN" => SummaryAggregate::Min,
-        "MAX" => SummaryAggregate::Max,
         _ => return None,
     };
     let range = rest.trim_end().strip_suffix(')')?;
@@ -3844,15 +3838,18 @@ fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]
             }
             let name = formula[start..cursor].to_ascii_uppercase();
             let required = matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT");
+            // Excel's MIN/MAX of an all-blank range is 0 while a Tachiko column
+            // min/max fails, so a range MIN/MAX is never translated.
             if required || matches!(name.as_str(), "MIN" | "MAX") {
                 let call = skip_whitespace(formula, cursor);
                 if formula[call..].starts_with('(') {
                     let Some((argument, consumed)) = call_argument(&formula[call..]) else {
                         return false;
                     };
-                    if (required || argument.contains(':'))
-                        && whole_column_argument(argument, current, sheets).is_none()
-                    {
+                    if !required && argument.contains(':') {
+                        return false;
+                    }
+                    if required && whole_column_argument(argument, current, sheets).is_none() {
                         return false;
                     }
                     cursor = call + consumed;

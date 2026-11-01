@@ -483,8 +483,16 @@ fn a_tachiko_export_of_the_household_workbook_imports_again() {
 
 #[test]
 fn a_partial_aggregate_range_in_a_data_row_stays_refused() {
+    // MIN/MAX over a whole column also stay refused: Excel gives 0 for an
+    // all-blank range where a Tachiko column min/max fails (review of #621).
+    for formula in ["SUM(Jan!C2:C5)", "MIN(Jan!C2:C9)", "MAX(Jan!C2:C9)"] {
+        assert_refused_at_summary_b2(formula);
+    }
+}
+
+fn assert_refused_at_summary_b2(formula: &str) {
     let bytes = mutate(&household(), "xl/worksheets/sheet3.xml", |xml| {
-        xml.replace(">Jan!C10</f>", ">SUM(Jan!C2:C5)</f>")
+        xml.replace(">Jan!C10</f>", &format!(">{formula}</f>"))
     });
     let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
     assert!(
