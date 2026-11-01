@@ -3502,6 +3502,12 @@ fn rows_above_header(rows: &[Vec<SourceCell>], width: usize) -> usize {
     if lead == 0 || lead > MAX_DETECTED_ROWS_ABOVE_HEADER {
         return 0;
     }
+    // A title directly above the header could be an incomplete header such as
+    // `Name | (blank)` over a first record, so a blank row must separate them;
+    // other layouts choose `header_rows` explicitly.
+    if rows[lead - 1].iter().any(present) {
+        return 0;
+    }
     // Detected rows are only skipped when a complete header follows them.
     match rows.get(lead) {
         Some(row)

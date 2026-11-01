@@ -646,3 +646,39 @@ fn a_range_nested_inside_min_is_checked_as_its_own_call() {
         .collect();
     assert!(blocking.is_empty(), "{blocking:?}");
 }
+
+#[test]
+fn an_incomplete_header_is_not_taken_for_a_title() {
+    let sheet = SourceSheet {
+        name: "People".into(),
+        has_header: false,
+        columns: ["A", "B"]
+            .into_iter()
+            .map(|name| SourceColumn {
+                name: name.into(),
+                width: None,
+                number_format: None,
+            })
+            .collect(),
+        rows: vec![
+            vec![text("Name"), SourceCell::default()],
+            vec![text("Alice"), text("Sales")],
+            vec![text("Bob"), text("Ops")],
+        ],
+        layout: SourceLayout::default(),
+    };
+    let bytes = export_xlsx(&SourceWorkbook {
+        sheets: vec![sheet],
+        ledger: Vec::new(),
+    })
+    .unwrap();
+    let workbook = import_xlsx_with(&bytes, &ImportOptions::default()).unwrap();
+    // Review of #621: only a blank row between them makes row 1 a title.
+    assert_eq!(workbook.sheets[0].layout.rows_above_header, 0);
+    assert!(
+        !workbook
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "rows_above_header_skipped")
+    );
+}
