@@ -816,6 +816,7 @@ pub fn import_workbook(
         )?;
         pending.insert(target, (source, references));
     }
+    let formula_targets = pending.keys().cloned().collect::<Vec<_>>();
     while !pending.is_empty() {
         let next = pending
             .iter()
@@ -832,7 +833,23 @@ pub fn import_workbook(
         let revision = runtime.current_revision().to_owned();
         runtime.update_formula(&revision, &field_target(&next), &source)?;
     }
-    let document = runtime.session.export_snapshot().into_document();
+    let mut document = runtime.session.export_snapshot().into_document();
+    for target in formula_targets {
+        let Some(Value::Formula(expression)) =
+            document.entities[&target.entity].fields.get(&target.field)
+        else {
+            continue;
+        };
+        let rewritten = excel_extremum(expression.clone(), &target, &document);
+        if &rewritten != expression {
+            document
+                .entities
+                .get_mut(&target.entity)
+                .unwrap()
+                .fields
+                .insert(target.field, Value::Formula(rewritten));
+        }
+    }
     // The temporary occurrence has finished binding formulas. Its detached
     // snapshot owns the complete document; release the old runtime before
     // validating and projecting the final occurrence.
@@ -1241,6 +1258,129 @@ fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, Designe
     }
     *cursor += 1;
     Ok(name)
+}
+
+// Excel skips blank direct references in MIN/MAX; Tachiko reads them as zero.
+// This conversion is only applied to newly imported formulas.
+fn excel_extremum(mut expression: Expression, owner: &FieldRef, document: &Document) -> Expression {
+    fn rewrite(expression: &mut Expression, owner: &FieldRef, document: &Document) {
+        for child in expression.children_mut() {
+            rewrite(child, owner, document);
+        }
+        let (Expression::Minimum { left, right } | Expression::Maximum { left, right }) =
+            expression
+        else {
+            return;
+        };
+        let blankable = |argument: &Expression| {
+            let (entity, field) = match argument {
+                Expression::Reference(reference) => (&reference.entity, &reference.field),
+                Expression::SameRowReference(field) => (&owner.entity, field),
+                _ => return false,
+            };
+            document
+                .entities
+                .get(entity)
+                .and_then(|entity| document.schemas.get(&entity.schema))
+                .and_then(|schema| schema.fields.get(field))
+                .is_some_and(|field| field.field_type == FieldType::Number && !field.required)
+        };
+        let left_blankable = blankable(left);
+        let right_blankable = blankable(right);
+        if !left_blankable && !right_blankable {
+            return;
+        }
+        let left = left.clone();
+        let right = right.clone();
+        let mut inner = expression.clone();
+        if right_blankable {
+            inner = Expression::If {
+                condition: Box::new(Expression::IsBlank(right.clone())),
+                then_value: left.clone(),
+                else_value: Box::new(inner),
+            };
+        }
+        if left_blankable {
+            inner = Expression::If {
+                condition: Box::new(Expression::IsBlank(left)),
+                then_value: right,
+                else_value: Box::new(inner),
+            };
+        }
+        *expression = inner;
+    }
+    rewrite(&mut expression, owner, document);
+    expression
+}
+
+#[cfg(test)]
+mod extremum_tests {
+    use super::*;
+
+    #[test]
+    fn required_references_stay_plain_and_optional_same_row_references_are_guarded() {
+        let mut document = Document::empty("extremum", "Extremum");
+        document.schemas.insert(
+            "items".into(),
+            Schema {
+                id: "items".into(),
+                key: "items".into(),
+                display_name: None,
+                field_order: None,
+                fields: BTreeMap::from([(
+                    "n".into(),
+                    FieldDefinition {
+                        id: "n".into(),
+                        key: "n".into(),
+                        display_name: None,
+                        number_format: None,
+                        field_type: FieldType::Number,
+                        required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
+                    },
+                )]),
+            },
+        );
+        document.entities.insert(
+            "row".into(),
+            Entity {
+                id: "row".into(),
+                key: "row".into(),
+                schema: "items".into(),
+                fields: BTreeMap::from([("n".into(), Value::Number(Number::new(3.0).unwrap()))]),
+            },
+        );
+        let owner = FieldRef::new("row", "result");
+        for reference in [
+            Expression::Reference(FieldRef::new("row", "n")),
+            Expression::SameRowReference("n".into()),
+        ] {
+            let expression = Expression::Minimum {
+                left: Box::new(reference),
+                right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
+            };
+            assert_eq!(
+                excel_extremum(expression.clone(), &owner, &document),
+                expression
+            );
+        }
+        document
+            .schemas
+            .get_mut("items")
+            .unwrap()
+            .fields
+            .get_mut("n")
+            .unwrap()
+            .required = false;
+        let expression = Expression::Maximum {
+            left: Box::new(Expression::SameRowReference("n".into())),
+            right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
+        };
+        assert!(matches!(
+            excel_extremum(expression, &owner, &document),
+            Expression::If { .. }
+        ));
+    }
 }
 
 #[allow(clippy::too_many_lines)] // One token loop over the bounded A1 profile.

@@ -139,21 +139,18 @@ fn collection_findings(
     csv: bool,
 ) {
     constraint_findings(document, spec, ledger);
-    if spec.entities.iter().any(|id| {
-        spec.columns.iter().any(|column| {
-            matches!(
-                document.entities[id].fields.get(&column.id),
-                Some(Value::Formula(_))
-            )
+    if csv
+        && spec.entities.iter().any(|id| {
+            spec.columns.iter().any(|column| {
+                matches!(
+                    document.entities[id].fields.get(&column.id),
+                    Some(Value::Formula(_))
+                )
+            })
         })
-    }) {
-        if csv {
-            ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_values_only", &spec.summary.id,
+    {
+        ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_values_only", &spec.summary.id,
                 "Formula cells export their current computed Number values; formula definitions are not written to the spreadsheet. Retain the Tachiko source to keep the formulas.".into()));
-        } else {
-            ledger.push(finding(FidelityCategory::Converted, "native_tables_formulas_written", &spec.summary.id,
-                "Formula cells export as Excel formulas over the exported cells, with their current computed Number kept as the cached value.".into()));
-        }
     }
 }
 
@@ -204,6 +201,7 @@ fn write_formulas(
         return;
     }
     for (spec, sheet) in specs.iter().zip(sheets.iter_mut()) {
+        let mut written = false;
         for (i, entity) in spec.entities.iter().enumerate() {
             for (j, column) in spec.columns.iter().enumerate() {
                 let Some(Value::Formula(expression)) =
@@ -234,6 +232,7 @@ fn write_formulas(
                     }
                     Ok(text) => {
                         sheet.rows[i][j].formula = Some(text);
+                        written = true;
                         continue;
                     }
                     Err(DesignerError::InvalidTrackerOperation { message }) => message,
@@ -242,6 +241,10 @@ fn write_formulas(
                 ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_value_only", &location,
                     format!("Formula cell exports its current computed value only: {reason}. Retain the Tachiko source to keep the formula.")));
             }
+        }
+        if written {
+            ledger.push(finding(FidelityCategory::Converted, "native_tables_formulas_written", &spec.summary.id,
+                "Formula cells export as Excel formulas over the exported cells, with their current computed Number kept as the cached value.".into()));
         }
     }
 }

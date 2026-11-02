@@ -602,6 +602,136 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
     (workbook, selection)
 }
 
+fn extremum_fixture(formula: &str) -> (SourceWorkbook, ImportSelection) {
+    let workbook = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: ["Minimum", "Maximum", "Optional C", "Optional D", "Required"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows: vec![
+                vec![
+                    source_cell(SourceValue::Number { value: 5.0 }, Some(formula)),
+                    source_cell(SourceValue::Number { value: 0.0 }, Some("=MAX(C2,D2)")),
+                    source_cell(SourceValue::Empty, None),
+                    source_cell(SourceValue::Empty, None),
+                    source_cell(SourceValue::Number { value: 7.0 }, None),
+                ],
+                vec![source_cell(SourceValue::Number { value: 9.0 }, None); 5],
+            ],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 5]],
+        extra_columns: vec![vec![]],
+    };
+    (workbook, selection)
+}
+
+#[test]
+fn imported_minimum_skips_blank_optional_reference_and_recalculates_after_edit() {
+    use tachiko_designer_runtime::{CellEdit, ScalarEditInput};
+    let (source, selection) = extremum_fixture("=MIN('Data'!C2,5)");
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        source.sheets[0].rows[0][0].value
+    );
+    assert!(
+        exported.sheets[0].rows[0][0]
+            .formula
+            .as_ref()
+            .unwrap()
+            .starts_with("IF(")
+    );
+    runtime
+        .handle(DesignerRequest::EditCells {
+            expected_revision: "resident/0".into(),
+            edits: vec![CellEdit {
+                target: FieldTarget {
+                    entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[2].field_id.clone(),
+                },
+                input: ScalarEditInput::Number { input: "3".into() },
+            }],
+        })
+        .unwrap();
+    let exported = runtime
+        .export_workbook("resident/1", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 3.0 }
+    );
+}
+
+#[test]
+fn imported_maximum_of_two_blank_references_calculates_zero() {
+    let (source, selection) = extremum_fixture("=MIN('Data'!C2,5)");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][1].value,
+        SourceValue::Number { value: 0.0 }
+    );
+}
+
+#[test]
+fn imported_minimum_of_populated_optional_reference_keeps_blank_guard() {
+    let (source, selection) = extremum_fixture("=MIN(E2,5)");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].formula.as_deref(),
+        Some("IF(ISBLANK('Data'!$E$2),5,MIN(('Data'!$E$2+0),5))")
+    );
+}
+
+#[test]
+fn imported_extremum_formula_text_is_stable_across_xlsx_cycles() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    // Exercise recursive conversion below arithmetic, IF, and another extremum.
+    let (source, selection) = extremum_fixture("=IF(ISBLANK(C2),MIN(5,MAX(C2,-5))+0,MIN(C2,5))");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let once = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        once.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: -5.0 }
+    );
+    let source = import_xlsx(&export_xlsx(&once).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let twice = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for column in [0, 1] {
+        assert_eq!(
+            once.sheets[0].rows[0][column].formula,
+            twice.sheets[0].rows[0][column].formula
+        );
+        assert_eq!(
+            once.sheets[0].rows[0][column].value,
+            twice.sheets[0].rows[0][column].value
+        );
+    }
+}
+
 fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
     (
         SourceWorkbook {
@@ -1191,7 +1321,7 @@ fn imported_forward_and_cross_sheet_formulas_rebind_and_export_from_live_ids_aft
     );
     assert_eq!(
         exported.sheets[1].rows[0][0].formula.as_deref(),
-        Some("('Data'!$C$2+MIN(('Data'!$C$3+0),5))")
+        Some("('Data'!$C$2+IF(ISBLANK('Data'!$C$3),5,MIN(('Data'!$C$3+0),5)))")
     );
     let bytes = runtime.export_project("resident/1").unwrap().bytes;
     let inspected = inspect_imported_project(&bytes, &metadata).unwrap();

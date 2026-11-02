@@ -63,6 +63,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Imported binary MIN/MAX formulas skip blank optional Number references as
+  Excel does, including after cell edits (#633). Native XLSX exports report
+  formulas written only for collections that actually export a formula.
+
 - XLSX exports of tables up to 64 rows write unformatted Number cells with
   the built-in General format (`numFmtId="0"`) instead of a custom
   `formatCode="General"`, which Apple Numbers showed as a whole number (1.5
