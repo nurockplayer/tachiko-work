@@ -14,8 +14,9 @@ use tachiko_designer_runtime::{
     KeyedGroupedSumDefinitionInput, import_workbook,
 };
 use tachiko_workspace_engine::{
-    Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
-    FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    ColumnAggregateFunction, ColumnRef, Date, Document, Entity, EntityId, EntityKey, Expression,
+    FieldConstraint, FieldDefinition, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey,
+    Value,
 };
 use zip::ZipArchive;
 
@@ -1880,27 +1881,38 @@ fn formula_document() -> Document {
 }
 
 #[test]
-fn native_tables_formula_cells_export_current_computed_values_to_csv_and_xlsx() {
+fn native_tables_formula_cells_export_formulas_to_xlsx_and_computed_values_to_csv() {
     let mut host = host_for(formula_document());
     let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
     assert_eq!(reply["status"], "ok", "{reply}");
     let bytes = bytes.unwrap();
     let sheet = xml(&bytes, "xl/worksheets/sheet1.xml");
-    assert!(!sheet.contains("<f>"), "{sheet}");
-    for value in ["6", "20"] {
+    for (row, value) in [(2, 6), (3, 20)] {
         assert!(
-            sheet.contains(&format!("t=\"n\"><v>{value}</v>")),
-            "{value}: {sheet}"
+            sheet.contains(&format!(
+                "<f>(&apos;Calculated&apos;!$A${row}*&apos;Calculated&apos;!$B${row})</f><v>{value}</v>"
+            )),
+            "{sheet}"
         );
     }
-    assert_finding(
-        &reply,
-        "native_tables_formula_values_only",
-        "lossy_on_export",
+    assert_finding(&reply, "native_tables_formulas_written", "converted");
+    assert!(
+        !reply["response"]["payload"]["ledger"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "native_tables_formula_values_only")
     );
     let imported = import_xlsx(&bytes).unwrap();
     assert!(!imported.ledger.iter().any(|finding| finding.blocking));
     assert_eq!(imported.sheets.len(), 2);
+    for (i, row) in imported.sheets[0].rows.iter().enumerate() {
+        let row_number = i + 2;
+        assert_eq!(
+            row[2].formula.as_deref(),
+            Some(format!("('Calculated'!$A${row_number}*'Calculated'!$B${row_number})").as_str())
+        );
+    }
     assert_eq!(
         source_values(&imported.sheets[0]),
         [
@@ -1925,6 +1937,166 @@ fn native_tables_formula_cells_export_current_computed_values_to_csv_and_xlsx() 
         "native_tables_formula_values_only",
         "lossy_on_export",
     );
+}
+
+#[test]
+fn native_xlsx_column_total_and_cross_collection_formulas_roundtrip_through_host() {
+    let mut document = formula_document();
+    add_table(
+        &mut document,
+        "plain",
+        "plain",
+        "Plain",
+        vec![
+            field("share", FieldType::Number, true),
+            field("total", FieldType::Number, true),
+        ],
+        vec![vec![
+            Some(Value::Formula(Expression::Reference(FieldRef::new(
+                "calc-r001",
+                "total",
+            )))),
+            Some(Value::Formula(Expression::ColumnTotal(ColumnRef::new(
+                "calc", "a",
+            )))),
+        ]],
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let bytes = bytes.unwrap();
+    let sheet = xml(&bytes, "xl/worksheets/sheet2.xml");
+    assert!(
+        sheet.contains("<f>&apos;Calculated&apos;!$C$3</f><v>20</v>"),
+        "{sheet}"
+    );
+    assert!(
+        sheet.contains("<f>SUM(&apos;Calculated&apos;!$A$2:$A$3)</f><v>6</v>"),
+        "{sheet}"
+    );
+    let workbook = import_xlsx(&bytes).unwrap();
+    assert!(!workbook.ledger.iter().any(|f| f.blocking));
+    let mut imported = DesignerHost::new();
+    let imported_reply = imported.spreadsheet(
+        &serde_json::to_vec(&json!({
+            "type":"import", "format":"xlsx", "csv_options":{"delimiter":",", "header":true},
+            "selection":{"column_types":[["number","number","number"],["number","number"]], "extra_columns":[[],[]]},
+            "occurrence_id":NEXT, "install":true,
+        }))
+        .unwrap(),
+        &bytes,
+    );
+    let reply: Json = serde_json::from_slice(&imported_reply.reply).unwrap();
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let collection = reply["response"]["payload"]["opened"]["bootstrap"]["default_collection"]
+        .as_str()
+        .unwrap();
+    // Re-export requires authoritative formula results from the installed host,
+    // so this proves binding and calculation, not just cached XML readback.
+    let (reply, bytes) = export(&mut imported, "resident/0", collection, "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let again = import_xlsx(&bytes.unwrap()).unwrap();
+    assert!(!again.ledger.iter().any(|f| f.blocking));
+    assert_eq!(again.sheets.len(), workbook.sheets.len());
+    // Imported native collections use generated names; references must follow
+    // the re-exported worksheet while retaining the same target cells.
+    let calculated_sheet = format!("'{}'!", again.sheets[0].name.replace('\'', "''"));
+    for (before, after) in workbook.sheets.iter().zip(&again.sheets) {
+        assert_eq!(source_values(before), source_values(after));
+        for (before_row, after_row) in before.rows.iter().zip(&after.rows) {
+            for (before_cell, after_cell) in before_row.iter().zip(after_row) {
+                assert_eq!(
+                    before_cell
+                        .formula
+                        .as_ref()
+                        .map(|text| text.replace("'Calculated'!", &calculated_sheet)),
+                    after_cell.formula
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn native_xlsx_minimum_over_a_blank_optional_number_keeps_tachiko_zero() {
+    let mut document = Document::empty("formula-export", "Formula export");
+    add_table(
+        &mut document,
+        "calc",
+        "calc",
+        "Calculated",
+        vec![
+            field("a", FieldType::Number, false),
+            field("low", FieldType::Number, true),
+        ],
+        vec![vec![
+            None,
+            Some(Value::Formula(Expression::Minimum {
+                left: Box::new(Expression::Reference(
+                    tachiko_workspace_engine::FieldRef::new("calc-r000", "a"),
+                )),
+                right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
+            })),
+        ]],
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let workbook = import_xlsx(&bytes.unwrap()).unwrap();
+    // Excel's MIN skips a blank cell argument; `+0` keeps Tachiko's 0.
+    assert_eq!(
+        workbook.sheets[0].rows[0][1].formula.as_deref(),
+        Some("MIN(('Calculated'!$A$2+0),5)")
+    );
+    assert_eq!(
+        workbook.sheets[0].rows[0][1].value,
+        SourceValue::Number { value: 0.0 }
+    );
+}
+
+#[test]
+fn native_xlsx_column_minimum_keeps_value_and_discloses_cell_fallback() {
+    let mut document = formula_document();
+    document
+        .entities
+        .get_mut("calc-r000")
+        .unwrap()
+        .fields
+        .insert(
+            "total".into(),
+            Value::Formula(Expression::ColumnAggregate {
+                function: ColumnAggregateFunction::Minimum,
+                column: ColumnRef::new("calc", "a"),
+            }),
+        );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let ledger = reply["response"]["payload"]["ledger"].as_array().unwrap();
+    let fallback = ledger
+        .iter()
+        .find(|f| f["code"] == "native_tables_formula_value_only")
+        .unwrap();
+    assert_eq!(fallback["category"], "lossy_on_export");
+    assert_eq!(fallback["blocking"], false);
+    assert_eq!(
+        fallback["location"],
+        "collection calc/field total/row calc-r000"
+    );
+    assert!(
+        fallback["message"]
+            .as_str()
+            .unwrap()
+            .contains("column minimum and maximum are outside the export mapping")
+    );
+    let workbook = import_xlsx(&bytes.unwrap()).unwrap();
+    assert!(!workbook.ledger.iter().any(|f| f.blocking));
+    assert_eq!(
+        workbook.sheets[0].rows[0][2].value,
+        SourceValue::Number { value: 2.0 }
+    );
+    assert!(workbook.sheets[0].rows[0][2].formula.is_none());
+    assert!(workbook.sheets[0].rows[1][2].formula.is_some());
 }
 
 #[test]

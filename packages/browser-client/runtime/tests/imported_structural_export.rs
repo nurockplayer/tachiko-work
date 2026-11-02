@@ -1321,7 +1321,10 @@ fn imported_reference_names_headers_and_csv_quoting_preserve_spelling() {
     assert_eq!(reply["status"], "ok", "{reply}");
     let book = import_xlsx(&bytes.unwrap()).unwrap();
     assert_eq!(book.sheets[0].name, name);
-    assert_eq!(book.sheets[1].rows[0][0].formula.as_deref(), Some(formula));
+    assert_eq!(
+        book.sheets[1].rows[0][0].formula.as_deref(),
+        Some("MAX(('O''Brien 5e-324 & <Data>'!$B$2+0),2)")
+    );
     assert_eq!(
         book.sheets[1].rows[0][0].value,
         SourceValue::Number { value: 2.0 }
