@@ -19,6 +19,10 @@ TACHIKO_CLIPPY_TOOLCHAIN to use it. A rustup/network check failure is a warning.
 
 An existing CARGO_TARGET_DIR is honored.
 
+On a hosted runner (GITHUB_ACTIONS=true), as when run through the Remote check
+workflow, Clippy uses the workflow's active toolchain unless
+TACHIKO_CLIPPY_TOOLCHAIN is set, and a missing Rust 1.85.0 is installed there.
+
 Checks run in this order:
   1. cargo fmt --all -- --check (workspace)
   2. cargo fmt check of the browser-client runtime (outside the workspace)
@@ -111,8 +115,18 @@ EOF
   fi
 }
 
-clippy_toolchain="${TACHIKO_CLIPPY_TOOLCHAIN:-stable}"
-warn_if_clippy_toolchain_is_old "${clippy_toolchain}"
+# On a hosted runner (the Remote check workflow, usually through remote-test)
+# the workflow already selected the toolchain, so Clippy uses the active one
+# and a missing Rust 1.85.0 is installed there. Locally nothing is installed.
+hosted_runner=0
+[[ "${GITHUB_ACTIONS:-}" == "true" ]] && hosted_runner=1
+
+if [[ "${hosted_runner}" -eq 1 && -z "${TACHIKO_CLIPPY_TOOLCHAIN:-}" ]]; then
+  clippy_toolchain="$(rustup show active-toolchain | cut -d' ' -f1)"
+else
+  clippy_toolchain="${TACHIKO_CLIPPY_TOOLCHAIN:-stable}"
+  warn_if_clippy_toolchain_is_old "${clippy_toolchain}"
+fi
 
 run_check() {
   local label="$1"
@@ -133,6 +147,10 @@ run_check "browser-client runtime Clippy (${clippy_toolchain})" \
   --all-targets --locked -- -D warnings
 
 if [[ "${fast}" -eq 0 ]]; then
+  if [[ "${hosted_runner}" -eq 1 ]] && ! rustup run 1.85.0 rustc --version >/dev/null 2>&1; then
+    run_check "install Rust 1.85.0 on the hosted runner" \
+      rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
+  fi
   run_check "Rust 1.85.0 workspace check" \
     rustup run 1.85.0 cargo check --workspace --all-targets --locked
   run_check "Rust 1.85.0 wasm32 browser-client runtime check" \

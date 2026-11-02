@@ -3,6 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runner="${repo_root}/scripts/pre-push-check.sh"
+# The local cases must not take the hosted-runner path when CI runs this test.
+unset GITHUB_ACTIONS
 test_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-pre-push-test.XXXXXX")"
 trap 'rm -rf -- "${test_dir}"' EXIT
 
@@ -23,6 +25,10 @@ set -euo pipefail
 if [[ "$1" == "check" ]]; then
   echo "${PRE_PUSH_TEST_CHECK:-stable-aarch64-apple-darwin - up to date : 1.99.0 (rustc 1.99.0)}"
   exit "${PRE_PUSH_TEST_CHECK_STATUS:-0}"
+elif [[ "$1" == "show" && "$2" == "active-toolchain" ]]; then
+  echo "1.99.0-x86_64-unknown-linux-gnu (default)"
+elif [[ "$1" == "run" && "$2" == "1.85.0" && "$3" == "rustc" && -n "${PRE_PUSH_TEST_NO_185:-}" ]]; then
+  exit 1
 elif [[ "$1" == "run" && "$3" == "rustc" ]]; then
   echo "rustc ${PRE_PUSH_TEST_LOCAL:-1.99.0} (test build)"
 else
@@ -67,5 +73,17 @@ if bash "${runner}" --unknown >"${test_dir}/unknown.out" 2>"${test_dir}/unknown.
   exit 1
 fi
 grep -F 'unknown argument: --unknown' "${test_dir}/unknown.err" >/dev/null
+
+# Hosted runner: Clippy uses the workflow's active toolchain and a missing
+# Rust 1.85.0 is installed before the MSRV checks.
+PRE_PUSH_TEST_CALLS="${test_dir}/calls-hosted.log" \
+  PRE_PUSH_TEST_NO_185=1 \
+  GITHUB_ACTIONS=true \
+  PATH="${test_dir}/fake-bin:${PATH}" \
+  bash "${runner}" >/dev/null
+grep -F 'rustup run 1.99.0-x86_64-unknown-linux-gnu cargo clippy --workspace' \
+  "${test_dir}/calls-hosted.log" >/dev/null
+grep -F 'rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown' \
+  "${test_dir}/calls-hosted.log" >/dev/null
 
 echo "pre-push-check argument and help tests passed"
