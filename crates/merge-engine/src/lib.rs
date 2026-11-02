@@ -27,6 +27,8 @@ pub enum MergeOutcome {
     UnsupportedKeyedGroupedSumDefinitionChange,
     UnsupportedFieldConstraintChange,
     UnsupportedDisplayName,
+    UnsupportedNumberFormat,
+    UnsupportedFieldOrder,
 }
 
 /// Conflict-free structural result awaiting workspace finalization.
@@ -497,6 +499,18 @@ impl From<&Entity> for EntitySubject {
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
     if [base, ours, theirs]
         .iter()
+        .any(|document| document.has_number_formats())
+    {
+        return MergeOutcome::UnsupportedNumberFormat;
+    }
+    if [base, ours, theirs]
+        .iter()
+        .any(|document| document.has_field_orders())
+    {
+        return MergeOutcome::UnsupportedFieldOrder;
+    }
+    if [base, ours, theirs]
+        .iter()
         .any(|document| document.has_display_names())
     {
         return MergeOutcome::UnsupportedDisplayName;
@@ -663,6 +677,7 @@ fn merge_schema(
     );
 
     Some(Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: key?,
         display_name: None,
@@ -771,6 +786,7 @@ fn merge_field_definition(
         id: field_id.clone(),
         key: key?,
         display_name: None,
+        number_format: None,
         field_type: field_type?,
         required: required?,
         constraint: tachiko_semantic_core::FieldConstraint::None,

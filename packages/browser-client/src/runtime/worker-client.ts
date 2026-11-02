@@ -1,5 +1,6 @@
 import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
 import { projectTransferFromEntries } from "../host/project-transfer.ts";
+import { isCapacityFailure } from "./protocol.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
@@ -8,12 +9,16 @@ import type {
   FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
+  CapacityProjection,
   CanonicalTreeExport,
   CanonicalProjectFile,
+  ColumnProjection,
   DesignerRequest,
   DesignerResponse,
   FieldBatchProjection,
   FieldExplanationProjection,
+  FieldConstraintInput,
+  NumberFormat,
   FieldTarget,
   FieldProjection,
   OpenedProjection,
@@ -26,6 +31,15 @@ import type {
   NewTableColumnInput,
   ProjectExport,
   TableProjection,
+  TableRowProjection,
+  TableView,
+  TableWindowProjection,
+  LocatedInViewProjection,
+  ColumnTotalsProjection,
+  GroupDimension,
+  GroupKey,
+  GroupScope,
+  GroupTotalsProjection,
   WorkerReply,
   WorkerRequest,
 } from "./protocol.ts";
@@ -49,6 +63,10 @@ export class WorkerDesignerClient implements DesignerClient {
       if (pending === undefined) return;
       this.#pending.delete(event.data.id);
       if (event.data.status === "error") {
+        if (event.data.error.code === "capacity_exceeded" && !isCapacityFailure(event.data.error)) {
+          pending.reject(new Error("Invalid Worker capacity failure."));
+          return;
+        }
         pending.reject(new DesignerRuntimeError(event.data.error));
       } else {
         pending.resolve(event.data);
@@ -143,8 +161,9 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns}));
   }
 
-  async duplicateCollection(expectedRevision: string, collection: string, name: string): Promise<DuplicateCollectionProjection> {
-    return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name}));
+  async duplicateCollection(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection> {
+    const columns = columnNames === undefined ? {} : {column_names: columnNames};
+    return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name, ...columns}));
   }
 
   /** Return complete entity and schema presentation invalidation from Rust. */
@@ -160,6 +179,18 @@ export class WorkerDesignerClient implements DesignerClient {
     return this.trackerCommand({type: "set_column_requiredness", expected_revision: expectedRevision, collection, field, required});
   }
 
+  async setColumnConstraint(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_constraint", expected_revision: expectedRevision, collection, field, constraint});
+  }
+
+  async setColumnNumberFormat(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_number_format", expected_revision: expectedRevision, collection, field, number_format: numberFormat});
+  }
+
+  async moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "move_column", expected_revision: expected, collection, field, to_index: toIndex});
+  }
+
   async bootstrap(): Promise<BootstrapProjection> {
     return expectResponse(
       "bootstrap",
@@ -167,6 +198,15 @@ export class WorkerDesignerClient implements DesignerClient {
         type: "bootstrap",
         occurrence_id: freshOccurrenceId(),
       }),
+    );
+  }
+
+  async queryCapacity(expectedRevision?: string): Promise<CapacityProjection> {
+    return expectResponse(
+      "capacity",
+      await this.#command(expectedRevision === undefined
+        ? {type: "query_capacity"}
+        : {type: "query_capacity", expected_revision: expectedRevision}),
     );
   }
 
@@ -313,6 +353,80 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse(
       "table",
       await this.#command({ type: "query_table", collection }),
+    );
+  }
+
+  async queryTableWindow(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    start: number,
+    count: number,
+  ): Promise<TableWindowProjection> {
+    return expectResponse(
+      "table_window",
+      await this.#command({
+        type: "query_table_window",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+        start,
+        count,
+      }),
+    );
+  }
+
+  async locateInView(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    entity: string,
+  ): Promise<LocatedInViewProjection> {
+    return expectResponse(
+      "located_in_view",
+      await this.#command({
+        type: "locate_in_view",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+        entity,
+      }),
+    );
+  }
+
+  async queryColumnTotals(
+    expectedRevision: string,
+    collection: string,
+    entities: string[],
+  ): Promise<ColumnTotalsProjection> {
+    return expectResponse(
+      "column_totals",
+      await this.#command({
+        type: "query_column_totals",
+        expected_revision: expectedRevision,
+        collection,
+        entities,
+      }),
+    );
+  }
+
+  async queryGroupTotals(
+    expectedRevision: string,
+    collection: string,
+    dimensions: GroupDimension[],
+    measures: string[],
+    scope: GroupScope,
+  ): Promise<GroupTotalsProjection> {
+    return expectResponse(
+      "group_totals",
+      await this.#command({
+        type: "query_group_totals",
+        expected_revision: expectedRevision,
+        collection,
+        dimensions,
+        measures,
+        scope,
+      }),
     );
   }
 
@@ -478,6 +592,7 @@ export function freshOccurrenceId(): string {
 function expectResponse(type: "import_preview", response: DesignerResponse): SourceWorkbook;
 function expectResponse(type: "imported", response: DesignerResponse): ImportedProjection;
 function expectResponse(type: "cleanup_preview", response: DesignerResponse): CleanupPreview;
+function expectResponse(type: "capacity", response: DesignerResponse): CapacityProjection;
 function expectResponse(
   type: "bootstrap",
   response: DesignerResponse,
@@ -490,6 +605,22 @@ function expectResponse(
   type: "table",
   response: DesignerResponse,
 ): TableProjection;
+function expectResponse(
+  type: "table_window",
+  response: DesignerResponse,
+): TableWindowProjection;
+function expectResponse(
+  type: "located_in_view",
+  response: DesignerResponse,
+): LocatedInViewProjection;
+function expectResponse(
+  type: "column_totals",
+  response: DesignerResponse,
+): ColumnTotalsProjection;
+function expectResponse(
+  type: "group_totals",
+  response: DesignerResponse,
+): GroupTotalsProjection;
 function expectResponse(
   type: "fields",
   response: DesignerResponse,
@@ -523,6 +654,10 @@ function expectResponse(
   // sparse Rust payload (or fabricating empty Text for absent slots).
   switch (response.type) {
     case "table": validateTablePresence(response.payload); break;
+    case "table_window": validateTablePresence(response.payload); break;
+    case "located_in_view": validateLocatedInView(response.payload); break;
+    case "column_totals": validateColumnTotals(response.payload); break;
+    case "group_totals": validateGroupTotals(response.payload); break;
     case "opened": validateTablePresence(response.payload.table); break;
     case "imported": validateTablePresence(response.payload.opened.table); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
@@ -533,8 +668,38 @@ function expectResponse(
     case "cleanup_preview":
       response.payload.changes.forEach(change => { if (change.before !== null) validateFieldPresence(change.before); });
       break;
+    case "capacity": validateCapacity(response.payload); break;
   }
   return "payload" in response ? response.payload : undefined;
+}
+
+const CAPACITY_LIMITS = [
+  "collections", "table_fields", "table_rows", "total_entities", "populated_cells",
+  "formulas", "formula_ast_nodes", "dependency_edges",
+] as const;
+
+function validateCapacity(capacity: CapacityProjection): void {
+  const nonnegativeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+  if (capacity === null || typeof capacity !== "object" ||
+      typeof capacity.revision !== "string" ||
+      capacity.usage === null || typeof capacity.usage !== "object" ||
+      capacity.limits === null || typeof capacity.limits !== "object") {
+    throw new Error("Invalid Worker capacity projection.");
+  }
+  const usage = capacity.usage;
+  const limits = capacity.limits;
+  const usageCounts = [usage.collections, usage.total_entities, usage.populated_cells, usage.formulas,
+    usage.formula_ast_nodes, usage.dependency_edges];
+  if (!usageCounts.every(nonnegativeInteger) || !CAPACITY_LIMITS.every(limit => nonnegativeInteger(limits[limit])) ||
+      usage.tables === null || typeof usage.tables !== "object" || Array.isArray(usage.tables)) {
+    throw new Error("Invalid Worker capacity projection.");
+  }
+  for (const table of Object.values(usage.tables)) {
+    if (table === null || typeof table !== "object" ||
+        !nonnegativeInteger(table.rows) || !nonnegativeInteger(table.fields)) {
+      throw new Error("Invalid Worker capacity projection.");
+    }
+  }
 }
 
 function validateFieldPresence(field: FieldProjection): void {
@@ -551,12 +716,157 @@ function validateFieldPresence(field: FieldProjection): void {
   }
 }
 
-function validateTablePresence(table: TableProjection): void {
+const byteOrder = new TextEncoder();
+
+function compareBytes(left: Uint8Array, right: Uint8Array): number {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] !== right[index]) return left[index]! < right[index]! ? -1 : 1;
+  }
+  return Math.sign(left.length - right.length);
+}
+
+/** Mirrors the semantic declaration: unique literals in strict byte order. */
+function strictlyByteOrdered(values: readonly string[]): boolean {
+  let previous: Uint8Array | undefined;
+  for (const value of values) {
+    const bytes = byteOrder.encode(value);
+    if (previous !== undefined && compareBytes(previous, bytes) >= 0) return false;
+    previous = bytes;
+  }
+  return true;
+}
+
+function validateColumnConstraint(column: ColumnProjection): void {
+  const constraint = column.constraint;
+  if (constraint === undefined) return;
+  if (constraint.kind === "text_literal_set") {
+    if (column.field_type !== "text" ||
+        !Array.isArray(constraint.values) || constraint.values.length === 0 ||
+        !constraint.values.every(value => typeof value === "string") ||
+        !strictlyByteOrdered(constraint.values) ||
+        !Array.isArray(column.dropdown_options) ||
+        column.dropdown_options.length !== constraint.values.length ||
+        column.dropdown_options.some((value, index) => value !== constraint.values[index])) {
+      throw new Error("Invalid Worker column constraint.");
+    }
+    return;
+  }
+  if (constraint.kind === "number_inclusive_range") {
+    if (column.field_type !== "number" ||
+        !Number.isFinite(constraint.min) || !Number.isFinite(constraint.max) ||
+        constraint.min > constraint.max) {
+      throw new Error("Invalid Worker column constraint.");
+    }
+    return;
+  }
+  throw new Error("Invalid Worker column constraint.");
+}
+
+function validateColumnNumberFormat(column: ColumnProjection): void {
+  const format = column.number_format;
+  if (format === undefined) return;
+  if (format === null || typeof format !== "object") {
+    throw new Error("Invalid Worker column number format.");
+  }
+  const kind = format.kind as { type?: unknown; code?: unknown } | null;
+  // Mirror Rust's closed wire: exact member sets on the format and each kind.
+  const exactKeys = (value: object, keys: string[]) =>
+    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  const validKind = kind !== null && typeof kind === "object" && (
+    ((kind.type === "plain" || kind.type === "percent") && exactKeys(kind, ["type"])) ||
+    (kind.type === "currency" && exactKeys(kind, ["type", "code"]) &&
+      typeof kind.code === "string" && /^[A-Z]{3}$/.test(kind.code)));
+  if (column.field_type !== "number" || !exactKeys(format, ["decimals", "kind", "thousands_separator"]) ||
+      !Number.isInteger(format.decimals) ||
+      format.decimals < 0 || format.decimals > 10 || typeof format.thousands_separator !== "boolean" || !validKind) {
+    throw new Error("Invalid Worker column number format.");
+  }
+}
+
+function validateColumnTotals(totals: ColumnTotalsProjection): void {
+  if (!Number.isInteger(totals.rows) || totals.rows < 0) {
+    throw new Error("Invalid Worker column totals row count.");
+  }
+  for (const total of Object.values(totals.column_totals)) {
+    if (total !== null && !Number.isFinite(total)) {
+      throw new Error("Invalid Worker column total.");
+    }
+  }
+}
+
+function validateGroupTotals(totals: GroupTotalsProjection): void {
+  if (!Number.isInteger(totals.rows) || totals.rows < 0) {
+    throw new Error("Invalid Worker group totals row count.");
+  }
+  validateGroupTotalValues(totals.totals, totals.measures.length);
+  for (const group of totals.groups) {
+    if (!Number.isInteger(group.rows) || group.rows < 0) {
+      throw new Error("Invalid Worker group row count.");
+    }
+    if (group.keys.length !== totals.dimensions.length) {
+      throw new Error("Invalid Worker group key count.");
+    }
+    group.keys.forEach(validateGroupKey);
+    validateGroupTotalValues(group.totals, totals.measures.length);
+  }
+}
+
+function validateGroupTotalValues(values: (number | null)[], measures: number): void {
+  if (values.length !== measures) {
+    throw new Error("Invalid Worker group total count.");
+  }
+  for (const total of values) {
+    if (total !== null && !Number.isFinite(total)) {
+      throw new Error("Invalid Worker group total.");
+    }
+  }
+}
+
+function validateGroupKey(key: GroupKey): void {
+  if (key === null || typeof key !== "object") {
+    throw new Error("Invalid Worker group key.");
+  }
+  switch (key.kind) {
+    case "boolean":
+      if (typeof key.value !== "boolean") throw new Error("Invalid Worker group key value.");
+      return;
+    case "date":
+    case "month":
+    case "year":
+    case "text":
+      if (typeof key.value !== "string") throw new Error("Invalid Worker group key value.");
+      return;
+    case "blank":
+      if (Object.hasOwn(key, "value")) throw new Error("Invalid Worker group key value.");
+      return;
+    default:
+      throw new Error("Invalid Worker group key kind.");
+  }
+}
+
+function validateLocatedInView(located: LocatedInViewProjection): void {
+  if (located.result === "found") {
+    if (!Number.isInteger(located.index) || located.index! < 0) {
+      throw new Error("Invalid Worker located-in-view position.");
+    }
+    return;
+  }
+  if (located.result !== "filtered_out" || located.index !== undefined) {
+    throw new Error("Invalid Worker located-in-view result.");
+  }
+}
+
+function validateTablePresence(
+  table: Pick<TableProjection, "columns"> & { rows: TableRowProjection[] },
+): void {
   const columns = new Map(table.columns.map((column, index) => {
     if (typeof column.required !== "boolean") throw new Error("Invalid Worker column requiredness.");
     if (column.display_name_explicit !== undefined && column.display_name_explicit !== true) {
       throw new Error("Invalid Worker column display_name_explicit.");
     }
+    validateColumnConstraint(column);
+    validateColumnNumberFormat(column);
     return [column.id, {required: column.required, index}];
   }));
   if (columns.size !== table.columns.length) throw new Error("Invalid Worker duplicate column identity.");

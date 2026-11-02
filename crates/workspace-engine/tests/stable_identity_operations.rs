@@ -40,6 +40,7 @@ fn document() -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("weapon"),
                 display_name: None,
@@ -50,6 +51,7 @@ fn document() -> Document {
                             id: damage_id.clone(),
                             key: FieldKey::from("damage"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -61,6 +63,7 @@ fn document() -> Document {
                             id: dps_id.clone(),
                             key: FieldKey::from("dps"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -134,7 +137,12 @@ fn entity_field_and_schema_rename_preserve_ids_and_bound_meaning() {
         Value::Formula(bound.clone())
     );
     assert_eq!(
-        project_expression(&schema.document, &bound).unwrap(),
+        project_expression(
+            &schema.document,
+            &FieldRef::new("owner-stable", "dps-stable"),
+            &bound,
+        )
+        .unwrap(),
         "[moonblade.power]"
     );
 }
@@ -181,9 +189,13 @@ fn rename_projection_accepts_4096_bytes_and_rejects_4097_atomically() {
         unreachable!()
     };
     assert_eq!(
-        project_expression(&accepted.document, expression)
-            .unwrap()
-            .len(),
+        project_expression(
+            &accepted.document,
+            &FieldRef::new("owner-stable", "dps-stable"),
+            expression,
+        )
+        .unwrap()
+        .len(),
         4_096
     );
     assert!(matches!(error, WorkspaceError::FormulaProjection { .. }));

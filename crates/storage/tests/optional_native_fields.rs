@@ -25,6 +25,7 @@ fn fixture(sole: bool) -> Document {
                 id: id.into(),
                 key: id.into(),
                 display_name: None,
+                number_format: None,
                 field_type,
                 required,
                 constraint: FieldConstraint::None,
@@ -34,6 +35,7 @@ fn fixture(sole: bool) -> Document {
     document.schemas.insert(
         "items".into(),
         Schema {
+            field_order: None,
             id: "items".into(),
             key: "items".into(),
             display_name: None,

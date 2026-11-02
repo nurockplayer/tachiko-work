@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity, Document,
-    Expression, FieldConstraint, FieldRef, FieldType, Number, Schema, SemanticSubject, Value,
+    ColumnRef, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity,
+    Document, Expression, FieldConstraint, FieldRef, FieldType, Number, Schema, SemanticSubject,
+    Value,
 };
 
 const CORE_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.semantic-core");
@@ -10,6 +11,7 @@ const CORE_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.seman
 impl DiagnosticCode {
     pub const EMPTY_STABLE_ID: Self = Self::new("core.empty_stable_id");
     pub const EMPTY_KEY: Self = Self::new("core.empty_key");
+    pub const INVALID_FIELD_ORDER: Self = Self::new("core.invalid_field_order");
     pub const INVALID_KEY: Self = Self::new("core.invalid_key");
     pub const DUPLICATE_KEY: Self = Self::new("core.duplicate_key");
     pub const EMPTY_TITLE: Self = Self::new("core.empty_title");
@@ -253,6 +255,7 @@ fn validate_names(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
 fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
     for (schema_id, schema) in &document.schemas {
         let schema_path = format!("schemas.{schema_id}");
+        validate_field_order(schema, &schema_path, diagnostics);
         if schema_id != &schema.id {
             diagnostics.push(key_mismatch_diagnostic(
                 format!("{schema_path}.id"),
@@ -567,6 +570,16 @@ fn validate_field_constraint(
     subject: SemanticSubject,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if let Some(format) = &definition.number_format {
+        if let Err(error) = format.validate_for(&definition.field_type) {
+            diagnostics.push(core_diagnostic(
+                format!("{field_path}.number_format"),
+                DiagnosticCode::new("core.field_number_format_declaration"),
+                error.to_string(),
+                vec![subject.clone()],
+            ));
+        }
+    }
     let invalid = match (&definition.field_type, &definition.constraint) {
         (_, FieldConstraint::None) => false,
         (FieldType::Text, FieldConstraint::TextLiteralSet { values }) => {
@@ -588,6 +601,25 @@ fn validate_field_constraint(
             DiagnosticCode::FIELD_CONSTRAINT_DECLARATION,
             "field constraint is invalid for its declared field type",
             vec![subject],
+        ));
+    }
+}
+
+fn validate_field_order(schema: &Schema, schema_path: &str, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(order) = &schema.field_order else {
+        return;
+    };
+    let mut seen = BTreeSet::new();
+    let is_permutation = order.len() == schema.fields.len()
+        && order
+            .iter()
+            .all(|id| schema.fields.contains_key(id) && seen.insert(id));
+    if !is_permutation {
+        diagnostics.push(core_diagnostic(
+            format!("{schema_path}.field_order"),
+            DiagnosticCode::INVALID_FIELD_ORDER,
+            "field order must name every schema field exactly once".to_owned(),
+            vec![SemanticSubject::Schema(schema.id.clone())],
         ));
     }
 }
@@ -699,23 +731,11 @@ fn validate_expression(
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let mut stack = vec![expression];
-    while let Some(node) = stack.pop() {
-        match node {
-            Expression::Number(_) => {}
-            Expression::Reference(reference) => {
-                validate_formula_reference(document, owner, reference, path, diagnostics);
-            }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                stack.push(right);
-                stack.push(left);
-            }
-        }
+    for (reference, numeric) in expression.reference_uses(owner) {
+        validate_formula_reference(document, owner, &reference, numeric, path, diagnostics);
+    }
+    for column in expression.column_totals() {
+        validate_formula_column(document, owner, column, path, diagnostics);
     }
 }
 
@@ -723,6 +743,7 @@ fn validate_formula_reference(
     document: &Document,
     owner: &FieldRef,
     reference: &FieldRef,
+    numeric: bool,
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -774,7 +795,7 @@ fn validate_formula_reference(
         );
         return;
     };
-    if definition.field_type != FieldType::Number {
+    if numeric && definition.field_type != FieldType::Number {
         diagnostics.push(
             core_diagnostic(
                 path,
@@ -783,6 +804,65 @@ fn validate_formula_reference(
                 vec![SemanticSubject::EntityField(owner.clone())],
             )
             .with_related_subjects(vec![SemanticSubject::EntityField(reference.clone())])
+            .with_fact(DiagnosticFact::new("expected_kind", "number"))
+            .with_fact(DiagnosticFact::new(
+                "actual_kind",
+                field_type_name(&definition.field_type),
+            )),
+        );
+    }
+}
+
+fn validate_formula_column(
+    document: &Document,
+    owner: &FieldRef,
+    column: &ColumnRef,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let column_subject = || SemanticSubject::SchemaField {
+        schema: column.schema.clone(),
+        field: column.field.clone(),
+    };
+    let Some(schema) = document.schemas.get(&column.schema) else {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::MISSING_FORMULA_REFERENCE,
+                format!(
+                    "formula column schema stable id '{}' does not exist",
+                    column.schema
+                ),
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_related_subjects(vec![column_subject()]),
+        );
+        return;
+    };
+    let Some(definition) = schema.fields.get(&column.field) else {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::MISSING_FORMULA_REFERENCE,
+                format!(
+                    "formula column field stable id '{}' does not exist",
+                    column.field
+                ),
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_related_subjects(vec![column_subject()]),
+        );
+        return;
+    };
+    if definition.field_type != FieldType::Number {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+                format!("formula column '{column}' does not target a numeric field"),
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_related_subjects(vec![column_subject()])
             .with_fact(DiagnosticFact::new("expected_kind", "number"))
             .with_fact(DiagnosticFact::new(
                 "actual_kind",
@@ -820,8 +900,9 @@ mod issue_175_research {
     use super::{
         Diagnostic, DiagnosticCode, DiagnosticFact, Document, Expression, FieldRef, FieldType,
         Schema, SemanticSubject, Value, core_diagnostic, field_type_name, is_valid_identifier,
-        key_mismatch_diagnostic, validate_field_constraint, validate_formula_reference,
-        validate_stored_value_constraint, value_type_name,
+        key_mismatch_diagnostic, validate_field_constraint, validate_field_order,
+        validate_formula_column, validate_formula_reference, validate_stored_value_constraint,
+        value_type_name,
     };
 
     /// Run the accepted semantic validator with a research-only cancellation poll.
@@ -897,6 +978,7 @@ mod issue_175_research {
         for (schema_id, schema) in &document.schemas {
             poll_cancellation(cancelled)?;
             let schema_path = format!("schemas.{schema_id}");
+            validate_field_order(schema, &schema_path, diagnostics);
             if schema_id != &schema.id {
                 diagnostics.push(key_mismatch_diagnostic(
                     format!("{schema_path}.id"),
@@ -1327,27 +1409,40 @@ mod issue_175_research {
         diagnostics: &mut Vec<Diagnostic>,
         cancelled: &mut impl FnMut() -> bool,
     ) -> ValidationControl {
-        let mut stack = vec![expression];
-        let mut nodes = 0_usize;
-        while let Some(node) = stack.pop() {
+        let mut pending = vec![(expression, true)];
+        let mut nodes = 0usize;
+        while let Some((node, numeric)) = pending.pop() {
             if nodes % 64 == 0 {
                 poll_cancellation(cancelled)?;
             }
             nodes += 1;
             match node {
-                Expression::Number(_) => {}
-                Expression::Reference(reference) => {
-                    validate_formula_reference(document, owner, reference, path, diagnostics);
+                Expression::Reference(reference) => validate_formula_reference(
+                    document,
+                    owner,
+                    reference,
+                    numeric,
+                    path,
+                    diagnostics,
+                ),
+                Expression::SameRowReference(field) => validate_formula_reference(
+                    document,
+                    owner,
+                    &FieldRef::new(owner.entity.clone(), field.clone()),
+                    numeric,
+                    path,
+                    diagnostics,
+                ),
+                Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
+                    validate_formula_column(document, owner, column, path, diagnostics);
                 }
-                Expression::Add { left, right }
-                | Expression::Subtract { left, right }
-                | Expression::Multiply { left, right }
-                | Expression::Divide { left, right }
-                | Expression::Minimum { left, right }
-                | Expression::Maximum { left, right } => {
-                    stack.push(right);
-                    stack.push(left);
-                }
+                Expression::IsBlank(value) => pending.push((value, false)),
+                _ => pending.extend(
+                    node.children()
+                        .into_iter()
+                        .rev()
+                        .map(|child| (child, numeric)),
+                ),
             }
         }
         Ok(())
@@ -1370,6 +1465,7 @@ mod issue_175_research {
             document.schemas.insert(
                 SchemaId::from("schema-store-id"),
                 Schema {
+                    field_order: None,
                     id: SchemaId::from("schema-declared-id"),
                     key: "Invalid Schema Key".into(),
                     display_name: None,
@@ -1380,6 +1476,7 @@ mod issue_175_research {
                                 id: FieldId::from("name"),
                                 key: "name".into(),
                                 display_name: None,
+                                number_format: None,
                                 field_type: FieldType::Text,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1391,6 +1488,7 @@ mod issue_175_research {
                                 id: FieldId::from("different-amount-id"),
                                 key: "Invalid Amount Key".into(),
                                 display_name: None,
+                                number_format: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1402,6 +1500,7 @@ mod issue_175_research {
                                 id: FieldId::from("calc"),
                                 key: "calc".into(),
                                 display_name: None,
+                                number_format: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1480,6 +1579,7 @@ mod issue_175_research {
             document.schemas.insert(
                 SchemaId::from("schema"),
                 Schema {
+                    field_order: None,
                     id: SchemaId::from("schema"),
                     key: "items".into(),
                     display_name: None,
@@ -1489,6 +1589,7 @@ mod issue_175_research {
                             id: FieldId::from("name"),
                             key: "name".into(),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint,

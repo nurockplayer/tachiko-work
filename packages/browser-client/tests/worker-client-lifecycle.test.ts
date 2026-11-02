@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DesignerRuntimeError } from "../src/runtime/client.ts";
-import type { FailureProjection, FieldExplanationProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
+import type { FailureProjection, FieldExplanationProjection, GroupTotalsProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
 import { WorkerDesignerClient } from "../src/runtime/worker-client.ts";
 
 // This fixture supplies transport events only. Request correlation and promise
@@ -105,6 +105,86 @@ describe("Designer Worker request lifecycle", () => {
     worker.reply({ id: worker.request(1).id, status: "ok", response: { type: "table", payload: table("second") } });
     worker.reply({ id: worker.request(0).id, status: "ok", response: { type: "table", payload: table("first") } });
     await expect(results).resolves.toEqual([table("first"), table("second")]);
+  });
+
+  it("forwards bounded window and located-in-view requests and validates their replies", async () => {
+    const worker = transport();
+    const view = {
+      sort: [{field: "amount", direction: "desc" as const}],
+      filters: [{kind: "number_compare" as const, field: "amount", op: ">=" as const, value: 5.5}],
+      keep_entities: ["row-9"],
+    };
+    const pendingWindow = worker.client.queryTableWindow("resident/7", "items", view, 64, 256);
+    expect(worker.request(0)).toMatchObject({
+      kind: "command",
+      request: {type: "query_table_window", expected_revision: "resident/7", collection: "items", view, start: 64, count: 256},
+    });
+    const window = {
+      ...table("items"),
+      columns_revision: "columns/00000000000000ff",
+      total_rows: 900,
+      unfiltered_rows: 1_000,
+      start: 64,
+      rows: [],
+    };
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "table_window", payload: window}});
+    await expect(pendingWindow).resolves.toEqual(window);
+
+    const pendingLocate = worker.client.locateInView("resident/7", "items", view, "row-9");
+    expect(worker.request(1)).toMatchObject({
+      kind: "command",
+      request: {type: "locate_in_view", expected_revision: "resident/7", collection: "items", view, entity: "row-9"},
+    });
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "located_in_view", payload: {revision: "resident/7", result: "found", index: 12}}});
+    await expect(pendingLocate).resolves.toEqual({revision: "resident/7", result: "found", index: 12});
+
+    const malformed = worker.client.locateInView("resident/7", "items", view, "row-1");
+    worker.reply({id: worker.request(2).id, status: "ok", response: {type: "located_in_view", payload: {revision: "resident/7", result: "filtered_out", index: 3}}});
+    await expect(malformed).rejects.toThrow("Invalid Worker located-in-view result.");
+  });
+
+  it("forwards column-total requests and validates their replies", async () => {
+    const worker = transport();
+    const pending = worker.client.queryColumnTotals("resident/7", "items", ["row-1", "row-9"]);
+    expect(worker.request(0)).toMatchObject({
+      kind: "command",
+      request: {type: "query_column_totals", expected_revision: "resident/7", collection: "items", entities: ["row-1", "row-9"]},
+    });
+    const totals = {revision: "resident/7", rows: 2, column_totals: {amount: 4.5, blank: null}};
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "column_totals", payload: totals}});
+    await expect(pending).resolves.toEqual(totals);
+
+    const malformed = worker.client.queryColumnTotals("resident/7", "items", ["row-1"]);
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "column_totals", payload: {revision: "resident/7", rows: 1, column_totals: {amount: Number.NaN}}}});
+    await expect(malformed).rejects.toThrow("Invalid Worker column total.");
+  });
+
+  it("forwards group-total requests and validates their replies", async () => {
+    const worker = transport();
+    const dimensions = [{field: "category"}, {field: "when", bucket: "month" as const}];
+    const scope = {kind: "except" as const, entities: ["row-1"]};
+    const pending = worker.client.queryGroupTotals("resident/7", "items", dimensions, ["amount"], scope);
+    expect(worker.request(0)).toMatchObject({
+      kind: "command",
+      request: {type: "query_group_totals", expected_revision: "resident/7", collection: "items", dimensions, measures: ["amount"], scope},
+    });
+    const totals: GroupTotalsProjection = {
+      revision: "resident/7",
+      dimensions: [{field: "category", bucket: "value"}, {field: "when", bucket: "month"}],
+      measures: ["amount"],
+      rows: 2,
+      totals: [4.5],
+      groups: [
+        {keys: [{kind: "text", value: "Food"}, {kind: "month", value: "2026-03"}], rows: 1, totals: [4.5]},
+        {keys: [{kind: "blank"}, {kind: "blank"}], rows: 1, totals: [0]},
+      ],
+    };
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "group_totals", payload: totals}});
+    await expect(pending).resolves.toEqual(totals);
+
+    const malformed = worker.client.queryGroupTotals("resident/7", "items", dimensions, ["amount"], scope);
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "group_totals", payload: {...totals, groups: [{keys: [{kind: "text", value: "Food"}, {kind: "month", value: "2026-03"}], rows: 1, totals: [Number.NaN]}]}}});
+    await expect(malformed).rejects.toThrow("Invalid Worker group total.");
   });
 
   it("ignores unknown and duplicate replies without consuming another pending request", async () => {

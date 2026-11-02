@@ -142,6 +142,7 @@ fn balance_document(damage: f64) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("weapon"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
                 display_name: None,
@@ -158,6 +159,7 @@ fn balance_document(damage: f64) -> Document {
                             id: FieldId::from("name"),
                             key: FieldKey::from("name"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -198,6 +200,7 @@ fn number_field(id: &str) -> FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
         display_name: None,
+        number_format: None,
         field_type: FieldType::Number,
         required: true,
         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -2077,6 +2080,7 @@ fn merge_schema_definition_only_change_prints_the_semantic_impact() {
             id: FieldId::from("weight"),
             key: FieldKey::from("weight"),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Number,
             required: false,
             constraint: tachiko_workspace_engine::FieldConstraint::None,

@@ -19,6 +19,7 @@ fn balance_document(damage: f64) -> Document {
             (
                 SchemaId::from("character"),
                 Schema {
+                    field_order: None,
                     id: SchemaId::from("character"),
                     key: SchemaKey::from("character"),
                     display_name: None,
@@ -28,6 +29,7 @@ fn balance_document(damage: f64) -> Document {
             (
                 SchemaId::from("weapon"),
                 Schema {
+                    field_order: None,
                     id: SchemaId::from("weapon"),
                     key: SchemaKey::from("weapon"),
                     display_name: None,
@@ -86,6 +88,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
         display_name: None,
+        number_format: None,
         field_type,
         required: true,
         constraint: tachiko_workspace_engine::FieldConstraint::None,

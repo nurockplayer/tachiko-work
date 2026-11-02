@@ -10,6 +10,7 @@ fn document() -> Document {
                 id,
                 key: key.into(),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Text,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -17,6 +18,7 @@ fn document() -> Document {
         )
     });
     let schema = Schema {
+        field_order: None,
         id: "table".into(),
         key: "table".into(),
         display_name: None,

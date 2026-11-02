@@ -54,9 +54,9 @@ impl Journey {
             .iter()
             .any(|column| column["field_type"] == "date")
         {
-            // The legacy canonical-v1 export does not carry Date. Its existing
-            // private v2 project carrier still proves exact snapshot equality.
-            runtime.export_project(revision).unwrap().bytes
+            // The legacy canonical-v1 export does not carry Date, and an added
+            // column may carry a column order; .roproj/v3 carries both.
+            runtime.export_project_v3(revision).unwrap().bytes
         } else {
             runtime.export_canonical_tree(revision).unwrap().bytes
         }
@@ -207,14 +207,146 @@ fn wire_journey_preserves_sparse_values_and_atomic_history() {
         .clone();
     j.round_trip(json!({"type":"remove_column","collection":"items","field":partial}));
     j.refused(json!({"type":"add_column","collection":"items","name":"required_missing","field_type":"text","initializers":[]}));
+    // Optional Date and Yes/No columns start blank like Text and Number (#598).
     for kind in ["boolean", "date"] {
-        j.refused(json!({"type":"add_column","collection":"items","name":"outside","field_type":kind,"required":false}));
-        j.refused(json!({"type":"new_table","occurrence_id":OCCURRENCE,"name":"outside","columns":[{"name":"x","field_type":kind,"required":false}]}));
+        j.round_trip(json!({"type":"add_column","collection":"items","name":format!("optional_{kind}"),"field_type":kind,"required":false}));
+        let table = j.table();
+        let added = table["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|column| column["key"] == format!("optional_{kind}").as_str())
+            .unwrap()["id"]
+            .clone();
+        assert_eq!(table["native_table_profile"], true);
+        for row in table["rows"].as_array().unwrap() {
+            assert!(row["blank_fields"].as_array().unwrap().contains(&added));
+        }
+        j.round_trip(json!({"type":"remove_column","collection":"items","field":added}));
     }
     j.refused(json!({"type":"paste_cells","collection":"items","start_entity":null,"start_field":note,"rows":[["missing required label"]]}));
     // The actual WASM ABI replays these exact requests against native replies.
     if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
         std::fs::write(path, serde_json::to_vec(&j.transcript).unwrap()).unwrap();
+    }
+}
+
+fn assert_required_values_missing(
+    failure: &Value,
+    before: &Value,
+    target: &Value,
+    count: &str,
+    message: &str,
+) {
+    assert_eq!(failure["code"], "required_values_missing");
+    assert_eq!(failure["message"], message);
+    assert_eq!(failure["current_revision"], before["revision"]);
+    assert_eq!(failure["diagnostics"].as_array().unwrap().len(), 1);
+    let diagnostic = &failure["diagnostics"][0];
+    assert_eq!(diagnostic["path"], *target);
+    assert_eq!(diagnostic["subjects"][0]["kind"], "schema_field");
+    assert_eq!(diagnostic["subjects"][0]["value"]["field"], *target);
+    assert_eq!(
+        diagnostic["facts"],
+        json!([{"name":"blank_count","value":count}])
+    );
+}
+
+#[test]
+fn requiredness_strengthening_reports_missing_values_and_preserves_history() {
+    let mut j = Journey::default();
+    j.ok(
+        json!({"type":"new_table","occurrence_id":OCCURRENCE,"name":"items","columns":[
+            {"name":"label","field_type":"text"},
+            {"name":"note","field_type":"text","required":false},
+            {"name":"amount","field_type":"number","required":false},
+            {"name":"single","field_type":"text","required":false},
+            {"name":"complete","field_type":"number","required":false}
+        ]}),
+    );
+    let table = j.table();
+    let columns = table["columns"].as_array().unwrap();
+    let field =
+        |key: &str| columns.iter().find(|column| column["key"] == key).unwrap()["id"].clone();
+    let label = field("label");
+    let note = field("note");
+    let amount = field("amount");
+    let single = field("single");
+    let complete = field("complete");
+
+    for index in 0..5 {
+        j.mutate(
+            json!({"type":"insert_row","collection":"items","initializers":[
+                {"field":label,"input":{"kind":"text","value":format!("row {index}")}}
+            ]}),
+        );
+    }
+    let rows = j.table()["rows"].as_array().unwrap().clone();
+    let edits = |field: &Value, count: usize, kind: &str| {
+        rows.iter()
+            .take(count)
+            .map(|row| {
+                let input = match kind {
+                    "number" => json!({"kind":"number","input":"1"}),
+                    _ => json!({"kind":"text","value":"filled"}),
+                };
+                json!({"target":{"entity":row["id"],"field":field},"input":input})
+            })
+            .collect::<Vec<_>>()
+    };
+    j.mutate(json!({"type":"edit_cells","edits":edits(&note, 2, "text")}));
+    j.mutate(json!({"type":"edit_cells","edits":edits(&amount, 2, "number")}));
+    j.mutate(json!({"type":"edit_cells","edits":edits(&single, 4, "text")}));
+    j.mutate(json!({"type":"edit_cells","edits":edits(&complete, 5, "number")}));
+
+    for (target, count, message) in [
+        (&note, "3", "3 rows have no value in this column."),
+        (&amount, "3", "3 rows have no value in this column."),
+        (&single, "1", "1 row has no value in this column."),
+    ] {
+        let before = j.table();
+        let failure = j.refused(json!({"type":"set_column_requiredness","collection":"items","field":target,"required":true}))["error"].clone();
+        assert_required_values_missing(&failure, &before, target, count, message);
+    }
+
+    j.mutate(json!({"type":"undo"}));
+    assert!(
+        j.table()["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| { row["blank_fields"].as_array().unwrap().contains(&complete) })
+    );
+    j.mutate(json!({"type":"redo"}));
+    assert!(j.table()["rows"].as_array().unwrap().iter().all(|row| {
+        row["blank_fields"]
+            .as_array()
+            .is_none_or(|blank_fields| !blank_fields.contains(&complete))
+    }));
+
+    j.round_trip(json!({"type":"set_column_requiredness","collection":"items","field":complete,"required":true}));
+    j.round_trip(json!({"type":"set_column_requiredness","collection":"items","field":complete,"required":false}));
+
+    let stale = j.refused(json!({"type":"set_column_requiredness","collection":"items","field":note,"required":true,"expected_revision":"resident/0"}));
+    assert_eq!(stale["error"]["code"], "stale_revision");
+    let unknown = j.refused(json!({"type":"set_column_requiredness","collection":"items","field":"missing","required":true}));
+    assert_eq!(unknown["error"]["code"], "invalid_table_operation");
+
+    // Empty Text is a stored value, not a blank: filling the last three `note`
+    // cells with "" admits strengthening.
+    let empty_notes = rows.iter().skip(2).map(|row| {
+        json!({"target":{"entity":row["id"],"field":note},"input":{"kind":"text","value":""}})
+    }).collect::<Vec<_>>();
+    j.mutate(json!({"type":"edit_cells","edits":empty_notes}));
+    j.round_trip(
+        json!({"type":"set_column_requiredness","collection":"items","field":note,"required":true}),
+    );
+    if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
+        std::fs::write(
+            format!("{path}.requiredness"),
+            serde_json::to_vec(&j.transcript).unwrap(),
+        )
+        .unwrap();
     }
 }
 
@@ -240,11 +372,12 @@ fn optional_rows_keep_the_128_row_gate() {
 }
 
 #[test]
-fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
+#[allow(clippy::too_many_lines)] // One end-to-end clear, calculate and undo/redo scenario.
+fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_history() {
     use std::collections::BTreeMap;
     use tachiko_workspace_engine::{
         Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldRef, FieldType,
-        Number, Schema, Value as Stored,
+        Number, Schema,
     };
     let mut doc = Document::empty("doc", "Formula consumer");
     for (schema, fields) in [
@@ -266,6 +399,7 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
                         id: id.into(),
                         key: id.into(),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required,
                         constraint: FieldConstraint::None,
@@ -276,6 +410,7 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
         doc.schemas.insert(
             schema.into(),
             Schema {
+                field_order: None,
                 id: schema.into(),
                 key: schema.into(),
                 display_name: None,
@@ -290,8 +425,14 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
             key: "a".into(),
             schema: "items".into(),
             fields: BTreeMap::from([
-                ("label".into(), Stored::Text("before".into())),
-                ("amount".into(), Stored::Number(Number::new(3.0).unwrap())),
+                (
+                    "label".into(),
+                    tachiko_workspace_engine::Value::Text("before".into()),
+                ),
+                (
+                    "amount".into(),
+                    tachiko_workspace_engine::Value::Number(Number::new(3.0).unwrap()),
+                ),
             ]),
         },
     );
@@ -303,7 +444,9 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
             schema: "summary".into(),
             fields: BTreeMap::from([(
                 "total".into(),
-                Stored::Formula(Expression::Reference(FieldRef::new("a", "amount"))),
+                tachiko_workspace_engine::Value::Formula(Expression::Reference(FieldRef::new(
+                    "a", "amount",
+                ))),
             )]),
         },
     );
@@ -318,21 +461,24 @@ fn runtime_clear_of_formula_input_refuses_whole_batch_and_preserves_history() {
         .export_project("resident/0")
         .unwrap()
         .bytes;
-    // No display names: this also exercises request-local v2 evidence selection.
-    j.refused(json!({"type":"edit_cells","edits":[
-        {"target":{"entity":"a","field":"label"},"input":{"kind":"text","value":"would publish a prefix"}},
+    // Clearing an optional Number is a successful history operation; its
+    // formula consumer reads zero while the stored input stays absent.
+    j.round_trip(serde_json::from_str(r#"{"type":"edit_cells","edits":[
+        {"target":{"entity":"a","field":"label"},"input":{"kind":"text","value":"published together"}},
         {"target":{"entity":"a","field":"amount"},"input":{"kind":"clear"}}
-    ]}));
-    j.refused(json!({"type":"paste_cells","collection":"items","start_entity":"a","start_field":"amount","rows":[[{"kind":"clear"}]]}));
-    j.refused(json!({"type":"undo"}));
-    j.round_trip(json!({"type":"set_column_requiredness","collection":"items","field":"amount","required":true}));
-    j.round_trip(json!({"type":"set_column_requiredness","collection":"items","field":"amount","required":false}));
+    ]}"#).unwrap());
+    let revision = j.table()["revision"].clone();
+    let fields = j.ok(serde_json::from_str(&format!(r#"{{"type":"query_fields","expected_revision":{revision},"fields":[{{"entity":"sum","field":"total"}}]}}"#)).unwrap());
+    assert_eq!(fields["fields"][0]["calculated"]["value"], 0.0);
+    j.refused(serde_json::from_str(r#"{"type":"set_column_requiredness","collection":"items","field":"amount","required":true}"#).unwrap());
     if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
         std::fs::write(
             format!("{path}.formula"),
-            serde_json::to_vec(
-                &json!({"project":initial,"occurrence_id":OCCURRENCE,"records":j.transcript}),
-            )
+            serde_json::to_vec(&BTreeMap::from([
+                ("project", serde_json::to_value(initial).unwrap()),
+                ("occurrence_id", serde_json::to_value(OCCURRENCE).unwrap()),
+                ("records", serde_json::to_value(j.transcript).unwrap()),
+            ]))
             .unwrap(),
         )
         .unwrap();
@@ -450,8 +596,9 @@ fn blank_editability_matches_native_authoring_for_imported_collections() {
         _ => panic!("unexpected scalar kind"),
     };
     for (kind, field_type, source, native) in [
-        ("boolean", ImportFieldType::Boolean, "true", false),
-        ("date", ImportFieldType::Date, "2026-10-20", false),
+        // Optional Date and Yes/No imports are native since #598.
+        ("boolean", ImportFieldType::Boolean, "true", true),
+        ("date", ImportFieldType::Date, "2026-10-20", true),
         ("text", ImportFieldType::Text, "anchor", true),
     ] {
         let csv = format!("note,amount,other\n,,{source}\npresent,1,\n");
@@ -533,6 +680,17 @@ fn blank_editability_matches_native_authoring_for_imported_collections() {
                     json!({"type":"edit_scalar","target":field["target"],"input":input(scalar)}),
                 );
             }
+        }
+        if kind == "date" {
+            let date_field = &columns[2]["id"];
+            let error = j.refused(json!({
+                "type":"set_column_requiredness",
+                "collection":j.collection,
+                "field":date_field,
+                "required":true
+            }));
+            // The column still has a blank cell, so it cannot become required.
+            assert_eq!(error["error"]["code"], "required_values_missing");
         }
         if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
             std::fs::write(

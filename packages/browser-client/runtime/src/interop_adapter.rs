@@ -21,7 +21,7 @@ pub const MAX_NATIVE_TABLES_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_NATIVE_TABLES_EXPANDED_BYTES: usize = 24 * 1024 * 1024;
 pub const MAX_NATIVE_TABLES_XLSX_TEXT_UNITS: usize = 32_767;
 const MAX_NATIVE_TABLES_PRECISION_LOCATIONS: usize = 20;
-pub const MAX_FORMULAS: usize = 32;
+pub const MAX_FORMULAS: usize = crate::capacity::DEFAULT_LIMITS.formulas;
 pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
 pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 25_218;
 pub(crate) const MAX_TEXT_CAPACITY_BYTES: usize = 1024 * 1024;
@@ -98,6 +98,14 @@ pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
         })
 }
 
+/// The one non-default cell style the capacity profile writes: an ISO date.
+pub(crate) fn capacity_date_style() -> CellStyle {
+    CellStyle {
+        number_format: Some("yyyy-mm-dd".into()),
+        ..CellStyle::default()
+    }
+}
+
 fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
     sheet.has_header
         && !sheet.columns.is_empty()
@@ -109,13 +117,16 @@ fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
             row.len() == sheet.columns.len()
                 && row.iter().all(|cell| {
                     cell.formula.is_none()
-                        && matches!(
-                            cell.value,
+                        && match &cell.value {
                             SourceValue::Empty
-                                | SourceValue::Text { .. }
-                                | SourceValue::Number { .. }
-                        )
-                        && cell.style == CellStyle::default()
+                            | SourceValue::Text { .. }
+                            | SourceValue::Number { .. }
+                            | SourceValue::Boolean { .. } => cell.style == CellStyle::default(),
+                            SourceValue::Date { .. } => {
+                                cell.style == CellStyle::default()
+                                    || cell.style == capacity_date_style()
+                            }
+                        }
                 })
         })
 }
@@ -168,7 +179,7 @@ pub(crate) fn capacity_header_bytes(sheet: &SourceSheet) -> usize {
 pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     if !text_capacity_shape(workbook) {
         return fail(
-            "Text capacity requires one headered, default-style Text/Number table within 8,406 rows, 16 columns, and 25,218 cells",
+            "Text capacity requires one headered Text, Number, Date or Yes/No table with default styles within 8,406 rows, 16 columns, and 25,218 cells",
         );
     }
     let sheet = &workbook.sheets[0];
@@ -191,8 +202,20 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
                 SourceValue::Number { .. } => {
                     return fail("Text capacity refuses nonfinite Number");
                 }
-                SourceValue::Boolean { .. } | SourceValue::Date { .. } => {
-                    return fail("Text capacity contains a value outside Text/Number");
+                SourceValue::Date { value } => {
+                    if tachiko_workspace_engine::Date::parse(value).is_err()
+                        || !("1900-01-01"..="9999-12-31").contains(&value.as_str())
+                    {
+                        return fail(
+                            "Text capacity Date must be a YYYY-MM-DD date from 1900-01-01 through 9999-12-31",
+                        );
+                    }
+                    csv_bytes += csv_text_bytes(value);
+                    continue;
+                }
+                SourceValue::Boolean { value } => {
+                    csv_bytes += csv_text_bytes(if *value { "true" } else { "false" });
+                    continue;
                 }
             };
             if is_text {
@@ -228,7 +251,8 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
         return fail("Text capacity expanded XLSX exceeds 8 MiB");
     }
     // Worksheet nodes: row + (c,is,t) for populated Text cells. Empty and
-    // Number cells use fewer nodes. Other parts are independent XML documents.
+    // Number cells use fewer nodes; a Date or Boolean cell adds only c and v,
+    // so the 3-per-cell bound still holds. Other parts are independent XML documents.
     if 2 + (sheet.rows.len() + 1) * (1 + 3 * sheet.columns.len()) > 100_000 {
         return fail("Text capacity XML exceeds 100000 nodes");
     }
@@ -690,6 +714,24 @@ pub(crate) fn native_tables_compatibility(
     Ok(NativeTablesCompatibility::default())
 }
 
+/// Strips the optional `:$COL$ROW` end of a whole-column reference.
+fn strip_column_range(source: &str) -> Option<&str> {
+    let Some(end) = source.strip_prefix(":$") else {
+        return Some(source);
+    };
+    let columns = end.bytes().take_while(u8::is_ascii_uppercase).count();
+    if columns == 0 {
+        return None;
+    }
+    let end = &end[columns..];
+    let row = end.strip_prefix('$')?;
+    let digits = row.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    Some(&row[digits..])
+}
+
 /// Inventory the closed formula wire grammar, independently of its cached
 /// result. Quoted worksheet references are names, never strings or numbers.
 /// A future serializer token outside this grammar refuses until it is governed.
@@ -701,7 +743,7 @@ fn compatible_formula(
         category: FidelityCategory::UnsupportedSafeDisabled,
         code: "native_tables_xlsx_formula".into(),
         location: location.into(),
-        message: "Formula is outside the bounded numeric/reference/MIN/MAX output grammar.".into(),
+        message: "Formula is outside the bounded numeric/reference/function output grammar.".into(),
         blocking: true,
     };
     if formula.len() > 4096 || !xml_text_valid(formula) {
@@ -748,9 +790,24 @@ fn compatible_formula(
                 return Err(refuse());
             }
             remaining = &remaining[rows..];
-        } else if remaining.starts_with("MIN(") || remaining.starts_with("MAX(") {
-            remaining = &remaining[4..];
-        } else if remaining.starts_with(['(', ')', '+', '-', '*', '/', ',']) {
+            // A column reference is followed by an optional whole-column range
+            // end in the same `$COL$ROW` shape.
+            remaining = strip_column_range(remaining).ok_or_else(refuse)?;
+        } else if remaining.starts_with("SUM(")
+            || remaining.starts_with("AVERAGE(")
+            || remaining.starts_with("COUNT(")
+            || remaining.starts_with("MIN(")
+            || remaining.starts_with("MAX(")
+            || remaining.starts_with("IF(")
+            || remaining.starts_with("AND(")
+            || remaining.starts_with("OR(")
+            || remaining.starts_with("NOT(")
+            || remaining.starts_with("ROUND(")
+            || remaining.starts_with("ISBLANK(")
+        {
+            let open = remaining.find('(').ok_or_else(refuse)?;
+            remaining = &remaining[open + 1..];
+        } else if remaining.starts_with(['(', ')', '+', '-', '*', '/', ',', '=', '<', '>']) {
             remaining = &remaining[1..];
         } else {
             let mut end = remaining
@@ -870,7 +927,13 @@ pub(crate) fn validate_xlsx_compatibility(
                     NativeTablesCheck::Style(cell),
                     &format!("{location}/style"),
                 )?;
-                let style = output_style(cell);
+                let style = output_style(
+                    cell,
+                    sheet
+                        .columns
+                        .get(column)
+                        .and_then(|column| column.number_format.as_ref()),
+                );
                 if !styles.contains(&style) {
                     styles.push(style);
                 }
@@ -1082,7 +1145,19 @@ fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
                     "<c r=\"{column}{number}\" s=\"0\" t=\"n\"><v>{value}</v></c>"
                 )
                 .expect("capacity XML sinks are infallible"),
-                SourceValue::Empty | SourceValue::Boolean { .. } | SourceValue::Date { .. } => {
+                SourceValue::Boolean { value } => write!(
+                    output,
+                    "<c r=\"{column}{number}\" s=\"0\" t=\"b\"><v>{}</v></c>",
+                    u8::from(*value)
+                )
+                .expect("capacity XML sinks are infallible"),
+                SourceValue::Date { value } => {
+                    write!(output, "<c r=\"{column}{number}\" s=\"1\" t=\"d\"><v>")
+                        .expect("capacity XML sinks are infallible");
+                    output.text(value);
+                    write!(output, "</v></c>").expect("capacity XML sinks are infallible");
+                }
+                SourceValue::Empty => {
                     write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
                         .expect("capacity XML sinks are infallible");
                 }
@@ -1105,6 +1180,80 @@ fn escaped_xml_bytes(value: &str) -> usize {
         .sum()
 }
 
+#[derive(Debug, Default)]
+struct InferredColumnNumberFormat {
+    format: Option<tachiko_workspace_engine::NumberFormat>,
+    rejected: bool,
+    /// First source pattern that maps to no Tachiko format, for the finding.
+    unmapped_pattern: Option<String>,
+    /// First Excel currency pattern and the code it named, when one was used.
+    currency_mapped: Option<(String, String)>,
+}
+
+fn infer_column_number_format(
+    rows: &[Vec<SourceCell>],
+    column_index: usize,
+) -> InferredColumnNumberFormat {
+    use crate::interop_number_format::{from_excel, from_excel_currency};
+    use tachiko_workspace_engine::NumberFormatKind as EngineNumberFormatKind;
+
+    let mut observed = None;
+    let mut has_explicit = false;
+    let mut numeric_without_style = false;
+    let mut non_numeric_value = false;
+    let mut invalid = false;
+    let mut unmapped_pattern = None;
+    let mut currency_mapped = None;
+    for cell in rows.iter().filter_map(|row| row.get(column_index)) {
+        let numeric = cell.formula.is_some() || matches!(cell.value, SourceValue::Number { .. });
+        numeric_without_style |= numeric && cell.style.number_format.is_none();
+        non_numeric_value |= !matches!(cell.value, SourceValue::Empty | SourceValue::Number { .. });
+        // Only populated numeric cells decide the column format; a styled blank
+        // (often "General") must not veto an otherwise uniform column.
+        if !numeric {
+            continue;
+        }
+        let Some(pattern) = cell.style.number_format.as_deref() else {
+            continue;
+        };
+        has_explicit = true;
+        if let Some(format) = from_excel(pattern) {
+            if observed.as_ref().is_none_or(|prior| *prior == format) {
+                observed = Some(format);
+            } else {
+                invalid = true;
+            }
+            continue;
+        }
+        match from_excel_currency(pattern) {
+            Some(format) if observed.as_ref().is_none_or(|prior| *prior == format) => {
+                if currency_mapped.is_none() {
+                    if let EngineNumberFormatKind::Currency { code } = &format.kind {
+                        currency_mapped = Some((pattern.to_owned(), code.clone()));
+                    }
+                }
+                observed = Some(format);
+            }
+            _ => {
+                invalid = true;
+                if unmapped_pattern.is_none() {
+                    unmapped_pattern = Some(pattern.to_owned());
+                }
+            }
+        }
+    }
+    invalid |= has_explicit && numeric_without_style;
+    // A column format is only carried by Number columns; a text or other non-Number
+    // value keeps the source value and drops the format as a non-blocking finding.
+    invalid |= observed.is_some() && non_numeric_value;
+    InferredColumnNumberFormat {
+        format: if invalid { None } else { observed },
+        rejected: invalid,
+        unmapped_pattern,
+        currency_mapped: if invalid { None } else { currency_mapped },
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceWorkbook {
     pub sheets: Vec<SourceSheet>,
@@ -1117,11 +1266,66 @@ pub struct SourceSheet {
     pub columns: Vec<SourceColumn>,
     /// Data rows exclude the header and retain every intervening empty source row/column.
     pub rows: Vec<Vec<SourceCell>>,
+    #[serde(default, skip_serializing_if = "SourceLayout::is_default")]
+    pub layout: SourceLayout,
+}
+/// Where the imported grid sat in the source worksheet.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceLayout {
+    /// Source rows above the header that were not imported (title or blank rows).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rows_above_header: u32,
+    /// A trailing summary row recognised and left out of the data rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_row: Option<SummaryRow>,
+}
+impl SourceLayout {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference.
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryRow {
+    /// 1-based source row.
+    pub row: u32,
+    pub cells: Vec<SummaryCell>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryCell {
+    /// 0-based column.
+    pub column: u32,
+    pub aggregate: SummaryAggregate,
+    /// Source formula text, as in `SourceCell::formula`.
+    pub formula: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryAggregate {
+    Total,
+    Average,
+    Count,
+}
+impl SummaryAggregate {
+    #[must_use]
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Total => "total",
+            Self::Average => "average",
+            Self::Count => "count",
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceColumn {
     pub name: String,
     pub width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<tachiko_workspace_engine::NumberFormat>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SourceCell {
@@ -1180,21 +1384,34 @@ pub struct FidelityFinding {
 pub struct ImportOptions {
     pub delimiter: char,
     pub header: bool,
+    /// XLSX only: 1-based source row of each sheet's header, by sheet position.
+    /// A missing or `None` entry detects it (title and blank rows above are skipped).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_rows: Vec<Option<u32>>,
+    /// XLSX only: import a recognised summary row as an ordinary data row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_summary_rows: bool,
 }
 impl Default for ImportOptions {
     fn default() -> Self {
         Self {
             delimiter: ',',
             header: true,
+            header_rows: Vec::new(),
+            keep_summary_rows: false,
         }
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct InteropError(pub String);
+pub enum InteropError {
+    #[error("{0}")]
+    Invalid(String),
+    #[error(transparent)]
+    Capacity(#[from] crate::CapacityExceeded),
+}
 type Result<T> = std::result::Result<T, InteropError>;
 fn fail<T>(message: impl Into<String>) -> Result<T> {
-    Err(InteropError(message.into()))
+    Err(InteropError::Invalid(message.into()))
 }
 fn finding(
     category: FidelityCategory,
@@ -1224,11 +1441,15 @@ fn source_bound(bytes: &[u8]) -> Result<()> {
 /// Rejects invalid UTF-8, quoting, headers or profile bounds.
 #[allow(clippy::too_many_lines)] // One bounded delimiter state machine.
 pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
+    if !options.header_rows.is_empty() || options.keep_summary_rows {
+        return fail("header_rows and keep_summary_rows apply to XLSX only");
+    }
     source_bound(bytes)?;
     if ![',', ';', '\t'].contains(&options.delimiter) {
         return fail("Unsupported CSV delimiter");
     }
-    let text = std::str::from_utf8(bytes).map_err(|_| InteropError("CSV must be UTF-8".into()))?;
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| InteropError::Invalid("CSV must be UTF-8".into()))?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut rows = Vec::new();
     let mut row = Vec::new();
@@ -1272,11 +1493,15 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         } else {
             field.push(ch);
         }
-        if row.len() > MAX_COLUMNS
-            || rows.len() > MAX_TEXT_CAPACITY_ROWS + usize::from(options.header)
-        {
-            return fail("CSV exceeds 8,406 row or column bounds");
+        if row.len() > MAX_COLUMNS {
+            return fail("CSV exceeds column bounds");
         }
+        crate::capacity::check_limit(
+            crate::CapacityLimit::TableRows,
+            MAX_TEXT_CAPACITY_ROWS,
+            rows.len().saturating_sub(usize::from(options.header)),
+            Some("Imported table"),
+        )?;
     }
     if quoted {
         return fail("CSV contains an unclosed quoted field");
@@ -1286,10 +1511,13 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         rows.push(row);
     }
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
-    if width == 0
-        || width > MAX_COLUMNS
-        || rows.len() > MAX_TEXT_CAPACITY_ROWS + usize::from(options.header)
-    {
+    crate::capacity::check_limit(
+        crate::CapacityLimit::TableRows,
+        MAX_TEXT_CAPACITY_ROWS,
+        rows.len().saturating_sub(usize::from(options.header)),
+        Some("Imported table"),
+    )?;
+    if width == 0 || width > MAX_COLUMNS {
         return fail("CSV exceeds profile bounds");
     }
     let headers = if options.header {
@@ -1305,7 +1533,11 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
     }
     let columns = headers
         .into_iter()
-        .map(|name| SourceColumn { name, width: None })
+        .map(|name| SourceColumn {
+            name,
+            width: None,
+            number_format: None,
+        })
         .collect();
     let rows = rows
         .into_iter()
@@ -1329,6 +1561,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
             has_header: options.header,
             columns,
             rows,
+            layout: SourceLayout::default(),
         }],
         ledger: vec![
             finding(
@@ -1525,7 +1758,8 @@ fn capacity_plain_declaration(decl: &quick_xml::events::BytesDecl<'_>) -> bool {
 
 #[allow(clippy::too_many_lines)] // One XML event state machine and namespace scope.
 fn parse_xml(bytes: &[u8]) -> Result<Xml> {
-    let input = std::str::from_utf8(bytes).map_err(|_| InteropError("XML must be UTF-8".into()))?;
+    let input = std::str::from_utf8(bytes)
+        .map_err(|_| InteropError::Invalid("XML must be UTF-8".into()))?;
     if input.chars().any(|c| {
         (c < ' ' && !matches!(c, '\t' | '\n' | '\r')) || matches!(c, '\u{fffe}' | '\u{ffff}')
     }) {
@@ -1542,12 +1776,12 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     let mut document_event = false;
     loop {
         let start = usize::try_from(reader.buffer_position())
-            .map_err(|_| InteropError("XML offset overflow".into()))?;
+            .map_err(|_| InteropError::Invalid("XML offset overflow".into()))?;
         let event = reader
             .read_event()
-            .map_err(|e| InteropError(format!("Invalid XML: {e}")))?;
+            .map_err(|e| InteropError::Invalid(format!("Invalid XML: {e}")))?;
         let end = usize::try_from(reader.buffer_position())
-            .map_err(|_| InteropError("XML offset overflow".into()))?;
+            .map_err(|_| InteropError::Invalid("XML offset overflow".into()))?;
         plain_document &= tokens
             .get(start..end)
             .is_some_and(|raw| plain_token(raw, &event));
@@ -1573,15 +1807,15 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     if attribute_count > 64 {
                         return fail("XML attribute count exceeds profile");
                     }
-                    let a = a.map_err(|e| InteropError(e.to_string()))?;
+                    let a = a.map_err(|e| InteropError::Invalid(e.to_string()))?;
                     plain_lexical_values &=
                         !a.value.iter().any(|b| matches!(b, b'\t' | b'\n' | b'\r'));
                     let key = std::str::from_utf8(a.key.as_ref())
-                        .map_err(|_| InteropError("Invalid XML attribute".into()))?
+                        .map_err(|_| InteropError::Invalid("Invalid XML attribute".into()))?
                         .to_owned();
                     let value = a
                         .unescape_value()
-                        .map_err(|e| InteropError(e.to_string()))?
+                        .map_err(|e| InteropError::Invalid(e.to_string()))?
                         .into_owned();
                     if !xml_text_valid(&value) {
                         return fail("Invalid escaped XML attribute character");
@@ -1624,10 +1858,9 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     let uri = if prefix.is_empty() {
                         ""
                     } else {
-                        bindings
-                            .get(prefix)
-                            .map(String::as_str)
-                            .ok_or_else(|| InteropError("Unbound XML attribute namespace".into()))?
+                        bindings.get(prefix).map(String::as_str).ok_or_else(|| {
+                            InteropError::Invalid("Unbound XML attribute namespace".into())
+                        })?
                     };
                     if !expanded_attributes.insert((uri, local)) {
                         return fail("Duplicate expanded XML attribute");
@@ -1639,7 +1872,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                         || (uri == "http://www.w3.org/XML/1998/namespace" && local == "space");
                 }
                 let qname = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|_| InteropError("Invalid XML element".into()))?
+                    .map_err(|_| InteropError::Invalid("Invalid XML element".into()))?
                     .to_owned();
                 let (prefix, name) = qname.split_once(':').unwrap_or(("", &qname));
                 let ns = bindings.get(prefix).cloned().unwrap_or_default();
@@ -1671,11 +1904,13 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
             Event::End(_) => {
                 let (node, _) = stack
                     .pop()
-                    .ok_or_else(|| InteropError("Unexpected XML end".into()))?;
+                    .ok_or_else(|| InteropError::Invalid("Unexpected XML end".into()))?;
                 attach_xml(node, &mut stack, &mut root)?;
             }
             Event::Text(e) => {
-                let value = e.unescape().map_err(|e| InteropError(e.to_string()))?;
+                let value = e
+                    .unescape()
+                    .map_err(|e| InteropError::Invalid(e.to_string()))?;
                 if !xml_text_valid(&value) {
                     return fail("Invalid escaped XML character");
                 }
@@ -1695,7 +1930,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
             }
             Event::CData(e) => {
                 let value = std::str::from_utf8(e.as_ref())
-                    .map_err(|_| InteropError("Invalid CDATA".into()))?;
+                    .map_err(|_| InteropError::Invalid("Invalid CDATA".into()))?;
                 if !xml_text_valid(value) {
                     return fail("Invalid CDATA XML character");
                 }
@@ -1720,7 +1955,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
     if !stack.is_empty() {
         return fail("Unclosed XML element");
     }
-    let mut root = root.ok_or_else(|| InteropError("Missing XML root".into()))?;
+    let mut root = root.ok_or_else(|| InteropError::Invalid("Missing XML root".into()))?;
     root.plain_lexical_values &= plain_document;
     Ok(root)
 }
@@ -1740,14 +1975,17 @@ fn attach_xml(
 fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
     source_bound(bytes)?;
     validate_zip_directory(bytes)?;
-    let mut zip = ZipArchive::new(Cursor::new(bytes)).map_err(|e| InteropError(e.to_string()))?;
+    let mut zip =
+        ZipArchive::new(Cursor::new(bytes)).map_err(|e| InteropError::Invalid(e.to_string()))?;
     if zip.len() > MAX_ZIP_ENTRIES {
         return fail("ZIP entry count exceeds 256");
     }
     let mut result = BTreeMap::new();
     let mut total = 0usize;
     for i in 0..zip.len() {
-        let mut file = zip.by_index(i).map_err(|e| InteropError(e.to_string()))?;
+        let mut file = zip
+            .by_index(i)
+            .map_err(|e| InteropError::Invalid(e.to_string()))?;
         let name = file.name().to_owned();
         if name.is_empty()
             || name.starts_with('/')
@@ -1759,11 +1997,11 @@ fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
         if result.contains_key(&name) {
             return fail("Duplicate ZIP entry path");
         }
-        let size =
-            usize::try_from(file.size()).map_err(|_| InteropError("ZIP size overflow".into()))?;
+        let size = usize::try_from(file.size())
+            .map_err(|_| InteropError::Invalid("ZIP size overflow".into()))?;
         total = total
             .checked_add(size)
-            .ok_or_else(|| InteropError("ZIP size overflow".into()))?;
+            .ok_or_else(|| InteropError::Invalid("ZIP size overflow".into()))?;
         if total > MAX_EXPANDED_BYTES {
             return fail("Expanded ZIP exceeds 8 MiB");
         }
@@ -1771,7 +2009,7 @@ fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
         (&mut file)
             .take((size + 1) as u64)
             .read_to_end(&mut contents)
-            .map_err(|e| InteropError(e.to_string()))?;
+            .map_err(|e| InteropError::Invalid(e.to_string()))?;
         if contents.len() != size {
             return fail("ZIP expanded size mismatch");
         }
@@ -1782,15 +2020,15 @@ fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
 fn zip_u16(bytes: &[u8], offset: usize) -> Result<usize> {
     let raw = bytes
         .get(offset..offset + 2)
-        .ok_or_else(|| InteropError("Truncated ZIP directory".into()))?;
+        .ok_or_else(|| InteropError::Invalid("Truncated ZIP directory".into()))?;
     Ok(usize::from(u16::from_le_bytes([raw[0], raw[1]])))
 }
 fn zip_u32(bytes: &[u8], offset: usize) -> Result<usize> {
     let raw = bytes
         .get(offset..offset + 4)
-        .ok_or_else(|| InteropError("Truncated ZIP directory".into()))?;
+        .ok_or_else(|| InteropError::Invalid("Truncated ZIP directory".into()))?;
     usize::try_from(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
-        .map_err(|_| InteropError("ZIP directory offset overflow".into()))
+        .map_err(|_| InteropError::Invalid("ZIP directory offset overflow".into()))
 }
 fn validate_zip_directory(bytes: &[u8]) -> Result<()> {
     // zip indexes entries by name, so duplicate names must be rejected before its index collapses them.
@@ -1801,7 +2039,7 @@ fn validate_zip_directory(bytes: &[u8]) -> Result<()> {
             bytes.get(p..p + 4) == Some(b"PK\x05\x06")
                 && zip_u16(bytes, p + 20).is_ok_and(|n| p + 22 + n == bytes.len())
         })
-        .ok_or_else(|| InteropError("Missing ZIP end directory".into()))?;
+        .ok_or_else(|| InteropError::Invalid("Missing ZIP end directory".into()))?;
     if zip_u16(bytes, end + 4)? != 0 || zip_u16(bytes, end + 6)? != 0 {
         return fail("Multi-disk ZIP is outside profile");
     }
@@ -1824,13 +2062,13 @@ fn validate_zip_directory(bytes: &[u8]) -> Result<()> {
         let comment = zip_u16(bytes, pos + 32)?;
         let name = bytes
             .get(pos + 46..pos + 46 + name_len)
-            .ok_or_else(|| InteropError("Truncated ZIP name".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Truncated ZIP name".into()))?;
         if !names.insert(name) {
             return fail("Duplicate ZIP entry path");
         }
         pos = pos
             .checked_add(46 + name_len + extra + comment)
-            .ok_or_else(|| InteropError("ZIP directory overflow".into()))?;
+            .ok_or_else(|| InteropError::Invalid("ZIP directory overflow".into()))?;
         if pos > end {
             return fail("ZIP directory outside archive");
         }
@@ -1844,7 +2082,7 @@ fn part<'a>(parts: &'a BTreeMap<String, Vec<u8>>, name: &str) -> Result<&'a [u8]
     parts
         .get(name)
         .map(Vec::as_slice)
-        .ok_or_else(|| InteropError(format!("Missing XLSX part {name}")))
+        .ok_or_else(|| InteropError::Invalid(format!("Missing XLSX part {name}")))
 }
 fn xml_part(parts: &BTreeMap<String, Vec<u8>>, name: &str, root: &str, ns: &str) -> Result<Xml> {
     let xml = parse_xml(part(parts, name)?)?;
@@ -2058,6 +2296,10 @@ fn worksheet_relationship_finding(path: &str, bytes: &[u8]) -> Result<FidelityFi
         false,
     ))
 }
+fn is_general_format(fmt: &str) -> bool {
+    fmt.eq_ignore_ascii_case("General")
+}
+
 fn builtin_format(id: u32) -> Option<String> {
     match id {
         0 => None,
@@ -2091,9 +2333,26 @@ fn builtin_format(id: u32) -> Option<String> {
         _ => Some(format!("unsupported_builtin_{id}")),
     }
 }
-fn capacity_styles_xml() -> String {
+/// The large-import style tree, or the one Text/Number files exported before
+/// Work #610 carry (no date format; a cell naming style 1 refuses as out of
+/// bounds).
+fn capacity_styles(xml: &Xml) -> Result<bool> {
+    Ok(
+        same_plain_tree(xml, &parse_xml(capacity_styles_xml().as_bytes())?)
+            || same_plain_tree(
+                xml,
+                &parse_xml(capacity_styles_xml_before_dates().as_bytes())?,
+            ),
+    )
+}
+fn capacity_styles_xml_before_dates() -> String {
     format!(
         "<styleSheet xmlns=\"{MAIN}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"
+    )
+}
+fn capacity_styles_xml() -> String {
+    format!(
+        "<styleSheet xmlns=\"{MAIN}\"><numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd\"/></numFmts><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs></styleSheet>"
     )
 }
 
@@ -2184,16 +2443,23 @@ fn capacity_plain_values(node: &Xml) -> bool {
                 && node.attr("rel:id").is_some()
         }
         "c" => {
-            matches!(node.attr("s"), None | Some("0"))
-                && match node.attr("t") {
-                    Some("inlineStr") => node.children.len() == 1 && node.children[0].name == "is",
-                    Some("str" | "s") => node.children.len() == 1 && node.children[0].name == "v",
-                    None | Some("n") => {
-                        node.children.is_empty()
-                            || (node.children.len() == 1 && node.children[0].name == "v")
-                    }
-                    _ => false,
+            let default_style = matches!(node.attr("s"), None | Some("0"));
+            let one_value = node.children.len() == 1 && node.children[0].name == "v";
+            match node.attr("t") {
+                Some("inlineStr") => {
+                    default_style && node.children.len() == 1 && node.children[0].name == "is"
                 }
+                // A Boolean uses the default style; only a Date carries the
+                // one non-default style (the canonical yyyy-mm-dd format).
+                Some("str" | "s" | "b") => default_style && one_value,
+                // A spreadsheet app may store the date as a serial number.
+                None | Some("n") if node.attr("s") == Some("1") => one_value,
+                None | Some("n") => default_style && (node.children.is_empty() || one_value),
+                // An ISO date may carry the date format or the default style,
+                // as the sheet shape admits both.
+                Some("d") => (default_style || node.attr("s") == Some("1")) && one_value,
+                _ => false,
+            }
         }
         "t" => node.attrs.values().all(|value| value == "preserve"),
         "sst" => node
@@ -2293,7 +2559,7 @@ fn capacity_plain_parts(parts: &BTreeMap<String, Vec<u8>>) -> Result<bool> {
             return Ok(false);
         }
         if path == "xl/styles.xml" {
-            if !same_plain_tree(&xml, &parse_xml(capacity_styles_xml().as_bytes())?) {
+            if !capacity_styles(&xml)? {
                 return Ok(false);
             }
         } else if !capacity_plain_node(&xml) || !capacity_plain_bindings(path, &xml, parts) {
@@ -2397,14 +2663,17 @@ fn parse_styles(
             xf.attr(key)
                 .unwrap_or("0")
                 .parse::<usize>()
-                .map_err(|_| InteropError("Invalid style index".into()))
+                .map_err(|_| InteropError::Invalid("Invalid style index".into()))
         };
         let fmt_id = u32::try_from(index("numFmtId")?)
-            .map_err(|_| InteropError("Invalid number format".into()))?;
+            .map_err(|_| InteropError::Invalid("Invalid number format".into()))?;
+        // A custom "General" (older Work exports wrote one) is the default
+        // format, like built-in 0.
         let number_format = formats
             .get(&fmt_id)
             .cloned()
-            .or_else(|| builtin_format(fmt_id));
+            .or_else(|| builtin_format(fmt_id))
+            .filter(|fmt| !is_general_format(fmt));
         let font = fonts.get(index("fontId")?).copied();
         let fill = fills.get(index("fillId")?).copied();
         let border = borders.get(index("borderId")?).copied();
@@ -2437,7 +2706,7 @@ fn parse_styles(
             alignment: horizontal,
         });
     }
-    if same_plain_tree(&xml, &parse_xml(capacity_styles_xml().as_bytes())?) {
+    if capacity_styles(&xml)? {
         ledger.push(finding(
             FidelityCategory::NativeEquivalent,
             "plain_styles",
@@ -2453,33 +2722,41 @@ fn parse_styles(
     }
     Ok(styles)
 }
-fn coordinate(address: &str) -> Result<(usize, usize)> {
+pub(crate) fn coordinate(address: &str) -> Result<(usize, usize)> {
     let split = address
         .bytes()
         .position(|b| !b.is_ascii_alphabetic())
-        .ok_or_else(|| InteropError("Missing cell row".into()))?;
+        .ok_or_else(|| InteropError::Invalid("Missing cell row".into()))?;
     let mut col = 0usize;
     for b in address[..split].bytes() {
         col = col
             .checked_mul(26)
             .and_then(|n| n.checked_add(usize::from(b.to_ascii_uppercase() - b'A' + 1)))
-            .ok_or_else(|| InteropError("Cell column overflow".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Cell column overflow".into()))?;
         if col > MAX_COLUMNS {
             return fail("Cell column exceeds profile");
         }
     }
     let row = address[split..]
         .parse::<usize>()
-        .map_err(|_| InteropError("Invalid cell row".into()))?;
-    if col == 0 || row == 0 || row > MAX_TEXT_CAPACITY_ROWS + 1 {
-        return fail("Cell row exceeds 8,406 profile");
+        .map_err(|_| InteropError::Invalid("Invalid cell row".into()))?;
+    if col == 0 || row == 0 {
+        return fail("Invalid cell coordinate");
     }
+    // Row 1 is the header, so data rows are `row - 1`.
+    crate::capacity::check_limit(
+        crate::CapacityLimit::TableRows,
+        MAX_TEXT_CAPACITY_ROWS,
+        row - 1,
+        Some("Imported table"),
+    )?;
     Ok((row - 1, col - 1))
 }
 use crate::interop_number_format::NumberFormatKind;
 
 fn checked_number_format(style: &CellStyle) -> Result<NumberFormatKind> {
-    crate::interop_number_format::classify(style.number_format.as_deref()).map_err(InteropError)
+    crate::interop_number_format::classify(style.number_format.as_deref())
+        .map_err(InteropError::Invalid)
 }
 #[allow(clippy::float_cmp, clippy::cast_possible_truncation)] // Serial is first proven finite, integral, and within the i64 range; serial 60 is exact.
 fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
@@ -2489,7 +2766,9 @@ fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
     if !date1904 && value == 60.0 {
         return fail("Excel 1900 serial 60 is not a Gregorian date");
     }
-    if !(-700_000.0..=2_900_000.0).contains(&value) {
+    // 2,958,465 is 9999-12-31 in the 1900 system; Date::parse refuses
+    // anything that lands beyond year 9999.
+    if !(-700_000.0..=2_958_465.0).contains(&value) {
         return fail("Date serial is outside Gregorian profile");
     }
     let serial = value as i64;
@@ -2509,7 +2788,8 @@ fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
     let m = mp + if mp < 10 { 3 } else { -9 };
     y += i64::from(m <= 2);
     let text = format!("{y:04}-{m:02}-{d:02}");
-    tachiko_workspace_engine::Date::parse(&text).map_err(|e| InteropError(e.to_string()))?;
+    tachiko_workspace_engine::Date::parse(&text)
+        .map_err(|e| InteropError::Invalid(e.to_string()))?;
     Ok(text)
 }
 fn cell_value(
@@ -2530,11 +2810,11 @@ fn cell_value(
         "s" => shared
             .get(
                 raw.parse::<usize>()
-                    .map_err(|_| InteropError("Invalid shared string index".into()))?,
+                    .map_err(|_| InteropError::Invalid("Invalid shared string index".into()))?,
             )
             .cloned()
             .map(|value| SourceValue::Text { value })
-            .ok_or_else(|| InteropError("Shared string index out of bounds".into())),
+            .ok_or_else(|| InteropError::Invalid("Shared string index out of bounds".into())),
         "inlineStr" => Ok(SourceValue::Text {
             value: cell.child("is").map(Xml::content).unwrap_or_default(),
         }),
@@ -2545,7 +2825,8 @@ fn cell_value(
             _ => fail("Invalid XLSX Boolean"),
         },
         "d" => {
-            tachiko_workspace_engine::Date::parse(raw).map_err(|e| InteropError(e.to_string()))?;
+            tachiko_workspace_engine::Date::parse(raw)
+                .map_err(|e| InteropError::Invalid(e.to_string()))?;
             Ok(SourceValue::Date { value: raw.into() })
         }
         "n" => {
@@ -2554,7 +2835,7 @@ fn cell_value(
             }
             let value = raw
                 .parse::<f64>()
-                .map_err(|_| InteropError("Invalid XLSX Number".into()))?;
+                .map_err(|_| InteropError::Invalid("Invalid XLSX Number".into()))?;
             if !value.is_finite() {
                 return fail("Nonfinite XLSX Number");
             }
@@ -2772,8 +3053,16 @@ fn inventory_hidden(
 /// Inspect all bounded worksheets and produce the sole fidelity admission ledger.
 /// # Errors
 /// Rejects malformed archives/XML, unresolved relationships and resource limits.
-#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
 pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
+    import_xlsx_with(bytes, &ImportOptions::default())
+}
+
+/// Inspect all bounded worksheets under explicit import options.
+/// # Errors
+/// Rejects malformed archives/XML, unresolved relationships, resource limits and
+/// header or summary-row options that do not fit the workbook.
+#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
+pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
     let parts = archive(bytes)?;
     let mut ledger = Vec::new();
     let workbook = xml_part(&parts, "xl/workbook.xml", "workbook", MAIN)?;
@@ -2783,7 +3072,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     for relationship in relationships.kids("Relationship") {
         let id = relationship
             .attr("Id")
-            .ok_or_else(|| InteropError("Missing relationship identity".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Missing relationship identity".into()))?;
         if rels.insert(id.to_owned(), relationship).is_some() {
             return fail("Duplicate workbook relationship identity");
         }
@@ -2812,20 +3101,23 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     };
     let sheet_nodes = workbook
         .child("sheets")
-        .ok_or_else(|| InteropError("Missing worksheets".into()))?
+        .ok_or_else(|| InteropError::Invalid("Missing worksheets".into()))?
         .kids("sheet")
         .collect::<Vec<_>>();
     if sheet_nodes.is_empty() || sheet_nodes.len() > MAX_SHEETS {
         return fail("Workbook must have 1..=4 sheets");
     }
+    if options.header_rows.len() > sheet_nodes.len() {
+        return fail("header_rows has more entries than the workbook has sheets");
+    }
     let mut sheets = Vec::new();
     let mut worksheet_paths = BTreeSet::new();
     let mut formula_count = 0;
     let mut names = BTreeSet::new();
-    for sheet in sheet_nodes {
+    for (sheet_index, sheet) in sheet_nodes.into_iter().enumerate() {
         let name = sheet
             .attr("name")
-            .ok_or_else(|| InteropError("Missing worksheet name".into()))?
+            .ok_or_else(|| InteropError::Invalid("Missing worksheet name".into()))?
             .to_owned();
         if !valid_worksheet_name(&name) || !names.insert(name.to_lowercase()) {
             return fail("Invalid or duplicate worksheet name");
@@ -2839,9 +3131,9 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             .get(
                 sheet
                     .attr("rel:id")
-                    .ok_or_else(|| InteropError("Missing sheet relationship".into()))?,
+                    .ok_or_else(|| InteropError::Invalid("Missing sheet relationship".into()))?,
             )
-            .ok_or_else(|| InteropError("Unresolved worksheet relationship".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Unresolved worksheet relationship".into()))?;
         if relationship.attr("TargetMode") == Some("External") {
             return fail("External worksheet is not admitted");
         }
@@ -2854,7 +3146,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             "xl",
             relationship
                 .attr("Target")
-                .ok_or_else(|| InteropError("Missing sheet target".into()))?,
+                .ok_or_else(|| InteropError::Invalid("Missing sheet target".into()))?,
         )?;
         let xml = xml_part(&parts, &path, "worksheet", MAIN)?;
         if !worksheet_paths.insert(path.clone()) {
@@ -2879,7 +3171,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         let mut width = 0;
         let data = xml
             .child("sheetData")
-            .ok_or_else(|| InteropError("Missing sheetData".into()))?;
+            .ok_or_else(|| InteropError::Invalid("Missing sheetData".into()))?;
         if data
             .children
             .iter()
@@ -2903,17 +3195,23 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             }
             let row_index = row
                 .attr("r")
-                .ok_or_else(|| InteropError("Missing worksheet row index".into()))?
+                .ok_or_else(|| InteropError::Invalid("Missing worksheet row index".into()))?
                 .parse::<usize>()
-                .map_err(|_| InteropError("Invalid row index".into()))?;
-            if row_index == 0 || row_index > MAX_TEXT_CAPACITY_ROWS + 1 {
-                return fail("Worksheet row exceeds 8,406 profile");
+                .map_err(|_| InteropError::Invalid("Invalid row index".into()))?;
+            if row_index == 0 {
+                return fail("Invalid row index");
             }
+            crate::capacity::check_limit(
+                crate::CapacityLimit::TableRows,
+                MAX_TEXT_CAPACITY_ROWS,
+                row_index - 1,
+                Some("Imported table"),
+            )?;
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
                 let address = c
                     .attr("r")
-                    .ok_or_else(|| InteropError("Missing cell coordinate".into()))?;
+                    .ok_or_else(|| InteropError::Invalid("Missing cell coordinate".into()))?;
                 let (r, col) = coordinate(address)?;
                 if r + 1 != row_index || !seen.insert((r, col)) {
                     return fail("Duplicate or inconsistent cell coordinate");
@@ -2926,16 +3224,16 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                         c.attr("s")
                             .unwrap_or("0")
                             .parse::<usize>()
-                            .map_err(|_| InteropError("Invalid cell style".into()))?,
+                            .map_err(|_| InteropError::Invalid("Invalid cell style".into()))?,
                     )
-                    .ok_or_else(|| InteropError("Cell style index out of bounds".into()))?
+                    .ok_or_else(|| InteropError::Invalid("Cell style index out of bounds".into()))?
                     .clone();
                 let location = format!("{name}!{address}");
                 let formula = c.child("f");
                 let mut value = match cell_value(c, &shared, &style, date1904) {
                     Ok(value) => value,
                     Err(error) if formula.is_some() && ignorable_formula_cache(c, &style) => {
-                        ledger.push(finding(FidelityCategory::Converted, "formula_cache_ignored", &location, &format!("Cached formula result is unusable and ignored: {}. Rust must bind and recalculate the source formula", error.0), false));
+                        ledger.push(finding(FidelityCategory::Converted, "formula_cache_ignored", &location, &format!("Cached formula result is unusable and ignored: {error}. Rust must bind and recalculate the source formula"), false));
                         SourceValue::Empty
                     }
                     Err(error) => {
@@ -2943,7 +3241,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                             FidelityCategory::UnsupportedSafeDisabled,
                             "scalar_mapping_rejected",
                             &location,
-                            &error.0,
+                            &error.to_string(),
                             true,
                         ));
                         SourceValue::Empty
@@ -2953,7 +3251,13 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 if let Some(f) = formula {
                     formula_count += 1;
                     if formula_count > MAX_FORMULAS {
-                        return fail("Workbook exceeds 32 formulas");
+                        return Err(crate::CapacityExceeded {
+                            limit: crate::CapacityLimit::Formulas,
+                            maximum: MAX_FORMULAS,
+                            attempted: formula_count,
+                            collection: None,
+                        }
+                        .into());
                     }
                     if f.attr("t").is_some_and(|t| t != "normal") || f.text.is_empty() {
                         ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"shared_array_dynamic_formula",&location,"Shared, empty, array or dynamic formula is safe-disabled; cached value is not semantic truth",true));
@@ -2979,26 +3283,13 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                             true,
                         ));
                         value = SourceValue::Empty;
-                    } else if unsupported_formula_function(&f.text) {
-                        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"unsupported_formula_function",&location,"Only numeric arithmetic and binary MIN/MAX are admitted; Rust still validates binding",true));
+                    } else if unsupported_formula_function(&f.text, true) {
+                        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"unsupported_formula_function",&location,"Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding",true));
                         value = SourceValue::Empty;
                     }
                 }
                 if matches!(value, SourceValue::Date { .. }) {
                     ledger.push(finding(FidelityCategory::Converted,"gregorian_date",&location,"Date mapped to Gregorian YYYY-MM-DD; source serial identity is adapter-only",false));
-                }
-                if style
-                    .number_format
-                    .as_ref()
-                    .is_some_and(|s| s.contains(['%', '$']))
-                {
-                    ledger.push(finding(
-                        FidelityCategory::Converted,
-                        "number_presentation",
-                        &location,
-                        "Percentage/currency is Number plus presentation",
-                        false,
-                    ));
                 }
                 rows[r][col] = SourceCell {
                     value,
@@ -3013,13 +3304,73 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         for row in &mut rows {
             row.resize(width, SourceCell::default());
         }
+        let above = match options.header_rows.get(sheet_index).copied().flatten() {
+            Some(row) => {
+                let row = usize::try_from(row).unwrap_or(usize::MAX);
+                if row == 0 || row > rows.len() {
+                    return fail(format!("Header row {row} is outside worksheet {name}"));
+                }
+                row - 1
+            }
+            None => rows_above_header(&rows, width),
+        };
+        if above > 0 {
+            // The skipped rows are not imported, so their cell findings cannot block.
+            let mut excluded = BTreeSet::new();
+            for row in 1..=above {
+                for column in 0..width {
+                    excluded.insert(format!("{name}!{}{}", column_name(column), row));
+                }
+            }
+            ledger.retain(|finding| !excluded.contains(&finding.location));
+            rows.drain(..above);
+            ledger.push(finding(
+                FidelityCategory::LossyOnExport,
+                "rows_above_header_skipped",
+                &format!("{name}!1:{above}"),
+                "Rows above the header (title or blank rows) are not imported; export writes the header in row 1",
+                false,
+            ));
+        }
         let header = rows.remove(0);
+        let mut layout = SourceLayout {
+            rows_above_header: u32::try_from(above)
+                .map_err(|_| InteropError::Invalid("Header offset exceeds the row bound".into()))?,
+            summary_row: None,
+        };
+        if !options.keep_summary_rows {
+            if let Some((kept, cells)) = summary_row(&rows, above + 1) {
+                let source_row = above + 1 + rows.len();
+                // The excluded rows' findings describe cells that do not become data.
+                let mut excluded = BTreeSet::new();
+                for i in kept..rows.len() {
+                    for column in 0..width {
+                        excluded.insert(format!("{name}!{}{}", column_name(column), above + 2 + i));
+                    }
+                }
+                ledger.retain(|f| !excluded.contains(&f.location));
+                ledger.push(finding(
+                    FidelityCategory::LossyOnExport,
+                    "summary_row_excluded",
+                    &format!("{name}!{source_row}"),
+                    "This row totals the column above it (SUM, AVERAGE or COUNT), so it is not imported as a data row. Tachiko shows column totals; export does not write this row. Choose keep_summary_rows to import it as data.",
+                    false,
+                ));
+                rows.truncate(kept);
+                layout.summary_row = Some(SummaryRow {
+                    row: u32::try_from(source_row).map_err(|_| {
+                        InteropError::Invalid("Summary row exceeds the row bound".into())
+                    })?,
+                    cells,
+                });
+            }
+        }
         let mut capacity_plain = header.iter().all(|cell| cell.style == CellStyle::default());
         let mut headers = BTreeSet::new();
         let mut columns = Vec::new();
         for (i, c) in header.into_iter().enumerate() {
             if c.style != CellStyle::default() {
-                ledger.push(finding(FidelityCategory::LossyOnExport,"header_style_not_preserved",&format!("{name}!{}1",column_name(i)),"Header text is retained; source header styling remains in original source bytes",false));
+                ledger.push(finding(FidelityCategory::LossyOnExport,"header_style_not_preserved",&format!("{name}!{}{}",column_name(i),above+1),"Header text is retained; source header styling remains in original source bytes",false));
             }
             let title = match c.value {
                 SourceValue::Text { value } if !value.is_empty() && c.formula.is_none() => value,
@@ -3027,7 +3378,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     ledger.push(finding(
                         FidelityCategory::UnsupportedSafeDisabled,
                         "invalid_header",
-                        &format!("{name}!{}1", column_name(i)),
+                        &format!("{name}!{}{}", column_name(i), above + 1),
                         "XLSX profile requires a nonempty Text, nonformula header",
                         true,
                     ));
@@ -3046,7 +3397,35 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             columns.push(SourceColumn {
                 name: title,
                 width: None,
+                number_format: None,
             });
+        }
+        for (column_index, column) in columns.iter_mut().enumerate() {
+            let inferred = infer_column_number_format(&rows, column_index);
+            let location = format!("{name}:column {}", column_index + 1);
+            column.number_format = inferred.format;
+            if inferred.rejected {
+                let message = inferred.unmapped_pattern.map_or_else(
+                    || "XLSX numeric formatting is mixed, outside the exact Tachiko number-format vocabulary, or applied to non-numeric values; the field keeps its default format and source styling is not promoted.".to_owned(),
+                    |pattern| format!("XLSX number format \"{pattern}\" is mixed, outside the Tachiko number-format vocabulary, or applied to non-numeric values; the field keeps its default format and source styling is not promoted."),
+                );
+                ledger.push(finding(
+                    FidelityCategory::LossyOnExport,
+                    "number_format_not_mapped",
+                    &location,
+                    &message,
+                    false,
+                ));
+            }
+            if let Some((pattern, code)) = inferred.currency_mapped {
+                ledger.push(finding(
+                    FidelityCategory::Converted,
+                    "number_format_currency_mapped",
+                    &location,
+                    &format!("XLSX number format \"{pattern}\" mapped to {code} currency"),
+                    false,
+                ));
+            }
         }
         for cols in xml.kids("cols") {
             if cols
@@ -3075,17 +3454,17 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     .attr("min")
                     .unwrap_or("1")
                     .parse::<usize>()
-                    .map_err(|_| InteropError("Invalid column width range".into()))?;
+                    .map_err(|_| InteropError::Invalid("Invalid column width range".into()))?;
                 let max = c
                     .attr("max")
                     .unwrap_or("1")
                     .parse::<usize>()
-                    .map_err(|_| InteropError("Invalid column width range".into()))?;
+                    .map_err(|_| InteropError::Invalid("Invalid column width range".into()))?;
                 let w = c
                     .attr("width")
                     .map(str::parse::<f64>)
                     .transpose()
-                    .map_err(|_| InteropError("Invalid column width".into()))?;
+                    .map_err(|_| InteropError::Invalid("Invalid column width".into()))?;
                 capacity_plain &= w.is_none();
                 if min == 0
                     || max < min
@@ -3112,8 +3491,10 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             has_header: true,
             columns,
             rows,
+            layout,
         });
     }
+    refuse_foreign_aggregates(&mut sheets, &mut ledger);
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
     let plain = capacity_plain_parts(&parts)?;
     // Parser-derived classification replaces the existing record with a shorter
@@ -3136,6 +3517,479 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     Ok(finish_source_admission(workbook))
 }
 
+/// Leading title rows are skipped only when a complete header follows them.
+const MAX_DETECTED_ROWS_ABOVE_HEADER: usize = 10;
+
+fn present(cell: &SourceCell) -> bool {
+    cell.formula.is_some() || !matches!(cell.value, SourceValue::Empty)
+}
+
+/// A title row holds no cell, or exactly one non-formula Text cell in column A.
+fn title_or_blank(row: &[SourceCell]) -> bool {
+    let mut present = row.iter().enumerate().filter(|(_, cell)| present(cell));
+    match (present.next(), present.next()) {
+        (None, _) => true,
+        (Some((column, cell)), None) => {
+            column == 0
+                && cell.formula.is_none()
+                && matches!(&cell.value, SourceValue::Text { value } if !value.is_empty())
+        }
+        _ => false,
+    }
+}
+
+fn rows_above_header(rows: &[Vec<SourceCell>], width: usize) -> usize {
+    if width < 2 {
+        return 0;
+    }
+    let lead = rows
+        .iter()
+        .take(MAX_DETECTED_ROWS_ABOVE_HEADER + 1)
+        .take_while(|row| title_or_blank(row))
+        .count();
+    if lead == 0 || lead > MAX_DETECTED_ROWS_ABOVE_HEADER {
+        return 0;
+    }
+    // A title directly above the header could be an incomplete header such as
+    // `Name | (blank)` over a first record, so a blank row must separate them;
+    // other layouts choose `header_rows` explicitly.
+    if rows[lead - 1].iter().any(present) {
+        return 0;
+    }
+    // Detected rows are only skipped when a complete header follows them.
+    match rows.get(lead) {
+        Some(row)
+            if row.iter().all(|cell| {
+                cell.formula.is_none()
+                    && matches!(&cell.value, SourceValue::Text { value } if !value.is_empty())
+            }) =>
+        {
+            lead
+        }
+        _ => 0,
+    }
+}
+
+/// Cell text that labels a trailing Total row, after trimming and ASCII lowercasing.
+const SUMMARY_LABELS: &[&str] = &[
+    "total",
+    "totals",
+    "grand total",
+    "sum",
+    "subtotal",
+    "sub-total",
+    "sub total",
+    "average",
+    "avg",
+    "mean",
+    "count",
+    "min",
+    "max",
+    "minimum",
+    "maximum",
+    "合計",
+    "合计",
+    "總計",
+    "总计",
+    "総計",
+    "小計",
+    "小计",
+    "平均",
+    "計",
+    "计",
+    "件数",
+    "個数",
+    "筆數",
+    "笔数",
+];
+
+fn summary_label(value: &str) -> bool {
+    let value = value.trim();
+    let value = value
+        .strip_suffix(':')
+        .or_else(|| value.strip_suffix('：'))
+        .unwrap_or(value);
+    SUMMARY_LABELS.contains(&value.to_ascii_lowercase().as_str())
+}
+
+/// `rows` holds data rows only; `header_row` is the 1-based source row of the header.
+fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Vec<SummaryCell>)> {
+    let last = rows.len().checked_sub(1)?;
+    let mut kept = last;
+    while kept > 0 && !rows[kept - 1].iter().any(present) {
+        kept -= 1;
+    }
+    if kept == 0 {
+        return None;
+    }
+    // The aggregate must cover every row above it, blank ones included, so the
+    // column total it becomes means the same rows.
+    let last_data = header_row + last;
+    let own_row = header_row + 1 + last;
+    let mut cells = Vec::new();
+    // A label such as "Total" is required: an unlabelled last row that sums
+    // the column above may be an ordinary record, so it stays data.
+    let mut labelled = false;
+    for (column, cell) in rows[last].iter().enumerate() {
+        if let Some(formula) = cell.formula.as_deref() {
+            let aggregate = column_aggregate(formula, column, header_row, last_data, own_row)?;
+            if !numeric_column(&rows[..last], column) {
+                return None;
+            }
+            cells.push(SummaryCell {
+                column: u32::try_from(column).ok()?,
+                aggregate,
+                formula: formula.to_owned(),
+            });
+        } else {
+            match &cell.value {
+                SourceValue::Empty => {}
+                SourceValue::Text { value } if value.is_empty() => {}
+                SourceValue::Text { value } if summary_label(value) => labelled = true,
+                _ => return None,
+            }
+        }
+    }
+    if cells.is_empty() || !labelled {
+        return None;
+    }
+    // Blank rows between the data and the summary stay data rows, as other
+    // intervening blank rows do; only the summary row itself is left out.
+    Some((last, cells))
+}
+
+fn column_aggregate(
+    formula: &str,
+    column: usize,
+    header_row: usize,
+    last_data: usize,
+    own_row: usize,
+) -> Option<SummaryAggregate> {
+    let source = formula.trim();
+    let source = source.strip_prefix('=').map_or(source, str::trim_start);
+    let (name, rest) = source.split_once('(')?;
+    let aggregate = match name.trim().to_ascii_uppercase().as_str() {
+        "SUM" => SummaryAggregate::Total,
+        "AVERAGE" => SummaryAggregate::Average,
+        "COUNT" => SummaryAggregate::Count,
+        _ => return None,
+    };
+    let range = rest.trim_end().strip_suffix(')')?;
+    let (start, end) = range.split_once(':')?;
+    let (start_column, start_row) = cell_reference(start)?;
+    let (end_column, end_row) = cell_reference(end)?;
+    let expected = column_name(column);
+    if !start_column.eq_ignore_ascii_case(&expected) || !end_column.eq_ignore_ascii_case(&expected)
+    {
+        return None;
+    }
+    if start_row != header_row && start_row != header_row + 1 {
+        return None;
+    }
+    if end_row < last_data || end_row >= own_row {
+        return None;
+    }
+    Some(aggregate)
+}
+
+fn cell_reference(source: &str) -> Option<(String, usize)> {
+    let mut source = source.trim();
+    if let Some(rest) = source.strip_prefix('$') {
+        source = rest;
+    }
+    let letters_len = source
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(source.len());
+    if letters_len == 0 {
+        return None;
+    }
+    let (letters, rest) = source.split_at(letters_len);
+    let rest = rest.strip_prefix('$').unwrap_or(rest);
+    if rest.is_empty() || !rest.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((letters.to_owned(), rest.parse().ok()?))
+}
+
+fn skip_whitespace(source: &str, mut cursor: usize) -> usize {
+    while let Some(character) = source[cursor..].chars().next() {
+        if !character.is_whitespace() {
+            break;
+        }
+        cursor += character.len_utf8();
+    }
+    cursor
+}
+
+/// Byte length of the `$?COL$?ROW` reference at the start of `source`, with
+/// leading whitespace included and trailing whitespace excluded.
+fn cell_reference_span(source: &str) -> Option<usize> {
+    let mut cursor = source.len() - source.trim_start().len();
+    if source[cursor..].starts_with('$') {
+        cursor += 1;
+    }
+    let letters = source[cursor..]
+        .bytes()
+        .take_while(u8::is_ascii_alphabetic)
+        .count();
+    if letters == 0 {
+        return None;
+    }
+    cursor += letters;
+    if source[cursor..].starts_with('$') {
+        cursor += 1;
+    }
+    let digits = source[cursor..]
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .count();
+    if digits == 0 {
+        return None;
+    }
+    Some(cursor + digits)
+}
+
+/// 0-based column of an A1 column name.
+fn column_index(letters: &str) -> Option<usize> {
+    letters
+        .bytes()
+        .try_fold(0usize, |index, letter| {
+            index.checked_mul(26)?.checked_add(usize::from(
+                letter.to_ascii_uppercase().checked_sub(b'A')? + 1,
+            ))
+        })?
+        .checked_sub(1)
+}
+
+/// The balanced argument of the call at the start of `source` (`(...)`), with
+/// quoted text and nested calls skipped; returns it and the bytes through `)`.
+pub(crate) fn call_argument(source: &str) -> Option<(&str, usize)> {
+    let body = source.strip_prefix('(')?;
+    let mut depth = 0usize;
+    let mut cursor = 0;
+    let mut quote = None;
+    while let Some(character) = body[cursor..].chars().next() {
+        cursor += character.len_utf8();
+        match quote {
+            Some(open) if character == open => {
+                if open == '\'' && body[cursor..].starts_with('\'') {
+                    cursor += 1;
+                } else {
+                    quote = None;
+                }
+            }
+            Some(_) => {}
+            None => match character {
+                '\'' | '"' => quote = Some(character),
+                '(' => depth += 1,
+                ')' if depth == 0 => return Some((&body[..cursor - 1], cursor + 1)),
+                ')' => depth -= 1,
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// `argument` is the exact argument of an aggregate call. It must be one range
+/// covering exactly one whole data column of a sheet; returns that sheet and column.
+pub(crate) fn whole_column_argument(
+    argument: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+) -> Option<(usize, usize)> {
+    let mut cursor = skip_whitespace(argument, 0);
+    let mut named = None;
+    if argument[cursor..].starts_with('\'') {
+        cursor += 1;
+        let mut name = String::new();
+        loop {
+            let character = argument[cursor..].chars().next()?;
+            cursor += character.len_utf8();
+            if character != '\'' {
+                name.push(character);
+            } else if argument[cursor..].starts_with('\'') {
+                name.push('\'');
+                cursor += 1;
+            } else {
+                break;
+            }
+        }
+        if !argument[cursor..].starts_with('!') {
+            return None;
+        }
+        cursor += 1;
+        named = Some(name);
+    } else {
+        let start = cursor;
+        while let Some(character) = argument[cursor..].chars().next() {
+            if !(character.is_ascii_alphanumeric() || character == '_' || character == '.') {
+                break;
+            }
+            cursor += character.len_utf8();
+        }
+        if cursor > start && argument[cursor..].starts_with('!') {
+            named = Some(argument[start..cursor].to_owned());
+            cursor += 1;
+        } else {
+            cursor = start;
+        }
+    }
+    let span = cell_reference_span(&argument[cursor..])?;
+    let (start_column, start_row) = cell_reference(&argument[cursor..cursor + span])?;
+    cursor = skip_whitespace(argument, cursor + span);
+    if !argument[cursor..].starts_with(':') {
+        return None;
+    }
+    cursor = skip_whitespace(argument, cursor + 1);
+    let span = cell_reference_span(&argument[cursor..])?;
+    let (end_column, end_row) = cell_reference(&argument[cursor..cursor + span])?;
+    if !argument[skip_whitespace(argument, cursor + span)..].is_empty() {
+        return None;
+    }
+    let target = match named {
+        Some(name) => sheets
+            .iter()
+            .position(|sheet| sheet.name.eq_ignore_ascii_case(&name))?,
+        None => current,
+    };
+    let sheet = sheets.get(target)?;
+    let above = usize::try_from(sheet.layout.rows_above_header).ok()?;
+    if sheet.rows.is_empty()
+        || !start_column.eq_ignore_ascii_case(&end_column)
+        || (start_row != above + 1 && start_row != above + 2)
+        || end_row != above + 1 + sheet.rows.len()
+    {
+        return None;
+    }
+    let column = column_index(&start_column)?;
+    numeric_column(&sheet.rows, column).then_some((target, column))
+}
+
+/// Excel's SUM/AVERAGE/COUNT skip text, Yes/No and dates in a range, while a
+/// column aggregate would count them once converted, so only a column of
+/// numbers and blanks keeps the same meaning.
+fn numeric_column(rows: &[Vec<SourceCell>], column: usize) -> bool {
+    rows.iter().all(|row| {
+        row.get(column).is_none_or(|cell| match &cell.value {
+            SourceValue::Empty | SourceValue::Number { .. } => true,
+            SourceValue::Text { value } => value.is_empty(),
+            _ => false,
+        })
+    })
+}
+
+/// Every SUM, AVERAGE or COUNT call, and every MIN/MAX call whose argument holds
+/// a range, must cover exactly one whole data column of a sheet.
+fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]) -> bool {
+    let mut cursor = 0;
+    while cursor < formula.len() {
+        let Some(character) = formula[cursor..].chars().next() else {
+            return false;
+        };
+        if character == '\'' || character == '"' {
+            cursor += character.len_utf8();
+            loop {
+                let Some(next) = formula[cursor..].chars().next() else {
+                    return false;
+                };
+                cursor += next.len_utf8();
+                if next != character {
+                    continue;
+                }
+                if character == '\'' && formula[cursor..].starts_with('\'') {
+                    cursor += 1;
+                } else {
+                    break;
+                }
+            }
+        } else if character.is_ascii_alphabetic() || character == '_' || character == '.' {
+            let start = cursor;
+            while let Some(next) = formula[cursor..].chars().next() {
+                if !(next.is_ascii_alphanumeric() || next == '_' || next == '.') {
+                    break;
+                }
+                cursor += next.len_utf8();
+            }
+            let name = formula[start..cursor].to_ascii_uppercase();
+            let required = matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT");
+            // Excel's MIN/MAX of an all-blank range is 0 while a Tachiko column
+            // min/max fails, so a range MIN/MAX is never translated.
+            if required || matches!(name.as_str(), "MIN" | "MAX") {
+                let call = skip_whitespace(formula, cursor);
+                if formula[call..].starts_with('(') {
+                    let Some((argument, consumed)) = call_argument(&formula[call..]) else {
+                        return false;
+                    };
+                    if !required {
+                        // A range directly inside MIN/MAX is refused; nested
+                        // calls such as MIN(SUM(B2:B9),1) are scanned in turn.
+                        if top_level_colon(argument) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if whole_column_argument(argument, current, sheets).is_none() {
+                        return false;
+                    }
+                    cursor = call + consumed;
+                }
+            }
+        } else {
+            cursor += character.len_utf8();
+        }
+    }
+    true
+}
+
+/// Whether a call argument has a `:` outside nested calls and quoted text.
+fn top_level_colon(argument: &str) -> bool {
+    let mut depth = 0usize;
+    let mut quote = None;
+    for character in argument.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => {}
+            None => match character {
+                '\'' | '"' => quote = Some(character),
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                ':' if depth == 0 => return true,
+                _ => {}
+            },
+        }
+    }
+    false
+}
+
+/// A data-row aggregate outside the whole-column profile is refused as before.
+fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<FidelityFinding>) {
+    let mut refused = Vec::new();
+    for (sheet_index, sheet) in sheets.iter().enumerate() {
+        for (row_index, row) in sheet.rows.iter().enumerate() {
+            for (column, cell) in row.iter().enumerate() {
+                if let Some(formula) = cell.formula.as_deref() {
+                    if !whole_column_aggregates(formula, sheet_index, sheets) {
+                        refused.push((sheet_index, row_index, column));
+                    }
+                }
+            }
+        }
+    }
+    for (sheet_index, row_index, column) in refused {
+        let sheet = &mut sheets[sheet_index];
+        let above = usize::try_from(sheet.layout.rows_above_header).unwrap_or(usize::MAX);
+        let location = format!(
+            "{}!{}{}",
+            sheet.name,
+            column_name(column),
+            above + 2 + row_index
+        );
+        sheet.rows[row_index][column].value = SourceValue::Empty;
+        ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled, "unsupported_formula_function", &location, "Only numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND and ISBLANK are admitted; Rust still validates binding", true));
+    }
+}
+
 /// Every parsed source uses the same representation predicate as output. Existing
 /// blockers retain their original inventory and are never replaced by a generic error.
 fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
@@ -3145,10 +3999,7 @@ fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
                 FidelityCategory::UnsupportedSafeDisabled,
                 "output_profile_rejected",
                 "workbook",
-                &format!(
-                    "Source cannot be represented by the shared output profile: {}",
-                    error.0
-                ),
+                &format!("Source cannot be represented by the shared output profile: {error}"),
                 true,
             ));
         }
@@ -3176,7 +4027,7 @@ pub(crate) fn export_csv_for_profile(
 ) -> Result<Vec<u8>> {
     if profile == OutputProfile::NativeTables {
         validate_native_tables_csv(sheet).map_err(|finding| {
-            InteropError(format!(
+            InteropError::Invalid(format!(
                 "{} at {}: {}",
                 finding.code, finding.location, finding.message
             ))
@@ -3267,7 +4118,7 @@ fn value_text(value: &SourceValue) -> String {
         SourceValue::Boolean { value } => value.to_string(),
     }
 }
-fn unsupported_formula_function(source: &str) -> bool {
+fn unsupported_formula_function(source: &str, column_aggregates: bool) -> bool {
     // Inventory function names only, without parsing or evaluating expression semantics.
     let mut token = String::new();
     let mut quoted = false;
@@ -3283,13 +4134,25 @@ fn unsupported_formula_function(source: &str) -> bool {
         if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
             token.push(c);
         } else if c == '(' {
-            if !token.is_empty()
-                && !matches!(
-                    token.to_ascii_uppercase().as_str(),
-                    "MIN" | "MAX" | "TRUE" | "FALSE"
-                )
-            {
-                return true;
+            if !token.is_empty() {
+                let name = token.to_ascii_uppercase();
+                let allowed = matches!(
+                    name.as_str(),
+                    "MIN"
+                        | "MAX"
+                        | "IF"
+                        | "AND"
+                        | "OR"
+                        | "NOT"
+                        | "ROUND"
+                        | "ISBLANK"
+                        | "TRUE"
+                        | "FALSE"
+                ) || (column_aggregates
+                    && matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT"));
+                if !allowed {
+                    return true;
+                }
             }
             token.clear();
         } else if !c.is_whitespace() {
@@ -3376,6 +4239,7 @@ fn output_headers_unique(columns: &[SourceColumn], profile: OutputProfile) -> bo
     }
 }
 
+#[allow(clippy::too_many_lines)] // One ordered profile check per output column, including number formats.
 pub(crate) fn validate_output_for_profile(
     workbook: &SourceWorkbook,
     profile: OutputProfile,
@@ -3413,6 +4277,20 @@ pub(crate) fn validate_output_for_profile(
         {
             return fail("Export exceeds sheet bounds");
         }
+        for (column_index, column) in s.columns.iter().enumerate() {
+            if let Some(number_format) = &column.number_format {
+                number_format
+                    .validate_for(&tachiko_workspace_engine::FieldType::Number)
+                    .map_err(|error| InteropError::Invalid(error.to_string()))?;
+                if s.rows.iter().any(|row| {
+                    row.get(column_index).is_none_or(|cell| {
+                        !matches!(cell.value, SourceValue::Empty | SourceValue::Number { .. })
+                    })
+                }) {
+                    return fail("Column number format requires Number values");
+                }
+            }
+        }
         for row in &s.rows {
             if row.len() != s.columns.len() {
                 return fail("Export rows must be rectangular");
@@ -3448,13 +4326,13 @@ pub(crate) fn validate_output_for_profile(
                 }
                 if let SourceValue::Date { value } = &c.value {
                     tachiko_workspace_engine::Date::parse(value)
-                        .map_err(|e| InteropError(e.to_string()))?;
+                        .map_err(|e| InteropError::Invalid(e.to_string()))?;
                 }
                 if let Some(formula) = &c.formula {
                     formulas += 1;
                     if formula.contains('[')
                         || formula.to_ascii_uppercase().contains("DDE(")
-                        || unsupported_formula_function(formula)
+                        || unsupported_formula_function(formula, true)
                     {
                         return fail("Unsafe or unsupported export formula");
                     }
@@ -3469,7 +4347,13 @@ pub(crate) fn validate_output_for_profile(
         }
     }
     if formulas > MAX_FORMULAS {
-        return fail("Export exceeds formula bound");
+        return Err(crate::CapacityExceeded {
+            limit: crate::CapacityLimit::Formulas,
+            maximum: MAX_FORMULAS,
+            attempted: formulas,
+            collection: None,
+        }
+        .into());
     }
     Ok(())
 }
@@ -3478,8 +4362,14 @@ fn xml_text_valid(text: &str) -> bool {
         (c < ' ' && !matches!(c, '\t' | '\n' | '\r')) || matches!(c, '\u{fffe}' | '\u{ffff}')
     })
 }
-fn output_style(cell: &SourceCell) -> CellStyle {
+fn output_style(
+    cell: &SourceCell,
+    column_format: Option<&tachiko_workspace_engine::NumberFormat>,
+) -> CellStyle {
     let mut style = cell.style.clone();
+    if let Some(format) = column_format {
+        style.number_format = Some(crate::interop_number_format::to_excel(format));
+    }
     if matches!(cell.value, SourceValue::Date { .. }) && style.number_format.is_none() {
         style.number_format = Some("yyyy-mm-dd".into());
     }
@@ -3524,7 +4414,7 @@ pub(crate) fn export_xlsx_for_profile(
 ) -> Result<Vec<u8>> {
     if profile == OutputProfile::NativeTables {
         validate_native_tables_xlsx(workbook).map_err(|finding| {
-            InteropError(format!(
+            InteropError::Invalid(format!(
                 "{} at {}: {}",
                 finding.code, finding.location, finding.message
             ))
@@ -3532,7 +4422,8 @@ pub(crate) fn export_xlsx_for_profile(
     }
     validate_output_for_profile(workbook, profile)?;
     let mut style_keys = vec![
-        serde_json::to_string(&CellStyle::default()).map_err(|e| InteropError(e.to_string()))?,
+        serde_json::to_string(&CellStyle::default())
+            .map_err(|e| InteropError::Invalid(e.to_string()))?,
     ];
     let mut styles = vec![CellStyle::default()];
     for s in workbook
@@ -3541,9 +4432,15 @@ pub(crate) fn export_xlsx_for_profile(
         .filter(|_| profile != OutputProfile::TextCapacity)
     {
         for row in &s.rows {
-            for c in row {
-                let style = output_style(c);
-                let key = serde_json::to_string(&style).map_err(|e| InteropError(e.to_string()))?;
+            for (column, c) in row.iter().enumerate() {
+                let style = output_style(
+                    c,
+                    s.columns
+                        .get(column)
+                        .and_then(|column| column.number_format.as_ref()),
+                );
+                let key = serde_json::to_string(&style)
+                    .map_err(|e| InteropError::Invalid(e.to_string()))?;
                 if !style_keys.contains(&key) {
                     style_keys.push(key);
                     styles.push(style);
@@ -3557,6 +4454,7 @@ pub(crate) fn export_xlsx_for_profile(
     );
     let mut borders = String::new();
     let mut fmts = String::new();
+    let mut custom_formats = 0;
     let mut xfs = String::new();
     for (i, style) in styles.iter().enumerate() {
         fonts.push_str(&format!(
@@ -3565,17 +4463,29 @@ pub(crate) fn export_xlsx_for_profile(
         ));
         fills.push_str(&style.fill.as_ref().map_or_else(||"<fill><patternFill patternType=\"none\"/></fill>".into(),|rgb|format!("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"{}\"/><bgColor indexed=\"64\"/></patternFill></fill>",if rgb.len()==6{format!("FF{rgb}")}else{rgb.clone()})));
         borders.push_str(if style.border{"<border><left style=\"thin\"/><right style=\"thin\"/><top style=\"thin\"/><bottom style=\"thin\"/><diagonal/></border>"}else{"<border><left/><right/><top/><bottom/><diagonal/></border>"});
-        let fmt = style.number_format.as_deref().unwrap_or("General");
-        fmts.push_str(&format!(
-            "<numFmt numFmtId=\"{}\" formatCode=\"{}\"/>",
-            164 + i,
-            capacity_attribute(fmt)
-        ));
-        xfs.push_str(&format!("<xf numFmtId=\"{}\" fontId=\"{i}\" fillId=\"{}\" borderId=\"{i}\" xfId=\"0\" applyNumberFormat=\"1\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"{}\" wrapText=\"{}\"/></xf>",164+i,i+2,escape(style.alignment.as_deref().unwrap_or("general")),u8::from(style.wrap)));
+        // General is built-in format 0. Redefining it as a custom format
+        // makes Numbers show 1.5 as 2 (#615).
+        let fmt_id = match style.number_format.as_deref() {
+            Some(fmt) if !is_general_format(fmt) => {
+                let id = 164 + custom_formats;
+                custom_formats += 1;
+                fmts.push_str(&format!(
+                    "<numFmt numFmtId=\"{id}\" formatCode=\"{}\"/>",
+                    capacity_attribute(fmt)
+                ));
+                id
+            }
+            _ => 0,
+        };
+        xfs.push_str(&format!("<xf numFmtId=\"{}\" fontId=\"{i}\" fillId=\"{}\" borderId=\"{i}\" xfId=\"0\" applyNumberFormat=\"1\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"{}\" wrapText=\"{}\"/></xf>",fmt_id,i+2,escape(style.alignment.as_deref().unwrap_or("general")),u8::from(style.wrap)));
     }
     let style_xml = format!(
-        "<styleSheet xmlns=\"{MAIN}\"><numFmts count=\"{}\">{fmts}</numFmts><fonts count=\"{}\">{fonts}</fonts><fills count=\"{}\">{fills}</fills><borders count=\"{}\">{borders}</borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"{}\">{xfs}</cellXfs></styleSheet>",
-        styles.len(),
+        "<styleSheet xmlns=\"{MAIN}\">{}<fonts count=\"{}\">{fonts}</fonts><fills count=\"{}\">{fills}</fills><borders count=\"{}\">{borders}</borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"{}\">{xfs}</cellXfs></styleSheet>",
+        if custom_formats == 0 {
+            String::new()
+        } else {
+            format!("<numFmts count=\"{custom_formats}\">{fmts}</numFmts>")
+        },
         styles.len(),
         styles.len() + 2,
         styles.len(),
@@ -3666,8 +4576,13 @@ pub(crate) fn export_xlsx_for_profile(
                 let sid = if profile == OutputProfile::TextCapacity {
                     0
                 } else {
-                    let key = serde_json::to_string(&output_style(c))
-                        .map_err(|e| InteropError(e.to_string()))?;
+                    let key = serde_json::to_string(&output_style(
+                        c,
+                        s.columns
+                            .get(col)
+                            .and_then(|column| column.number_format.as_ref()),
+                    ))
+                    .map_err(|e| InteropError::Invalid(e.to_string()))?;
                     style_keys.iter().position(|x| x == &key).unwrap_or(0)
                 };
                 let formula = c
@@ -3760,12 +4675,14 @@ pub(crate) fn export_xlsx_for_profile(
             };
             writer
                 .start_file(name, options)
-                .map_err(|e| InteropError(e.to_string()))?;
+                .map_err(|e| InteropError::Invalid(e.to_string()))?;
             writer
                 .write_all(xml.as_bytes())
-                .map_err(|e| InteropError(e.to_string()))?;
+                .map_err(|e| InteropError::Invalid(e.to_string()))?;
         }
-        writer.finish().map_err(|e| InteropError(e.to_string()))?;
+        writer
+            .finish()
+            .map_err(|e| InteropError::Invalid(e.to_string()))?;
     }
     let bytes = output.into_inner();
     if profile == OutputProfile::NativeTables {
@@ -3831,9 +4748,10 @@ mod capacity_proof_tests {
     use std::fmt::Write;
 
     use super::{
-        CapacityXmlCount, ImportOptions, SourceColumn, SourceValue, capacity_auxiliary_xml_reserve,
-        capacity_header_bytes, capacity_header_limit, capacity_worksheet, export_xlsx, import_csv,
-        import_xlsx, plain_tag, st_xstring, validate_text_capacity,
+        CapacityXmlCount, ImportOptions, SourceColumn, SourceLayout, SourceValue,
+        capacity_auxiliary_xml_reserve, capacity_header_bytes, capacity_header_limit,
+        capacity_worksheet, export_xlsx, import_csv, import_xlsx, plain_tag, st_xstring,
+        validate_text_capacity,
     };
 
     #[test]
@@ -3850,9 +4768,11 @@ mod capacity_proof_tests {
                 .map(|index| SourceColumn {
                     name: format!("h{index}"),
                     width: None,
+                    number_format: None,
                 })
                 .collect(),
             rows: Vec::new(),
+            layout: SourceLayout::default(),
         };
         assert_eq!(capacity_header_bytes(&wide_headers), 55);
         let mut csv = String::from("label,amount\n");
@@ -3970,11 +4890,11 @@ mod capacity_proof_tests {
 mod native_tables_output_tests {
     use super::{
         FidelityCategory, MAX_NATIVE_TABLES_EXPANDED_BYTES, MAX_NATIVE_TABLES_OUTPUT_BYTES,
-        NativeTablesCheck, OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue,
-        SourceWorkbook, date_from_serial, export_csv_for_profile, export_xlsx_for_profile,
-        import_xlsx, native_tables_caseless_key, native_tables_compatibility,
-        native_tables_trim_worksheet_name, validate_native_tables_csv, validate_native_tables_xlsx,
-        validate_output_for_profile,
+        NativeTablesCheck, OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet,
+        SourceValue, SourceWorkbook, date_from_serial, export_csv_for_profile,
+        export_xlsx_for_profile, import_xlsx, native_tables_caseless_key,
+        native_tables_compatibility, native_tables_trim_worksheet_name, validate_native_tables_csv,
+        validate_native_tables_xlsx, validate_output_for_profile,
     };
     use std::collections::BTreeSet;
     use std::io::{Cursor, Read, Write};
@@ -3988,9 +4908,11 @@ mod native_tables_output_tests {
                 .map(|index| SourceColumn {
                     name: format!("c{index}"),
                     width: None,
+                    number_format: None,
                 })
                 .collect(),
             rows: vec![vec![SourceCell::default(); columns]; rows],
+            layout: SourceLayout::default(),
         }
     }
 
@@ -4628,7 +5550,7 @@ mod native_tables_output_tests {
                 assert_eq!(finding.location, format!("sheet 1 \"Table\"{suffix}"));
                 let error =
                     export_csv_for_profile(&selected, OutputProfile::NativeTables).unwrap_err();
-                assert!(error.0.contains(&finding.location));
+                assert!(error.to_string().contains(&finding.location));
                 assert!(export_csv_for_profile(&selected, OutputProfile::Shared).is_ok());
             }
         }
@@ -4858,9 +5780,11 @@ mod native_tables_output_tests {
                         assert!(result.is_ok(), "{character} header={header}: {result:?}");
                     } else {
                         let error = result.unwrap_err();
-                        assert!(error.0.contains("32,767 UTF-16"), "{error:?}");
+                        assert!(error.to_string().contains("32,767 UTF-16"), "{error:?}");
                         assert!(
-                            error.0.contains(if header { "header" } else { "row 2" }),
+                            error
+                                .to_string()
+                                .contains(if header { "header" } else { "row 2" }),
                             "{error:?}"
                         );
                         let finding = validate_native_tables_xlsx(&workbook).unwrap_err();
@@ -4925,6 +5849,54 @@ mod native_tables_output_tests {
             assert!(value.encode_utf16().count() <= 32_767);
         }
         let error = export_xlsx_for_profile(&workbook, profile).unwrap_err();
-        assert!(error.0.contains("24 MiB"), "{error:?}");
+        assert!(error.to_string().contains("24 MiB"), "{error:?}");
+    }
+}
+
+#[cfg(test)]
+mod column_number_format_inference_tests {
+    use super::{CellStyle, SourceCell, SourceValue, infer_column_number_format};
+
+    fn cell(value: SourceValue, pattern: Option<&str>) -> Vec<SourceCell> {
+        vec![SourceCell {
+            value,
+            formula: None,
+            style: CellStyle {
+                number_format: pattern.map(str::to_owned),
+                ..CellStyle::default()
+            },
+        }]
+    }
+
+    #[test]
+    fn a_styled_blank_does_not_veto_a_uniform_numeric_column() {
+        let mut rows = (0..3)
+            .map(|index| {
+                cell(
+                    SourceValue::Number {
+                        value: f64::from(index),
+                    },
+                    Some("#,##0.00"),
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.push(cell(SourceValue::Empty, Some("General")));
+        let inferred = infer_column_number_format(&rows, 0);
+        assert!(
+            inferred.format.is_some(),
+            "the numeric cells agree on #,##0.00"
+        );
+        assert!(!inferred.rejected);
+    }
+
+    #[test]
+    fn mixed_numeric_formats_still_drop_the_column_format() {
+        let rows = vec![
+            cell(SourceValue::Number { value: 1.0 }, Some("#,##0.00")),
+            cell(SourceValue::Number { value: 2.0 }, Some("0%")),
+        ];
+        let inferred = infer_column_number_format(&rows, 0);
+        assert!(inferred.format.is_none());
+        assert!(inferred.rejected);
     }
 }

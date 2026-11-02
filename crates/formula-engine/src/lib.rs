@@ -1,12 +1,14 @@
 //! Deterministic formula parsing, binding, projection, and evaluation.
 
+mod evaluation;
 mod parser;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use tachiko_semantic_core::{
-    AddressIndex, AddressIndexError, Document, Expression, FieldAddress, FieldRef, FieldType,
-    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Value,
+    AddressIndex, AddressIndexError, ColumnAddress, ColumnRef, Document, Expression, FieldAddress,
+    FieldId, FieldRef, FieldType, FormulaExpressionType, MAX_EXPRESSION_DEPTH,
+    MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
 
@@ -17,6 +19,8 @@ pub use parser::{
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum FormulaBindError {
+    #[error("formula type mismatch: {message}")]
+    TypeMismatch { message: String },
     #[error(transparent)]
     Complexity(#[from] ExpressionComplexityError),
     #[error("formula address index is invalid: {source}")]
@@ -35,12 +39,22 @@ pub enum FormulaBindError {
         address: FieldAddress,
         reference: FieldRef,
     },
+    #[error("formula column address '{address}' cannot be resolved: {source}")]
+    Column {
+        address: ColumnAddress,
+        #[source]
+        source: Box<AddressIndexError>,
+    },
+    #[error("formula column address '{address}' does not resolve to a numeric field")]
+    NonNumericColumn { address: ColumnAddress },
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CanonicalAuthoringProjectionError {
     #[error("bound formula references cannot be projected through current human addresses")]
     UnresolvableBoundReferences { targets: BTreeSet<FieldRef> },
+    #[error("bound formula columns cannot be projected through current human addresses")]
+    UnresolvableBoundColumns { columns: BTreeSet<ColumnRef> },
     #[error(transparent)]
     Complexity(#[from] ExpressionComplexityError),
 }
@@ -53,87 +67,269 @@ pub enum CanonicalAuthoringProjectionError {
 /// bound expression.
 pub fn bind_expression(
     document: &Document,
+    owner: &FieldRef,
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
     validate_unbound_expression_structure(expression)?;
     let index = AddressIndex::build(document).map_err(|source| FormulaBindError::Index {
         source: Box::new(source),
     })?;
-    bind_node(document, &index, expression)
+    let bound = bind_node(document, &index, owner, expression)?;
+    if bound.expression_type() != Some(FormulaExpressionType::Number) {
+        return Err(FormulaBindError::TypeMismatch {
+            message:
+                "conditions are only valid in IF, AND, OR, or NOT; ROUND requires a numeric value"
+                    .into(),
+        });
+    }
+    Ok(bound)
+}
+
+/// Resolve one human address to a numeric stable target.
+fn bind_numeric_reference(
+    document: &Document,
+    index: &AddressIndex,
+    address: &FieldAddress,
+) -> Result<FieldRef, FormulaBindError> {
+    let reference =
+        index
+            .resolve_field(document, address)
+            .map_err(|source| FormulaBindError::Address {
+                address: address.clone(),
+                source: Box::new(source),
+            })?;
+    let entity =
+        document
+            .entities
+            .get(&reference.entity)
+            .ok_or_else(|| FormulaBindError::Index {
+                source: Box::new(AddressIndexError::MissingBoundEntity {
+                    entity: reference.entity.clone(),
+                }),
+            })?;
+    let schema = document
+        .schemas
+        .get(&entity.schema)
+        .ok_or_else(|| FormulaBindError::Index {
+            source: Box::new(AddressIndexError::MissingBoundSchema {
+                schema: entity.schema.clone(),
+            }),
+        })?;
+    let definition =
+        schema
+            .fields
+            .get(&reference.field)
+            .ok_or_else(|| FormulaBindError::Index {
+                source: Box::new(AddressIndexError::MissingBoundField {
+                    entity: reference.entity.clone(),
+                    field: reference.field.clone(),
+                }),
+            })?;
+    if definition.field_type != FieldType::Number {
+        return Err(FormulaBindError::NonNumericTarget {
+            address: address.clone(),
+            reference,
+        });
+    }
+    Ok(reference)
+}
+
+/// Resolve one human column address to a stable schema/field identity and
+/// require that the column is numeric.
+fn bind_column_reference(
+    document: &Document,
+    index: &AddressIndex,
+    address: &ColumnAddress,
+) -> Result<ColumnRef, FormulaBindError> {
+    let unresolved = |source: AddressIndexError| FormulaBindError::Column {
+        address: address.clone(),
+        source: Box::new(source),
+    };
+    let schema = index
+        .schema_id(&address.schema)
+        .map_err(unresolved)?
+        .clone();
+    let field = index
+        .schema_field_id(&schema, &address.field)
+        .map_err(unresolved)?
+        .clone();
+    let definition = document
+        .schemas
+        .get(&schema)
+        .and_then(|schema| schema.fields.get(&field))
+        .ok_or_else(|| {
+            unresolved(AddressIndexError::MissingSchemaFieldKey {
+                schema: schema.clone(),
+                field: address.field.clone(),
+            })
+        })?;
+    if definition.field_type != FieldType::Number {
+        return Err(FormulaBindError::NonNumericColumn {
+            address: address.clone(),
+        });
+    }
+    Ok(ColumnRef::new(schema, field))
 }
 
 fn bind_node(
     document: &Document,
     index: &AddressIndex,
+    owner: &FieldRef,
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
     Ok(match expression {
         UnboundExpression::Number(number) => Expression::Number(*number),
         UnboundExpression::Reference(address) => {
-            let reference = index.resolve_field(document, address).map_err(|source| {
-                FormulaBindError::Address {
-                    address: address.clone(),
-                    source: Box::new(source),
-                }
-            })?;
-            let entity = document.entities.get(&reference.entity).ok_or_else(|| {
-                FormulaBindError::Index {
-                    source: Box::new(AddressIndexError::MissingBoundEntity {
-                        entity: reference.entity.clone(),
-                    }),
-                }
-            })?;
-            let schema =
-                document
-                    .schemas
-                    .get(&entity.schema)
-                    .ok_or_else(|| FormulaBindError::Index {
-                        source: Box::new(AddressIndexError::MissingBoundSchema {
-                            schema: entity.schema.clone(),
-                        }),
-                    })?;
-            let definition =
-                schema
-                    .fields
-                    .get(&reference.field)
-                    .ok_or_else(|| FormulaBindError::Index {
-                        source: Box::new(AddressIndexError::MissingBoundField {
-                            entity: reference.entity.clone(),
-                            field: reference.field.clone(),
-                        }),
-                    })?;
-            if definition.field_type != FieldType::Number {
-                return Err(FormulaBindError::NonNumericTarget {
-                    address: address.clone(),
-                    reference,
-                });
-            }
-            Expression::Reference(reference)
+            Expression::Reference(bind_numeric_reference(document, index, address)?)
         }
+        UnboundExpression::SameRowReference(field) => {
+            let entity =
+                document
+                    .entities
+                    .get(&owner.entity)
+                    .ok_or_else(|| FormulaBindError::Index {
+                        source: Box::new(AddressIndexError::MissingBoundEntity {
+                            entity: owner.entity.clone(),
+                        }),
+                    })?;
+            let address = FieldAddress::new(entity.key.clone(), field.clone());
+            Expression::SameRowReference(bind_numeric_reference(document, index, &address)?.field)
+        }
+        UnboundExpression::ColumnTotal(address) => {
+            Expression::ColumnTotal(bind_column_reference(document, index, address)?)
+        }
+        UnboundExpression::ColumnAggregate { function, column } => Expression::ColumnAggregate {
+            function: *function,
+            column: bind_column_reference(document, index, column)?,
+        },
         UnboundExpression::Add { left, right } => Expression::Add {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Subtract { left, right } => Expression::Subtract {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Multiply { left, right } => Expression::Multiply {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Divide { left, right } => Expression::Divide {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Minimum { left, right } => Expression::Minimum {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
         UnboundExpression::Maximum { left, right } => Expression::Maximum {
-            left: Box::new(bind_node(document, index, left)?),
-            right: Box::new(bind_node(document, index, right)?),
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
         },
+        UnboundExpression::Compare {
+            operator,
+            left,
+            right,
+        } => Expression::Compare {
+            operator: *operator,
+            left: Box::new(bind_node(document, index, owner, left)?),
+            right: Box::new(bind_node(document, index, owner, right)?),
+        },
+        UnboundExpression::If {
+            condition,
+            then_value,
+            else_value,
+        } => Expression::If {
+            condition: Box::new(bind_node(document, index, owner, condition)?),
+            then_value: Box::new(bind_node(document, index, owner, then_value)?),
+            else_value: Box::new(bind_node(document, index, owner, else_value)?),
+        },
+        UnboundExpression::And(arguments) => {
+            Expression::And(bind_arguments(document, index, owner, arguments)?)
+        }
+        UnboundExpression::Or(arguments) => {
+            Expression::Or(bind_arguments(document, index, owner, arguments)?)
+        }
+        UnboundExpression::Not(value) => {
+            Expression::Not(Box::new(bind_node(document, index, owner, value)?))
+        }
+        UnboundExpression::Round { value, digits } => Expression::Round {
+            value: Box::new(bind_node(document, index, owner, value)?),
+            digits: bind_round_digits(digits)?,
+        },
+        UnboundExpression::IsBlank(reference) => Expression::IsBlank(Box::new(
+            bind_blank_reference(document, index, owner, reference)?,
+        )),
+    })
+}
+
+fn bind_round_digits(expression: &UnboundExpression) -> Result<u8, FormulaBindError> {
+    let UnboundExpression::Number(digits) = expression else {
+        return Err(round_digits_error());
+    };
+    let digits = digits.get();
+    if !(0.0..=10.0).contains(&digits) || digits.fract() != 0.0 {
+        return Err(round_digits_error());
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    // The literal was checked to be an integer in 0..=10.
+    Ok(digits as u8)
+}
+
+fn round_digits_error() -> FormulaBindError {
+    FormulaBindError::TypeMismatch {
+        message: "ROUND digits must be an integer literal in 0..=10".into(),
+    }
+}
+
+fn bind_arguments(
+    document: &Document,
+    index: &AddressIndex,
+    owner: &FieldRef,
+    arguments: &[UnboundExpression],
+) -> Result<Vec<Expression>, FormulaBindError> {
+    arguments
+        .iter()
+        .map(|argument| bind_node(document, index, owner, argument))
+        .collect()
+}
+
+fn bind_blank_reference(
+    document: &Document,
+    index: &AddressIndex,
+    owner: &FieldRef,
+    expression: &UnboundExpression,
+) -> Result<Expression, FormulaBindError> {
+    let (address, same_row) =
+        match expression {
+            UnboundExpression::Reference(address) => (address.clone(), false),
+            UnboundExpression::SameRowReference(field) => {
+                let entity = document.entities.get(&owner.entity).ok_or_else(|| {
+                    FormulaBindError::Index {
+                        source: Box::new(AddressIndexError::MissingBoundEntity {
+                            entity: owner.entity.clone(),
+                        }),
+                    }
+                })?;
+                (FieldAddress::new(entity.key.clone(), field.clone()), true)
+            }
+            _ => {
+                return Err(FormulaBindError::TypeMismatch {
+                    message: "ISBLANK requires a field reference".into(),
+                });
+            }
+        };
+    let reference =
+        index
+            .resolve_field(document, &address)
+            .map_err(|source| FormulaBindError::Address {
+                address,
+                source: Box::new(source),
+            })?;
+    Ok(if same_row {
+        Expression::SameRowReference(reference.field)
+    } else {
+        Expression::Reference(reference)
     })
 }
 
@@ -147,20 +343,23 @@ fn bind_node(
 /// Returns a typed stable-target set or structural/canonical-length failure.
 pub fn project_expression(
     document: &Document,
+    owner: &FieldRef,
     expression: &Expression,
 ) -> Result<String, CanonicalAuthoringProjectionError> {
     validate_expression_structure(expression)?;
-    let dependencies = extract_dependencies(expression);
+    // Column totals are projected through their own identity, so only the
+    // direct references need a human-address round-trip proof here.
+    let references = direct_references(owner, expression);
     let Ok(index) = AddressIndex::build(document) else {
         return Err(
             CanonicalAuthoringProjectionError::UnresolvableBoundReferences {
-                targets: dependencies,
+                targets: references,
             },
         );
     };
     let mut addresses = BTreeMap::new();
     let mut unresolved = BTreeSet::new();
-    for target in dependencies {
+    for target in references {
         match index.field_address(document, &target) {
             Ok(address) => {
                 addresses.insert(target, address);
@@ -178,48 +377,169 @@ pub fn project_expression(
         );
     }
 
-    let projected = render_bound(expression, &addresses);
+    let mut columns = BTreeMap::new();
+    let mut unresolved_columns = BTreeSet::new();
+    for column in extract_column_totals(expression) {
+        match column_address(document, &column) {
+            Some(address) => {
+                columns.insert(column, address);
+            }
+            None => {
+                unresolved_columns.insert(column);
+            }
+        }
+    }
+    if !unresolved_columns.is_empty() {
+        return Err(
+            CanonicalAuthoringProjectionError::UnresolvableBoundColumns {
+                columns: unresolved_columns,
+            },
+        );
+    }
+
+    let projected = render_bound(expression, owner, &addresses, &columns);
     if projected.len() > parser::MAX_INPUT_BYTES {
         return Err(ExpressionComplexityError::CanonicalLengthLimit.into());
     }
     Ok(projected)
 }
 
-fn render_bound(expression: &Expression, addresses: &BTreeMap<FieldRef, FieldAddress>) -> String {
+fn render_bound(
+    expression: &Expression,
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, FieldAddress>,
+    columns: &BTreeMap<ColumnRef, ColumnAddress>,
+) -> String {
     match expression {
         Expression::Number(number) => parser::format_number(*number),
         Expression::Reference(reference) => {
             let address = &addresses[reference];
             format!("[{}.{}]", address.entity, address.field)
         }
-        Expression::Add { left, right } => render_bound_binary(left, "+", right, addresses),
-        Expression::Subtract { left, right } => render_bound_binary(left, "-", right, addresses),
-        Expression::Multiply { left, right } => render_bound_binary(left, "*", right, addresses),
-        Expression::Divide { left, right } => render_bound_binary(left, "/", right, addresses),
+        Expression::SameRowReference(field) => {
+            let reference = FieldRef::new(owner.entity.clone(), field.clone());
+            format!("[.{}]", addresses[&reference].field)
+        }
+        Expression::ColumnTotal(column) => {
+            let address = &columns[column];
+            format!("[{}.{}:total]", address.schema, address.field)
+        }
+        Expression::ColumnAggregate { function, column } => {
+            let address = &columns[column];
+            format!(
+                "[{}.{}:{}]",
+                address.schema,
+                address.field,
+                function.suffix()
+            )
+        }
+        Expression::Add { left, right } => {
+            render_bound_binary(left, "+", right, owner, addresses, columns)
+        }
+        Expression::Subtract { left, right } => {
+            render_bound_binary(left, "-", right, owner, addresses, columns)
+        }
+        Expression::Multiply { left, right } => {
+            render_bound_binary(left, "*", right, owner, addresses, columns)
+        }
+        Expression::Divide { left, right } => {
+            render_bound_binary(left, "/", right, owner, addresses, columns)
+        }
         Expression::Minimum { left, right } => format!(
             "min({}, {})",
-            render_bound(left, addresses),
-            render_bound(right, addresses)
+            render_bound(left, owner, addresses, columns),
+            render_bound(right, owner, addresses, columns)
         ),
         Expression::Maximum { left, right } => format!(
             "max({}, {})",
-            render_bound(left, addresses),
-            render_bound(right, addresses)
+            render_bound(left, owner, addresses, columns),
+            render_bound(right, owner, addresses, columns)
+        ),
+        Expression::Compare {
+            operator,
+            left,
+            right,
+        } => render_bound_binary(left, operator.as_str(), right, owner, addresses, columns),
+        Expression::If {
+            condition,
+            then_value,
+            else_value,
+        } => format!(
+            "IF({}, {}, {})",
+            render_bound(condition, owner, addresses, columns),
+            render_bound(then_value, owner, addresses, columns),
+            render_bound(else_value, owner, addresses, columns)
+        ),
+        Expression::And(arguments) => {
+            render_bound_function("AND", arguments, owner, addresses, columns)
+        }
+        Expression::Or(arguments) => {
+            render_bound_function("OR", arguments, owner, addresses, columns)
+        }
+        Expression::Not(value) => {
+            format!("NOT({})", render_bound(value, owner, addresses, columns))
+        }
+        Expression::Round { value, digits } => {
+            format!(
+                "ROUND({}, {digits})",
+                render_bound(value, owner, addresses, columns)
+            )
+        }
+        Expression::IsBlank(value) => format!(
+            "ISBLANK({})",
+            render_bound(value, owner, addresses, columns)
         ),
     }
+}
+
+fn render_bound_function(
+    name: &str,
+    arguments: &[Expression],
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, FieldAddress>,
+    columns: &BTreeMap<ColumnRef, ColumnAddress>,
+) -> String {
+    format!(
+        "{name}({})",
+        arguments
+            .iter()
+            .map(|argument| render_bound(argument, owner, addresses, columns))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn render_bound_binary(
     left: &Expression,
     operator: &str,
     right: &Expression,
+    owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, FieldAddress>,
+    columns: &BTreeMap<ColumnRef, ColumnAddress>,
 ) -> String {
     format!(
         "({} {operator} {})",
-        render_bound(left, addresses),
-        render_bound(right, addresses)
+        render_bound(left, owner, addresses, columns),
+        render_bound(right, owner, addresses, columns)
     )
+}
+
+/// Resolve a column identity to the document's current human keys.
+///
+/// The field must still be a Number column, because canonical text only
+/// round-trips if the projected address binds back to the same column total.
+fn column_address(document: &Document, column: &ColumnRef) -> Option<ColumnAddress> {
+    let schema = document.schemas.get(&column.schema)?;
+    let field = schema.fields.get(&column.field)?;
+    if field.field_type != FieldType::Number {
+        return None;
+    }
+    Some(ColumnAddress::new(schema.key.clone(), field.key.clone()))
+}
+
+/// Collect every column identity named by a bound expression.
+fn extract_column_totals(expression: &Expression) -> BTreeSet<ColumnRef> {
+    expression.column_totals().into_iter().cloned().collect()
 }
 
 /// Validate node and depth limits for a directly supplied bound expression.
@@ -242,42 +562,48 @@ pub fn validate_expression_structure(
         if nodes > MAX_EXPRESSION_NODES {
             return Err(ExpressionComplexityError::NodeLimit);
         }
-        match node {
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                stack.push((right, depth + 1));
-                stack.push((left, depth + 1));
-            }
-            Expression::Number(_) | Expression::Reference(_) => {}
-        }
+        stack.extend(
+            node.children()
+                .into_iter()
+                .rev()
+                .map(|child| (child, depth + 1)),
+        );
     }
     Ok(())
 }
 
+/// Collect the value nodes named by direct references (`[e.f]` and `[.f]`).
+fn direct_references(owner: &FieldRef, expression: &Expression) -> BTreeSet<FieldRef> {
+    expression
+        .reference_uses(owner)
+        .into_iter()
+        .map(|(reference, _)| reference)
+        .collect()
+}
+
 /// Extract the deterministic static dependency set from a bound expression.
+///
+/// Same-row references resolve against `owner`, and a column total expands to
+/// that column on every entity of the document's current schema, so the set is
+/// exactly the stable value nodes the formula reads. Because a column total's
+/// expansion follows current row membership, retained incremental state
+/// re-extracts it whenever a row of that schema changes.
 #[must_use]
-pub fn extract_dependencies(expression: &Expression) -> BTreeSet<FieldRef> {
-    let mut dependencies = BTreeSet::new();
-    let mut stack = vec![expression];
-    while let Some(node) = stack.pop() {
-        match node {
-            Expression::Reference(reference) => {
-                dependencies.insert(reference.clone());
+pub fn extract_dependencies(
+    document: &Document,
+    owner: &FieldRef,
+    expression: &Expression,
+) -> BTreeSet<FieldRef> {
+    let mut dependencies = expression
+        .reference_uses(owner)
+        .into_iter()
+        .map(|(reference, _)| reference)
+        .collect::<BTreeSet<_>>();
+    for column in expression.column_totals() {
+        for (entity_id, entity) in &document.entities {
+            if entity.schema == column.schema {
+                dependencies.insert(FieldRef::new(entity_id.clone(), column.field.clone()));
             }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                stack.push(right);
-                stack.push(left);
-            }
-            Expression::Number(_) => {}
         }
     }
     dependencies
@@ -393,7 +719,10 @@ impl RetainedCalculationState {
     /// Recompute dirty roots and their old/new-graph reverse dependent closure.
     ///
     /// The caller owns conservative impact classification. When that cannot be
-    /// proved, discard this state and call [`Self::rebuild`] instead.
+    /// proved, discard this state and call [`Self::rebuild`] instead. Column
+    /// totals make row membership part of a formula's dependencies; the
+    /// caller only lists changed rows, and this update re-extracts every
+    /// column total those rows can affect.
     #[must_use]
     pub fn update(
         &mut self,
@@ -413,6 +742,7 @@ impl RetainedCalculationState {
 
         let before_failed = self.is_failed();
         let before_formulas = self.dependencies.keys().cloned().collect::<BTreeSet<_>>();
+        let dirty_roots = &self.with_column_total_roots(document, dirty_roots);
         let impact = self.update_dependency_impact(document, dirty_roots);
         let before_projections = impact
             .dirty
@@ -460,6 +790,66 @@ impl RetainedCalculationState {
                 .collect(),
             changed_calculation_projections,
         }
+    }
+
+    /// A column total's dependencies are the schema's current rows, so a
+    /// changed row can change the dependency set of a formula that is not
+    /// itself dirty. Promote every column-total formula that read a root
+    /// before (old graph) or totals a root's schema now, so its dependencies
+    /// are re-extracted rather than left stale.
+    fn with_column_total_roots(
+        &self,
+        document: &Document,
+        dirty_roots: &BTreeSet<FieldRef>,
+    ) -> BTreeSet<FieldRef> {
+        let mut roots = dirty_roots.clone();
+        let root_schemas = dirty_roots
+            .iter()
+            .filter_map(|root| document.entities.get(&root.entity))
+            .map(|entity| &entity.schema)
+            .collect::<BTreeSet<_>>();
+        // A total also holds reverse edges from a root row's blank slots, which
+        // are never roots themselves (only stored fields are). Walk every
+        // reverse edge of each root's row, so deleting a row whose totalled
+        // cell is blank still refreshes the total.
+        let root_entities = dirty_roots
+            .iter()
+            .map(|root| &root.entity)
+            .collect::<BTreeSet<_>>();
+        for entity in root_entities {
+            let first = FieldRef::new(entity.clone(), FieldId::from(String::new()));
+            for (_, dependents) in self
+                .reverse_dependents
+                .range(first..)
+                .take_while(|(slot, _)| &slot.entity == entity)
+            {
+                for dependent in dependents {
+                    if matches!(
+                        calculation_value(document, dependent),
+                        Some(Value::Formula(expression))
+                            if !extract_column_totals(expression).is_empty()
+                    ) {
+                        roots.insert(dependent.clone());
+                    }
+                }
+            }
+        }
+        if root_schemas.is_empty() {
+            return roots;
+        }
+        for (entity_id, entity) in &document.entities {
+            for (field_id, value) in &entity.fields {
+                if let Value::Formula(expression) = value {
+                    if extract_column_totals(expression)
+                        .iter()
+                        .any(|column| root_schemas.contains(&column.schema))
+                    {
+                        roots.insert(FieldRef::new(entity_id.clone(), field_id.clone()));
+                    }
+                }
+            }
+        }
+        roots
     }
 
     fn update_dependency_impact(
@@ -528,16 +918,13 @@ impl RetainedCalculationState {
             self.failures.remove(field);
             self.values.remove(field);
         }
-        self.failures.extend(pregraph_failures(
-            document,
-            &dirty_nodes,
-            &dirty_formulas,
-            &self.dependencies,
-        ));
+        self.failures
+            .extend(pregraph_failures(document, &dirty_nodes, &dirty_formulas));
         assign_cycle_failures(&dirty_formulas, &self.dependencies, &mut self.failures);
         self.values
             .extend(initial_values(&dirty_nodes, &self.failures));
         evaluate_remaining_formulas(
+            document,
             &dirty_formulas,
             &self.dependencies,
             &mut self.failures,
@@ -668,6 +1055,12 @@ impl CalculationFailures {
                 "failed-dependency outcomes form an acyclic graph"
             );
             match failure {
+                CalculationFailure::TypeMismatch => {
+                    return CalculationError::InvalidExpression {
+                        formula: field.clone(),
+                        message: "formula type mismatch".into(),
+                    };
+                }
                 CalculationFailure::InvalidExpression { error } => {
                     return CalculationError::InvalidExpression {
                         formula: field.clone(),
@@ -710,6 +1103,11 @@ impl CalculationFailures {
                     field = dependency;
                     failure = dependency_failure;
                 }
+                CalculationFailure::EmptyAggregate => {
+                    return CalculationError::EmptyAggregate {
+                        formula: field.clone(),
+                    };
+                }
                 CalculationFailure::DivisionByZero => {
                     return CalculationError::DivisionByZero {
                         formula: field.clone(),
@@ -718,6 +1116,20 @@ impl CalculationFailures {
                 CalculationFailure::NonFiniteResult => {
                     return CalculationError::NonFiniteResult {
                         field: field.clone(),
+                    };
+                }
+                CalculationFailure::InvalidColumn { columns } => {
+                    let (column, column_failure) = columns
+                        .first_key_value()
+                        .expect("invalid-column failure must contain a column");
+                    return CalculationError::InvalidColumn {
+                        column: column.clone(),
+                        message: match column_failure {
+                            ColumnFailure::MissingSchema => "column schema does not exist",
+                            ColumnFailure::MissingField => "column field does not exist",
+                            ColumnFailure::NonNumeric => "column field is not numeric",
+                        }
+                        .to_owned(),
                     };
                 }
             }
@@ -795,6 +1207,7 @@ impl CalculationFailures {
 /// One primary semantic failure for a stable value node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CalculationFailure {
+    TypeMismatch,
     InvalidExpression {
         error: ExpressionComplexityError,
     },
@@ -808,13 +1221,25 @@ pub enum CalculationFailure {
         dependencies: BTreeSet<FieldRef>,
     },
     DivisionByZero,
+    EmptyAggregate,
     NonFiniteResult,
+    InvalidColumn {
+        columns: BTreeMap<ColumnRef, ColumnFailure>,
+    },
 }
 
 /// Binding/type classification for one directly referenced stable value node.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReferenceFailure {
     Missing,
+    NonNumeric,
+}
+
+/// Binding/type classification for one column total named by a formula.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ColumnFailure {
+    MissingSchema,
+    MissingField,
     NonNumeric,
 }
 
@@ -872,12 +1297,16 @@ pub enum CalculationError {
     NonNumericReference { reference: FieldRef },
     #[error("formula '{formula}' divided by zero")]
     DivisionByZero { formula: FieldRef },
+    #[error("formula '{formula}' reads an empty aggregate")]
+    EmptyAggregate { formula: FieldRef },
     #[error("formula dependency cycle: {path:?}")]
     Cycle { path: Vec<FieldRef> },
     #[error("calculation for '{field}' produced a non-finite result")]
     NonFiniteResult { field: FieldRef },
     #[error("formula '{formula}' violates the bound expression contract: {message}")]
     InvalidExpression { formula: FieldRef, message: String },
+    #[error("formula column '{column}' is invalid: {message}")]
+    InvalidColumn { column: ColumnRef, message: String },
 }
 
 /// Calculate every numeric literal and formula in deterministic stable-ID order.
@@ -934,10 +1363,16 @@ type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
 
 fn full_calculation_parts(document: &Document) -> FullCalculationParts {
     let (nodes, formulas, dependencies) = collect_calculation_nodes(document);
-    let mut failures = pregraph_failures(document, &nodes, &formulas, &dependencies);
+    let mut failures = pregraph_failures(document, &nodes, &formulas);
     assign_cycle_failures(&formulas, &dependencies, &mut failures);
     let mut values = initial_values(&nodes, &failures);
-    evaluate_remaining_formulas(&formulas, &dependencies, &mut failures, &mut values);
+    evaluate_remaining_formulas(
+        document,
+        &formulas,
+        &dependencies,
+        &mut failures,
+        &mut values,
+    );
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
         values,
@@ -958,7 +1393,10 @@ fn collect_calculation_nodes(
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
                 nodes.insert(field.clone(), value);
                 if let Value::Formula(expression) = value {
-                    dependencies.insert(field.clone(), extract_dependencies(expression));
+                    dependencies.insert(
+                        field.clone(),
+                        extract_dependencies(document, &field, expression),
+                    );
                     formulas.insert(field, expression);
                 }
             }
@@ -980,7 +1418,7 @@ fn calculation_value<'document>(
 
 fn formula_dependencies(document: &Document, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
     match calculation_value(document, field) {
-        Some(Value::Formula(expression)) => Some(extract_dependencies(expression)),
+        Some(Value::Formula(expression)) => Some(extract_dependencies(document, field, expression)),
         Some(
             Value::Number(_)
             | Value::Text(_)
@@ -1059,7 +1497,6 @@ fn pregraph_failures(
     document: &Document,
     nodes: &ValueNodes<'_>,
     formulas: &FormulaNodes<'_>,
-    dependencies: &DependencyMap,
 ) -> FailureMap {
     let mut failures = BTreeMap::new();
     // Phase 1a: structural failures take precedence over every later phase.
@@ -1069,22 +1506,68 @@ fn pregraph_failures(
                 formula.clone(),
                 CalculationFailure::InvalidExpression { error },
             );
+        } else if expression.expression_type() != Some(FormulaExpressionType::Number) {
+            failures.insert(formula.clone(), CalculationFailure::TypeMismatch);
         }
     }
 
-    // Phase 1b: capture every directly discovered missing/stale/type target.
+    // Phase 1b: a column identity that does not resolve to a numeric schema
+    // field fails the naming formula before any row-level target check.
+    for (formula, expression) in formulas {
+        if failures.contains_key(formula) {
+            continue;
+        }
+        let columns = column_failures(document, expression);
+        if !columns.is_empty() {
+            failures.insert(
+                formula.clone(),
+                CalculationFailure::InvalidColumn { columns },
+            );
+        }
+    }
+
+    // Phase 1c: capture every directly discovered missing/stale/type target.
     for (field, value) in nodes {
         if failures.contains_key(field) {
             continue;
         }
         let mut invalid_targets = BTreeMap::new();
-        if let Some(failure) = reference_failure(document, field) {
+        if let Some(failure) = reference_failure(document, field, true) {
             invalid_targets.insert(field.clone(), failure);
         }
-        if matches!(value, Value::Formula(_)) {
-            for dependency in dependencies.get(field).into_iter().flatten() {
-                if let Some(failure) = reference_failure(document, dependency) {
-                    invalid_targets.insert(dependency.clone(), failure);
+        if let Value::Formula(expression) = value {
+            let unconditional = expression.unconditional_references(field);
+            let mut checks = expression
+                .reference_uses(field)
+                .into_iter()
+                .map(|(dependency, numeric)| {
+                    // A value missing only inside an IF branch is decided at
+                    // evaluation, when the branch is actually selected; the
+                    // reference itself must still be well-formed.
+                    let failure = if unconditional.contains(&dependency) {
+                        reference_failure(document, &dependency, numeric)
+                    } else {
+                        structural_reference_failure(document, &dependency, numeric)
+                    };
+                    (dependency, failure)
+                })
+                .collect::<Vec<_>>();
+            // A column total reads every non-blank cell of its column; a blank
+            // cell is skipped by the sum, not a missing target. A present cell
+            // must hold a Number wherever the total sits.
+            let mut pending = vec![expression];
+            while let Some(node) = pending.pop() {
+                if let Expression::ColumnTotal(column) = node {
+                    for cell in column_cells(document, column) {
+                        let failure = reference_failure(document, &cell, true);
+                        checks.push((cell, failure));
+                    }
+                }
+                pending.extend(node.children());
+            }
+            for (dependency, failure) in checks {
+                if let Some(failure) = failure {
+                    invalid_targets.insert(dependency, failure);
                 }
             }
         }
@@ -1139,6 +1622,7 @@ fn initial_values(nodes: &ValueNodes<'_>, failures: &FailureMap) -> BTreeMap<Fie
 }
 
 fn evaluate_remaining_formulas(
+    document: &Document,
     formulas: &FormulaNodes<'_>,
     dependencies: &DependencyMap,
     failures: &mut FailureMap,
@@ -1186,16 +1670,20 @@ fn evaluate_remaining_formulas(
 
     while let Some(formula) = ready.pop_first() {
         remaining_dependency_counts.remove(&formula);
-        let failed_dependencies = dependencies
-            .get(&formula)
-            .into_iter()
-            .flatten()
+        let evaluation = evaluation::Evaluation {
+            document,
+            owner: &formula,
+            values,
+        };
+        let failed_dependencies = evaluation
+            .required_references(formulas[&formula])
+            .iter()
             .filter(|dependency| failures.contains_key(*dependency))
             .cloned()
             .collect::<BTreeSet<_>>();
         if failed_dependencies.is_empty() {
             let expression = formulas[&formula];
-            match evaluate_bound_expression(expression, values) {
+            match evaluation.number(expression) {
                 Ok(value) => {
                     values.insert(formula.clone(), value);
                 }
@@ -1229,22 +1717,50 @@ fn evaluate_remaining_formulas(
     );
 }
 
-#[derive(Clone, Copy, Debug)]
-enum BinaryOperation {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Minimum,
-    Maximum,
+fn column_failures(
+    document: &Document,
+    expression: &Expression,
+) -> BTreeMap<ColumnRef, ColumnFailure> {
+    let mut failures = BTreeMap::new();
+    for column in extract_column_totals(expression) {
+        let failure = match document.schemas.get(&column.schema) {
+            None => Some(ColumnFailure::MissingSchema),
+            Some(schema) => match schema.fields.get(&column.field) {
+                None => Some(ColumnFailure::MissingField),
+                Some(definition) if definition.field_type != FieldType::Number => {
+                    Some(ColumnFailure::NonNumeric)
+                }
+                Some(_) => None,
+            },
+        };
+        if let Some(failure) = failure {
+            failures.insert(column, failure);
+        }
+    }
+    failures
 }
 
-enum EvaluationFrame<'expression> {
-    Expression(&'expression Expression),
-    Apply(BinaryOperation),
+/// The non-blank cells a column total sums, in entity order.
+pub(crate) fn column_cells<'a>(
+    document: &'a Document,
+    column: &'a ColumnRef,
+) -> impl Iterator<Item = FieldRef> + 'a {
+    document
+        .entities
+        .iter()
+        .filter(|(_, entity)| {
+            entity.schema == column.schema && entity.fields.contains_key(&column.field)
+        })
+        .map(|(entity_id, _)| FieldRef::new(entity_id.clone(), column.field.clone()))
 }
 
-fn reference_failure(document: &Document, field: &FieldRef) -> Option<ReferenceFailure> {
+/// The reference names an existing entity and field of the right type,
+/// whatever value it holds now.
+fn structural_reference_failure(
+    document: &Document,
+    field: &FieldRef,
+    numeric: bool,
+) -> Option<ReferenceFailure> {
     let Some(entity) = document.entities.get(&field.entity) else {
         return Some(ReferenceFailure::Missing);
     };
@@ -1255,14 +1771,28 @@ fn reference_failure(document: &Document, field: &FieldRef) -> Option<ReferenceF
     else {
         return Some(ReferenceFailure::Missing);
     };
-    if definition.field_type != FieldType::Number {
-        return Some(ReferenceFailure::NonNumeric);
+    (numeric && definition.field_type != FieldType::Number).then_some(ReferenceFailure::NonNumeric)
+}
+
+fn reference_failure(
+    document: &Document,
+    field: &FieldRef,
+    numeric: bool,
+) -> Option<ReferenceFailure> {
+    if let Some(failure) = structural_reference_failure(document, field, numeric) {
+        return Some(failure);
     }
+    if !numeric {
+        return None;
+    }
+    let entity = &document.entities[&field.entity];
+    let definition = &document.schemas[&entity.schema].fields[&field.field];
     match entity.fields.get(&field.field) {
         Some(Value::Number(_) | Value::Formula(_)) => None,
         Some(Value::Text(_) | Value::Boolean(_) | Value::Date(_) | Value::Reference(_)) => {
             Some(ReferenceFailure::NonNumeric)
         }
+        None if !definition.required => None,
         None => Some(ReferenceFailure::Missing),
     }
 }
@@ -1362,96 +1892,4 @@ fn cyclic_components(
         }
     }
     cycles
-}
-
-fn evaluate_bound_expression(
-    expression: &Expression,
-    values: &BTreeMap<FieldRef, Number>,
-) -> Result<Number, CalculationFailure> {
-    let mut frames = vec![EvaluationFrame::Expression(expression)];
-    let mut results = Vec::new();
-    while let Some(frame) = frames.pop() {
-        match frame {
-            EvaluationFrame::Expression(Expression::Number(number)) => results.push(*number),
-            EvaluationFrame::Expression(Expression::Reference(reference)) => {
-                let Some(value) = values.get(reference) else {
-                    return Err(CalculationFailure::FailedDependencies {
-                        dependencies: BTreeSet::from([reference.clone()]),
-                    });
-                };
-                results.push(*value);
-            }
-            EvaluationFrame::Expression(Expression::Add { left, right }) => {
-                push_binary(&mut frames, BinaryOperation::Add, left, right);
-            }
-            EvaluationFrame::Expression(Expression::Subtract { left, right }) => {
-                push_binary(&mut frames, BinaryOperation::Subtract, left, right);
-            }
-            EvaluationFrame::Expression(Expression::Multiply { left, right }) => {
-                push_binary(&mut frames, BinaryOperation::Multiply, left, right);
-            }
-            EvaluationFrame::Expression(Expression::Divide { left, right }) => {
-                push_binary(&mut frames, BinaryOperation::Divide, left, right);
-            }
-            EvaluationFrame::Expression(Expression::Minimum { left, right }) => {
-                push_binary(&mut frames, BinaryOperation::Minimum, left, right);
-            }
-            EvaluationFrame::Expression(Expression::Maximum { left, right }) => {
-                push_binary(&mut frames, BinaryOperation::Maximum, left, right);
-            }
-            EvaluationFrame::Apply(operation) => {
-                let right = pop_result(&mut results);
-                let left = pop_result(&mut results);
-                results.push(apply_operation(operation, left, right)?);
-            }
-        }
-    }
-
-    assert_eq!(
-        results.len(),
-        1,
-        "validated expression produces exactly one result"
-    );
-    Ok(pop_result(&mut results))
-}
-
-fn push_binary<'expression>(
-    frames: &mut Vec<EvaluationFrame<'expression>>,
-    operation: BinaryOperation,
-    left: &'expression Expression,
-    right: &'expression Expression,
-) {
-    frames.push(EvaluationFrame::Apply(operation));
-    frames.push(EvaluationFrame::Expression(right));
-    frames.push(EvaluationFrame::Expression(left));
-}
-
-fn pop_result(results: &mut Vec<Number>) -> Number {
-    results
-        .pop()
-        .expect("validated expression result stack is non-empty")
-}
-
-fn apply_operation(
-    operation: BinaryOperation,
-    left: Number,
-    right: Number,
-) -> Result<Number, CalculationFailure> {
-    match operation {
-        BinaryOperation::Add => number_result(left.get() + right.get()),
-        BinaryOperation::Subtract => number_result(left.get() - right.get()),
-        BinaryOperation::Multiply => number_result(left.get() * right.get()),
-        BinaryOperation::Divide => {
-            if right.get() == 0.0 {
-                return Err(CalculationFailure::DivisionByZero);
-            }
-            number_result(left.get() / right.get())
-        }
-        BinaryOperation::Minimum => Ok(if left <= right { left } else { right }),
-        BinaryOperation::Maximum => Ok(if left >= right { left } else { right }),
-    }
-}
-
-fn number_result(value: f64) -> Result<Number, CalculationFailure> {
-    Number::new(value).map_err(|_| CalculationFailure::NonFiniteResult)
 }

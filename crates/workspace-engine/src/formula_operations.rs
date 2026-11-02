@@ -570,6 +570,7 @@ impl PatchLifecycle {
                 PatchLifecycleError::CommandRejected {
                     source: Box::new(WorkspaceError::InvalidFormula {
                         field: request.target.clone(),
+                        input: request.source.clone(),
                         source,
                     }),
                 }
@@ -600,7 +601,7 @@ impl PatchLifecycle {
                 });
             }
         };
-        let command = FormulaUpdateCommand::new(request.target, expression);
+        let command = FormulaUpdateCommand::new(document, request.target, expression);
         let mut disclosure = BTreeSet::new();
         for field in std::iter::once(command.target()).chain(command.references()) {
             disclosure.insert(
@@ -908,11 +909,16 @@ impl PatchLifecycle {
                 Some(BTreeSet::from([field.clone()]))
             }
             WorkspaceError::FormulaBinding { field, source } => match source.as_ref() {
-                FormulaBindError::Complexity(_) => Some(BTreeSet::from([field.clone()])),
+                FormulaBindError::Complexity(_) | FormulaBindError::TypeMismatch { .. } => {
+                    Some(BTreeSet::from([field.clone()]))
+                }
                 FormulaBindError::NonNumericTarget { reference, .. } => {
                     Some(BTreeSet::from([field.clone(), reference.clone()]))
                 }
-                FormulaBindError::Index { .. } | FormulaBindError::Address { .. } => None,
+                FormulaBindError::Index { .. }
+                | FormulaBindError::Address { .. }
+                | FormulaBindError::Column { .. }
+                | FormulaBindError::NonNumericColumn { .. } => None,
             },
             _ => None,
         };
@@ -1106,9 +1112,12 @@ fn calculation_evidence_subjects(outcome: &FormulaCalculationOutcome) -> BTreeSe
         CalculationFailure::InvalidReferences { targets } => targets.keys().cloned().collect(),
         CalculationFailure::Cycle { members } => members.clone(),
         CalculationFailure::FailedDependencies { dependencies } => dependencies.clone(),
-        CalculationFailure::InvalidExpression { .. }
+        CalculationFailure::TypeMismatch
+        | CalculationFailure::InvalidExpression { .. }
         | CalculationFailure::DivisionByZero
-        | CalculationFailure::NonFiniteResult => BTreeSet::new(),
+        | CalculationFailure::EmptyAggregate
+        | CalculationFailure::NonFiniteResult
+        | CalculationFailure::InvalidColumn { .. } => BTreeSet::new(),
     }
 }
 

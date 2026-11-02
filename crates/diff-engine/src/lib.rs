@@ -238,6 +238,10 @@ pub enum DiffError {
     UnsupportedFieldConstraintChange,
     #[error("tachiko.semantic-delta/v1 does not support durable display names")]
     UnsupportedDisplayName,
+    #[error("tachiko.semantic-delta/v1 does not support durable number formats")]
+    UnsupportedNumberFormat,
+    #[error("tachiko.semantic-delta/v1 does not support durable field order")]
+    UnsupportedFieldOrder,
     #[error("could not calculate the original document: {0}")]
     BeforeCalculation(#[source] CalculationError),
     #[error("could not calculate the changed document: {0}")]
@@ -250,6 +254,12 @@ pub enum DiffError {
 ///
 /// Returns [`DiffError`] when either document cannot be calculated.
 pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {
+    if before.has_number_formats() || after.has_number_formats() {
+        return Err(DiffError::UnsupportedNumberFormat);
+    }
+    if before.has_field_orders() || after.has_field_orders() {
+        return Err(DiffError::UnsupportedFieldOrder);
+    }
     if before.has_display_names() || after.has_display_names() {
         return Err(DiffError::UnsupportedDisplayName);
     }
@@ -612,14 +622,14 @@ fn render_change(
             format!(
                 "{} added: {}",
                 field_key(after_document, field),
-                format_value(value, after_document)
+                format_value(field, value, after_document)
             )
         }
         SemanticChange::FieldRemoved { field, value } => {
             format!(
                 "{} removed: {}",
                 field_key(before_document, field),
-                format_value(value, before_document)
+                format_value(field, value, before_document)
             )
         }
         SemanticChange::FieldChanged {
@@ -629,8 +639,8 @@ fn render_change(
         } => format!(
             "{}: {} -> {}",
             field_key(after_document, field),
-            format_value(before, before_document),
-            format_value(after, after_document)
+            format_value(field, before, before_document),
+            format_value(field, after, after_document)
         ),
         SemanticChange::FormulaImpact {
             field,
@@ -664,7 +674,7 @@ fn format_definition(definition: &FieldDefinition, document: &Document) -> Strin
     format!("{field_type} ({presence})")
 }
 
-fn format_value(value: &Value, document: &Document) -> String {
+fn format_value(field: &FieldRef, value: &Value, document: &Document) -> String {
     match value {
         Value::Number(number) => format_number(*number),
         Value::Text(text) => format!("\"{text}\""),
@@ -677,7 +687,7 @@ fn format_value(value: &Value, document: &Document) -> String {
                 .get(entity)
                 .map_or_else(|| entity.to_string(), |target| target.key.to_string())
         ),
-        Value::Formula(expression) => project_expression(document, expression)
+        Value::Formula(expression) => project_expression(document, field, expression)
             .unwrap_or_else(|error| format!("<unprojectable formula: {error}>")),
     }
 }

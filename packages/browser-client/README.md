@@ -33,6 +33,22 @@ operations, and resets on successful New, Import, legacy open or Close. Keep a
 v3-capable reader available when rolling back a producer that has emitted v3
 artifacts. Sheet host save/restart qualification remains a separate consumer gate.
 
+## Conditional formulas
+
+`updateFormula` accepts IF, Number comparisons (`= <> < <= > >=`), AND/OR/NOT,
+ROUND with literal precision `0..=10`, percent literals, and ISBLANK. Conditions
+are intermediate types, not stored values; invalid placements return the existing
+`formula_type_mismatch` refusal. IF evaluates only its selected branch while
+tracking both branches' dependencies. Absent optional Number inputs read as zero;
+ISBLANK observes presence without converting Text or other types to Numbers.
+
+Canonical `.roproj/v3` and direct `.ro/v2` preserve the new bound operations;
+frozen project v1/v2 writers refuse them. XLSX emits corresponding Excel formula
+text and current computed results. Formula copy and collection duplication remap
+references inside conditions and both branches. See the
+[formula authoring reference](../../docs/engineering/formula-authoring-reference.md).
+The existing formula, node, byte, depth, and history bounds are unchanged.
+
 ## Bounded Text/Number capacity profile
 
 The producer supports the private [bounded Text capacity profile](../../acceptance/bounded-text-capacity/CONTRACT.md):

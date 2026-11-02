@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use tachiko_designer_runtime::{
-    CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection,
-    FieldTarget,
+    CalculationProjection, CapacityExceeded, CapacityLimit, DesignerRequest, DesignerResponse,
+    DesignerRuntime, FieldProjection, FieldTarget,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey, FieldType, Number,
@@ -19,6 +19,7 @@ fn fixture() -> DesignerRuntime {
         document.schemas.insert(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from(id),
                 display_name: None,
@@ -32,6 +33,7 @@ fn fixture() -> DesignerRuntime {
                                 id: field,
                                 key: FieldKey::from(name),
                                 display_name: None,
+                                number_format: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -180,6 +182,38 @@ fn copy_column_offset_uses_canonical_columns_and_absolute_mode_preserves_ids() {
         "([r1.a] * 2)"
     );
 }
+
+#[test]
+fn copy_shifts_references_inside_conditions_and_rounding_arguments() {
+    let mut runtime = fixture();
+    update(
+        &mut runtime,
+        0,
+        "r1.c",
+        "IF(AND([r1.a]>0,OR([r1.b]<30,[r1.b]=30)),ROUND([r1.b]*50%,0),0)",
+    );
+    runtime
+        .handle(copy(1, "r1.c", &["r2.c"], &[], true, false))
+        .unwrap();
+    let copied = field(&mut runtime, 2, "r2.c");
+    assert_eq!(
+        copied
+            .formula
+            .as_ref()
+            .map(|formula| formula.source.as_str()),
+        Some(
+            "IF(AND(([r2.a] > 0), OR(([r2.b] < 30), ([r2.b] = 30))), ROUND(([r2.b] * 0.5), 0), 0)"
+        )
+    );
+    assert_eq!(
+        copied
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(10.0)
+    );
+}
+
 #[test]
 fn rejected_copy_preserves_the_complete_snapshot_and_previous_history() {
     let mut runtime = fixture();
@@ -282,6 +316,7 @@ fn formula_capacity_fixture() -> DesignerRuntime {
     document.schemas.insert(
         schema.clone(),
         Schema {
+            field_order: None,
             id: schema.clone(),
             key: SchemaKey::from("items"),
             display_name: None,
@@ -291,6 +326,7 @@ fn formula_capacity_fixture() -> DesignerRuntime {
                     id: field_id.clone(),
                     key: FieldKey::from("n"),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Number,
                     required: true,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -329,6 +365,7 @@ fn assert_formula_rejection_preserves_reopen(
     revision: u32,
     target: &str,
     source: &str,
+    capacity_refusal: bool,
 ) {
     let revision_text = format!("resident/{revision}");
     let before = runtime.export_project(&revision_text).unwrap().bytes;
@@ -339,10 +376,21 @@ fn assert_formula_rejection_preserves_reopen(
             source: source.into(),
         })
         .expect_err("unopenable formula candidate must be rejected before publication");
-    assert_eq!(
-        error.failure_projection(&revision_text).code,
-        "unsupported_project"
-    );
+    let failure = error.failure_projection(&revision_text);
+    if capacity_refusal {
+        assert_eq!(failure.code, "capacity_exceeded");
+        assert_eq!(
+            failure.capacity,
+            Some(CapacityExceeded {
+                limit: CapacityLimit::Formulas,
+                maximum: 32,
+                attempted: 33,
+                collection: None,
+            })
+        );
+    } else {
+        assert_eq!(failure.code, "unsupported_project");
+    }
     assert_eq!(
         runtime.export_project(&revision_text).unwrap().bytes,
         before
@@ -367,7 +415,7 @@ fn assert_formula_rejection_preserves_reopen(
 #[test]
 fn formula_authoring_rejects_33rd_formula_before_publication_and_keeps_32_reopenable() {
     let mut runtime = formula_capacity_fixture();
-    assert_formula_rejection_preserves_reopen(&mut runtime, 0, "r32.n", "3");
+    assert_formula_rejection_preserves_reopen(&mut runtime, 0, "r32.n", "3", true);
 }
 
 #[test]
@@ -409,7 +457,7 @@ fn formula_authoring_preflights_complete_projection_budget_for_long_sources() {
                     .bytes,
                 before
             );
-            assert_formula_rejection_preserves_reopen(&mut runtime, index, &target, &source);
+            assert_formula_rejection_preserves_reopen(&mut runtime, index, &target, &source, false);
             rejected = true;
             break;
         }

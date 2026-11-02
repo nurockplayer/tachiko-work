@@ -1,15 +1,19 @@
 //! Storage-owned `.roproj/v3` DTOs and canonical tree codec.
 
-use std::{collections::BTreeMap, convert::Infallible};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    convert::Infallible,
+};
 
 use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldConstraint,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
-    KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
-    KeyedGroupedSumProductsBinding, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema,
-    SchemaId, SchemaKey, Value, validate_document, validate_keyed_grouped_sum_definitions,
+    ColumnAggregateFunction, ColumnRef, ComparisonOperator, Document, DocumentId, Entity, EntityId,
+    EntityKey, Expression, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
+    validate_document, validate_keyed_grouped_sum_definitions,
 };
 
 use crate::{
@@ -212,6 +216,8 @@ struct SchemaV3 {
     key: String,
     #[serde(default, deserialize_with = "optional_name")]
     display_name: Option<String>,
+    #[serde(default)]
+    field_order: Option<Vec<String>>,
     fields: Vec<FieldDefinitionV3>,
 }
 
@@ -225,6 +231,8 @@ struct FieldDefinitionV3 {
     field_type: FieldTypeV3,
     required: bool,
     constraint: ConstraintV3,
+    #[serde(default, deserialize_with = "crate::number_format::optional")]
+    number_format: Option<crate::number_format::NumberFormatDto>,
 }
 
 fn optional_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
@@ -358,12 +366,22 @@ enum ValueV3 {
 enum ExpressionV3 {
     Number(NumberV3),
     Reference(FieldRefV3),
+    SameRowReference(String),
+    ColumnTotal(ColumnRefV3),
+    ColumnAggregate(ColumnAggregateArgsV3),
     Add(BinaryArgumentsV3),
     Subtract(BinaryArgumentsV3),
     Multiply(BinaryArgumentsV3),
     Divide(BinaryArgumentsV3),
     Minimum(BinaryArgumentsV3),
     Maximum(BinaryArgumentsV3),
+    Compare(ComparisonArgumentsV3),
+    If(IfArgumentsV3),
+    And(Vec<ExpressionV3>),
+    Or(Vec<ExpressionV3>),
+    Not(Box<ExpressionV3>),
+    Round(RoundArgumentsV3),
+    IsBlank(Box<ExpressionV3>),
 }
 
 #[derive(Deserialize)]
@@ -375,9 +393,63 @@ struct FieldRefV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ColumnAggregateArgsV3 {
+    function: ColumnAggregateFunction,
+    column: ColumnRefV3,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColumnRefV3 {
+    schema: String,
+    field: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BinaryArgumentsV3 {
     left: Box<ExpressionV3>,
     right: Box<ExpressionV3>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComparisonArgumentsV3 {
+    operator: String,
+    left: Box<ExpressionV3>,
+    right: Box<ExpressionV3>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IfArgumentsV3 {
+    condition: Box<ExpressionV3>,
+    then_value: Box<ExpressionV3>,
+    else_value: Box<ExpressionV3>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoundArgumentsV3 {
+    value: Box<ExpressionV3>,
+    #[serde(deserialize_with = "deserialize_round_digits")]
+    digits: u8,
+}
+
+fn deserialize_round_digits<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<u8, D::Error> {
+    // The strict JSON frontend normalizes numeric tokens to binary64, including
+    // integer-valued representation parameters such as ROUND precision.
+    let digits = f64::deserialize(deserializer)?;
+    if !(0.0..=10.0).contains(&digits) || digits.fract() != 0.0 {
+        return Err(serde::de::Error::custom(
+            "ROUND digits must be an integer in 0..=10",
+        ));
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    // The representation value is a checked integer in 0..=10.
+    Ok(digits as u8)
 }
 
 /// `.roproj/v3` owns this closed-world definition DTO; it intentionally does
@@ -755,7 +827,9 @@ impl SchemaV3 {
                 return invalid_representation(format!("duplicate field id '{id_text}'"));
             }
         }
+        let field_order = field_order_from_wire(self.field_order, &fields)?;
         Ok(Schema {
+            field_order,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
             display_name: self.display_name,
@@ -764,12 +838,34 @@ impl SchemaV3 {
     }
 }
 
+/// Admits a stored field order only when it is an exact permutation of the fields.
+fn field_order_from_wire(
+    order: Option<Vec<String>>,
+    fields: &BTreeMap<FieldId, FieldDefinition>,
+) -> Result<Option<Vec<FieldId>>, FormatError> {
+    let Some(order) = order else {
+        return Ok(None);
+    };
+    let ids = order.into_iter().map(FieldId::from).collect::<Vec<_>>();
+    let distinct = ids.iter().collect::<BTreeSet<_>>();
+    if ids.len() != fields.len()
+        || distinct.len() != ids.len()
+        || !ids.iter().all(|id| fields.contains_key(id))
+    {
+        return invalid_representation(
+            "field_order must list every schema field exactly once".to_owned(),
+        );
+    }
+    Ok(Some(ids))
+}
+
 impl FieldDefinitionV3 {
     fn into_semantic(self) -> Result<FieldDefinition, FormatError> {
         Ok(FieldDefinition {
             id: FieldId::from(self.id),
             key: FieldKey::from(self.key),
             display_name: self.display_name,
+            number_format: self.number_format.map(Into::into),
             field_type: self.field_type.into_semantic()?,
             required: self.required,
             constraint: self.constraint.into_semantic()?,
@@ -923,6 +1019,14 @@ impl ExpressionV3 {
                     require_id("formula entity id", &reference.entity)?;
                     require_id("formula field id", &reference.field)?;
                 }
+                Self::SameRowReference(field) => {
+                    require_id("formula field id", field)?;
+                }
+                Self::ColumnTotal(column)
+                | Self::ColumnAggregate(ColumnAggregateArgsV3 { column, .. }) => {
+                    require_id("formula schema id", &column.schema)?;
+                    require_id("formula field id", &column.field)?;
+                }
                 Self::Add(arguments)
                 | Self::Subtract(arguments)
                 | Self::Multiply(arguments)
@@ -931,6 +1035,40 @@ impl ExpressionV3 {
                 | Self::Maximum(arguments) => {
                     stack.push((&arguments.right, depth + 1));
                     stack.push((&arguments.left, depth + 1));
+                }
+                Self::Compare(arguments) => {
+                    comparison_operator(&arguments.operator)?;
+                    stack.push((&arguments.right, depth + 1));
+                    stack.push((&arguments.left, depth + 1));
+                }
+                Self::If(arguments) => {
+                    stack.push((&arguments.else_value, depth + 1));
+                    stack.push((&arguments.then_value, depth + 1));
+                    stack.push((&arguments.condition, depth + 1));
+                }
+                Self::And(expressions) | Self::Or(expressions) => {
+                    stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
+                }
+                Self::Not(expression) => stack.push((expression, depth + 1)),
+                Self::Round(arguments) => {
+                    if arguments.digits > 10 {
+                        return invalid_representation(format!(
+                            "ROUND digits must be between 0 and 10, found {}",
+                            arguments.digits
+                        ));
+                    }
+                    stack.push((&arguments.value, depth + 1));
+                }
+                Self::IsBlank(expression) => {
+                    if !matches!(
+                        expression.as_ref(),
+                        Self::Reference(_) | Self::SameRowReference(_)
+                    ) {
+                        return invalid_representation(
+                            "ISBLANK requires a field reference".to_owned(),
+                        );
+                    }
+                    stack.push((expression, depth + 1));
                 }
                 Self::Number(_) => {}
             }
@@ -944,6 +1082,18 @@ impl ExpressionV3 {
             Self::Reference(reference) => {
                 Expression::Reference(FieldRef::new(reference.entity, reference.field))
             }
+            Self::SameRowReference(field) => Expression::SameRowReference(FieldId::from(field)),
+            Self::ColumnTotal(column) => Expression::ColumnTotal(ColumnRef::new(
+                SchemaId::from(column.schema),
+                FieldId::from(column.field),
+            )),
+            Self::ColumnAggregate(args) => Expression::ColumnAggregate {
+                function: args.function,
+                column: ColumnRef::new(
+                    SchemaId::from(args.column.schema),
+                    FieldId::from(args.column.field),
+                ),
+            },
             Self::Add(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Add { left, right })?
             }
@@ -962,6 +1112,34 @@ impl ExpressionV3 {
             Self::Maximum(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Maximum { left, right })?
             }
+            Self::Compare(arguments) => Expression::Compare {
+                operator: comparison_operator(&arguments.operator)?,
+                left: Box::new(arguments.left.into_semantic()?),
+                right: Box::new(arguments.right.into_semantic()?),
+            },
+            Self::If(arguments) => Expression::If {
+                condition: Box::new(arguments.condition.into_semantic()?),
+                then_value: Box::new(arguments.then_value.into_semantic()?),
+                else_value: Box::new(arguments.else_value.into_semantic()?),
+            },
+            Self::And(expressions) => Expression::And(
+                expressions
+                    .into_iter()
+                    .map(ExpressionV3::into_semantic)
+                    .collect::<Result<_, _>>()?,
+            ),
+            Self::Or(expressions) => Expression::Or(
+                expressions
+                    .into_iter()
+                    .map(ExpressionV3::into_semantic)
+                    .collect::<Result<_, _>>()?,
+            ),
+            Self::Not(expression) => Expression::Not(Box::new(expression.into_semantic()?)),
+            Self::Round(arguments) => Expression::Round {
+                value: Box::new(arguments.value.into_semantic()?),
+                digits: arguments.digits,
+            },
+            Self::IsBlank(expression) => Expression::IsBlank(Box::new(expression.into_semantic()?)),
         })
     }
 }
@@ -1003,6 +1181,10 @@ impl SchemaV3 {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
             display_name: schema.display_name.clone(),
+            field_order: schema
+                .field_order
+                .as_ref()
+                .map(|order| order.iter().map(ToString::to_string).collect()),
             fields,
         })
     }
@@ -1017,6 +1199,7 @@ impl FieldDefinitionV3 {
             field_type: FieldTypeV3::from_semantic(&field.field_type),
             required: field.required,
             constraint: ConstraintV3::from_semantic(&field.constraint)?,
+            number_format: field.number_format.as_ref().map(Into::into),
         })
     }
 }
@@ -1089,6 +1272,20 @@ impl ExpressionV3 {
             Expression::Reference(reference) => {
                 Self::Reference(FieldRefV3::from_semantic(reference))
             }
+            Expression::SameRowReference(field) => Self::SameRowReference(field.to_string()),
+            Expression::ColumnTotal(column) => Self::ColumnTotal(ColumnRefV3 {
+                schema: column.schema.to_string(),
+                field: column.field.to_string(),
+            }),
+            Expression::ColumnAggregate { function, column } => {
+                Self::ColumnAggregate(ColumnAggregateArgsV3 {
+                    function: *function,
+                    column: ColumnRefV3 {
+                        schema: column.schema.to_string(),
+                        field: column.field.to_string(),
+                    },
+                })
+            }
             Expression::Add { left, right } => {
                 Self::Add(BinaryArgumentsV3::from_semantic(left, right))
             }
@@ -1106,6 +1303,38 @@ impl ExpressionV3 {
             }
             Expression::Maximum { left, right } => {
                 Self::Maximum(BinaryArgumentsV3::from_semantic(left, right))
+            }
+            Expression::Compare {
+                operator,
+                left,
+                right,
+            } => Self::Compare(ComparisonArgumentsV3 {
+                operator: operator.as_str().to_owned(),
+                left: Box::new(Self::from_semantic(left)),
+                right: Box::new(Self::from_semantic(right)),
+            }),
+            Expression::If {
+                condition,
+                then_value,
+                else_value,
+            } => Self::If(IfArgumentsV3 {
+                condition: Box::new(Self::from_semantic(condition)),
+                then_value: Box::new(Self::from_semantic(then_value)),
+                else_value: Box::new(Self::from_semantic(else_value)),
+            }),
+            Expression::And(expressions) => {
+                Self::And(expressions.iter().map(Self::from_semantic).collect())
+            }
+            Expression::Or(expressions) => {
+                Self::Or(expressions.iter().map(Self::from_semantic).collect())
+            }
+            Expression::Not(expression) => Self::Not(Box::new(Self::from_semantic(expression))),
+            Expression::Round { value, digits } => Self::Round(RoundArgumentsV3 {
+                value: Box::new(Self::from_semantic(value)),
+                digits: *digits,
+            }),
+            Expression::IsBlank(expression) => {
+                Self::IsBlank(Box::new(Self::from_semantic(expression)))
             }
         }
     }
@@ -1290,6 +1519,17 @@ fn write_schema(output: &mut String, schema: &SchemaV3, indent: usize) -> Result
     if let Some(name) = &schema.display_name {
         pretty_member_string(output, indent + 1, "display_name", name, true)?;
     }
+    if let Some(order) = &schema.field_order {
+        pretty_member_prefix(output, indent + 1, "field_order")?;
+        output.push('[');
+        for (index, id) in order.iter().enumerate() {
+            if index > 0 {
+                output.push_str(", ");
+            }
+            write_json_string(output, id)?;
+        }
+        output.push_str("],\n");
+    }
     pretty_member_prefix(output, indent + 1, "fields")?;
     if schema.fields.is_empty() {
         output.push_str("[]\n");
@@ -1334,6 +1574,11 @@ fn write_field_definition(
     )?;
     pretty_member_prefix(output, indent + 1, "constraint")?;
     write_constraint(output, &field.constraint, indent + 1)?;
+    if let Some(format) = &field.number_format {
+        output.push_str(",\n");
+        pretty_member_prefix(output, indent + 1, "number_format")?;
+        crate::number_format::write(output, format, indent + 1)?;
+    }
     output.push('\n');
     push_indent(output, indent);
     output.push('}');
@@ -1476,6 +1721,7 @@ fn write_value(output: &mut String, value: &ValueV3) -> Result<(), FormatError> 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // One closed-world operation dispatch keeps the canonical wire shape visible.
 fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<(), FormatError> {
     output.push('{');
     match expression {
@@ -1491,12 +1737,98 @@ fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<()
             compact_member_string(output, "field", &reference.field, false)?;
             output.push('}');
         }
+        ExpressionV3::SameRowReference(field) => {
+            compact_member_string(output, "op", "same_row_reference", true)?;
+            compact_member_string(output, "args", field, false)?;
+        }
+        ExpressionV3::ColumnTotal(column) => {
+            compact_member_string(output, "op", "column_total", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "schema", &column.schema, true)?;
+            compact_member_string(output, "field", &column.field, false)?;
+            output.push('}');
+        }
+        ExpressionV3::ColumnAggregate(args) => {
+            compact_member_string(output, "op", "column_aggregate", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "function", args.function.wire_name(), true)?;
+            compact_member_prefix(output, "column")?;
+            output.push('{');
+            compact_member_string(output, "schema", &args.column.schema, true)?;
+            compact_member_string(output, "field", &args.column.field, false)?;
+            output.push_str("}}");
+        }
         ExpressionV3::Add(args) => write_binary_expression(output, "add", args)?,
         ExpressionV3::Subtract(args) => write_binary_expression(output, "subtract", args)?,
         ExpressionV3::Multiply(args) => write_binary_expression(output, "multiply", args)?,
         ExpressionV3::Divide(args) => write_binary_expression(output, "divide", args)?,
         ExpressionV3::Minimum(args) => write_binary_expression(output, "minimum", args)?,
         ExpressionV3::Maximum(args) => write_binary_expression(output, "maximum", args)?,
+        ExpressionV3::Compare(args) => {
+            compact_member_string(output, "op", "compare", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "operator", &args.operator, true)?;
+            compact_member_prefix(output, "left")?;
+            write_expression(output, &args.left)?;
+            output.push(',');
+            compact_member_prefix(output, "right")?;
+            write_expression(output, &args.right)?;
+            output.push('}');
+        }
+        ExpressionV3::If(args) => {
+            compact_member_string(output, "op", "if", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_prefix(output, "condition")?;
+            write_expression(output, &args.condition)?;
+            output.push(',');
+            compact_member_prefix(output, "then_value")?;
+            write_expression(output, &args.then_value)?;
+            output.push(',');
+            compact_member_prefix(output, "else_value")?;
+            write_expression(output, &args.else_value)?;
+            output.push('}');
+        }
+        ExpressionV3::And(expressions) | ExpressionV3::Or(expressions) => {
+            let op = if matches!(expression, ExpressionV3::And(_)) {
+                "and"
+            } else {
+                "or"
+            };
+            compact_member_string(output, "op", op, true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('[');
+            for (index, expression) in expressions.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                write_expression(output, expression)?;
+            }
+            output.push(']');
+        }
+        ExpressionV3::Not(expression) => {
+            compact_member_string(output, "op", "not", true)?;
+            compact_member_prefix(output, "args")?;
+            write_expression(output, expression)?;
+        }
+        ExpressionV3::IsBlank(expression) => {
+            compact_member_string(output, "op", "is_blank", true)?;
+            compact_member_prefix(output, "args")?;
+            write_expression(output, expression)?;
+        }
+        ExpressionV3::Round(args) => {
+            compact_member_string(output, "op", "round", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_prefix(output, "value")?;
+            write_expression(output, &args.value)?;
+            output.push(',');
+            compact_member_number(output, "digits", NumberV3(f64::from(args.digits)), false)?;
+            output.push('}');
+        }
     }
     output.push('}');
     Ok(())
@@ -1652,11 +1984,48 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     | Expression::Multiply { left, right }
                     | Expression::Divide { left, right }
                     | Expression::Minimum { left, right }
-                    | Expression::Maximum { left, right } => {
+                    | Expression::Maximum { left, right }
+                    | Expression::Compare { left, right, .. } => {
                         stack.push((right, depth + 1));
                         stack.push((left, depth + 1));
                     }
-                    Expression::Number(_) | Expression::Reference(_) => {}
+                    Expression::If {
+                        condition,
+                        then_value,
+                        else_value,
+                    } => {
+                        stack.push((else_value, depth + 1));
+                        stack.push((then_value, depth + 1));
+                        stack.push((condition, depth + 1));
+                    }
+                    Expression::And(expressions) | Expression::Or(expressions) => {
+                        stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
+                    }
+                    Expression::Not(expression) => stack.push((expression, depth + 1)),
+                    Expression::Round { value, digits } => {
+                        if *digits > 10 {
+                            return invalid_representation(format!(
+                                "ROUND digits must be between 0 and 10, found {digits}"
+                            ));
+                        }
+                        stack.push((value, depth + 1));
+                    }
+                    Expression::IsBlank(expression) => {
+                        if !matches!(
+                            expression.as_ref(),
+                            Expression::Reference(_) | Expression::SameRowReference(_)
+                        ) {
+                            return invalid_representation(
+                                "ISBLANK requires a field reference".to_owned(),
+                            );
+                        }
+                        stack.push((expression, depth + 1));
+                    }
+                    Expression::Number(_)
+                    | Expression::Reference(_)
+                    | Expression::SameRowReference(_)
+                    | Expression::ColumnTotal(_)
+                    | Expression::ColumnAggregate { .. } => {}
                 }
             }
         }
@@ -1731,4 +2100,16 @@ fn ensure_increasing(kind: &str, previous: Option<&str>, current: &str) -> Resul
 
 fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
     Err(FormatError::InvalidRoProjectRepresentation { message })
+}
+
+fn comparison_operator(operator: &str) -> Result<ComparisonOperator, FormatError> {
+    match operator {
+        "=" => Ok(ComparisonOperator::Equal),
+        "<>" => Ok(ComparisonOperator::NotEqual),
+        "<" => Ok(ComparisonOperator::Less),
+        "<=" => Ok(ComparisonOperator::LessOrEqual),
+        ">" => Ok(ComparisonOperator::Greater),
+        ">=" => Ok(ComparisonOperator::GreaterOrEqual),
+        _ => invalid_representation(format!("unknown formula comparison operator '{operator}'")),
+    }
 }

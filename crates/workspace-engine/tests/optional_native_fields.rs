@@ -30,6 +30,7 @@ fn document() -> Document {
                 id: id.into(),
                 key: id.into(),
                 display_name: None,
+                number_format: None,
                 field_type: kind,
                 required: true,
                 constraint: FieldConstraint::None,
@@ -40,6 +41,7 @@ fn document() -> Document {
     doc.schemas.insert(
         "s".into(),
         Schema {
+            field_order: None,
             id: "s".into(),
             key: "items".into(),
             display_name: None,
@@ -290,7 +292,7 @@ fn sole_required_field_removal_keeps_its_existing_append_inverse() {
     round_trip(&mut lifecycle(), &mut session, vec![remove], vec![append]);
 }
 
-fn non_native_optional_document(kind: FieldType, value: &Value, sparse: bool) -> Document {
+fn optional_kind_document(kind: FieldType, value: &Value, sparse: bool) -> Document {
     let mut base = document();
     for field in base.schemas.get_mut("s").unwrap().fields.values_mut() {
         field.required = false;
@@ -327,68 +329,60 @@ fn assert_optional_field_type_refusal(
 }
 
 #[test]
-fn non_native_optional_removal_refuses_like_its_append_inverse_without_publication() {
+fn optional_boolean_and_date_removal_round_trips_like_text_and_number() {
     for (kind, value) in [
         (FieldType::Boolean, Value::Boolean(false)),
         (FieldType::Date, Value::Date("2026-10-20".parse().unwrap())),
     ] {
         for sparse in [false, true] {
-            let base = non_native_optional_document(kind.clone(), &value, sparse);
+            let base = optional_kind_document(kind.clone(), &value, sparse);
             for target in ["label", "amount"] {
                 let (remove, append) = field_removal_pair(&base, target);
-                let mut restoration_base = base.clone();
-                restoration_base
-                    .schemas
-                    .get_mut("s")
-                    .unwrap()
-                    .fields
-                    .remove(target);
-                for entity in restoration_base.entities.values_mut() {
-                    entity.fields.remove(target);
-                }
-                let mut inverse_session =
-                    ResidentWorkspaceSession::new("scope".into(), restoration_base.clone());
-                assert_optional_field_type_refusal(
-                    apply(&mut lifecycle(), &mut inverse_session, vec![append]),
-                    target,
-                );
-                assert_eq!(
-                    inverse_session.export_snapshot().document(),
-                    &restoration_base
-                );
-                assert_eq!(inverse_session.revision().as_str(), "resident/0");
-
                 let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
-                assert_optional_field_type_refusal(
-                    apply(&mut lifecycle(), &mut session, vec![remove.clone()]),
-                    target,
-                );
-                assert_eq!(session.export_snapshot().document(), &base);
-                assert_eq!(session.revision().as_str(), "resident/0");
-                // A valid prefix must not publish when the removal is refused.
-                let prefix = SemanticCommand::SetSchemaFieldDisplayName {
-                    schema: "s".into(),
-                    field: if target == "label" { "amount" } else { "label" }.into(),
-                    display_name: Some("Changed".into()),
-                };
-                assert_optional_field_type_refusal(
-                    apply(&mut lifecycle(), &mut session, vec![prefix, remove]),
-                    target,
-                );
-                assert_eq!(session.export_snapshot().document(), &base);
-                assert_eq!(session.revision().as_str(), "resident/0");
+                round_trip(&mut lifecycle(), &mut session, vec![remove], vec![append]);
             }
         }
     }
 }
 
 #[test]
-fn required_field_removal_from_non_native_schema_keeps_its_append_inverse() {
+fn optional_reference_append_inverse_refuses_without_publication() {
+    let base = optional_kind_document(
+        FieldType::Reference { schema: "s".into() },
+        &Value::Reference("a".into()),
+        true,
+    );
+    let (_, append) = field_removal_pair(&base, "amount");
+    let mut restoration_base = base.clone();
+    restoration_base
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .remove("amount");
+    for entity in restoration_base.entities.values_mut() {
+        entity.fields.remove("amount");
+    }
+    let mut inverse_session =
+        ResidentWorkspaceSession::new("scope".into(), restoration_base.clone());
+    assert_optional_field_type_refusal(
+        apply(&mut lifecycle(), &mut inverse_session, vec![append]),
+        "amount",
+    );
+    assert_eq!(
+        inverse_session.export_snapshot().document(),
+        &restoration_base
+    );
+    assert_eq!(inverse_session.revision().as_str(), "resident/0");
+}
+
+#[test]
+fn required_field_removal_from_optional_boolean_and_date_schema_keeps_its_append_inverse() {
     for (kind, value) in [
         (FieldType::Boolean, Value::Boolean(false)),
         (FieldType::Date, Value::Date("2026-10-20".parse().unwrap())),
     ] {
-        let mut base = non_native_optional_document(kind, &value, false);
+        let mut base = optional_kind_document(kind, &value, false);
         base.schemas
             .get_mut("s")
             .unwrap()
@@ -425,9 +419,11 @@ fn optional_append_still_checks_values_and_the_complete_resulting_shape() {
         .fields
         .get_mut("amount")
         .unwrap()
-        .field_type = FieldType::Boolean;
+        .field_type = FieldType::Reference { schema: "s".into() };
     for entity in imported.entities.values_mut() {
-        entity.fields.insert("amount".into(), Value::Boolean(false));
+        entity
+            .fields
+            .insert("amount".into(), Value::Reference("a".into()));
     }
     let SemanticCommand::AppendSchemaField { values, .. } = &mut append else {
         unreachable!()
@@ -553,7 +549,7 @@ fn requiredness_and_clear_produce_exact_v2_facts_and_forward_inverses() {
 }
 
 #[test]
-fn strengthening_and_formula_consumer_clear_refuse_without_publication() {
+fn strengthening_refuses_but_optional_formula_input_clear_publishes_zero() {
     let mut optional = document();
     optional
         .schemas
@@ -587,22 +583,41 @@ fn strengthening_and_formula_consumer_clear_refuse_without_publication() {
         "amount".into(),
         Value::Formula(Expression::Reference(FieldRef::new("a", "amount"))),
     );
-    let mut session = ResidentWorkspaceSession::new("scope".into(), formula.clone());
+    let mut session = ResidentWorkspaceSession::new("scope".into(), formula);
+    apply(
+        &mut lifecycle(),
+        &mut session,
+        vec![
+            SemanticCommand::set_field_value(
+                FieldRef::new("a", "label"),
+                Value::Text("changed".into()),
+            ),
+            clear(),
+        ],
+    )
+    .unwrap();
+    let snapshot = session.export_snapshot();
     assert!(
-        apply(
-            &mut lifecycle(),
-            &mut session,
-            vec![
-                SemanticCommand::set_field_value(
-                    FieldRef::new("a", "label"),
-                    Value::Text("changed".into())
-                ),
-                clear()
-            ]
-        )
-        .is_err()
+        !snapshot.document().entities["a"]
+            .fields
+            .contains_key("amount")
     );
-    assert_eq!(session.export_snapshot().document(), &formula);
+    assert_eq!(
+        snapshot.document().entities["a"].fields["label"],
+        Value::Text("changed".into())
+    );
+    let projections = session
+        .query_fields(&[FieldRef::new("b", "amount")])
+        .unwrap()
+        .into_value();
+    assert_eq!(
+        projections[0].calculated_value,
+        Some(
+            tachiko_workspace_engine::formula_operations::FormulaCalculationOutcome::Value(
+                Number::default()
+            )
+        )
+    );
 }
 
 #[test]
@@ -741,9 +756,11 @@ fn requiredness_refuses_absent_targets_unsupported_kinds_and_missing_authority()
         .fields
         .get_mut("amount")
         .unwrap()
-        .field_type = FieldType::Boolean;
+        .field_type = FieldType::Reference { schema: "s".into() };
     for entity in unsupported.entities.values_mut() {
-        entity.fields.insert("amount".into(), Value::Boolean(false));
+        entity
+            .fields
+            .insert("amount".into(), Value::Reference("a".into()));
     }
     let mut session = ResidentWorkspaceSession::new("scope".into(), unsupported.clone());
     assert!(apply(&mut lifecycle(), &mut session, vec![required(false)]).is_err());
@@ -753,5 +770,62 @@ fn requiredness_refuses_absent_targets_unsupported_kinds_and_missing_authority()
     lifecycle.revoke_grant(&"grant".into()).unwrap();
     let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
     assert!(apply(&mut lifecycle, &mut session, vec![required(false)]).is_err());
+    assert_eq!(session.export_snapshot().document(), &base);
+}
+
+#[test]
+fn a_column_total_blocks_removing_its_column_from_an_empty_table() {
+    let mut base = document();
+    base.entities.clear();
+    base.schemas.insert(
+        "t".into(),
+        Schema {
+            field_order: None,
+            id: "t".into(),
+            key: "summary".into(),
+            display_name: None,
+            fields: BTreeMap::from([(
+                "total".into(),
+                FieldDefinition {
+                    id: "total".into(),
+                    key: "total".into(),
+                    display_name: None,
+                    field_type: FieldType::Number,
+                    required: true,
+                    constraint: FieldConstraint::None,
+                    number_format: None,
+                },
+            )]),
+        },
+    );
+    base.entities.insert(
+        "summary".into(),
+        Entity {
+            id: "summary".into(),
+            key: "summary".into(),
+            schema: "t".into(),
+            fields: BTreeMap::from([(
+                "total".into(),
+                Value::Formula(Expression::ColumnTotal(
+                    tachiko_workspace_engine::ColumnRef::new("s", "amount"),
+                )),
+            )]),
+        },
+    );
+    assert!(validation_report(&base).is_valid());
+    let (remove, _) = field_removal_pair(&base, "amount");
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut lifecycle = lifecycle();
+    let result = apply(&mut lifecycle, &mut session, vec![remove]);
+    let Err(PatchLifecycleError::CommandRejected { source }) = result else {
+        panic!("removing a totaled column must be refused: {result:?}")
+    };
+    assert!(
+        matches!(
+            source.as_ref(),
+            WorkspaceError::SchemaFieldReferenced { .. }
+        ),
+        "unexpected refusal: {source:?}"
+    );
     assert_eq!(session.export_snapshot().document(), &base);
 }

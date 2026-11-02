@@ -22,6 +22,7 @@ fn mixed_document() -> Document {
     document.schemas.insert(
         SchemaId::from("notes"),
         Schema {
+            field_order: None,
             id: SchemaId::from("notes"),
             key: SchemaKey::from("notes"),
             display_name: None,
@@ -31,6 +32,7 @@ fn mixed_document() -> Document {
                     id: FieldId::from("text"),
                     key: FieldKey::from("text"),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,

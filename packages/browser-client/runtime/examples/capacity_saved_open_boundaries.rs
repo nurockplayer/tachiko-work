@@ -23,6 +23,7 @@ const MIB: usize = 1024 * 1024;
 fn document(rows: usize) -> Document {
     let mut document = Document::empty("d", "capacity");
     let schema = Schema {
+        field_order: None,
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
         display_name: None,
@@ -36,6 +37,7 @@ fn document(rows: usize) -> Document {
                         id,
                         key: FieldKey::from(key),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: FieldConstraint::None,
@@ -508,6 +510,7 @@ fn ineligible() {
     multiple.schemas.insert(
         SchemaId::from("other"),
         Schema {
+            field_order: None,
             id: SchemaId::from("other"),
             key: SchemaKey::from("other"),
             display_name: None,

@@ -1,24 +1,24 @@
 // Slice-1 native/WASM replay from HANDBACK-551, with fail-closed input guards.
-// Usage: node optional_native_fields.mjs <designer_runtime.wasm> <all seven captures>
+// Usage: node optional_native_fields.mjs <designer_runtime.wasm> <all eight captures>
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
 
 const [wasmPath, ...captures] = process.argv.slice(2);
-assert.ok(wasmPath, "WASM path and all seven native capture cases required");
+assert.ok(wasmPath, "WASM path and all eight native capture cases required");
 const expectedCases = ["native", "capacity", "formula", "rowgate",
-  "editability-boolean", "editability-date", "editability-text"];
+  "editability-boolean", "editability-date", "editability-text", "requiredness"];
 const cases = new Map();
 for (const path of captures) {
-  const match = basename(path).match(/\.json(?:\.(capacity|formula|rowgate|editability-(?:boolean|date|text)))?$/);
+  const match = basename(path).match(/\.json(?:\.(capacity|formula|rowgate|editability-(?:boolean|date|text)|requiredness))?$/);
   assert.ok(match, `${path}: unrecognized native capture case name`);
   const name = match[1] ?? "native";
   assert.ok(!cases.has(name), `${path}: duplicate native capture case ${name}`);
   cases.set(name, path);
 }
 assert.deepEqual([...cases.keys()].sort(), [...expectedCases].sort(),
-  "native capture inventory must include all seven expected cases");
+  "native capture inventory must include all eight expected cases");
 const loaded = [];
 for (const [name, path] of cases) {
   const transcript = JSON.parse(await readFile(path, "utf8"));

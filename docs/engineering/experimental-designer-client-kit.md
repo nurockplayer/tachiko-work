@@ -96,11 +96,127 @@ for (const row of table.rows) {
 `openProject` transfers its input buffer to the Worker. Copy the buffer first if
 your host needs to retain it.
 
-## Optional native Text and Number columns
+## Bounded table windows
+
+`queryTable` stays the complete-table read and refuses a collection above 1,000
+rows with the `use_window_query` failure; `failure.row_count` carries the actual
+count so the host never parses the message. Nothing is truncated.
+
+Large tables use a stateless window instead:
+
+```ts
+const view = {
+  sort: [{ field: amountColumn.id, direction: "desc" as const }],
+  filters: [
+    { kind: "number_compare" as const, field: amountColumn.id, op: ">=" as const, value: 5 },
+    { kind: "text_contains" as const, field: nameColumn.id, value: "beta" },
+  ],
+  keep_entities: [pinnedRow.id], // at most 256, visible even when filtered out
+};
+const window = await client.queryTableWindow(revision, collection, view, 0, 256);
+const located = await client.locateInView(revision, collection, view, pinnedRow.id);
+// located = { revision, result: "found", index: 12 } or { result: "filtered_out" }
+```
+
+To total exactly the rows a view shows, pass their entity ids to
+`queryColumnTotals`. It sums each Number column over the named entities, in
+collection order, and returns `{ revision, rows, column_totals }` with the same
+null and blank-cell rules as the window footer. Naming every entity of the
+collection gives the footer's totals exactly. The request accepts any set of
+unique ids of that collection, up to all of them; an unknown, duplicate or
+foreign id, or a stale revision, refuses with no change. Use it for the footer of a filtered view:
+the window's `column_totals` always cover the whole collection.
+
+```ts
+const shownIds = visibleRows.map((row) => row.id);
+const shown = await client.queryColumnTotals(revision, collection, shownIds);
+```
+
+`count` is 0..=256 and `0` returns the columns and totals only. `start` clamps
+past the end instead of failing, so a shrinking view never turns a scroll into an
+error. The reply repeats `revision`, `collection`, `columns`, a
+`columns_revision` digest that changes only when a column definition changes,
+`total_rows` (after filters and kept entities), `unfiltered_rows`, the clamped
+`start`, and the window's `rows` with the same row/field projections as
+`queryTable`.
+
+The view is request state owned by the host: it never enters the document,
+publication history or revision token. Sort keys apply in order with blanks last
+and a stable entity-ID tie-break; filters are AND-ed. Text filters compare
+case-insensitively and are text-only, number and date filters use
+`= <> < <= > >=`, `is_blank`/`not_blank` find missing or present values, and
+`in_set` takes literals of the column's declared kind. Formula columns filter and
+sort by their calculated Number. A window above the reply cap (1 MiB, or 16 MiB for a text-capacity
+document) refuses with
+`query_too_large` rather than serialising an oversized response; ask for
+fewer rows or fewer columns.
+
+## Grouped totals
+
+`queryGroupTotals` sums Number columns grouped by one or two Text, Date or
+Yes/No columns over the rows one scope covers. The request names the grouping
+dimensions, the Number measures and the scope; the runtime resolves every scope
+to collection order before summing.
+
+```ts
+const totals = await client.queryGroupTotals(
+  revision,
+  collection,
+  [
+    { field: categoryColumn.id },
+    { field: dateColumn.id, bucket: "month" }, // "value" | "month" | "year"
+  ],
+  [amountColumn.id], // one to four Number columns, request order kept
+  { kind: "all" }, // or {kind: "entities", entities: [...]}, {kind: "except", entities: [...]}
+);
+```
+
+`scope` is `all`, `entities` (exactly these rows) or `except` (every row but
+these); send the smaller list. The reply echoes `dimensions` and `measures`,
+reports `rows` in scope and one `totals` entry per measure over the whole
+scope, plus `groups` ordered by their keys ascending:
+
+```ts
+type GroupTotalsProjection = {
+  revision: string;
+  dimensions: GroupDimension[];
+  measures: string[];
+  rows: number;
+  totals: (number | null)[];
+  groups: { keys: GroupKey[]; rows: number; totals: (number | null)[] }[];
+};
+type GroupKey =
+  | { kind: "boolean"; value: boolean }
+  | { kind: "date"; value: string } // "YYYY-MM-DD"
+  | { kind: "month"; value: string } // "YYYY-MM"
+  | { kind: "year"; value: string } // "YYYY"
+  | { kind: "text"; value: string }
+  | { kind: "blank" };
+```
+
+Text keys use exact equality: no trim and no case folding, so `"Food"` and
+`"food"` are different groups and an empty text is its own group, distinct from
+blank. Each dimension has one blank group, which sorts last. Groups are ordered
+by key ascending: Boolean `false` before `true`, Date/Month/Year
+chronologically, Text by Unicode scalar value, and blank after every present
+value. A `bucket` other than `"value"` is meaningful only for a Date column;
+Text and Yes/No columns always group by exact value.
+
+Each group's `rows` counts every member, including rows whose measure cell is
+blank; blank measure cells are skipped when summing. A total is `null` only
+when an unavailable contributor nulls it — there are never partial sums.
+
+At most 200 groups and a 64 KiB reply payload (the projection itself, measured
+as JSON) are allowed; requests are limited to 64 KiB. Refusals use
+`group_limit_exceeded`, `result_size_exceeded`, `invalid_group_query`,
+`stale_revision` and `missing_collection`, with no change.
+
+## Optional native columns
 
 Under [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md),
 `newTable(name, columns)` accepts `required?: boolean` per column. Omission
-defaults to `true`; only Text and Number may be declared optional. The same
+defaults to `true`; any scalar column (Text, Number, Date or Yes/No) may be
+declared optional ([#598](https://github.com/nurockplayer/tachiko-work/issues/598)). The same
 property is accepted by the `add_column` command through `trackerCommand`.
 An optional added column needs no `initializers`; a supplied subset fills only
 those entities. `insert_row` may omit optional initializers, leaving those slots
@@ -123,6 +239,10 @@ entity is blank; it never fills or coerces. Ordinary final validation can also
 refuse a clear that breaks a surviving formula. An already-blank clear is
 `no_change`. Rejected/no-change attempts add no history; `undo`/`redo` through
 `trackerCommand` restore exact prior presence and values as forward operations.
+When strengthening is refused for blank values, the failure code is
+`required_values_missing`; its single diagnostic identifies the column and
+reports the authoritative blank count. The message says how many rows have no
+value in the column.
 
 `ScalarEditInput` adds `{kind: "clear"}` alongside typed sets. `edit_cells`
 can mix both atomically. `paste_cells.rows` accepts `PasteCellInput[][]`:
@@ -149,6 +269,16 @@ marker before relying on omission to mean fallback in older kits. The client
 preserves `true` or omission and rejects every other defined value; Rust emits
 only `true` or omission. Storage formats and rename semantics are unchanged.
 
+`duplicateCollection(expectedRevision, collection, name, columnNames?)` can name
+the copy's columns in the same command. `columnNames` maps each source column's
+stable field ID to the copy's display name; a name passes the same spelling rule
+as renaming a column. A blank name, two copy columns with the same effective name, or a
+source ID that is not a column of the table refuses without publication. The
+names are part of the copy's single history step, so one Undo removes the copy
+with its names and Redo restores both. Omitting `columnNames` or passing `{}`
+keeps the source names. An imported CSV or XLSX table has no stored names; pass
+the header text to give the copy its headers.
+
 Table columns always project `required: boolean`. Each row's `fields` array
 contains **only present values**. `blank_fields?: string[]` names absent declared
 FieldIds in column order; omission means `[]`. Join by stable ID rather than
@@ -159,6 +289,80 @@ present `{kind: "text", value: ""}`. These omission defaults are preserved in
 client replies, not materialized as extra payload members. Worker reply
 validation rejects malformed presence metadata. Optional Date/Boolean authoring,
 blank coercion and skip-blank calculation are outside this surface.
+
+## Field constraints (v3 list and number range)
+
+`setColumnConstraint(expectedRevision, collection, field, constraint)` replaces
+one durable constraint on a native Text or Number column:
+
+```ts
+await client.setColumnConstraint(revision, collectionKey, statusFieldId, {
+  kind: "text_literal_set",
+  values: ["Doing", "Done", "Todo"],
+});
+await client.setColumnConstraint(nextRevision, collectionKey, amountFieldId, {
+  kind: "number_inclusive_range",
+  min: 0,
+  max: 100,
+});
+// Clear the declaration; the column becomes unconstrained again.
+await client.setColumnConstraint(clearedRevision, collectionKey, statusFieldId, {kind: "none"});
+```
+
+The literal list is a complete closed set, as the semantic declaration requires:
+values are non-empty, unique, byte-sorted ascending (`["Doing", "Done", "Todo"]`,
+not `["Todo", ...]`), and bounded; range bounds must be finite and ordered.
+A constraint kind that does not match the column type is refused. The sets are
+closed: only an explicit `{kind: "none"}` clears a constraint, and calling the
+command with the constraint already in force is `no_change`.
+
+`ColumnProjection` gains `constraint?: FieldConstraint`:
+`{kind: "text_literal_set", values}` or
+`{kind: "number_inclusive_range", min, max}`. Omission means unconstrained.
+A literal set also fills the existing `dropdown_options` property, so it can
+drive a select control without a second lookup; range columns project no
+dropdown. The client validates the shape and rejects malformed constraints,
+but never normalizes, sorts or widens the declaration.
+
+An edit that violates a constraint publishes nothing and rejects with
+`DesignerRuntimeError`. Its `failure.code` is `field_constraint_violation` and
+`failure.constraint_failure` carries the typed shape:
+`{reason: "field_value", schema, field, constraint, offending_rows}`. Declaring
+a constraint that existing rows violate is refused the same way with
+`code: "existing_values_violate_constraint"`, `reason: "existing_values"` and
+the offending row count; the declaration is not applied. The UI can explain
+allowed values or bounds from `constraint_failure.constraint` without parsing
+the message.
+
+Constraints are stored only in `.roproj/v3`. A constrained project continues to
+save through `exportProjectV3`/`exportCanonicalTree` and reopens with its
+declarations and values intact, but legacy `exportProject` (v1/v2) refuses with
+`code: "legacy_export_unsupported"` instead of silently dropping constraints.
+The kit manifest's `capabilities` includes `columnConstraintProjection` as a
+projection feature marker (not a callable method); consumers must detect it
+before relying on `ColumnProjection.constraint` in older kits.
+
+## Keyed grouped-sum totals
+
+`queryKeyedGroupedSum` and `createKeyedGroupedSum` return
+`KeyedGroupedSumProjection`, which now carries an authoritative overall total:
+
+```ts
+const summary = await client.queryKeyedGroupedSum(definitionId);
+for (const {category, value} of summary.groups) renderCategory(category, value);
+renderTotal(summary.total); // number | null
+```
+
+`total` is the sum of `groups` at the same `revision`; Work derives both from one
+evaluation, so a client never adds groups itself or reads a cached total.
+`total` is `null` whenever the result is unavailable (missing or ambiguous keys,
+invalid input, an invalid definition) and `groups` is then empty with
+diagnostics explaining why. `null` is never a zero or a previous revision's
+value, so render it as "unavailable", not as 0. An available result with no
+contributing rows reports `total: 0` and `groups: []`. If the aggregate
+cannot be represented as a finite number (overflow), `total` is `null` while the
+already-evaluated `groups` remain; `null` still means "unavailable", never a
+corrected or clamped number.
 
 ## Publish one revision-safe edit and observe authority
 

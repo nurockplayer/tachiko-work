@@ -33,6 +33,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
         display_name: None,
+        number_format: None,
         field_type,
         required: true,
         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -46,6 +47,7 @@ fn security_document(note: &str) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("enemy"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("enemy"),
                 key: SchemaKey::from("enemy"),
                 display_name: None,

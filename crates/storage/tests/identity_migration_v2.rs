@@ -94,6 +94,18 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "reference",
             "args": {"entity": reference.entity.as_str(), "field": reference.field.as_str()}
         }),
+        Expression::SameRowReference(field) => serde_json::json!({
+            "op": "same_row_reference",
+            "args": field.as_str()
+        }),
+        Expression::ColumnTotal(column) => serde_json::json!({
+            "op": "column_total",
+            "args": {"schema": column.schema.as_str(), "field": column.field.as_str()}
+        }),
+        Expression::ColumnAggregate { function, column } => serde_json::json!({
+            "op": "column_aggregate", "args": {"function": function.wire_name(),
+                "column": {"schema": column.schema.as_str(), "field": column.field.as_str()}}
+        }),
         Expression::Add { left, right } => serde_json::json!({
             "op": "add",
             "args": {"left": expression_json(left), "right": expression_json(right)}
@@ -117,6 +129,42 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
         Expression::Maximum { left, right } => serde_json::json!({
             "op": "maximum",
             "args": {"left": expression_json(left), "right": expression_json(right)}
+        }),
+        Expression::Compare {
+            operator,
+            left,
+            right,
+        } => serde_json::json!({
+            "op": "compare",
+            "args": {"operator": operator.as_str(), "left": expression_json(left), "right": expression_json(right)}
+        }),
+        Expression::If {
+            condition,
+            then_value,
+            else_value,
+        } => serde_json::json!({
+            "op": "if",
+            "args": {"condition": expression_json(condition), "then_value": expression_json(then_value), "else_value": expression_json(else_value)}
+        }),
+        Expression::And(expressions) => serde_json::json!({
+            "op": "and",
+            "args": expressions.iter().map(expression_json).collect::<Vec<_>>()
+        }),
+        Expression::Or(expressions) => serde_json::json!({
+            "op": "or",
+            "args": expressions.iter().map(expression_json).collect::<Vec<_>>()
+        }),
+        Expression::Not(expression) => serde_json::json!({
+            "op": "not",
+            "args": expression_json(expression)
+        }),
+        Expression::Round { value, digits } => serde_json::json!({
+            "op": "round",
+            "args": {"value": expression_json(value), "digits": digits}
+        }),
+        Expression::IsBlank(expression) => serde_json::json!({
+            "op": "is_blank",
+            "args": expression_json(expression)
         }),
     }
 }

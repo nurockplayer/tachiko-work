@@ -13,6 +13,7 @@ fn balance_document(damage: f64) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("weapon"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
                 display_name: None,
@@ -65,6 +66,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
         display_name: None,
+        number_format: None,
         field_type,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -264,6 +266,7 @@ fn schema_addition_and_removal_preserve_typed_definitions() {
     let before = balance_document(100.0);
     let mut after = before.clone();
     let armor = Schema {
+        field_order: None,
         id: SchemaId::from("armor"),
         key: SchemaKey::from("armor"),
         display_name: None,
@@ -298,6 +301,7 @@ fn schema_field_changes_preserve_typed_definitions_and_order() {
     before.schemas.insert(
         SchemaId::from("metadata"),
         Schema {
+            field_order: None,
             id: SchemaId::from("metadata"),
             key: SchemaKey::from("metadata"),
             display_name: None,

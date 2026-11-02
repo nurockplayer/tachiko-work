@@ -763,3 +763,115 @@ fn empty_table_name_publication_wire_invalidates_presentation() {
         &Vec::<serde_json::Value>::new()
     );
 }
+
+#[test]
+fn added_columns_follow_existing_columns_before_and_after_v3_reopen() {
+    fn keys(runtime: &DesignerRuntime) -> Vec<String> {
+        let table = runtime.query_table("plan").unwrap();
+        table.columns.into_iter().map(|column| column.key).collect()
+    }
+    let mut runtime = DesignerRuntime::new_table(
+        OCCURRENCE,
+        "Plan",
+        &columns(&["date", "item", "category", "amount"]),
+    )
+    .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .add_column(&revision, "plan", "tax", "text", &[])
+        .unwrap();
+    assert_eq!(
+        keys(&runtime),
+        ["date", "item", "category", "amount", "tax"]
+    );
+
+    // A reopened occurrence restarts its proposal serial under a new namespace.
+    let export = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    let mut reopened = None;
+    open_project(
+        &mut reopened,
+        &export.bytes,
+        "00000000-0000-4000-8000-000000000530",
+    )
+    .unwrap();
+    let mut reopened = reopened.unwrap();
+    let revision = reopened.current_revision().to_owned();
+    reopened
+        .add_column(&revision, "plan", "note", "text", &[])
+        .unwrap();
+    assert_eq!(
+        keys(&reopened),
+        ["date", "item", "category", "amount", "tax", "note"]
+    );
+}
+
+#[test]
+fn a_removed_column_id_is_not_reused_by_the_next_added_column() {
+    fn ids(runtime: &DesignerRuntime) -> Vec<String> {
+        let table = runtime.query_table("plan").unwrap();
+        table.columns.into_iter().map(|column| column.id).collect()
+    }
+    let mut runtime = DesignerRuntime::new_table(
+        OCCURRENCE,
+        "Plan",
+        &columns(&["date", "item", "category", "amount"]),
+    )
+    .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .add_column(&revision, "plan", "tax", "text", &[])
+        .unwrap();
+    let tax = ids(&runtime).pop().unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime.remove_column(&revision, "plan", &tax).unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .add_column(&revision, "plan", "note", "text", &[])
+        .unwrap();
+    let note = ids(&runtime).pop().unwrap();
+    assert_ne!(note, tax);
+}
+
+#[test]
+fn appended_field_ids_sort_after_any_existing_id_spelling() {
+    let runtime = DesignerRuntime::new_table(OCCURRENCE, "Plan", &columns(&["item"])).unwrap();
+    let snapshot = runtime.session.export_snapshot();
+    let template = snapshot.document().schemas.values().next().unwrap().clone();
+    let definition = template.fields.values().next().unwrap().clone();
+    let with_ids = |ids: &[&str]| {
+        let mut schema = template.clone();
+        schema.fields = ids
+            .iter()
+            .map(|id| (FieldId::from(*id), definition.clone()))
+            .collect();
+        schema
+    };
+    let max = char::MAX.to_string();
+    let prefixed = format!("{max}native_table_field_0001_ns/column");
+    let generated = "native_table_field_9999_ns".to_owned();
+    for ids in [
+        vec![],
+        vec!["native_table_field_0003_ns", "native_table_field_0004_ns"],
+        vec!["item", "total"],
+        vec!["été", "~z"],
+        vec![prefixed.as_str(), "item"],
+        vec![max.as_str()],
+        vec![generated.as_str()],
+    ] {
+        let schema = with_ids(&ids);
+        let serial = super::last_native_field_serial(&schema) + 1;
+        let id = super::appended_field_id(&schema, serial, "ns");
+        assert!(
+            schema.fields.keys().all(|existing| existing < &id),
+            "{id:?} must sort after {ids:?}"
+        );
+    }
+    // The usual case keeps the plain generated spelling.
+    let schema = with_ids(&["native_table_field_0003_ns"]);
+    assert_eq!(
+        super::appended_field_id(&schema, 4, "ns").as_str(),
+        "native_table_field_0004_ns/column"
+    );
+}

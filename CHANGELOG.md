@@ -4,7 +4,75 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Imports over 64 rows can select Date and Yes/No columns (Work #610): the
+  large-import profile admits them with the existing conversion rules
+  (`YYYY-MM-DD`, `true`/`false`, blanks stay absent), keeps its row, column,
+  cell and byte limits, and writes XLSX dates with a `yyyy-mm-dd` format so
+  spreadsheet apps show them as dates.
+
+- Optional Date and Boolean fields are native: a field can be declared optional
+  when creating a table or adding a column, rows can be inserted with blanks,
+  values can be cleared, and requiredness can change (strengthening refuses
+  while blanks exist), with the same rules as optional Text and Number fields.
+  Blank stays distinct from `false` and from any date; formulas stay strict.
+  Imports with optional Date and Boolean columns project as native tables.
+  No storage-format change (ADR-0045 amendment, Work #598).
+
+- `queryColumnTotals` sums Number columns over the entity ids a caller names,
+  so a filtered view can total exactly the rows it shows. The request is
+  revision-pinned, takes unique ids of the collection only and is summed in
+  collection order; naming every entity gives the whole-collection footer.
+  Unknown, duplicate or foreign ids refuse with no change.
+
+- `queryGroupTotals` sums Number columns grouped by one or two Text, Date or
+  Yes/No columns over the rows a scope names (`all`, `entities` or `except`).
+  Text keys match exactly, so case and empty text form their own groups; each
+  dimension has one blank group, sorted last, and groups are ordered by key
+  ascending. A group counts rows with blank measures but skips their cells, and
+  an unavailable contributor nulls the total rather than leaving a partial sum.
+  At most 200 groups and a 64 KiB reply refuse with a typed error and no change.
+
+- `duplicateCollection` accepts optional `columnNames`, keyed by source field
+  ID, so a copy's columns can carry their own names in the same command. The
+  names are validated before publication and undo with the copy as one step.
+  Imported CSV and XLSX tables can be copied with their header names. Without
+  `columnNames` the copy is unchanged.
+
+- Columns can be reordered with `moveColumn`. The order is durable document
+  state: it is saved, undone and redone, diffed and merged, and used by table
+  projections and exports. A new column is appended last. Format-free documents
+  keep their bytes; frozen v1/v2 project exports and the frozen merge and diff
+  contracts refuse a reordered document with a typed error.
+
+- Column formulas support `:average`, `:count`, `:min`, and `:max` over Number columns, with typed empty-aggregate failures.
+
+- The browser runtime reports workbook-wide capacity usage and effective limits
+  through `queryCapacity`. Candidate admissions now share accounting and return
+  a typed `capacity_exceeded` refusal without publishing changes. Existing
+  document limits and the Text/Number capacity exception remain unchanged.
+- Number columns can store a display format with 0–10 decimal places, optional
+  grouping, plain/currency/percent presentation, and revision-pinned set/clear
+  with Undo/Redo. Table projections, collection copies, explicit v3 saves and
+  direct `.ro/v2` preserve it; format-free document bytes stay unchanged.
+  Frozen project exports refuse formats with a typed error. XLSX writes an
+  equivalent column format and imports exact uniform formats; CSV retains raw
+  values and reports omitted formatting. Existing merge contracts explicitly
+  refuse formatted documents rather than dropping display metadata.
+
 ### Fixed
+
+- XLSX exports of tables up to 64 rows write unformatted Number cells with
+  the built-in General format (`numFmtId="0"`) instead of a custom
+  `formatCode="General"`, which Apple Numbers showed as a whole number (1.5
+  as 2). Older exports with the custom General still read as the default
+  format (#615).
+- A formula whose result falls outside its column's constraint, or makes a
+  dependent formula field do so, is refused with the typed
+  `field_constraint_violation` (`constraint_failure` names the field, the
+  constraint and the offending row count) instead of a generic lifecycle
+  failure (#578). The update is still refused atomically.
 
 - Capacity metadata acceptance now states the imported export name policy:
   CSV round-trips quoted Unicode/XML-sensitive headers despite an un-emitted
@@ -45,6 +113,59 @@ All notable changes to Tachiko Work are documented in this file.
   surviving cell styles and stable formula references are retained.
 
 ### Added
+
+- Number formulas now support IF, exact Number comparisons, AND/OR/NOT,
+  ROUND (literal precision 0..=10, half away from zero), percent literals, and
+  ISBLANK. IF evaluates only the selected branch while tracking dependencies in
+  both branches. Absent optional Number inputs calculate as zero without
+  filling the stored cell; non-Number numeric operands still fail. The new
+  expressions survive canonical v3/direct-ro v2 saves, formula copy, collection
+  duplication, history, and XLSX formula export. Frozen project v1/v2 writers
+  refuse the new operations.
+- Formulas now read column totals with `[schema.field:total]`. A total names a
+  column identity rather than rows, so row churn and key renames never retarget
+  it; blank cells are skipped, an empty column totals zero, and an unavailable,
+  failed or non-numeric contributor makes the total unavailable instead of a
+  partial sum. Unresolvable columns are typed (`InvalidColumn`, plus the
+  `formula_unknown_reference`/`formula_type_mismatch` bind codes) and a total
+  over its own row is `formula_cycle`. Totals save as `.roproj/v3`; frozen v1/v2
+  portable encoding refuses them. Every table projection carries a
+  `column_totals` footer keyed by column id, which the TypeScript client and kit
+  expose and document.
+
+- The Rust runtime, WASM bridge and public TypeScript client now author v3 field
+  constraints: closed Text literal lists (also filling `dropdown_options`) and
+  inclusive Number ranges. `setColumnConstraint` sets or clears one declaration;
+  constrained edits publish nothing and reject with a typed
+  `constraint_failure` carrying the allowed shape and offending row count, and
+  declaring a constraint that existing values violate is refused atomically.
+  Unsorted or duplicate Text values are normalised to their byte-sorted unique
+  set; an empty or oversized literal list, reversed bounds, or a kind that does
+  not match the column is refused before publication with the typed
+  `invalid_constraint_declaration` reason.
+  Constrained projects save as `.roproj/v3`, reopen with constraints and values
+  intact, and legacy v1/v2 `exportProject` refuses them with
+  `legacy_export_unsupported` instead of dropping the declaration. The kit
+  advertises `setColumnConstraint` and the `columnConstraintProjection` marker.
+
+- Keyed grouped-sum projections now carry the overall total alongside the
+  category groups. `total` is derived from the same evaluation at the same
+  revision and is `null` whenever the result is unavailable, never zero or a
+  stale value; the public TypeScript client exposes `number | null`.
+- Formulas accept a same-row shorthand `[.field]` meaning "this formula's own
+  row". Binding stores the field identity and resolves the entity from the
+  owning formula, so `copyFormula` with relative rows and `duplicateCollection`
+  keep the source unchanged while each destination reads its own row. The
+  canonical projection keeps `([.expense] * [settings.rate])`; `.roproj/v3` and
+  direct-ro/v2 encode the distinct same-entity node, frozen `.roproj/v1`/`v2`
+  refuse it, and a missing field, non-Number field, or the formula's own field
+  refuse as `formula_unknown_reference`, `formula_type_mismatch`, or
+  `formula_cycle`.
+
+- Strengthening an optional native Text/Number column now reports
+  `required_values_missing` with the blank row count and column identity. The
+  rejection preserves the current revision and undo history; host and WASM
+  expose the same failure projection.
 
 - Table columns expose optional `display_name_explicit: true` through the Rust,
   WASM and public TypeScript client projections, sharing the imported-export

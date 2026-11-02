@@ -7,6 +7,7 @@ fn document() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            field_order: None,
             id: "s".into(),
             key: "table".into(),
             display_name: None,
@@ -21,6 +22,7 @@ fn definition(id: &str, name: Option<&str>) -> FieldDefinition {
         id: id.into(),
         key: id.into(),
         display_name: name.map(str::to_owned),
+        number_format: None,
         field_type: FieldType::Text,
         required: true,
         constraint: FieldConstraint::None,
@@ -285,6 +287,7 @@ fn overwritten_execution() {
 fn append_and_inverse_payloads_are_checked_before_any_command() {
     let field = definition("g", Some("\0"));
     let schema = Schema {
+        field_order: None,
         id: "new".into(),
         key: "new".into(),
         display_name: Some(" Item ".into()),
@@ -352,6 +355,7 @@ fn append_and_inverse_payloads_are_checked_before_any_command() {
 #[test]
 fn independent_failures_accumulate_in_request_subject_and_reason_order() {
     let schema = Schema {
+        field_order: None,
         id: "new".into(),
         key: "new".into(),
         display_name: Some(" ".into()),

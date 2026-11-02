@@ -28,6 +28,7 @@ fn document() -> Document {
     document.schemas.insert(
         "schema".into(),
         Schema {
+            field_order: None,
             id: "schema".into(),
             key: "items".into(),
             display_name: None,
@@ -37,6 +38,7 @@ fn document() -> Document {
                     id: "amount".into(),
                     key: "amount".into(),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Number,
                     required: false,
                     constraint: FieldConstraint::None,
@@ -64,6 +66,7 @@ fn document_with_keyed_definition() -> Document {
             id: "label".into(),
             key: "label".into(),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Text,
             required: false,
             constraint: FieldConstraint::None,

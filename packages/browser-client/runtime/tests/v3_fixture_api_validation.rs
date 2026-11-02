@@ -2,6 +2,7 @@
 #[path = "v3_acceptance_fixtures/mod.rs"]
 mod fixtures;
 
+use serde_json::json;
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, import_csv};
 use tachiko_designer_runtime::{
     DesignerRequest, ImportFieldType, ImportSelection, NewTableColumnInput, StoredValueProjection,
@@ -55,23 +56,37 @@ fn valid_constraint_fixtures_roundtrip_in_the_existing_v3_storage_codec() {
                         && definition.products.schema != extra.id)
             );
         }
-        let error = fixtures::inspect_existing_api(&transfer).unwrap_err();
-        assert_eq!(
-            error.failure_projection("resident/0").code,
-            "unsupported_project"
-        );
+        // Constrained v3 input now reaches inspection and admission; the
+        // projected constraint appears only when it sits on a projected table.
+        let inspected = fixtures::inspect_existing_api(&transfer)
+            .expect("constrained v3 transfer must inspect");
+        let columns = serde_json::to_value(&inspected.table.columns).unwrap();
+        let projected = if nondefault {
+            serde_json::Value::Null
+        } else if index == 1 {
+            json!({"kind": "text_literal_set", "values": ["Paper", "Stationery"]})
+        } else {
+            json!({"kind": "number_inclusive_range", "min": 0.0, "max": 10.0})
+        };
+        assert_eq!(columns[index]["constraint"], projected);
         let mut slot = None;
-        let error = fixtures::open_existing_api(
+        let opened = fixtures::open_existing_api(
             &mut slot,
             &transfer,
             "00000000-0000-4000-8000-000000000001",
         )
-        .unwrap_err();
+        .expect("constrained v3 transfer must open");
+        assert_eq!(opened.table, inspected.table);
+        let runtime = slot.expect("admission must retain the constrained resident");
         assert_eq!(
-            error.failure_projection("resident/0").code,
-            "unsupported_project"
+            runtime.export_project_v3("resident/0").unwrap().bytes,
+            transfer
         );
-        assert!(slot.is_none());
+        let legacy = runtime.export_project("resident/0").unwrap_err();
+        assert_eq!(
+            legacy.failure_projection("resident/0").code,
+            "legacy_export_unsupported"
+        );
     }
 }
 

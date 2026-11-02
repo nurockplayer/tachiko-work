@@ -7,10 +7,10 @@ use serde_json::json;
 use tachiko_designer_runtime::{
     DesignerRequest, DesignerResponse, DesignerRuntime, ImportFieldType, ImportSelection,
     InteropMetadata, OccurrenceProjection, ScalarEditInput, StoredValueProjection, TableProjection,
-    import_workbook,
+    TableView, import_workbook,
     interop_adapter::{
-        ImportOptions, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
-        export_csv, export_xlsx, import_csv, import_xlsx,
+        ImportOptions, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
+        SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
     },
     open_imported_project, process_wire_request,
 };
@@ -35,6 +35,7 @@ fn native_explicit_320_by_2_number_confirmation() {
                 .map(|name| SourceColumn {
                     name: name.into(),
                     width: None,
+                    number_format: None,
                 })
                 .to_vec(),
             rows: (0..320)
@@ -47,6 +48,7 @@ fn native_explicit_320_by_2_number_confirmation() {
                         .to_vec()
                 })
                 .collect(),
+            layout: SourceLayout::default(),
         }],
         ledger: vec![],
     };
@@ -84,16 +86,48 @@ struct Expected {
     metadata: InteropMetadata,
 }
 
+/// Read the whole capacity table through bounded windows: `queryTable` refuses
+/// above 1,000 rows.
 fn table(runtime: &mut DesignerRuntime, collection: &str) -> TableProjection {
-    let DesignerResponse::Table(table) = runtime
-        .handle(DesignerRequest::QueryTable {
-            collection: collection.into(),
-        })
-        .unwrap()
-    else {
-        panic!("complete table response");
-    };
-    table
+    let revision = runtime.observe_occurrence().revision;
+    let mut rows = Vec::new();
+    let mut columns = None;
+    let mut summary = None;
+    let mut start = 0;
+    loop {
+        let DesignerResponse::TableWindow(window) = runtime
+            .handle(DesignerRequest::QueryTableWindow {
+                expected_revision: revision.clone(),
+                collection: collection.into(),
+                view: TableView::default(),
+                start,
+                count: 128,
+            })
+            .unwrap()
+        else {
+            panic!("table window response");
+        };
+        if columns.is_none() {
+            columns = Some(window.columns);
+            summary = Some(window.collection);
+        }
+        let received = window.rows.len();
+        rows.extend(window.rows);
+        start += received;
+        if received == 0 || start >= window.total_rows {
+            break;
+        }
+    }
+    TableProjection {
+        revision,
+        tracker_profile: None,
+        native_table_profile: None,
+        collection: summary.expect("the first window carries the collection"),
+        columns: columns.expect("the first window carries the columns"),
+        rows,
+        // Windows carry no totals yet; this assembly only verifies rows.
+        column_totals: std::collections::BTreeMap::new(),
+    }
 }
 
 fn verify(actual: &TableProjection, expected: &Expected) {
@@ -315,6 +349,7 @@ fn publish(runtime: &mut DesignerRuntime, request: DesignerRequest) {
 fn native_required_mixed_document(rows: usize, text_width: usize) -> Document {
     let mut document = Document::empty("native", "capacity");
     let schema = Schema {
+        field_order: None,
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
         display_name: None,
@@ -328,6 +363,7 @@ fn native_required_mixed_document(rows: usize, text_width: usize) -> Document {
                         id,
                         key: FieldKey::from(key),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: true,
                         constraint: FieldConstraint::None,
@@ -775,14 +811,46 @@ fn native_rectangular_capacity_complete_lifecycle() {
                 let before = runtime.observe_occurrence();
                 let before_exports = exports(runtime, &expected.metadata);
                 let before_project = project_bytes(runtime, carrier);
+                // queryTable stays complete up to 1,000 rows and refuses above
+                // with the typed window-query failure; a bounded window keeps
+                // the large capacity reply legal at any size.
                 let query = serde_json::to_vec(&DesignerRequest::QueryTable {
                     collection: collection.clone(),
                 })
                 .unwrap();
                 let capacity_reply = process_wire_request(&mut resident, &query);
+                if expected.values.len() > 1_000 {
+                    let refused: serde_json::Value =
+                        serde_json::from_slice(&capacity_reply).unwrap();
+                    assert_eq!(refused["status"], "error");
+                    assert_eq!(refused["error"]["code"], "use_window_query");
+                    assert_eq!(refused["error"]["row_count"], expected.values.len());
+                } else {
+                    assert!(
+                        capacity_reply.len() > 65_536,
+                        "fixture must exercise an actual capacity-native reply over 64 KiB"
+                    );
+                }
+                let window = serde_json::to_vec(&DesignerRequest::QueryTableWindow {
+                    expected_revision: before.revision.clone(),
+                    collection: collection.clone(),
+                    view: TableView::default(),
+                    start: 0,
+                    count: 128,
+                })
+                .unwrap();
+                let window_reply = process_wire_request(&mut resident, &window);
+                let window_json: serde_json::Value = serde_json::from_slice(&window_reply).unwrap();
+                assert_eq!(window_json["status"], "ok", "{window_json}");
+                assert_eq!(
+                    window_json["response"]["payload"]["rows"]
+                        .as_array()
+                        .map(Vec::len),
+                    Some(128)
+                );
                 assert!(
-                    capacity_reply.len() > 65_536,
-                    "fixture must exercise an actual capacity-native reply over 64 KiB"
+                    window_reply.len() > 65_536,
+                    "a bounded capacity window must still exceed 64 KiB"
                 );
                 let reply: serde_json::Value = serde_json::from_slice(&process_wire_request(
                     &mut resident,
@@ -841,4 +909,37 @@ fn native_rectangular_capacity_complete_lifecycle() {
             verify(&table(runtime, &collection), &expected);
         }
     }
+}
+
+#[test]
+fn imported_capacity_export_follows_a_moved_column() {
+    let (bytes, selection, expected) = fixture(100, 3, false);
+    let source = import_csv(&bytes, &ImportOptions::default()).unwrap();
+    let (mut runtime, imported) = import_workbook(&source, &selection, ORIGINAL).unwrap();
+    publish(
+        &mut runtime,
+        DesignerRequest::MoveColumn {
+            expected_revision: imported.opened.bootstrap.revision.clone(),
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            field: expected.columns[2].clone(),
+            to_index: 0,
+        },
+    );
+    let workbook = runtime
+        .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
+        .expect("a reordered capacity import exports");
+    let headers = workbook.sheets[0]
+        .columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        headers,
+        [
+            expected.headers[2].clone(),
+            expected.headers[0].clone(),
+            expected.headers[1].clone()
+        ]
+    );
+    assert!(export_csv(&workbook.sheets[0]).is_ok());
 }

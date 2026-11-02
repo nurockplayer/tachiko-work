@@ -27,7 +27,7 @@ use thiserror::Error;
 use super::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
-    apply_field_value_candidate, field_value_candidate, finalize_edit, unset_field_candidate,
+    apply_field_value_candidate, finalize_edit, unset_field_candidate,
 };
 
 #[cfg(test)]
@@ -357,6 +357,16 @@ pub enum SemanticCommand {
         required: bool,
     },
     /// Replace the complete durable constraint facet of one stable field.
+    SetFieldNumberFormat {
+        schema: SchemaId,
+        field: FieldId,
+        number_format: Option<super::NumberFormat>,
+    },
+    /// Replace the durable presentation order of one schema's fields; `None` is id order.
+    SetSchemaFieldOrder {
+        schema: SchemaId,
+        order: Option<Vec<FieldId>>,
+    },
     SetFieldConstraint {
         schema: SchemaId,
         field: FieldId,
@@ -375,6 +385,15 @@ pub enum SemanticCommand {
     },
     FormulaUpdate(FormulaUpdateCommand),
     FormulaInverseRestore(FormulaInverseRestoreCommand),
+    /// Reinstall one host-cleared formula over an absent optional Number slot.
+    ///
+    /// Formula initialization stays rejected on the generic value path; this
+    /// app-private command exists so one bounded session Undo can restore the
+    /// formula that a clear removed, and so the host can copy an admitted
+    /// formula into a blank cell. It is host-only and shares the
+    /// `FormulaInverseRestore` trust boundary: no wire decoder produces it, so
+    /// it never widens the generic value path.
+    FormulaRestore(FormulaRestoreCommand),
     /// Persist one complete saved keyed lookup + grouped-sum definition.
     ///
     /// The definition is a document-level structure rather than an inferred
@@ -399,6 +418,15 @@ impl SemanticCommand {
     pub fn formula_inverse_restore(field: FieldRef, value: Number) -> Self {
         Self::FormulaInverseRestore(FormulaInverseRestoreCommand::new(field, value))
     }
+
+    /// Host-history only: the expression must be one the host read from an
+    /// admitted document formula that its own clear removed. No wire decoder
+    /// produces this command, and the candidate still passes full document
+    /// validation, but the engine cannot prove that provenance by itself.
+    #[must_use]
+    pub fn formula_restore(field: FieldRef, expression: Expression) -> Self {
+        Self::FormulaRestore(FormulaRestoreCommand::new(field, expression))
+    }
 }
 
 /// One admitted formula-update Command with complete bound meaning.
@@ -413,8 +441,9 @@ pub struct FormulaUpdateCommand {
 }
 
 impl FormulaUpdateCommand {
-    pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
-        let references = tachiko_formula_engine::extract_dependencies(&expression);
+    pub(crate) fn new(document: &Document, target: FieldRef, expression: Expression) -> Self {
+        let references =
+            tachiko_formula_engine::extract_dependencies(document, &target, &expression);
         Self {
             target,
             expression,
@@ -438,10 +467,12 @@ impl FormulaUpdateCommand {
     }
 }
 
-/// One app-private restoration of a scalar that a prior `FormulaUpdate` replaced.
+/// One app-private replacement of a stored formula with a scalar: either the
+/// inverse of a prior `FormulaUpdate` or a host-deliberate scalar edit over a
+/// formula cell.
 ///
 /// This command is deliberately separate from generic `SetFieldValue`: it can
-/// restore only a Number over a currently stored formula through the ordinary
+/// write only a Number over a currently stored formula through the ordinary
 /// lifecycle, and does not make formula cells generally scalar-editable.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FormulaInverseRestoreCommand {
@@ -462,6 +493,40 @@ impl FormulaInverseRestoreCommand {
     #[must_use]
     pub fn value(&self) -> Number {
         self.value
+    }
+}
+
+/// One app-private installation of an admitted formula into a blank cell: a
+/// formula the host cleared, or a host copy of a document formula.
+///
+/// The expression can only come from an already-admitted document formula, so
+/// this command never parses or binds authoring text; it stays separate from
+/// generic `SetFieldValue` so an absent slot cannot become a formula through
+/// the ordinary value path.
+///
+/// Host-only, with the same trust boundary as
+/// [`FormulaInverseRestoreCommand`]: the host constructs it from history it
+/// recorded or from a formula already in the document, no wire decoder
+/// produces it, and it is never reachable from authoring input.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormulaRestoreCommand {
+    target: FieldRef,
+    expression: Expression,
+}
+
+impl FormulaRestoreCommand {
+    pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
+        Self { target, expression }
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &FieldRef {
+        &self.target
+    }
+
+    #[must_use]
+    pub fn expression(&self) -> &Expression {
+        &self.expression
     }
 }
 
@@ -2498,13 +2563,17 @@ impl PatchLifecycle {
                     | SemanticCommand::RenameSchemaField { .. }
                     | SemanticCommand::SetSchemaFieldDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldRequiredness { .. }
+                    | SemanticCommand::SetFieldNumberFormat { .. }
+                    | SemanticCommand::SetSchemaFieldOrder { .. }
                     | SemanticCommand::SetFieldConstraint { .. } => {
                         OperationFamily::SchemaFieldMutation
                     }
                     SemanticCommand::SetFieldValue { .. } | SemanticCommand::UnsetField { .. } => {
                         OperationFamily::SetFieldValue
                     }
-                    SemanticCommand::FormulaUpdate(_) => OperationFamily::FormulaUpdate,
+                    SemanticCommand::FormulaUpdate(_) | SemanticCommand::FormulaRestore(_) => {
+                        OperationFamily::FormulaUpdate
+                    }
                     SemanticCommand::FormulaInverseRestore(_) => {
                         OperationFamily::FormulaInverseRestore
                     }
@@ -2754,6 +2823,14 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    fn schema_scope(&self, schema: &SchemaId) -> ScopedSemanticSubject {
+        ScopedSemanticSubject::new(
+            self.document_scope.clone(),
+            self.document.clone(),
+            SemanticScope::Schema(schema.clone()),
+        )
+    }
+
     fn schema_field_scope(&self, schema: &SchemaId, field: &FieldId) -> ScopedSemanticSubject {
         ScopedSemanticSubject::new(
             self.document_scope.clone(),
@@ -2777,9 +2854,7 @@ impl PatchLifecycle {
         if !matches!(
             field.field_type,
             FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
-        ) || (!field.required
-            && !matches!(field.field_type, FieldType::Text | FieldType::Number))
-        {
+        ) {
             return Err(WorkspaceError::TypeMismatch {
                 field: FieldRef::new("schema", field.id.clone()),
             });
@@ -2837,12 +2912,11 @@ impl PatchLifecycle {
                 });
             }
         }
-        candidate
+        let definition = candidate
             .schemas
             .get_mut(schema_id)
-            .expect("checked schema")
-            .fields
-            .insert(field.id.clone(), field.clone());
+            .expect("checked schema");
+        definition.insert_field(field.clone());
         for (entity, value) in values {
             candidate
                 .entities
@@ -2893,10 +2967,7 @@ impl PatchLifecycle {
             });
         }
         // The inverse optional append must admit this exact restored shape.
-        if !field.required
-            && (!matches!(field.field_type, FieldType::Text | FieldType::Number)
-                || !has_native_scalar_shape(candidate, schema))
-        {
+        if !field.required && !has_native_scalar_shape(candidate, schema) {
             return Err(WorkspaceError::TypeMismatch {
                 field: FieldRef::new("schema", field.id.clone()),
             });
@@ -2950,15 +3021,32 @@ impl PatchLifecycle {
         let field_is_referenced_by_formula = candidate
             .entities
             .values()
-            .flat_map(|entity| entity.fields.values())
-            .any(|value| match value {
-                Value::Formula(expression) => {
-                    expression_references(expression).iter().any(|reference| {
-                        reference.field == field.id && schema_entities.contains(&reference.entity)
-                    })
-                }
+            .flat_map(|entity| {
+                entity
+                    .fields
+                    .iter()
+                    .map(move |(field_id, value)| (entity.id.clone(), field_id, value))
+            })
+            .any(|(entity_id, field_id, value)| match value {
+                Value::Formula(expression) => expression_references(
+                    candidate,
+                    &FieldRef::new(entity_id, field_id.clone()),
+                    expression,
+                )
+                .iter()
+                .any(|reference| {
+                    reference.field == field.id && schema_entities.contains(&reference.entity)
+                }),
                 _ => false,
             });
+        // A column total names the column itself, so it blocks removal even
+        // when the schema has no rows to expand into references.
+        let field_is_totaled_by_formula = candidate.entities.values().any(|entity| {
+            entity.fields.values().any(|value| {
+                matches!(value, Value::Formula(expression)
+                    if expression_names_column(expression, schema_id, &field.id))
+            })
+        });
         let field_is_referenced_by_definition = candidate
             .keyed_grouped_sum_definitions
             .values()
@@ -2971,17 +3059,20 @@ impl PatchLifecycle {
                             || definition.products.category_field == field.id
                             || definition.products.price_field == field.id))
             });
-        if field_is_referenced_by_formula || field_is_referenced_by_definition {
+        if field_is_referenced_by_formula
+            || field_is_totaled_by_formula
+            || field_is_referenced_by_definition
+        {
             return Err(WorkspaceError::SchemaFieldReferenced {
                 field: FieldRef::new(schema_id.to_string(), field.id.clone()),
             });
         }
-        candidate
+        let definition = candidate
             .schemas
             .get_mut(schema_id)
-            .expect("checked schema")
-            .fields
-            .remove(&field.id);
+            .expect("checked schema");
+        definition.fields.remove(&field.id);
+        definition.normalize_field_order();
         for entity in &entities {
             candidate
                 .entities
@@ -3197,8 +3288,10 @@ impl PatchLifecycle {
                             field: field.clone(),
                         }
                     })?;
-                    if !matches!(definition.field_type, FieldType::Text | FieldType::Number)
-                        || !has_native_scalar_shape(&candidate, record)
+                    if !matches!(
+                        definition.field_type,
+                        FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                    ) || !has_native_scalar_shape(&candidate, record)
                     {
                         return Err(WorkspaceError::TypeMismatch {
                             field: FieldRef::new("schema", field.clone()),
@@ -3225,6 +3318,67 @@ impl PatchLifecycle {
                         family: OperationFamily::SchemaFieldMutation,
                         mutation_class: MutationClass::Schema,
                         scope: self.schema_field_scope(schema, field),
+                    });
+                }
+                SemanticCommand::SetFieldNumberFormat {
+                    schema,
+                    field,
+                    number_format,
+                } => {
+                    let definition = candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        })?
+                        .fields
+                        .get_mut(field)
+                        .ok_or_else(|| WorkspaceError::MissingSchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        })?;
+                    if definition.field_type != FieldType::Number {
+                        return Err(WorkspaceError::InvalidNumberFormat {
+                            source: super::NumberFormatError::NonNumberField,
+                        });
+                    }
+                    if let Some(format) = number_format {
+                        format
+                            .validate_for(&definition.field_type)
+                            .map_err(|source| WorkspaceError::InvalidNumberFormat { source })?;
+                    }
+                    definition.number_format.clone_from(number_format);
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_field_scope(schema, field),
+                    });
+                }
+                SemanticCommand::SetSchemaFieldOrder { schema, order } => {
+                    let definition = candidate.schemas.get_mut(schema).ok_or_else(|| {
+                        WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        }
+                    })?;
+                    // A proposed order must name every field once; it is
+                    // never repaired.
+                    if let Some(order) = order {
+                        let unique = order.iter().collect::<std::collections::BTreeSet<_>>();
+                        if order.len() != definition.fields.len()
+                            || unique.len() != order.len()
+                            || !order.iter().all(|id| definition.fields.contains_key(id))
+                        {
+                            return Err(WorkspaceError::InvalidFieldOrder {
+                                schema: schema.clone(),
+                            });
+                        }
+                    }
+                    definition.field_order.clone_from(order);
+                    definition.normalize_field_order();
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_scope(schema),
                     });
                 }
                 SemanticCommand::SetFieldConstraint {
@@ -3300,11 +3454,8 @@ impl PatchLifecycle {
                         mutation_class: MutationClass::Formula,
                         scope,
                     });
-                    candidate = field_value_candidate(
-                        &candidate,
-                        field,
-                        &Value::Formula(command.expression().clone()),
-                    )?;
+                    candidate =
+                        super::formula_update_candidate(&candidate, field, command.expression())?;
                 }
                 SemanticCommand::FormulaInverseRestore(command) => {
                     let field = command.target();
@@ -3325,6 +3476,17 @@ impl PatchLifecycle {
                         field,
                         command.value(),
                     )?;
+                }
+                SemanticCommand::FormulaRestore(command) => {
+                    let field = command.target();
+                    let scope = self.field_scope(&candidate, field)?;
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::FormulaUpdate,
+                        mutation_class: MutationClass::Formula,
+                        scope,
+                    });
+                    candidate =
+                        super::formula_restore_candidate(&candidate, field, command.expression())?;
                 }
                 SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
                     // ADR-0036: create and update both require only
@@ -3386,6 +3548,8 @@ impl PatchLifecycle {
                 associated_write_requirements,
             );
         }
+        reject_legacy_number_formats(base, &candidate, body)?;
+        reject_legacy_field_orders(base, &candidate, body)?;
         if contains_constraint_command(body)
             || document_has_field_constraints(base)
             || document_has_field_constraints(&candidate)
@@ -3634,6 +3798,8 @@ impl PatchLifecycle {
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
+            | SemanticCommand::SetFieldNumberFormat { .. }
+            | SemanticCommand::SetSchemaFieldOrder { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. } => {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
                 Ok(())
@@ -3650,10 +3816,12 @@ impl PatchLifecycle {
                         .filter(|entity| entity.schema == *schema)
                     {
                         if let Some(value) = entity.fields.get(field) {
+                            let owner = FieldRef::new(entity.id.clone(), field.clone());
                             self.insert_value_disclosures_for(
                                 OperationFamily::SchemaFieldMutation,
                                 before,
                                 after,
+                                &owner,
                                 value,
                                 disclosures,
                             )?;
@@ -3661,7 +3829,7 @@ impl PatchLifecycle {
                                 self.insert_calculation_dependency_disclosures(
                                     OperationFamily::SchemaFieldMutation,
                                     document,
-                                    expression_references(expression),
+                                    expression_references(document, &owner, expression),
                                     disclosures,
                                 )?;
                             }
@@ -3672,7 +3840,7 @@ impl PatchLifecycle {
             }
             SemanticCommand::SetFieldValue { field, value } => {
                 self.insert_field_disclosure(before, after, field, disclosures)?;
-                self.insert_value_disclosures(before, after, value, disclosures)
+                self.insert_value_disclosures(before, after, field, value, disclosures)
             }
             SemanticCommand::UnsetField { field } => {
                 self.insert_field_disclosure_for(
@@ -3691,6 +3859,7 @@ impl PatchLifecycle {
                         OperationFamily::SetFieldValue,
                         before,
                         after,
+                        field,
                         value,
                         disclosures,
                     )?;
@@ -3716,6 +3885,32 @@ impl PatchLifecycle {
                 }
                 Ok(())
             }
+            SemanticCommand::FormulaRestore(command) => {
+                self.insert_field_disclosure_for(
+                    OperationFamily::FormulaUpdate,
+                    before,
+                    after,
+                    command.target(),
+                    disclosures,
+                )?;
+                // A column total reads every entity of its schema, so the
+                // reference set expands against the admitted document. The
+                // command is built from host history where no document is at
+                // hand (the capacity edit path keeps none), so the expansion
+                // happens here, once both documents exist.
+                for reference in
+                    expression_references(after, command.target(), command.expression())
+                {
+                    self.insert_field_disclosure_for(
+                        OperationFamily::FormulaUpdate,
+                        before,
+                        after,
+                        &reference,
+                        disclosures,
+                    )?;
+                }
+                Ok(())
+            }
             SemanticCommand::FormulaInverseRestore(command) => {
                 self.insert_field_disclosure_for(
                     OperationFamily::FormulaInverseRestore,
@@ -3728,6 +3923,7 @@ impl PatchLifecycle {
                     OperationFamily::FormulaInverseRestore,
                     before,
                     after,
+                    command.target(),
                     &Value::Number(command.value()),
                     disclosures,
                 )
@@ -3803,18 +3999,38 @@ impl PatchLifecycle {
                 // A value-slot initialization is not a schema/identity mutation.
                 // Admit only the existing optional declaration and its exact
                 // SetFieldValue command; arbitrary added fields remain closed.
+                // The formula exceptions are an authored formula update and
+                // the app-private restore of a formula the host cleared; both
+                // can only target an optional Number slot through their own
+                // commands.
                 let definition = crate::field_definition(before, field)
                     .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
                 let existing = before.entities[&field.entity].fields.get(&field.field);
+                let formula_restore = definition.field_type == FieldType::Number
+                    && !definition.required
+                    && matches!(value, Value::Formula(_))
+                    && body.commands().iter().any(|command| match command {
+                        SemanticCommand::FormulaRestore(restore) => restore.target() == field,
+                        SemanticCommand::FormulaUpdate(update) => update.target() == field,
+                        _ => false,
+                    });
                 if existing.is_some()
                     || definition.required
-                    || matches!(value, Value::Formula(_))
-                    || families != BTreeSet::from([OperationFamily::SetFieldValue])
+                    || (matches!(value, Value::Formula(_)) && !formula_restore)
+                    || (!formula_restore
+                        && families != BTreeSet::from([OperationFamily::SetFieldValue]))
                 {
                     return Err(PatchLifecycleError::ScopeDerivationFailed);
                 }
-                self.insert_field_disclosure(before, after, field, disclosures)?;
-                self.insert_value_disclosures(before, after, value, disclosures)
+                // A formula into a blank slot discloses under its own family,
+                // as it does over a present value.
+                let family = if formula_restore {
+                    OperationFamily::FormulaUpdate
+                } else {
+                    OperationFamily::SetFieldValue
+                };
+                self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
+                self.insert_value_disclosures_for(family, before, after, field, value, disclosures)
             }
             SemanticChange::FieldRemoved { field, value } => {
                 let mut families = command_families_for_field(body, field);
@@ -3827,7 +4043,9 @@ impl PatchLifecycle {
                 }
                 for family in families {
                     self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
-                    self.insert_value_disclosures_for(family, before, after, value, disclosures)?;
+                    self.insert_value_disclosures_for(
+                        family, before, after, field, value, disclosures,
+                    )?;
                 }
                 Ok(())
             }
@@ -3843,18 +4061,10 @@ impl PatchLifecycle {
                 for family in families {
                     self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
                     self.insert_value_disclosures_for(
-                        family,
-                        before,
-                        after,
-                        old_value,
-                        disclosures,
+                        family, before, after, field, old_value, disclosures,
                     )?;
                     self.insert_value_disclosures_for(
-                        family,
-                        before,
-                        after,
-                        new_value,
-                        disclosures,
+                        family, before, after, field, new_value, disclosures,
                     )?;
                 }
                 Ok(())
@@ -3890,7 +4100,7 @@ impl PatchLifecycle {
                             self.insert_calculation_dependency_disclosures(
                                 family,
                                 document,
-                                expression_references(expression),
+                                expression_references(document, field, expression),
                                 disclosures,
                             )?;
                         }
@@ -3938,6 +4148,7 @@ impl PatchLifecycle {
         &self,
         before: &Document,
         after: &Document,
+        owner: &FieldRef,
         value: &Value,
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
@@ -3945,6 +4156,7 @@ impl PatchLifecycle {
             OperationFamily::SetFieldValue,
             before,
             after,
+            owner,
             value,
             disclosures,
         )
@@ -3955,6 +4167,7 @@ impl PatchLifecycle {
         family: OperationFamily,
         before: &Document,
         after: &Document,
+        owner: &FieldRef,
         value: &Value,
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
@@ -3966,7 +4179,7 @@ impl PatchLifecycle {
                 disclosures.insert(DisclosureRequirement { family, scope });
             }
             Value::Formula(expression) => {
-                for field in expression_references(expression) {
+                for field in expression_references(after, owner, expression) {
                     self.insert_field_disclosure_for(family, before, after, &field, disclosures)?;
                 }
             }
@@ -3989,13 +4202,25 @@ impl PatchLifecycle {
                 continue;
             }
             self.insert_field_disclosure_for(family, document, document, &field, disclosures)?;
-            let value = document
+            let entity = document
                 .entities
                 .get(&field.entity)
-                .and_then(|entity| entity.fields.get(&field.field))
                 .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+            let Some(value) = entity.fields.get(&field.field) else {
+                // A blank slot of a declared field (a column total reads every
+                // row, blanks included) is disclosed but has nothing further
+                // to traverse.
+                let declared = document
+                    .schemas
+                    .get(&entity.schema)
+                    .is_some_and(|schema| schema.fields.contains_key(&field.field));
+                if declared {
+                    continue;
+                }
+                return Err(PatchLifecycleError::ScopeDerivationFailed);
+            };
             if let Value::Formula(expression) = value {
-                pending.extend(expression_references(expression));
+                pending.extend(expression_references(document, &field, expression));
             }
         }
         Ok(())
@@ -4139,7 +4364,8 @@ impl PatchLifecycle {
                         field_id,
                         disclosures,
                     )?;
-                    for reference in expression_references(expression) {
+                    let owner = FieldRef::new(entity.id.clone(), field_id.clone());
+                    for reference in expression_references(document, &owner, expression) {
                         self.insert_keyed_grouped_sum_entity_field(
                             document,
                             &reference.entity,
@@ -4321,6 +4547,9 @@ fn command_families_for_field(
             SemanticCommand::FormulaUpdate(command) if command.target() == field => {
                 Some(OperationFamily::FormulaUpdate)
             }
+            SemanticCommand::FormulaRestore(command) if command.target() == field => {
+                Some(OperationFamily::FormulaUpdate)
+            }
             SemanticCommand::FormulaInverseRestore(command) if command.target() == field => {
                 Some(OperationFamily::FormulaInverseRestore)
             }
@@ -4356,7 +4585,7 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
             matches!(
                 field.field_type,
                 FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
-            ) && (field.required || matches!(field.field_type, FieldType::Text | FieldType::Number))
+            )
         })
         && document
             .entities
@@ -4372,7 +4601,7 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
                             matches!(
                                 (&field.field_type, value),
                                 (FieldType::Text, Value::Text(_))
-                                    | (FieldType::Number, Value::Number(_))
+                                    | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
                                     | (FieldType::Date, Value::Date(_))
                             )
@@ -4470,6 +4699,48 @@ fn duplicate_constraint_write(body: &SemanticPatchBody) -> Option<(SchemaId, Fie
     None
 }
 
+fn reject_legacy_field_orders(
+    base: &Document,
+    candidate: &Document,
+    body: &SemanticPatchBody,
+) -> Result<(), PatchLifecycleError> {
+    if base.has_field_orders()
+        || candidate.has_field_orders()
+        || body
+            .commands()
+            .iter()
+            .any(|command| matches!(command, SemanticCommand::SetSchemaFieldOrder { .. }))
+    {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(
+                super::DiffError::UnsupportedFieldOrder,
+            )),
+        });
+    }
+    Ok(())
+}
+
+fn reject_legacy_number_formats(
+    base: &Document,
+    candidate: &Document,
+    body: &SemanticPatchBody,
+) -> Result<(), PatchLifecycleError> {
+    if base.has_number_formats()
+        || candidate.has_number_formats()
+        || body
+            .commands()
+            .iter()
+            .any(|command| matches!(command, SemanticCommand::SetFieldNumberFormat { .. }))
+    {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(
+                super::DiffError::UnsupportedNumberFormat,
+            )),
+        });
+    }
+    Ok(())
+}
+
 fn contains_constraint_command(body: &SemanticPatchBody) -> bool {
     body.commands()
         .iter()
@@ -4563,8 +4834,10 @@ fn formula_projection_document(document: &Document) -> Document {
     document.keyed_grouped_sum_definitions.clear();
     for schema in document.schemas.values_mut() {
         schema.display_name = None;
+        schema.field_order = None;
         for field in schema.fields.values_mut() {
             field.constraint = FieldConstraint::None;
+            field.number_format = None;
             field.display_name = None;
         }
     }
@@ -4682,23 +4955,27 @@ fn keyed_grouped_sum_matched_products(
     (matched, formula_operand_required)
 }
 
-fn expression_references(expression: &Expression) -> BTreeSet<FieldRef> {
-    let mut references = BTreeSet::new();
-    let mut pending = vec![expression];
-    while let Some(current) = pending.pop() {
-        match current {
-            Expression::Number(_) => {}
-            Expression::Reference(field) => {
-                references.insert(field.clone());
-            }
-            Expression::Add { left, right }
-            | Expression::Subtract { left, right }
-            | Expression::Multiply { left, right }
-            | Expression::Divide { left, right }
-            | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
-                pending.push(right);
-                pending.push(left);
+fn expression_names_column(expression: &Expression, schema: &SchemaId, field: &FieldId) -> bool {
+    expression
+        .column_totals()
+        .into_iter()
+        .any(|column| &column.schema == schema && &column.field == field)
+}
+
+fn expression_references(
+    document: &Document,
+    owner: &FieldRef,
+    expression: &Expression,
+) -> BTreeSet<FieldRef> {
+    let mut references = expression
+        .reference_uses(owner)
+        .into_iter()
+        .map(|(reference, _)| reference)
+        .collect::<BTreeSet<_>>();
+    for column in expression.column_totals() {
+        for (entity_id, entity) in &document.entities {
+            if entity.schema == column.schema {
+                references.insert(FieldRef::new(entity_id.clone(), column.field.clone()));
             }
         }
     }
@@ -4853,12 +5130,15 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
             | SemanticCommand::AppendEntity { .. }
             | SemanticCommand::RemoveEntity { .. }
             | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetFieldNumberFormat { .. }
+            | SemanticCommand::SetSchemaFieldOrder { .. }
             | SemanticCommand::SetFieldConstraint { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. }
             | SemanticCommand::SetFieldValue { .. }
             | SemanticCommand::UnsetField { .. }
             | SemanticCommand::FormulaUpdate(_)
             | SemanticCommand::FormulaInverseRestore(_)
+            | SemanticCommand::FormulaRestore(_)
             | SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
             | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {}
         }
@@ -4887,6 +5167,7 @@ mod tests {
             id: FieldId::from(field),
             key: FieldKey::from(field),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Number,
             required: true,
             constraint: FieldConstraint::None,
@@ -4910,6 +5191,7 @@ mod tests {
         if append {
             SemanticCommand::AppendCollection {
                 schema: Schema {
+                    field_order: None,
                     id: SchemaId::from(schema_id),
                     key: SchemaKey::from(schema_id),
                     display_name: None,
@@ -4919,6 +5201,7 @@ mod tests {
                             id: FieldId::from("field"),
                             key: FieldKey::from("field"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: FieldConstraint::None,
@@ -5012,6 +5295,7 @@ mod tests {
         document.schemas.insert(
             orders.clone(),
             Schema {
+                field_order: None,
                 id: orders.clone(),
                 key: SchemaKey::from("orders"),
                 display_name: None,
@@ -5022,6 +5306,7 @@ mod tests {
                             id: FieldId::from("order-key"),
                             key: FieldKey::from("product_key"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5033,6 +5318,7 @@ mod tests {
                             id: FieldId::from("quantity"),
                             key: FieldKey::from("quantity"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5044,6 +5330,7 @@ mod tests {
         document.schemas.insert(
             products.clone(),
             Schema {
+                field_order: None,
                 id: products.clone(),
                 key: SchemaKey::from("products"),
                 display_name: None,
@@ -5054,6 +5341,7 @@ mod tests {
                             id: FieldId::from("product-key"),
                             key: FieldKey::from("product_key"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5065,6 +5353,7 @@ mod tests {
                             id: FieldId::from("category"),
                             key: FieldKey::from("category"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5076,6 +5365,7 @@ mod tests {
                             id: FieldId::from("price"),
                             key: FieldKey::from("price"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -5659,6 +5949,7 @@ mod tests {
                     id,
                     key: FieldKey::from(field),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Number,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,

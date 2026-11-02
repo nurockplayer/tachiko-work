@@ -16,6 +16,7 @@ fn number_document(number: Number) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("schema"),
                 display_name: None,
@@ -25,6 +26,7 @@ fn number_document(number: Number) -> Document {
                         id: field_id.clone(),
                         key: FieldKey::from("number"),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

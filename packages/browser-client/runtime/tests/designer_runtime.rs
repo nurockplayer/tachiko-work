@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
-    CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply,
-    ScalarEditInput, ScalarKind, StoredValueProjection, close_project, open_portable_ro,
-    open_project, process_wire_request, verify_portable_ro,
+    CalculationProjection, CapacityExceeded, CapacityLimit, DesignerRequest, DesignerResponse,
+    DesignerRuntime, DesignerWireReply, ScalarEditInput, ScalarKind, StoredValueProjection,
+    close_project, open_portable_ro, open_project, process_wire_request, verify_portable_ro,
 };
 use tachiko_workspace_engine::{
     Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
@@ -51,6 +51,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
         (
             areas.clone(),
             Schema {
+                field_order: None,
                 id: areas.clone(),
                 key: SchemaKey::from("areas"),
                 display_name: None,
@@ -60,6 +61,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                         id: label.clone(),
                         key: FieldKey::from("label"),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -70,6 +72,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
         (
             product_gaps.clone(),
             Schema {
+                field_order: None,
                 id: product_gaps.clone(),
                 key: SchemaKey::from("product_gaps"),
                 display_name: None,
@@ -80,6 +83,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                             id: title.clone(),
                             key: FieldKey::from("title"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -91,6 +95,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                             id: confirmed.clone(),
                             key: FieldKey::from("confirmed"),
                             display_name: None,
+                            number_format: None,
                             field_type: FieldType::Boolean,
                             required: true,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -102,6 +107,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
         (
             roadmap_notes.clone(),
             Schema {
+                field_order: None,
                 id: roadmap_notes.clone(),
                 key: SchemaKey::from("roadmap_notes"),
                 display_name: None,
@@ -111,6 +117,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
                         id: title.clone(),
                         key: FieldKey::from("title"),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -200,6 +207,7 @@ fn date_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("events"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("events"),
                 key: SchemaKey::from("events"),
                 display_name: None,
@@ -209,6 +217,7 @@ fn date_document() -> Document {
                         id: FieldId::from("published"),
                         key: FieldKey::from("published"),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Date,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -358,6 +367,7 @@ fn admission_rejects_any_collection_that_cannot_be_rendered() {
                 id: FieldId::from(key.as_str()),
                 key: FieldKey::from(key.as_str()),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -368,9 +378,16 @@ fn admission_rejects_any_collection_that_cannot_be_rendered() {
     let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
         panic!("every advertised collection must fit the bounded table profile");
     };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "capacity_exceeded");
     assert_eq!(
-        error.failure_projection("unavailable").code,
-        "unsupported_project"
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::TableFields,
+            maximum: 32,
+            attempted: 33,
+            collection: Some("items".to_owned()),
+        })
     );
 }
 
@@ -388,6 +405,7 @@ fn admission_rejects_an_unbounded_collection_catalog() {
         document.schemas.insert(
             SchemaId::from(id.as_str()),
             Schema {
+                field_order: None,
                 id: SchemaId::from(id.as_str()),
                 key: SchemaKey::from(key.as_str()),
                 display_name: None,
@@ -396,12 +414,21 @@ fn admission_rejects_an_unbounded_collection_catalog() {
         );
     }
 
+    let attempted = document.schemas.len();
     let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
         panic!("the advertised collection catalog must remain bounded");
     };
     let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(failure.message.contains("bounded maximum is 32"));
+    assert_eq!(failure.code, "capacity_exceeded");
+    assert_eq!(
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::Collections,
+            maximum: 32,
+            attempted,
+            collection: None,
+        })
+    );
 }
 
 #[test]
@@ -462,6 +489,7 @@ fn admission_bounds_aggregate_profile_strings_before_projection_construction() {
                 id: field_id,
                 key: FieldKey::from(format!("aggregate_profile_{index}")),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -542,6 +570,7 @@ fn admission_bounds_aggregate_collection_text_before_validation_and_projection()
                     id: field_id.clone(),
                     key: FieldKey::from(format!("aggregate_text_{index}")),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Text,
                     required: false,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -597,6 +626,7 @@ fn admission_bounds_the_complete_cross_collection_post_edit_refresh() {
                 id: source_id.clone(),
                 key: source_key,
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -622,6 +652,7 @@ fn admission_bounds_the_complete_cross_collection_post_edit_refresh() {
                         "refresh_formula_{collection_index}_{formula_index}"
                     )),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Number,
                     required: false,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -732,13 +763,16 @@ fn admission_bounds_formula_analysis_before_per_formula_projection() {
         panic!("formula analysis must have a cheap aggregate admission bound");
     };
     let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(
-        failure
-            .message
-            .contains(&format!("contains {formula_count} formulas"))
+    assert_eq!(failure.code, "capacity_exceeded");
+    assert_eq!(
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::Formulas,
+            maximum: 32,
+            attempted: formula_count,
+            collection: None,
+        })
     );
-    assert!(failure.message.contains("bounded maximum is 32"));
 }
 
 #[test]
@@ -770,9 +804,16 @@ fn admission_bounds_total_entities_before_workspace_validation() {
         panic!("total entities must be bounded before workspace validation");
     };
     let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(failure.message.contains("contains 1025 entities"));
-    assert!(failure.message.contains("bounded maximum is 1024"));
+    assert_eq!(failure.code, "capacity_exceeded");
+    assert_eq!(
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::TotalEntities,
+            maximum: 1_024,
+            attempted: 1_025,
+            collection: None,
+        })
+    );
 }
 
 #[test]
@@ -800,9 +841,16 @@ fn admission_bounds_entity_fields_before_workspace_validation() {
         panic!("stored entity fields must be bounded before workspace validation");
     };
     let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(failure.message.contains("contains 33 stored fields"));
-    assert!(failure.message.contains("bounded maximum is 32"));
+    assert_eq!(failure.code, "capacity_exceeded");
+    assert_eq!(
+        failure.capacity,
+        Some(CapacityExceeded {
+            limit: CapacityLimit::TableFields,
+            maximum: 32,
+            attempted: 33,
+            collection: Some("weapons".to_owned()),
+        })
+    );
 }
 
 #[test]
@@ -855,6 +903,7 @@ fn admission_rejects_an_unbounded_worst_case_publication_projection() {
                 id: FieldId::from(id.as_str()),
                 key: FieldKey::from(key.as_str()),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -1156,7 +1205,7 @@ fn budget_open_and_formula_updates_use_the_authoritative_cross_collection_lifecy
         .expect_err("unbound formulas must not publish");
     assert_eq!(
         rejected.failure_projection("resident/1").code,
-        "edit_rejected"
+        "formula_unknown_reference"
     );
     let DesignerResponse::Fields(unchanged) = runtime
         .handle(DesignerRequest::QueryFields {

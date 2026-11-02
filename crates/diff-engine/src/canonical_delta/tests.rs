@@ -19,6 +19,7 @@ fn number(value: f64) -> Number {
 
 fn text_schema(id: &str) -> Schema {
     Schema {
+        field_order: None,
         id: id.into(),
         key: "schema".into(),
         display_name: None,
@@ -28,6 +29,7 @@ fn text_schema(id: &str) -> Schema {
                 id: "f".into(),
                 key: "f".into(),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Text,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -68,6 +70,7 @@ fn keyed_definition() -> KeyedGroupedSumDefinition {
 
 fn numeric_or_text_schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
     Schema {
+        field_order: None,
         id: id.into(),
         key: id.into(),
         display_name: None,
@@ -80,6 +83,7 @@ fn numeric_or_text_schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
                         id: (*field_id).into(),
                         key: (*field_id).into(),
                         display_name: None,
+                        number_format: None,
                         field_type: field_type.clone(),
                         required: false,
                         constraint: FieldConstraint::None,
@@ -142,6 +146,7 @@ fn calculation_failure_is_reported_for_the_failing_side() {
     let valid = Document::empty("doc", "title");
     let mut failed = valid.clone();
     let schema = Schema {
+        field_order: None,
         id: "s".into(),
         key: "s".into(),
         display_name: None,
@@ -151,6 +156,7 @@ fn calculation_failure_is_reported_for_the_failing_side() {
                 id: "n".into(),
                 key: "n".into(),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -378,5 +384,40 @@ fn saved_definition_ranks_append_without_moving_names_or_constraints() {
         .ordering_key()
         .0,
         4
+    );
+}
+
+#[test]
+fn a_reorder_alone_is_one_field_order_fact_with_both_orders() {
+    let mut before = Document::empty("doc", "title");
+    before.schemas.insert(
+        "s".into(),
+        numeric_or_text_schema("s", &[("a", FieldType::Number), ("b", FieldType::Text)]),
+    );
+    let mut after = before.clone();
+    let reordered = Some(vec![FieldId::from("b"), FieldId::from("a")]);
+    after
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .field_order
+        .clone_from(&reordered);
+    let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after).unwrap();
+    assert_eq!(
+        delta.facts(),
+        [Fact::SchemaFieldOrderChanged {
+            schema: SchemaId::from("s"),
+            before: None,
+            after: reordered.clone(),
+        }]
+    );
+    let reverse = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &after, &before).unwrap();
+    assert_eq!(
+        reverse.facts(),
+        [Fact::SchemaFieldOrderChanged {
+            schema: SchemaId::from("s"),
+            before: reordered,
+            after: None,
+        }]
     );
 }

@@ -67,8 +67,8 @@ Number fields alongside required scalar fields**. An absent optional entry is
 valid; every present entry keeps its direct scalar type requirement. This
 decision grants **new authoring authority** for Text/Number only. Classification
 is structural: an imported table qualifies for native authoring
-when every field is scalar and its optional fields are Text/Number; imports with
-optional Date/Boolean remain non-native. “Does not invalidate” means no stored
+when every field is scalar and its optional fields are Text/Number (amended
+2026-10-30: Date/Boolean as well; see the amendment below). “Does not invalidate” means no stored
 field or value changes, including the optional declarations import already
 creates. Import origin is not an authoring exception. See [#557](https://github.com/nurockplayer/tachiko-work/issues/557)
 and the [imported-workbook export contract](../specs/imported-workbook-spreadsheet-export.md)
@@ -76,8 +76,8 @@ for current-content export or located whole-file refusal after structural edits.
 
 ### Admitted native-table operations
 
-For native scalar tables only, and only for fields of type **Text** or
-**Number**:
+For native scalar tables only, and (as amended 2026-10-30) for fields of type
+**Text**, **Number**, **Date** or **Boolean**:
 
 1. **Declare an optional field** when creating a native table or when adding a
    field (ADR-0040 "add field" is extended). An optional added field needs no
@@ -174,7 +174,8 @@ This decision adds no coercion and no new aggregate semantics:
 
 ### Deferred work and non-goals
 
-Optional Date and Boolean fields, optional fields outside native tables,
+Optional fields outside native tables (optional Date and Boolean fields were
+admitted by the 2026-10-30 amendment below),
 defaults, type changes, skip-blank aggregates, "is blank" predicates, blank-aware
 sort/filter semantics, automatic requiredness relaxation, and any storage-format
 change are not admitted. Each needs its own authority.
@@ -201,3 +202,24 @@ strict. The semantic model gains no new value kind. The cost is that clients
 must handle blank explicitly in projections and inputs, and summaries over
 blank inputs report "unavailable" until a later decision defines skip-blank
 aggregates.
+
+## Amendment 2026-10-30 (Work #598, founder accepted 2026-10-29)
+
+Optional (blank-able) **Date** and **Boolean** fields are admitted with exactly
+the authority this ADR gives optional Text and Number fields: declaration when
+creating a native table or adding a field, insert with blanks, explicit clear
+(`UnsetField`), and requiredness changes in either direction (strengthening
+still refuses while blanks exist, with `required_values_missing`). Native
+scalar admission and the inverse append/removal pairs now accept any of the four
+scalar types. A blank stays distinct from `false`, `true` and any date.
+
+Classification is structural as before: imports whose optional fields are Text,
+Number, Date or Boolean qualify as native tables. No storage-format change is
+introduced; imports already write these declarations. Native CSV and XLSX
+export writes an empty cell for a blank Date or Boolean.
+
+Out of scope, each needing its own authority: defaults; type conversions;
+new aggregate behavior (skip-blank sums, "is blank" aggregates); blank-aware sort
+and filter semantics. Formulas stay strict: only a blank Number reads as 0; a
+blank Date or Boolean in arithmetic remains a type mismatch, and `ISBLANK`
+applies to any type.

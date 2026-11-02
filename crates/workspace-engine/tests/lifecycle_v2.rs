@@ -563,6 +563,7 @@ fn constraint_write_requires_schema_class_even_when_other_classes_are_granted() 
 fn keyed_definition_document() -> Document {
     fn schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
         Schema {
+            field_order: None,
             id: id.into(),
             key: id.into(),
             display_name: None,
@@ -575,6 +576,7 @@ fn keyed_definition_document() -> Document {
                             id: (*field_id).into(),
                             key: (*field_id).into(),
                             display_name: None,
+                            number_format: None,
                             field_type: field_type.clone(),
                             required: true,
                             constraint: FieldConstraint::None,
@@ -1262,6 +1264,7 @@ fn constraint_review_requires_transitive_formula_dependency_query() {
                 id: field.into(),
                 key: field.into(),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -1401,6 +1404,7 @@ fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
     document.schemas.insert(
         "items".into(),
         Schema {
+            field_order: None,
             id: "items".into(),
             key: "items".into(),
             display_name: None,
@@ -1410,6 +1414,7 @@ fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
                     id: "label".into(),
                     key: "label".into(),
                     display_name: None,
+                    number_format: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: FieldConstraint::None,

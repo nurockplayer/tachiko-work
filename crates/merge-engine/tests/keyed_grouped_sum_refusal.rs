@@ -75,6 +75,7 @@ fn conflict_v2_refuses_all_definition_changing_requests_atomically() {
         empty.schemas.insert(
             id.into(),
             Schema {
+                field_order: None,
                 id: id.into(),
                 key: id.into(),
                 display_name: Some(format!("Table {id}")),
@@ -87,6 +88,7 @@ fn conflict_v2_refuses_all_definition_changing_requests_atomically() {
                                 id: field.into(),
                                 key: field.into(),
                                 display_name: None,
+                                number_format: None,
                                 field_type: if field == "quantity" || field == "price" {
                                     FieldType::Number
                                 } else {

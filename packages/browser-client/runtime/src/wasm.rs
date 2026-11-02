@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
     OutputProfile, SourceWorkbook, export_csv, export_csv_for_profile, export_xlsx,
-    export_xlsx_for_profile, import_csv, import_xlsx, validate_text_capacity_inspection,
+    export_xlsx_for_profile, import_csv, import_xlsx_with, validate_text_capacity_inspection,
 };
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
@@ -355,13 +355,16 @@ fn import_source(
     }
     match format {
         SpreadsheetFormat::Csv => import_csv(source, options),
-        SpreadsheetFormat::Xlsx => import_xlsx(source),
+        SpreadsheetFormat::Xlsx => import_xlsx_with(source, options),
     }
     .map_err(interop_error)
 }
 
 fn interop_error(error: InteropError) -> DesignerError {
-    DesignerError::InvalidProjectTransfer { message: error.0 }
+    match error {
+        InteropError::Invalid(message) => DesignerError::InvalidProjectTransfer { message },
+        InteropError::Capacity(capacity) => capacity.into(),
+    }
 }
 
 fn spreadsheet_operation(
@@ -646,7 +649,7 @@ fn export_spreadsheet(
         SpreadsheetFormat::Csv => {
             let sheet = &workbook.sheets[0];
             let bytes = export_csv(sheet).map_err(|error| {
-                crate::interop_document::imported_export_error("workbook", &error.0)
+                crate::interop_document::imported_export_error("workbook", &error.to_string())
             })?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,
@@ -658,7 +661,7 @@ fn export_spreadsheet(
             bytes
         }
         SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(|error| {
-            crate::interop_document::imported_export_error("workbook", &error.0)
+            crate::interop_document::imported_export_error("workbook", &error.to_string())
         })?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
@@ -782,6 +785,9 @@ pub extern "C" fn tachiko_designer_project_export() {
                     current_revision: "unavailable".to_owned(),
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
+                    constraint_failure: None,
+                    row_count: None,
+                    capacity: None,
                 },
             }
         };
@@ -834,6 +840,9 @@ pub extern "C" fn tachiko_designer_occurrence_observe() {
                     current_revision: "unavailable".to_owned(),
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
+                    constraint_failure: None,
+                    row_count: None,
+                    capacity: None,
                 },
             },
         };
@@ -889,6 +898,9 @@ fn export_project_bytes<E>(
                     current_revision: "unavailable".to_owned(),
                     diagnostics: Vec::new(),
                     name_failures: Vec::new(),
+                    constraint_failure: None,
+                    row_count: None,
+                    capacity: None,
                 },
             }
         };

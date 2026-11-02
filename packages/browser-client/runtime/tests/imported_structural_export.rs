@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::io::Read;
 use tachiko_designer_runtime::host_bridge::{DesignerHost, HostReply};
 use tachiko_designer_runtime::interop_adapter::{
-    ImportOptions, SourceValue, export_xlsx, import_csv, import_xlsx,
+    ImportOptions, SourceLayout, SourceValue, export_xlsx, import_csv, import_xlsx,
 };
 
 const ORIGINAL: &str = "00000000-0000-4000-8000-000000000557";
@@ -508,11 +508,13 @@ fn structural_export_preserves_untouched_formulas_styles_and_workbook_coverage()
         columns: vec![SourceColumn {
             name: "Result".into(),
             width: None,
+            number_format: None,
         }],
         rows: vec![vec![SourceCell {
             formula: Some("'Data'!$B$2+1".into()),
             ..number(2.0)
         }]],
+        layout: SourceLayout::default(),
     });
     let mut j = Journey::default();
     let source_bytes = export_xlsx(&SourceWorkbook {
@@ -911,6 +913,7 @@ fn formula_journey_rows(formula: &str, data_name: &str, rows: usize) -> Journey 
         columns: vec![SourceColumn {
             name: "Result".into(),
             width: None,
+            number_format: None,
         }],
         rows: vec![
             vec![SourceCell {
@@ -920,6 +923,7 @@ fn formula_journey_rows(formula: &str, data_name: &str, rows: usize) -> Journey 
             }];
             rows
         ],
+        layout: SourceLayout::default(),
     });
     let bytes = export_xlsx(&source).unwrap();
     let mut j = Journey::default();
@@ -1217,6 +1221,7 @@ fn imported_style_inventory_refuses_before_excel_format_resource_limits() {
         document.schemas.insert(
             schema.clone(),
             Schema {
+                field_order: None,
                 id: schema.clone(),
                 key: SchemaKey::from(format!("sheet_{n}")),
                 display_name: None,
@@ -1226,6 +1231,7 @@ fn imported_style_inventory_refuses_before_excel_format_resource_limits() {
                         id: field.clone(),
                         key: FieldKey::from("value"),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Text,
                         required: false,
                         constraint: FieldConstraint::None,
@@ -1446,12 +1452,14 @@ fn imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output() {
                 columns: vec![SourceColumn {
                     name: "Result".into(),
                     width: None,
+                    number_format: None,
                 }],
                 rows: vec![vec![SourceCell {
                     value: SourceValue::Number { value: 1.0 },
                     formula: Some(formula.into()),
                     ..SourceCell::default()
                 }]],
+                layout: SourceLayout::default(),
             }],
             ledger: vec![],
         };

@@ -4,6 +4,7 @@ import {
   createExperimentalDesignerClient,
   openCanonicalTreeFromEntries,
   type ExperimentalDesignerClient,
+  type FailureCode,
 } from "../src/experimental-client.ts";
 import { DesignerRuntimeError } from "../src/runtime/client.ts";
 import type { PublicationProjection, TrackerCommand, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
@@ -162,6 +163,40 @@ it.each(["csv", "xlsx"] as const)("exports native tables as %s through the publi
     const failure = {code: "stale_revision", message: "Stale revision", current_revision: "resident/7", diagnostics: []};
     receive!(new MessageEvent<WorkerReply>("message", {data: {id: 2, status: "error", error: failure}}));
     await expect(stale).rejects.toMatchObject({failure});
+  } finally {
+    client.close();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("preserves required_values_missing diagnostics through the public Worker client", async () => {
+  let receive: ((event: MessageEvent<WorkerReply>) => void) | undefined;
+  const requests: WorkerRequest[] = [];
+  vi.stubGlobal("Worker", class {
+    addEventListener(type: string, callback: (event: MessageEvent<WorkerReply>) => void) {
+      if (type === "message") receive = callback;
+    }
+    postMessage(request: WorkerRequest) { requests.push(structuredClone(request)); }
+    terminate() {}
+  });
+  const client = createExperimentalDesignerClient();
+  try {
+    const pending = client.setColumnRequiredness("resident/7", "items", "note", true);
+    expect(requests).toEqual([{id: 1, kind: "command", request: {
+      type: "set_column_requiredness", expected_revision: "resident/7", collection: "items", field: "note", required: true,
+    }}]);
+    const failure = {
+      code: "required_values_missing", message: "3 rows have no value in this column.",
+      current_revision: "resident/7", diagnostics: [{code: "required_values_missing",
+        message: "3 rows have no value in this column.", path: "note", subjects: [],
+        related_subjects: [], facts: [{name: "blank_count", value: "3"}]}],
+    };
+    const expectedCode: FailureCode = "required_values_missing";
+    expect(failure.code).toBe(expectedCode);
+    receive!(new MessageEvent<WorkerReply>("message", {
+      data: {id: 1, status: "error", error: failure},
+    }));
+    await expect(pending).rejects.toMatchObject({failure});
   } finally {
     client.close();
     vi.unstubAllGlobals();

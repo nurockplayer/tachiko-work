@@ -17,6 +17,7 @@ fn fixture() -> DesignerRuntime {
     document.schemas.insert(
         schema.clone(),
         Schema {
+            field_order: None,
             id: schema.clone(),
             key: SchemaKey::from("items"),
             display_name: None,
@@ -35,6 +36,7 @@ fn fixture() -> DesignerRuntime {
                         id: field,
                         key: FieldKey::from(name),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,

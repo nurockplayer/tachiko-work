@@ -54,6 +54,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
                 id: id.clone(),
                 key: FieldKey::from(key),
                 display_name: None,
+                number_format: None,
                 field_type,
                 required: all_fields_required,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -68,6 +69,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("inventory"),
                 display_name: None,
@@ -183,7 +185,9 @@ fn native_table_profile_requires_complete_typed_rows_without_publication() {
 #[test]
 fn row_paste_rejects_non_native_collections_before_row_construction() {
     let mut runtime = DesignerRuntime::moonfall(OCCURRENCE).expect("Moonfall fixture must admit");
-    let initial = table(&mut runtime, "weapons");
+    // Characters carries a typed Reference column, so it is not a scalar table
+    // regardless of the formulas in the weapons collection.
+    let initial = table(&mut runtime, "characters");
     assert_ne!(initial.native_table_profile, Some(true));
     let before = runtime
         .export_project_v3(&initial.revision)
@@ -271,8 +275,32 @@ fn scalar_row_authoring_survives_respelled_opaque_ids_and_reopen() {
 
 #[test]
 fn legacy_looking_ids_do_not_grant_scalar_row_authoring_without_the_shape() {
-    let mut runtime = DesignerRuntime::from_document(scalar_document(true, false), OCCURRENCE)
-        .expect("a document with optional scalar fields must still admit normally");
+    // Optional scalar fields are native since #598; an optional Reference field
+    // is what keeps this table out of the native shape.
+    let mut document = scalar_document(true, false);
+    let schema_id = SchemaId::from("native_table_schema_0002_spoof");
+    let reference = FieldId::from("native_table_field_0008_spoof");
+    document
+        .schemas
+        .get_mut(&schema_id)
+        .expect("fixture schema")
+        .fields
+        .insert(
+            reference.clone(),
+            FieldDefinition {
+                id: reference,
+                key: FieldKey::from("supplier"),
+                display_name: None,
+                number_format: None,
+                field_type: FieldType::Reference {
+                    schema: schema_id.clone(),
+                },
+                required: false,
+                constraint: tachiko_workspace_engine::FieldConstraint::None,
+            },
+        );
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE)
+        .expect("a document with an optional Reference field must still admit normally");
     let initial = table(&mut runtime, "inventory");
     assert_ne!(initial.native_table_profile, Some(true));
 

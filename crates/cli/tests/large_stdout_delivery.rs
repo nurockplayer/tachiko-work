@@ -43,6 +43,7 @@ fn large_document() -> Document {
     let schema_id = SchemaId::from("record-schema");
     let field_id = FieldId::from("payload-field");
     let schema = Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("record"),
         display_name: None,
@@ -52,6 +53,7 @@ fn large_document() -> Document {
                 id: field_id.clone(),
                 key: FieldKey::from("payload"),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,

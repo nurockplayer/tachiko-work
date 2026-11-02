@@ -605,18 +605,7 @@ fn validate_semantic_expression_limits_cancellable(
                         "formula expression exceeds {MAX_EXPRESSION_NODES}-node limit"
                     ));
                 }
-                match node {
-                    Expression::Add { left, right }
-                    | Expression::Subtract { left, right }
-                    | Expression::Multiply { left, right }
-                    | Expression::Divide { left, right }
-                    | Expression::Minimum { left, right }
-                    | Expression::Maximum { left, right } => {
-                        stack.push((right, depth + 1));
-                        stack.push((left, depth + 1));
-                    }
-                    Expression::Number(_) | Expression::Reference(_) => {}
-                }
+                stack.extend(node.children().into_iter().map(|child| (child, depth + 1)));
             }
         }
     }
@@ -836,11 +825,27 @@ fn emit_steady_rss() {
     println!("ISSUE175_STEADY_RSS_BYTES={}", current_rss_bytes());
 }
 
+// libtest can print `test <name> ... ` on the same line as the child's
+// marker (seen with Rust 1.99, #582), so the marker may start mid-line.
+fn child_marker_value<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    line.split_once(marker).map(|(_, value)| value.trim_end())
+}
+
+#[test]
+fn issue_175_child_marker_found_after_libtest_prefix() {
+    let line = "test roproj::v1::issue_175_research::issue_175_sidecar_child ... issue_175_sidecar_child={\"a\":1}";
+    assert_eq!(
+        child_marker_value(line, SIDECAR_CHILD_MARKER),
+        Some("{\"a\":1}")
+    );
+    assert_eq!(child_marker_value("ok", SIDECAR_CHILD_MARKER), None);
+}
+
 fn parse_child_rss(stdout: &[u8], stderr: &[u8]) -> (usize, usize) {
     let stdout = String::from_utf8_lossy(stdout);
     let steady = stdout
         .lines()
-        .find_map(|line| line.strip_prefix("ISSUE175_STEADY_RSS_BYTES="))
+        .find_map(|line| child_marker_value(line, "ISSUE175_STEADY_RSS_BYTES="))
         .unwrap()
         .parse::<usize>()
         .unwrap();
@@ -2163,6 +2168,7 @@ fn mixed_document(entity_count: usize, text_char_count: usize) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("records"),
                 display_name: None,
@@ -2215,6 +2221,7 @@ fn dependency_chain_document(entity_count: usize, cycle: bool) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("chain"),
                 display_name: None,
@@ -2534,6 +2541,7 @@ fn single_schema_document(
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from(schema_key),
                 display_name: None,
@@ -2550,6 +2558,7 @@ fn field(id: &FieldId, key: &str, field_type: FieldType) -> FieldDefinition {
         id: id.clone(),
         key: FieldKey::from(key),
         display_name: None,
+        number_format: None,
         field_type,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -2585,6 +2594,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
         (
             cold_schema_id.clone(),
             Schema {
+                field_order: None,
                 id: cold_schema_id.clone(),
                 key: SchemaKey::from("late_cold"),
                 display_name: None,
@@ -2594,6 +2604,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
         (
             hot_schema_id.clone(),
             Schema {
+                field_order: None,
                 id: hot_schema_id.clone(),
                 key: SchemaKey::from("late_hot"),
                 display_name: None,
@@ -3403,6 +3414,7 @@ fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("formula_poll"),
                 display_name: None,
@@ -4698,7 +4710,7 @@ fn run_sidecar_child(
     let stdout = String::from_utf8(output.stdout).unwrap();
     let sample = stdout
         .lines()
-        .find_map(|line| line.strip_prefix(SIDECAR_CHILD_MARKER))
+        .find_map(|line| child_marker_value(line, SIDECAR_CHILD_MARKER))
         .map_or_else(
             || panic!("sidecar child '{action}' emitted no sample: {stdout}"),
             |json| serde_json::from_str::<SidecarChildSample>(json).unwrap(),

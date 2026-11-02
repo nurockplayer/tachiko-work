@@ -14,6 +14,8 @@ rust-version.workspace = true
 
 [features]
 issue-175-research = []
+# Capacity benchmark only; adds no behavior and is off for release WASM.
+capacity-instrumentation = []
 
 [dependencies]
 serde.workspace = true

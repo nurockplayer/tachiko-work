@@ -18,7 +18,7 @@ use super::{
     EntityInspection, Expression, FieldAddress, FieldId, FieldRef, SchemaId, SemanticSubject,
     ValidationReport, ValidationRole, Value, WorkspaceError,
     formula_operations::{FormulaCalculationOutcome, calculation_dependencies, calculation_for},
-    invalid_document,
+    instrumentation, invalid_document,
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
@@ -623,6 +623,7 @@ where
         if candidate.id != self.session.document.id {
             return Err(SemanticPublicationError::Conflict);
         }
+        instrumentation::record_publication_document_comparison();
         if candidate == self.session.document {
             return Err(SemanticPublicationError::NoChange);
         }
@@ -725,6 +726,9 @@ fn collect_entity_projection_changes(
     entity_ids: &BTreeSet<EntityId>,
     changes: &mut ProjectionChanges,
 ) {
+    instrumentation::record_publication_entities_inspected(
+        u64::try_from(entity_ids.len()).unwrap_or(u64::MAX),
+    );
     for entity_id in entity_ids {
         match (
             before.entities.get(entity_id),
@@ -761,6 +765,9 @@ fn collect_entity_projection_changes(
                     );
                 }
 
+                instrumentation::record_publication_fields_inspected(
+                    u64::try_from(field_ids.len()).unwrap_or(u64::MAX),
+                );
                 for field_id in field_ids {
                     if before_entity.fields.get(&field_id) != after_entity.fields.get(&field_id) {
                         let field = FieldRef::new(entity_id.clone(), field_id);
@@ -809,9 +816,22 @@ fn collect_schema_projection_changes(
         {
             changes.address_index_changed = true;
         }
-        if before_schema.map(|schema| (&schema.id, &schema.key, &schema.display_name))
-            != after_schema.map(|schema| (&schema.id, &schema.key, &schema.display_name))
-        {
+        // The column order (R4a) is schema presentation too.
+        if before_schema.map(|schema| {
+            (
+                &schema.id,
+                &schema.key,
+                &schema.display_name,
+                &schema.field_order,
+            )
+        }) != after_schema.map(|schema| {
+            (
+                &schema.id,
+                &schema.key,
+                &schema.display_name,
+                &schema.field_order,
+            )
+        }) {
             changes.schemas.insert(schema_id.clone());
         }
         let field_ids = before_schema
@@ -826,6 +846,7 @@ fn collect_schema_projection_changes(
             .collect::<BTreeSet<_>>();
 
         for field_id in field_ids {
+            instrumentation::record_publication_fields_inspected(1);
             let before_definition = before_schema.and_then(|schema| schema.fields.get(&field_id));
             let after_definition = after_schema.and_then(|schema| schema.fields.get(&field_id));
             if before_definition == after_definition {
@@ -851,6 +872,7 @@ fn collect_schema_projection_changes(
             };
 
             for entity_id in entity_ids {
+                instrumentation::record_publication_fields_inspected(1);
                 let before_has_field = before.entities.get(entity_id).is_some_and(|entity| {
                     entity.schema == schema_id && entity.fields.contains_key(&field_id)
                 });
@@ -893,6 +915,9 @@ fn collect_diagnostic_projection_changes(
             .cloned()
             .collect::<BTreeSet<_>>();
 
+        instrumentation::record_publication_fields_inspected(
+            u64::try_from(field_ids.len()).unwrap_or(u64::MAX),
+        );
         for field_id in field_ids {
             let field = FieldRef::new(entity_id.clone(), field_id);
             if before_diagnostics.get(&field) != after_diagnostics.get(&field) {
@@ -952,11 +977,13 @@ mod tests {
             id: "f".into(),
             key: "item".into(),
             display_name: None,
+            number_format: None,
             field_type: tachiko_semantic_core::FieldType::Text,
             required: false,
             constraint: tachiko_semantic_core::FieldConstraint::None,
         };
         let schema = tachiko_semantic_core::Schema {
+            field_order: None,
             id: "s".into(),
             key: "table".into(),
             display_name: None,

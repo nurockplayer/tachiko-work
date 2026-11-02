@@ -10,11 +10,13 @@ fn base() -> Document {
         id: "f".into(),
         key: "item".into(),
         display_name: None,
+        number_format: None,
         field_type: FieldType::Text,
         required: false,
         constraint: FieldConstraint::None,
     };
     let schema = Schema {
+        field_order: None,
         id: "s".into(),
         key: "table".into(),
         display_name: None,

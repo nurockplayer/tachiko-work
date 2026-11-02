@@ -34,6 +34,7 @@ pub fn document() -> Document {
         FieldType::Date,
     ];
     let schema = Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("sheet_1"),
         display_name: None,
@@ -59,6 +60,7 @@ pub fn document() -> Document {
                         id,
                         key: FieldKey::from(format!("column_{}", index + 1)),
                         display_name: None,
+                        number_format: None,
                         field_type,
                         required: false,
                         constraint,

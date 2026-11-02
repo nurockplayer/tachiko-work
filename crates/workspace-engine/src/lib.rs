@@ -14,13 +14,12 @@ pub use tachiko_diff_engine::{
 #[cfg(feature = "issue-175-research")]
 pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
 use tachiko_formula_engine::{
-    Calculation, CalculationOutcome, FormulaBindError, FormulaParseError, RetainedCalculationState,
-    bind_expression, calculate_complete, parse_expression, project_expression,
-    validate_expression_structure,
+    Calculation, CalculationOutcome, FormulaParseError, RetainedCalculationState, bind_expression,
+    calculate_complete, parse_expression, project_expression, validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
-    CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
-    ExpressionComplexityError, ReferenceFailure,
+    CalculationError, CalculationFailure, CanonicalAuthoringProjectionError, ColumnFailure,
+    ExpressionComplexityError, FormulaBindError, ReferenceFailure,
 };
 pub use tachiko_merge_engine::{
     ConflictFacet, ConflictFacetV2, ConflictFact, ConflictFactV2, ConflictKind, ConflictTarget,
@@ -32,18 +31,20 @@ pub use tachiko_merge_engine::{
 use tachiko_merge_engine::{
     MergeOutcome, MergeOutcomeV2, UnmaterializedStoredFact, merge, merge_v2,
 };
+pub use tachiko_semantic_core::instrumentation;
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, KeyedGroupedSumDefinitionError, is_valid_identifier,
     validate_complete_formula_constraints, validate_document_core,
     validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
-    Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
-    DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity, EntityId, EntityKey,
-    Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
-    Schema, SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
+    ColumnAggregateFunction, ColumnRef, ComparisonOperator, Date, Diagnostic, DiagnosticCode,
+    DiagnosticFact, DiagnosticLocation, DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure,
+    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldConstraint,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    MAX_DISPLAY_NAME_BYTES, Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema,
+    SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
     display_name_failures, trim_display_name,
 };
 use thiserror::Error;
@@ -68,6 +69,7 @@ pub fn issue_175_calculate_complete(document: &Document) -> Issue175CalculationO
 /// The catalog is internal and provisional under ADR-0019; code meanings are
 /// stable observations and do not depend on Rust enum ordinals.
 pub mod diagnostic_codes {
+    pub const FORMULA_TYPE_MISMATCH: DiagnosticCode = DiagnosticCode::new("formula.type_mismatch");
     use tachiko_semantic_core::DiagnosticCode;
 
     pub const FORMULA_STRUCTURAL: DiagnosticCode = DiagnosticCode::new("formula.invalid_structure");
@@ -78,6 +80,8 @@ pub mod diagnostic_codes {
         DiagnosticCode::new("formula.failed_dependency");
     pub const FORMULA_DIVISION_BY_ZERO: DiagnosticCode =
         DiagnosticCode::new("formula.division_by_zero");
+    pub const FORMULA_AGGREGATE_EMPTY: DiagnosticCode =
+        DiagnosticCode::new("formula.aggregate_empty");
     pub const FORMULA_NON_FINITE_RESULT: DiagnosticCode =
         DiagnosticCode::new("formula.non_finite_result");
     pub const MERGE_UNMATERIALIZED_QUALIFIED_FIELD: DiagnosticCode =
@@ -301,6 +305,9 @@ pub struct SchemaInspection {
     pub id: SchemaId,
     pub key: SchemaKey,
     pub display_name: Option<String>,
+    /// Fields are listed in column order; this keeps an explicit order
+    /// distinguishable from the default one, even when it equals id order.
+    pub field_order: Option<Vec<FieldId>>,
     pub fields: Vec<FieldDefinition>,
 }
 
@@ -336,10 +343,20 @@ impl Serialize for SchemaInspection {
                 "the frozen schema inspection transport cannot represent display names",
             ));
         }
+        if self.field_order.is_some() {
+            return Err(S::Error::custom(
+                "the frozen schema inspection transport cannot represent a field order",
+            ));
+        }
         let fields = self
             .fields
             .iter()
             .map(|field| {
+                if field.number_format.is_some() {
+                    return Err(S::Error::custom(
+                        "the frozen schema inspection transport cannot represent number formats",
+                    ));
+                }
                 if field.constraint != FieldConstraint::None {
                     return Err(S::Error::custom(
                         "the frozen schema inspection transport cannot represent field constraints",
@@ -542,6 +559,9 @@ pub enum WorkspaceError {
     #[error("invalid formula syntax for '{field}': {source}")]
     InvalidFormula {
         field: FieldRef,
+        /// The refused source, retained so presentations can translate the
+        /// parser's byte offset into a character position.
+        input: String,
         #[source]
         source: FormulaParseError,
     },
@@ -587,6 +607,17 @@ pub enum WorkspaceError {
     UnsupportedFieldConstraintMerge,
     #[error("the selected frozen representation cannot represent display names")]
     UnsupportedDisplayNameRepresentation,
+    #[error("the selected merge contract does not support durable number formats")]
+    UnsupportedNumberFormatMerge,
+    #[error("the selected merge contract does not support durable field order")]
+    UnsupportedFieldOrderMerge,
+    #[error("the field order for schema {schema} must name every field exactly once")]
+    InvalidFieldOrder { schema: SchemaId },
+    #[error("invalid number format: {source}")]
+    InvalidNumberFormat {
+        #[source]
+        source: NumberFormatError,
+    },
     #[error("unsupported semantic conflict contract '{contract}'")]
     UnsupportedSemanticConflictContract { contract: String },
     #[error("{role} keyed grouped-sum definitions are invalid: {source}")]
@@ -732,7 +763,8 @@ pub fn inspect_document(
             id: schema.id.clone(),
             key: schema.key.clone(),
             display_name: schema.display_name.clone(),
-            fields: schema.fields.values().cloned().collect(),
+            field_order: schema.field_order.clone(),
+            fields: schema.ordered_fields().cloned().collect(),
         })
         .collect();
     let entities = document
@@ -770,14 +802,14 @@ pub fn analyze_field(
     let index = AddressIndex::build(document)?;
     let address = index.field_address(document, field)?;
     let formula_source = match &stored_value {
-        Value::Formula(expression) => {
-            Some(project_expression(document, expression).map_err(|source| {
+        Value::Formula(expression) => Some(
+            project_expression(document, field, expression).map_err(|source| {
                 WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,
                 }
-            })?)
-        }
+            })?,
+        ),
         Value::Number(_)
         | Value::Text(_)
         | Value::Boolean(_)
@@ -1020,6 +1052,8 @@ pub fn merge_documents(
         MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange => {
             Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
         }
+        MergeOutcome::UnsupportedNumberFormat => Err(WorkspaceError::UnsupportedNumberFormatMerge),
+        MergeOutcome::UnsupportedFieldOrder => Err(WorkspaceError::UnsupportedFieldOrderMerge),
         MergeOutcome::UnsupportedDisplayName => {
             Err(WorkspaceError::UnsupportedDisplayNameRepresentation)
         }
@@ -1090,6 +1124,9 @@ pub fn merge_documents_v2(
             })))
         }
         MergeOutcomeV2::Conflicted(conflicts) => Ok(WorkspaceMergeOutcomeV2::Conflicted(conflicts)),
+        MergeOutcomeV2::UnsupportedNumberFormat => {
+            Err(WorkspaceError::UnsupportedNumberFormatMerge)
+        }
         MergeOutcomeV2::UnsupportedKeyedGroupedSumDefinitionChange => {
             Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
         }
@@ -1266,14 +1303,14 @@ pub fn explain_field(
         .value(&field)
         .map_or_else(|| format_value(document, value), format_number);
     let expression = match value {
-        Value::Formula(expression) => {
-            Some(project_expression(document, expression).map_err(|source| {
+        Value::Formula(expression) => Some(
+            project_expression(document, &field, expression).map_err(|source| {
                 WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,
                 }
-            })?)
-        }
+            })?,
+        ),
         _ => None,
     };
     let dependencies = calculation
@@ -1350,9 +1387,26 @@ pub fn set_formula(
 ) -> Result<EditPreview, WorkspaceError> {
     let field = document.resolve_field(address)?;
     let expression = bind_formula_update(document, &field, input)?;
-    let value = Value::Formula(expression);
-    let edited = field_value_candidate(document, &field, &value)?;
+    let edited = formula_update_candidate(document, &field, &expression)?;
     finalize_edit(document, edited)
+}
+
+/// Install an authored formula: over the current value, or into a blank
+/// optional Number cell through the same narrow install as a restored one.
+pub(crate) fn formula_update_candidate(
+    document: &Document,
+    field: &FieldRef,
+    expression: &Expression,
+) -> Result<Document, WorkspaceError> {
+    let absent = document
+        .entities
+        .get(&field.entity)
+        .is_some_and(|entity| !entity.fields.contains_key(&field.field));
+    if absent {
+        formula_restore_candidate(document, field, expression)
+    } else {
+        field_value_candidate(document, field, &Value::Formula(expression.clone()))
+    }
 }
 
 /// Admit formula authoring into one complete typed bound expression without
@@ -1364,6 +1418,7 @@ pub(crate) fn bind_formula_update(
 ) -> Result<Expression, WorkspaceError> {
     let unbound = parse_expression(input).map_err(|source| WorkspaceError::InvalidFormula {
         field: field.clone(),
+        input: input.to_owned(),
         source,
     })?;
     bind_formula_update_unbound(document, field, &unbound)
@@ -1376,11 +1431,12 @@ pub(crate) fn bind_formula_update_unbound(
 ) -> Result<Expression, WorkspaceError> {
     formula_update_target_rule(document, field)?;
 
-    let expression =
-        bind_expression(document, unbound).map_err(|source| WorkspaceError::FormulaBinding {
+    let expression = bind_expression(document, field, unbound).map_err(|source| {
+        WorkspaceError::FormulaBinding {
             field: field.clone(),
             source: Box::new(source),
-        })?;
+        }
+    })?;
     Ok(expression)
 }
 
@@ -1593,7 +1649,13 @@ pub fn remove_entity(
             entity
                 .fields
                 .iter()
-                .filter(|(_, value)| value_references_entity(value, &target_id))
+                .filter(|(field_id, value)| {
+                    value_references_entity(
+                        value,
+                        &FieldRef::new(entity_id.clone(), (*field_id).clone()),
+                        &target_id,
+                    )
+                })
                 .map(|(field_id, _)| FieldRef::new(entity_id.clone(), field_id.clone()))
         })
         .collect::<BTreeSet<_>>()
@@ -1639,46 +1701,49 @@ fn validate_key(key: &str) -> Result<(), ()> {
 
 fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, target: &EntityId) {
     match expression {
-        Expression::Number(_) => {}
         Expression::Reference(reference) => {
             if &reference.entity == source {
                 reference.entity = target.clone();
             }
         }
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            rewrite_expression_entity(left, source, target);
-            rewrite_expression_entity(right, source, target);
+        // A same-row reference follows its owner and a column total names a
+        // schema, so rebasing an entity never rewrites either; a literal has
+        // nothing to rebase.
+        Expression::Number(_)
+        | Expression::SameRowReference(_)
+        | Expression::ColumnTotal(_)
+        | Expression::ColumnAggregate { .. } => {}
+        _ => {
+            for child in expression.children_mut() {
+                rewrite_expression_entity(child, source, target);
+            }
         }
     }
 }
 
-fn value_references_entity(value: &Value, target: &EntityId) -> bool {
+fn value_references_entity(value: &Value, owner: &FieldRef, target: &EntityId) -> bool {
     match value {
         Value::Reference(reference) => reference == target,
-        Value::Formula(expression) => expression_references_entity(expression, target),
+        Value::Formula(expression) => expression_references_entity(expression, owner, target),
         Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => false,
     }
 }
 
-fn expression_references_entity(expression: &Expression, target: &EntityId) -> bool {
-    match expression {
-        Expression::Number(_) => false,
-        Expression::Reference(reference) => &reference.entity == target,
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            expression_references_entity(left, target)
-                || expression_references_entity(right, target)
-        }
-    }
+// Callers use this to refuse removing `target` while a formula still reads it.
+// A same-row reference reports the owner's entity because that is the row it
+// resolves to; `remove_entity` excludes the target's own formulas from the
+// check, so a formula on the removed entity never blocks its own removal. A
+// column total names a schema column rather than a row, so it reports no
+// entity dependency.
+fn expression_references_entity(
+    expression: &Expression,
+    owner: &FieldRef,
+    target: &EntityId,
+) -> bool {
+    expression
+        .reference_uses(owner)
+        .iter()
+        .any(|(reference, _)| &reference.entity == target)
 }
 
 pub(crate) fn field_value_candidate(
@@ -1745,14 +1810,15 @@ fn check_field_value_candidate(
         });
     }
     if let Value::Formula(expression) = value {
-        project_expression(document, expression).map_err(|source| match source {
+        project_expression(document, field, expression).map_err(|source| match source {
             CanonicalAuthoringProjectionError::Complexity(source) => {
                 WorkspaceError::ExpressionComplexity {
                     field: field.clone(),
                     source,
                 }
             }
-            source @ CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. } => {
+            source @ (CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. }
+            | CanonicalAuthoringProjectionError::UnresolvableBoundColumns { .. }) => {
                 WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,
@@ -1906,9 +1972,11 @@ pub(crate) fn formula_update_target_rule(
     field: &FieldRef,
 ) -> Result<(), WorkspaceError> {
     let definition = field_definition(document, field)?;
-    if !document.entities[&field.entity]
-        .fields
-        .contains_key(&field.field)
+    // A blank optional cell is a valid target; a required one cannot be blank.
+    if definition.required
+        && !document.entities[&field.entity]
+            .fields
+            .contains_key(&field.field)
     {
         return Err(WorkspaceError::MissingField {
             field: field.clone(),
@@ -1955,6 +2023,53 @@ pub(crate) fn formula_inverse_restore_candidate(
     entity
         .fields
         .insert(field.field.clone(), Value::Number(value));
+    Ok(candidate)
+}
+
+/// Build the narrow restore candidate for one host-cleared formula cell.
+///
+/// Formula initialization stays prohibited on the generic value path. This
+/// path reinstalls one already-admitted formula over an absent optional Number
+/// slot so one bounded session Undo can restore the formula that a clear
+/// removed.
+pub(crate) fn formula_restore_candidate(
+    document: &Document,
+    field: &FieldRef,
+    expression: &Expression,
+) -> Result<Document, WorkspaceError> {
+    let entity =
+        document
+            .entities
+            .get(&field.entity)
+            .ok_or_else(|| WorkspaceError::MissingEntityId {
+                entity: field.entity.clone(),
+            })?;
+    let definition = field_definition(document, field)?;
+    if definition.field_type != FieldType::Number {
+        return Err(WorkspaceError::NonNumericFormulaField {
+            field: field.clone(),
+        });
+    }
+    if definition.required {
+        return Err(WorkspaceError::MissingField {
+            field: field.clone(),
+        });
+    }
+    if entity.fields.contains_key(&field.field) {
+        return Err(WorkspaceError::NoChange {
+            field: field.clone(),
+        });
+    }
+    preflight_formula_structures(document)?;
+    let mut candidate = document.clone();
+    let entity = candidate.entities.get_mut(&field.entity).ok_or_else(|| {
+        WorkspaceError::MissingEntityId {
+            entity: field.entity.clone(),
+        }
+    })?;
+    entity
+        .fields
+        .insert(field.field.clone(), Value::Formula(expression.clone()));
     Ok(candidate)
 }
 
@@ -2118,6 +2233,12 @@ fn formula_diagnostics(
         }
         let subject = SemanticSubject::EntityField(formula.clone());
         let diagnostic = match failure {
+            CalculationFailure::TypeMismatch => formula_diagnostic(
+                diagnostic_codes::FORMULA_TYPE_MISMATCH,
+                vec![subject],
+                path,
+                "formula has incompatible Number and condition types".to_owned(),
+            ),
             CalculationFailure::InvalidExpression { error } => formula_diagnostic(
                 diagnostic_codes::FORMULA_STRUCTURAL,
                 vec![subject],
@@ -2140,6 +2261,9 @@ fn formula_diagnostics(
                 };
                 diagnostic
             }
+            CalculationFailure::InvalidColumn { columns } => {
+                invalid_column_diagnostic(formula, path.clone(), columns)
+            }
             CalculationFailure::Cycle { members } => formula_diagnostic(
                 diagnostic_codes::FORMULA_CYCLE,
                 members
@@ -2153,6 +2277,12 @@ fn formula_diagnostics(
             CalculationFailure::FailedDependencies { .. } => {
                 unreachable!("failed dependencies are projected after primary failures")
             }
+            CalculationFailure::EmptyAggregate => formula_diagnostic(
+                diagnostic_codes::FORMULA_AGGREGATE_EMPTY,
+                vec![subject],
+                path,
+                format!("formula '{formula}' reads an empty aggregate"),
+            ),
             CalculationFailure::DivisionByZero => formula_diagnostic(
                 diagnostic_codes::FORMULA_DIVISION_BY_ZERO,
                 vec![subject],
@@ -2313,6 +2443,37 @@ fn invalid_reference_diagnostic(
     diagnostic
 }
 
+fn invalid_column_diagnostic(
+    formula: &FieldRef,
+    path: String,
+    columns: &BTreeMap<ColumnRef, ColumnFailure>,
+) -> Diagnostic {
+    let mut diagnostic = formula_diagnostic(
+        diagnostic_codes::FORMULA_INVALID_REFERENCES,
+        vec![SemanticSubject::EntityField(formula.clone())],
+        path,
+        format!("formula '{formula}' has invalid columns"),
+    )
+    .with_related_subjects(
+        columns
+            .keys()
+            .map(|column| SemanticSubject::SchemaField {
+                schema: column.schema.clone(),
+                field: column.field.clone(),
+            })
+            .collect(),
+    );
+    for (column, failure) in columns {
+        let fact = match failure {
+            ColumnFailure::MissingSchema => "missing_column_schema",
+            ColumnFailure::MissingField => "missing_column_field",
+            ColumnFailure::NonNumeric => "non_numeric_column",
+        };
+        diagnostic = diagnostic.with_fact(DiagnosticFact::new(fact, column.to_string()));
+    }
+    diagnostic
+}
+
 fn formula_diagnostic(
     code: DiagnosticCode,
     subjects: Vec<SemanticSubject>,
@@ -2333,11 +2494,14 @@ fn formula_prerequisites_available(
         return false;
     }
     match failure {
-        CalculationFailure::InvalidExpression { .. }
+        CalculationFailure::TypeMismatch
+        | CalculationFailure::InvalidExpression { .. }
         | CalculationFailure::InvalidReferences { .. }
         | CalculationFailure::FailedDependencies { .. }
         | CalculationFailure::DivisionByZero
-        | CalculationFailure::NonFiniteResult => true,
+        | CalculationFailure::EmptyAggregate
+        | CalculationFailure::NonFiniteResult
+        | CalculationFailure::InvalidColumn { .. } => true,
         CalculationFailure::Cycle { members } => members
             .iter()
             .all(|member| field_prerequisites_available(document, member, &blockers.values)),
@@ -2462,7 +2626,7 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
         for (field_id, value) in &entity.fields {
             if let Value::Formula(expression) = value {
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
-                project_expression(document, expression).map_err(|source| {
+                project_expression(document, &field, expression).map_err(|source| {
                     WorkspaceError::FormulaProjection {
                         field: field.clone(),
                         source,
@@ -2499,11 +2663,29 @@ fn drop_expression_iteratively(expression: Expression) {
             | Expression::Multiply { left, right }
             | Expression::Divide { left, right }
             | Expression::Minimum { left, right }
-            | Expression::Maximum { left, right } => {
+            | Expression::Maximum { left, right }
+            | Expression::Compare { left, right, .. } => {
                 stack.push(*right);
                 stack.push(*left);
             }
-            Expression::Number(_) | Expression::Reference(_) => {}
+            Expression::If {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                stack.push(*else_value);
+                stack.push(*then_value);
+                stack.push(*condition);
+            }
+            Expression::And(arguments) | Expression::Or(arguments) => stack.extend(arguments),
+            Expression::Not(value)
+            | Expression::Round { value, .. }
+            | Expression::IsBlank(value) => stack.push(*value),
+            Expression::Number(_)
+            | Expression::Reference(_)
+            | Expression::SameRowReference(_)
+            | Expression::ColumnTotal(_)
+            | Expression::ColumnAggregate { .. } => {}
         }
     }
 }
@@ -2760,6 +2942,7 @@ fn game_balance_schemas(
                     id: field_id,
                     key: FieldKey::from(field_key),
                     display_name: None,
+                    number_format: None,
                     field_type,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -2769,6 +2952,7 @@ fn game_balance_schemas(
         schemas.insert(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id,
                 key: SchemaKey::from(schema_key),
                 display_name: None,

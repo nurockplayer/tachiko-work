@@ -31,6 +31,7 @@ fn number_field(id: &str, required: bool) -> FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
         display_name: None,
+        number_format: None,
         field_type: FieldType::Number,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -42,6 +43,7 @@ fn text_field(id: &str, required: bool) -> FieldDefinition {
         id: FieldId::from(id),
         key: FieldKey::from(id),
         display_name: None,
+        number_format: None,
         field_type: FieldType::Text,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -85,6 +87,7 @@ fn analysis_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("weapons"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("weapons"),
                 key: SchemaKey::from("weapons"),
                 display_name: None,
@@ -123,6 +126,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
     document.schemas.insert(
         SchemaId::from("categories"),
         Schema {
+            field_order: None,
             id: SchemaId::from("categories"),
             key: SchemaKey::from("categories"),
             display_name: None,
@@ -132,6 +136,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
     document.schemas.insert(
         SchemaId::from("characters"),
         Schema {
+            field_order: None,
             id: SchemaId::from("characters"),
             key: SchemaKey::from("characters"),
             display_name: None,
@@ -144,6 +149,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
             id: FieldId::from("category_ref"),
             key: FieldKey::from("category_ref"),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Reference {
                 schema: SchemaId::from("categories"),
             },
@@ -175,6 +181,7 @@ fn date_analysis_document() -> Document {
             id: FieldId::from("published"),
             key: FieldKey::from("published"),
             display_name: None,
+            number_format: None,
             field_type: FieldType::Date,
             required: true,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -893,6 +900,7 @@ fn authorized_target_domain_and_type_errors_remain_structured() {
     other_domain.schemas.insert(
         SchemaId::from("characters"),
         Schema {
+            field_order: None,
             id: SchemaId::from("characters"),
             key: SchemaKey::from("characters"),
             display_name: None,

@@ -6,6 +6,14 @@ use super::{
     ScalarEditInput, StoredValueProjection,
 };
 use serde::{Deserialize, Serialize};
+
+fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
+    match error {
+        super::interop_adapter::InteropError::Invalid(message) => super::tracker_error(&message),
+        super::interop_adapter::InteropError::Capacity(capacity) => capacity.into(),
+    }
+}
+
 use tachiko_workspace_engine::patch_lifecycle::SemanticCommand;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -87,7 +95,8 @@ use tachiko_workspace_engine::patch_lifecycle::{
     ProposalRequest, SemanticPatchBody, SemanticRevision,
 };
 use tachiko_workspace_engine::{
-    Date, Document, EntityId, FieldId, FieldRef, FieldType, Number, Value,
+    ColumnAggregateFunction, ColumnRef, Date, Document, EntityId, FieldId, FieldRef, FieldType,
+    Number, Value,
 };
 
 impl DesignerRuntime {
@@ -592,7 +601,8 @@ fn deduplicate(
 
 use super::interop_adapter::{
     CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS, MAX_SHEETS,
-    OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
+    OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
+    SourceWorkbook, SummaryAggregate, SummaryRow, call_argument, whole_column_argument,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use std::collections::BTreeMap;
@@ -697,6 +707,8 @@ pub struct NativeTrackerExportPresentation {
 #[serde(deny_unknown_fields)]
 pub struct NativeTrackerExportRow {
     pub entity_id: String,
+    /// One style per column, in the table's projected column order at the
+    /// export revision (as `queryTable` returns it; R4a moves change it).
     pub styles: Vec<CellStyle>,
 }
 
@@ -798,6 +810,7 @@ pub fn import_workbook(
         let (source, references) = translate_a1(
             &source,
             &metadata,
+            &workbook.sheets,
             sheet_index,
             runtime.session.export_snapshot().document(),
         )?;
@@ -865,13 +878,13 @@ fn finish_import(
     if runtime.text_capacity {
         let encoded =
             super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
-                .map_err(|error| tracker_error(&error.0))?;
-        super::interop_adapter::import_xlsx(&encoded).map_err(|error| tracker_error(&error.0))?;
+                .map_err(interop_admission_error)?;
+        super::interop_adapter::import_xlsx(&encoded).map_err(interop_admission_error)?;
         super::interop_adapter::export_csv_for_profile(
             &exported.sheets[0],
             OutputProfile::TextCapacity,
         )
-        .map_err(|error| tracker_error(&error.0))?;
+        .map_err(interop_admission_error)?;
     }
     drop(exported);
     let bootstrap = runtime.bootstrap_projection();
@@ -908,8 +921,8 @@ fn finish_import(
             candidate.export_workbook(candidate.current_revision(), &projection.metadata)?;
         let bytes =
             super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
-                .map_err(|error| tracker_error(&error.0))?;
-        super::interop_adapter::import_xlsx(&bytes).map_err(|error| tracker_error(&error.0))?;
+                .map_err(interop_admission_error)?;
+        super::interop_adapter::import_xlsx(&bytes).map_err(interop_admission_error)?;
         projection.opened = OpenedProjection {
             bootstrap: candidate.bootstrap_projection(),
             table: candidate.query_table(&candidate.default_collection)?,
@@ -935,14 +948,20 @@ fn validate_selection(
     let capacity_selection = workbook.sheets.first().is_some_and(|sheet| {
         selection.column_types.len() == 1
             && selection.column_types[0].len() == sheet.columns.len()
-            && selection.column_types[0]
-                .iter()
-                .all(|kind| matches!(kind, ImportFieldType::Text | ImportFieldType::Number))
+            && selection.column_types[0].iter().all(|kind| {
+                matches!(
+                    kind,
+                    ImportFieldType::Text
+                        | ImportFieldType::Number
+                        | ImportFieldType::Date
+                        | ImportFieldType::Boolean
+                )
+            })
             && selection.extra_columns == vec![Vec::new()]
     });
     if capacity && (!super::interop_adapter::text_capacity_shape(workbook) || !capacity_selection) {
         return Err(tracker_error(
-            "8,406-row capacity requires selected Text/Number fields and no extra columns",
+            "8,406-row capacity requires selected Text, Number, Date or Boolean fields and no extra columns",
         ));
     }
     if workbook.ledger.iter().any(|finding| finding.blocking) {
@@ -994,11 +1013,12 @@ fn validate_selection(
             formulas += row.iter().filter(|cell| cell.formula.is_some()).count();
         }
     }
-    if formulas > super::MAX_FORMULAS {
-        return Err(tracker_error(
-            "source formulas exceed the declared bounded profile",
-        ));
-    }
+    super::capacity::check_limit(
+        super::CapacityLimit::Formulas,
+        super::capacity::DEFAULT_LIMITS.formulas,
+        formulas,
+        None,
+    )?;
     if serde_json::to_vec(workbook)
         .map_err(|_| tracker_error("source workbook is not encodable"))?
         .len()
@@ -1011,7 +1031,7 @@ fn validate_selection(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // One sheet builder shares one bounded import transaction.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // One sheet builder shares one bounded import transaction.
 fn build_import_sheet(
     index: usize,
     source: &SourceSheet,
@@ -1024,6 +1044,7 @@ fn build_import_sheet(
 ) -> Result<(), DesignerError> {
     let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
     let mut schema = Schema {
+        field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from(format!("sheet_{}", index + 1)),
         display_name: None,
@@ -1040,13 +1061,32 @@ fn build_import_sheet(
         .columns
         .iter()
         .zip(&selection.column_types[index])
-        .map(|(column, kind)| (column.name.clone(), column.width, *kind))
+        .map(|(column, kind)| {
+            (
+                column.name.clone(),
+                column.width,
+                *kind,
+                column.number_format.clone(),
+            )
+        })
         .chain(
             selection.extra_columns[index]
                 .iter()
-                .map(|column| (column.name.clone(), None, column.field_type)),
+                .map(|column| (column.name.clone(), None, column.field_type, None)),
         );
-    for (column, (name, width, kind)) in columns.enumerate() {
+    for (column, (name, width, kind, number_format)) in columns.enumerate() {
+        if kind.field_type() != FieldType::Number && number_format.is_some() {
+            ledger.push(FidelityFinding {
+                category: FidelityCategory::LossyOnExport,
+                code: "number_format_not_applied".into(),
+                location: format!("{}:column {}", source.name, column + 1),
+                message: "The selected field type is not Number, so the imported XLSX display format was not stored.".into(),
+                blocking: false,
+            });
+        }
+        let number_format = (kind.field_type() == FieldType::Number)
+            .then_some(number_format)
+            .flatten();
         let id = FieldId::from(ids.generate(SemanticIdKind::Field));
         schema.fields.insert(
             id.clone(),
@@ -1057,6 +1097,7 @@ fn build_import_sheet(
                 field_type: kind.field_type(),
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
+                number_format,
             },
         );
         sheet.columns.push(InteropColumnMetadata {
@@ -1100,7 +1141,26 @@ fn build_import_sheet(
                     .fields
                     .insert(FieldId::from(sheet.columns[column].field_id.clone()), value);
             }
-            styles.push(cell.style.clone());
+            let mut style = cell.style.clone();
+            if source.columns[column].number_format.is_some()
+                && (cell.formula.is_some()
+                    || matches!(cell.value, SourceValue::Number { .. } | SourceValue::Empty))
+            {
+                // The promoted column format now owns numeric presentation in
+                // this column, blanks included (a number typed there later is
+                // the column's); retaining the source copy would bring a later
+                // cleared format back on export.
+                style.number_format = None;
+            }
+            if source.rows.len() > MAX_DATA_ROWS
+                && matches!(cell.value, SourceValue::Date { .. })
+                && style == super::interop_adapter::capacity_date_style()
+            {
+                // The large-import writer adds this one date format to every
+                // Date cell itself; capacity metadata keeps default styles.
+                style = CellStyle::default();
+            }
+            styles.push(style);
         }
         styles.resize_with(sheet.columns.len(), CellStyle::default);
         sheet.rows.push(InteropRowMetadata {
@@ -1183,9 +1243,11 @@ fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, Designe
     Ok(name)
 }
 
+#[allow(clippy::too_many_lines)] // One token loop over the bounded A1 profile.
 fn translate_a1(
     source: &str,
     metadata: &InteropMetadata,
+    sources: &[SourceSheet],
     current_sheet: usize,
     document: &Document,
 ) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
@@ -1218,12 +1280,47 @@ fn translate_a1(
                 cursor += next.len_utf8();
             }
             let token = &source[token_start..cursor];
-            if sheet_name.is_none()
-                && !token.contains('!')
-                && (token.eq_ignore_ascii_case("MIN") || token.eq_ignore_ascii_case("MAX"))
-            {
-                output.push_str(&token.to_ascii_lowercase());
-                continue;
+            if sheet_name.is_none() && !token.contains('!') {
+                let name = token.to_ascii_uppercase();
+                let aggregate = match name.as_str() {
+                    "SUM" => Some(SummaryAggregate::Total),
+                    "AVERAGE" => Some(SummaryAggregate::Average),
+                    "COUNT" => Some(SummaryAggregate::Count),
+                    _ => None,
+                };
+                if let Some(aggregate) = aggregate {
+                    let call = skip_spaces(source, cursor);
+                    if source[call..].starts_with('(') {
+                        let (argument, consumed) = call_argument(&source[call..])
+                            .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+                        match whole_column_argument(argument, current_sheet, sources) {
+                            Some((sheet_index, column)) => {
+                                output.push_str(&column_aggregate_source(
+                                    aggregate,
+                                    column,
+                                    sheet_index,
+                                    metadata,
+                                    document,
+                                    &mut references,
+                                )?);
+                                cursor = call + consumed;
+                                continue;
+                            }
+                            None => {
+                                return Err(tracker_error(
+                                    "aggregate range must cover one whole data column",
+                                ));
+                            }
+                        }
+                    }
+                }
+                if matches!(
+                    name.as_str(),
+                    "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
+                ) {
+                    output.push_str(&name.to_ascii_lowercase());
+                    continue;
+                }
             }
             let (sheet_name, address) = if let Some(name) = sheet_name {
                 (Some(name), token)
@@ -1245,11 +1342,32 @@ fn translate_a1(
                 return Err(tracker_error("invalid source formula token"));
             }
             let (column, sheet_row) = parse_a1_address(address)?;
+            let layout = &sources
+                .get(sheet_index)
+                .ok_or_else(|| tracker_error("formula worksheet is unavailable"))?
+                .layout;
+            if let Some(summary) = layout.summary_row.as_ref().filter(|summary| {
+                usize::try_from(summary.row).is_ok_and(|row| row == sheet_row + 1)
+            }) {
+                output.push_str(&column_aggregate_source(
+                    summary_cell_aggregate(summary, column)?,
+                    column,
+                    sheet_index,
+                    metadata,
+                    document,
+                    &mut references,
+                )?);
+                continue;
+            }
+            let above = usize::try_from(layout.rows_above_header)
+                .map_err(|_| tracker_error("header offset exceeds the row bound"))?;
             let row = sheet_row
-                .checked_sub(usize::from(metadata.sheets[sheet_index].has_header))
-                .ok_or_else(|| tracker_error("formula cannot bind a header cell"))?;
+                .checked_sub(above + usize::from(metadata.sheets[sheet_index].has_header))
+                .ok_or_else(|| tracker_error("formula cannot bind a header or title cell"))?;
             let reference = metadata_target(metadata, sheet_index, row, column)?;
-            require_copy_number_for_import(document, &reference)?;
+            // The shared binder checks numeric uses after translation, when it
+            // can distinguish an ISBLANK presence probe from a numeric operand.
+            declared_type(document, &reference)?;
             let entity = &document.entities[&reference.entity];
             let field = &document.schemas[&entity.schema].fields[&reference.field];
             output.push('[');
@@ -1286,21 +1404,69 @@ fn translate_a1(
     Ok((output, references))
 }
 
-fn require_copy_number_for_import(
-    document: &Document,
-    reference: &FieldRef,
-) -> Result<(), DesignerError> {
-    if declared_type(document, reference)? != &FieldType::Number
-        || !matches!(
-            stored_value(document, reference)?,
-            Some(Value::Number(_) | Value::Formula(_))
-        )
-    {
-        return Err(tracker_error(
-            "source formula reference must resolve to a present numeric field",
-        ));
+fn skip_spaces(source: &str, mut cursor: usize) -> usize {
+    while let Some(character) = source[cursor..].chars().next() {
+        if !character.is_whitespace() {
+            break;
+        }
+        cursor += character.len_utf8();
     }
-    Ok(())
+    cursor
+}
+
+/// The aggregate a source formula reads from one imported summary-row cell.
+fn summary_cell_aggregate(
+    summary: &SummaryRow,
+    column: usize,
+) -> Result<SummaryAggregate, DesignerError> {
+    summary
+        .cells
+        .iter()
+        .find(|cell| usize::try_from(cell.column).is_ok_and(|index| index == column))
+        .map(|cell| cell.aggregate)
+        .ok_or_else(|| {
+            tracker_error("formula refers to a cell of a summary row that is not imported")
+        })
+}
+
+/// The semantic spelling of one sheet column's aggregate, as
+/// `[schema.field:total]`, binding every row of that column.
+fn column_aggregate_source(
+    aggregate: SummaryAggregate,
+    column: usize,
+    sheet_index: usize,
+    metadata: &InteropMetadata,
+    document: &Document,
+    references: &mut BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
+    let sheet = metadata
+        .sheets
+        .get(sheet_index)
+        .ok_or_else(|| tracker_error("formula worksheet is unavailable"))?;
+    let field_id = &sheet
+        .columns
+        .get(column)
+        .ok_or_else(|| tracker_error("formula column is outside source data"))?
+        .field_id;
+    let schema = document
+        .schemas
+        .get(&SchemaId::from(sheet.schema_id.clone()))
+        .ok_or_else(|| tracker_error("formula worksheet schema is unavailable"))?;
+    let field = schema
+        .fields
+        .get(&FieldId::from(field_id.clone()))
+        .ok_or_else(|| tracker_error("formula field is unavailable"))?;
+    // Binding after every cell formula of the column keeps a formula column
+    // bound before a total that reads it.
+    for row in &sheet.rows {
+        references.insert(FieldRef::new(row.entity_id.clone(), field_id.clone()));
+    }
+    Ok(format!(
+        "[{}.{}:{}]",
+        schema.key.as_str(),
+        field.key.as_str(),
+        aggregate.suffix()
+    ))
 }
 
 fn parse_a1_address(address: &str) -> Result<(usize, usize), DesignerError> {
@@ -1362,6 +1528,13 @@ pub(crate) enum ImportedOutput<'a> {
     Projection,
     Csv(&'a str),
     Xlsx,
+}
+
+/// A durable column order (R4a) outranks the source presentation order.
+fn sort_by_field_order(schema: &Schema, columns: &mut [InteropColumnMetadata]) {
+    if let Some(order) = &schema.field_order {
+        columns.sort_by_key(|column| order.iter().position(|id| id.as_str() == column.field_id));
+    }
 }
 
 /// Reconcile source presentation with current stable identities. Source slots
@@ -1447,6 +1620,7 @@ fn current_import_metadata(
                 width: None,
             });
         }
+        sort_by_field_order(schema, &mut sheet.columns);
         if sheet.columns != source_columns
             || sheet
                 .rows
@@ -1852,6 +2026,14 @@ fn validate_metadata_envelope(
     Ok(capacity)
 }
 
+/// Capacity columns follow id order (the stored source) or the durable column
+/// order (R4a), which reconciled exports use.
+fn capacity_columns_in_order(sheet: &InteropSheetMetadata, schema: &Schema) -> bool {
+    let columns = || sheet.columns.iter().map(|column| column.field_id.as_str());
+    columns().eq(schema.fields.keys().map(FieldId::as_str))
+        || columns().eq(schema.ordered_fields().map(|field| field.id.as_str()))
+}
+
 fn validate_capacity_metadata(
     document: &Document,
     metadata: &InteropMetadata,
@@ -1871,11 +2053,7 @@ fn validate_capacity_metadata(
             .iter()
             .map(|row| row.entity_id.as_str())
             .eq(document.entities.keys().map(EntityId::as_str))
-        || !sheet
-            .columns
-            .iter()
-            .map(|column| column.field_id.as_str())
-            .eq(schema.fields.keys().map(FieldId::as_str))
+        || !capacity_columns_in_order(sheet, schema)
     {
         return Err(tracker_error(
             "capacity metadata must preserve canonical row and column identity order",
@@ -1903,16 +2081,17 @@ fn validate_capacity_metadata(
             .map(|column| SourceColumn {
                 name: column.name.clone(),
                 width: None,
+                number_format: None,
             })
             .collect(),
         rows: Vec::new(),
+        layout: SourceLayout::default(),
     };
     let workbook = SourceWorkbook {
         sheets: vec![header],
         ledger: Vec::new(),
     };
-    super::interop_adapter::validate_text_capacity(&workbook)
-        .map_err(|error| tracker_error(&error.0))
+    super::interop_adapter::validate_text_capacity(&workbook).map_err(interop_admission_error)
 }
 
 impl DesignerRuntime {
@@ -2096,9 +2275,11 @@ impl DesignerRuntime {
                     .map(|column| SourceColumn {
                         name: column.key.clone(),
                         width: None,
+                        number_format: None,
                     })
                     .collect(),
                 rows,
+                layout: SourceLayout::default(),
             }],
             ledger: vec![FidelityFinding {
                 category: FidelityCategory::Converted,
@@ -2128,6 +2309,7 @@ impl DesignerRuntime {
         finalize_export_workbook(document, workbook, profile)
     }
 
+    #[allow(clippy::too_many_lines)] // One metadata-to-workbook rebuild, column formats included.
     fn rebuild_workbook_from_metadata(
         &self,
         expected_revision: &str,
@@ -2140,6 +2322,9 @@ impl DesignerRuntime {
         // The caller holds the exact immutable snapshot already used for
         // metadata admission. No second owned document is needed here.
         let mut addresses = BTreeMap::new();
+        // One whole-column range per exported column, so a column total keeps
+        // meaning every exported row instead of the rows present today.
+        let mut columns = BTreeMap::new();
         // Capacity admission excludes formulas, the sole consumers of A1
         // addresses. Other profiles retain their full reference index.
         for sheet in metadata
@@ -2147,12 +2332,34 @@ impl DesignerRuntime {
             .iter()
             .filter(|_| profile != OutputProfile::TextCapacity && !values_only)
         {
-            let present = sheet.rows.iter().filter(|row| {
-                document
-                    .entities
-                    .contains_key(&EntityId::from(row.entity_id.clone()))
-            });
-            for (row_index, row) in present.enumerate() {
+            let present: Vec<_> = sheet
+                .rows
+                .iter()
+                .filter(|row| {
+                    document
+                        .entities
+                        .contains_key(&EntityId::from(row.entity_id.clone()))
+                })
+                .collect();
+            let first = 1 + usize::from(sheet.has_header);
+            let last = present.len() + usize::from(sheet.has_header);
+            for (column, definition) in sheet.columns.iter().enumerate() {
+                let letters = column_letters(column);
+                // An exported table without rows maps its columns to no range.
+                let range = if present.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "'{}'!${letters}${first}:${letters}${last}",
+                        sheet.name.replace('\'', "''")
+                    )
+                };
+                columns.insert(
+                    ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
+                    range,
+                );
+            }
+            for (row_index, row) in present.iter().enumerate() {
                 for (column, definition) in sheet.columns.iter().enumerate() {
                     addresses.insert(
                         FieldRef::new(row.entity_id.clone(), definition.field_id.clone()),
@@ -2187,7 +2394,9 @@ impl DesignerRuntime {
                         let formula = if values_only {
                             None
                         } else {
-                            Some(export_expression(expression, &addresses)?)
+                            Some(export_expression(
+                                expression, &target, &addresses, &columns,
+                            )?)
                         };
                         if formula
                             .as_ref()
@@ -2222,9 +2431,21 @@ impl DesignerRuntime {
                     .map(|column| SourceColumn {
                         name: column.name.clone(),
                         width: if values_only { None } else { column.width },
+                        number_format: if values_only || profile == OutputProfile::TextCapacity {
+                            None
+                        } else {
+                            document
+                                .schemas
+                                .get(&SchemaId::from(sheet.schema_id.clone()))
+                                .and_then(|schema| {
+                                    schema.fields.get(&FieldId::from(column.field_id.clone()))
+                                })
+                                .and_then(|field| field.number_format.clone())
+                        },
                     })
                     .collect(),
                 rows,
+                layout: SourceLayout::default(),
             });
         }
         let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
@@ -2242,7 +2463,7 @@ fn finalize_export_workbook(
 ) -> Result<SourceWorkbook, DesignerError> {
     append_saved_export_findings(document, &mut workbook);
     super::interop_adapter::validate_output_for_profile(&workbook, profile)
-        .map_err(|error| tracker_error(&error.0))?;
+        .map_err(interop_admission_error)?;
     Ok(workbook)
 }
 
@@ -2620,6 +2841,14 @@ fn native_budget_metadata(
     Ok(InteropMetadata { version: 1, sheets })
 }
 
+/// The stock Tracker columns in their durable order (R4a).
+fn tracker_column_order(schema: &Schema) -> Vec<&str> {
+    schema.field_order.as_ref().map_or_else(
+        || vec!["task", "estimate", "done"],
+        |order| order.iter().map(FieldId::as_str).collect(),
+    )
+}
+
 fn native_tracker_metadata(
     document: &Document,
     presentation: &NativeTrackerExportPresentation,
@@ -2689,15 +2918,16 @@ fn native_tracker_metadata(
             "native Tracker export must map every accepted row exactly once",
         ));
     }
+    let order = tracker_column_order(schema);
     Ok(InteropMetadata {
         version: 1,
         sheets: vec![InteropSheetMetadata {
             schema_id: "tracker".to_owned(),
             name: "Tracker".to_owned(),
             has_header: true,
-            columns: fields
+            columns: order
                 .iter()
-                .map(|(id, _)| InteropColumnMetadata {
+                .map(|id| InteropColumnMetadata {
                     field_id: (*id).to_owned(),
                     name: (*id).to_owned(),
                     width: None,
@@ -2746,11 +2976,11 @@ pub(crate) fn validate_saved_open_closure(
         OutputProfile::Shared
     };
     let encoded = super::interop_adapter::export_xlsx_for_profile(&workbook, profile)
-        .map_err(|error| tracker_error(&error.0))?;
-    super::interop_adapter::import_xlsx(&encoded).map_err(|error| tracker_error(&error.0))?;
+        .map_err(interop_admission_error)?;
+    super::interop_adapter::import_xlsx(&encoded).map_err(interop_admission_error)?;
     for sheet in &workbook.sheets {
         super::interop_adapter::export_csv_for_profile(sheet, profile)
-            .map_err(|error| tracker_error(&error.0))?;
+            .map_err(interop_admission_error)?;
     }
     Ok(())
 }
@@ -2797,40 +3027,133 @@ pub(crate) fn export_scalar(value: Option<&Value>) -> Result<SourceValue, Design
 
 fn export_expression(
     expression: &Expression,
+    owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
     match expression {
         Expression::Number(number) => Ok(number.get().to_string()),
+        Expression::SameRowReference(field) => addresses
+            .get(&FieldRef::new(owner.entity.clone(), field.clone()))
+            .cloned()
+            .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::Reference(reference) => addresses
             .get(reference)
             .cloned()
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
-        Expression::Add { left, right } => export_binary(left, "+", right, addresses),
-        Expression::Subtract { left, right } => export_binary(left, "-", right, addresses),
-        Expression::Multiply { left, right } => export_binary(left, "*", right, addresses),
-        Expression::Divide { left, right } => export_binary(left, "/", right, addresses),
+        Expression::ColumnTotal(column) => export_column("SUM", column, columns),
+        Expression::ColumnAggregate { function, column } => {
+            let name = match function {
+                ColumnAggregateFunction::Average => "AVERAGE",
+                ColumnAggregateFunction::Count => "COUNT",
+                // Excel's range MIN/MAX is 0 over an all-blank column where
+                // Tachiko's fails, and import refuses it, so neither exports.
+                ColumnAggregateFunction::Minimum | ColumnAggregateFunction::Maximum => {
+                    return Err(tracker_error(
+                        "column minimum and maximum are outside the export mapping",
+                    ));
+                }
+            };
+            export_column(name, column, columns)
+        }
+        Expression::Add { left, right } => {
+            export_binary(left, "+", right, owner, addresses, columns)
+        }
+        Expression::Subtract { left, right } => {
+            export_binary(left, "-", right, owner, addresses, columns)
+        }
+        Expression::Multiply { left, right } => {
+            export_binary(left, "*", right, owner, addresses, columns)
+        }
+        Expression::Divide { left, right } => {
+            export_binary(left, "/", right, owner, addresses, columns)
+        }
         Expression::Minimum { left, right } => Ok(format!(
             "MIN({},{})",
-            export_expression(left, addresses)?,
-            export_expression(right, addresses)?
+            export_expression(left, owner, addresses, columns)?,
+            export_expression(right, owner, addresses, columns)?
         )),
         Expression::Maximum { left, right } => Ok(format!(
             "MAX({},{})",
-            export_expression(left, addresses)?,
-            export_expression(right, addresses)?
+            export_expression(left, owner, addresses, columns)?,
+            export_expression(right, owner, addresses, columns)?
+        )),
+        Expression::Compare {
+            operator,
+            left,
+            right,
+        } => export_binary(left, operator.as_str(), right, owner, addresses, columns),
+        Expression::If {
+            condition,
+            then_value,
+            else_value,
+        } => Ok(format!(
+            "IF({},{},{})",
+            export_expression(condition, owner, addresses, columns)?,
+            export_expression(then_value, owner, addresses, columns)?,
+            export_expression(else_value, owner, addresses, columns)?
+        )),
+        Expression::And(conditions) => {
+            export_function("AND", conditions, owner, addresses, columns)
+        }
+        Expression::Or(conditions) => export_function("OR", conditions, owner, addresses, columns),
+        Expression::Not(condition) => Ok(format!(
+            "NOT({})",
+            export_expression(condition, owner, addresses, columns)?
+        )),
+        Expression::Round { value, digits } => Ok(format!(
+            "ROUND({},{digits})",
+            export_expression(value, owner, addresses, columns)?
+        )),
+        Expression::IsBlank(reference) => Ok(format!(
+            "ISBLANK({})",
+            export_expression(reference, owner, addresses, columns)?
         )),
     }
+}
+
+/// A column total exports as the aggregate over the column's whole exported
+/// range, the same meaning the semantic node keeps.
+fn export_column(
+    name: &str,
+    column: &ColumnRef,
+    columns: &BTreeMap<ColumnRef, String>,
+) -> Result<String, DesignerError> {
+    match columns.get(column).map(String::as_str) {
+        Some(range) if !range.is_empty() => Ok(format!("{name}({range})")),
+        // A column of a table outside this export, or of an exported table
+        // without rows, has no range that would follow rows added later.
+        _ => Err(tracker_error(
+            "column totals are outside the export mapping",
+        )),
+    }
+}
+
+fn export_function(
+    name: &str,
+    arguments: &[Expression],
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
+) -> Result<String, DesignerError> {
+    let mut exported = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        exported.push(export_expression(argument, owner, addresses, columns)?);
+    }
+    Ok(format!("{name}({})", exported.join(",")))
 }
 fn export_binary(
     left: &Expression,
     operator: &str,
     right: &Expression,
+    owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
     Ok(format!(
         "({}{}{})",
-        export_expression(left, addresses)?,
+        export_expression(left, owner, addresses, columns)?,
         operator,
-        export_expression(right, addresses)?
+        export_expression(right, owner, addresses, columns)?
     ))
 }

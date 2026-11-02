@@ -39,6 +39,7 @@ fields_captures=(
   "${check_dir}/optional-native-fields.json.editability-boolean"
   "${check_dir}/optional-native-fields.json.editability-date"
   "${check_dir}/optional-native-fields.json.editability-text"
+  "${check_dir}/optional-native-fields.json.requiredness"
 )
 persistence_captures=()
 for sole in false true; do

@@ -87,6 +87,34 @@ graph or introduce a new type architecture. `Date` is a proleptic Gregorian
 civil date in the bounded `0001..=9999` range, canonically represented as
 `YYYY-MM-DD` without time or timezone semantics.
 
+### Per-column Number display format (R3)
+
+A FieldDefinition MAY carry `number_format` only when its FieldType is Number.
+Omission means the existing default presentation and leaves existing serialized
+Document bytes and hashes unchanged. The closed declaration is:
+
+```json
+{"decimals":2,"kind":{"type":"currency","code":"USD"},"thousands_separator":true}
+```
+
+`decimals` is an integer in 0..=10; `thousands_separator` is a boolean. `kind`
+is `{"type":"plain"}`, `{"type":"currency","code":"USD"}`, or
+`{"type":"percent"}`. Currency identifiers use the ISO-4217 spelling of three
+uppercase ASCII letters (the model checks syntax, not a changing currency registry).
+Percent renders the value multiplied by 100 and followed by `%`. This is display
+metadata: stored Numbers, formula expressions, calculated results, and constraints
+retain their existing meaning. Invalid declarations produce typed errors and
+`core.field_number_format_declaration` diagnostics during document validation.
+
+The revision-pinned `set_column_number_format` command replaces this facet;
+`null` clears it. It publishes through the ordinary schema-field lifecycle and
+records an exact inverse for Undo/Redo. The v2 canonical delta carries a
+`SchemaFieldNumberFormatChanged` fact, and complete field payloads include the
+format. Frozen v1 evidence and the existing merge contracts refuse formatted
+documents instead of discarding an unsupported facet. Collection duplication
+copies the format with the field; column removal discards it. A replacement
+column starts without a format, including when its type differs.
+
 ### Document
 
 A document is a graph containing semantic blocks.
@@ -127,6 +155,32 @@ Entities have:
 - fields
 - references
 - validation rules
+
+### Per-schema field order (R4a)
+
+A Schema MAY carry `field_order`, an ordered list of its field IDs. Omission
+(`None`) means the client's default presentation (field-id order, or a
+built-in arrangement such as the tracker's), so documents without an order keep
+their bytes and hashes. When present, the list MUST be an exact permutation of
+the schema's field IDs; otherwise validation emits `core.invalid_field_order`.
+An explicit list equal to id order is valid and distinct from omission. Presentation consumers use the order; stored values,
+formulas and constraints are unaffected.
+
+Adding a field under an explicit order appends it after the listed columns;
+without one the field takes its id position, so a RemoveSchemaField /
+AppendSchemaField pair restores a document exactly (native authoring allocates
+field IDs that sort last). Under an explicit order an exact inverse of a removal
+also restores the previous order with `SetSchemaFieldOrder`. Removing a field
+drops its ID from the order.
+Normalisation (drop stale IDs, append missing IDs in id order) runs after each
+such change.
+
+`set_schema_field_order` (the `SetSchemaFieldOrder` command) replaces the
+facet through the ordinary schema lifecycle with an exact inverse for Undo/Redo.
+The v2 canonical delta carries `SchemaFieldOrderChanged`. In merge v2 one side
+that changes the order wins; both sides changing it to different orders is a
+conflict on facet `FieldOrder`. Frozen v1 merge and semantic-delta/v1 refuse a
+reordered document with a typed error.
 
 ## Typed References
 

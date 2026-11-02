@@ -55,6 +55,7 @@ pub struct SchemaDefinitionPayload {
     pub key: SchemaKey,
     pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, FieldDefinitionPayload>,
+    pub field_order: Option<Vec<FieldId>>,
 }
 
 /// Complete immutable payload for a field definition, excluding its target ID.
@@ -65,6 +66,7 @@ pub struct FieldDefinitionPayload {
     pub field_type: FieldType,
     pub required: bool,
     pub constraint: FieldConstraint,
+    pub number_format: Option<tachiko_semantic_core::NumberFormat>,
 }
 
 /// Complete immutable payload for an entity state, excluding its target ID.
@@ -118,6 +120,11 @@ pub enum CanonicalDirectFact {
         before: Option<String>,
         after: Option<String>,
     },
+    SchemaFieldOrderChanged {
+        schema: SchemaId,
+        before: Option<Vec<FieldId>>,
+        after: Option<Vec<FieldId>>,
+    },
     SchemaFieldDisplayNameChanged {
         schema: SchemaId,
         field: FieldId,
@@ -151,6 +158,12 @@ pub enum CanonicalDirectFact {
         field: FieldId,
         before: bool,
         after: bool,
+    },
+    SchemaFieldNumberFormatChanged {
+        schema: SchemaId,
+        field: FieldId,
+        before: Option<tachiko_semantic_core::NumberFormat>,
+        after: Option<tachiko_semantic_core::NumberFormat>,
     },
     SchemaFieldConstraintChanged {
         schema: SchemaId,
@@ -228,6 +241,7 @@ impl CanonicalDirectFact {
             F::SchemaDeleted { schema, .. } => (1, vec![schema.as_str()], 1),
             F::SchemaKeyChanged { schema, .. } => (1, vec![schema.as_str()], 2),
             F::SchemaDisplayNameChanged { schema, .. } => (1, vec![schema.as_str()], 3),
+            F::SchemaFieldOrderChanged { schema, .. } => (1, vec![schema.as_str()], 4),
             F::SchemaFieldDisplayNameChanged { schema, field, .. } => {
                 (2, vec![schema.as_str(), field.as_str()], 6)
             }
@@ -248,6 +262,9 @@ impl CanonicalDirectFact {
             }
             F::SchemaFieldConstraintChanged { schema, field, .. } => {
                 (2, vec![schema.as_str(), field.as_str()], 5)
+            }
+            F::SchemaFieldNumberFormatChanged { schema, field, .. } => {
+                (2, vec![schema.as_str(), field.as_str()], 7)
             }
             F::EntityCreated { entity, .. } => (3, vec![entity.as_str()], 0),
             F::EntityDeleted { entity, .. } => (3, vec![entity.as_str()], 1),
@@ -373,6 +390,7 @@ fn schema_payload(schema: &tachiko_semantic_core::Schema) -> SchemaDefinitionPay
             .iter()
             .map(|(id, field)| (id.clone(), field_payload(field)))
             .collect(),
+        field_order: schema.field_order.clone(),
     }
 }
 
@@ -383,6 +401,7 @@ fn field_payload(field: &FieldDefinition) -> FieldDefinitionPayload {
         field_type: field.field_type.clone(),
         required: field.required,
         constraint: field.constraint.clone(),
+        number_format: field.number_format.clone(),
     }
 }
 
@@ -503,6 +522,13 @@ fn compare_schema(
             after: after.display_name.clone(),
         });
     }
+    if before.field_order != after.field_order {
+        facts.push(F::SchemaFieldOrderChanged {
+            schema: id.clone(),
+            before: before.field_order.clone(),
+            after: after.field_order.clone(),
+        });
+    }
     let fields = before
         .fields
         .keys()
@@ -551,6 +577,14 @@ fn compare_schema(
                         field: field_id.clone(),
                         before: old.required,
                         after: new.required,
+                    });
+                }
+                if old.number_format != new.number_format {
+                    facts.push(F::SchemaFieldNumberFormatChanged {
+                        schema: id.clone(),
+                        field: field_id.clone(),
+                        before: old.number_format.clone(),
+                        after: new.number_format.clone(),
                     });
                 }
                 if old.constraint != new.constraint {

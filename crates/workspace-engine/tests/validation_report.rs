@@ -15,6 +15,7 @@ fn document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
+                field_order: None,
                 id: "schema".into(),
                 key: SchemaKey::from("schema"),
                 display_name: None,
@@ -41,6 +42,7 @@ fn define(document: &mut Document, field: &str, field_type: FieldType, required:
             id: FieldId::from(field),
             key: FieldKey::from(field),
             display_name: None,
+            number_format: None,
             field_type,
             required,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -178,6 +180,7 @@ fn swapped_schema_ids_preserve_both_directional_mismatches() {
         (
             SchemaId::from("schema-a"),
             Schema {
+                field_order: None,
                 id: "schema-b".into(),
                 key: "schema-a".into(),
                 display_name: None,
@@ -187,6 +190,7 @@ fn swapped_schema_ids_preserve_both_directional_mismatches() {
         (
             SchemaId::from("schema-b"),
             Schema {
+                field_order: None,
                 id: "schema-a".into(),
                 key: "schema-b".into(),
                 display_name: None,
@@ -252,6 +256,7 @@ fn swapped_schema_field_ids_preserve_both_directional_mismatches() {
                 id: "field-b".into(),
                 key: "field-a".into(),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -263,6 +268,7 @@ fn swapped_schema_field_ids_preserve_both_directional_mismatches() {
                 id: "field-a".into(),
                 key: "field-b".into(),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: tachiko_semantic_core::FieldConstraint::None,

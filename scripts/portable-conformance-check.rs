@@ -12,7 +12,7 @@ mod package_acceptance_document;
 use tachiko_ai_api::{explain_formula, suggest_field_change};
 use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CalculationOutcome, CanonicalAuthoringProjectionError,
-    ReferenceFailure, calculate, calculate_complete, project_expression,
+    ColumnFailure, ReferenceFailure, calculate, calculate_complete, project_expression,
 };
 use tachiko_semantic_core::{
     Date, DiagnosticCode, DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey,
@@ -137,6 +137,7 @@ fn field(id: &str) -> FieldDefinition {
         field_type: FieldType::Number,
         required: true,
         constraint: FieldConstraint::None,
+        number_format: None,
     }
 }
 
@@ -150,6 +151,7 @@ fn formula_document(input: Number, expression: Expression) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("numbers"),
                 display_name: None,
@@ -218,6 +220,7 @@ fn date_document(value: Date) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("dates"),
                 display_name: None,
@@ -230,6 +233,7 @@ fn date_document(value: Date) -> Document {
                         field_type: FieldType::Date,
                         required: true,
                         constraint: FieldConstraint::None,
+                        number_format: None,
                     },
                 )]),
             },
@@ -490,6 +494,25 @@ fn mix_calculation_failure(hash: &mut u64, failure: &CalculationFailure) {
         }
         CalculationFailure::DivisionByZero => mix_hash(hash, &[4]),
         CalculationFailure::NonFiniteResult => mix_hash(hash, &[5]),
+        CalculationFailure::TypeMismatch => mix_hash(hash, &[7]),
+        CalculationFailure::EmptyAggregate => mix_hash(hash, &[8]),
+        CalculationFailure::InvalidColumn { columns } => {
+            mix_hash(hash, &[6]);
+            for (column, failure) in columns {
+                mix_hash(hash, column.schema.as_str().as_bytes());
+                mix_hash(hash, &[0]);
+                mix_hash(hash, column.field.as_str().as_bytes());
+                mix_hash(hash, &[0xff]);
+                mix_hash(
+                    hash,
+                    &[match failure {
+                        ColumnFailure::MissingSchema => 0,
+                        ColumnFailure::MissingField => 1,
+                        ColumnFailure::NonNumeric => 2,
+                    }],
+                );
+            }
+        }
     }
 }
 
@@ -589,6 +612,7 @@ fn complete_oracle_record() -> Record {
             field_type: FieldType::Text,
             required: true,
             constraint: FieldConstraint::None,
+            number_format: None,
         },
     );
     let values = BTreeMap::from([
@@ -632,6 +656,7 @@ fn complete_oracle_record() -> Record {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("oracle-schema"),
                 display_name: None,
@@ -1003,6 +1028,7 @@ fn oracle_document() -> Document {
             field_type: FieldType::Text,
             required: true,
             constraint: FieldConstraint::None,
+            number_format: None,
         },
     );
 
@@ -1071,6 +1097,7 @@ fn oracle_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
+                field_order: None,
                 id: "schema".into(),
                 key: "schema".into(),
                 display_name: None,
@@ -1125,6 +1152,7 @@ fn validation_accumulation_record() -> Record {
             },
             required: false,
             constraint: FieldConstraint::None,
+            number_format: None,
         },
     );
     document
@@ -1341,6 +1369,7 @@ fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
+                field_order: None,
                 id: "schema".into(),
                 key: "schema".into(),
                 display_name: None,
@@ -1507,6 +1536,7 @@ fn analysis_text_field(id: &str, required: bool) -> FieldDefinition {
         field_type: FieldType::Text,
         required,
         constraint: FieldConstraint::None,
+        number_format: None,
     }
 }
 
@@ -1518,6 +1548,7 @@ fn analysis_number_field(id: &str, required: bool) -> FieldDefinition {
         field_type: FieldType::Number,
         required,
         constraint: FieldConstraint::None,
+        number_format: None,
     }
 }
 
@@ -1566,6 +1597,7 @@ fn analysis_document() -> Document {
         schemas: BTreeMap::from([(
             schema.clone(),
             Schema {
+                field_order: None,
                 id: schema,
                 key: SchemaKey::from("analysis-weapons"),
                 display_name: None,
@@ -2118,6 +2150,23 @@ fn analysis_hash_calculation_failure(hash: &mut u64, failure: &CalculationFailur
         }
         CalculationFailure::DivisionByZero => analysis_hash_text(hash, "division-by-zero"),
         CalculationFailure::NonFiniteResult => analysis_hash_text(hash, "non-finite-result"),
+        CalculationFailure::TypeMismatch => analysis_hash_text(hash, "type-mismatch"),
+        CalculationFailure::EmptyAggregate => analysis_hash_text(hash, "empty-aggregate"),
+        CalculationFailure::InvalidColumn { columns } => {
+            analysis_hash_text(hash, "invalid-column");
+            for (column, failure) in columns {
+                analysis_hash_text(hash, column.schema.as_str());
+                analysis_hash_text(hash, column.field.as_str());
+                analysis_hash_text(
+                    hash,
+                    match failure {
+                        ColumnFailure::MissingSchema => "missing-schema",
+                        ColumnFailure::MissingField => "missing-field",
+                        ColumnFailure::NonNumeric => "non-numeric",
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -2791,6 +2840,7 @@ fn constraint_text_literal_record() -> Record {
     document.schemas.insert(
         "schema".into(),
         Schema {
+            field_order: None,
             id: "schema".into(),
             key: "items".into(),
             display_name: None,
@@ -2805,6 +2855,7 @@ fn constraint_text_literal_record() -> Record {
                     constraint: FieldConstraint::TextLiteralSet {
                         values: vec!["é".into()],
                     },
+                    number_format: None,
                 },
             )]),
         },
@@ -2901,7 +2952,7 @@ fn case_record(index: u32) -> Record {
             else {
                 return Record::failure(UNEXPECTED, 0);
             };
-            match project_expression(&document, expression) {
+            match project_expression(&document, &FieldRef::new("entity-stable", "output-stable"), expression) {
                 Ok(source) => record.auxiliary = source.len() as u64,
                 Err(_) => return Record::failure(UNEXPECTED, 0),
             }
@@ -2929,7 +2980,7 @@ fn case_record(index: u32) -> Record {
                     fields: BTreeMap::new(),
                 },
             );
-            match project_expression(&document, &expression) {
+            match project_expression(&document, &FieldRef::new("entity-stable", "output-stable"), &expression) {
                 Err(CanonicalAuthoringProjectionError::UnresolvableBoundReferences { targets }) => {
                     Record::failure(PROJECTION_FAILURE, targets.len() as u64)
                 }

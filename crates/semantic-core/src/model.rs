@@ -1,7 +1,7 @@
 use std::{
     borrow::Borrow,
     cmp::Ordering,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt,
     hash::{Hash, Hasher},
 };
@@ -343,7 +343,7 @@ fn decimal_component(bytes: &[u8]) -> u16 {
         .fold(0_u16, |value, byte| value * 10 + u16::from(byte - b'0'))
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
     pub id: DocumentId,
@@ -368,6 +368,22 @@ impl Document {
     }
 }
 
+// The manual implementation only adds an instrumentation hook. Semantics are
+// identical to the derived `Clone`; the hook is an empty inline call unless the
+// `capacity-instrumentation` feature is enabled.
+impl Clone for Document {
+    fn clone(&self) -> Self {
+        crate::instrumentation::record_document_clone();
+        Self {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            schemas: self.schemas.clone(),
+            entities: self.entities.clone(),
+            keyed_grouped_sum_definitions: self.keyed_grouped_sum_definitions.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Schema {
@@ -380,6 +396,10 @@ pub struct Schema {
     )]
     pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, FieldDefinition>,
+    /// Presentation order of `fields`. `None` means field-id order. `Some` must be an exact
+    /// permutation of `fields` and must differ from id order (see `normalize_field_order`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_order: Option<Vec<FieldId>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -396,6 +416,8 @@ pub struct FieldDefinition {
     pub field_type: FieldType,
     pub required: bool,
     pub constraint: FieldConstraint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<NumberFormat>,
 }
 
 fn stored_display_name<'de, D: Deserializer<'de>>(
@@ -409,6 +431,43 @@ impl Schema {
     pub fn effective_name(&self) -> &str {
         self.display_name.as_deref().unwrap_or(self.key.as_str())
     }
+
+    /// Fields in presentation order. Ids listed in `field_order` come first in that order;
+    /// any field the order does not name follows in id order.
+    pub fn ordered_fields(&self) -> impl Iterator<Item = &FieldDefinition> + '_ {
+        let listed: &[FieldId] = self.field_order.as_deref().unwrap_or(&[]);
+        let fields = &self.fields;
+        listed.iter().filter_map(move |id| fields.get(id)).chain(
+            fields
+                .iter()
+                .filter(move |(id, _)| !listed.contains(id))
+                .map(|(_, field)| field),
+        )
+    }
+
+    /// Adds a field. Without an explicit order columns are in id order, so the
+    /// field takes its id position (a Remove/Append pair restores a document
+    /// exactly; native authoring allocates ids that sort last). With an
+    /// explicit order the field is appended after every listed column.
+    pub fn insert_field(&mut self, field: FieldDefinition) {
+        self.fields.insert(field.id.clone(), field);
+        self.normalize_field_order();
+    }
+
+    /// Drops ids no longer in `fields` and appends missing ids in id order.
+    /// An explicit order equal to id order is kept: `None` is the client's
+    /// default presentation, which need not be id order.
+    pub fn normalize_field_order(&mut self) {
+        let Some(order) = self.field_order.as_mut() else {
+            return;
+        };
+        order.retain(|id| self.fields.contains_key(id));
+        for id in self.fields.keys() {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+    }
 }
 
 impl FieldDefinition {
@@ -419,6 +478,21 @@ impl FieldDefinition {
 }
 
 impl Document {
+    #[must_use]
+    pub fn has_number_formats(&self) -> bool {
+        self.schemas
+            .values()
+            .flat_map(|schema| schema.fields.values())
+            .any(|field| field.number_format.is_some())
+    }
+
+    #[must_use]
+    pub fn has_field_orders(&self) -> bool {
+        self.schemas
+            .values()
+            .any(|schema| schema.field_order.is_some())
+    }
+
     #[must_use]
     pub fn has_display_names(&self) -> bool {
         self.schemas.values().any(|schema| {
@@ -551,17 +625,298 @@ pub const MAX_EXPRESSION_NODES: usize = 256;
 /// Maximum root-to-leaf node depth admitted in a semantic formula expression.
 pub const MAX_EXPRESSION_DEPTH: usize = 64;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnAggregateFunction {
+    Average,
+    Count,
+    Minimum,
+    Maximum,
+}
+
+impl ColumnAggregateFunction {
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Average => "average",
+            Self::Count => "count",
+            Self::Minimum => "minimum",
+            Self::Maximum => "maximum",
+        }
+    }
+
+    /// The function named by a `[schema.field:<suffix>]` spelling, any case.
+    #[must_use]
+    pub fn from_suffix(suffix: &str) -> Option<Self> {
+        [Self::Average, Self::Count, Self::Minimum, Self::Maximum]
+            .into_iter()
+            .find(|function| suffix.eq_ignore_ascii_case(function.suffix()))
+    }
+
+    #[must_use]
+    pub const fn suffix(self) -> &'static str {
+        match self {
+            Self::Average => "average",
+            Self::Count => "count",
+            Self::Minimum => "min",
+            Self::Maximum => "max",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "op", content = "args", rename_all = "snake_case")]
 pub enum Expression {
     Number(Number),
     Reference(FieldRef),
-    Add { left: Box<Self>, right: Box<Self> },
-    Subtract { left: Box<Self>, right: Box<Self> },
-    Multiply { left: Box<Self>, right: Box<Self> },
-    Divide { left: Box<Self>, right: Box<Self> },
-    Minimum { left: Box<Self>, right: Box<Self> },
-    Maximum { left: Box<Self>, right: Box<Self> },
+    // The formula owner's own field: the entity is resolved from the formula
+    // that contains this node, so the node stores only the field identity and
+    // keeps meaning "this row" through copies and row-relative moves.
+    SameRowReference(FieldId),
+    // The sum of one Number column across every entity of a schema. The node
+    // names the schema and field, never the rows, so adding, deleting or
+    // renaming rows keeps the total meaning the whole column.
+    ColumnTotal(ColumnRef),
+    ColumnAggregate {
+        function: ColumnAggregateFunction,
+        column: ColumnRef,
+    },
+    Add {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Subtract {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Multiply {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Divide {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Minimum {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Maximum {
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Compare {
+        operator: ComparisonOperator,
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    If {
+        condition: Box<Self>,
+        then_value: Box<Self>,
+        else_value: Box<Self>,
+    },
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Not(Box<Self>),
+    Round {
+        value: Box<Self>,
+        digits: u8,
+    },
+    IsBlank(Box<Self>),
+}
+
+/// A condition is an intermediate formula type, never a stored scalar value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FormulaExpressionType {
+    Number,
+    Condition,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonOperator {
+    Equal,
+    NotEqual,
+    Less,
+    LessOrEqual,
+    Greater,
+    GreaterOrEqual,
+}
+
+impl ComparisonOperator {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Equal => "=",
+            Self::NotEqual => "<>",
+            Self::Less => "<",
+            Self::LessOrEqual => "<=",
+            Self::Greater => ">",
+            Self::GreaterOrEqual => ">=",
+        }
+    }
+}
+
+impl Expression {
+    /// Direct children in evaluation order, including both conditional branches.
+    #[must_use]
+    pub fn children(&self) -> Vec<&Self> {
+        match self {
+            Self::Number(_)
+            | Self::Reference(_)
+            | Self::SameRowReference(_)
+            | Self::ColumnTotal(_)
+            | Self::ColumnAggregate { .. } => Vec::new(),
+            Self::Add { left, right }
+            | Self::Subtract { left, right }
+            | Self::Multiply { left, right }
+            | Self::Divide { left, right }
+            | Self::Minimum { left, right }
+            | Self::Maximum { left, right }
+            | Self::Compare { left, right, .. } => vec![left, right],
+            Self::If {
+                condition,
+                then_value,
+                else_value,
+            } => vec![condition, then_value, else_value],
+            Self::And(arguments) | Self::Or(arguments) => arguments.iter().collect(),
+            Self::Not(value) | Self::Round { value, .. } | Self::IsBlank(value) => vec![value],
+        }
+    }
+
+    /// Mutable children for identity-preserving formula remapping.
+    pub fn children_mut(&mut self) -> Vec<&mut Self> {
+        match self {
+            Self::Number(_)
+            | Self::Reference(_)
+            | Self::SameRowReference(_)
+            | Self::ColumnTotal(_)
+            | Self::ColumnAggregate { .. } => Vec::new(),
+            Self::Add { left, right }
+            | Self::Subtract { left, right }
+            | Self::Multiply { left, right }
+            | Self::Divide { left, right }
+            | Self::Minimum { left, right }
+            | Self::Maximum { left, right }
+            | Self::Compare { left, right, .. } => vec![left, right],
+            Self::If {
+                condition,
+                then_value,
+                else_value,
+            } => vec![condition, then_value, else_value],
+            Self::And(arguments) | Self::Or(arguments) => arguments.iter_mut().collect(),
+            Self::Not(value) | Self::Round { value, .. } | Self::IsBlank(value) => vec![value],
+        }
+    }
+
+    /// Infer the non-value condition type after structural bounds are checked.
+    #[must_use]
+    pub fn expression_type(&self) -> Option<FormulaExpressionType> {
+        use FormulaExpressionType::{Condition, Number};
+        match self {
+            Self::Number(_)
+            | Self::Reference(_)
+            | Self::SameRowReference(_)
+            | Self::ColumnTotal(_)
+            | Self::ColumnAggregate { .. } => Some(Number),
+            Self::Add { left, right }
+            | Self::Subtract { left, right }
+            | Self::Multiply { left, right }
+            | Self::Divide { left, right }
+            | Self::Minimum { left, right }
+            | Self::Maximum { left, right } => (left.expression_type() == Some(Number)
+                && right.expression_type() == Some(Number))
+            .then_some(Number),
+            Self::Compare { left, right, .. } => (left.expression_type() == Some(Number)
+                && right.expression_type() == Some(Number))
+            .then_some(Condition),
+            Self::If {
+                condition,
+                then_value,
+                else_value,
+            } => (condition.expression_type() == Some(Condition)
+                && then_value.expression_type() == Some(Number)
+                && else_value.expression_type() == Some(Number))
+            .then_some(Number),
+            Self::And(arguments) | Self::Or(arguments) => (!arguments.is_empty()
+                && arguments
+                    .iter()
+                    .all(|argument| argument.expression_type() == Some(Condition)))
+            .then_some(Condition),
+            Self::Not(value) => (value.expression_type() == Some(Condition)).then_some(Condition),
+            Self::Round { value, digits } => {
+                (*digits <= 10 && value.expression_type() == Some(Number)).then_some(Number)
+            }
+            Self::IsBlank(value) => matches!(
+                value.as_ref(),
+                Self::Reference(_) | Self::SameRowReference(_)
+            )
+            .then_some(Condition),
+        }
+    }
+
+    /// References whose value is read on every evaluation: everything except
+    /// IF's `then`/`else` branches (the condition is always read) and ISBLANK's
+    /// presence-only probe. A missing value here fails the formula before
+    /// evaluation; inside a branch it fails only when that branch is selected.
+    #[must_use]
+    pub fn unconditional_references(&self, owner: &FieldRef) -> BTreeSet<FieldRef> {
+        let mut references = BTreeSet::new();
+        let mut pending = vec![self];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::Reference(reference) => {
+                    references.insert(reference.clone());
+                }
+                Self::SameRowReference(field) => {
+                    references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
+                }
+                Self::If { condition, .. } => pending.push(condition),
+                Self::IsBlank(_) => {}
+                _ => pending.extend(node.children()),
+            }
+        }
+        references
+    }
+
+    /// Every static reference and whether its use requires a Number field.
+    #[must_use]
+    pub fn reference_uses(&self, owner: &FieldRef) -> Vec<(FieldRef, bool)> {
+        let mut uses = Vec::new();
+        let mut pending = vec![(self, true)];
+        while let Some((node, numeric)) = pending.pop() {
+            match node {
+                Self::Reference(reference) => uses.push((reference.clone(), numeric)),
+                Self::SameRowReference(field) => {
+                    uses.push((FieldRef::new(owner.entity.clone(), field.clone()), numeric));
+                }
+                Self::IsBlank(value) => pending.push((value, false)),
+                _ => pending.extend(
+                    node.children()
+                        .into_iter()
+                        .rev()
+                        .map(|child| (child, numeric)),
+                ),
+            }
+        }
+        uses
+    }
+
+    /// Every column total the expression reads, in evaluation order.
+    #[must_use]
+    pub fn column_totals(&self) -> Vec<&ColumnRef> {
+        let mut columns = Vec::new();
+        let mut pending = vec![self];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::ColumnTotal(column) | Self::ColumnAggregate { column, .. } => {
+                    columns.push(column);
+                }
+                _ => pending.extend(node.children().into_iter().rev()),
+            }
+        }
+        columns
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -607,5 +962,140 @@ impl FieldAddress {
 impl fmt::Display for FieldAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}.{}", self.entity, self.field)
+    }
+}
+
+/// A stable column identity: one schema field, independent of any row.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnRef {
+    pub schema: SchemaId,
+    pub field: FieldId,
+}
+
+impl ColumnRef {
+    #[must_use]
+    pub fn new(schema: impl Into<SchemaId>, field: impl Into<FieldId>) -> Self {
+        Self {
+            schema: schema.into(),
+            field: field.into(),
+        }
+    }
+}
+
+/// Display-only presentation of a Number; never changes stored or calculated values.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NumberFormat {
+    pub decimals: u8,
+    pub kind: NumberFormatKind,
+    pub thousands_separator: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", from = "NumberFormatKindWire")]
+pub enum NumberFormatKind {
+    Plain,
+    Currency { code: String },
+    Percent,
+}
+
+// Unit variants of an internally tagged enum ignore extra keys, so the wire
+// shape wraps each kind in a `deny_unknown_fields` struct to keep it closed.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum NumberFormatKindWire {
+    Plain(EmptyKindWire),
+    Currency(CurrencyKindWire),
+    Percent(EmptyKindWire),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyKindWire {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CurrencyKindWire {
+    code: String,
+}
+
+impl From<NumberFormatKindWire> for NumberFormatKind {
+    fn from(wire: NumberFormatKindWire) -> Self {
+        match wire {
+            NumberFormatKindWire::Plain(_) => Self::Plain,
+            NumberFormatKindWire::Currency(CurrencyKindWire { code }) => Self::Currency { code },
+            NumberFormatKindWire::Percent(_) => Self::Percent,
+        }
+    }
+}
+
+impl fmt::Display for ColumnRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.schema, self.field)
+    }
+}
+
+/// A human column address used while authoring a formula.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnAddress {
+    pub schema: SchemaKey,
+    pub field: FieldKey,
+}
+
+impl ColumnAddress {
+    #[must_use]
+    pub fn new(schema: impl Into<SchemaKey>, field: impl Into<FieldKey>) -> Self {
+        Self {
+            schema: schema.into(),
+            field: field.into(),
+        }
+    }
+}
+
+impl fmt::Display for ColumnAddress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.schema, self.field)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NumberFormatError {
+    NonNumberField,
+    DecimalsOutOfRange,
+    InvalidCurrencyCode,
+}
+
+impl fmt::Display for NumberFormatError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NonNumberField => "number format is only valid on Number fields",
+            Self::DecimalsOutOfRange => "number format decimals must be between 0 and 10",
+            Self::InvalidCurrencyCode => "currency code must be three uppercase ASCII letters",
+        })
+    }
+}
+
+impl std::error::Error for NumberFormatError {}
+
+impl NumberFormat {
+    /// Validate the format declaration independently of storage or rendering.
+    ///
+    /// # Errors
+    /// Returns a typed declaration error without coercion.
+    pub fn validate_for(&self, field_type: &FieldType) -> Result<(), NumberFormatError> {
+        if *field_type != FieldType::Number {
+            return Err(NumberFormatError::NonNumberField);
+        }
+        if self.decimals > 10 {
+            return Err(NumberFormatError::DecimalsOutOfRange);
+        }
+        if let NumberFormatKind::Currency { code } = &self.kind {
+            if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_uppercase()) {
+                return Err(NumberFormatError::InvalidCurrencyCode);
+            }
+        }
+        Ok(())
     }
 }

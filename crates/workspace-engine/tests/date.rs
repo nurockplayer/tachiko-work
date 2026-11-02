@@ -20,6 +20,7 @@ fn date_document(value: &str) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("event"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("event"),
                 key: "event".into(),
                 display_name: None,
@@ -29,6 +30,7 @@ fn date_document(value: &str) -> Document {
                         id: field_id,
                         key: "published".into(),
                         display_name: None,
+                        number_format: None,
                         field_type: FieldType::Date,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

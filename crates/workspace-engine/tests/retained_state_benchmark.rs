@@ -122,6 +122,7 @@ fn synthetic_document(entity_count: usize) -> Document {
     let schemas = BTreeMap::from([(
         schema_id.clone(),
         Schema {
+            field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from("synthetic_records"),
             display_name: None,
@@ -186,6 +187,7 @@ fn synthetic_fields(
                 id: label.clone(),
                 key: FieldKey::from("label"),
                 display_name: None,
+                number_format: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -199,6 +201,7 @@ fn number_field(id: &FieldId, key: &str) -> FieldDefinition {
         id: id.clone(),
         key: FieldKey::from(key),
         display_name: None,
+        number_format: None,
         field_type: FieldType::Number,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,

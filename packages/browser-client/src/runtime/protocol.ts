@@ -20,6 +20,20 @@ export type BootstrapProjection = {
   keyed_grouped_sum_definition_ids?: string[];
 };
 
+export type CapacityLimits = Record<CapacityLimitName, number>;
+
+export type CapacityUsage = {
+  collections: number;
+  total_entities: number;
+  populated_cells: number;
+  formulas: number;
+  formula_ast_nodes: number;
+  dependency_edges: number;
+  tables: Record<string, {rows: number; fields: number}>;
+};
+
+export type CapacityProjection = {revision: string; usage: CapacityUsage; limits: CapacityLimits};
+
 export type OpenedProjection = {
   bootstrap: BootstrapProjection;
   table: TableProjection;
@@ -60,6 +74,35 @@ export type FieldProjection = {
   editable_scalar: "number" | "text" | "boolean" | "date" | null;
 };
 
+/** One durable field constraint; absence of the projection means unconstrained. */
+export type FieldConstraint =
+  | { kind: "text_literal_set"; values: string[] }
+  | { kind: "number_inclusive_range"; min: number; max: number };
+
+/** One complete constraint replacement; `none` clears the declaration. */
+export type FieldConstraintInput = FieldConstraint | { kind: "none" };
+
+/** Display-only number formatting stored on a Number field. */
+export type NumberFormat = {
+  decimals: number;
+  kind: { type: "plain" } | { type: "currency"; code: string } | { type: "percent" };
+  thousands_separator: boolean;
+};
+
+export type ConstraintFailureReason =
+  | "field_value"
+  | "existing_values"
+  | "declaration";
+
+/** Structured refusal: the allowed shape and how many rows or values failed. */
+export type ConstraintFailureProjection = {
+  reason: ConstraintFailureReason;
+  schema: string;
+  field: string;
+  constraint: FieldConstraint;
+  offending_rows: number;
+};
+
 export type ColumnProjection = {
   id: string;
   key: string;
@@ -69,6 +112,18 @@ export type ColumnProjection = {
   field_type: string;
   required: boolean;
   dropdown_options?: string[];
+  /** Declared durable constraint; omission means unconstrained. */
+  constraint?: FieldConstraint;
+  /** Declared display-only number format; omission means default formatting. */
+  number_format?: NumberFormat;
+};
+
+export type TableRowProjection = {
+  id: string;
+  key: string;
+  /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
+  blank_fields?: string[];
+  fields: FieldProjection[];
 };
 
 export type TableProjection = {
@@ -77,8 +132,122 @@ export type TableProjection = {
   revision: string;
   collection: CollectionSummary;
   columns: ColumnProjection[];
-  /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
-  rows: Array<{ id: string; key: string; blank_fields?: string[]; fields: FieldProjection[] }>;
+  rows: TableRowProjection[];
+  /**
+   * One total per Number column, keyed by column id and observed at the same
+   * revision as rows. Null means a contributing value is unavailable; blank
+   * cells are skipped.
+   */
+  column_totals?: Record<string, number | null>;
+};
+
+export type SortDirection = "asc" | "desc";
+
+/** Every comparison takes the column's declared kind; text compares case-insensitively. */
+export type ComparisonOperator = "=" | "<>" | "<" | "<=" | ">" | ">=";
+
+/** One literal member of an `in_set` filter; it must fit the filtered column's type. */
+export type ScalarLiteral = number | string | boolean;
+
+/** One AND-ed view filter. Comparisons and sets match only same-kind values; blanks match `is_blank`. */
+export type ViewFilter =
+  | { kind: "text_equals"; field: string; value: string }
+  | { kind: "text_contains"; field: string; value: string }
+  | { kind: "number_compare"; field: string; op: ComparisonOperator; value: number }
+  | { kind: "date_compare"; field: string; op: ComparisonOperator; value: string }
+  | { kind: "is_blank"; field: string }
+  | { kind: "not_blank"; field: string }
+  | { kind: "in_set"; field: string; values: ScalarLiteral[] };
+
+export type ViewSortKey = { field: string; direction: SortDirection };
+
+/**
+ * Stateless view state owned by the caller, never by the document: sort keys
+ * apply in order with blanks last, filters are AND-ed, and `keep_entities`
+ * (at most 256) stay visible even when a filter excludes them.
+ */
+export type TableView = {
+  sort?: ViewSortKey[];
+  filters?: ViewFilter[];
+  keep_entities?: string[];
+};
+
+/** One bounded window of a table; `count` 0 returns totals and columns only. */
+export type TableWindowProjection = {
+  /** Same profile flags as `TableProjection`; present only when true. */
+  tracker_profile?: boolean;
+  native_table_profile?: boolean;
+  revision: string;
+  collection: CollectionSummary;
+  columns: ColumnProjection[];
+  /** Deterministic digest of the column definitions; stable across row edits. */
+  columns_revision: string;
+  /** Rows left after filters, plus kept entities. */
+  total_rows: number;
+  unfiltered_rows: number;
+  start: number;
+  rows: TableRowProjection[];
+  /**
+   * One total per Number column, keyed by column id and observed at the same
+   * revision as rows. Null means a contributing value is unavailable; blank
+   * cells are skipped.
+   */
+  column_totals?: Record<string, number | null>;
+};
+
+/** Zero-based position in the filtered, sorted view; `index` appears only when found. */
+export type LocatedInViewProjection = {
+  revision: string;
+  result: "found" | "filtered_out";
+  index?: number;
+};
+
+/** Number totals over the named entities at one revision; blank cells are skipped, as in `column_totals`. */
+export type ColumnTotalsProjection = {
+  revision: string;
+  rows: number;
+  column_totals: Record<string, number | null>;
+};
+
+/** How a Date grouping dimension is bucketed; any non-Date column always groups by exact value. */
+export type GroupBucket = "value" | "month" | "year";
+
+/** One grouping column of a grouped-totals query; `bucket` defaults to `"value"`. */
+export type GroupDimension = {
+  field: string;
+  bucket?: GroupBucket;
+};
+
+/** Which rows a grouped-totals query covers; every form resolves to collection order. */
+export type GroupScope =
+  | { kind: "all" }
+  | { kind: "entities"; entities: string[] }
+  | { kind: "except"; entities: string[] };
+
+/** One typed grouping key; `blank` carries no value and sorts after every present value. */
+export type GroupKey =
+  | { kind: "boolean"; value: boolean }
+  | { kind: "date"; value: string }
+  | { kind: "month"; value: string }
+  | { kind: "year"; value: string }
+  | { kind: "text"; value: string }
+  | { kind: "blank" };
+
+/** One group of a grouped-totals reply. */
+export type GroupTotalsRow = {
+  keys: GroupKey[];
+  rows: number;
+  totals: (number | null)[];
+};
+
+/** Number totals grouped by one or two keys over the rows of one scope, at one revision. */
+export type GroupTotalsProjection = {
+  revision: string;
+  dimensions: GroupDimension[];
+  measures: string[];
+  rows: number;
+  totals: (number | null)[];
+  groups: GroupTotalsRow[];
 };
 
 export type FieldBatchProjection = {
@@ -153,6 +322,8 @@ export type KeyedGroupedSumProjection = {
   definition_id: string;
   revision: string;
   groups: Array<{category: string; value: number}>;
+  /** Sum of the groups at this revision; null whenever the result is unavailable. */
+  total: number | null;
   diagnostics: Array<{code: string; entity: string | null; field: string | null; lookup_key: string | null; candidates: string[]}>;
 };
 
@@ -174,12 +345,99 @@ export type NameFailure = {
 };
 
 export type FailureProjection = {
-  code: string;
+  code: FailureCode;
   message: string;
   current_revision: string;
   diagnostics: DiagnosticProjection[];
+  /** Present only for the `capacity_exceeded` refusal. */
+  limit?: CapacityLimitName;
+  maximum?: number;
+  attempted?: number;
+  collection?: string;
   name_failures?: NameFailure[];
+  /** Present only when a field constraint refused the request. */
+  constraint_failure?: ConstraintFailureProjection;
+  /** Present only for the `use_window_query` refusal: the collection's row count. */
+  row_count?: number;
 };
+
+/** Runtime accounting limit named by a capacity refusal. */
+export type CapacityLimitName =
+  | "collections"
+  | "table_fields"
+  | "table_rows"
+  | "total_entities"
+  | "populated_cells"
+  | "formulas"
+  | "formula_ast_nodes"
+  | "dependency_edges";
+
+export type CapacityFailureProjection = FailureProjection & {
+  code: "capacity_exceeded";
+  limit: CapacityLimitName;
+  maximum: number;
+  attempted: number;
+} & (
+  | { limit: "table_fields" | "table_rows"; collection: string }
+  | { limit: Exclude<CapacityLimitName, "table_fields" | "table_rows">; collection?: never }
+);
+
+const CAPACITY_LIMIT_NAMES: readonly CapacityLimitName[] = [
+  "collections",
+  "table_fields",
+  "table_rows",
+  "total_entities",
+  "populated_cells",
+  "formulas",
+  "formula_ast_nodes",
+  "dependency_edges",
+];
+
+/** Validate the detailed wire payload for a capacity refusal. */
+export function isCapacityFailure(failure: FailureProjection): failure is CapacityFailureProjection {
+  if (failure.code !== "capacity_exceeded" ||
+      !CAPACITY_LIMIT_NAMES.includes(failure.limit as CapacityLimitName) ||
+      !Number.isSafeInteger(failure.maximum) || failure.maximum! < 0 ||
+      !Number.isSafeInteger(failure.attempted) || failure.attempted! <= failure.maximum!) {
+    return false;
+  }
+  if (failure.limit === "table_fields" || failure.limit === "table_rows") {
+    return typeof failure.collection === "string" && failure.collection.length > 0;
+  }
+  return failure.collection === undefined;
+}
+
+/** Known runtime failure codes, while allowing forward-compatible additions. */
+export type FailureCode =
+  | "required_values_missing"
+  | "capacity_exceeded"
+  | (string & {});
+
+/**
+ * Stable refusal codes for `updateFormula`. Each failure carries a human
+ * message in `FailureProjection.message`. Syntax and reference failures add
+ * one diagnostic for the refused formula with a `position` or `reference`
+ * fact; a cycle failure carries the authoritative validation diagnostics,
+ * whose location is the cycle's canonical member.
+ */
+export type FormulaFailureCode =
+  | "formula_syntax"
+  | "formula_unknown_reference"
+  | "formula_type_mismatch"
+  | "formula_cycle";
+
+const FORMULA_FAILURE_CODES: readonly string[] = [
+  "formula_syntax",
+  "formula_unknown_reference",
+  "formula_type_mismatch",
+  "formula_cycle",
+];
+
+export type FormulaFailureProjection = FailureProjection & { code: FormulaFailureCode };
+
+export function isFormulaFailure(failure: FailureProjection): failure is FormulaFailureProjection {
+  return FORMULA_FAILURE_CODES.includes(failure.code);
+}
 
 export type TrackerCommand =
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
@@ -190,6 +448,9 @@ export type TrackerCommand =
   | { type: "remove_table_rows"; expected_revision: string; collection: string; entities: string[] }
   | { type: "add_column"; expected_revision: string; collection: string; name: string; field_type: string; required?: boolean; initializers?: Array<{entity: string; input: ScalarEditInput}> }
   | { type: "set_column_requiredness"; expected_revision: string; collection: string; field: string; required: boolean }
+  | { type: "set_column_constraint"; expected_revision: string; collection: string; field: string; constraint: FieldConstraintInput }
+  | { type: "set_column_number_format"; expected_revision: string; collection: string; field: string; number_format: NumberFormat | null }
+  | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "rename_column"; expected_revision: string; collection: string; field: string; name: string }
   | { type: "remove_column"; expected_revision: string; collection: string; field: string }
   | { type: "undo" | "redo"; expected_revision: string };
@@ -204,7 +465,7 @@ export type ScalarEditInput =
 /** Raw strings parse as the declared scalar type; only an explicit clear removes a value. */
 export type PasteCellInput = string | ScalarEditInput;
 
-/** required defaults to true; optional native authoring admits Text/Number only. */
+/** required defaults to true; optional native authoring admits every scalar type (#598). */
 export type NewTableColumnInput = {name: string; field_type: string; required?: boolean};
 
 export type FormulaCopy = {
@@ -223,9 +484,39 @@ export type DesignerRequest =
   | { type: "new_tracker"; occurrence_id: string }
   | { type: "new_budget"; occurrence_id: string }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[] }
-  | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string }
+  | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
   | { type: "bootstrap"; occurrence_id: string }
+  | { type: "query_capacity"; expected_revision?: string }
   | { type: "query_table"; collection: string }
+  | {
+      type: "query_table_window";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
+      start: number;
+      count: number;
+    }
+  | {
+      type: "locate_in_view";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
+      entity: string;
+    }
+  | {
+      type: "query_column_totals";
+      expected_revision: string;
+      collection: string;
+      entities: string[];
+    }
+  | {
+      type: "query_group_totals";
+      expected_revision: string;
+      collection: string;
+      dimensions: GroupDimension[];
+      measures: string[];
+      scope: GroupScope;
+    }
   | {
       type: "query_fields";
       expected_revision: string;
@@ -257,8 +548,13 @@ export type DesignerResponse =
   | {type: "imported"; payload: ImportedProjection}
   | {type: "spreadsheet_exported"; payload: {revision: string; byte_length: number; ledger: FidelityFinding[]}}
   | { type: "bootstrap"; payload: BootstrapProjection }
+  | { type: "capacity"; payload: CapacityProjection }
   | { type: "opened"; payload: OpenedProjection }
   | { type: "table"; payload: TableProjection }
+  | { type: "table_window"; payload: TableWindowProjection }
+  | { type: "located_in_view"; payload: LocatedInViewProjection }
+  | { type: "column_totals"; payload: ColumnTotalsProjection }
+  | { type: "group_totals"; payload: GroupTotalsProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "field_explanation"; payload: FieldExplanationProjection }
   | { type: "published"; payload: PublicationProjection }

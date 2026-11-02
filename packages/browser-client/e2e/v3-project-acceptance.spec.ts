@@ -26,7 +26,7 @@ const REQUIRED_NATIVE_CASES = [
   "ordinary_export_keeps_the_mixed_legacy_refusal_control", "frozen_codec_and_bridge_profile_controls",
   "legacy_date_only_ingress_edit_reexport", "legacy_definition_only_ingress_edit_reexport",
   "legacy_neither_ingress_edit_reexport", "fresh_candidate_ordinary_legacy_exports_remain_v1_v2_compatible",
-  "candidate_inspect_and_open_refuse_valid_v3_text_and_number_constraints",
+  "candidate_inspect_and_open_admit_valid_v3_text_and_number_constraints",
   "exact_full_catalogue_opened_projection_boundary_and_plus_one",
   "version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic",
   "successful_legacy_replacement_clears_v3_origin_marker",
@@ -178,7 +178,8 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
       }, "complete Bootstrap oracle changed");
       equal(opened.table.revision, input.revision, "table revision changed");
       equal(opened.table.collection, collection, "complete table collection changed");
-      equal(opened.table.native_table_profile, input.date ? undefined : true, "literal native scalar profile changed");
+      // All-optional scalar imports, Date included, are native since #598.
+      equal(opened.table.native_table_profile, true, "literal native scalar profile changed");
       equal(opened.table.columns, literalIds.fields.map((id: string, i: number) => ({
         id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.date ? "date" : "text"][i],
         required: false, // Imported schema declarations are optional; every fixture cell is present.
@@ -198,6 +199,12 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
           };
         }),
       })), "complete literal field target/address/value/formula/diagnostic projection changed");
+      // The two Number columns total their two present cells; every other
+      // column is Text and contributes no footer entry.
+      equal(opened.table.column_totals, {
+        [literalIds.fields[2]!]: input.quantity + 5,
+        [literalIds.fields[3]!]: 400,
+      }, "complete literal Number column totals changed");
     };
     const assertCurrent = async (client: any, input: any): Promise<void> => {
       const occurrence = await client.observeOccurrence();
@@ -525,11 +532,12 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       const values = [["PEN", "Stationery", input.quantity, 200, input.dateValue], ["NOTE", "Paper", 5, 200, "2026-09-27"]];
       const expected = {
         bootstrap: { title: "Imported workbook", revision: input.revision, default_collection: "sheet_1", collections: [collection], keyed_grouped_sum_definition_ids: input.catalogue },
-        table: { revision: input.revision, ...(input.dateType === false ? { native_table_profile: true } : {}), collection, columns: fields.map((id, i) => ({ id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.dateType === false ? "text" : "date"][i], required: false })),
+        table: { revision: input.revision, native_table_profile: true, collection, columns: fields.map((id, i) => ({ id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", input.dateType === false ? "text" : "date"][i], required: false })),
           rows: rows.map((id, ri) => ({ id, key: `sheet_1_row_${ri + 1}`, fields: fields.map((field, fi) => {
             const kind = fi < 2 ? "text" : fi < 4 ? "number" : input.dateType === false ? "text" : "date";
             return { target: { entity: id, field }, address: `sheet_1_row_${ri + 1}.column_${fi + 1}`, stored: { kind, value: values[ri]![fi] }, formula: null, calculated: null, diagnostics: [], editable_scalar: kind };
-          }) })) },
+          }) })),
+          column_totals: { [fields[2]!]: input.quantity + 5, [fields[3]!]: 400 } },
       };
       equal(opened, expected, "full literal Date-only projection changed");
       equal(await client.observeOccurrence(), { scope: `designer-occurrence/${input.occurrence}/${prefix}0001`, revision: input.revision }, "literal Date-only occurrence changed");
@@ -584,13 +592,21 @@ test("Worker preserves typed failures and resets origin after replacement or clo
             stored: { kind, value: sourceRows[ri]![fi] }, formula: null, calculated: null, diagnostics: [], editable_scalar: kind };
         }),
       }));
+      // The two Number columns total their two present cells.
+      const column_totals = { [boundaryFieldIds[2]!]: quantity + 5, [boundaryFieldIds[3]!]: 400 };
       return {
         bootstrap: { title: "Imported workbook", revision, default_collection: "sheet_1", collections: [collection], keyed_grouped_sum_definition_ids: ids },
-        table: { revision, collection, columns, rows },
+        // An all-optional scalar import with a Date column is native since #598.
+        table: { revision, native_table_profile: true, collection, columns, rows, column_totals },
       };
     };
+    // Column-total values are `Option<f64>` on the wire, so serde prints them
+    // with a fractional part (`400.0`) where JSON.stringify prints `400`.
+    // Count every present total the way the native projection encodes it.
     const rustProjectionBytes = (projection: any): number => new TextEncoder().encode(
-      JSON.stringify(projection).replace(/("value":)(-?\d+)([,}])/g, "$1$2.0$3"),
+      JSON.stringify(projection)
+        .replace(/("value":)(-?\d+)([,}])/g, "$1$2.0$3")
+        .replace(/"column_totals":\{[^}]*\}/g, (totals) => totals.replace(/:(-?\d+)([,}])/g, ":$1.0$2")),
     ).byteLength;
     const exactBoundaryIds = (target = 65536): string[] => {
       const prefixes = Array.from({ length: 16 }, (_, i) => `v3-budget-${String(i).padStart(2, "0")}-`);
@@ -717,12 +733,12 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const matrixProfile = (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string): any => ({
       dateValue, quantity, catalogue: [DEFINITION_ID], revision, occurrence: occurrenceUuid, dateType: marked,
     });
-    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800): Promise<void> => {
+    const checkMatrixResident = async (marked: boolean, occurrenceUuid: string, dateValue: string, quantity: number, revision: string, stationery = quantity === 6 ? 1200 : 800, ordinaryExportCode = "unsupported_project"): Promise<void> => {
       const profile = matrixProfile(marked, occurrenceUuid, dateValue, quantity, revision);
       await assertDateProjection({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, profile);
       const summary = await client.queryKeyedGroupedSum(DEFINITION_ID);
       if (summary.revision !== revision || JSON.stringify(summary.groups.map((group: any) => [group.category, group.value]).sort()) !== JSON.stringify([["Paper", 1000], ["Stationery", stationery]].sort())) throw new Error(`T2 literal catalogue summary changed at ${revision}`);
-      if (marked) await expectCode(() => client.exportProject(revision), "unsupported_project", revision);
+      if (marked) await expectCode(() => client.exportProject(revision), ordinaryExportCode, revision);
       else {
         const saved = await client.exportProject(revision);
         const manifest = JSON.parse(new TextDecoder().decode(decodeEntries(new Uint8Array(saved.bytes)).find(([path]) => path === "manifest.json")![1]));
@@ -767,7 +783,6 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     };
     const matrixCandidates: Array<{ label: string; code: string; bytes: Uint8Array; revision?: string }> = [
       ...ordinaryV3.map((candidate) => ({ label: candidate.label, code: candidate.code, bytes: candidate.bytes })),
-      ...constrainedMasters.map((bytes, index) => ({ label: `valid constrained v3 ${index}`, code: "unsupported_project", bytes })),
       { label: "exact transfer limit", code: "invalid_project", bytes: exactLimit },
       { label: "over transfer limit", code: "request_too_large", revision: "unavailable", bytes: overLimit },
       { label: "malformed legacy candidate", code: "invalid_project", bytes: new TextEncoder().encode("TWDPROJ2not-json") },
@@ -790,6 +805,43 @@ test("Worker preserves typed failures and resets origin after replacement or clo
         await unchanged(beforeOpen, `${candidate.label} Open / ${marked ? "v3" : "legacy"}`);
         await checkMatrixResident(marked, openUuid, "2026-09-29", 4, "resident/3");
         await replayMatrixHistory(marked, openUuid);
+      }
+    }
+    // Valid constrained v3 input is admitted: Inspect is read-only and projects
+    // the declaration, Open replaces the resident and keeps it projectable,
+    // and ordinary export still refuses because the admitted origin is v3.
+    const constraintFieldIds = ["import_00000000-0000-4000-8000-000000000001_0004", "import_00000000-0000-4000-8000-000000000001_0005"];
+    const constrainedExpectations: Array<{ label: string; field: string; constraint: unknown }> = [
+      { label: "valid constrained v3 text", field: constraintFieldIds[0]!, constraint: { kind: "text_literal_set", values: ["Paper", "Stationery"] } },
+      { label: "valid constrained v3 number", field: constraintFieldIds[1]!, constraint: { kind: "number_inclusive_range", min: 0, max: 10 } },
+      { label: "valid constrained v3 non-default text", field: constraintFieldIds[0]!, constraint: undefined },
+      { label: "valid constrained v3 non-default number", field: constraintFieldIds[1]!, constraint: undefined },
+    ];
+    for (let index = 0; index < constrainedMasters.length; index += 1) {
+      const candidate = constrainedMasters[index]!;
+      const expected = constrainedExpectations[index]!;
+      const projectedConstraint = (table: { columns: Array<{ id: string; constraint?: unknown }> }): unknown =>
+        table.columns.find((column) => column.id === expected.field)?.constraint;
+      for (const marked of [true, false]) {
+        const inspectUuid = nextMatrixUuid();
+        await prepareMatrixResident(marked, inspectUuid);
+        const beforeInspect = await residentState();
+        const inspected = await client.inspectProject(transferCopy(candidate));
+        equal(projectedConstraint(inspected.table), expected.constraint, `${expected.label} Inspect / ${marked ? "v3" : "legacy"} projection changed`);
+        await unchanged(beforeInspect, `${expected.label} Inspect / ${marked ? "v3" : "legacy"}`);
+
+        const openUuid = nextMatrixUuid();
+        await prepareMatrixResident(marked, openUuid);
+        // Admission replaces the resident, so the opened occurrence gets its own pinned identity.
+        const openedUuid = nextMatrixUuid();
+        const opened: any = await withUuid(openedUuid, () => client.openProject(transferCopy(candidate)));
+        equal(projectedConstraint(opened.table), expected.constraint, `${expected.label} Open / ${marked ? "v3" : "legacy"} projection changed`);
+        // The admitted candidate is now the resident: its live projection is the
+        // one Open returned, under the pinned occurrence, and it has no legacy form.
+        equal(await client.queryTable(opened.table.collection.key), opened.table, `${expected.label} Open / ${marked ? "v3" : "legacy"} live table changed`);
+        const occurrence: any = await client.observeOccurrence();
+        if (occurrence.revision !== "resident/0" || !occurrence.scope.startsWith(`designer-occurrence/${openedUuid}/`)) throw new Error(`${expected.label} Open occurrence changed: ${JSON.stringify(occurrence)}`);
+        await expectCode(() => client.exportProject("resident/0"), "legacy_export_unsupported", "resident/0");
       }
     }
     // Each rejection starts with an independent marked mixed U=[A], R=[B].
@@ -1006,22 +1058,26 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       await checkResident("2026-09-29", 4, "resident/3");
     };
 
-    // T4: v3-to-v3 replacement installs a different semantic candidate and clears history.
+    // T4: v3-to-v3 replacement installs a different semantic candidate and clears
+    // history. The candidate must stay inside the fresh admission budget, so it
+    // moves the Date cell (byte-neutral) rather than the quantity: a quantity edit
+    // grows the column footer from 9.0 to 11.0 and the catalogue already fills the
+    // 65,536-byte budget exactly, so that candidate could not be exported at all.
     await withUuid("00000000-0000-4000-8000-000000000003", () => openFresh(boundaryAtMaster));
-    await client.editNumber("resident/0", { entity: boundaryEntityIds[0], field: boundaryFieldIds[2] }, "6");
-    const q6 = await client.exportProjectV3("resident/1");
-    const q6Entries = decodeEntries(new Uint8Array(q6.bytes));
-    const q6Manifest = JSON.parse(new TextDecoder().decode(q6Entries.find(([path]) => path === "manifest.json")![1]));
-    const q6Definitions = JSON.parse(new TextDecoder().decode(q6Entries.find(([path]) => path === "definitions.json")![1]));
-    if (q6Manifest.format_version !== 3 || q6Definitions.length !== boundaryIds.length) throw new Error("v3-to-v3 replacement candidate lost the selected format or catalogue");
-    equal(q6Definitions, boundaryIds.map((id) => ({ id,
+    await client.editDate("resident/0", { entity: boundaryEntityIds[0], field: boundaryFieldIds[4] }, "2026-09-29");
+    const distinct = await client.exportProjectV3("resident/1");
+    const distinctEntries = decodeEntries(new Uint8Array(distinct.bytes));
+    const distinctManifest = JSON.parse(new TextDecoder().decode(distinctEntries.find(([path]) => path === "manifest.json")![1]));
+    const distinctDefinitions = JSON.parse(new TextDecoder().decode(distinctEntries.find(([path]) => path === "definitions.json")![1]));
+    if (distinctManifest.format_version !== 3 || distinctDefinitions.length !== boundaryIds.length) throw new Error("v3-to-v3 replacement candidate lost the selected format or catalogue");
+    equal(distinctDefinitions, boundaryIds.map((id) => ({ id,
       orders: { schema: `${boundaryPrefix}0002`, lookup_key_field: boundaryFieldIds[0], quantity_field: boundaryFieldIds[2] },
       products: { schema: `${boundaryPrefix}0002`, key_field: boundaryFieldIds[0], category_field: boundaryFieldIds[1], price_field: boundaryFieldIds[3] },
     })), "v3-to-v3 encoded definition bindings changed");
     await establishMarkedHistory("00000000-0000-4000-8000-000000000015");
-    await withUuid("00000000-0000-4000-8000-000000000004", () => client.openProject(q6.bytes.slice(0)));
-    const q6Expected = boundaryProjection("resident/0", boundaryIds, "2026-09-28", 6);
-    equal({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, q6Expected, "successful v3 replacement did not install the distinct q6 candidate");
+    await withUuid("00000000-0000-4000-8000-000000000004", () => client.openProject(distinct.bytes.slice(0)));
+    const distinctExpected = boundaryProjection("resident/0", boundaryIds, "2026-09-29", 4);
+    equal({ bootstrap: await client.bootstrap(), table: await client.queryTable("sheet_1") }, distinctExpected, "successful v3 replacement did not install the distinct candidate");
     equal(await client.observeOccurrence(), { scope: "designer-occurrence/00000000-0000-4000-8000-000000000004/import_00000000-0000-4000-8000-000000000001_0001", revision: "resident/0" }, "v3 replacement scope/revision changed");
     await expectCode(() => client.exportProject("resident/0"), "unsupported_project", "resident/0");
     for (const type of ["undo", "redo"] as const) {
@@ -1056,7 +1112,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const newField = `native_table_field_0003_${newUuid}`;
     const newExpected = {
       bootstrap: { title: "reset", revision: "resident/0", default_collection: "reset", collections: [{ id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
-      table: { revision: "resident/0", native_table_profile: true, collection: { id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }, columns: [{ id: newField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }, columns: [{ id: newField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [], column_totals: {} },
     };
     equal(newOpen, newExpected, "New did not produce the literal native table document");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${newUuid}/${newDocument}`, revision: "resident/0" }, "New scope/document identity changed");
@@ -1110,7 +1166,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const afterCloseField = `native_table_field_0003_${afterCloseUuid}`;
     const afterCloseExpected = {
       bootstrap: { title: "after_close", revision: "resident/0", default_collection: "after_close", collections: [{ id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
-      table: { revision: "resident/0", native_table_profile: true, collection: { id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [], column_totals: {} },
     };
     equal(afterClose, afterCloseExpected, "Close/New did not install the fresh native table");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${afterCloseUuid}/${afterCloseDocument}`, revision: "resident/0" }, "Close/New retained the previous occurrence identity");

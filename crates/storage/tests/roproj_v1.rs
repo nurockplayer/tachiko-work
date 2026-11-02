@@ -101,6 +101,7 @@ fn frozen_roproj_v1_rejects_date_instead_of_widening_the_contract() {
         schemas: BTreeMap::from([(
             SchemaId::from("schema-date"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("schema-date"),
                 key: SchemaKey::from("date"),
                 display_name: None,
@@ -883,6 +884,7 @@ fn character_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema-character"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("schema-character"),
                 key: SchemaKey::from("character"),
                 display_name: None,
@@ -1034,6 +1036,7 @@ fn full_shape_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema-record"),
             Schema {
+                field_order: None,
                 id: SchemaId::from("schema-record"),
                 key: SchemaKey::from("record"),
                 display_name: None,
@@ -1126,31 +1129,20 @@ fn balanced_add_json(nodes: usize) -> String {
 }
 
 fn expression_depth(expression: &Expression) -> usize {
-    match expression {
-        Expression::Number(_) | Expression::Reference(_) => 1,
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            1 + expression_depth(left).max(expression_depth(right))
-        }
-    }
+    1 + expression
+        .children()
+        .into_iter()
+        .map(expression_depth)
+        .max()
+        .unwrap_or(0)
 }
 
 fn expression_node_count(expression: &Expression) -> usize {
-    match expression {
-        Expression::Number(_) | Expression::Reference(_) => 1,
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            1 + expression_node_count(left) + expression_node_count(right)
-        }
-    }
+    1 + expression
+        .children()
+        .into_iter()
+        .map(expression_node_count)
+        .sum::<usize>()
 }
 
 fn field(id: &str, key: &str, field_type: FieldType, required: bool) -> FieldDefinition {
@@ -1158,6 +1150,7 @@ fn field(id: &str, key: &str, field_type: FieldType, required: bool) -> FieldDef
         id: FieldId::from(id),
         key: FieldKey::from(key),
         display_name: None,
+        number_format: None,
         field_type,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,

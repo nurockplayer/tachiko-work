@@ -1,8 +1,8 @@
 use std::io::{Cursor, Read, Write};
 use tachiko_designer_runtime::interop_adapter::{
-    FidelityCategory, ImportOptions, MAX_COLUMNS, MAX_DATA_ROWS, MAX_EXPANDED_BYTES, MAX_FORMULAS,
-    MAX_SHEETS, MAX_SOURCE_BYTES, MAX_ZIP_ENTRIES, SourceValue, SourceWorkbook, export_csv,
-    export_xlsx, import_csv, import_xlsx,
+    CellStyle, FidelityCategory, ImportOptions, MAX_COLUMNS, MAX_DATA_ROWS, MAX_EXPANDED_BYTES,
+    MAX_FORMULAS, MAX_SHEETS, MAX_SOURCE_BYTES, MAX_ZIP_ENTRIES, SourceValue, SourceWorkbook,
+    export_csv, export_xlsx, import_csv, import_xlsx,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 fn simple() -> SourceWorkbook {
@@ -12,6 +12,37 @@ fn simple() -> SourceWorkbook {
 fn capacity_book() -> SourceWorkbook {
     let source = format!("a,b,c\n{}", "one,two,three\n".repeat(65));
     import_csv(source.as_bytes(), &ImportOptions::default()).unwrap()
+}
+
+/// The first cell style of a plain export: General is built-in format 0 (#615).
+const FIRST_DEFAULT_XF: &str = "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"2\"";
+
+fn first_xf_with_format(id: u32) -> String {
+    format!("<xf numFmtId=\"{id}\" fontId=\"0\" fillId=\"2\"")
+}
+
+/// Declare one custom number format, next to any the export already has.
+fn with_custom_format(styles: &str, id: u32, pattern: &str) -> String {
+    let format = format!("<numFmt numFmtId=\"{id}\" formatCode=\"{pattern}\"/>");
+    if let Some(start) = styles.find("<numFmts count=\"") {
+        let count_start = start + "<numFmts count=\"".len();
+        let count_end = count_start + styles[count_start..].find('"').unwrap();
+        let count: usize = styles[count_start..count_end].parse().unwrap();
+        let body = styles[count_end..].find('>').unwrap() + count_end + 1;
+        format!(
+            "{}{}{}{}",
+            &styles[..count_start],
+            count + 1,
+            &styles[count_end..body],
+            format
+        ) + &styles[body..]
+    } else {
+        styles.replacen(
+            "<fonts",
+            &format!("<numFmts count=\"1\">{format}</numFmts><fonts"),
+            1,
+        )
+    }
 }
 
 #[test]
@@ -70,7 +101,7 @@ fn capacity_source_cannot_hide_header_style_or_out_of_grid_width() {
     assert!(
         import_xlsx(&styled)
             .unwrap_err()
-            .0
+            .to_string()
             .contains("default source headers")
     );
     let width = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
@@ -79,7 +110,12 @@ fn capacity_source_cannot_hide_header_style_or_out_of_grid_width() {
             "<cols><col min=\"4\" max=\"4\" width=\"12\"/></cols><sheetData>",
         )
     });
-    assert!(import_xlsx(&width).unwrap_err().0.contains("column widths"));
+    assert!(
+        import_xlsx(&width)
+            .unwrap_err()
+            .to_string()
+            .contains("column widths")
+    );
     // Existing small generic source-only losses keep their original behavior.
     let small = export_xlsx(&simple()).unwrap();
     let width = mutate(&small, "xl/worksheets/sheet1.xml", |xml| {
@@ -402,7 +438,7 @@ fn formula_export_requires_numeric_presentation_for_every_cache_kind() {
             assert!(
                 export_xlsx(&book)
                     .unwrap_err()
-                    .0
+                    .to_string()
                     .contains("uniform numeric number format")
             );
         }
@@ -603,7 +639,7 @@ fn accounting_number_formats_preserve_defined_patterns_without_inventing_currenc
         (40, "#,##0.00;[Red](#,##0.00)"),
     ] {
         let input = mutate(&bytes, "xl/styles.xml", |s| {
-            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+            s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id))
         });
         let imported = import_xlsx(&input).unwrap();
         assert!(!imported.ledger.iter().any(|f| f.blocking));
@@ -617,7 +653,7 @@ fn accounting_number_formats_preserve_defined_patterns_without_inventing_currenc
     // formatCode establishes presentation. No USD inference is permitted.
     for id in [5, 6, 7, 8, 41, 42, 43, 44] {
         let undefined = mutate(&bytes, "xl/styles.xml", |s| {
-            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+            s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id))
         });
         let rejected = import_xlsx(&undefined).unwrap();
         assert!(
@@ -629,11 +665,11 @@ fn accounting_number_formats_preserve_defined_patterns_without_inventing_currenc
         assert!(export_xlsx(&rejected).is_err());
         let pattern = "[$¥-411]#,##0.000;[Red](#,##0.000)";
         let defined = mutate(&bytes, "xl/styles.xml", |s| {
-            s.replace("numFmtId=\"164\"", &format!("numFmtId=\"{id}\""))
-                .replace(
-                    "formatCode=\"General\"",
-                    &format!("formatCode=\"{pattern}\""),
-                )
+            with_custom_format(
+                &s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id)),
+                id,
+                pattern,
+            )
         });
         let imported = import_xlsx(&defined).unwrap();
         assert!(!imported.ledger.iter().any(|f| f.blocking));
@@ -646,6 +682,62 @@ fn accounting_number_formats_preserve_defined_patterns_without_inventing_currenc
 }
 
 #[test]
+fn excel_currency_number_formats_map_to_currency_columns() {
+    use tachiko_workspace_engine::{NumberFormat, NumberFormatKind};
+
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 1234.5 };
+    let bytes = export_xlsx(&book).unwrap();
+    let usd = mutate(&bytes, "xl/styles.xml", |s| {
+        with_custom_format(
+            &s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(164)),
+            164,
+            "&quot;$&quot;#,##0.00",
+        )
+    });
+    let imported = import_xlsx(&usd).unwrap();
+    assert!(!imported.ledger.iter().any(|f| f.blocking));
+    assert_eq!(
+        imported.sheets[0].columns[1].number_format,
+        Some(NumberFormat {
+            decimals: 2,
+            kind: NumberFormatKind::Currency { code: "USD".into() },
+            thousands_separator: true,
+        })
+    );
+    let mapped = imported
+        .ledger
+        .iter()
+        .find(|f| f.code == "number_format_currency_mapped")
+        .expect("a mapped currency pattern is disclosed");
+    assert_eq!(mapped.category, FidelityCategory::Converted);
+    assert!(!mapped.blocking);
+    assert!(
+        mapped.message.contains(r##""$"#,##0.00"##) && mapped.message.contains("USD"),
+        "{}",
+        mapped.message
+    );
+
+    // An ambiguous ¥ without a locale stays unmapped, and the message names it.
+    let ambiguous = mutate(&bytes, "xl/styles.xml", |s| {
+        with_custom_format(
+            &s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(164)),
+            164,
+            "¥#,##0",
+        )
+    });
+    let imported = import_xlsx(&ambiguous).unwrap();
+    assert_eq!(imported.sheets[0].columns[1].number_format, None);
+    let unmapped = imported
+        .ledger
+        .iter()
+        .find(|f| f.code == "number_format_not_mapped")
+        .expect("the ambiguous pattern is disclosed");
+    assert!(!unmapped.blocking);
+    assert!(unmapped.message.contains("¥#,##0"), "{}", unmapped.message);
+}
+
+#[test]
 fn decoded_attributes_reject_illegal_characters_including_namespaces() {
     let bytes = export_xlsx(&simple()).unwrap();
     for reference in ["&#0;", "&#1;", "&#xFFFE;", "&#65535;"] {
@@ -655,7 +747,11 @@ fn decoded_attributes_reject_illegal_characters_including_namespaces() {
             });
             let error = import_xlsx(&invalid).unwrap_err();
             if reference == "&#xFFFE;" {
-                assert!(error.0.contains("Invalid escaped XML attribute character"));
+                assert!(
+                    error
+                        .to_string()
+                        .contains("Invalid escaped XML attribute character")
+                );
             }
         }
     }
@@ -1139,7 +1235,7 @@ fn multiple_column_groups_are_all_inspected_and_singleton_duplicates_rejected() 
         assert!(
             import_xlsx(&changed)
                 .unwrap_err()
-                .0
+                .to_string()
                 .contains("Duplicate singleton")
         );
     }
@@ -1172,7 +1268,7 @@ fn integral_time_only_formats_never_become_dates_or_numbers() {
     let bytes = export_xlsx(&book).unwrap();
     for id in 18..=22 {
         let changed = mutate(&bytes, "xl/styles.xml", |s| {
-            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+            s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id))
         });
         let imported = import_xlsx(&changed).unwrap();
         if id == 22 {
@@ -1300,7 +1396,7 @@ fn cdata_obeys_xml_characters_and_root_boundaries() {
             assert!(
                 import_xlsx(&invalid)
                     .unwrap_err()
-                    .0
+                    .to_string()
                     .contains("CDATA outside XML root")
             );
         }
@@ -1699,7 +1795,12 @@ fn expanded_limit_is_checked_before_xml_materialization() {
         format!("<x>{}</x>", "a".repeat(MAX_EXPANDED_BYTES + 1))
     });
     assert!(large.len() < MAX_SOURCE_BYTES);
-    assert!(import_xlsx(&large).unwrap_err().0.contains("Expanded ZIP"));
+    assert!(
+        import_xlsx(&large)
+            .unwrap_err()
+            .to_string()
+            .contains("Expanded ZIP")
+    );
 }
 #[test]
 fn zip_path_entry_count_and_source_bounds_fail_closed() {
@@ -1742,7 +1843,7 @@ fn unknown_parts_are_blocking_and_xml_namespace_aliases_cannot_hide_duplicate_at
     assert!(
         import_xlsx(&bytes)
             .unwrap_err()
-            .0
+            .to_string()
             .contains("Duplicate expanded")
     );
 }
@@ -1755,7 +1856,7 @@ fn csv_does_not_activate_literal_text_as_external_formulas() {
         assert!(
             export_csv(&book.sheets[0])
                 .unwrap_err()
-                .0
+                .to_string()
                 .contains("literal Text")
         );
         let reimport = import_xlsx(&export_xlsx(&book).unwrap()).unwrap();
@@ -1944,7 +2045,7 @@ fn numeric_scalar_export_cannot_change_type_through_its_format() {
         assert!(
             export_xlsx(&book)
                 .unwrap_err()
-                .0
+                .to_string()
                 .contains("Number requires")
         );
     }
@@ -2031,7 +2132,7 @@ fn all_language_builtin_formats_match_explicit_patterns_and_scalar_boundaries() 
             source.sheets[0].rows[0][1].value = SourceValue::Number { value };
             let bytes = export_xlsx(&source).unwrap();
             let builtin = mutate(&bytes, "xl/styles.xml", |xml| {
-                xml.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+                xml.replace(FIRST_DEFAULT_XF, &first_xf_with_format(id))
             });
             source.sheets[0].rows[0][1].style.number_format = Some(pattern.into());
             let explicit = source_with_format(&source);
@@ -2064,9 +2165,10 @@ fn all_language_builtin_formats_match_explicit_patterns_and_scalar_boundaries() 
                     let reopened = import_xlsx(&export_xlsx(book).unwrap()).unwrap();
                     assert!(!reopened.ledger.iter().any(|f| f.blocking));
                     assert_eq!(reopened.sheets[0].rows[0][1].value, expected);
+                    // General is the default format: it reads back as none (#615).
                     assert_eq!(
                         reopened.sheets[0].rows[0][1].style.number_format.as_deref(),
-                        Some(pattern)
+                        Some(pattern).filter(|pattern| *pattern != "General")
                     );
                 }
             }
@@ -2080,8 +2182,234 @@ fn all_language_builtin_formats_match_explicit_patterns_and_scalar_boundaries() 
             );
             assert_eq!(
                 explicit.sheets[0].rows[0][1].style.number_format.as_deref(),
-                Some(pattern)
+                Some(pattern).filter(|pattern| *pattern != "General")
             );
         }
     }
+}
+
+/// Work #610: a large-import workbook with Date and Yes/No cells, some blank.
+fn typed_capacity_book(rows: usize) -> SourceWorkbook {
+    let source = format!("Item,When,Amount,Paid\n{}", "x,y,1,z\n".repeat(rows));
+    let mut book = import_csv(source.as_bytes(), &ImportOptions::default()).unwrap();
+    fill_typed(&mut book, true);
+    book
+}
+
+/// Item (optional), When, Amount, Paid in that order.
+fn fill_typed(book: &mut SourceWorkbook, item: bool) {
+    let offset = usize::from(item);
+    for (index, row) in book.sheets[0].rows.iter_mut().enumerate() {
+        if item {
+            row[0].value = SourceValue::Text {
+                value: format!("item-{index}"),
+            };
+        }
+        row[offset].value = if index % 7 == 0 {
+            SourceValue::Empty
+        } else {
+            SourceValue::Date {
+                value: format!("2026-{:02}-{:02}", index % 12 + 1, index % 28 + 1),
+            }
+        };
+        row[offset + 1].value = SourceValue::Number {
+            value: f64::from(u32::try_from(index).unwrap()) + 0.25,
+        };
+        row[offset + 2].value = if index % 11 == 0 {
+            SourceValue::Empty
+        } else {
+            SourceValue::Boolean {
+                value: index % 2 == 0,
+            }
+        };
+    }
+}
+
+fn worksheet_xml(bytes: &[u8]) -> String {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut entry = archive.by_name("xl/worksheets/sheet1.xml").unwrap();
+    let mut contents = String::new();
+    entry.read_to_string(&mut contents).unwrap();
+    contents
+}
+
+#[test]
+fn capacity_xlsx_carries_dates_and_yes_no_and_reads_them_back() {
+    let book = typed_capacity_book(100);
+    let bytes = export_xlsx(&book).unwrap();
+    let xml = worksheet_xml(&bytes);
+    assert!(
+        xml.contains("s=\"1\" t=\"d\"><v>2026-02-02</v>"),
+        "dates carry the date style"
+    );
+    assert!(
+        xml.contains("s=\"0\" t=\"b\"><v>0</v>"),
+        "Yes/No uses the default style"
+    );
+    let parsed = import_xlsx(&bytes).unwrap();
+    let date_style = CellStyle {
+        number_format: Some("yyyy-mm-dd".into()),
+        ..CellStyle::default()
+    };
+    for (expected, actual) in book.sheets[0].rows.iter().zip(&parsed.sheets[0].rows) {
+        for (expected, actual) in expected.iter().zip(actual) {
+            assert_eq!(actual.value, expected.value);
+            let style = if matches!(actual.value, SourceValue::Date { .. }) {
+                &date_style
+            } else {
+                &CellStyle::default()
+            };
+            assert_eq!(&actual.style, style);
+        }
+    }
+    assert_eq!(
+        export_xlsx(&parsed).unwrap(),
+        bytes,
+        "re-export is byte-identical"
+    );
+}
+
+#[test]
+fn capacity_exports_typed_cells_at_the_row_limit() {
+    // 8,406 x 3 is the largest typed rectangle within 25,218 cells.
+    let source = format!("When,Amount,Paid\n{}", "y,1,z\n".repeat(8406));
+    let mut book = import_csv(source.as_bytes(), &ImportOptions::default()).unwrap();
+    fill_typed(&mut book, false);
+    let xlsx = export_xlsx(&book).unwrap();
+    assert_eq!(import_xlsx(&xlsx).unwrap().sheets[0].rows.len(), 8406);
+    let csv = String::from_utf8(export_csv(&book.sheets[0]).unwrap()).unwrap();
+    assert!(csv.contains("2026-02-02,1.25,false"), "{}", &csv[..200]);
+    assert!(csv.contains(",true"));
+}
+
+#[test]
+fn capacity_refuses_dates_outside_excel_range_or_calendar() {
+    for bad in ["1899-12-31", "2026-02-30"] {
+        let mut book = typed_capacity_book(100);
+        book.sheets[0].rows[3][1].value = SourceValue::Date { value: bad.into() };
+        // The large-import writer refuses it, and the shared writer cannot take 100 rows.
+        assert!(export_xlsx(&book).is_err(), "{bad} must not export");
+    }
+}
+
+const STYLES_BEFORE_DATES: &str = "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>";
+
+#[test]
+fn capacity_xlsx_exported_before_dates_still_imports() {
+    let bytes = export_xlsx(&capacity_book()).unwrap();
+    let old = mutate(&bytes, "xl/styles.xml", |_| STYLES_BEFORE_DATES.into());
+    assert!(capacity_source_admits(&old));
+    // Without the date format, a cell naming style 1 has nothing to refer to.
+    let typed = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let dated = mutate(&typed, "xl/styles.xml", |_| STYLES_BEFORE_DATES.into());
+    assert!(import_xlsx(&dated).is_err());
+}
+
+#[test]
+fn capacity_xlsx_reads_serial_dates_with_the_date_format() {
+    let bytes = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let serial = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+        assert!(xml.contains("s=\"1\" t=\"d\"><v>2026-02-02</v>"));
+        xml.replace(
+            "s=\"1\" t=\"d\"><v>2026-02-02</v>",
+            "s=\"1\" t=\"n\"><v>46055</v>",
+        )
+        .replace(
+            "s=\"1\" t=\"d\"><v>2026-03-03</v>",
+            "s=\"1\" t=\"n\"><v>2958465</v>",
+        )
+    });
+    let book = import_xlsx(&serial).unwrap();
+    assert!(
+        !book.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        book.ledger
+    );
+    assert_eq!(
+        book.sheets[0].rows[1][1].value,
+        SourceValue::Date {
+            value: "2026-02-02".into()
+        }
+    );
+    assert_eq!(
+        book.sheets[0].rows[2][1].value,
+        SourceValue::Date {
+            value: "9999-12-31".into()
+        }
+    );
+}
+
+#[test]
+fn capacity_xlsx_reads_iso_dates_without_the_date_format() {
+    let bytes = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let unstyled = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "s=\"1\" t=\"d\"><v>2026-02-02</v>",
+            "t=\"d\"><v>2026-02-02</v>",
+        )
+        .replace(
+            "s=\"1\" t=\"d\"><v>2026-03-03</v>",
+            "s=\"0\" t=\"d\"><v>2026-03-03</v>",
+        )
+    });
+    let book = import_xlsx(&unstyled).unwrap();
+    assert!(
+        !book.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        book.ledger
+    );
+    assert_eq!(
+        book.sheets[0].rows[1][1].value,
+        SourceValue::Date {
+            value: "2026-02-02".into()
+        }
+    );
+    assert_eq!(book.sheets[0].rows[2][1].style, CellStyle::default());
+}
+
+#[test]
+fn general_is_written_as_built_in_format_zero() {
+    // Numbers reads a custom formatCode="General" as a whole-number format and
+    // shows 1.5 as 2 (#615); Excel and Numbers both read built-in 0 as General.
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 1.5 };
+    book.sheets[0].rows[0][1].style.number_format = None;
+    let bytes = export_xlsx(&book).unwrap();
+    let styles = part_text(&bytes, "xl/styles.xml");
+    assert!(!styles.contains("formatCode=\"General\""), "{styles}");
+    assert!(styles.contains(FIRST_DEFAULT_XF), "{styles}");
+    let reopened = import_xlsx(&bytes).unwrap();
+    assert_eq!(reopened.sheets[0].rows[0][1].style.number_format, None);
+    assert_eq!(
+        export_xlsx(&reopened).unwrap(),
+        bytes,
+        "the round trip is byte-stable"
+    );
+
+    // Exports written before #615 declared General as custom format 164; they
+    // still read as the default format, and re-export with built-in 0.
+    let legacy = mutate(&bytes, "xl/styles.xml", |s| {
+        with_custom_format(
+            &s.replace(FIRST_DEFAULT_XF, &first_xf_with_format(164)),
+            164,
+            "General",
+        )
+    });
+    let legacy = import_xlsx(&legacy).unwrap();
+    assert_eq!(legacy.sheets[0].rows[0][1].style.number_format, None);
+    assert!(
+        !part_text(&export_xlsx(&legacy).unwrap(), "xl/styles.xml")
+            .contains("formatCode=\"General\"")
+    );
+}
+
+fn part_text(bytes: &[u8], name: &str) -> String {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name(name)
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    text
 }

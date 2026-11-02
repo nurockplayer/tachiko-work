@@ -11,6 +11,7 @@ fn fixture() -> Document {
         d.schemas.insert(
             id.into(),
             Schema {
+                field_order: None,
                 id: id.into(),
                 key: id.into(),
                 display_name: None,
@@ -32,6 +33,7 @@ fn fixture() -> Document {
                             id: id.into(),
                             key: id.into(),
                             display_name: None,
+                            number_format: None,
                             field_type: if id.starts_with("key") || id.starts_with("category") {
                                 FieldType::Text
                             } else {
