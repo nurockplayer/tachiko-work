@@ -665,9 +665,16 @@ fn reopened_kitchen_sink_exports_formula_values_to_csv_and_xlsx() {
         "formula cells export their current computed value, not a blank or a source"
     );
     assert_eq!(
-        disclosed_codes(&workbook, "native_tables_formula_values_only"),
+        workbook
+            .ledger
+            .iter()
+            .filter(|finding| {
+                finding.code == "native_tables_formulas_written"
+                    && finding.category == FidelityCategory::Converted
+            })
+            .count(),
         2,
-        "both formula-bearing collections disclose that definitions stay behind"
+        "both formula-bearing collections disclose their Excel formula conversion"
     );
     assert_eq!(
         disclosed_codes(&workbook, "native_tables_saved_grouped_sum_excluded"),

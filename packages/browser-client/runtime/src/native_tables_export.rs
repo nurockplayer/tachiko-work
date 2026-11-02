@@ -2,7 +2,7 @@
 //! presentation participates: the immutable resident snapshot owns every value.
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_workspace_engine::{Document, FieldRef, FieldType, Value};
+use tachiko_workspace_engine::{ColumnRef, Document, FieldRef, FieldType, Value};
 
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, NativeTablesCheck, OutputProfile, SourceCell, SourceColumn,
@@ -11,6 +11,7 @@ use crate::interop_adapter::{
     native_tables_trim_worksheet_name, native_tables_xlsx_number_findings,
     validate_native_tables_csv, validate_native_tables_xlsx, validate_output_for_profile,
 };
+use crate::interop_document::{column_letters, export_expression};
 use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
     SpreadsheetExportProjection,
@@ -57,8 +58,8 @@ fn scalar_mapping(document: &Document, spec: &CollectionSpec) -> bool {
                 .all(|column| match entity.fields.get(&column.id) {
                     None => !column.required,
                     Some(Value::Text(_)) => column.field_type == FieldType::Text,
-                    // Formula cells export their current computed Number; the
-                    // definition itself stays in the Tachiko source.
+                    // Formula cells require a current computed Number, also
+                    // used as the cached value when XLSX carries the formula.
                     Some(Value::Number(_) | Value::Formula(_)) => {
                         column.field_type == FieldType::Number
                     }
@@ -130,12 +131,12 @@ fn exclusion_findings(ledger: &mut Vec<FidelityFinding>) {
     }
 }
 
-/// Disclose derived state that the spreadsheet cannot carry: constrained
-/// rules and formula definitions stay in the Tachiko source.
+/// Disclose excluded constraints and the format's formula conversion.
 fn collection_findings(
     document: &Document,
     spec: &CollectionSpec,
     ledger: &mut Vec<FidelityFinding>,
+    csv: bool,
 ) {
     constraint_findings(document, spec, ledger);
     if spec.entities.iter().any(|id| {
@@ -146,8 +147,102 @@ fn collection_findings(
             )
         })
     }) {
-        ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_values_only", &spec.summary.id,
-            "Formula cells export their current computed Number values; formula definitions are not written to the spreadsheet. Retain the Tachiko source to keep the formulas.".into()));
+        if csv {
+            ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_values_only", &spec.summary.id,
+                "Formula cells export their current computed Number values; formula definitions are not written to the spreadsheet. Retain the Tachiko source to keep the formulas.".into()));
+        } else {
+            ledger.push(finding(FidelityCategory::Converted, "native_tables_formulas_written", &spec.summary.id,
+                "Formula cells export as Excel formulas over the exported cells, with their current computed Number kept as the cached value.".into()));
+        }
+    }
+}
+
+fn write_formulas(
+    document: &Document,
+    specs: &[&CollectionSpec],
+    sheets: &mut [SourceSheet],
+    ledger: &mut Vec<FidelityFinding>,
+) {
+    let mut addresses = BTreeMap::new();
+    let mut columns = BTreeMap::new();
+    let mut formula_counts = Vec::new();
+    for (spec, sheet) in specs.iter().zip(sheets.iter()) {
+        let quoted = sheet.name.replace('\'', "''");
+        let n = spec.entities.len();
+        let mut count = 0;
+        for (j, column) in spec.columns.iter().enumerate() {
+            let letters = column_letters(j);
+            let range = if n == 0 {
+                String::new()
+            } else {
+                format!("'{quoted}'!${letters}$2:${letters}${}", n + 1)
+            };
+            columns.insert(
+                ColumnRef::new(spec.summary.id.clone(), column.id.clone()),
+                range,
+            );
+            for (i, entity) in spec.entities.iter().enumerate() {
+                addresses.insert(
+                    FieldRef::new(entity.clone(), column.id.clone()),
+                    format!("'{quoted}'!${letters}${}", i + 2),
+                );
+                count += usize::from(matches!(
+                    document.entities[entity].fields.get(&column.id),
+                    Some(Value::Formula(_))
+                ));
+            }
+        }
+        formula_counts.push(count);
+    }
+    if formula_counts.iter().sum::<usize>() > crate::interop_adapter::MAX_FORMULAS {
+        for (spec, count) in specs.iter().zip(formula_counts) {
+            if count > 0 {
+                ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_value_only", &spec.summary.id,
+                    format!("The workbook holds more than {} formulas, so they export as computed values. Retain the Tachiko source to keep the formulas.", crate::interop_adapter::MAX_FORMULAS)));
+            }
+        }
+        return;
+    }
+    for (spec, sheet) in specs.iter().zip(sheets.iter_mut()) {
+        for (i, entity) in spec.entities.iter().enumerate() {
+            for (j, column) in spec.columns.iter().enumerate() {
+                let Some(Value::Formula(expression)) =
+                    document.entities[entity].fields.get(&column.id)
+                else {
+                    continue;
+                };
+                let target = FieldRef::new(entity.clone(), column.id.clone());
+                let location = format!(
+                    "collection {}/field {}/row {entity}",
+                    spec.summary.id, column.id
+                );
+                let reason = match export_expression(expression, &target, &addresses, &columns) {
+                    Ok(text) if text.len() > crate::MAX_PROFILE_STRING_BYTES => {
+                        "the formula is longer than the export profile allows".into()
+                    }
+                    Ok(text)
+                        if native_tables_compatibility(
+                            NativeTablesCheck::Formula(&text),
+                            &location,
+                        )
+                        .is_err()
+                            || crate::interop_adapter::unsupported_formula_function(
+                                &text, true,
+                            ) =>
+                    {
+                        "the formula is outside the native XLSX formula grammar".into()
+                    }
+                    Ok(text) => {
+                        sheet.rows[i][j].formula = Some(text);
+                        continue;
+                    }
+                    Err(DesignerError::InvalidTrackerOperation { message }) => message,
+                    Err(error) => error.to_string(),
+                };
+                ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_value_only", &location,
+                    format!("Formula cell exports its current computed value only: {reason}. Retain the Tachiko source to keep the formula.")));
+            }
+        }
     }
 }
 
@@ -446,6 +541,7 @@ impl DesignerRuntime {
         let mut ledger = vec![finding(FidelityCategory::NativeEquivalent, "native_tables_outbound_profile", "workbook",
             "Native scalar output: at most 32 collections, 32 columns, 128 rows per collection, 1,024 total rows, 8 MiB encoded bytes and 24 MiB expanded XLSX. The general incoming profile remains separate (4 sheets, 16 columns, 64 rows); its restricted Text-capacity exception is unchanged. Larger output is not promised reimportable.".into())];
         let mut sheets = Vec::new();
+        let mut exported = Vec::new();
         let mut names = BTreeSet::new();
         for (key, spec) in &self.collection_specs {
             if csv && spec.summary.id != selected.summary.id {
@@ -462,7 +558,7 @@ impl DesignerRuntime {
                     ),
                 ));
             }
-            collection_findings(document, spec, &mut ledger);
+            collection_findings(document, spec, &mut ledger, csv);
             // Canonical specs are Rust-derived; the client supplies no names,
             // identity mapping, row order or values.
             sheets.push(project_sheet(
@@ -474,6 +570,10 @@ impl DesignerRuntime {
                 &mut names,
                 &mut ledger,
             )?);
+            exported.push(spec);
+        }
+        if !csv {
+            write_formulas(document, &exported, &mut sheets, &mut ledger);
         }
         exclusion_findings(&mut ledger);
         for id in document.keyed_grouped_sum_definitions.keys() {

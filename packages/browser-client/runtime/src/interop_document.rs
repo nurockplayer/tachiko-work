@@ -2992,7 +2992,7 @@ pub(crate) fn validate_saved_open_capacity_metadata(
     validate_capacity_metadata(document, metadata)
 }
 
-fn column_letters(mut index: usize) -> String {
+pub(crate) fn column_letters(mut index: usize) -> String {
     let mut reversed = Vec::new();
     loop {
         reversed.push(char::from(
@@ -3025,7 +3025,7 @@ pub(crate) fn export_scalar(value: Option<&Value>) -> Result<SourceValue, Design
     }
 }
 
-fn export_expression(
+pub(crate) fn export_expression(
     expression: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,

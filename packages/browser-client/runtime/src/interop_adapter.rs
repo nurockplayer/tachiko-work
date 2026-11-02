@@ -4157,7 +4157,7 @@ fn value_text(value: &SourceValue) -> String {
         SourceValue::Boolean { value } => value.to_string(),
     }
 }
-fn unsupported_formula_function(source: &str, column_aggregates: bool) -> bool {
+pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool) -> bool {
     // Inventory function names only, without parsing or evaluating expression semantics.
     let mut token = String::new();
     let mut quoted = false;
