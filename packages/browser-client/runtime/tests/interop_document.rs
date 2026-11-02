@@ -698,6 +698,55 @@ fn guard_depth_overflow_and_deep_chains_keep_numeric_cache() {
 }
 
 #[test]
+fn guarded_formula_over_the_canonical_text_limit_keeps_numeric_cache() {
+    // 21 two-reference MINs over another row ([sheet_1_row_12.column_10])
+    // guard to 251 nodes, inside the node and depth limits, but render 4,237
+    // canonical bytes, past the 4,096-byte limit.
+    let formula = format!("={}", vec!["MIN(J13,K13)"; 21].join("+"));
+    let mut rows = vec![vec![source_cell(SourceValue::Empty, None); 11]; 12];
+    rows[0][0] = source_cell(SourceValue::Number { value: 21.0 }, Some(&formula));
+    rows[11][9] = source_cell(SourceValue::Number { value: 1.0 }, None);
+    rows[11][10] = source_cell(SourceValue::Number { value: 2.0 }, None);
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: (0..11)
+                .map(|index| SourceColumn {
+                    name: format!("Column {index}"),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows,
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 11]],
+        extra_columns: vec![vec![]],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        imported
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 21.0 }
+    );
+    assert!(exported.sheets[0].rows[0][0].formula.is_none());
+}
+
+#[test]
 fn oversized_blank_guards_keep_numeric_cache_and_refuse_without_cache() {
     let formula = "=MIN(C2,MIN(D2,MIN(E2,MIN(F2,MIN(G2,MIN(H2,5))))))";
     let (mut source, mut selection) = extremum_fixture(formula);
