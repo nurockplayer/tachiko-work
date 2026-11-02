@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 use sha2::{Digest, Sha256};
@@ -482,7 +482,7 @@ fn mix_calculation_failure(hash: &mut u64, failure: &CalculationFailure) {
         }
         CalculationFailure::Cycle { members } => {
             mix_hash(hash, &[2]);
-            for member in members {
+            for member in members.iter() {
                 mix_field_ref(hash, member);
             }
         }
@@ -679,12 +679,14 @@ fn complete_oracle_record() -> Record {
         (
             node("cycle-a"),
             CalculationFailure::Cycle {
-                members: cycle.clone(),
+                members: Arc::new(cycle.clone()),
             },
         ),
         (
             node("cycle-b"),
-            CalculationFailure::Cycle { members: cycle },
+            CalculationFailure::Cycle {
+                members: Arc::new(cycle),
+            },
         ),
         (
             node("downstream-failure"),
@@ -2087,7 +2089,7 @@ fn analysis_hash_bucket(hash: &mut u64, bucket: &AnalysisBucket) {
         match value {
             AnalysisResultValue::Membership(members) => {
                 analysis_hash_text(hash, "membership");
-                for member in members {
+                for member in members.iter() {
                     analysis_hash_text(hash, member.as_str());
                 }
             }
@@ -2138,7 +2140,7 @@ fn analysis_hash_calculation_failure(hash: &mut u64, failure: &CalculationFailur
         }
         CalculationFailure::Cycle { members } => {
             analysis_hash_text(hash, "cycle");
-            for field in members {
+            for field in members.iter() {
                 analysis_hash_field_ref(hash, field);
             }
         }

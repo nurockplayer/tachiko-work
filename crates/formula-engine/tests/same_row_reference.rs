@@ -1,6 +1,7 @@
 //! `[.field]` keeps meaning "this row" through binding, projection, and
 //! evaluation.
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use tachiko_formula_engine::{
     CalculationFailure, CalculationOutcome, FormulaBindError, UnboundExpression, bind_expression,
@@ -238,7 +239,7 @@ fn referring_to_the_own_formula_field_is_a_cycle() {
     assert_eq!(
         failures.failures().get(&owner("rent", "reserve")),
         Some(&CalculationFailure::Cycle {
-            members: std::collections::BTreeSet::from([owner("rent", "reserve")]),
+            members: Arc::new(std::collections::BTreeSet::from([owner("rent", "reserve")])),
         })
     );
 }

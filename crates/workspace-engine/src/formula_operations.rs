@@ -1110,7 +1110,7 @@ fn calculation_evidence_subjects(outcome: &FormulaCalculationOutcome) -> BTreeSe
     };
     match failure {
         CalculationFailure::InvalidReferences { targets } => targets.keys().cloned().collect(),
-        CalculationFailure::Cycle { members } => members.clone(),
+        CalculationFailure::Cycle { members } => members.as_ref().clone(),
         CalculationFailure::FailedDependencies { dependencies } => dependencies.clone(),
         CalculationFailure::TypeMismatch
         | CalculationFailure::InvalidExpression { .. }
