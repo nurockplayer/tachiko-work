@@ -2,6 +2,7 @@
 //! keeping the identity of the column rather than of the rows it happens to
 //! contain.
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use tachiko_formula_engine::{
     CalculationFailure, CalculationOutcome, CanonicalAuthoringProjectionError, ColumnFailure,
@@ -439,7 +440,7 @@ fn a_column_total_over_its_own_row_is_a_cycle() {
     assert_eq!(
         failures.failures().get(&owner("rent", "reserve")),
         Some(&CalculationFailure::Cycle {
-            members: BTreeSet::from([owner("rent", "reserve")]),
+            members: Arc::new(BTreeSet::from([owner("rent", "reserve")])),
         })
     );
 }

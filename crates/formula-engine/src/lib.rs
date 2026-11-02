@@ -4,6 +4,7 @@ mod evaluation;
 mod parser;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, ColumnAddress, ColumnRef, Document, Expression, FieldAddress,
@@ -1082,7 +1083,7 @@ impl CalculationFailures {
                 }
                 CalculationFailure::Cycle { members } => {
                     return CalculationError::Cycle {
-                        path: self.compatibility_cycle_witness(field, members),
+                        path: self.compatibility_cycle_witness(field, members.as_ref()),
                     };
                 }
                 CalculationFailure::FailedDependencies { dependencies } => {
@@ -1215,7 +1216,9 @@ pub enum CalculationFailure {
         targets: BTreeMap<FieldRef, ReferenceFailure>,
     },
     Cycle {
-        members: BTreeSet<FieldRef>,
+        /// One immutable SCC set shared by its members: O(n) rather than O(n²) memory.
+        /// `Arc` preserves `Send`/`Sync` for calculation results used by native hosts.
+        members: Arc<BTreeSet<FieldRef>>,
     },
     FailedDependencies {
         dependencies: BTreeSet<FieldRef>,
@@ -1596,11 +1599,12 @@ fn assign_cycle_failures(
         .cloned()
         .collect::<BTreeSet<_>>();
     for members in cyclic_components(&eligible_formulas, dependencies) {
-        for member in &members {
+        let members = Arc::new(members);
+        for member in members.iter() {
             failures.insert(
                 member.clone(),
                 CalculationFailure::Cycle {
-                    members: members.clone(),
+                    members: Arc::clone(&members),
                 },
             );
         }

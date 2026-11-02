@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use tachiko_formula_engine::{
     CalculationFailure, CalculationOutcome, FormulaBindError, UnboundExpression, bind_expression,
@@ -298,7 +299,7 @@ fn untaken_if_branch_still_participates_in_static_cycle_detection() {
     assert_eq!(
         failures.failures().get(&owner("output")),
         Some(&CalculationFailure::Cycle {
-            members: BTreeSet::from([owner("output")]),
+            members: Arc::new(BTreeSet::from([owner("output")])),
         })
     );
 }

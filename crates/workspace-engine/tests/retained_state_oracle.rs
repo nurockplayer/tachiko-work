@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use tachiko_formula_engine::{CalculationOutcome, calculate_complete, extract_dependencies};
 use tachiko_workspace_engine::{
@@ -1055,7 +1056,7 @@ fn assert_cycle_and_failed_dependency(session: &ResidentWorkspaceSession, contex
             projection.calculated_value,
             Some(FormulaCalculationOutcome::Failure(
                 tachiko_workspace_engine::CalculationFailure::Cycle {
-                    members: expected_members.clone(),
+                    members: Arc::new(expected_members.clone()),
                 }
             )),
             "complete SCC membership at {context}"

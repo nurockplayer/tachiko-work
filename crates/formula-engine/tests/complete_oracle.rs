@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use tachiko_formula_engine::{
     CalculationFailure, CalculationFailures, CalculationOutcome, ExpressionComplexityError,
@@ -148,32 +149,59 @@ fn complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure
             (
                 node("cycle-a-1"),
                 CalculationFailure::Cycle {
-                    members: cycle_a.clone(),
+                    members: Arc::new(cycle_a.clone()),
                 },
             ),
             (
                 node("cycle-a-2"),
-                CalculationFailure::Cycle { members: cycle_a },
+                CalculationFailure::Cycle {
+                    members: Arc::new(cycle_a),
+                },
             ),
             (
                 node("cycle-b-1"),
                 CalculationFailure::Cycle {
-                    members: cycle_b.clone(),
+                    members: Arc::new(cycle_b.clone()),
                 },
             ),
             (
                 node("cycle-b-2"),
                 CalculationFailure::Cycle {
-                    members: cycle_b.clone(),
+                    members: Arc::new(cycle_b.clone()),
                 },
             ),
             (
                 node("cycle-b-3"),
-                CalculationFailure::Cycle { members: cycle_b },
+                CalculationFailure::Cycle {
+                    members: Arc::new(cycle_b),
+                },
             ),
             (node("evaluation"), CalculationFailure::DivisionByZero,),
         ])
     );
+}
+
+#[test]
+fn cycle_members_share_one_membership_set() {
+    let document = document(vec![
+        ("a", FieldType::Number, formula(reference("b"))),
+        ("b", FieldType::Number, formula(reference("c"))),
+        ("c", FieldType::Number, formula(reference("a"))),
+    ]);
+    let failures = failed(calculate_complete(&document));
+    let members = ["a", "b", "c"].map(|field| {
+        let CalculationFailure::Cycle { members } = &failures.failures()[&node(field)] else {
+            panic!("expected a cycle failure for {field}");
+        };
+        members
+    });
+
+    assert_eq!(
+        members[0].as_ref(),
+        &BTreeSet::from([node("a"), node("b"), node("c")])
+    );
+    assert!(Arc::ptr_eq(members[0], members[1]));
+    assert!(Arc::ptr_eq(members[1], members[2]));
 }
 
 #[test]
@@ -213,12 +241,14 @@ fn binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evalua
             (
                 node("cycle-1"),
                 CalculationFailure::Cycle {
-                    members: cycle.clone(),
+                    members: Arc::new(cycle.clone()),
                 },
             ),
             (
                 node("cycle-2"),
-                CalculationFailure::Cycle { members: cycle },
+                CalculationFailure::Cycle {
+                    members: Arc::new(cycle),
+                },
             ),
             (node("evaluation"), CalculationFailure::DivisionByZero,),
             (
@@ -404,12 +434,14 @@ fn primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority
     assert_eq!(
         failures.failures().get(&node("cycle-a")),
         Some(&CalculationFailure::Cycle {
-            members: cycle.clone(),
+            members: Arc::new(cycle.clone()),
         })
     );
     assert_eq!(
         failures.failures().get(&node("cycle-b")),
-        Some(&CalculationFailure::Cycle { members: cycle })
+        Some(&CalculationFailure::Cycle {
+            members: Arc::new(cycle),
+        })
     );
     assert_eq!(
         failures.failures().get(&node("local-root")),
@@ -610,10 +642,12 @@ fn generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle(
                 expected_failures.insert(
                     node(&format!("field-{index:03}")),
                     CalculationFailure::Cycle {
-                        members: members
-                            .iter()
-                            .map(|member| node(&format!("field-{member:03}")))
-                            .collect(),
+                        members: Arc::new(
+                            members
+                                .iter()
+                                .map(|member| node(&format!("field-{member:03}")))
+                                .collect(),
+                        ),
                     },
                 );
                 continue;

@@ -984,7 +984,7 @@ fn calculation_failure_output(failure: &CalculationFailure) -> serde_json::Value
         }),
         CalculationFailure::Cycle { members } => json!({
             "kind": "cycle",
-            "members": members,
+            "members": members.as_ref(),
         }),
         CalculationFailure::FailedDependencies { dependencies } => json!({
             "kind": "failed_dependencies",
