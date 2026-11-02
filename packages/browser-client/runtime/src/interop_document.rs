@@ -3070,13 +3070,13 @@ pub(crate) fn export_expression(
         }
         Expression::Minimum { left, right } => Ok(format!(
             "MIN({},{})",
-            export_expression(left, owner, addresses, columns)?,
-            export_expression(right, owner, addresses, columns)?
+            export_extremum_argument(left, owner, addresses, columns)?,
+            export_extremum_argument(right, owner, addresses, columns)?
         )),
         Expression::Maximum { left, right } => Ok(format!(
             "MAX({},{})",
-            export_expression(left, owner, addresses, columns)?,
-            export_expression(right, owner, addresses, columns)?
+            export_extremum_argument(left, owner, addresses, columns)?,
+            export_extremum_argument(right, owner, addresses, columns)?
         )),
         Expression::Compare {
             operator,
@@ -3110,6 +3110,21 @@ pub(crate) fn export_expression(
             export_expression(reference, owner, addresses, columns)?
         )),
     }
+}
+
+/// Tachiko reads a blank optional Number as 0, but Excel's MIN and MAX skip a
+/// blank cell argument; `(reference+0)` is 0 there too.
+fn export_extremum_argument(
+    argument: &Expression,
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
+) -> Result<String, DesignerError> {
+    let exported = export_expression(argument, owner, addresses, columns)?;
+    Ok(match argument {
+        Expression::Reference(_) | Expression::SameRowReference(_) => format!("({exported}+0)"),
+        _ => exported,
+    })
 }
 
 /// A column total exports as the aggregate over the column's whole exported

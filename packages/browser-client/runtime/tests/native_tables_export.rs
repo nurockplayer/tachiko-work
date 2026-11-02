@@ -2018,6 +2018,43 @@ fn native_xlsx_column_total_and_cross_collection_formulas_roundtrip_through_host
 }
 
 #[test]
+fn native_xlsx_minimum_over_a_blank_optional_number_keeps_tachiko_zero() {
+    let mut document = Document::empty("formula-export", "Formula export");
+    add_table(
+        &mut document,
+        "calc",
+        "calc",
+        "Calculated",
+        vec![
+            field("a", FieldType::Number, false),
+            field("low", FieldType::Number, true),
+        ],
+        vec![vec![
+            None,
+            Some(Value::Formula(Expression::Minimum {
+                left: Box::new(Expression::Reference(
+                    tachiko_workspace_engine::FieldRef::new("calc-r000", "a"),
+                )),
+                right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
+            })),
+        ]],
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let workbook = import_xlsx(&bytes.unwrap()).unwrap();
+    // Excel's MIN skips a blank cell argument; `+0` keeps Tachiko's 0.
+    assert_eq!(
+        workbook.sheets[0].rows[0][1].formula.as_deref(),
+        Some("MIN(('Calculated'!$A$2+0),5)")
+    );
+    assert_eq!(
+        workbook.sheets[0].rows[0][1].value,
+        SourceValue::Number { value: 0.0 }
+    );
+}
+
+#[test]
 fn native_xlsx_column_minimum_keeps_value_and_discloses_cell_fallback() {
     let mut document = formula_document();
     document

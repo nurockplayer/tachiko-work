@@ -1191,7 +1191,7 @@ fn imported_forward_and_cross_sheet_formulas_rebind_and_export_from_live_ids_aft
     );
     assert_eq!(
         exported.sheets[1].rows[0][0].formula.as_deref(),
-        Some("('Data'!$C$2+MIN('Data'!$C$3,5))")
+        Some("('Data'!$C$2+MIN(('Data'!$C$3+0),5))")
     );
     let bytes = runtime.export_project("resident/1").unwrap().bytes;
     let inspected = inspect_imported_project(&bytes, &metadata).unwrap();
