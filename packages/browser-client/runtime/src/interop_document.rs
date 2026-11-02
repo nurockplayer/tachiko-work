@@ -842,12 +842,12 @@ pub fn import_workbook(
         };
         let rewritten = excel_extremum(expression.clone(), &target, &document);
         if &rewritten != expression {
-            document
+            let value = document
                 .entities
                 .get_mut(&target.entity)
-                .unwrap()
-                .fields
-                .insert(target.field, Value::Formula(rewritten));
+                .and_then(|entity| entity.fields.get_mut(&target.field))
+                .ok_or_else(|| tracker_error("bound import formula target is unavailable"))?;
+            *value = Value::Formula(rewritten);
         }
     }
     // The temporary occurrence has finished binding formulas. Its detached
