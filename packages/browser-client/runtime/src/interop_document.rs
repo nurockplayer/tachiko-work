@@ -1285,7 +1285,7 @@ fn bind_import_formula(
     })?;
     let expression = match excel_extremum(expression, target, snapshot.document()) {
         Ok(expression) => expression,
-        Err(ExpressionComplexityError::NodeLimit) => {
+        Err(ExpressionComplexityError::NodeLimit | ExpressionComplexityError::DepthLimit) => {
             drop(snapshot);
             let mut value = cell.value.clone();
             let mut formula = cell

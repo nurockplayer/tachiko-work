@@ -672,6 +672,30 @@ fn imported_minimum_skips_blank_right_reference() {
 }
 
 #[test]
+fn guard_depth_overflow_and_deep_chains_keep_numeric_cache() {
+    let depth_overflow = format!("=MIN(C2,5){}", "+1".repeat(62));
+    let chain = (0..20).fold("5".to_owned(), |inner, _| format!("MIN(C2,{inner})"));
+    for (formula, value) in [(depth_overflow, 67.0), (chain, 5.0)] {
+        let (mut source, selection) = extremum_fixture(&formula);
+        source.sheets[0].rows[0][0].value = SourceValue::Number { value };
+        let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        assert!(
+            imported.ledger.iter().any(
+                |finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking
+            )
+        );
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(
+            exported.sheets[0].rows[0][0].value,
+            SourceValue::Number { value }
+        );
+        assert!(exported.sheets[0].rows[0][0].formula.is_none());
+    }
+}
+
+#[test]
 fn oversized_blank_guards_keep_numeric_cache_and_refuse_without_cache() {
     let formula = "=MIN(C2,MIN(D2,MIN(E2,MIN(F2,MIN(G2,MIN(H2,5))))))";
     let (mut source, mut selection) = extremum_fixture(formula);
