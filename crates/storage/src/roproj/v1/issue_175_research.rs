@@ -825,11 +825,27 @@ fn emit_steady_rss() {
     println!("ISSUE175_STEADY_RSS_BYTES={}", current_rss_bytes());
 }
 
+// libtest can print `test <name> ... ` on the same line as the child's
+// marker (seen with Rust 1.99, #582), so the marker may start mid-line.
+fn child_marker_value<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    line.split_once(marker).map(|(_, value)| value.trim_end())
+}
+
+#[test]
+fn issue_175_child_marker_found_after_libtest_prefix() {
+    let line = "test roproj::v1::issue_175_research::issue_175_sidecar_child ... issue_175_sidecar_child={\"a\":1}";
+    assert_eq!(
+        child_marker_value(line, SIDECAR_CHILD_MARKER),
+        Some("{\"a\":1}")
+    );
+    assert_eq!(child_marker_value("ok", SIDECAR_CHILD_MARKER), None);
+}
+
 fn parse_child_rss(stdout: &[u8], stderr: &[u8]) -> (usize, usize) {
     let stdout = String::from_utf8_lossy(stdout);
     let steady = stdout
         .lines()
-        .find_map(|line| line.strip_prefix("ISSUE175_STEADY_RSS_BYTES="))
+        .find_map(|line| child_marker_value(line, "ISSUE175_STEADY_RSS_BYTES="))
         .unwrap()
         .parse::<usize>()
         .unwrap();
@@ -4694,7 +4710,7 @@ fn run_sidecar_child(
     let stdout = String::from_utf8(output.stdout).unwrap();
     let sample = stdout
         .lines()
-        .find_map(|line| line.strip_prefix(SIDECAR_CHILD_MARKER))
+        .find_map(|line| child_marker_value(line, SIDECAR_CHILD_MARKER))
         .map_or_else(
             || panic!("sidecar child '{action}' emitted no sample: {stdout}"),
             |json| serde_json::from_str::<SidecarChildSample>(json).unwrap(),
