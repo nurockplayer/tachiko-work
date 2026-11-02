@@ -698,6 +698,31 @@ fn guard_depth_overflow_and_deep_chains_keep_numeric_cache() {
 }
 
 /// One A2 formula of `terms` copies of MIN(J13,K13) over an 11×12 sheet.
+#[test]
+fn guarded_formula_over_the_parser_node_limit_keeps_numeric_cache() {
+    // 19 ROUND(MIN(C2,D2),0) terms guard to 247 bound nodes, but the parser
+    // also counts each ROUND digit literal: 265 parsed nodes (limit 256).
+    let formula = format!("={}", vec!["ROUND(MIN(C2,D2),0)"; 19].join("+"));
+    let (source, selection) = extremum_fixture(&formula);
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        imported
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 5.0 }
+    );
+    assert!(exported.sheets[0].rows[0][0].formula.is_none());
+}
+
 fn repeated_extremum_import(sheet: &str, terms: usize) -> (DesignerRuntime, ImportedProjection) {
     let formula = format!("={}", vec!["MIN(J13,K13)"; terms].join("+"));
     let mut rows = vec![vec![source_cell(SourceValue::Empty, None); 11]; 12];

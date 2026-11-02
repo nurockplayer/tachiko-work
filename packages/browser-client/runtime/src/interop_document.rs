@@ -1344,12 +1344,15 @@ fn bind_import_formula(
     // Guarding can outgrow any engine bound (nodes, depth or canonical text);
     // each keeps Excel's cached value rather than failing the whole import.
     // The export round trip in `finish_import` writes the same formula as A1
-    // text, which has its own length bound.
+    // text, which has its own length bound. `update_formula` re-parses the
+    // projected text, whose parse tree counts nodes (such as ROUND digits)
+    // the bound tree does not, so the parser itself decides.
     let projected = match excel_extremum(expression, target, snapshot.document()) {
         Ok(expression) => match project_expression(snapshot.document(), target, &expression) {
-            Ok(_)
-                if export_expression(&expression, target, &export_maps.0, &export_maps.1)
-                    .is_ok_and(|text| text.len() > MAX_PROFILE_STRING_BYTES) =>
+            Ok(source)
+                if parse_expression(&source).is_err()
+                    || export_expression(&expression, target, &export_maps.0, &export_maps.1)
+                        .is_ok_and(|text| text.len() > MAX_PROFILE_STRING_BYTES) =>
             {
                 None
             }
