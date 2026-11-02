@@ -166,10 +166,16 @@ fn emit_steady_rss() {
     println!("ISSUE_175_STEADY_RSS_BYTES={}", kib * 1024);
 }
 
+// libtest can print `test <name> ... ` on the same line as the child's
+// marker (seen with Rust 1.99, #582), so the marker may start mid-line.
+fn child_marker_value<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    line.split_once(marker).map(|(_, value)| value.trim_end())
+}
+
 fn parse_child_rss(stdout: &[u8], stderr: &[u8]) -> (u64, u64) {
     let steady = String::from_utf8_lossy(stdout)
         .lines()
-        .find_map(|line| line.strip_prefix("ISSUE_175_STEADY_RSS_BYTES="))
+        .find_map(|line| child_marker_value(line, "ISSUE_175_STEADY_RSS_BYTES="))
         .unwrap()
         .parse::<u64>()
         .unwrap();
