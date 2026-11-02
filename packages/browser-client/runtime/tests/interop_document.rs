@@ -675,7 +675,9 @@ fn imported_minimum_skips_blank_right_reference() {
 fn guard_depth_overflow_and_deep_chains_keep_numeric_cache() {
     let depth_overflow = format!("=MIN(C2,5){}", "+1".repeat(62));
     let chain = (0..20).fold("5".to_owned(), |inner, _| format!("MIN(C2,{inner})"));
-    for (formula, value) in [(depth_overflow, 67.0), (chain, 5.0)] {
+    // A cached zero equals the temporary formula slot and needs no edit.
+    let zero_chain = (0..20).fold("0".to_owned(), |inner, _| format!("MAX(C2,{inner})"));
+    for (formula, value) in [(depth_overflow, 67.0), (chain, 5.0), (zero_chain, 0.0)] {
         let (mut source, selection) = extremum_fixture(&formula);
         source.sheets[0].rows[0][0].value = SourceValue::Number { value };
         let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();

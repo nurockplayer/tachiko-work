@@ -1309,6 +1309,21 @@ fn bind_import_formula(
             let SourceValue::Number { value } = value else {
                 return Err(tracker_error("MIN/MAX requires a numeric cached value"));
             };
+            // The formula slot already holds a temporary Number; a cached value
+            // equal to it needs no edit (which would refuse as no change).
+            let unchanged = runtime
+                .session
+                .export_snapshot()
+                .document()
+                .entities
+                .get(&target.entity)
+                .and_then(|entity| entity.fields.get(&target.field))
+                .is_some_and(|stored| {
+                    Number::new(value).is_ok_and(|value| stored == &Value::Number(value))
+                });
+            if unchanged {
+                return Ok(());
+            }
             let revision = runtime.current_revision().to_owned();
             runtime.edit_cells(
                 &revision,
