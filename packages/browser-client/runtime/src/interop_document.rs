@@ -7,8 +7,8 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use tachiko_formula_engine::{
-    ExpressionComplexityError, bind_expression, parse_expression, project_expression,
-    validate_expression_structure,
+    CanonicalAuthoringProjectionError, ExpressionComplexityError, bind_expression,
+    parse_expression, project_expression, validate_expression_structure,
 };
 
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
@@ -1283,66 +1283,79 @@ fn bind_import_formula(
             source: Box::new(error),
         }
     })?;
-    let expression = match excel_extremum(expression, target, snapshot.document()) {
-        Ok(expression) => expression,
-        Err(ExpressionComplexityError::NodeLimit | ExpressionComplexityError::DepthLimit) => {
-            drop(snapshot);
-            let mut value = cell.value.clone();
-            let mut formula = cell
-                .formula
-                .as_ref()
-                .map(|source| source.strip_prefix('=').unwrap_or(source).to_owned());
-            super::interop_adapter::keep_cached_value(
-                &mut value,
-                &mut formula,
-                location,
-                ledger,
-                Some(
-                    "guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows",
-                ),
-            );
-            if let Some(finding) = ledger.last().filter(|finding| finding.blocking) {
-                return Err(DesignerError::ImportedSpreadsheetExport {
-                    finding: finding.clone(),
-                });
-            }
-            let SourceValue::Number { value } = value else {
-                return Err(tracker_error("MIN/MAX requires a numeric cached value"));
-            };
-            // The formula slot already holds a temporary Number; a cached value
-            // equal to it needs no edit (which would refuse as no change).
-            let unchanged = runtime
-                .session
-                .export_snapshot()
-                .document()
-                .entities
-                .get(&target.entity)
-                .and_then(|entity| entity.fields.get(&target.field))
-                .is_some_and(|stored| {
-                    Number::new(value).is_ok_and(|value| stored == &Value::Number(value))
-                });
-            if unchanged {
-                return Ok(());
-            }
-            let revision = runtime.current_revision().to_owned();
-            runtime.edit_cells(
-                &revision,
-                &[super::CellEdit {
-                    target: field_target(target),
-                    input: ScalarEditInput::Number {
-                        input: value.to_string(),
-                    },
-                }],
-            )?;
-            return Ok(());
-        }
-        Err(error) => return Err(tracker_error(&error.to_string())),
+    // Guarding can outgrow any engine bound (nodes, depth or canonical text);
+    // each keeps Excel's cached value rather than failing the whole import.
+    let projected = match excel_extremum(expression, target, snapshot.document()) {
+        Ok(expression) => match project_expression(snapshot.document(), target, &expression) {
+            Ok(source) => Some(source),
+            Err(CanonicalAuthoringProjectionError::Complexity(_)) => None,
+            Err(error) => return Err(tracker_error(&error.to_string())),
+        },
+        Err(_) => None,
     };
-    let source = project_expression(snapshot.document(), target, &expression)
-        .map_err(|error| tracker_error(&error.to_string()))?;
     drop(snapshot);
+    let Some(source) = projected else {
+        return keep_import_cache(runtime, target, cell, location, ledger);
+    };
     let revision = runtime.current_revision().to_owned();
     runtime.update_formula(&revision, &field_target(target), &source)?;
+    Ok(())
+}
+
+/// An imported formula Tachiko cannot hold after guarding keeps Excel's cached
+/// Number in its temporary formula slot.
+fn keep_import_cache(
+    runtime: &mut DesignerRuntime,
+    target: &FieldRef,
+    cell: &SourceCell,
+    location: &str,
+    ledger: &mut Vec<FidelityFinding>,
+) -> Result<(), DesignerError> {
+    let mut value = cell.value.clone();
+    let mut formula = cell
+        .formula
+        .as_ref()
+        .map(|source| source.strip_prefix('=').unwrap_or(source).to_owned());
+    super::interop_adapter::keep_cached_value(
+        &mut value,
+        &mut formula,
+        location,
+        ledger,
+        Some("guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows"),
+    );
+    if let Some(finding) = ledger.last().filter(|finding| finding.blocking) {
+        return Err(DesignerError::ImportedSpreadsheetExport {
+            finding: finding.clone(),
+        });
+    }
+    let SourceValue::Number { value } = value else {
+        return Err(tracker_error("MIN/MAX requires a numeric cached value"));
+    };
+    // The formula slot already holds a temporary Number; a cached value
+    // equal to it needs no edit (which would refuse as no change).
+    let unchanged = runtime
+        .session
+        .export_snapshot()
+        .document()
+        .entities
+        .get(&target.entity)
+        .and_then(|entity| entity.fields.get(&target.field))
+        .is_some_and(|stored| {
+            Number::new(value).is_ok_and(|value| stored == &Value::Number(value))
+        });
+    if unchanged {
+        return Ok(());
+    }
+    let revision = runtime.current_revision().to_owned();
+    runtime.edit_cells(
+        &revision,
+        &[super::CellEdit {
+            target: field_target(target),
+            input: ScalarEditInput::Number {
+                input: value.to_string(),
+            },
+        }],
+    )?;
     Ok(())
 }
 
