@@ -637,6 +637,94 @@ fn extremum_fixture(formula: &str) -> (SourceWorkbook, ImportSelection) {
 }
 
 #[test]
+fn imported_division_uses_guarded_minimum_before_calculation() {
+    let (mut source, selection) = extremum_fixture("=1/MIN(C2,5)");
+    source.sheets[0].rows[0][0].value = SourceValue::Number { value: 0.2 };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 0.2 }
+    );
+    assert!(exported.sheets[0].rows[0][0].formula.is_some());
+}
+
+#[test]
+fn imported_minimum_skips_blank_right_reference() {
+    let (source, selection) = extremum_fixture("=MIN(5,C2)");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 5.0 }
+    );
+    assert!(
+        exported.sheets[0].rows[0][0]
+            .formula
+            .as_ref()
+            .unwrap()
+            .starts_with("IF(ISBLANK(")
+    );
+}
+
+#[test]
+fn oversized_blank_guards_keep_numeric_cache_and_refuse_without_cache() {
+    let formula = "=MIN(C2,MIN(D2,MIN(E2,MIN(F2,MIN(G2,MIN(H2,5))))))";
+    let (mut source, mut selection) = extremum_fixture(formula);
+    let sheet = &mut source.sheets[0];
+    sheet.columns.extend((5..8).map(|index| SourceColumn {
+        name: format!("Optional {index}"),
+        width: None,
+        number_format: None,
+    }));
+    for row in &mut sheet.rows {
+        row.resize(8, source_cell(SourceValue::Empty, None));
+    }
+    sheet.rows[0][4].value = SourceValue::Empty;
+    sheet.rows[0][1] = source_cell(SourceValue::Number { value: 10.0 }, Some("=A2*2"));
+    selection.column_types[0].resize(8, ImportFieldType::Number);
+    for cached in [SourceValue::Number { value: 5.0 }, SourceValue::Empty] {
+        source.sheets[0].rows[0][0].value = cached.clone();
+        let result = import_workbook(&source, &selection, OCCURRENCE);
+        if cached == SourceValue::Empty {
+            let Err(error) = result else {
+                panic!("expected missing-cache refusal")
+            };
+            assert!(
+                matches!(error, tachiko_designer_runtime::DesignerError::ImportedSpreadsheetExport { finding }
+                if finding.blocking && finding.code == "unsupported_formula_function")
+            );
+            continue;
+        }
+        let (runtime, imported) = result.unwrap();
+        let finding = imported
+            .ledger
+            .iter()
+            .find(|finding| finding.code == "unsupported_formula_kept_value")
+            .unwrap();
+        assert_eq!(finding.category, FidelityCategory::LossyOnExport);
+        assert!(!finding.blocking);
+        assert_eq!(finding.location, "Data!A2");
+        assert!(finding.message.contains(
+            "guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows"
+        ));
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(exported.sheets[0].rows[0][0].value, cached);
+        assert!(exported.sheets[0].rows[0][0].formula.is_none());
+        assert_eq!(
+            exported.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: 10.0 }
+        );
+    }
+}
+
+#[test]
 fn imported_minimum_skips_blank_optional_reference_and_recalculates_after_edit() {
     use tachiko_designer_runtime::{CellEdit, ScalarEditInput};
     let (source, selection) = extremum_fixture("=MIN('Data'!C2,5)");

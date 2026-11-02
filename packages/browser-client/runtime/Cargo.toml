@@ -16,6 +16,7 @@ capacity-bench = ["tachiko-workspace-engine/capacity-instrumentation"]
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tachiko-formula-engine = { path = "../../../crates/formula-engine" }
 tachiko-storage = { path = "../../../crates/storage" }
 tachiko-workspace-engine = { path = "../../../crates/workspace-engine" }
 thiserror = "2.0"

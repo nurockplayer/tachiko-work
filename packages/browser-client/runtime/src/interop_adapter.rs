@@ -3284,7 +3284,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                         ));
                         value = SourceValue::Empty;
                     } else if unsupported_formula_function(&f.text, true) {
-                        keep_cached_value(&mut value, &mut source, &location, &mut ledger);
+                        keep_cached_value(&mut value, &mut source, &location, &mut ledger, None);
                     }
                 }
                 if matches!(value, SourceValue::Date { .. }) {
@@ -3985,7 +3985,7 @@ fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<Fideli
             above + 2 + row_index
         );
         let cell = &mut sheet.rows[row_index][column];
-        keep_cached_value(&mut cell.value, &mut cell.formula, &location, ledger);
+        keep_cached_value(&mut cell.value, &mut cell.formula, &location, ledger, None);
     }
 }
 
@@ -3994,13 +3994,15 @@ const ADMITTED_FORMULAS: &str = "Tachiko calculates numeric arithmetic, comparis
 /// A formula Tachiko does not calculate keeps Excel's last calculated value as
 /// a plain value, with the original formula named in the finding. Without a
 /// cached value nothing is guessed: the cell stays a blocking refusal.
-fn keep_cached_value(
+pub(super) fn keep_cached_value(
     value: &mut SourceValue,
     formula: &mut Option<String>,
     location: &str,
     ledger: &mut Vec<FidelityFinding>,
+    reason: Option<&str>,
 ) {
     let original = formula.as_deref().unwrap_or_default();
+    let reason = reason.map_or_else(String::new, |reason| format!(" {reason}."));
     // A `t="str"` formula without `<v>`, or with an empty `<v/>` placeholder,
     // reads as empty text; treat it as no calculated value rather than keep "".
     let cached = match value {
@@ -4013,7 +4015,7 @@ fn keep_cached_value(
             FidelityCategory::UnsupportedSafeDisabled,
             "unsupported_formula_function",
             location,
-            &format!("={original} cannot be calculated in Tachiko and the file holds no calculated value to keep. {ADMITTED_FORMULAS}."),
+            &format!("={original} cannot be calculated in Tachiko and the file holds no calculated value to keep.{reason} {ADMITTED_FORMULAS}."),
             true,
         ));
         *value = SourceValue::Empty;
@@ -4023,7 +4025,7 @@ fn keep_cached_value(
         FidelityCategory::LossyOnExport,
         "unsupported_formula_kept_value",
         location,
-        &format!("Kept Excel's last calculated value of ={original}; it will not recalculate in Tachiko, and export writes the value. {ADMITTED_FORMULAS}."),
+        &format!("Kept Excel's last calculated value of ={original}; it will not recalculate in Tachiko, and export writes the value.{reason} {ADMITTED_FORMULAS}."),
         false,
     ));
     *formula = None;
@@ -4213,7 +4215,7 @@ fn escape(value: &str) -> String {
 fn capacity_attribute(value: &str) -> String {
     escape(value).replace('\n', "&#10;").replace('\t', "&#9;")
 }
-fn column_name(index: usize) -> String {
+pub(super) fn column_name(index: usize) -> String {
     let mut n = index + 1;
     let mut s = String::new();
     while n > 0 {

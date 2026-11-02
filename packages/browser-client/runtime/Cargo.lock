@@ -402,6 +402,7 @@ dependencies = [
  "quick-xml",
  "serde",
  "serde_json",
+ "tachiko-formula-engine",
  "tachiko-storage",
  "tachiko-workspace-engine",
  "thiserror",

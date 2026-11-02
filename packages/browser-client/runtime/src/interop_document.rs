@@ -6,6 +6,10 @@ use super::{
     ScalarEditInput, StoredValueProjection,
 };
 use serde::{Deserialize, Serialize};
+use tachiko_formula_engine::{
+    ExpressionComplexityError, bind_expression, parse_expression, project_expression,
+    validate_expression_structure,
+};
 
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
     match error {
@@ -814,42 +818,38 @@ pub fn import_workbook(
             sheet_index,
             runtime.session.export_snapshot().document(),
         )?;
-        pending.insert(target, (source, references));
+        pending.insert(target, (source, references, (sheet_index, row, column)));
     }
-    let formula_targets = pending.keys().cloned().collect::<Vec<_>>();
     while !pending.is_empty() {
         let next = pending
             .iter()
-            .find(|(_, (_, references))| {
+            .find(|(_, (_, references, _))| {
                 references
                     .iter()
                     .all(|reference| !pending.contains_key(reference))
             })
             .map(|(target, _)| target.clone())
             .ok_or_else(|| tracker_error("source formulas contain a dependency cycle"))?;
-        let (source, _) = pending
+        let (source, _, (sheet_index, row, column)) = pending
             .remove(&next)
             .ok_or_else(|| tracker_error("pending import formula is unavailable"))?;
-        let revision = runtime.current_revision().to_owned();
-        runtime.update_formula(&revision, &field_target(&next), &source)?;
+        let sheet = &workbook.sheets[sheet_index];
+        let location = format!(
+            "{}!{}{}",
+            sheet.name,
+            super::interop_adapter::column_name(column),
+            sheet.layout.rows_above_header as usize + usize::from(sheet.has_header) + row + 1
+        );
+        bind_import_formula(
+            &mut runtime,
+            &next,
+            &source,
+            &sheet.rows[row][column],
+            &location,
+            &mut ledger,
+        )?;
     }
-    let mut document = runtime.session.export_snapshot().into_document();
-    for target in formula_targets {
-        let Some(Value::Formula(expression)) =
-            document.entities[&target.entity].fields.get(&target.field)
-        else {
-            continue;
-        };
-        let rewritten = excel_extremum(expression.clone(), &target, &document);
-        if &rewritten != expression {
-            let value = document
-                .entities
-                .get_mut(&target.entity)
-                .and_then(|entity| entity.fields.get_mut(&target.field))
-                .ok_or_else(|| tracker_error("bound import formula target is unavailable"))?;
-            *value = Value::Formula(rewritten);
-        }
-    }
+    let document = runtime.session.export_snapshot().into_document();
     // The temporary occurrence has finished binding formulas. Its detached
     // snapshot owns the complete document; release the old runtime before
     // validating and projecting the final occurrence.
@@ -1260,17 +1260,96 @@ fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, Designe
     Ok(name)
 }
 
+// Bind and guard without publishing an unguarded intermediate calculation.
+fn bind_import_formula(
+    runtime: &mut DesignerRuntime,
+    target: &FieldRef,
+    source: &str,
+    cell: &SourceCell,
+    location: &str,
+    ledger: &mut Vec<FidelityFinding>,
+) -> Result<(), DesignerError> {
+    let snapshot = runtime.session.export_snapshot();
+    let unbound = parse_expression(source).map_err(|error| {
+        tachiko_workspace_engine::WorkspaceError::InvalidFormula {
+            field: target.clone(),
+            input: source.into(),
+            source: error,
+        }
+    })?;
+    let expression = bind_expression(snapshot.document(), target, &unbound).map_err(|error| {
+        tachiko_workspace_engine::WorkspaceError::FormulaBinding {
+            field: target.clone(),
+            source: Box::new(error),
+        }
+    })?;
+    let expression = match excel_extremum(expression, target, snapshot.document()) {
+        Ok(expression) => expression,
+        Err(ExpressionComplexityError::NodeLimit) => {
+            drop(snapshot);
+            let mut value = cell.value.clone();
+            let mut formula = cell
+                .formula
+                .as_ref()
+                .map(|source| source.strip_prefix('=').unwrap_or(source).to_owned());
+            super::interop_adapter::keep_cached_value(
+                &mut value,
+                &mut formula,
+                location,
+                ledger,
+                Some(
+                    "guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows",
+                ),
+            );
+            if let Some(finding) = ledger.last().filter(|finding| finding.blocking) {
+                return Err(DesignerError::ImportedSpreadsheetExport {
+                    finding: finding.clone(),
+                });
+            }
+            let SourceValue::Number { value } = value else {
+                return Err(tracker_error("MIN/MAX requires a numeric cached value"));
+            };
+            let revision = runtime.current_revision().to_owned();
+            runtime.edit_cells(
+                &revision,
+                &[super::CellEdit {
+                    target: field_target(target),
+                    input: ScalarEditInput::Number {
+                        input: value.to_string(),
+                    },
+                }],
+            )?;
+            return Ok(());
+        }
+        Err(error) => return Err(tracker_error(&error.to_string())),
+    };
+    let source = project_expression(snapshot.document(), target, &expression)
+        .map_err(|error| tracker_error(&error.to_string()))?;
+    drop(snapshot);
+    let revision = runtime.current_revision().to_owned();
+    runtime.update_formula(&revision, &field_target(target), &source)?;
+    Ok(())
+}
+
 // Excel skips blank direct references in MIN/MAX; Tachiko reads them as zero.
 // This conversion is only applied to newly imported formulas.
-fn excel_extremum(mut expression: Expression, owner: &FieldRef, document: &Document) -> Expression {
-    fn rewrite(expression: &mut Expression, owner: &FieldRef, document: &Document) {
+fn excel_extremum(
+    mut expression: Expression,
+    owner: &FieldRef,
+    document: &Document,
+) -> Result<Expression, ExpressionComplexityError> {
+    fn rewrite(
+        expression: &mut Expression,
+        owner: &FieldRef,
+        document: &Document,
+    ) -> Result<(), ExpressionComplexityError> {
         for child in expression.children_mut() {
-            rewrite(child, owner, document);
+            rewrite(child, owner, document)?;
         }
         let (Expression::Minimum { left, right } | Expression::Maximum { left, right }) =
             expression
         else {
-            return;
+            return Ok(());
         };
         let blankable = |argument: &Expression| {
             let (entity, field) = match argument {
@@ -1288,7 +1367,7 @@ fn excel_extremum(mut expression: Expression, owner: &FieldRef, document: &Docum
         let left_blankable = blankable(left);
         let right_blankable = blankable(right);
         if !left_blankable && !right_blankable {
-            return;
+            return Ok(());
         }
         let left = left.clone();
         let right = right.clone();
@@ -1307,10 +1386,15 @@ fn excel_extremum(mut expression: Expression, owner: &FieldRef, document: &Docum
                 else_value: Box::new(inner),
             };
         }
+        // Check every expansion before its parent can duplicate it again.
+        // The engine owns MAX_EXPRESSION_NODES (256), not this adapter.
+        validate_expression_structure(&inner)?;
         *expression = inner;
+        Ok(())
     }
-    rewrite(&mut expression, owner, document);
-    expression
+    rewrite(&mut expression, owner, document)?;
+    validate_expression_structure(&expression)?;
+    Ok(expression)
 }
 
 #[cfg(test)]
@@ -1360,7 +1444,7 @@ mod extremum_tests {
                 right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
             };
             assert_eq!(
-                excel_extremum(expression.clone(), &owner, &document),
+                excel_extremum(expression.clone(), &owner, &document).unwrap(),
                 expression
             );
         }
@@ -1377,7 +1461,7 @@ mod extremum_tests {
             right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
         };
         assert!(matches!(
-            excel_extremum(expression, &owner, &document),
+            excel_extremum(expression, &owner, &document).unwrap(),
             Expression::If { .. }
         ));
     }
