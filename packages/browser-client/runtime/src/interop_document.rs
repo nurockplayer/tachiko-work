@@ -820,6 +820,7 @@ pub fn import_workbook(
         )?;
         pending.insert(target, (source, references, (sheet_index, row, column)));
     }
+    let export_maps = export_a1_maps(runtime.session.export_snapshot().document(), &metadata);
     while !pending.is_empty() {
         let next = pending
             .iter()
@@ -846,6 +847,7 @@ pub fn import_workbook(
             &source,
             &sheet.rows[row][column],
             &location,
+            &export_maps,
             &mut ledger,
         )?;
     }
@@ -1260,6 +1262,61 @@ fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, Designe
     Ok(name)
 }
 
+/// The A1 address of every exported cell and one whole-column range per
+/// exported column, as the imported-workbook export writes them.
+fn export_a1_maps(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> (BTreeMap<FieldRef, String>, BTreeMap<ColumnRef, String>) {
+    let mut addresses = BTreeMap::new();
+    // One whole-column range per exported column, so a column total keeps
+    // meaning every exported row instead of the rows present today.
+    let mut columns = BTreeMap::new();
+    for sheet in &metadata.sheets {
+        let present: Vec<_> = sheet
+            .rows
+            .iter()
+            .filter(|row| {
+                document
+                    .entities
+                    .contains_key(&EntityId::from(row.entity_id.clone()))
+            })
+            .collect();
+        let first = 1 + usize::from(sheet.has_header);
+        let last = present.len() + usize::from(sheet.has_header);
+        for (column, definition) in sheet.columns.iter().enumerate() {
+            let letters = column_letters(column);
+            // An exported table without rows maps its columns to no range.
+            let range = if present.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "'{}'!${letters}${first}:${letters}${last}",
+                    sheet.name.replace('\'', "''")
+                )
+            };
+            columns.insert(
+                ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
+                range,
+            );
+        }
+        for (row_index, row) in present.iter().enumerate() {
+            for (column, definition) in sheet.columns.iter().enumerate() {
+                addresses.insert(
+                    FieldRef::new(row.entity_id.clone(), definition.field_id.clone()),
+                    format!(
+                        "'{}'!${}${}",
+                        sheet.name.replace('\'', "''"),
+                        column_letters(column),
+                        row_index + 1 + usize::from(sheet.has_header)
+                    ),
+                );
+            }
+        }
+    }
+    (addresses, columns)
+}
+
 // Bind and guard without publishing an unguarded intermediate calculation.
 fn bind_import_formula(
     runtime: &mut DesignerRuntime,
@@ -1267,6 +1324,7 @@ fn bind_import_formula(
     source: &str,
     cell: &SourceCell,
     location: &str,
+    export_maps: &(BTreeMap<FieldRef, String>, BTreeMap<ColumnRef, String>),
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<(), DesignerError> {
     let snapshot = runtime.session.export_snapshot();
@@ -1285,8 +1343,16 @@ fn bind_import_formula(
     })?;
     // Guarding can outgrow any engine bound (nodes, depth or canonical text);
     // each keeps Excel's cached value rather than failing the whole import.
+    // The export round trip in `finish_import` writes the same formula as A1
+    // text, which has its own length bound.
     let projected = match excel_extremum(expression, target, snapshot.document()) {
         Ok(expression) => match project_expression(snapshot.document(), target, &expression) {
+            Ok(_)
+                if export_expression(&expression, target, &export_maps.0, &export_maps.1)
+                    .is_ok_and(|text| text.len() > MAX_PROFILE_STRING_BYTES) =>
+            {
+                None
+            }
             Ok(source) => Some(source),
             Err(CanonicalAuthoringProjectionError::Complexity(_)) => None,
             Err(error) => return Err(tracker_error(&error.to_string())),
@@ -2573,58 +2639,13 @@ impl DesignerRuntime {
         self.check_revision(expected_revision)?;
         // The caller holds the exact immutable snapshot already used for
         // metadata admission. No second owned document is needed here.
-        let mut addresses = BTreeMap::new();
-        // One whole-column range per exported column, so a column total keeps
-        // meaning every exported row instead of the rows present today.
-        let mut columns = BTreeMap::new();
         // Capacity admission excludes formulas, the sole consumers of A1
         // addresses. Other profiles retain their full reference index.
-        for sheet in metadata
-            .sheets
-            .iter()
-            .filter(|_| profile != OutputProfile::TextCapacity && !values_only)
-        {
-            let present: Vec<_> = sheet
-                .rows
-                .iter()
-                .filter(|row| {
-                    document
-                        .entities
-                        .contains_key(&EntityId::from(row.entity_id.clone()))
-                })
-                .collect();
-            let first = 1 + usize::from(sheet.has_header);
-            let last = present.len() + usize::from(sheet.has_header);
-            for (column, definition) in sheet.columns.iter().enumerate() {
-                let letters = column_letters(column);
-                // An exported table without rows maps its columns to no range.
-                let range = if present.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        "'{}'!${letters}${first}:${letters}${last}",
-                        sheet.name.replace('\'', "''")
-                    )
-                };
-                columns.insert(
-                    ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
-                    range,
-                );
-            }
-            for (row_index, row) in present.iter().enumerate() {
-                for (column, definition) in sheet.columns.iter().enumerate() {
-                    addresses.insert(
-                        FieldRef::new(row.entity_id.clone(), definition.field_id.clone()),
-                        format!(
-                            "'{}'!${}${}",
-                            sheet.name.replace('\'', "''"),
-                            column_letters(column),
-                            row_index + 1 + usize::from(sheet.has_header)
-                        ),
-                    );
-                }
-            }
-        }
+        let (addresses, columns) = if profile == OutputProfile::TextCapacity || values_only {
+            (BTreeMap::new(), BTreeMap::new())
+        } else {
+            export_a1_maps(document, metadata)
+        };
         let mut sheets = Vec::new();
         for sheet in &metadata.sheets {
             let mut rows = Vec::new();

@@ -518,9 +518,9 @@ use tachiko_designer_runtime::interop_adapter::{
     SourceSheet, SourceValue, SourceWorkbook,
 };
 use tachiko_designer_runtime::{
-    ImportFieldType, ImportSelection, InteropMetadata, KeyedGroupedSumDefinitionInput,
-    KeyedGroupedSumGroupProjection, KeyedGroupedSumProjection, import_workbook,
-    inspect_imported_project,
+    ImportFieldType, ImportSelection, ImportedProjection, InteropMetadata,
+    KeyedGroupedSumDefinitionInput, KeyedGroupedSumGroupProjection, KeyedGroupedSumProjection,
+    import_workbook, inspect_imported_project,
 };
 fn source_cell(value: SourceValue, formula: Option<&str>) -> SourceCell {
     SourceCell {
@@ -697,20 +697,18 @@ fn guard_depth_overflow_and_deep_chains_keep_numeric_cache() {
     }
 }
 
-#[test]
-fn guarded_formula_over_the_canonical_text_limit_keeps_numeric_cache() {
-    // 21 two-reference MINs over another row ([sheet_1_row_12.column_10])
-    // guard to 251 nodes, inside the node and depth limits, but render 4,237
-    // canonical bytes, past the 4,096-byte limit.
-    let formula = format!("={}", vec!["MIN(J13,K13)"; 21].join("+"));
+/// One A2 formula of `terms` copies of MIN(J13,K13) over an 11×12 sheet.
+fn repeated_extremum_import(sheet: &str, terms: usize) -> (DesignerRuntime, ImportedProjection) {
+    let formula = format!("={}", vec!["MIN(J13,K13)"; terms].join("+"));
     let mut rows = vec![vec![source_cell(SourceValue::Empty, None); 11]; 12];
-    rows[0][0] = source_cell(SourceValue::Number { value: 21.0 }, Some(&formula));
+    let cached = f64::from(u32::try_from(terms).unwrap());
+    rows[0][0] = source_cell(SourceValue::Number { value: cached }, Some(&formula));
     rows[11][9] = source_cell(SourceValue::Number { value: 1.0 }, None);
     rows[11][10] = source_cell(SourceValue::Number { value: 2.0 }, None);
     let source = SourceWorkbook {
         ledger: vec![],
         sheets: vec![SourceSheet {
-            name: "Data".into(),
+            name: sheet.into(),
             has_header: true,
             columns: (0..11)
                 .map(|index| SourceColumn {
@@ -727,23 +725,41 @@ fn guarded_formula_over_the_canonical_text_limit_keeps_numeric_cache() {
         column_types: vec![vec![ImportFieldType::Number; 11]],
         extra_columns: vec![vec![]],
     };
-    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
-    assert!(
-        imported
-            .ledger
-            .iter()
-            .any(|finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking),
-        "{:?}",
-        imported.ledger
-    );
+    import_workbook(&source, &selection, OCCURRENCE).unwrap()
+}
+
+#[test]
+fn guarded_formulas_past_a_text_limit_keep_numeric_cache() {
+    // 21 terms ([sheet_1_row_12.column_10]) guard to 251 nodes, inside the
+    // node and depth limits, but render 4,237 canonical bytes (limit 4,096).
+    // 15 terms on a long sheet name fit the canonical limit, but their A1
+    // export ('Monthly Financial Forecast 2026'!$J$13) runs past 4,096 bytes.
+    for (sheet, terms) in [("Data", 21), ("Monthly Financial Forecast 2026", 15)] {
+        let (runtime, imported) = repeated_extremum_import(sheet, terms);
+        assert!(
+            imported.ledger.iter().any(
+                |finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking
+            ),
+            "{sheet}: {:?}",
+            imported.ledger
+        );
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(
+            exported.sheets[0].rows[0][0].value,
+            SourceValue::Number {
+                value: f64::from(u32::try_from(terms).unwrap())
+            }
+        );
+        assert!(exported.sheets[0].rows[0][0].formula.is_none());
+    }
+    // A short chain still imports as a guarded live formula.
+    let (runtime, imported) = repeated_extremum_import("Data", 2);
     let exported = runtime
         .export_workbook("resident/0", &imported.metadata)
         .unwrap();
-    assert_eq!(
-        exported.sheets[0].rows[0][0].value,
-        SourceValue::Number { value: 21.0 }
-    );
-    assert!(exported.sheets[0].rows[0][0].formula.is_none());
+    assert!(exported.sheets[0].rows[0][0].formula.is_some());
 }
 
 #[test]
