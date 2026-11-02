@@ -732,9 +732,9 @@ fn repeated_extremum_import(sheet: &str, terms: usize) -> (DesignerRuntime, Impo
 fn guarded_formulas_past_a_text_limit_keep_numeric_cache() {
     // 21 terms ([sheet_1_row_12.column_10]) guard to 251 nodes, inside the
     // node and depth limits, but render 4,237 canonical bytes (limit 4,096).
-    // 15 terms on a long sheet name fit the canonical limit, but their A1
+    // 16 terms on a long sheet name fit the canonical limit, but their A1
     // export ('Monthly Financial Forecast 2026'!$J$13) runs past 4,096 bytes.
-    for (sheet, terms) in [("Data", 21), ("Monthly Financial Forecast 2026", 15)] {
+    for (sheet, terms) in [("Data", 21), ("Monthly Financial Forecast 2026", 16)] {
         let (runtime, imported) = repeated_extremum_import(sheet, terms);
         assert!(
             imported.ledger.iter().any(
@@ -877,7 +877,7 @@ fn imported_minimum_of_populated_optional_reference_keeps_blank_guard() {
         .unwrap();
     assert_eq!(
         exported.sheets[0].rows[0][0].formula.as_deref(),
-        Some("IF(ISBLANK('Data'!$E$2),5,MIN(('Data'!$E$2+0),5))")
+        Some("IF(ISBLANK('Data'!$E$2),5,MIN('Data'!$E$2,5))")
     );
 }
 
@@ -909,6 +909,36 @@ fn imported_extremum_formula_text_is_stable_across_xlsx_cycles() {
             twice.sheets[0].rows[0][column].value
         );
     }
+}
+
+#[test]
+fn guarded_extremum_exports_without_growth_and_reimports_as_a_formula() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    // Twenty guarded MIN(C2,D2) terms fill 239 of 256 nodes. A `+0` around
+    // each guarded argument would push the exported formula past the limit.
+    let formula = format!("={}", vec!["MIN(C2,D2)"; 20].join("+"));
+    let (source, selection) = extremum_fixture(&formula);
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let once = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    let text = once.sheets[0].rows[0][0].formula.clone().unwrap();
+    assert!(!text.contains("+0)"), "{text}");
+    let source = import_xlsx(&export_xlsx(&once).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value")
+    );
+    let twice = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        twice.sheets[0].rows[0][0].formula.as_deref(),
+        Some(text.as_str())
+    );
 }
 
 fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
@@ -1500,7 +1530,7 @@ fn imported_forward_and_cross_sheet_formulas_rebind_and_export_from_live_ids_aft
     );
     assert_eq!(
         exported.sheets[1].rows[0][0].formula.as_deref(),
-        Some("('Data'!$C$2+IF(ISBLANK('Data'!$C$3),5,MIN(('Data'!$C$3+0),5)))")
+        Some("('Data'!$C$2+IF(ISBLANK('Data'!$C$3),5,MIN('Data'!$C$3,5)))")
     );
     let bytes = runtime.export_project("resident/1").unwrap().bytes;
     let inspected = inspect_imported_project(&bytes, &metadata).unwrap();

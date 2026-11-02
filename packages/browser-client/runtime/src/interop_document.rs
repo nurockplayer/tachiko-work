@@ -1436,9 +1436,23 @@ fn excel_extremum(
         expression: &mut Expression,
         owner: &FieldRef,
         document: &Document,
+        present: &std::collections::BTreeSet<FieldRef>,
     ) -> Result<(), ExpressionComplexityError> {
+        // A reference an enclosing ISBLANK guard proved present is not blank
+        // in the else branch, so already guarded formulas stay unchanged.
+        if let Expression::If {
+            condition,
+            then_value,
+            else_value,
+        } = expression
+        {
+            rewrite(condition, owner, document, present)?;
+            rewrite(then_value, owner, document, present)?;
+            let present = guarded_present(condition, owner, present);
+            return rewrite(else_value, owner, document, &present);
+        }
         for child in expression.children_mut() {
-            rewrite(child, owner, document)?;
+            rewrite(child, owner, document, present)?;
         }
         let (Expression::Minimum { left, right } | Expression::Maximum { left, right }) =
             expression
@@ -1446,17 +1460,18 @@ fn excel_extremum(
             return Ok(());
         };
         let blankable = |argument: &Expression| {
-            let (entity, field) = match argument {
-                Expression::Reference(reference) => (&reference.entity, &reference.field),
-                Expression::SameRowReference(field) => (&owner.entity, field),
-                _ => return false,
-            };
-            document
-                .entities
-                .get(entity)
-                .and_then(|entity| document.schemas.get(&entity.schema))
-                .and_then(|schema| schema.fields.get(field))
-                .is_some_and(|field| field.field_type == FieldType::Number && !field.required)
+            direct_reference(argument, owner)
+                .filter(|reference| !present.contains(reference))
+                .is_some_and(|reference| {
+                    document
+                        .entities
+                        .get(&reference.entity)
+                        .and_then(|entity| document.schemas.get(&entity.schema))
+                        .and_then(|schema| schema.fields.get(&reference.field))
+                        .is_some_and(|field| {
+                            field.field_type == FieldType::Number && !field.required
+                        })
+                })
         };
         let left_blankable = blankable(left);
         let right_blankable = blankable(right);
@@ -1486,14 +1501,22 @@ fn excel_extremum(
         *expression = inner;
         Ok(())
     }
-    rewrite(&mut expression, owner, document)?;
+    rewrite(
+        &mut expression,
+        owner,
+        document,
+        &std::collections::BTreeSet::new(),
+    )?;
     validate_expression_structure(&expression)?;
     Ok(expression)
 }
 
 #[cfg(test)]
 mod extremum_tests {
-    use super::*;
+    use super::{
+        BTreeMap, Document, Entity, Expression, FieldDefinition, FieldRef, FieldType, Number,
+        Schema, Value, excel_extremum,
+    };
 
     #[test]
     fn required_references_stay_plain_and_optional_same_row_references_are_guarded() {
@@ -3304,6 +3327,47 @@ pub(crate) fn export_expression(
     addresses: &BTreeMap<FieldRef, String>,
     columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
+    export_in(
+        expression,
+        owner,
+        addresses,
+        columns,
+        &std::collections::BTreeSet::new(),
+    )
+}
+
+/// The field a direct reference names, resolved against the formula's owner.
+fn direct_reference(argument: &Expression, owner: &FieldRef) -> Option<FieldRef> {
+    match argument {
+        Expression::Reference(reference) => Some(reference.clone()),
+        Expression::SameRowReference(field) => {
+            Some(FieldRef::new(owner.entity.clone(), field.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// The references known present in the else branch of `IF(condition, ...)`:
+/// those already known, plus the one `ISBLANK` tested.
+fn guarded_present(
+    condition: &Expression,
+    owner: &FieldRef,
+    present: &std::collections::BTreeSet<FieldRef>,
+) -> std::collections::BTreeSet<FieldRef> {
+    let mut present = present.clone();
+    if let Expression::IsBlank(argument) = condition {
+        present.extend(direct_reference(argument, owner));
+    }
+    present
+}
+
+fn export_in(
+    expression: &Expression,
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
+    present: &std::collections::BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
     match expression {
         Expression::Number(number) => Ok(number.get().to_string()),
         Expression::SameRowReference(field) => addresses
@@ -3330,74 +3394,94 @@ pub(crate) fn export_expression(
             export_column(name, column, columns)
         }
         Expression::Add { left, right } => {
-            export_binary(left, "+", right, owner, addresses, columns)
+            export_binary(left, "+", right, owner, addresses, columns, present)
         }
         Expression::Subtract { left, right } => {
-            export_binary(left, "-", right, owner, addresses, columns)
+            export_binary(left, "-", right, owner, addresses, columns, present)
         }
         Expression::Multiply { left, right } => {
-            export_binary(left, "*", right, owner, addresses, columns)
+            export_binary(left, "*", right, owner, addresses, columns, present)
         }
         Expression::Divide { left, right } => {
-            export_binary(left, "/", right, owner, addresses, columns)
+            export_binary(left, "/", right, owner, addresses, columns, present)
         }
         Expression::Minimum { left, right } => Ok(format!(
             "MIN({},{})",
-            export_extremum_argument(left, owner, addresses, columns)?,
-            export_extremum_argument(right, owner, addresses, columns)?
+            export_extremum_argument(left, owner, addresses, columns, present)?,
+            export_extremum_argument(right, owner, addresses, columns, present)?
         )),
         Expression::Maximum { left, right } => Ok(format!(
             "MAX({},{})",
-            export_extremum_argument(left, owner, addresses, columns)?,
-            export_extremum_argument(right, owner, addresses, columns)?
+            export_extremum_argument(left, owner, addresses, columns, present)?,
+            export_extremum_argument(right, owner, addresses, columns, present)?
         )),
         Expression::Compare {
             operator,
             left,
             right,
-        } => export_binary(left, operator.as_str(), right, owner, addresses, columns),
+        } => export_binary(
+            left,
+            operator.as_str(),
+            right,
+            owner,
+            addresses,
+            columns,
+            present,
+        ),
         Expression::If {
             condition,
             then_value,
             else_value,
         } => Ok(format!(
             "IF({},{},{})",
-            export_expression(condition, owner, addresses, columns)?,
-            export_expression(then_value, owner, addresses, columns)?,
-            export_expression(else_value, owner, addresses, columns)?
+            export_in(condition, owner, addresses, columns, present)?,
+            export_in(then_value, owner, addresses, columns, present)?,
+            export_in(
+                else_value,
+                owner,
+                addresses,
+                columns,
+                &guarded_present(condition, owner, present)
+            )?
         )),
         Expression::And(conditions) => {
-            export_function("AND", conditions, owner, addresses, columns)
+            export_function("AND", conditions, owner, addresses, columns, present)
         }
-        Expression::Or(conditions) => export_function("OR", conditions, owner, addresses, columns),
+        Expression::Or(conditions) => {
+            export_function("OR", conditions, owner, addresses, columns, present)
+        }
         Expression::Not(condition) => Ok(format!(
             "NOT({})",
-            export_expression(condition, owner, addresses, columns)?
+            export_in(condition, owner, addresses, columns, present)?
         )),
         Expression::Round { value, digits } => Ok(format!(
             "ROUND({},{digits})",
-            export_expression(value, owner, addresses, columns)?
+            export_in(value, owner, addresses, columns, present)?
         )),
         Expression::IsBlank(reference) => Ok(format!(
             "ISBLANK({})",
-            export_expression(reference, owner, addresses, columns)?
+            export_in(reference, owner, addresses, columns, present)?
         )),
     }
 }
 
 /// Tachiko reads a blank optional Number as 0, but Excel's MIN and MAX skip a
-/// blank cell argument; `(reference+0)` is 0 there too.
+/// blank cell argument; `(reference+0)` is 0 there too. A reference the
+/// enclosing `IF(ISBLANK(...))` already proved present needs no wrapper.
 fn export_extremum_argument(
     argument: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
     columns: &BTreeMap<ColumnRef, String>,
+    present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
-    let exported = export_expression(argument, owner, addresses, columns)?;
-    Ok(match argument {
-        Expression::Reference(_) | Expression::SameRowReference(_) => format!("({exported}+0)"),
-        _ => exported,
-    })
+    let exported = export_in(argument, owner, addresses, columns, present)?;
+    Ok(
+        match direct_reference(argument, owner).filter(|reference| !present.contains(reference)) {
+            Some(_) => format!("({exported}+0)"),
+            None => exported,
+        },
+    )
 }
 
 /// A column total exports as the aggregate over the column's whole exported
@@ -3423,10 +3507,11 @@ fn export_function(
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
     columns: &BTreeMap<ColumnRef, String>,
+    present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     let mut exported = Vec::with_capacity(arguments.len());
     for argument in arguments {
-        exported.push(export_expression(argument, owner, addresses, columns)?);
+        exported.push(export_in(argument, owner, addresses, columns, present)?);
     }
     Ok(format!("{name}({})", exported.join(",")))
 }
@@ -3437,11 +3522,12 @@ fn export_binary(
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
     columns: &BTreeMap<ColumnRef, String>,
+    present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     Ok(format!(
         "({}{}{})",
-        export_expression(left, owner, addresses, columns)?,
+        export_in(left, owner, addresses, columns, present)?,
         operator,
-        export_expression(right, owner, addresses, columns)?
+        export_in(right, owner, addresses, columns, present)?
     ))
 }

@@ -1324,7 +1324,7 @@ fn imported_reference_names_headers_and_csv_quoting_preserve_spelling() {
     assert_eq!(
         book.sheets[1].rows[0][0].formula.as_deref(),
         Some(
-            "IF(ISBLANK('O''Brien 5e-324 & <Data>'!$B$2),2,MAX(('O''Brien 5e-324 & <Data>'!$B$2+0),2))"
+            "IF(ISBLANK('O''Brien 5e-324 & <Data>'!$B$2),2,MAX('O''Brien 5e-324 & <Data>'!$B$2,2))"
         )
     );
     assert_eq!(
