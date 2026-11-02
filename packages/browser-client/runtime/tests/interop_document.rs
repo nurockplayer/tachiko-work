@@ -518,9 +518,9 @@ use tachiko_designer_runtime::interop_adapter::{
     SourceSheet, SourceValue, SourceWorkbook,
 };
 use tachiko_designer_runtime::{
-    ImportFieldType, ImportSelection, InteropMetadata, KeyedGroupedSumDefinitionInput,
-    KeyedGroupedSumGroupProjection, KeyedGroupedSumProjection, import_workbook,
-    inspect_imported_project,
+    ImportFieldType, ImportSelection, ImportedProjection, InteropMetadata,
+    KeyedGroupedSumDefinitionInput, KeyedGroupedSumGroupProjection, KeyedGroupedSumProjection,
+    import_workbook, inspect_imported_project,
 };
 fn source_cell(value: SourceValue, formula: Option<&str>) -> SourceCell {
     SourceCell {
@@ -600,6 +600,370 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
         extra_columns: vec![vec![], vec![]],
     };
     (workbook, selection)
+}
+
+fn extremum_fixture(formula: &str) -> (SourceWorkbook, ImportSelection) {
+    let workbook = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: ["Minimum", "Maximum", "Optional C", "Optional D", "Required"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows: vec![
+                vec![
+                    source_cell(SourceValue::Number { value: 5.0 }, Some(formula)),
+                    source_cell(SourceValue::Number { value: 0.0 }, Some("=MAX(C2,D2)")),
+                    source_cell(SourceValue::Empty, None),
+                    source_cell(SourceValue::Empty, None),
+                    source_cell(SourceValue::Number { value: 7.0 }, None),
+                ],
+                vec![source_cell(SourceValue::Number { value: 9.0 }, None); 5],
+            ],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 5]],
+        extra_columns: vec![vec![]],
+    };
+    (workbook, selection)
+}
+
+#[test]
+fn imported_division_uses_guarded_minimum_before_calculation() {
+    let (mut source, selection) = extremum_fixture("=1/MIN(C2,5)");
+    source.sheets[0].rows[0][0].value = SourceValue::Number { value: 0.2 };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 0.2 }
+    );
+    assert!(exported.sheets[0].rows[0][0].formula.is_some());
+}
+
+#[test]
+fn imported_minimum_skips_blank_right_reference() {
+    let (source, selection) = extremum_fixture("=MIN(5,C2)");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 5.0 }
+    );
+    assert!(
+        exported.sheets[0].rows[0][0]
+            .formula
+            .as_ref()
+            .unwrap()
+            .starts_with("IF(ISBLANK(")
+    );
+}
+
+#[test]
+fn guard_depth_overflow_and_deep_chains_keep_numeric_cache() {
+    let depth_overflow = format!("=MIN(C2,5){}", "+1".repeat(62));
+    let chain = (0..20).fold("5".to_owned(), |inner, _| format!("MIN(C2,{inner})"));
+    // A cached zero equals the temporary formula slot and needs no edit.
+    let zero_chain = (0..20).fold("0".to_owned(), |inner, _| format!("MAX(C2,{inner})"));
+    for (formula, value) in [(depth_overflow, 67.0), (chain, 5.0), (zero_chain, 0.0)] {
+        let (mut source, selection) = extremum_fixture(&formula);
+        source.sheets[0].rows[0][0].value = SourceValue::Number { value };
+        let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        assert!(
+            imported.ledger.iter().any(
+                |finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking
+            )
+        );
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(
+            exported.sheets[0].rows[0][0].value,
+            SourceValue::Number { value }
+        );
+        assert!(exported.sheets[0].rows[0][0].formula.is_none());
+    }
+}
+
+/// One A2 formula of `terms` copies of MIN(J13,K13) over an 11×12 sheet.
+#[test]
+fn guarded_formula_over_the_parser_node_limit_keeps_numeric_cache() {
+    // 19 ROUND(MIN(C2,D2),0) terms guard to 247 bound nodes, but the parser
+    // also counts each ROUND digit literal: 265 parsed nodes (limit 256).
+    let formula = format!("={}", vec!["ROUND(MIN(C2,D2),0)"; 19].join("+"));
+    let (source, selection) = extremum_fixture(&formula);
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        imported
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 5.0 }
+    );
+    assert!(exported.sheets[0].rows[0][0].formula.is_none());
+}
+
+fn repeated_extremum_import(sheet: &str, terms: usize) -> (DesignerRuntime, ImportedProjection) {
+    let formula = format!("={}", vec!["MIN(J13,K13)"; terms].join("+"));
+    let mut rows = vec![vec![source_cell(SourceValue::Empty, None); 11]; 12];
+    let cached = f64::from(u32::try_from(terms).unwrap());
+    rows[0][0] = source_cell(SourceValue::Number { value: cached }, Some(&formula));
+    rows[11][9] = source_cell(SourceValue::Number { value: 1.0 }, None);
+    rows[11][10] = source_cell(SourceValue::Number { value: 2.0 }, None);
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: sheet.into(),
+            has_header: true,
+            columns: (0..11)
+                .map(|index| SourceColumn {
+                    name: format!("Column {index}"),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows,
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 11]],
+        extra_columns: vec![vec![]],
+    };
+    import_workbook(&source, &selection, OCCURRENCE).unwrap()
+}
+
+#[test]
+fn guarded_formulas_past_a_text_limit_keep_numeric_cache() {
+    // 21 terms ([sheet_1_row_12.column_10]) guard to 251 nodes, inside the
+    // node and depth limits, but render 4,237 canonical bytes (limit 4,096).
+    // 16 terms on a long sheet name fit the canonical limit, but their A1
+    // export ('Monthly Financial Forecast 2026'!$J$13) runs past 4,096 bytes.
+    for (sheet, terms) in [("Data", 21), ("Monthly Financial Forecast 2026", 16)] {
+        let (runtime, imported) = repeated_extremum_import(sheet, terms);
+        assert!(
+            imported.ledger.iter().any(
+                |finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking
+            ),
+            "{sheet}: {:?}",
+            imported.ledger
+        );
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(
+            exported.sheets[0].rows[0][0].value,
+            SourceValue::Number {
+                value: f64::from(u32::try_from(terms).unwrap())
+            }
+        );
+        assert!(exported.sheets[0].rows[0][0].formula.is_none());
+    }
+    // A short chain still imports as a guarded live formula.
+    let (runtime, imported) = repeated_extremum_import("Data", 2);
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert!(exported.sheets[0].rows[0][0].formula.is_some());
+}
+
+#[test]
+fn oversized_blank_guards_keep_numeric_cache_and_refuse_without_cache() {
+    let formula = "=MIN(C2,MIN(D2,MIN(E2,MIN(F2,MIN(G2,MIN(H2,5))))))";
+    let (mut source, mut selection) = extremum_fixture(formula);
+    let sheet = &mut source.sheets[0];
+    sheet.columns.extend((5..8).map(|index| SourceColumn {
+        name: format!("Optional {index}"),
+        width: None,
+        number_format: None,
+    }));
+    for row in &mut sheet.rows {
+        row.resize(8, source_cell(SourceValue::Empty, None));
+    }
+    sheet.rows[0][4].value = SourceValue::Empty;
+    sheet.rows[0][1] = source_cell(SourceValue::Number { value: 10.0 }, Some("=A2*2"));
+    selection.column_types[0].resize(8, ImportFieldType::Number);
+    for cached in [SourceValue::Number { value: 5.0 }, SourceValue::Empty] {
+        source.sheets[0].rows[0][0].value = cached.clone();
+        let result = import_workbook(&source, &selection, OCCURRENCE);
+        if cached == SourceValue::Empty {
+            let Err(error) = result else {
+                panic!("expected missing-cache refusal")
+            };
+            assert!(
+                matches!(error, tachiko_designer_runtime::DesignerError::ImportedSpreadsheetExport { finding }
+                if finding.blocking && finding.code == "unsupported_formula_function")
+            );
+            continue;
+        }
+        let (runtime, imported) = result.unwrap();
+        let finding = imported
+            .ledger
+            .iter()
+            .find(|finding| finding.code == "unsupported_formula_kept_value")
+            .unwrap();
+        assert_eq!(finding.category, FidelityCategory::LossyOnExport);
+        assert!(!finding.blocking);
+        assert_eq!(finding.location, "Data!A2");
+        assert!(finding.message.contains(
+            "guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows"
+        ));
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(exported.sheets[0].rows[0][0].value, cached);
+        assert!(exported.sheets[0].rows[0][0].formula.is_none());
+        assert_eq!(
+            exported.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: 10.0 }
+        );
+    }
+}
+
+#[test]
+fn imported_minimum_skips_blank_optional_reference_and_recalculates_after_edit() {
+    use tachiko_designer_runtime::{CellEdit, ScalarEditInput};
+    let (source, selection) = extremum_fixture("=MIN('Data'!C2,5)");
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        source.sheets[0].rows[0][0].value
+    );
+    assert!(
+        exported.sheets[0].rows[0][0]
+            .formula
+            .as_ref()
+            .unwrap()
+            .starts_with("IF(")
+    );
+    runtime
+        .handle(DesignerRequest::EditCells {
+            expected_revision: "resident/0".into(),
+            edits: vec![CellEdit {
+                target: FieldTarget {
+                    entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[2].field_id.clone(),
+                },
+                input: ScalarEditInput::Number { input: "3".into() },
+            }],
+        })
+        .unwrap();
+    let exported = runtime
+        .export_workbook("resident/1", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 3.0 }
+    );
+}
+
+#[test]
+fn imported_maximum_of_two_blank_references_calculates_zero() {
+    let (source, selection) = extremum_fixture("=MIN('Data'!C2,5)");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][1].value,
+        SourceValue::Number { value: 0.0 }
+    );
+}
+
+#[test]
+fn imported_minimum_of_populated_optional_reference_keeps_blank_guard() {
+    let (source, selection) = extremum_fixture("=MIN(E2,5)");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].formula.as_deref(),
+        Some("IF(ISBLANK('Data'!$E$2),5,MIN('Data'!$E$2,5))")
+    );
+}
+
+#[test]
+fn imported_extremum_formula_text_is_stable_across_xlsx_cycles() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    // Exercise recursive conversion below arithmetic, IF, and another extremum.
+    let (source, selection) = extremum_fixture("=IF(ISBLANK(C2),MIN(5,MAX(C2,-5))+0,MIN(C2,5))");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let once = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        once.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: -5.0 }
+    );
+    let source = import_xlsx(&export_xlsx(&once).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let twice = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for column in [0, 1] {
+        assert_eq!(
+            once.sheets[0].rows[0][column].formula,
+            twice.sheets[0].rows[0][column].formula
+        );
+        assert_eq!(
+            once.sheets[0].rows[0][column].value,
+            twice.sheets[0].rows[0][column].value
+        );
+    }
+}
+
+#[test]
+fn guarded_extremum_exports_without_growth_and_reimports_as_a_formula() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    // Twenty guarded MIN(C2,D2) terms fill 239 of 256 nodes. A `+0` around
+    // each guarded argument would push the exported formula past the limit.
+    let formula = format!("={}", vec!["MIN(C2,D2)"; 20].join("+"));
+    let (source, selection) = extremum_fixture(&formula);
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let once = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    let text = once.sheets[0].rows[0][0].formula.clone().unwrap();
+    assert!(!text.contains("+0)"), "{text}");
+    let source = import_xlsx(&export_xlsx(&once).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value")
+    );
+    let twice = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        twice.sheets[0].rows[0][0].formula.as_deref(),
+        Some(text.as_str())
+    );
 }
 
 fn grouped_export_fixture() -> (SourceWorkbook, ImportSelection) {
@@ -1191,7 +1555,7 @@ fn imported_forward_and_cross_sheet_formulas_rebind_and_export_from_live_ids_aft
     );
     assert_eq!(
         exported.sheets[1].rows[0][0].formula.as_deref(),
-        Some("('Data'!$C$2+MIN(('Data'!$C$3+0),5))")
+        Some("('Data'!$C$2+IF(ISBLANK('Data'!$C$3),5,MIN('Data'!$C$3,5)))")
     );
     let bytes = runtime.export_project("resident/1").unwrap().bytes;
     let inspected = inspect_imported_project(&bytes, &metadata).unwrap();

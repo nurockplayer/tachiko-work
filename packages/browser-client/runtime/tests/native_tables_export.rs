@@ -2055,6 +2055,43 @@ fn native_xlsx_minimum_over_a_blank_optional_number_keeps_tachiko_zero() {
 }
 
 #[test]
+fn native_xlsx_collection_with_only_fallback_has_no_formulas_written_finding() {
+    let mut document = formula_document();
+    document
+        .entities
+        .get_mut("calc-r000")
+        .unwrap()
+        .fields
+        .insert(
+            "total".into(),
+            Value::Formula(Expression::ColumnAggregate {
+                function: ColumnAggregateFunction::Minimum,
+                column: ColumnRef::new("calc", "a"),
+            }),
+        );
+    document
+        .entities
+        .get_mut("calc-r001")
+        .unwrap()
+        .fields
+        .insert("total".into(), Value::Number(Number::new(20.0).unwrap()));
+    let mut host = host_for(document);
+    let (reply, _) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let ledger = reply["response"]["payload"]["ledger"].as_array().unwrap();
+    assert!(
+        ledger
+            .iter()
+            .any(|f| f["code"] == "native_tables_formula_value_only")
+    );
+    assert!(
+        !ledger
+            .iter()
+            .any(|f| f["code"] == "native_tables_formulas_written")
+    );
+}
+
+#[test]
 fn native_xlsx_column_minimum_keeps_value_and_discloses_cell_fallback() {
     let mut document = formula_document();
     document

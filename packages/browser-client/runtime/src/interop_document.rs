@@ -6,6 +6,10 @@ use super::{
     ScalarEditInput, StoredValueProjection,
 };
 use serde::{Deserialize, Serialize};
+use tachiko_formula_engine::{
+    CanonicalAuthoringProjectionError, ExpressionComplexityError, bind_expression,
+    parse_expression, project_expression, validate_expression_structure,
+};
 
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
     match error {
@@ -814,23 +818,38 @@ pub fn import_workbook(
             sheet_index,
             runtime.session.export_snapshot().document(),
         )?;
-        pending.insert(target, (source, references));
+        pending.insert(target, (source, references, (sheet_index, row, column)));
     }
+    let export_maps = export_a1_maps(runtime.session.export_snapshot().document(), &metadata);
     while !pending.is_empty() {
         let next = pending
             .iter()
-            .find(|(_, (_, references))| {
+            .find(|(_, (_, references, _))| {
                 references
                     .iter()
                     .all(|reference| !pending.contains_key(reference))
             })
             .map(|(target, _)| target.clone())
             .ok_or_else(|| tracker_error("source formulas contain a dependency cycle"))?;
-        let (source, _) = pending
+        let (source, _, (sheet_index, row, column)) = pending
             .remove(&next)
             .ok_or_else(|| tracker_error("pending import formula is unavailable"))?;
-        let revision = runtime.current_revision().to_owned();
-        runtime.update_formula(&revision, &field_target(&next), &source)?;
+        let sheet = &workbook.sheets[sheet_index];
+        let location = format!(
+            "{}!{}{}",
+            sheet.name,
+            super::interop_adapter::column_name(column),
+            sheet.layout.rows_above_header as usize + usize::from(sheet.has_header) + row + 1
+        );
+        bind_import_formula(
+            &mut runtime,
+            &next,
+            &source,
+            &sheet.rows[row][column],
+            &location,
+            &export_maps,
+            &mut ledger,
+        )?;
     }
     let document = runtime.session.export_snapshot().into_document();
     // The temporary occurrence has finished binding formulas. Its detached
@@ -1241,6 +1260,331 @@ fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, Designe
     }
     *cursor += 1;
     Ok(name)
+}
+
+/// The A1 address of every exported cell and one whole-column range per
+/// exported column, as the imported-workbook export writes them.
+fn export_a1_maps(
+    document: &Document,
+    metadata: &InteropMetadata,
+) -> (BTreeMap<FieldRef, String>, BTreeMap<ColumnRef, String>) {
+    let mut addresses = BTreeMap::new();
+    // One whole-column range per exported column, so a column total keeps
+    // meaning every exported row instead of the rows present today.
+    let mut columns = BTreeMap::new();
+    for sheet in &metadata.sheets {
+        let present: Vec<_> = sheet
+            .rows
+            .iter()
+            .filter(|row| {
+                document
+                    .entities
+                    .contains_key(&EntityId::from(row.entity_id.clone()))
+            })
+            .collect();
+        let first = 1 + usize::from(sheet.has_header);
+        let last = present.len() + usize::from(sheet.has_header);
+        for (column, definition) in sheet.columns.iter().enumerate() {
+            let letters = column_letters(column);
+            // An exported table without rows maps its columns to no range.
+            let range = if present.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "'{}'!${letters}${first}:${letters}${last}",
+                    sheet.name.replace('\'', "''")
+                )
+            };
+            columns.insert(
+                ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
+                range,
+            );
+        }
+        for (row_index, row) in present.iter().enumerate() {
+            for (column, definition) in sheet.columns.iter().enumerate() {
+                addresses.insert(
+                    FieldRef::new(row.entity_id.clone(), definition.field_id.clone()),
+                    format!(
+                        "'{}'!${}${}",
+                        sheet.name.replace('\'', "''"),
+                        column_letters(column),
+                        row_index + 1 + usize::from(sheet.has_header)
+                    ),
+                );
+            }
+        }
+    }
+    (addresses, columns)
+}
+
+// Bind and guard without publishing an unguarded intermediate calculation.
+fn bind_import_formula(
+    runtime: &mut DesignerRuntime,
+    target: &FieldRef,
+    source: &str,
+    cell: &SourceCell,
+    location: &str,
+    export_maps: &(BTreeMap<FieldRef, String>, BTreeMap<ColumnRef, String>),
+    ledger: &mut Vec<FidelityFinding>,
+) -> Result<(), DesignerError> {
+    let snapshot = runtime.session.export_snapshot();
+    let unbound = parse_expression(source).map_err(|error| {
+        tachiko_workspace_engine::WorkspaceError::InvalidFormula {
+            field: target.clone(),
+            input: source.into(),
+            source: error,
+        }
+    })?;
+    let expression = bind_expression(snapshot.document(), target, &unbound).map_err(|error| {
+        tachiko_workspace_engine::WorkspaceError::FormulaBinding {
+            field: target.clone(),
+            source: Box::new(error),
+        }
+    })?;
+    // Guarding can outgrow any engine bound (nodes, depth or canonical text);
+    // each keeps Excel's cached value rather than failing the whole import.
+    // The export round trip in `finish_import` writes the same formula as A1
+    // text, which has its own length bound. `update_formula` re-parses the
+    // projected text, whose parse tree counts nodes (such as ROUND digits)
+    // the bound tree does not, so the parser itself decides.
+    let projected = match excel_extremum(expression, target, snapshot.document()) {
+        Ok(expression) => match project_expression(snapshot.document(), target, &expression) {
+            Ok(source)
+                if parse_expression(&source).is_err()
+                    || export_expression(&expression, target, &export_maps.0, &export_maps.1)
+                        .is_ok_and(|text| text.len() > MAX_PROFILE_STRING_BYTES) =>
+            {
+                None
+            }
+            Ok(source) => Some(source),
+            Err(CanonicalAuthoringProjectionError::Complexity(_)) => None,
+            Err(error) => return Err(tracker_error(&error.to_string())),
+        },
+        Err(_) => None,
+    };
+    drop(snapshot);
+    let Some(source) = projected else {
+        return keep_import_cache(runtime, target, cell, location, ledger);
+    };
+    let revision = runtime.current_revision().to_owned();
+    runtime.update_formula(&revision, &field_target(target), &source)?;
+    Ok(())
+}
+
+/// An imported formula Tachiko cannot hold after guarding keeps Excel's cached
+/// Number in its temporary formula slot.
+fn keep_import_cache(
+    runtime: &mut DesignerRuntime,
+    target: &FieldRef,
+    cell: &SourceCell,
+    location: &str,
+    ledger: &mut Vec<FidelityFinding>,
+) -> Result<(), DesignerError> {
+    let mut value = cell.value.clone();
+    let mut formula = cell
+        .formula
+        .as_ref()
+        .map(|source| source.strip_prefix('=').unwrap_or(source).to_owned());
+    super::interop_adapter::keep_cached_value(
+        &mut value,
+        &mut formula,
+        location,
+        ledger,
+        Some("guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows"),
+    );
+    if let Some(finding) = ledger.last().filter(|finding| finding.blocking) {
+        return Err(DesignerError::ImportedSpreadsheetExport {
+            finding: finding.clone(),
+        });
+    }
+    let SourceValue::Number { value } = value else {
+        return Err(tracker_error("MIN/MAX requires a numeric cached value"));
+    };
+    // The formula slot already holds a temporary Number; a cached value
+    // equal to it needs no edit (which would refuse as no change).
+    let unchanged = runtime
+        .session
+        .export_snapshot()
+        .document()
+        .entities
+        .get(&target.entity)
+        .and_then(|entity| entity.fields.get(&target.field))
+        .is_some_and(|stored| {
+            Number::new(value).is_ok_and(|value| stored == &Value::Number(value))
+        });
+    if unchanged {
+        return Ok(());
+    }
+    let revision = runtime.current_revision().to_owned();
+    runtime.edit_cells(
+        &revision,
+        &[super::CellEdit {
+            target: field_target(target),
+            input: ScalarEditInput::Number {
+                input: value.to_string(),
+            },
+        }],
+    )?;
+    Ok(())
+}
+
+// Excel skips blank direct references in MIN/MAX; Tachiko reads them as zero.
+// This conversion is only applied to newly imported formulas.
+fn excel_extremum(
+    mut expression: Expression,
+    owner: &FieldRef,
+    document: &Document,
+) -> Result<Expression, ExpressionComplexityError> {
+    fn rewrite(
+        expression: &mut Expression,
+        owner: &FieldRef,
+        document: &Document,
+        present: &std::collections::BTreeSet<FieldRef>,
+    ) -> Result<(), ExpressionComplexityError> {
+        // A reference an enclosing ISBLANK guard proved present is not blank
+        // in the else branch, so already guarded formulas stay unchanged.
+        if let Expression::If {
+            condition,
+            then_value,
+            else_value,
+        } = expression
+        {
+            rewrite(condition, owner, document, present)?;
+            rewrite(then_value, owner, document, present)?;
+            let present = guarded_present(condition, owner, present);
+            return rewrite(else_value, owner, document, &present);
+        }
+        for child in expression.children_mut() {
+            rewrite(child, owner, document, present)?;
+        }
+        let (Expression::Minimum { left, right } | Expression::Maximum { left, right }) =
+            expression
+        else {
+            return Ok(());
+        };
+        let blankable = |argument: &Expression| {
+            direct_reference(argument, owner)
+                .filter(|reference| !present.contains(reference))
+                .is_some_and(|reference| {
+                    document
+                        .entities
+                        .get(&reference.entity)
+                        .and_then(|entity| document.schemas.get(&entity.schema))
+                        .and_then(|schema| schema.fields.get(&reference.field))
+                        .is_some_and(|field| {
+                            field.field_type == FieldType::Number && !field.required
+                        })
+                })
+        };
+        let left_blankable = blankable(left);
+        let right_blankable = blankable(right);
+        if !left_blankable && !right_blankable {
+            return Ok(());
+        }
+        let left = left.clone();
+        let right = right.clone();
+        let mut inner = expression.clone();
+        if right_blankable {
+            inner = Expression::If {
+                condition: Box::new(Expression::IsBlank(right.clone())),
+                then_value: left.clone(),
+                else_value: Box::new(inner),
+            };
+        }
+        if left_blankable {
+            inner = Expression::If {
+                condition: Box::new(Expression::IsBlank(left)),
+                then_value: right,
+                else_value: Box::new(inner),
+            };
+        }
+        // Check every expansion before its parent can duplicate it again.
+        // The engine owns MAX_EXPRESSION_NODES (256), not this adapter.
+        validate_expression_structure(&inner)?;
+        *expression = inner;
+        Ok(())
+    }
+    rewrite(
+        &mut expression,
+        owner,
+        document,
+        &std::collections::BTreeSet::new(),
+    )?;
+    validate_expression_structure(&expression)?;
+    Ok(expression)
+}
+
+#[cfg(test)]
+mod extremum_tests {
+    use super::{
+        BTreeMap, Document, Entity, Expression, FieldDefinition, FieldRef, FieldType, Number,
+        Schema, Value, excel_extremum,
+    };
+
+    #[test]
+    fn required_references_stay_plain_and_optional_same_row_references_are_guarded() {
+        let mut document = Document::empty("extremum", "Extremum");
+        document.schemas.insert(
+            "items".into(),
+            Schema {
+                id: "items".into(),
+                key: "items".into(),
+                display_name: None,
+                field_order: None,
+                fields: BTreeMap::from([(
+                    "n".into(),
+                    FieldDefinition {
+                        id: "n".into(),
+                        key: "n".into(),
+                        display_name: None,
+                        number_format: None,
+                        field_type: FieldType::Number,
+                        required: true,
+                        constraint: tachiko_workspace_engine::FieldConstraint::None,
+                    },
+                )]),
+            },
+        );
+        document.entities.insert(
+            "row".into(),
+            Entity {
+                id: "row".into(),
+                key: "row".into(),
+                schema: "items".into(),
+                fields: BTreeMap::from([("n".into(), Value::Number(Number::new(3.0).unwrap()))]),
+            },
+        );
+        let owner = FieldRef::new("row", "result");
+        for reference in [
+            Expression::Reference(FieldRef::new("row", "n")),
+            Expression::SameRowReference("n".into()),
+        ] {
+            let expression = Expression::Minimum {
+                left: Box::new(reference),
+                right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
+            };
+            assert_eq!(
+                excel_extremum(expression.clone(), &owner, &document).unwrap(),
+                expression
+            );
+        }
+        document
+            .schemas
+            .get_mut("items")
+            .unwrap()
+            .fields
+            .get_mut("n")
+            .unwrap()
+            .required = false;
+        let expression = Expression::Maximum {
+            left: Box::new(Expression::SameRowReference("n".into())),
+            right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
+        };
+        assert!(matches!(
+            excel_extremum(expression, &owner, &document).unwrap(),
+            Expression::If { .. }
+        ));
+    }
 }
 
 #[allow(clippy::too_many_lines)] // One token loop over the bounded A1 profile.
@@ -2321,58 +2665,13 @@ impl DesignerRuntime {
         self.check_revision(expected_revision)?;
         // The caller holds the exact immutable snapshot already used for
         // metadata admission. No second owned document is needed here.
-        let mut addresses = BTreeMap::new();
-        // One whole-column range per exported column, so a column total keeps
-        // meaning every exported row instead of the rows present today.
-        let mut columns = BTreeMap::new();
         // Capacity admission excludes formulas, the sole consumers of A1
         // addresses. Other profiles retain their full reference index.
-        for sheet in metadata
-            .sheets
-            .iter()
-            .filter(|_| profile != OutputProfile::TextCapacity && !values_only)
-        {
-            let present: Vec<_> = sheet
-                .rows
-                .iter()
-                .filter(|row| {
-                    document
-                        .entities
-                        .contains_key(&EntityId::from(row.entity_id.clone()))
-                })
-                .collect();
-            let first = 1 + usize::from(sheet.has_header);
-            let last = present.len() + usize::from(sheet.has_header);
-            for (column, definition) in sheet.columns.iter().enumerate() {
-                let letters = column_letters(column);
-                // An exported table without rows maps its columns to no range.
-                let range = if present.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        "'{}'!${letters}${first}:${letters}${last}",
-                        sheet.name.replace('\'', "''")
-                    )
-                };
-                columns.insert(
-                    ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
-                    range,
-                );
-            }
-            for (row_index, row) in present.iter().enumerate() {
-                for (column, definition) in sheet.columns.iter().enumerate() {
-                    addresses.insert(
-                        FieldRef::new(row.entity_id.clone(), definition.field_id.clone()),
-                        format!(
-                            "'{}'!${}${}",
-                            sheet.name.replace('\'', "''"),
-                            column_letters(column),
-                            row_index + 1 + usize::from(sheet.has_header)
-                        ),
-                    );
-                }
-            }
-        }
+        let (addresses, columns) = if profile == OutputProfile::TextCapacity || values_only {
+            (BTreeMap::new(), BTreeMap::new())
+        } else {
+            export_a1_maps(document, metadata)
+        };
         let mut sheets = Vec::new();
         for sheet in &metadata.sheets {
             let mut rows = Vec::new();
@@ -3031,6 +3330,47 @@ pub(crate) fn export_expression(
     addresses: &BTreeMap<FieldRef, String>,
     columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
+    export_in(
+        expression,
+        owner,
+        addresses,
+        columns,
+        &std::collections::BTreeSet::new(),
+    )
+}
+
+/// The field a direct reference names, resolved against the formula's owner.
+fn direct_reference(argument: &Expression, owner: &FieldRef) -> Option<FieldRef> {
+    match argument {
+        Expression::Reference(reference) => Some(reference.clone()),
+        Expression::SameRowReference(field) => {
+            Some(FieldRef::new(owner.entity.clone(), field.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// The references known present in the else branch of `IF(condition, ...)`:
+/// those already known, plus the one `ISBLANK` tested.
+fn guarded_present(
+    condition: &Expression,
+    owner: &FieldRef,
+    present: &std::collections::BTreeSet<FieldRef>,
+) -> std::collections::BTreeSet<FieldRef> {
+    let mut present = present.clone();
+    if let Expression::IsBlank(argument) = condition {
+        present.extend(direct_reference(argument, owner));
+    }
+    present
+}
+
+fn export_in(
+    expression: &Expression,
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, String>,
+    columns: &BTreeMap<ColumnRef, String>,
+    present: &std::collections::BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
     match expression {
         Expression::Number(number) => Ok(number.get().to_string()),
         Expression::SameRowReference(field) => addresses
@@ -3057,74 +3397,94 @@ pub(crate) fn export_expression(
             export_column(name, column, columns)
         }
         Expression::Add { left, right } => {
-            export_binary(left, "+", right, owner, addresses, columns)
+            export_binary(left, "+", right, owner, addresses, columns, present)
         }
         Expression::Subtract { left, right } => {
-            export_binary(left, "-", right, owner, addresses, columns)
+            export_binary(left, "-", right, owner, addresses, columns, present)
         }
         Expression::Multiply { left, right } => {
-            export_binary(left, "*", right, owner, addresses, columns)
+            export_binary(left, "*", right, owner, addresses, columns, present)
         }
         Expression::Divide { left, right } => {
-            export_binary(left, "/", right, owner, addresses, columns)
+            export_binary(left, "/", right, owner, addresses, columns, present)
         }
         Expression::Minimum { left, right } => Ok(format!(
             "MIN({},{})",
-            export_extremum_argument(left, owner, addresses, columns)?,
-            export_extremum_argument(right, owner, addresses, columns)?
+            export_extremum_argument(left, owner, addresses, columns, present)?,
+            export_extremum_argument(right, owner, addresses, columns, present)?
         )),
         Expression::Maximum { left, right } => Ok(format!(
             "MAX({},{})",
-            export_extremum_argument(left, owner, addresses, columns)?,
-            export_extremum_argument(right, owner, addresses, columns)?
+            export_extremum_argument(left, owner, addresses, columns, present)?,
+            export_extremum_argument(right, owner, addresses, columns, present)?
         )),
         Expression::Compare {
             operator,
             left,
             right,
-        } => export_binary(left, operator.as_str(), right, owner, addresses, columns),
+        } => export_binary(
+            left,
+            operator.as_str(),
+            right,
+            owner,
+            addresses,
+            columns,
+            present,
+        ),
         Expression::If {
             condition,
             then_value,
             else_value,
         } => Ok(format!(
             "IF({},{},{})",
-            export_expression(condition, owner, addresses, columns)?,
-            export_expression(then_value, owner, addresses, columns)?,
-            export_expression(else_value, owner, addresses, columns)?
+            export_in(condition, owner, addresses, columns, present)?,
+            export_in(then_value, owner, addresses, columns, present)?,
+            export_in(
+                else_value,
+                owner,
+                addresses,
+                columns,
+                &guarded_present(condition, owner, present)
+            )?
         )),
         Expression::And(conditions) => {
-            export_function("AND", conditions, owner, addresses, columns)
+            export_function("AND", conditions, owner, addresses, columns, present)
         }
-        Expression::Or(conditions) => export_function("OR", conditions, owner, addresses, columns),
+        Expression::Or(conditions) => {
+            export_function("OR", conditions, owner, addresses, columns, present)
+        }
         Expression::Not(condition) => Ok(format!(
             "NOT({})",
-            export_expression(condition, owner, addresses, columns)?
+            export_in(condition, owner, addresses, columns, present)?
         )),
         Expression::Round { value, digits } => Ok(format!(
             "ROUND({},{digits})",
-            export_expression(value, owner, addresses, columns)?
+            export_in(value, owner, addresses, columns, present)?
         )),
         Expression::IsBlank(reference) => Ok(format!(
             "ISBLANK({})",
-            export_expression(reference, owner, addresses, columns)?
+            export_in(reference, owner, addresses, columns, present)?
         )),
     }
 }
 
 /// Tachiko reads a blank optional Number as 0, but Excel's MIN and MAX skip a
-/// blank cell argument; `(reference+0)` is 0 there too.
+/// blank cell argument; `(reference+0)` is 0 there too. A reference the
+/// enclosing `IF(ISBLANK(...))` already proved present needs no wrapper.
 fn export_extremum_argument(
     argument: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
     columns: &BTreeMap<ColumnRef, String>,
+    present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
-    let exported = export_expression(argument, owner, addresses, columns)?;
-    Ok(match argument {
-        Expression::Reference(_) | Expression::SameRowReference(_) => format!("({exported}+0)"),
-        _ => exported,
-    })
+    let exported = export_in(argument, owner, addresses, columns, present)?;
+    Ok(
+        match direct_reference(argument, owner).filter(|reference| !present.contains(reference)) {
+            Some(_) => format!("({exported}+0)"),
+            None => exported,
+        },
+    )
 }
 
 /// A column total exports as the aggregate over the column's whole exported
@@ -3150,10 +3510,11 @@ fn export_function(
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
     columns: &BTreeMap<ColumnRef, String>,
+    present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     let mut exported = Vec::with_capacity(arguments.len());
     for argument in arguments {
-        exported.push(export_expression(argument, owner, addresses, columns)?);
+        exported.push(export_in(argument, owner, addresses, columns, present)?);
     }
     Ok(format!("{name}({})", exported.join(",")))
 }
@@ -3164,11 +3525,12 @@ fn export_binary(
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, String>,
     columns: &BTreeMap<ColumnRef, String>,
+    present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     Ok(format!(
         "({}{}{})",
-        export_expression(left, owner, addresses, columns)?,
+        export_in(left, owner, addresses, columns, present)?,
         operator,
-        export_expression(right, owner, addresses, columns)?
+        export_in(right, owner, addresses, columns, present)?
     ))
 }
