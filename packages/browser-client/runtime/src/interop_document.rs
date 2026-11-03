@@ -901,7 +901,9 @@ fn finish_import(
         }
         Err(error) => return Err(error),
     };
-    if runtime.text_capacity {
+    if runtime.text_capacity
+        || super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity
+    {
         let encoded =
             super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
                 .map_err(interop_admission_error)?;

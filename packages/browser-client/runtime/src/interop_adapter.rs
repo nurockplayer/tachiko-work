@@ -5750,7 +5750,7 @@ mod native_tables_output_tests {
     }
 
     #[test]
-    fn native_tables_writer_refuses_geometry_plus_one_without_widening_shared_profile() {
+    fn native_tables_and_shared_writers_refuse_geometry_plus_one() {
         let profile = OutputProfile::NativeTables;
         let mut workbook = SourceWorkbook {
             sheets: vec![sheet(32, 128)],
@@ -5758,7 +5758,7 @@ mod native_tables_output_tests {
         };
         assert!(export_csv_for_profile(&workbook.sheets[0], profile).is_ok());
         assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
-        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_err());
+        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
         for invalid in [sheet(33, 1), sheet(1, 129)] {
             assert!(export_csv_for_profile(&invalid, profile).is_err());
             workbook.sheets = vec![invalid];
