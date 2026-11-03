@@ -800,7 +800,6 @@ pub fn import_workbook(
             sheet_index,
             sheet,
             selection,
-            super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity,
             &mut ids,
             &mut document,
             &mut metadata,
@@ -865,6 +864,7 @@ pub fn import_workbook(
             "Text capacity requires the complete original source profile",
         ));
     }
+    normalize_import_date_styles(workbook, &mut metadata, runtime.text_capacity);
     validate_import_metadata_for_profile(
         runtime.session.export_snapshot().document(),
         &metadata,
@@ -876,7 +876,7 @@ pub fn import_workbook(
 fn finish_import(
     mut runtime: DesignerRuntime,
     workbook: &SourceWorkbook,
-    metadata: InteropMetadata,
+    mut metadata: InteropMetadata,
     mut ledger: Vec<FidelityFinding>,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, ImportedProjection), DesignerError> {
@@ -893,6 +893,7 @@ fn finish_import(
                 occurrence_id,
                 true,
             )?;
+            normalize_import_date_styles(workbook, &mut metadata, candidate.text_capacity);
             let exported = candidate
                 .export_workbook(candidate.current_revision(), &metadata)
                 .map_err(|_| error)?;
@@ -945,6 +946,7 @@ fn finish_import(
             occurrence_id,
             true,
         )?;
+        normalize_import_date_styles(workbook, &mut projection.metadata, candidate.text_capacity);
         let exported =
             candidate.export_workbook(candidate.current_revision(), &projection.metadata)?;
         let bytes =
@@ -1074,7 +1076,6 @@ fn build_import_sheet(
     index: usize,
     source: &SourceSheet,
     selection: &ImportSelection,
-    capacity: bool,
     ids: &mut ImportIds<'_>,
     document: &mut Document,
     metadata: &mut InteropMetadata,
@@ -1191,14 +1192,6 @@ fn build_import_sheet(
                 // cleared format back on export.
                 style.number_format = None;
             }
-            if capacity
-                && matches!(cell.value, SourceValue::Date { .. })
-                && style == super::interop_adapter::capacity_date_style()
-            {
-                // The large-import writer adds this one date format to every
-                // Date cell itself; capacity metadata keeps default styles.
-                style = CellStyle::default();
-            }
             styles.push(style);
         }
         styles.resize_with(sheet.columns.len(), CellStyle::default);
@@ -1211,6 +1204,29 @@ fn build_import_sheet(
     document.schemas.insert(schema_id, schema);
     metadata.sheets.push(sheet);
     Ok(())
+}
+
+fn normalize_import_date_styles(
+    workbook: &SourceWorkbook,
+    metadata: &mut InteropMetadata,
+    text_capacity: bool,
+) {
+    if !text_capacity {
+        return;
+    }
+    // The capacity writer supplies this Date format; only the admitted
+    // runtime profile may require default styles in its metadata.
+    for (sheet, source) in metadata.sheets.iter_mut().zip(&workbook.sheets) {
+        for (row, cells) in sheet.rows.iter_mut().zip(&source.rows) {
+            for (style, cell) in row.styles.iter_mut().zip(cells) {
+                if matches!(cell.value, SourceValue::Date { .. })
+                    && *style == super::interop_adapter::capacity_date_style()
+                {
+                    *style = CellStyle::default();
+                }
+            }
+        }
+    }
 }
 
 fn source_value(value: &SourceValue) -> Result<Option<Value>, DesignerError> {

@@ -58,9 +58,9 @@ fn selection(book: &SourceWorkbook) -> ImportSelection {
     }
 }
 
-/// Encode out-of-profile inputs without asking the bounded product writer to
-/// admit them: extend a valid package's final sheet, column or data row.
-fn oversized_xlsx(book: &SourceWorkbook, dimension: &str) -> Vec<u8> {
+/// Alter valid package geometry without asking the bounded writer to select
+/// a different profile: extend a sheet, column or row, or remove the last row.
+fn boundary_xlsx(book: &SourceWorkbook, dimension: &str) -> Vec<u8> {
     let bytes = export_xlsx(book).unwrap();
     let mut source = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut output = ZipWriter::new(Cursor::new(Vec::new()));
@@ -101,6 +101,11 @@ fn oversized_xlsx(book: &SourceWorkbook, dimension: &str) -> Vec<u8> {
                         "<row r=\"{row}\"><c r=\"A{row}\" t=\"n\"><v>1</v></c></row></sheetData>"
                     ),
                 );
+            }
+            ("remove_last_row", "xl/worksheets/sheet1.xml") => {
+                let start = xml.rfind("<row ").unwrap();
+                let end = start + xml[start..].find("</row>").unwrap() + "</row>".len();
+                xml.replace_range(start..end, "");
             }
             _ => {}
         }
@@ -151,7 +156,7 @@ fn shared_xlsx_and_direct_selection_geometry_boundaries() {
             }
             Err(error) => panic!("{dimension}: {error}"),
         }
-        refused_source(&oversized_xlsx(&book, dimension));
+        refused_source(&boundary_xlsx(&book, dimension));
         let oversized = match dimension {
             "sheets" => workbook(33, 1, 1),
             "columns" => workbook(1, 33, 1),
@@ -178,7 +183,7 @@ fn shared_total_rows_are_simultaneous_with_per_sheet_bounds() {
             .sum::<usize>(),
         1024
     );
-    refused_source(&oversized_xlsx(&book, "total"));
+    refused_source(&boundary_xlsx(&book, "total"));
     let row = book.sheets[0].rows[0].clone();
     book.sheets[0].rows.push(row);
     assert!(export_xlsx(&book).is_err());
@@ -350,4 +355,93 @@ fn text_capacity_csv_still_refuses_extra_columns() {
     });
     let error = import_workbook(&source, &selected, ORIGINAL).err().unwrap();
     assert!(error.to_string().contains("no extra columns"), "{error}");
+}
+
+fn date_workbook(rows: usize, columns: usize) -> SourceWorkbook {
+    let mut source = workbook(1, columns, rows);
+    for cell in source.sheets[0].rows.iter_mut().flatten() {
+        cell.value = SourceValue::Date {
+            value: "2026-11-04".into(),
+        };
+        cell.style.number_format = Some("yyyy-mm-dd".into());
+    }
+    source
+}
+
+#[test]
+fn shared_shaped_dates_promoted_to_capacity_import_save_and_reopen() {
+    // Retain the plain capacity package's presentation while bringing its
+    // geometry down to Shared, as in an externally supplied plain workbook.
+    let mut source = date_workbook(129, 16);
+    let bytes = boundary_xlsx(&source, "remove_last_row");
+    source.sheets[0].rows.pop();
+    let parsed = import_xlsx(&bytes).unwrap();
+    assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+    assert_eq!(parsed.sheets[0].rows, source.sheets[0].rows);
+    let selected = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Date; 16]],
+        extra_columns: vec![Vec::new()],
+    };
+    // Repeated imported field identities exceed the ordinary profile-string
+    // budget even though the source fits Shared geometry and has no Text.
+    let (runtime, imported) = import_workbook(&parsed, &selected, ORIGINAL).unwrap();
+    assert!(
+        imported.metadata.sheets[0]
+            .rows
+            .iter()
+            .flat_map(|row| &row.styles)
+            .all(|style| *style == CellStyle::default())
+    );
+    let exported = runtime
+        .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(exported.sheets[0].rows.len(), 128);
+    assert_eq!(exported.sheets[0].columns.len(), 16);
+    let encoded = export_xlsx(&exported).unwrap();
+    assert_eq!(
+        import_xlsx(&encoded).unwrap().sheets[0].rows,
+        source.sheets[0].rows
+    );
+    let saved = runtime
+        .export_project_v3(&runtime.observe_occurrence().revision)
+        .unwrap()
+        .bytes;
+    inspect_imported_project(&saved, &imported.metadata).unwrap();
+    let mut resident = None;
+    open_imported_project(&mut resident, &saved, &imported.metadata, FRESH).unwrap();
+    let reopened = resident.unwrap();
+    let after = reopened
+        .export_workbook(&reopened.observe_occurrence().revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(after.sheets, exported.sheets);
+    assert_eq!(export_xlsx(&after).unwrap(), encoded);
+}
+
+#[test]
+fn small_shared_dates_keep_their_nondefault_style() {
+    let source = date_workbook(2, 2);
+    let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    let selected = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Date; 2]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (runtime, imported) = import_workbook(&parsed, &selected, ORIGINAL).unwrap();
+    assert!(
+        imported.metadata.sheets[0]
+            .rows
+            .iter()
+            .flat_map(|row| &row.styles)
+            .all(|style| *style == source.sheets[0].rows[0][0].style)
+    );
+    let saved = runtime
+        .export_project_v3(&runtime.observe_occurrence().revision)
+        .unwrap()
+        .bytes;
+    let mut resident = None;
+    open_imported_project(&mut resident, &saved, &imported.metadata, FRESH).unwrap();
+    let reopened = resident.unwrap();
+    let after = reopened
+        .export_workbook(&reopened.observe_occurrence().revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(after.sheets[0].rows, source.sheets[0].rows);
 }
