@@ -242,8 +242,9 @@ coordinates, headers and package overhead. Caps are hard refusal boundaries,
 never truncation. The native table output profile is explicitly selected and
 does not borrow `NativeTracker` or widen default writers.
 
-The incoming typed spreadsheet profile remains 4 sheets, 16 columns and 64 data
-rows per sheet, with 2 MiB source/8 MiB expanded bounds. Its separate restricted
+The incoming shared spreadsheet profile explicitly admits 32 sheets, 32 columns,
+128 data rows per sheet and 1,024 total data rows, with unchanged 2 MiB source/
+8 MiB expanded bounds. Its separate restricted
 Text-capacity exception is unchanged. Within incoming bounds, typed readback
 and explicit CSV reimport are tested. Larger outbound workbooks are not promised
 reimportable. Source admission also enforces complete-publication and refresh

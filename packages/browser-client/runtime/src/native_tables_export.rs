@@ -542,7 +542,7 @@ impl DesignerRuntime {
         let snapshot = self.session.export_snapshot();
         let document = snapshot.document();
         let mut ledger = vec![finding(FidelityCategory::NativeEquivalent, "native_tables_outbound_profile", "workbook",
-            "Native scalar output: at most 32 collections, 32 columns, 128 rows per collection, 1,024 total rows, 8 MiB encoded bytes and 24 MiB expanded XLSX. The general incoming profile remains separate (4 sheets, 16 columns, 64 rows); its restricted Text-capacity exception is unchanged. Larger output is not promised reimportable.".into())];
+            "Native scalar output: at most 32 collections, 32 columns, 128 rows per collection, 1,024 total rows, 8 MiB encoded bytes and 24 MiB expanded XLSX. The shared incoming geometry is 32 sheets, 32 columns, 128 rows per sheet and 1,024 total rows, with separate 2 MiB source/8 MiB expanded bounds; its restricted Text-capacity exception is unchanged. Larger output is not promised reimportable.".into())];
         let mut sheets = Vec::new();
         let mut exported = Vec::new();
         let mut names = BTreeSet::new();

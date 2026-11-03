@@ -6786,7 +6786,6 @@ pub(crate) fn admit_imported_project(
     metadata: &InteropMetadata,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
     let (document, opened_from_v3) = decode_project_bundle(input)?;
-    interop_document::validate_import_metadata(&document, metadata)?;
     if opened_from_v3 {
         // A capacity-profile v3 save of an import keeps the same provenance
         // gate as the legacy capacity retry below.
@@ -7907,7 +7906,7 @@ fn is_text_capacity_document(document: &Document) -> bool {
             .any(|field| matches!(field.field_type, FieldType::Date | FieldType::Boolean));
     !stock_tracker
         && document.schemas.len() == 1
-        && (1..=interop_adapter::MAX_COLUMNS).contains(&columns)
+        && (1..=interop_adapter::MAX_TEXT_CAPACITY_COLUMNS).contains(&columns)
         && document.entities.len() <= interop_adapter::MAX_TEXT_CAPACITY_ROWS
         && document.entities.len().saturating_mul(columns)
             <= interop_adapter::MAX_TEXT_CAPACITY_CELLS
@@ -7936,7 +7935,7 @@ fn is_text_capacity_document(document: &Document) -> bool {
 
 fn is_text_capacity_eligible_document(document: &Document) -> bool {
     is_text_capacity_document(document)
-        && (document.entities.len() > interop_adapter::MAX_DATA_ROWS
+        && (document.entities.len() >= interop_adapter::TEXT_CAPACITY_MIN_ROWS
             || document.schemas.values().next().is_some_and(|schema| {
                 schema.fields.len() == 3
                     && schema
@@ -8119,7 +8118,7 @@ fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) 
             format!(
                 "only one Text, Number, Date or Yes/No table within {} rows, {} columns and {} cells qualifies",
                 interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-                interop_adapter::MAX_COLUMNS,
+                interop_adapter::MAX_TEXT_CAPACITY_COLUMNS,
                 interop_adapter::MAX_TEXT_CAPACITY_CELLS
             )
         },

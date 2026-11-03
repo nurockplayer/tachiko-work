@@ -604,9 +604,11 @@ fn deduplicate(
 }
 
 use super::interop_adapter::{
-    CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS, MAX_SHEETS,
-    OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
-    SourceWorkbook, SummaryAggregate, SummaryRow, call_argument, whole_column_argument,
+    CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS,
+    MAX_NATIVE_BUDGET_COLUMNS, MAX_NATIVE_BUDGET_DATA_ROWS, MAX_NATIVE_BUDGET_SHEETS, MAX_SHEETS,
+    MAX_TEXT_CAPACITY_COLUMNS, MAX_TOTAL_DATA_ROWS, OutputProfile, SourceCell, SourceColumn,
+    SourceLayout, SourceSheet, SourceValue, SourceWorkbook, SummaryAggregate, SummaryRow,
+    call_argument, whole_column_argument,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use std::collections::BTreeMap;
@@ -698,8 +700,8 @@ pub struct InteropRowMetadata {
 
 /// Private, outbound-only presentation binding for the stock Driver Tracker.
 ///
-/// This deliberately is not import metadata: Tracker accepts up to 128 rows,
-/// while the incoming spreadsheet profile remains capped at 64 rows per sheet.
+/// This deliberately is not import metadata: Tracker retains its own outbound
+/// geometry and presentation binding independently of shared import capacity.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTrackerExportPresentation {
@@ -798,6 +800,7 @@ pub fn import_workbook(
             sheet_index,
             sheet,
             selection,
+            super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity,
             &mut ids,
             &mut document,
             &mut metadata,
@@ -862,7 +865,11 @@ pub fn import_workbook(
             "Text capacity requires the complete original source profile",
         ));
     }
-    validate_import_metadata(runtime.session.export_snapshot().document(), &metadata)?;
+    validate_import_metadata_for_profile(
+        runtime.session.export_snapshot().document(),
+        &metadata,
+        runtime.text_capacity,
+    )?;
     finish_import(runtime, workbook, metadata, ledger, occurrence_id)
 }
 
@@ -960,10 +967,7 @@ fn validate_selection(
     workbook: &SourceWorkbook,
     selection: &ImportSelection,
 ) -> Result<(), DesignerError> {
-    let capacity = workbook
-        .sheets
-        .iter()
-        .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS);
+    let capacity = super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity;
     let capacity_selection = workbook.sheets.first().is_some_and(|sheet| {
         selection.column_types.len() == 1
             && selection.column_types[0].len() == sheet.columns.len()
@@ -995,13 +999,26 @@ fn validate_selection(
             "import sheet and selection dimensions do not match the declared profile",
         ));
     }
+    if !capacity {
+        super::capacity::check_limit(
+            super::CapacityLimit::TotalEntities,
+            MAX_TOTAL_DATA_ROWS,
+            workbook.sheets.iter().map(|sheet| sheet.rows.len()).sum(),
+            None,
+        )?;
+    }
     let mut names = BTreeSet::new();
     let mut formulas = 0;
     for (index, sheet) in workbook.sheets.iter().enumerate() {
         check_label(&sheet.name)?;
         if !names.insert(sheet.name.to_ascii_lowercase())
             || sheet.columns.is_empty()
-            || sheet.columns.len() + selection.extra_columns[index].len() > MAX_COLUMNS
+            || sheet.columns.len() + selection.extra_columns[index].len()
+                > if capacity {
+                    MAX_TEXT_CAPACITY_COLUMNS
+                } else {
+                    MAX_COLUMNS
+                }
             || sheet.rows.len()
                 > if capacity {
                     super::interop_adapter::MAX_TEXT_CAPACITY_ROWS
@@ -1055,6 +1072,7 @@ fn build_import_sheet(
     index: usize,
     source: &SourceSheet,
     selection: &ImportSelection,
+    capacity: bool,
     ids: &mut ImportIds<'_>,
     document: &mut Document,
     metadata: &mut InteropMetadata,
@@ -1171,7 +1189,7 @@ fn build_import_sheet(
                 // cleared format back on export.
                 style.number_format = None;
             }
-            if source.rows.len() > MAX_DATA_ROWS
+            if capacity
                 && matches!(cell.value, SourceValue::Date { .. })
                 && style == super::interop_adapter::capacity_date_style()
             {
@@ -1883,13 +1901,15 @@ fn sort_by_field_order(schema: &Schema, columns: &mut [InteropColumnMetadata]) {
 
 /// Reconcile source presentation with current stable identities. Source slots
 /// remain useful for Undo; they never recreate removed fields or entities.
+#[allow(clippy::too_many_lines)] // Keep profile-aware identity and presentation reconciliation in one ordered pass.
 fn current_import_metadata(
     document: &Document,
     metadata: &InteropMetadata,
     output: ImportedOutput<'_>,
+    capacity: bool,
 ) -> Result<(InteropMetadata, Vec<FidelityFinding>), DesignerError> {
     let refuse = |location: &str, message: &str| imported_export_error(location, message);
-    validate_historical_envelope(document, metadata)?;
+    validate_historical_envelope(document, metadata, capacity)?;
     if matches!(output, ImportedOutput::Projection) {
         validate_neutral_source_presentation(metadata)?;
     }
@@ -1909,7 +1929,12 @@ fn current_import_metadata(
         if !schemas.insert(sheet.schema_id.clone())
             || !names.insert(sheet.name.to_ascii_lowercase())
             || sheet.columns.is_empty()
-            || sheet.columns.len() > MAX_COLUMNS
+            || sheet.columns.len()
+                > if capacity {
+                    MAX_TEXT_CAPACITY_COLUMNS
+                } else {
+                    MAX_COLUMNS
+                }
         {
             return Err(refuse(
                 &location,
@@ -1986,19 +2011,23 @@ fn current_import_metadata(
             &mut ledger,
             matches!(output, ImportedOutput::Csv(_)),
         )?;
-        reconcile_import_rows(document, sheet, &source_columns, &entities)?;
+        reconcile_import_rows(document, sheet, &source_columns, &entities, capacity)?;
     }
-    Ok((scope_import_metadata(document, result, output)?, ledger))
+    Ok((
+        scope_import_metadata(document, result, output, capacity)?,
+        ledger,
+    ))
 }
 
 fn scope_import_metadata(
     document: &Document,
     mut result: InteropMetadata,
     output: ImportedOutput<'_>,
+    capacity: bool,
 ) -> Result<InteropMetadata, DesignerError> {
     let refuse = imported_export_error;
     match output {
-        ImportedOutput::Projection => validate_exact_import_metadata(document, &result)
+        ImportedOutput::Projection => validate_exact_import_metadata(document, &result, capacity)
             .map_err(|error| refuse("workbook", &error.to_string()))?,
         ImportedOutput::Csv(collection) => {
             result.sheets.retain(|sheet| sheet.schema_id == collection);
@@ -2045,6 +2074,7 @@ fn validate_neutral_source_presentation(metadata: &InteropMetadata) -> Result<()
 fn validate_historical_envelope(
     document: &Document,
     metadata: &InteropMetadata,
+    capacity: bool,
 ) -> Result<(), DesignerError> {
     let refuse = imported_export_error;
     if metadata.version != 1
@@ -2057,8 +2087,6 @@ fn validate_historical_envelope(
             "Metadata must cover every current worksheet exactly once.",
         ));
     }
-    let capacity =
-        super::is_text_capacity_document(document) && document.entities.len() > MAX_DATA_ROWS;
     super::ensure_projection_size_with_limit(
         metadata,
         if capacity {
@@ -2076,6 +2104,7 @@ fn reconcile_import_rows(
     sheet: &mut InteropSheetMetadata,
     source_columns: &[InteropColumnMetadata],
     entities: &BTreeSet<String>,
+    capacity: bool,
 ) -> Result<(), DesignerError> {
     let location = format!("collection {}", sheet.schema_id);
     let schema = &document.schemas[sheet.schema_id.as_str()];
@@ -2105,10 +2134,13 @@ fn reconcile_import_rows(
             styles: vec![CellStyle::default(); sheet.columns.len()],
         });
     }
-    let capacity =
-        super::is_text_capacity_document(document) && document.entities.len() > MAX_DATA_ROWS;
     if sheet.columns.is_empty()
-        || sheet.columns.len() > MAX_COLUMNS
+        || sheet.columns.len()
+            > if capacity {
+                MAX_TEXT_CAPACITY_COLUMNS
+            } else {
+                MAX_COLUMNS
+            }
         || sheet.rows.len()
             > if capacity {
                 super::interop_adapter::MAX_TEXT_CAPACITY_ROWS
@@ -2242,7 +2274,18 @@ pub fn validate_import_metadata(
     document: &Document,
     metadata: &InteropMetadata,
 ) -> Result<(), DesignerError> {
-    current_import_metadata(document, metadata, ImportedOutput::Projection).map(|_| ())
+    // The detached admission chooses the same profile as import/reopen, including
+    // projection limits; scalar shape alone cannot decide presentation rules.
+    let runtime = DesignerRuntime::from_document(document.clone(), PREFLIGHT_OCCURRENCE)?;
+    validate_import_metadata_for_profile(document, metadata, runtime.text_capacity)
+}
+
+fn validate_import_metadata_for_profile(
+    document: &Document,
+    metadata: &InteropMetadata,
+    capacity: bool,
+) -> Result<(), DesignerError> {
+    current_import_metadata(document, metadata, ImportedOutput::Projection, capacity).map(|_| ())
 }
 
 /// Check private source presentation mappings against exact canonical identity.
@@ -2253,8 +2296,9 @@ pub fn validate_import_metadata(
 fn validate_exact_import_metadata(
     document: &Document,
     metadata: &InteropMetadata,
+    capacity: bool,
 ) -> Result<(), DesignerError> {
-    let capacity = validate_metadata_envelope(document, metadata)?;
+    validate_metadata_envelope(document, metadata, capacity)?;
     let mut schemas = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut rows = BTreeSet::new();
@@ -2270,7 +2314,12 @@ fn validate_exact_import_metadata(
             .get(&SchemaId::from(sheet.schema_id.clone()))
             .ok_or_else(|| tracker_error("interop schema is not present in the candidate"))?;
         if sheet.columns.is_empty()
-            || sheet.columns.len() > MAX_COLUMNS
+            || sheet.columns.len()
+                > if capacity {
+                    MAX_TEXT_CAPACITY_COLUMNS
+                } else {
+                    MAX_COLUMNS
+                }
             || sheet.columns.len() != schema.fields.len()
             || sheet.rows.len()
                 > if capacity {
@@ -2344,9 +2393,8 @@ fn validate_exact_import_metadata(
 fn validate_metadata_envelope(
     document: &Document,
     metadata: &InteropMetadata,
-) -> Result<bool, DesignerError> {
-    let capacity = super::is_text_capacity_document(document)
-        && document.entities.len() > super::interop_adapter::MAX_DATA_ROWS;
+    capacity: bool,
+) -> Result<(), DesignerError> {
     if metadata.version != 1
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
@@ -2367,7 +2415,7 @@ fn validate_metadata_envelope(
     if capacity {
         validate_capacity_metadata(document, metadata)?;
     }
-    Ok(capacity)
+    Ok(())
 }
 
 /// Capacity columns follow id order (the stored source) or the durable column
@@ -2404,7 +2452,7 @@ fn validate_capacity_metadata(
         ));
     }
     if !sheet.has_header
-        || !(1..=MAX_COLUMNS).contains(&sheet.columns.len())
+        || !(1..=MAX_TEXT_CAPACITY_COLUMNS).contains(&sheet.columns.len())
         || sheet.columns.iter().any(|column| column.width.is_some())
         || sheet.rows.iter().any(|row| {
             row.styles
@@ -2462,7 +2510,8 @@ impl DesignerRuntime {
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
-        let (metadata, ledger) = current_import_metadata(snapshot.document(), metadata, output)?;
+        let (metadata, ledger) =
+            current_import_metadata(snapshot.document(), metadata, output, self.text_capacity)?;
         if self.text_capacity {
             validate_capacity_metadata(snapshot.document(), &metadata)
                 .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
@@ -2496,7 +2545,7 @@ impl DesignerRuntime {
                 {
                     return Err(imported_export_error(
                         "workbook",
-                        "CSV output exceeds the existing 64-row profile.",
+                        &format!("CSV output exceeds the {MAX_DATA_ROWS}-row shared profile."),
                     ));
                 }
                 super::interop_adapter::validate_native_tables_csv(&workbook.sheets[0])
@@ -2595,7 +2644,7 @@ impl DesignerRuntime {
             .ok_or_else(|| tracker_error("native Budget active schema is unavailable"))?;
         if schema.id.as_str() != active.collection_id
             || spec.columns.is_empty()
-            || spec.columns.len() > MAX_COLUMNS
+            || spec.columns.len() > MAX_NATIVE_BUDGET_COLUMNS
             || schema.fields.len() != spec.columns.len()
         {
             return Err(tracker_error(
@@ -2836,7 +2885,10 @@ fn native_budget_active_csv_styles(
     collection: &NativeBudgetExportCollection,
     spec: &CollectionSpec,
 ) -> Result<BTreeMap<String, Vec<CellStyle>>, DesignerError> {
-    if collection.rows.len() != spec.entities.len() || collection.rows.len() > MAX_DATA_ROWS {
+    if spec.columns.len() > MAX_NATIVE_BUDGET_COLUMNS
+        || collection.rows.len() != spec.entities.len()
+        || collection.rows.len() > MAX_NATIVE_BUDGET_DATA_ROWS
+    {
         return Err(tracker_error(
             "native Budget active collection mapping must cover every bounded source row exactly once",
         ));
@@ -2943,7 +2995,7 @@ fn native_budget_metadata(
         || presentation.views.is_empty()
         || presentation.views.len() > super::MAX_COLLECTIONS
         || presentation.collections.is_empty()
-        || presentation.collections.len() > MAX_SHEETS
+        || presentation.collections.len() > MAX_NATIVE_BUDGET_SHEETS
     {
         return Err(tracker_error(
             "native Budget export presentation is outside the bounded profile",
@@ -3002,7 +3054,10 @@ fn native_budget_metadata(
             .ok_or_else(|| {
                 tracker_error("native Budget collection mapping references an unavailable source")
             })?;
-        if collection.rows.len() != spec.entities.len() || collection.rows.len() > MAX_DATA_ROWS {
+        if spec.columns.len() > MAX_NATIVE_BUDGET_COLUMNS
+            || collection.rows.len() != spec.entities.len()
+            || collection.rows.len() > MAX_NATIVE_BUDGET_DATA_ROWS
+        {
             return Err(tracker_error(
                 "native Budget collection mapping must cover every bounded source row exactly once",
             ));

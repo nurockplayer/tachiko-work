@@ -1,8 +1,8 @@
 use std::io::{Cursor, Read, Write};
 use tachiko_designer_runtime::interop_adapter::{
     CellStyle, FidelityCategory, ImportOptions, MAX_COLUMNS, MAX_DATA_ROWS, MAX_EXPANDED_BYTES,
-    MAX_FORMULAS, MAX_SHEETS, MAX_SOURCE_BYTES, MAX_ZIP_ENTRIES, SourceValue, SourceWorkbook,
-    export_csv, export_xlsx, import_csv, import_xlsx,
+    MAX_FORMULAS, MAX_SHEETS, MAX_SOURCE_BYTES, MAX_TOTAL_DATA_ROWS, MAX_ZIP_ENTRIES, SourceValue,
+    SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 fn simple() -> SourceWorkbook {
@@ -88,7 +88,12 @@ fn capacity_xlsx_worksheet_compression_is_independent_of_metadata() {
 
 #[test]
 fn capacity_source_cannot_hide_header_style_or_out_of_grid_width() {
-    let bytes = export_xlsx(&capacity_book()).unwrap();
+    // Above the expanded shared profile, these source-only surfaces still
+    // cannot hide inside the restricted TextCapacity route.
+    let mut book = capacity_book();
+    let row = book.sheets[0].rows[0].clone();
+    book.sheets[0].rows.resize(129, row);
+    let bytes = export_xlsx(&book).unwrap();
     let styled = mutate(&bytes, "xl/styles.xml", |xml| {
         xml.replace("<fonts count=\"1\">", "<fonts count=\"2\">")
             .replace("</fonts>", "<font><b/></font></fonts>")
@@ -1178,7 +1183,7 @@ fn workbook_omissions_and_column_width_tails_are_explicit() {
     let oversized = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
         s.replace(
             "<sheetData>",
-            "<cols><col min=\"1\" max=\"17\" width=\"24\"/></cols><sheetData>",
+            "<cols><col min=\"1\" max=\"33\" width=\"24\"/></cols><sheetData>",
         )
     });
     assert!(import_xlsx(&oversized).is_err());
@@ -1674,6 +1679,7 @@ fn checked_in_profile_limits_match_adapter() {
         ("sheets", MAX_SHEETS),
         ("columns_per_sheet", MAX_COLUMNS),
         ("data_rows_per_sheet", MAX_DATA_ROWS),
+        ("total_data_rows", MAX_TOTAL_DATA_ROWS),
         ("formulas", MAX_FORMULAS),
     ] {
         assert_eq!(l[key], value);
@@ -2293,7 +2299,7 @@ fn capacity_refuses_dates_outside_excel_range_or_calendar() {
     for bad in ["1899-12-31", "2026-02-30"] {
         let mut book = typed_capacity_book(100);
         book.sheets[0].rows[3][1].value = SourceValue::Date { value: bad.into() };
-        // The large-import writer refuses it, and the shared writer cannot take 100 rows.
+        // An invalid capacity source cannot fall through to the expanded shared writer.
         assert!(export_xlsx(&book).is_err(), "{bad} must not export");
     }
 }

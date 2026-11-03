@@ -429,25 +429,35 @@ impl Journey {
 fn unrepresentable_structures_refuse_whole_files_with_located_findings() {
     let mut j = Journey::default();
     j.import("csv");
-    // The native authoring profile allows 17 columns; metadata output allows 16.
-    for i in 0..15 {
-        j.mutate(json!({"type":"add_column","collection":"sheet_1","name":format!("extra {i}"),"field_type":"text","required":false}));
+    // Imported metadata now exports all 32 native columns and the formerly
+    // refused 65 rows; larger publication payloads keep their independent cap.
+    for i in 0..30 {
+        j.mutate(serde_json::from_str(&format!(r#"{{"type":"add_column","collection":"sheet_1","name":"extra {i}","field_type":"text","required":false}}"#)).unwrap());
     }
-    let schema = j.metadata["sheets"][0]["schema_id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    j.refused_exports(&schema);
-    j.mutate(json!({"type":"undo"}));
+    assert_eq!(j.table()["columns"].as_array().unwrap().len(), 32);
+    for format in ["csv", "xlsx"] {
+        assert_eq!(j.current_export(format).0["status"], "ok");
+    }
     let revision = j.table()["revision"].clone();
-    assert_eq!(j.sheet(&json!({"type":"export","expected_revision":revision,"metadata":j.metadata,"format":"xlsx","collection":schema}), &[]).0["status"], "ok");
+    let request: Value = serde_json::from_str(&format!(r#"{{"type":"add_column","expected_revision":{revision},"collection":"sheet_1","name":"extra 33","field_type":"text","required":false}}"#)).unwrap();
+    let reply: Value =
+        serde_json::from_slice(&j.host.request(&serde_json::to_vec(&request).unwrap())).unwrap();
+    assert_eq!(reply["error"]["code"], "capacity_exceeded");
     j.import("xlsx");
     let note = j.table()["columns"][0]["id"].clone();
     let rows: Vec<_> = (0..63).map(|i| vec![format!("new {i}")]).collect();
-    j.mutate(json!({"type":"paste_cells","collection":"sheet_1","start_entity":null,"start_field":note,"rows":rows}));
+    let rows = serde_json::to_string(&rows).unwrap();
+    j.mutate(serde_json::from_str(&format!(r#"{{"type":"paste_cells","collection":"sheet_1","start_entity":null,"start_field":{note},"rows":{rows}}}"#)).unwrap());
     assert_eq!(j.table()["rows"].as_array().unwrap().len(), 65);
-    j.refused_exports("workbook");
-    j.mutate(json!({"type":"undo"}));
+    for format in ["csv", "xlsx"] {
+        assert_eq!(j.current_export(format).0["status"], "ok");
+    }
+    let revision = j.table()["revision"].clone();
+    let rows = serde_json::to_string(&vec![vec!["row 129"]; 64]).unwrap();
+    let request: Value = serde_json::from_str(&format!(r#"{{"type":"paste_cells","expected_revision":{revision},"collection":"sheet_1","start_entity":null,"start_field":{note},"rows":{rows}}}"#)).unwrap();
+    let reply: Value =
+        serde_json::from_slice(&j.host.request(&serde_json::to_vec(&request).unwrap())).unwrap();
+    assert_eq!(reply["error"]["code"], "capacity_exceeded");
     j.import("csv");
     j.mutate(json!({"type":"duplicate_collection","collection":"sheet_1","name":"Unmapped"}));
     j.refused_exports("workbook");
