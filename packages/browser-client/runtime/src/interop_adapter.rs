@@ -155,16 +155,32 @@ pub(crate) fn capacity_auxiliary_xml_reserve(columns: usize) -> usize {
 }
 
 pub(crate) fn output_profile(workbook: &SourceWorkbook) -> OutputProfile {
-    if workbook
-        .sheets
-        .iter()
-        .any(|sheet| sheet.rows.len() >= TEXT_CAPACITY_MIN_ROWS)
-        && text_capacity_shape(workbook)
-    {
+    let exceeds_shared_bounds = workbook.sheets.len() > MAX_SHEETS
+        || workbook.sheets.iter().any(exceeds_shared_sheet_bounds)
+        || workbook
+            .sheets
+            .iter()
+            .map(|sheet| sheet.rows.len())
+            .sum::<usize>()
+            > MAX_TOTAL_DATA_ROWS;
+    if exceeds_shared_bounds && text_capacity_shape(workbook) {
         OutputProfile::TextCapacity
     } else {
         OutputProfile::Shared
     }
+}
+
+fn exceeds_shared_sheet_bounds(sheet: &SourceSheet) -> bool {
+    let mut text_bytes = 0usize;
+    sheet.columns.len() > MAX_COLUMNS
+        || sheet.rows.len() > MAX_DATA_ROWS
+        || sheet.rows.iter().flatten().any(|cell| {
+            let SourceValue::Text { value } = &cell.value else {
+                return false;
+            };
+            text_bytes = text_bytes.saturating_add(value.len());
+            text_bytes > crate::MAX_PROJECTION_BYTES
+        })
 }
 
 /// Exact RFC CSV width, including quote doubling and empty-field quotes.
@@ -1593,7 +1609,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
             ),
         ],
     };
-    if workbook.sheets[0].rows.len() >= TEXT_CAPACITY_MIN_ROWS && text_capacity_shape(&workbook) {
+    if output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate an isolated typed feasibility copy, retaining the lexical
         // source values for explicit user selection.
         validate_capacity_source_inspection(&workbook)?;
@@ -4056,8 +4072,7 @@ fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
 /// # Errors
 /// Rejects an oversized or invalid scalar output profile.
 pub fn export_csv(sheet: &SourceSheet) -> Result<Vec<u8>> {
-    let profile = if sheet.rows.len() >= TEXT_CAPACITY_MIN_ROWS && text_capacity_sheet_shape(sheet)
-    {
+    let profile = if exceeds_shared_sheet_bounds(sheet) && text_capacity_sheet_shape(sheet) {
         OutputProfile::TextCapacity
     } else {
         OutputProfile::Shared
@@ -4431,31 +4446,7 @@ fn output_style(
 /// Rejects blocking findings, invalid output values/styles and bounded size limits.
 #[allow(clippy::too_many_lines, clippy::format_push_string)] // Bounded deterministic XML assembly; temporary strings stay within the tiny workbook profile.
 pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
-    export_xlsx_for_profile(
-        workbook,
-        if use_text_capacity_writer(workbook) {
-            OutputProfile::TextCapacity
-        } else {
-            OutputProfile::Shared
-        },
-    )
-}
-
-fn use_text_capacity_writer(workbook: &SourceWorkbook) -> bool {
-    if output_profile(workbook) == OutputProfile::TextCapacity {
-        return true;
-    }
-    if validate_text_capacity(workbook).is_err() {
-        return false;
-    }
-    let sheet = &workbook.sheets[0];
-    sheet.rows.len() >= TEXT_CAPACITY_MIN_ROWS
-        || (sheet.columns.len() == 3
-            && sheet
-                .rows
-                .iter()
-                .flatten()
-                .all(|cell| matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. })))
+    export_xlsx_for_profile(workbook, output_profile(workbook))
 }
 
 /// Emit typed worksheets using the selected bounded output profile.
@@ -4830,7 +4821,7 @@ mod capacity_proof_tests {
         };
         assert_eq!(capacity_header_bytes(&wide_headers), 55);
         let mut csv = String::from("label,amount\n");
-        for row in 0..65 {
+        for row in 0..129 {
             writeln!(csv, "row{row},{}", if row == 0 { "-13.25" } else { "42.5" }).unwrap();
         }
         let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
@@ -4882,7 +4873,7 @@ mod capacity_proof_tests {
         for invalid in ["-1+2", "inf", "not-a-number"] {
             let mut csv = String::from("label,amount\nrow0,-1\n");
             writeln!(csv, "row1,{invalid}\nrow2,2").unwrap();
-            for _ in 0..62 {
+            for _ in 0..126 {
                 writeln!(csv, "row,2").unwrap();
             }
             assert!(import_csv(csv.as_bytes(), &ImportOptions::default()).is_err());

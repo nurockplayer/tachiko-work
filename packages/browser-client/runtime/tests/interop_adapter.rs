@@ -10,7 +10,7 @@ fn simple() -> SourceWorkbook {
 }
 
 fn capacity_book() -> SourceWorkbook {
-    let source = format!("a,b,c\n{}", "one,two,three\n".repeat(65));
+    let source = format!("a,b,c\n{}", "one,two,three\n".repeat(129));
     import_csv(source.as_bytes(), &ImportOptions::default()).unwrap()
 }
 
@@ -2247,7 +2247,7 @@ fn worksheet_xml(bytes: &[u8]) -> String {
 
 #[test]
 fn capacity_xlsx_carries_dates_and_yes_no_and_reads_them_back() {
-    let book = typed_capacity_book(100);
+    let book = typed_capacity_book(129);
     let bytes = export_xlsx(&book).unwrap();
     let xml = worksheet_xml(&bytes);
     assert!(
@@ -2297,7 +2297,7 @@ fn capacity_exports_typed_cells_at_the_row_limit() {
 #[test]
 fn capacity_refuses_dates_outside_excel_range_or_calendar() {
     for bad in ["1899-12-31", "2026-02-30"] {
-        let mut book = typed_capacity_book(100);
+        let mut book = typed_capacity_book(129);
         book.sheets[0].rows[3][1].value = SourceValue::Date { value: bad.into() };
         // An invalid capacity source cannot fall through to the expanded shared writer.
         assert!(export_xlsx(&book).is_err(), "{bad} must not export");
@@ -2312,14 +2312,14 @@ fn capacity_xlsx_exported_before_dates_still_imports() {
     let old = mutate(&bytes, "xl/styles.xml", |_| STYLES_BEFORE_DATES.into());
     assert!(capacity_source_admits(&old));
     // Without the date format, a cell naming style 1 has nothing to refer to.
-    let typed = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let typed = export_xlsx(&typed_capacity_book(129)).unwrap();
     let dated = mutate(&typed, "xl/styles.xml", |_| STYLES_BEFORE_DATES.into());
     assert!(import_xlsx(&dated).is_err());
 }
 
 #[test]
 fn capacity_xlsx_reads_serial_dates_with_the_date_format() {
-    let bytes = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let bytes = export_xlsx(&typed_capacity_book(129)).unwrap();
     let serial = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
         assert!(xml.contains("s=\"1\" t=\"d\"><v>2026-02-02</v>"));
         xml.replace(
@@ -2353,7 +2353,7 @@ fn capacity_xlsx_reads_serial_dates_with_the_date_format() {
 
 #[test]
 fn capacity_xlsx_reads_iso_dates_without_the_date_format() {
-    let bytes = export_xlsx(&typed_capacity_book(100)).unwrap();
+    let bytes = export_xlsx(&typed_capacity_book(129)).unwrap();
     let unstyled = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
         xml.replace(
             "s=\"1\" t=\"d\"><v>2026-02-02</v>",

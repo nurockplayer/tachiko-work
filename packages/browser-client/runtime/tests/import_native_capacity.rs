@@ -5,8 +5,8 @@ use tachiko_designer_runtime::interop_adapter::{
     SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
 };
 use tachiko_designer_runtime::{
-    DesignerError, ImportFieldType, ImportSelection, import_workbook, inspect_imported_project,
-    open_imported_project,
+    DesignerError, ImportColumnSpec, ImportFieldType, ImportSelection, import_workbook,
+    inspect_imported_project, open_imported_project,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -279,4 +279,75 @@ fn wide_csv_shared_row_boundary_and_plus_one() {
             assert!(export_csv(&book.sheets[0]).is_err());
         }
     }
+}
+
+#[test]
+fn shared_csv_extra_column_import_export_save_and_reopen() {
+    for rows in [65, 128] {
+        let csv = format!("a,b\n{}", "one,two\n".repeat(rows));
+        let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
+        assert!(!source.ledger.iter().any(|finding| finding.blocking));
+        let selected = ImportSelection {
+            column_types: vec![vec![ImportFieldType::Text; 2]],
+            extra_columns: vec![vec![ImportColumnSpec {
+                name: "Optional".into(),
+                field_type: ImportFieldType::Text,
+            }]],
+        };
+        let (runtime, imported) = import_workbook(&source, &selected, ORIGINAL).unwrap();
+        let exported = runtime
+            .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
+            .unwrap();
+        assert_eq!(exported.sheets[0].columns.len(), 3);
+        assert_eq!(exported.sheets[0].rows.len(), rows);
+        assert!(exported.sheets[0].rows.iter().all(|row| {
+            row[0].value
+                == SourceValue::Text {
+                    value: "one".into(),
+                }
+                && row[1].value
+                    == SourceValue::Text {
+                        value: "two".into(),
+                    }
+                && row[2].value == SourceValue::Empty
+        }));
+        assert_eq!(
+            export_csv(&exported.sheets[0]).unwrap(),
+            format!("a,b,Optional\r\n{}", "one,two,\"\"\r\n".repeat(rows)).as_bytes()
+        );
+        let xlsx = export_xlsx(&exported).unwrap();
+        let parsed = import_xlsx(&xlsx).unwrap();
+        assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+        assert_eq!(parsed.sheets[0].rows, exported.sheets[0].rows);
+        let saved = runtime
+            .export_project_v3(&runtime.observe_occurrence().revision)
+            .unwrap()
+            .bytes;
+        inspect_imported_project(&saved, &imported.metadata).unwrap();
+        let mut resident = None;
+        open_imported_project(&mut resident, &saved, &imported.metadata, FRESH).unwrap();
+        let reopened = resident.unwrap();
+        let after = reopened
+            .export_workbook(&reopened.observe_occurrence().revision, &imported.metadata)
+            .unwrap();
+        assert_eq!(after.sheets, exported.sheets);
+        assert_eq!(export_xlsx(&after).unwrap(), xlsx);
+    }
+}
+
+#[test]
+fn text_capacity_csv_still_refuses_extra_columns() {
+    let csv = format!("a,b\n{}", "one,two\n".repeat(129));
+    let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
+    let mut selected = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Text; 2]],
+        extra_columns: vec![Vec::new()],
+    };
+    import_workbook(&source, &selected, ORIGINAL).unwrap();
+    selected.extra_columns[0].push(ImportColumnSpec {
+        name: "Optional".into(),
+        field_type: ImportFieldType::Text,
+    });
+    let error = import_workbook(&source, &selected, ORIGINAL).err().unwrap();
+    assert!(error.to_string().contains("no extra columns"), "{error}");
 }
