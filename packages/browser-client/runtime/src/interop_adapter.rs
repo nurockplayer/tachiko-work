@@ -3534,6 +3534,19 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
         validate_capacity_source_inspection(&workbook)?;
         return Ok(workbook);
     }
+    // Preserve the former >64-row refusal until XLSX ST_Xstring decoding (#637).
+    if workbook.sheets.iter().any(|sheet| {
+        sheet.rows.len() >= TEXT_CAPACITY_MIN_ROWS
+            && (st_xstring(&sheet.name)
+                || sheet.columns.iter().any(|column| st_xstring(&column.name))
+                || sheet.rows.iter().flatten().any(
+                    |cell| matches!(&cell.value, SourceValue::Text { value } if st_xstring(value)),
+                ))
+    }) {
+        return fail(
+            "Sheets above 64 data rows refuse SpreadsheetML _xHHHH_ escapes until decoded (#637)",
+        );
+    }
     Ok(finish_source_admission(workbook))
 }
 

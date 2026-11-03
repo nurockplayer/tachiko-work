@@ -131,6 +131,84 @@ fn refused_source(bytes: &[u8]) {
 }
 
 #[test]
+fn shared_xlsx_escape_refusal_preserves_the_old_row_threshold() {
+    let pattern = "_x005F_x0041_";
+    for rows in [64, 65, 100, 128] {
+        for location in ["sheet", "column", "text"] {
+            let mut source = workbook(1, 1, rows);
+            for cell in source.sheets[0].rows.iter_mut().flatten() {
+                cell.value = SourceValue::Text {
+                    value: "value".into(),
+                };
+                cell.style = CellStyle::default();
+            }
+            match location {
+                "sheet" => source.sheets[0].name = pattern.into(),
+                "column" => source.sheets[0].columns[0].name = pattern.into(),
+                "text" => {
+                    source.sheets[0].rows[rows - 1][0].value = SourceValue::Text {
+                        value: pattern.into(),
+                    };
+                }
+                _ => unreachable!(),
+            }
+            let bytes = export_xlsx(&source).unwrap();
+            if rows > 64 {
+                let error = import_xlsx(&bytes).unwrap_err();
+                assert!(
+                    error.to_string().contains(
+                        "Sheets above 64 data rows refuse SpreadsheetML _xHHHH_ escapes until decoded (#637)"
+                    ),
+                    "{rows} rows, {location}: {error}"
+                );
+            } else {
+                let parsed = import_xlsx(&bytes).unwrap();
+                assert_eq!(parsed.sheets, source.sheets);
+            }
+        }
+    }
+}
+
+#[test]
+fn shared_xlsx_escape_guard_is_local_to_each_large_sheet() {
+    let mut source = workbook(2, 1, 100);
+    source.sheets[0].rows.truncate(64);
+    source.sheets[0].name = "_x005F_x0041_".into();
+    source.sheets[0].columns[0].name = "_x005F_x0041_".into();
+    source.sheets[0].rows[0][0] = SourceCell {
+        value: SourceValue::Text {
+            value: "_x005F_x0041_".into(),
+        },
+        ..SourceCell::default()
+    };
+    let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+    assert_eq!(parsed.sheets[0].name, source.sheets[0].name);
+    assert_eq!(parsed.sheets[0].columns, source.sheets[0].columns);
+    assert_eq!(parsed.sheets[0].rows, source.sheets[0].rows);
+}
+
+#[test]
+fn shared_hundred_row_xlsx_and_csv_keep_their_admission() {
+    let source = workbook(1, 1, 100);
+    let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    // Non-default styles require Shared, not TextCapacity.
+    assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+    assert_eq!(parsed.sheets[0].rows.len(), 100);
+    assert!(parsed.sheets[0].columns[0].number_format.is_some());
+    import_workbook(&parsed, &selection(&parsed), ORIGINAL).unwrap();
+
+    let csv = format!("Name\n{}", "_x005F_x0041_\n".repeat(100));
+    let parsed = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
+    assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+    assert_eq!(parsed.sheets[0].rows.len(), 100);
+    assert_eq!(
+        export_csv(&parsed.sheets[0]).unwrap(),
+        csv.replace('\n', "\r\n").as_bytes()
+    );
+}
+
+#[test]
 fn shared_xlsx_and_direct_selection_geometry_boundaries() {
     for (sheets, columns, rows, dimension) in [
         (32, 1, 1, "sheets"),

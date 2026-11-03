@@ -9,6 +9,8 @@ All notable changes to Tachiko Work are documented in this file.
 - XLSX/CSV import and round-trip export admit 32 sheets, 32 columns and 128 data
   rows per sheet, within 1,024 total rows (Work #635). CSV stays one sheet; the
   restricted Text-capacity exception and byte/ZIP/formula bounds are unchanged.
+  XLSX sheets above 64 data rows still refuse SpreadsheetML `_xHHHH_` escapes
+  until decoding is implemented (Work #637); smaller sheets and CSV are unchanged.
 
 - Imports over 64 rows can select Date and Yes/No columns (Work #610): the
   large-import profile admits them with the existing conversion rules
