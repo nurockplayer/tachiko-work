@@ -198,7 +198,7 @@ fn shared_hundred_row_xlsx_and_csv_keep_their_admission() {
     assert!(parsed.sheets[0].columns[0].number_format.is_some());
     import_workbook(&parsed, &selection(&parsed), ORIGINAL).unwrap();
 
-    let csv = format!("Name\n{}", "_x005F_x0041_\n".repeat(100));
+    let csv = format!("Name\n{}", "value\n".repeat(100));
     let parsed = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
     assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
     assert_eq!(parsed.sheets[0].rows.len(), 100);
@@ -206,6 +206,54 @@ fn shared_hundred_row_xlsx_and_csv_keep_their_admission() {
         export_csv(&parsed.sheets[0]).unwrap(),
         csv.replace('\n', "\r\n").as_bytes()
     );
+}
+
+#[test]
+fn csv_escape_refusal_preserves_the_old_row_threshold() {
+    for rows in [64, 65, 128] {
+        for location in ["column", "text"] {
+            let options = ImportOptions::default();
+            let header = if location == "column" {
+                "_x0041_"
+            } else {
+                "Name"
+            };
+            let value = if location == "text" {
+                "_x0041_"
+            } else {
+                "value"
+            };
+            let csv = format!("{header}\n{}", format!("{value}\n").repeat(rows));
+            let result = import_csv(csv.as_bytes(), &options);
+            if rows > 64 {
+                assert!(result.unwrap_err().to_string().contains("#637"));
+            } else {
+                let source = result.unwrap();
+                let selected = ImportSelection {
+                    column_types: vec![vec![ImportFieldType::Text]],
+                    extra_columns: vec![Vec::new()],
+                };
+                if location == "column" {
+                    // Source inspection is unchanged; semantic field names still
+                    // obey the existing XLSX compatibility restriction.
+                    let error = import_workbook(&source, &selected, ORIGINAL).err().unwrap();
+                    assert!(error.to_string().contains("escape sequences"));
+                    continue;
+                }
+                let (runtime, imported) = import_workbook(&source, &selected, ORIGINAL).unwrap();
+                let saved = runtime
+                    .export_project_v3(&runtime.observe_occurrence().revision)
+                    .unwrap()
+                    .bytes;
+                let mut resident = None;
+                open_imported_project(&mut resident, &saved, &imported.metadata, FRESH).unwrap();
+                assert_eq!(
+                    export_csv(&source.sheets[0]).unwrap(),
+                    csv.replace('\n', "\r\n").as_bytes()
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -446,6 +494,26 @@ fn date_workbook(rows: usize, columns: usize) -> SourceWorkbook {
     source
 }
 
+fn host_xlsx_export(source: &[u8], selected: &ImportSelection) -> Vec<u8> {
+    let mut host = tachiko_designer_runtime::host_bridge::DesignerHost::new();
+    let mut request: serde_json::Value = serde_json::from_str(
+        r#"{"type":"import","format":"xlsx","csv_options":{"delimiter":",","header":true},"selection":null,"occurrence_id":"00000000-0000-4000-8000-000000000635","install":true}"#,
+    ).unwrap();
+    request["selection"] = serde_json::to_value(selected).unwrap();
+    let reply = host.spreadsheet(&serde_json::to_vec(&request).unwrap(), source);
+    let reply: serde_json::Value = serde_json::from_slice(&reply.reply).unwrap();
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let payload = &reply["response"]["payload"];
+    let mut request: serde_json::Value = serde_json::from_str(
+        r#"{"type":"export","format":"xlsx","expected_revision":"resident/0","metadata":null,"collection":"sheet_1"}"#,
+    ).unwrap();
+    request["metadata"] = payload["metadata"].clone();
+    let reply = host.spreadsheet(&serde_json::to_vec(&request).unwrap(), &[]);
+    let response: serde_json::Value = serde_json::from_slice(&reply.reply).unwrap();
+    assert_eq!(response["status"], "ok", "{response}");
+    reply.bytes.unwrap()
+}
+
 #[test]
 fn shared_shaped_dates_promoted_to_capacity_import_save_and_reopen() {
     // Retain the plain capacity package's presentation while bringing its
@@ -475,11 +543,15 @@ fn shared_shaped_dates_promoted_to_capacity_import_save_and_reopen() {
         .unwrap();
     assert_eq!(exported.sheets[0].rows.len(), 128);
     assert_eq!(exported.sheets[0].columns.len(), 16);
-    let encoded = export_xlsx(&exported).unwrap();
+    let encoded = host_xlsx_export(&bytes, &selected);
     assert_eq!(
         import_xlsx(&encoded).unwrap().sheets[0].rows,
         source.sheets[0].rows
     );
+    let reparsed = import_xlsx(&encoded).unwrap();
+    assert!(!reparsed.ledger.iter().any(|finding| finding.blocking
+        || matches!(finding.code.as_str(), "style_profile" | "bounded_workbook")));
+    let (runtime, imported) = import_workbook(&reparsed, &selected, ORIGINAL).unwrap();
     let saved = runtime
         .export_project_v3(&runtime.observe_occurrence().revision)
         .unwrap()
@@ -492,7 +564,7 @@ fn shared_shaped_dates_promoted_to_capacity_import_save_and_reopen() {
         .export_workbook(&reopened.observe_occurrence().revision, &imported.metadata)
         .unwrap();
     assert_eq!(after.sheets, exported.sheets);
-    assert_eq!(export_xlsx(&after).unwrap(), encoded);
+    assert_eq!(host_xlsx_export(&encoded, &selected), encoded);
 }
 
 #[test]

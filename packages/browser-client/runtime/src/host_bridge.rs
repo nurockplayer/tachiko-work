@@ -14,8 +14,8 @@ use serde::Deserialize;
 
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
-    OutputProfile, SourceWorkbook, export_csv, export_csv_for_profile, export_xlsx,
-    export_xlsx_for_profile, import_csv, import_xlsx_with,
+    OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile, import_csv,
+    import_xlsx_with,
 };
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply, FailureProjection,
@@ -671,7 +671,8 @@ fn export_native_budget_spreadsheet(
                     .ok_or_else(|| DesignerError::InvalidProjectTransfer {
                         message: "Native Budget export active view is unavailable.".to_owned(),
                     })?;
-            let bytes = export_csv(sheet).map_err(interop_error)?;
+            let bytes =
+                export_csv_for_profile(sheet, OutputProfile::Shared).map_err(interop_error)?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,
                 code: "csv_values_only".to_owned(),
@@ -681,7 +682,9 @@ fn export_native_budget_spreadsheet(
             });
             bytes
         }
-        SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(interop_error)?,
+        SpreadsheetFormat::Xlsx => {
+            export_xlsx_for_profile(&workbook, OutputProfile::Shared).map_err(interop_error)?
+        }
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
@@ -733,10 +736,11 @@ fn export_spreadsheet(
             blocking: false,
         });
     }
+    let profile = runtime.imported_output_profile();
     let bytes = match format {
         SpreadsheetFormat::Csv => {
             let sheet = &workbook.sheets[0];
-            let bytes = export_csv(sheet).map_err(|error| {
+            let bytes = export_csv_for_profile(sheet, profile).map_err(|error| {
                 crate::interop_document::imported_export_error("workbook", &error.to_string())
             })?;
             workbook.ledger.push(FidelityFinding {
@@ -748,9 +752,11 @@ fn export_spreadsheet(
             });
             bytes
         }
-        SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(|error| {
-            crate::interop_document::imported_export_error("workbook", &error.to_string())
-        })?,
+        SpreadsheetFormat::Xlsx => {
+            export_xlsx_for_profile(&workbook, profile).map_err(|error| {
+                crate::interop_document::imported_export_error("workbook", &error.to_string())
+            })?
+        }
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {

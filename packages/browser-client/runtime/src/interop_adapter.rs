@@ -1609,6 +1609,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
             ),
         ],
     };
+    validate_large_sheet_strings(&workbook)?;
     if output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate an isolated typed feasibility copy, retaining the lexical
         // source values for explicit user selection.
@@ -3534,19 +3535,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
         validate_capacity_source_inspection(&workbook)?;
         return Ok(workbook);
     }
-    // Preserve the former >64-row refusal until XLSX ST_Xstring decoding (#637).
-    if workbook.sheets.iter().any(|sheet| {
-        sheet.rows.len() >= TEXT_CAPACITY_MIN_ROWS
-            && (st_xstring(&sheet.name)
-                || sheet.columns.iter().any(|column| st_xstring(&column.name))
-                || sheet.rows.iter().flatten().any(
-                    |cell| matches!(&cell.value, SourceValue::Text { value } if st_xstring(value)),
-                ))
-    }) {
-        return fail(
-            "Sheets above 64 data rows refuse SpreadsheetML _xHHHH_ escapes until decoded (#637)",
-        );
-    }
+    validate_large_sheet_strings(&workbook)?;
     Ok(finish_source_admission(workbook))
 }
 
@@ -4067,6 +4056,23 @@ pub(super) fn keep_cached_value(
 
 /// Every parsed source uses the same representation predicate as output. Existing
 /// blockers retain their original inventory and are never replaced by a generic error.
+fn validate_large_sheet_strings(workbook: &SourceWorkbook) -> Result<()> {
+    // Preserve the former >64-row refusal until XLSX ST_Xstring decoding (#637).
+    if workbook.sheets.iter().any(|sheet| {
+        sheet.rows.len() >= TEXT_CAPACITY_MIN_ROWS
+            && (st_xstring(&sheet.name)
+                || sheet.columns.iter().any(|column| st_xstring(&column.name))
+                || sheet.rows.iter().flatten().any(
+                    |cell| matches!(&cell.value, SourceValue::Text { value } if st_xstring(value)),
+                ))
+    }) {
+        return fail(
+            "Sheets above 64 data rows refuse SpreadsheetML _xHHHH_ escapes until decoded (#637)",
+        );
+    }
+    Ok(())
+}
+
 fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
     if !workbook.ledger.iter().any(|finding| finding.blocking) {
         if let Err(error) = validate_output(&workbook) {

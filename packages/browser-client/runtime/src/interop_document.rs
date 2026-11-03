@@ -902,18 +902,13 @@ fn finish_import(
         }
         Err(error) => return Err(error),
     };
-    if runtime.text_capacity
-        || super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity
-    {
-        let encoded =
-            super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
-                .map_err(interop_admission_error)?;
+    if runtime.text_capacity {
+        let profile = runtime.imported_output_profile();
+        let encoded = super::interop_adapter::export_xlsx_for_profile(&exported, profile)
+            .map_err(interop_admission_error)?;
         super::interop_adapter::import_xlsx(&encoded).map_err(interop_admission_error)?;
-        super::interop_adapter::export_csv_for_profile(
-            &exported.sheets[0],
-            OutputProfile::TextCapacity,
-        )
-        .map_err(interop_admission_error)?;
+        super::interop_adapter::export_csv_for_profile(&exported.sheets[0], profile)
+            .map_err(interop_admission_error)?;
     }
     drop(exported);
     let bootstrap = runtime.bootstrap_projection();
@@ -949,9 +944,11 @@ fn finish_import(
         normalize_import_date_styles(workbook, &mut projection.metadata, candidate.text_capacity);
         let exported =
             candidate.export_workbook(candidate.current_revision(), &projection.metadata)?;
-        let bytes =
-            super::interop_adapter::export_xlsx_for_profile(&exported, OutputProfile::TextCapacity)
-                .map_err(interop_admission_error)?;
+        let bytes = super::interop_adapter::export_xlsx_for_profile(
+            &exported,
+            candidate.imported_output_profile(),
+        )
+        .map_err(interop_admission_error)?;
         super::interop_adapter::import_xlsx(&bytes).map_err(interop_admission_error)?;
         projection.opened = OpenedProjection {
             bootstrap: candidate.bootstrap_projection(),
@@ -2518,6 +2515,16 @@ impl DesignerRuntime {
         self.export_imported_workbook(expected_revision, metadata, ImportedOutput::Projection)
     }
 
+    /// The admitted runtime profile also governs encoding, even when rebuilt
+    /// cells fit Shared geometry after a capacity promotion.
+    pub(crate) fn imported_output_profile(&self) -> OutputProfile {
+        if self.text_capacity {
+            OutputProfile::TextCapacity
+        } else {
+            OutputProfile::Shared
+        }
+    }
+
     /// Reconcile once, then check every emitted cell for the selected format
     /// before shared profile validation or encoding can flatten its location.
     pub(crate) fn export_imported_workbook(
@@ -2534,11 +2541,7 @@ impl DesignerRuntime {
             validate_capacity_metadata(snapshot.document(), &metadata)
                 .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
         }
-        let profile = if self.text_capacity {
-            OutputProfile::TextCapacity
-        } else {
-            OutputProfile::Shared
-        };
+        let profile = self.imported_output_profile();
         let mut workbook = self
             .rebuild_workbook_from_metadata(
                 expected_revision,
@@ -3342,11 +3345,7 @@ pub(crate) fn validate_saved_open_closure(
     metadata: &InteropMetadata,
 ) -> Result<(), DesignerError> {
     let workbook = candidate.export_workbook(candidate.current_revision(), metadata)?;
-    let profile = if candidate.text_capacity {
-        OutputProfile::TextCapacity
-    } else {
-        OutputProfile::Shared
-    };
+    let profile = candidate.imported_output_profile();
     let encoded = super::interop_adapter::export_xlsx_for_profile(&workbook, profile)
         .map_err(interop_admission_error)?;
     super::interop_adapter::import_xlsx(&encoded).map_err(interop_admission_error)?;
