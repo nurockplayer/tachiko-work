@@ -742,10 +742,16 @@ fn native_geometry_exact_bounds_export_without_truncation_and_plus_one_is_refuse
         let (reply, bytes) = export(&mut host, "resident/0", "s00", "xlsx");
         assert_eq!(reply["status"], "ok", "{reply}");
         assert!(bytes.is_some());
-        // Incoming limits remain deliberately narrower.
-        if tables > 4 || columns > 16 {
-            assert!(import_xlsx(&bytes.unwrap()).is_err());
-        }
+        // Shared import now admits this geometry; native byte bounds remain separate.
+        let parsed = import_xlsx(&bytes.unwrap()).unwrap();
+        assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+        assert_eq!(parsed.sheets.len(), tables);
+        assert!(
+            parsed
+                .sheets
+                .iter()
+                .all(|sheet| sheet.columns.len() == columns && sheet.rows.len() == rows)
+        );
         let (reply, bytes) = export(&mut host, "resident/0", "s00", "csv");
         assert_eq!(reply["status"], "ok", "{reply}");
         assert!(bytes.is_some());
