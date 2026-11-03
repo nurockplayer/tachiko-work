@@ -494,6 +494,7 @@ fn date_workbook(rows: usize, columns: usize) -> SourceWorkbook {
     source
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn host_xlsx_export(source: &[u8], selected: &ImportSelection) -> Vec<u8> {
     let mut host = tachiko_designer_runtime::host_bridge::DesignerHost::new();
     let mut request: serde_json::Value = serde_json::from_str(
@@ -514,6 +515,7 @@ fn host_xlsx_export(source: &[u8], selected: &ImportSelection) -> Vec<u8> {
     reply.bytes.unwrap()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn shared_shaped_dates_promoted_to_capacity_import_save_and_reopen() {
     // Retain the plain capacity package's presentation while bringing its
