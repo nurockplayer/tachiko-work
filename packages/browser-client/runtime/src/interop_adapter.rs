@@ -8,11 +8,17 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 pub const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_EXPANDED_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_ZIP_ENTRIES: usize = 256;
-pub const MAX_SHEETS: usize = 4;
-pub const MAX_COLUMNS: usize = 16;
-pub const MAX_DATA_ROWS: usize = 64;
+pub const MAX_SHEETS: usize = crate::capacity::DEFAULT_LIMITS.collections;
+pub const MAX_COLUMNS: usize = crate::capacity::DEFAULT_LIMITS.table_fields;
+pub const MAX_DATA_ROWS: usize = crate::capacity::DEFAULT_LIMITS.table_rows;
+pub const MAX_TOTAL_DATA_ROWS: usize = crate::capacity::DEFAULT_LIMITS.total_entities;
+pub(crate) const MAX_NATIVE_BUDGET_SHEETS: usize = 4;
+pub(crate) const MAX_NATIVE_BUDGET_COLUMNS: usize = 16;
+pub(crate) const MAX_NATIVE_BUDGET_DATA_ROWS: usize = 64;
+const MAX_NATIVE_TRACKER_SHEETS: usize = 4;
+const MAX_NATIVE_TRACKER_COLUMNS: usize = 16;
 pub const MAX_NATIVE_TRACKER_DATA_ROWS: usize = 128;
-// Outbound-only: matches native admission geometry without widening imports.
+// Native output keeps its own geometry and larger byte bounds.
 pub const MAX_NATIVE_TABLES_SHEETS: usize = 32;
 pub const MAX_NATIVE_TABLES_COLUMNS: usize = 32;
 pub const MAX_NATIVE_TABLES_DATA_ROWS: usize = 128;
@@ -22,6 +28,8 @@ pub const MAX_NATIVE_TABLES_EXPANDED_BYTES: usize = 24 * 1024 * 1024;
 pub const MAX_NATIVE_TABLES_XLSX_TEXT_UNITS: usize = 32_767;
 const MAX_NATIVE_TABLES_PRECISION_LOCATIONS: usize = 20;
 pub const MAX_FORMULAS: usize = crate::capacity::DEFAULT_LIMITS.formulas;
+pub(crate) const MAX_TEXT_CAPACITY_COLUMNS: usize = 16;
+pub(crate) const TEXT_CAPACITY_MIN_ROWS: usize = 65;
 pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
 pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 25_218;
 pub(crate) const MAX_TEXT_CAPACITY_BYTES: usize = 1024 * 1024;
@@ -39,18 +47,20 @@ pub(crate) enum OutputProfile {
 
 impl OutputProfile {
     const fn max_sheets(self) -> usize {
-        if matches!(self, Self::NativeTables) {
-            MAX_NATIVE_TABLES_SHEETS
-        } else {
-            MAX_SHEETS
+        match self {
+            Self::Shared => MAX_SHEETS,
+            Self::NativeTracker => MAX_NATIVE_TRACKER_SHEETS,
+            Self::NativeTables => MAX_NATIVE_TABLES_SHEETS,
+            Self::TextCapacity => 1,
         }
     }
 
     const fn max_columns(self) -> usize {
-        if matches!(self, Self::NativeTables) {
-            MAX_NATIVE_TABLES_COLUMNS
-        } else {
-            MAX_COLUMNS
+        match self {
+            Self::Shared => MAX_COLUMNS,
+            Self::NativeTracker => MAX_NATIVE_TRACKER_COLUMNS,
+            Self::NativeTables => MAX_NATIVE_TABLES_COLUMNS,
+            Self::TextCapacity => MAX_TEXT_CAPACITY_COLUMNS,
         }
     }
 
@@ -109,10 +119,13 @@ pub(crate) fn capacity_date_style() -> CellStyle {
 fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
     sheet.has_header
         && !sheet.columns.is_empty()
-        && sheet.columns.len() <= MAX_COLUMNS
+        && sheet.columns.len() <= MAX_TEXT_CAPACITY_COLUMNS
         && sheet.rows.len() <= MAX_TEXT_CAPACITY_ROWS
         && sheet.rows.len().saturating_mul(sheet.columns.len()) <= MAX_TEXT_CAPACITY_CELLS
-        && sheet.columns.iter().all(|column| column.width.is_none())
+        && sheet
+            .columns
+            .iter()
+            .all(|column| column.width.is_none() && column.number_format.is_none())
         && sheet.rows.iter().all(|row| {
             row.len() == sheet.columns.len()
                 && row.iter().all(|cell| {
@@ -142,16 +155,32 @@ pub(crate) fn capacity_auxiliary_xml_reserve(columns: usize) -> usize {
 }
 
 pub(crate) fn output_profile(workbook: &SourceWorkbook) -> OutputProfile {
-    if workbook
-        .sheets
-        .iter()
-        .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS)
-        && text_capacity_shape(workbook)
-    {
+    let exceeds_shared_bounds = workbook.sheets.len() > MAX_SHEETS
+        || workbook.sheets.iter().any(exceeds_shared_sheet_bounds)
+        || workbook
+            .sheets
+            .iter()
+            .map(|sheet| sheet.rows.len())
+            .sum::<usize>()
+            > MAX_TOTAL_DATA_ROWS;
+    if exceeds_shared_bounds && text_capacity_shape(workbook) {
         OutputProfile::TextCapacity
     } else {
         OutputProfile::Shared
     }
+}
+
+fn exceeds_shared_sheet_bounds(sheet: &SourceSheet) -> bool {
+    let mut text_bytes = 0usize;
+    sheet.columns.len() > MAX_COLUMNS
+        || sheet.rows.len() > MAX_DATA_ROWS
+        || sheet.rows.iter().flatten().any(|cell| {
+            let SourceValue::Text { value } = &cell.value else {
+                return false;
+            };
+            text_bytes = text_bytes.saturating_add(value.len());
+            text_bytes > crate::MAX_PROJECTION_BYTES
+        })
 }
 
 /// Exact RFC CSV width, including quote doubling and empty-field quotes.
@@ -278,7 +307,7 @@ pub(crate) fn validate_text_capacity_inspection(workbook: &SourceWorkbook) -> Re
             .iter()
             .flatten()
             .all(|cell| matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. }));
-    if sheet.rows.len() <= MAX_DATA_ROWS {
+    if sheet.rows.len() < TEXT_CAPACITY_MIN_ROWS {
         if !legacy_small_text {
             return fail("Only large or legacy Text sources use the private capacity inspection");
         }
@@ -1580,10 +1609,8 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
             ),
         ],
     };
-    if workbook.sheets[0].rows.len() > MAX_DATA_ROWS {
-        if !text_capacity_shape(&workbook) {
-            return fail("CSV exceeds the bounded Text/Number capacity rectangle");
-        }
+    validate_large_sheet_strings(&workbook)?;
+    if output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate an isolated typed feasibility copy, retaining the lexical
         // source values for explicit user selection.
         validate_capacity_source_inspection(&workbook)?;
@@ -3105,7 +3132,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
         .kids("sheet")
         .collect::<Vec<_>>();
     if sheet_nodes.is_empty() || sheet_nodes.len() > MAX_SHEETS {
-        return fail("Workbook must have 1..=4 sheets");
+        return fail(format!("Workbook must have 1..={MAX_SHEETS} sheets"));
     }
     if options.header_rows.len() > sheet_nodes.len() {
         return fail("header_rows has more entries than the workbook has sheets");
@@ -3467,10 +3494,12 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 capacity_plain &= w.is_none();
                 if min == 0
                     || max < min
-                    || max > MAX_COLUMNS
                     || w.is_some_and(|w| !w.is_finite() || w <= 0.0 || w > 255.0)
                 {
                     return fail("Invalid column width");
+                }
+                if max > MAX_COLUMNS {
+                    return fail(format!("Column width range exceeds {MAX_COLUMNS} columns"));
                 }
                 if max > columns.len() && w.is_some() {
                     ledger.push(finding(FidelityCategory::LossyOnExport, "column_width_outside_grid", &format!("{name}:columns {min}..{max}"), "Column width outside the represented cell grid remains source-only and is omitted on export", false));
@@ -3500,19 +3529,13 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
     // code. Nonplain generic source ledgers and their wire width stay unchanged.
     ledger.push(finding(FidelityCategory::NativeEquivalent,if plain {"plain_workbook"} else {"bounded_workbook"},"source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
     let workbook = SourceWorkbook { sheets, ledger };
-    if workbook
-        .sheets
-        .iter()
-        .any(|sheet| sheet.rows.len() > MAX_DATA_ROWS)
-    {
-        if !text_capacity_shape(&workbook) {
-            return fail("XLSX exceeds the bounded Text/Number capacity rectangle");
-        }
+    if output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate isolated Number-feasibility hypotheses without changing
         // the typed values the user sees and explicitly selects.
         validate_capacity_source_inspection(&workbook)?;
         return Ok(workbook);
     }
+    validate_large_sheet_strings(&workbook)?;
     Ok(finish_source_admission(workbook))
 }
 
@@ -4033,6 +4056,23 @@ pub(super) fn keep_cached_value(
 
 /// Every parsed source uses the same representation predicate as output. Existing
 /// blockers retain their original inventory and are never replaced by a generic error.
+fn validate_large_sheet_strings(workbook: &SourceWorkbook) -> Result<()> {
+    // Preserve the former >64-row refusal until XLSX ST_Xstring decoding (#637).
+    if workbook.sheets.iter().any(|sheet| {
+        sheet.rows.len() >= TEXT_CAPACITY_MIN_ROWS
+            && (st_xstring(&sheet.name)
+                || sheet.columns.iter().any(|column| st_xstring(&column.name))
+                || sheet.rows.iter().flatten().any(
+                    |cell| matches!(&cell.value, SourceValue::Text { value } if st_xstring(value)),
+                ))
+    }) {
+        return fail(
+            "Sheets above 64 data rows refuse SpreadsheetML _xHHHH_ escapes until decoded (#637)",
+        );
+    }
+    Ok(())
+}
+
 fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
     if !workbook.ledger.iter().any(|finding| finding.blocking) {
         if let Err(error) = validate_output(&workbook) {
@@ -4051,7 +4091,7 @@ fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
 /// # Errors
 /// Rejects an oversized or invalid scalar output profile.
 pub fn export_csv(sheet: &SourceSheet) -> Result<Vec<u8>> {
-    let profile = if sheet.rows.len() > MAX_DATA_ROWS && text_capacity_sheet_shape(sheet) {
+    let profile = if exceeds_shared_sheet_bounds(sheet) && text_capacity_sheet_shape(sheet) {
         OutputProfile::TextCapacity
     } else {
         OutputProfile::Shared
@@ -4243,21 +4283,25 @@ fn validate_output_collection_bounds(
     profile: OutputProfile,
 ) -> Result<()> {
     if workbook.sheets.is_empty() || workbook.sheets.len() > profile.max_sheets() {
-        return fail(if profile == OutputProfile::NativeTables {
-            "Native tables export requires 1..=32 sheets"
-        } else {
-            "Export requires 1..=4 sheets"
-        });
+        return fail(format!(
+            "Export requires 1..={} sheets",
+            profile.max_sheets()
+        ));
     }
-    if profile == OutputProfile::NativeTables
-        && workbook
+    let max_total_rows = match profile {
+        OutputProfile::Shared => Some(MAX_TOTAL_DATA_ROWS),
+        OutputProfile::NativeTables => Some(MAX_NATIVE_TABLES_TOTAL_ROWS),
+        OutputProfile::NativeTracker | OutputProfile::TextCapacity => None,
+    };
+    if let Some(maximum) = max_total_rows {
+        let total = workbook
             .sheets
             .iter()
             .map(|sheet| sheet.rows.len())
-            .sum::<usize>()
-            > MAX_NATIVE_TABLES_TOTAL_ROWS
-    {
-        return fail("Native tables export exceeds 1,024 total rows");
+            .sum::<usize>();
+        if total > maximum {
+            return fail(format!("Export exceeds {maximum} total rows"));
+        }
     }
     Ok(())
 }
@@ -4421,28 +4465,7 @@ fn output_style(
 /// Rejects blocking findings, invalid output values/styles and bounded size limits.
 #[allow(clippy::too_many_lines, clippy::format_push_string)] // Bounded deterministic XML assembly; temporary strings stay within the tiny workbook profile.
 pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
-    export_xlsx_for_profile(
-        workbook,
-        if use_text_capacity_writer(workbook) {
-            OutputProfile::TextCapacity
-        } else {
-            OutputProfile::Shared
-        },
-    )
-}
-
-fn use_text_capacity_writer(workbook: &SourceWorkbook) -> bool {
-    if validate_text_capacity(workbook).is_err() {
-        return false;
-    }
-    let sheet = &workbook.sheets[0];
-    sheet.rows.len() > MAX_DATA_ROWS
-        || (sheet.columns.len() == 3
-            && sheet
-                .rows
-                .iter()
-                .flatten()
-                .all(|cell| matches!(cell.value, SourceValue::Empty | SourceValue::Text { .. })))
+    export_xlsx_for_profile(workbook, output_profile(workbook))
 }
 
 /// Emit typed worksheets using the selected bounded output profile.
@@ -4817,7 +4840,7 @@ mod capacity_proof_tests {
         };
         assert_eq!(capacity_header_bytes(&wide_headers), 55);
         let mut csv = String::from("label,amount\n");
-        for row in 0..65 {
+        for row in 0..129 {
             writeln!(csv, "row{row},{}", if row == 0 { "-13.25" } else { "42.5" }).unwrap();
         }
         let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
@@ -4869,7 +4892,7 @@ mod capacity_proof_tests {
         for invalid in ["-1+2", "inf", "not-a-number"] {
             let mut csv = String::from("label,amount\nrow0,-1\n");
             writeln!(csv, "row1,{invalid}\nrow2,2").unwrap();
-            for _ in 0..62 {
+            for _ in 0..126 {
                 writeln!(csv, "row,2").unwrap();
             }
             assert!(import_csv(csv.as_bytes(), &ImportOptions::default()).is_err());
@@ -5737,7 +5760,7 @@ mod native_tables_output_tests {
     }
 
     #[test]
-    fn native_tables_writer_refuses_geometry_plus_one_without_widening_shared_profile() {
+    fn native_tables_and_shared_writers_refuse_geometry_plus_one() {
         let profile = OutputProfile::NativeTables;
         let mut workbook = SourceWorkbook {
             sheets: vec![sheet(32, 128)],
@@ -5745,7 +5768,7 @@ mod native_tables_output_tests {
         };
         assert!(export_csv_for_profile(&workbook.sheets[0], profile).is_ok());
         assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
-        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_err());
+        assert!(export_xlsx_for_profile(&workbook, OutputProfile::Shared).is_ok());
         for invalid in [sheet(33, 1), sheet(1, 129)] {
             assert!(export_csv_for_profile(&invalid, profile).is_err());
             workbook.sheets = vec![invalid];

@@ -205,11 +205,13 @@ integers, never raw source markup.
 
 ## Limits and atomic refusal
 
-The shared output profile remains 4 sheets, 16 columns, 64 data rows per sheet,
-32 formulas, 2 MiB encoded and 8 MiB expanded XLSX. The compatibility inventory
+The shared import/round-trip output profile explicitly expands to 32 sheets,
+32 columns, 128 data rows per sheet and 1,024 total data rows, with unchanged
+32-formula, 2 MiB encoded and 8 MiB expanded XLSX bounds. The compatibility inventory
 also enforces the Office presentation limits above. The existing separately
 admitted Text-capacity exception keeps its exact bounds and metadata rules.
-Native authoring capacity does not widen metadata export capacity. Crossing any
+Native authoring beyond this explicit shared profile does not widen metadata
+export capacity. Crossing any
 output, style, formula, character or mapping limit refuses the entire operation;
 no truncated workbook or partial bytes are returned. Spreadsheet export does not
 mutate content, revision, history or source metadata.

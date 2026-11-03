@@ -68,11 +68,21 @@ fn native_document(rows: usize) -> Document {
 }
 
 fn imported(rows: usize) -> (DesignerRuntime, InteropMetadata) {
-    // Exact independently recorded compact saved-copy counterexample5999450017.
+    imported_with_padding(rows, "")
+}
+
+fn capacity_imported(rows: usize) -> (DesignerRuntime, InteropMetadata) {
+    // Keep 65/66-row cases on TextCapacity after the shared geometry expands:
+    // this collection exceeds the ordinary 64 KiB stored-text budget.
+    imported_with_padding(rows, &"x".repeat(1024))
+}
+
+fn imported_with_padding(rows: usize, padding: &str) -> (DesignerRuntime, InteropMetadata) {
+    // Empty padding retains the independently recorded compact counterexample5999450017.
     let mut csv = String::from("a,b,c\r\n");
     for i in 0..rows {
         let v = if i < 2 { 0 } else { i };
-        write!(csv, "key{v:03},value{v:03},00{v:03}\r\n").unwrap();
+        write!(csv, "key{v:03},value{v:03}{padding},00{v:03}\r\n").unwrap();
     }
     let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
     let selection = ImportSelection {
@@ -240,7 +250,7 @@ fn new_saved_open_preserves_both_carriers_and_complete_edit_history_resave() {
 
 #[test]
 fn invalid_saved_metadata_refuses_before_replacement_and_retains_both_histories() {
-    let (source, metadata) = imported(66);
+    let (source, metadata) = capacity_imported(66);
     let mut invalid = Vec::new();
     let mut m = metadata.clone();
     m.version = 2;
@@ -309,7 +319,7 @@ fn dedup(
 #[test]
 fn enlarged_import_dedup_66_to_65_and_65_to_64_refuses_atomically() {
     for rows in [66, 65] {
-        let (source, metadata) = imported(rows);
+        let (source, metadata) = capacity_imported(rows);
         for carrier in carriers(&source) {
             let mut resident = None;
             open_imported_project(&mut resident, &carrier, &metadata, FRESH).unwrap();
@@ -641,9 +651,9 @@ fn native_capacity_remove_keeps_full_history_and_saved_reopen() {
 }
 
 #[test]
-fn compact_capacity_runtime_keeps_original_pure_v3_eligibility_but_not_import_closure() {
-    // Read-only Astra advice: judge the snapshot's original native envelope,
-    // not a blanket text_capacity ban. Imported-carrier closure is separate.
+fn compact_shared_runtime_keeps_pure_v3_eligibility_and_import_closure() {
+    // The expanded shared profile now closes the compact 66-row import too;
+    // pure v3 eligibility and imported metadata remain independent checks.
     let (mut runtime, metadata) = imported(66);
     let states = seed_histories(&mut runtime);
     let before = runtime.observe_occurrence();
@@ -659,16 +669,13 @@ fn compact_capacity_runtime_keeps_original_pure_v3_eligibility_but_not_import_cl
     assert_eq!(table(plain.as_mut().unwrap()).rows.len(), 66);
     ordinary_export_refuses(plain.as_ref().unwrap());
     let mut empty = None;
-    assert!(inspect_imported_project(&selected, &metadata).is_err());
-    assert!(open_imported_project(&mut empty, &selected, &metadata, SECOND).is_err());
-    assert!(empty.is_none());
-    let mut resident = Some(runtime);
-    assert!(open_imported_project(&mut resident, &selected, &metadata, SECOND).is_err());
-    let retained = resident.as_mut().unwrap();
-    assert_eq!(retained.observe_occurrence(), before);
-    assert_eq!(table(retained), cells);
-    assert_eq!(carriers(retained), ordinary_saved);
-    assert_histories(retained, &states);
+    inspect_imported_project(&selected, &metadata).unwrap();
+    open_imported_project(&mut empty, &selected, &metadata, SECOND).unwrap();
+    let reopened = empty.as_ref().unwrap();
+    assert_eq!(workbook(reopened, &metadata), workbook(&runtime, &metadata));
+    assert_eq!(table(&mut runtime), cells);
+    assert_eq!(carriers(&runtime), ordinary_saved);
+    assert_histories(&mut runtime, &states);
 }
 
 #[test]
