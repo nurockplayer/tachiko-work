@@ -977,7 +977,7 @@ fn native_tables_xlsx_encodes_literal_spreadsheetml_escapes() {
         "_xAbCd_",
         "_x005F_x0041_",
     ] {
-        for location in ["cell", "header", "sheet-name"] {
+        for location in ["cell", "header"] {
             let mut host = host_for(literal_text_document(text, location));
             let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
             assert_eq!(reply["status"], "ok", "{reply}");
@@ -990,36 +990,64 @@ fn native_tables_xlsx_encodes_literal_spreadsheetml_escapes() {
                     SourceValue::Text { value: text.into() }
                 ),
                 "header" => assert_eq!(parsed.sheets[0].columns[0].name, text),
-                "sheet-name" => assert_eq!(parsed.sheets[0].name, text),
                 _ => unreachable!(),
             }
             let reopened = import_xlsx(&export_xlsx(&parsed).unwrap()).unwrap();
             assert_eq!(reopened.sheets, parsed.sheets);
-            let path = if location == "sheet-name" {
-                "xl/workbook.xml"
-            } else {
-                "xl/worksheets/sheet1.xml"
-            };
-            assert!(xml(&bytes, path).contains(if location == "sheet-name" {
-                text
-            } else {
-                "_x005F_"
-            }));
+            assert!(xml(&bytes, "xl/worksheets/sheet1.xml").contains("_x005F_"));
             let (reply, bytes) = export(&mut host, "resident/0", "s", "csv");
             assert_eq!(reply["status"], "ok", "{reply}");
-            if location != "sheet-name" {
-                assert!(String::from_utf8(bytes.unwrap()).unwrap().contains(text));
-            }
+            assert!(String::from_utf8(bytes.unwrap()).unwrap().contains(text));
         }
     }
-    // Existing worksheet allocation still truncates and sanitizes names.
-    for name in [format!("{}_x000D_", "s".repeat(31)), "_x000D[".into()] {
-        let runtime =
-            DesignerRuntime::from_document(literal_text_document(&name, "sheet-name"), OCCURRENCE)
-                .unwrap();
-        runtime
-            .export_native_tables_workbook("resident/0", "s")
-            .unwrap();
+}
+
+#[test]
+fn native_tables_xlsx_refuses_worksheet_escape_patterns_before_and_after_allocation() {
+    for name in [
+        "_x0041_".into(),
+        "_xAbCd_".into(),
+        "_x005F_x0041_".into(),
+        format!("{}_x000D_", "s".repeat(31)),
+        "_x000D[".into(),
+    ] {
+        for collision in [false, true] {
+            let mut document = literal_text_document(&name, "sheet-name");
+            if collision {
+                add_table(
+                    &mut document,
+                    "a",
+                    "a",
+                    "A",
+                    vec![field("a", FieldType::Text, true)],
+                    vec![],
+                );
+            }
+            let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+            let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } = runtime
+                .export_native_tables_workbook("resident/0", "s")
+                .unwrap_err()
+            else {
+                panic!("expected located worksheet-name refusal");
+            };
+            assert_eq!(finding.code, "native_tables_xlsx_escape_sequence");
+            assert!(finding.blocking);
+            assert!(finding.location.ends_with("/sheet-name"));
+            assert!(finding.message.contains("worksheet names"));
+            let mut host = host_for(document);
+            let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
+            assert_eq!(reply["error"]["code"], "native_tables_export_refused");
+            assert_eq!(reply["error"]["diagnostics"][0]["code"], finding.code);
+            assert_eq!(reply["error"]["diagnostics"][0]["path"], finding.location);
+            assert!(bytes.is_none());
+            // CSV emits no worksheet name; its internal label must stay safe.
+            let (reply, bytes) = export(&mut host, "resident/0", "s", "csv");
+            assert_eq!(reply["status"], "ok", "{reply}");
+            assert_eq!(
+                String::from_utf8(bytes.unwrap()).unwrap(),
+                "text\r\nsafe\r\n"
+            );
+        }
     }
 }
 

@@ -8,7 +8,7 @@ use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, NativeTablesCheck, OutputProfile, SourceCell, SourceColumn,
     SourceLayout, SourceSheet, SourceWorkbook, csv_formula_text, export_csv_for_profile,
     export_xlsx_for_profile, native_tables_caseless_key, native_tables_compatibility,
-    native_tables_trim_worksheet_name, native_tables_xlsx_number_findings,
+    native_tables_trim_worksheet_name, native_tables_xlsx_number_findings, st_xstring,
     validate_native_tables_csv, validate_native_tables_xlsx, validate_output_for_profile,
 };
 use crate::interop_document::{column_letters, export_expression};
@@ -310,7 +310,7 @@ fn mapped_name(source: &str, worksheet: bool, used: &mut BTreeSet<String>) -> St
     } else {
         cleaned.as_str()
     };
-    let base = if cleaned.trim().is_empty() {
+    let base = if cleaned.trim().is_empty() || (worksheet && st_xstring(cleaned)) {
         if worksheet { "Table" } else { "Column" }
     } else {
         cleaned

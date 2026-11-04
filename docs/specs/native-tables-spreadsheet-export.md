@@ -114,8 +114,11 @@ Native-tables XLSX encodes literal SpreadsheetML escape prefixes in Text cells
 and headers: the initial underscore of `_x[0-9A-Fa-f]{4}_` becomes `_x005F_`.
 Carriage return becomes `_x000D_`; near-misses such as `_x00D_` and `_x000G_`
 remain literal. All XLSX profiles share this encoder (Issue #637). Worksheet
-name attributes remain literal under the lead's Excel compatibility boundary;
-existing name allocation still applies. The reader decodes shared and inline
+names are read literally on import; XLSX output refuses escape patterns in both
+source and allocated names with `native_tables_xlsx_escape_sequence`. This
+includes patterns created by sanitization and source patterns beyond truncation.
+CSV avoids these patterns in its internal worksheet label without changing its
+emitted Text or headers. The reader decodes shared and inline
 cell Text in one non-recursive pass, combines adjacent high/low surrogate
 escapes, and refuses unsupported decoded Text with a cell location before
 formula-cache fallback or capacity-profile selection.
@@ -184,7 +187,7 @@ constraints do not restrict CSV.
 | Headers: nonempty and unique | [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545), adapter contract (stronger than plain Excel cells) | Empty becomes `Column`; use the same caseless suffix allocator; changed mappings are `Converted`; never truncate. An added suffix exceeding the cell limit is refused. |
 | Text/headers: at most 32,767 UTF-16 units | [Excel limits][excel-limits]; conservative UTF-16 measurement required by the lead disposition | Refuse 32,768; accept 32,767 for ASCII, BMP and astral values and headers. |
 | Text/headers: at most 253 line feeds | [Excel limits][excel-limits] | Refuse 254; preserve all 253 at the boundary. Applies to cells/headers, not allocated worksheet names. |
-| Text/headers/names: literal `_x[0-9A-Fa-f]{4}_` | ECMA-376 Part 1 §22.9.2.19 `ST_Xstring`; [lead fidelity disposition](https://github.com/nurockplayer/tachiko-work/pull/546#issuecomment-6262364908) | Encode literal prefixes in cell Text/headers; leave worksheet attributes literal. Decode cell Text on import in one pass (Issue #637). |
+| Text/headers/names: literal `_x[0-9A-Fa-f]{4}_` | ECMA-376 Part 1 §22.9.2.19 `ST_Xstring`; [lead fidelity disposition](https://github.com/nurockplayer/tachiko-work/pull/546#issuecomment-6262364908) | Encode literal prefixes in cell Text/headers. Refuse source or allocated worksheet names with `native_tables_xlsx_escape_sequence`, identifying worksheet names; CSV's unexported internal worksheet label avoids patterns. Read worksheet names literally on import; decode cell Text in one pass (Issue #637). |
 | Text/headers/names: XML-legal characters | [XML 1.0 §2.2][xml-characters] | Refuse forbidden controls, U+FFFE/U+FFFF. CSV applies the same rule to selected Text and original/emitted headers, with a located finding. Rust strings cannot contain surrogates. Accept TAB/LF/CR and other XML-legal scalars, including astral characters. |
 | Text/headers: leading/trailing whitespace | [XML 1.0 §2.10][xml-space] | Inline Text with `xml:space="preserve"`; CR encoded as `_x000D_`. Verify exact Work readback and independent-reader spaces/TAB/LF. Worksheet names retain their explicit rename rules. |
 | Numbers: finite | [Microsoft numeric behavior][excel-numbers] | Refuse NaN/infinities with a cell finding; emit finite numeric cells. |

@@ -11,7 +11,8 @@ All notable changes to Tachiko Work are documented in this file.
   its cell location, including formula caches and large imports. All XLSX
   writers encode literal escape prefixes and carriage
   returns. Shared and TextCapacity imports now admit literal patterns at every
-  supported row count; CSV Text stays literal (Work #637).
+  supported row count; CSV Text stays literal. Worksheet names are read literally
+  on import and retain their XLSX escape-pattern refusal (Work #637).
 
 - Over-limit XLSX/CSV imports return typed `capacity_exceeded` errors naming
   the source sheet, attempted count and maximum. Workbook-wide limits omit the

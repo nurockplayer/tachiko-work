@@ -212,6 +212,9 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
         );
     }
     let sheet = &workbook.sheets[0];
+    if st_xstring(&sheet.name) {
+        return fail("Text capacity refuses SpreadsheetML escape patterns in worksheet names");
+    }
     let header_limit = capacity_header_limit(sheet.columns.len());
     if capacity_header_bytes(sheet) > header_limit {
         return fail("Text capacity CSV header exceeds its reserved encoded bytes");
@@ -357,7 +360,7 @@ fn xstring_unit(value: &[u8]) -> Option<u16> {
     })
 }
 
-fn st_xstring(value: &str) -> bool {
+pub(crate) fn st_xstring(value: &str) -> bool {
     value
         .as_bytes()
         .windows(7)
@@ -493,7 +496,17 @@ pub(crate) fn native_tables_compatibility(
             used,
             allocate,
         } => {
-            text(value, !worksheet)?;
+            let name_text = |name: &str| {
+                text(name, !worksheet)?;
+                if worksheet && st_xstring(name) {
+                    return Err(refuse(
+                        "native_tables_xlsx_escape_sequence",
+                        "Literal SpreadsheetML _xHHHH_ escape sequences in worksheet names are refused because Excel may decode them and change worksheet identity.",
+                    ));
+                }
+                Ok(())
+            };
+            name_text(value)?;
             if allocate {
                 let cleaned: String = value
                     .chars()
@@ -535,7 +548,7 @@ pub(crate) fn native_tables_compatibility(
                         base.to_owned()
                     };
                     let candidate = format!("{prefix}{suffix}");
-                    text(&candidate, !worksheet)?;
+                    name_text(&candidate)?;
                     let key = native_tables_caseless_key(&candidate);
                     if worksheet && key == "history" {
                         continue;
@@ -4373,7 +4386,7 @@ fn escape(value: &str) -> String {
         .replace('\r', "&#13;")
 }
 
-// Cell Text uses ST_Xstring; workbook attributes and numeric <v> do not.
+// Encode cell Text only; worksheet names retain their escape-pattern refusal.
 fn escape_xstring(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for (index, character) in value.char_indices() {
@@ -4475,6 +4488,12 @@ pub(crate) fn validate_output_for_profile(
     let mut names = BTreeSet::new();
     let mut formulas = 0;
     for s in &workbook.sheets {
+        if st_xstring(&s.name) {
+            return fail(format!(
+                "native_tables_xlsx_escape_sequence at worksheet {:?}/sheet-name: SpreadsheetML escape patterns in worksheet names are refused",
+                s.name
+            ));
+        }
         if !xml_text_valid(&s.name) || s.columns.iter().any(|c| !xml_text_valid(&c.name)) {
             return fail("Invalid XML character in sheet or header");
         }
@@ -5806,6 +5825,30 @@ mod native_tables_output_tests {
             let key = native_tables_caseless_key(&scalar.to_string());
             assert_eq!(native_tables_caseless_key(&key), key, "{scalar:?}");
             assert_eq!(key.to_uppercase().to_lowercase(), key, "{scalar:?}");
+        }
+    }
+
+    #[test]
+    fn worksheet_escape_patterns_refuse_in_every_xlsx_output_profile() {
+        for profile in [
+            OutputProfile::Shared,
+            OutputProfile::TextCapacity,
+            OutputProfile::NativeTables,
+        ] {
+            let mut workbook = SourceWorkbook {
+                sheets: vec![sheet(1, 200)],
+                ledger: vec![],
+            };
+            if profile != OutputProfile::TextCapacity {
+                workbook.sheets[0].rows.truncate(1);
+            }
+            assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
+            workbook.sheets[0].name = "_x0041_".into();
+            let error = export_xlsx_for_profile(&workbook, profile)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("worksheet"), "{error}");
+            assert!(error.contains("escape"), "{error}");
         }
     }
 

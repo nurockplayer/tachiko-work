@@ -152,6 +152,12 @@ fn xlsx_escape_text_round_trips_across_shared_and_capacity_profiles() {
                 }
                 _ => unreachable!(),
             }
+            if location == "sheet" {
+                let error = export_xlsx(&source).unwrap_err().to_string();
+                assert!(error.contains("worksheet"), "{error}");
+                assert!(error.contains("escape"), "{error}");
+                continue;
+            }
             let bytes = export_xlsx(&source).unwrap();
             let parsed = import_xlsx(&bytes).unwrap();
             assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
@@ -166,7 +172,6 @@ fn xlsx_escape_text_round_trips_across_shared_and_capacity_profiles() {
 fn shared_xlsx_escape_text_round_trips_in_mixed_sheet_sizes() {
     let mut source = workbook(2, 1, 100);
     source.sheets[0].rows.truncate(64);
-    source.sheets[0].name = "_x005F_x0041_".into();
     source.sheets[0].columns[0].name = "_x005F_x0041_".into();
     source.sheets[0].rows[0][0] = SourceCell {
         value: SourceValue::Text {
@@ -179,6 +184,12 @@ fn shared_xlsx_escape_text_round_trips_in_mixed_sheet_sizes() {
     assert_eq!(parsed.sheets[0].name, source.sheets[0].name);
     assert_eq!(parsed.sheets[0].columns, source.sheets[0].columns);
     assert_eq!(parsed.sheets[0].rows, source.sheets[0].rows);
+    source.sheets[0].name = "_x005F_x0041_".into();
+    let error = export_xlsx(&source).unwrap_err().to_string();
+    assert!(
+        error.contains("native_tables_xlsx_escape_sequence"),
+        "{error}"
+    );
 }
 
 #[test]

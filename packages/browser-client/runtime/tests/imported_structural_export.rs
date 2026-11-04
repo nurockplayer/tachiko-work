@@ -1065,6 +1065,7 @@ fn imported_presentation_cases() -> Vec<(&'static str, Value, &'static str, &'st
     vec![
         ("sheet", json!("😀".repeat(16)), "name", "/sheet-name"),
         ("sheet", json!("History"), "name", "/sheet-name"),
+        ("sheet", json!("_x0041_"), "escape_sequence", "/sheet-name"),
         (
             "number_format",
             serde_json::from_str(r#""0\"_x0041_\"""#).unwrap(),

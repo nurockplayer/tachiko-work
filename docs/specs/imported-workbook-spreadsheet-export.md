@@ -65,7 +65,7 @@ returns to the historical header still discloses its requested/output mapping.
 Structural changes have `imported_current_structure` at the stable collection.
 XLSX source worksheet names remain unchanged and pass the shared native name
 policy: at most 31 UTF-16 units, legal characters/boundaries, no reserved `History`,
-no fixed-point caseless duplicates. Literal escape patterns remain literal in worksheet attributes. Refuse
+no literal SpreadsheetML escape patterns and no fixed-point caseless duplicates. Refuse
 rather than allocate a new worksheet name and change formula references. XLSX
 inserts headers for headerless input as before, with disclosure.
 
@@ -173,8 +173,10 @@ continues to use XML character references.
 Microsoft's [ST_Xstring implementation notes][st-xstring] require CR escaping
 and escaping underscores that begin literal patterns. The [sheet schema][sheet-schema]
 also types `name` as ST_Xstring; the schema alone does not establish Excel's
-cell-versus-attribute behavior. Issue #637's lead decision keeps worksheet names
-literal and limits decoding to `<t>` under shared `<si>` and inline `<is>`.
+cell-versus-attribute behavior. Issue #637's lead decision reads worksheet names
+literally on import and retains their escape-pattern refusal on XLSX output
+(`native_tables_xlsx_escape_sequence`, identifying worksheet names). Decoding
+is limited to `<t>` under shared `<si>` and inline `<is>`.
 Numeric `<v>` is never decoded. Malformed patterns stay literal; unpaired
 surrogates, forbidden controls and U+FFFE/U+FFFF refuse import with the cell
 location before formula-cache fallback or capacity-profile selection.
@@ -205,7 +207,7 @@ integers, never raw source markup.
 | Formula string/Boolean/NaN/infinity literals | No corresponding AST variant or nonfinite Number; reject before publication; unknown future wire tokens also refuse | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output` |
 | References and names inside formulas | Stable binding, current absolute coordinates; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Headers | Current/historical fallback and caseless allocation; format-specific text checks; XML/CSV escaping and header-insertion disclosure | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `header_mapping_discloses_requested_spelling_even_when_output_equals_history`, `unrepresentable_structures_refuse_whole_files_with_located_findings` |
-| Worksheet names | Name policy: 31 UTF-16 units, illegal/reserved/caseless checks; no rename; CSV does not emit them | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`, `imported_reference_names_headers_and_csv_quoting_preserve_spelling` |
+| Worksheet names | Name policy: 31 UTF-16 units, illegal/reserved/escape/caseless checks; no rename; CSV does not emit them | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`, `imported_reference_names_headers_and_csv_quoting_preserve_spelling` |
 | Number-format codes and literal display text | Closed classifier; ST_Xstring/XML refusal, <255 UTF-16 units; attribute character references preserve TAB/LF/CR | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks` |
 | Numeric format conditions / locale and color tokens | Same format tokenizer inventories numeric conditions for Cell checks; existing closed color/locale grammar; precision disclosure | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`; `interop_number_format::tests` |
 | Fill/alignment/bold/wrap/border and generated font/style attributes | Hex/enumeration/typed boolean checks; fixed generated Arial/size/border vocabulary; preserve supported presentation | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks` |
