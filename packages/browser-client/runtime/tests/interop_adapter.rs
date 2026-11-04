@@ -311,9 +311,8 @@ fn capacity_requires_complete_plain_source_at_small_and_large_sizes() {
                     .replace("uniqueCount=\"3\"", "uniqueCount=\"4\"")
                     .replace("</sst>", &format!("<si><t>{text}</t></si></sst>"))
             });
-            assert_eq!(
+            assert!(
                 capacity_source_admits(&changed),
-                text == "_x000G_",
                 "unused shared string {rows}: {text}"
             );
         }
@@ -2424,4 +2423,191 @@ fn part_text(bytes: &[u8], name: &str) -> String {
         .read_to_string(&mut text)
         .unwrap();
     text
+}
+
+#[test]
+fn xlsx_cell_text_decodes_st_xstring_with_located_refusals() {
+    let shared = include_bytes!("../../tests/fixtures/interop/reference-two-sheet.xlsx");
+    let inline = export_xlsx(&simple()).unwrap();
+    for (encoded, expected) in [
+        ("_x000D_", Some("\r")),
+        ("_x000d_", Some("\r")),
+        ("_x005F_x0041_", Some("_x0041_")),
+        ("_x0041_", Some("A")),
+        ("_x000G_", Some("_x000G_")),
+        ("_x00", Some("_x00")),
+        ("_xD83D__xDE00_", Some("😀")),
+        ("_xD800_", None),
+        ("_xDC00_", None),
+        ("_x0001_", None),
+        ("_xFFFE_", None),
+        ("_xFFFF_", None),
+    ] {
+        for (bytes, path, original, header) in [
+            (shared.as_slice(), "xl/sharedStrings.xml", "Item", true),
+            (shared.as_slice(), "xl/sharedStrings.xml", "00123", false),
+            (inline.as_slice(), "xl/worksheets/sheet1.xml", "Name", true),
+            (inline.as_slice(), "xl/worksheets/sheet1.xml", "Ada", false),
+        ] {
+            let changed = mutate(bytes, path, |xml| {
+                xml.replacen(&format!(">{original}</t>"), &format!(">{encoded}</t>"), 1)
+            });
+            if let Some(expected) = expected {
+                let parsed = import_xlsx(&changed).unwrap();
+                if header {
+                    assert_eq!(parsed.sheets[0].columns[0].name, expected);
+                } else {
+                    assert_eq!(
+                        parsed.sheets[0].rows[0][0].value,
+                        SourceValue::Text {
+                            value: expected.into()
+                        }
+                    );
+                }
+                assert!(
+                    !parsed.ledger.iter().any(|finding| finding.blocking),
+                    "{encoded}: {:?}",
+                    parsed.ledger
+                );
+            } else {
+                let error = import_xlsx(&changed).unwrap_err().to_string();
+                assert!(
+                    error.contains(if header { "!A1" } else { "!A2" }),
+                    "{error}"
+                );
+                assert!(error.contains("Invalid ST_Xstring Text"), "{error}");
+            }
+        }
+    }
+    // Numeric <v> and workbook sheet attributes are outside cell Text decoding.
+    let mut numeric_book = simple();
+    numeric_book.sheets[0].rows[0][1].value = SourceValue::Number { value: 12.0 };
+    let numeric = mutate(
+        &export_xlsx(&numeric_book).unwrap(),
+        "xl/worksheets/sheet1.xml",
+        |xml| {
+            assert!(xml.contains("<v>12</v>"));
+            xml.replace("<v>12</v>", "<v>_x0031_</v>")
+        },
+    );
+    assert!(
+        import_xlsx(&numeric)
+            .unwrap()
+            .ledger
+            .iter()
+            .any(|finding| finding.blocking)
+    );
+    let named = mutate(&inline, "xl/workbook.xml", |xml| {
+        xml.replace("name=\"Imported table\"", "name=\"_x0041_\"")
+    });
+    assert_eq!(import_xlsx(&named).unwrap().sheets[0].name, "_x0041_");
+}
+
+#[test]
+fn string_formula_caches_decode_st_xstring_before_fallback() {
+    let bytes = export_xlsx(&simple()).unwrap();
+    for (encoded, expected) in [
+        ("_x005F_x0041_", Some("_x0041_")),
+        ("_x000D_", Some("\r")),
+        ("_xD800_", None),
+        ("_x0001_", None),
+    ] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+            let original = "t=\"inlineStr\"><is><t xml:space=\"preserve\">Ada</t></is>";
+            assert!(xml.contains(original));
+            xml.replace(
+                original,
+                &format!(
+                    "t=\"str\"><f>CONCAT(&quot;_x&quot;,&quot;0041_&quot;)</f><v>{encoded}</v>"
+                ),
+            )
+        });
+        if let Some(expected) = expected {
+            let parsed = import_xlsx(&changed).unwrap();
+            let cell = &parsed.sheets[0].rows[0][0];
+            assert_eq!(
+                cell.value,
+                SourceValue::Text {
+                    value: expected.into()
+                }
+            );
+            assert!(cell.formula.is_none());
+            assert!(parsed.ledger.iter().any(|finding| {
+                finding.code == "unsupported_formula_kept_value"
+                    && finding.location == "Imported table!A2"
+            }));
+            assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+        } else {
+            let error = import_xlsx(&changed).unwrap_err().to_string();
+            assert!(error.contains("Imported table!A2"), "{error}");
+            assert!(error.contains("Invalid ST_Xstring Text"), "{error}");
+        }
+    }
+}
+
+#[test]
+fn exported_string_formula_caches_round_trip_st_xstring() {
+    for value in ["_x0041_", "_x005F_x0041_", "CR\rLF\n & < 😀"] {
+        let mut book = simple();
+        book.sheets[0].rows[0][0].value = SourceValue::Text {
+            value: value.into(),
+        };
+        book.sheets[0].rows[0][1].value = SourceValue::Text {
+            value: value.into(),
+        };
+        book.sheets[0].rows[0][1].formula = Some("A2".into());
+        let bytes = export_xlsx(&book).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut xml = String::new();
+        archive
+            .by_name("xl/worksheets/sheet1.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("t=\"str\"><f>A2</f><v>"), "{xml}");
+        if value == "_x0041_" {
+            assert!(xml.contains("<v>_x005F_x0041_</v>"), "{xml}");
+        }
+        let parsed = import_xlsx(&bytes).unwrap();
+        let cell = &parsed.sheets[0].rows[0][1];
+        assert_eq!(cell.value, book.sheets[0].rows[0][1].value);
+        assert_eq!(cell.formula.as_deref(), Some("A2"));
+        assert!(
+            !parsed.ledger.iter().any(|finding| finding.blocking),
+            "{:?}",
+            parsed.ledger
+        );
+    }
+}
+
+#[test]
+fn invalid_st_xstring_cannot_hide_in_formula_caches_or_capacity_errors() {
+    for rows in [10, 100, 200] {
+        let csv = format!("Name\n{}", "value\n".repeat(rows));
+        let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
+        let bytes = export_xlsx(&source).unwrap();
+        for encoded in ["_xD800_", "_x0001_"] {
+            for formula in ["", "<f>1+2</f>"] {
+                let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+                    let original = "<is><t xml:space=\"preserve\">value</t></is>";
+                    assert!(xml.contains(original));
+                    xml.replacen(original, &format!("{formula}<is><t>{encoded}</t></is>"), 1)
+                });
+                let error = import_xlsx(&changed).unwrap_err().to_string();
+                assert!(error.contains("Imported table!A2"), "{rows}: {error}");
+                assert!(error.contains("Invalid ST_Xstring Text"), "{rows}: {error}");
+            }
+        }
+    }
+    let shared = include_bytes!("../../tests/fixtures/interop/reference-two-sheet.xlsx");
+    let changed = mutate(shared, "xl/sharedStrings.xml", |xml| {
+        xml.replace(">00123</t>", ">_xD800_</t>")
+    });
+    let changed = mutate(&changed, "xl/worksheets/sheet1.xml", |xml| {
+        assert!(xml.contains("<v>12</v>"));
+        xml.replacen("<v>12</v>", "<f>1+2</f><v>12</v>", 1)
+    });
+    let error = import_xlsx(&changed).unwrap_err().to_string();
+    assert!(error.contains("!A2"), "{error}");
+    assert!(error.contains("Invalid ST_Xstring Text"), "{error}");
 }

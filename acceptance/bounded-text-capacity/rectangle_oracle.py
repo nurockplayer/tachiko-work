@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import math
+import re
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
@@ -92,6 +93,15 @@ def xlsx_bytes(case):
     return output.getvalue()
 
 
+def decoded_text(value):
+    # One substitution pass preserves escaped literal prefixes. UTF-16 decoding
+    # combines adjacent surrogate escapes and refuses unpaired code units.
+    units = re.sub(r"_x([0-9a-fA-F]{4})_", lambda match: chr(int(match[1], 16)), value)
+    text = units.encode("utf-16-le", "surrogatepass").decode("utf-16-le")
+    assert all((ord(c) >= 32 or c in "\t\n\r") and c not in "\ufffe\uffff" for c in text), "unsupported Text"
+    return text
+
+
 def read_xlsx(path, columns):
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
@@ -109,7 +119,7 @@ def read_xlsx(path, columns):
             for item in strings:
                 assert item.tag == f"{{{MAIN}}}si" and len(item) == 1
                 assert item[0].tag == f"{{{MAIN}}}t", "unexpected shared-string structure"
-                shared.append(item[0].text or "")
+                shared.append(decoded_text(item[0].text or ""))
         sheet = ET.fromstring(archive.read("xl/" + target))
         result = []
         for r, row in enumerate(sheet.findall(f"{{{MAIN}}}sheetData/{{{MAIN}}}row"), 1):
@@ -121,7 +131,7 @@ def read_xlsx(path, columns):
                 assert cell.find(f"{{{MAIN}}}f") is None
                 kind = cell.attrib.get("t", "n")
                 if kind == "inlineStr":
-                    value = {"kind": "text", "value": "".join(cell.find(f"{{{MAIN}}}is").itertext())}
+                    value = {"kind": "text", "value": "".join(decoded_text(node.text or "") for node in cell.findall(f"{{{MAIN}}}is//{{{MAIN}}}t"))}
                 elif kind == "s":
                     index = cell.findtext(f"{{{MAIN}}}v", "")
                     assert index and all("0" <= digit <= "9" for digit in index), "invalid shared-string index"

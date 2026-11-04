@@ -212,8 +212,8 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
         );
     }
     let sheet = &workbook.sheets[0];
-    if st_xstring(&sheet.name) || sheet.columns.iter().any(|column| st_xstring(&column.name)) {
-        return fail("Text capacity refuses SpreadsheetML escape patterns");
+    if st_xstring(&sheet.name) {
+        return fail("Text capacity refuses SpreadsheetML escape patterns in worksheet names");
     }
     let header_limit = capacity_header_limit(sheet.columns.len());
     if capacity_header_bytes(sheet) > header_limit {
@@ -250,9 +250,6 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
             if is_text {
                 if value.len() > 4096 {
                     return fail("Text capacity value exceeds 4096 UTF-8 bytes");
-                }
-                if st_xstring(value) {
-                    return fail("Text capacity refuses SpreadsheetML escape patterns");
                 }
                 if csv_formula_text(value) || !xml_text_valid(value) {
                     return fail("Text capacity requires safe CSV Text and valid XML characters");
@@ -325,7 +322,7 @@ fn validate_capacity_source_inspection(workbook: &SourceWorkbook) -> Result<()> 
     let mut prospective = workbook.clone();
     for column in 0..prospective.sheets[0].columns.len() {
         let needs_number = prospective.sheets[0].rows.iter().any(|row| {
-            matches!(&row[column].value, SourceValue::Text { value } if value.len() > 4096 || st_xstring(value) || csv_formula_text(value) || !xml_text_valid(value))
+            matches!(&row[column].value, SourceValue::Text { value } if value.len() > 4096 || csv_formula_text(value) || !xml_text_valid(value))
         });
         if !needs_number {
             continue;
@@ -351,12 +348,62 @@ fn validate_capacity_source_inspection(workbook: &SourceWorkbook) -> Result<()> 
     Ok(())
 }
 
-fn st_xstring(value: &str) -> bool {
-    value.as_bytes().windows(7).any(|token| {
-        token.starts_with(b"_x")
-            && token[2..6].iter().all(u8::is_ascii_hexdigit)
-            && token[6] == b'_'
+fn xstring_unit(value: &[u8]) -> Option<u16> {
+    let token = value.get(..7)?;
+    if !token.starts_with(b"_x") || token[6] != b'_' {
+        return None;
+    }
+    token[2..6].iter().try_fold(0u16, |unit, byte| {
+        char::from(*byte)
+            .to_digit(16)
+            .map(|digit| unit * 16 + u16::try_from(digit).expect("hex digit fits u16"))
     })
+}
+
+pub(crate) fn st_xstring(value: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(7)
+        .any(|token| xstring_unit(token).is_some())
+}
+
+fn decode_xstring(value: &str) -> Result<String> {
+    let mut decoded = String::with_capacity(value.len());
+    let mut rest = value;
+    while !rest.is_empty() {
+        if let Some(unit) = xstring_unit(rest.as_bytes()) {
+            rest = &rest[7..];
+            let scalar = if (0xd800..=0xdbff).contains(&unit) {
+                let Some(low) =
+                    xstring_unit(rest.as_bytes()).filter(|low| (0xdc00..=0xdfff).contains(low))
+                else {
+                    return Err(InteropError::InvalidText(
+                        "Invalid ST_Xstring Text: unpaired UTF-16 surrogate".into(),
+                    ));
+                };
+                rest = &rest[7..];
+                0x10000 + ((u32::from(unit) - 0xd800) << 10) + u32::from(low) - 0xdc00
+            } else {
+                u32::from(unit)
+            };
+            let Some(character) = char::from_u32(scalar) else {
+                return Err(InteropError::InvalidText(
+                    "Invalid ST_Xstring Text: unpaired UTF-16 surrogate".into(),
+                ));
+            };
+            decoded.push(character);
+        } else {
+            let character = rest.chars().next().expect("nonempty text");
+            decoded.push(character);
+            rest = &rest[character.len_utf8()..];
+        }
+    }
+    if !xml_text_valid(&decoded) {
+        return Err(InteropError::InvalidText(
+            "Invalid ST_Xstring Text: character is not supported by Tachiko Text".into(),
+        ));
+    }
+    Ok(decoded)
 }
 
 /// Removing one boundary can expose the other; repeat until both are gone.
@@ -428,11 +475,6 @@ pub(crate) fn native_tables_compatibility(
                 "native_tables_xlsx_xml_character",
                 "XML-illegal characters cannot be retained in native XLSX; the source is refused rather than changed.",
             ))
-        } else if st_xstring(value) {
-            Err(refuse(
-                "native_tables_xlsx_escape_sequence",
-                "Literal SpreadsheetML _xHHHH_ escape sequences are refused because Excel decodes them and would change the source Text.",
-            ))
         } else if cell_text && value.encode_utf16().count() > MAX_NATIVE_TABLES_XLSX_TEXT_UNITS {
             Err(refuse(
                 "native_tables_xlsx_text_limit",
@@ -454,7 +496,17 @@ pub(crate) fn native_tables_compatibility(
             used,
             allocate,
         } => {
-            text(value, !worksheet)?;
+            let name_text = |name: &str| {
+                text(name, !worksheet)?;
+                if worksheet && st_xstring(name) {
+                    return Err(refuse(
+                        "native_tables_xlsx_escape_sequence",
+                        "Literal SpreadsheetML _xHHHH_ escape sequences in worksheet names are refused because Excel may decode them and change worksheet identity.",
+                    ));
+                }
+                Ok(())
+            };
+            name_text(value)?;
             if allocate {
                 let cleaned: String = value
                     .chars()
@@ -496,7 +548,7 @@ pub(crate) fn native_tables_compatibility(
                         base.to_owned()
                     };
                     let candidate = format!("{prefix}{suffix}");
-                    text(&candidate, !worksheet)?;
+                    name_text(&candidate)?;
                     let key = native_tables_caseless_key(&candidate);
                     if worksheet && key == "history" {
                         continue;
@@ -642,6 +694,14 @@ pub(crate) fn native_tables_compatibility(
         NativeTablesCheck::Style(cell) => {
             let style = &cell.style;
             if let Some(format) = &style.number_format {
+                if st_xstring(format) {
+                    let mut finding = refuse(
+                        "native_tables_xlsx_style",
+                        "SpreadsheetML escapes in number-format attributes are unsupported.",
+                    );
+                    finding.location = format!("{location}/number-format");
+                    return Err(finding);
+                }
                 text(format, false).map_err(|mut finding| {
                     finding.location = format!("{location}/number-format");
                     finding
@@ -1120,11 +1180,7 @@ trait CapacityXmlSink: std::fmt::Write {
 }
 impl CapacityXmlSink for String {
     fn text(&mut self, value: &str) {
-        if value.contains(['&', '<', '>', '"', '\'', '\r']) {
-            self.push_str(&escape(value));
-        } else {
-            self.push_str(value);
-        }
+        self.push_str(&escape_xstring(value));
     }
 }
 struct CapacityXmlCount(usize);
@@ -1136,7 +1192,7 @@ impl std::fmt::Write for CapacityXmlCount {
 }
 impl CapacityXmlSink for CapacityXmlCount {
     fn text(&mut self, value: &str) {
-        self.0 += escaped_xml_bytes(value);
+        self.0 += escape_xstring(value).len();
     }
 }
 // The writer and admission counter share every worksheet token. Other permitted
@@ -1195,18 +1251,6 @@ fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
         write!(output, "</row>").expect("capacity XML sinks are infallible");
     }
     write!(output, "</sheetData></worksheet>").expect("capacity XML sinks are infallible");
-}
-
-fn escaped_xml_bytes(value: &str) -> usize {
-    value
-        .bytes()
-        .map(|byte| match byte {
-            b'&' | b'\r' => 5,
-            b'<' | b'>' => 4,
-            b'"' | b'\'' => 6,
-            _ => 1,
-        })
-        .sum()
 }
 
 #[derive(Debug, Default)]
@@ -1435,6 +1479,8 @@ impl Default for ImportOptions {
 pub enum InteropError {
     #[error("{0}")]
     Invalid(String),
+    #[error("{0}")]
+    InvalidText(String),
     #[error(transparent)]
     Capacity(#[from] crate::CapacityExceeded),
     #[error(transparent)]
@@ -1680,7 +1726,6 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
             ),
         ],
     };
-    validate_large_sheet_strings(&workbook)?;
     if output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate an isolated typed feasibility copy, retaining the lexical
         // source values for explicit user selection.
@@ -1725,9 +1770,9 @@ impl Xml {
             c.all(name, out);
         }
     }
-    fn content(&self) -> String {
+    fn content(&self) -> Result<String> {
         if self.name == "t" {
-            return self.text.clone();
+            return decode_xstring(&self.text);
         }
         let mut s = String::new();
         for c in self
@@ -1735,9 +1780,9 @@ impl Xml {
             .iter()
             .filter(|c| c.ns == self.ns && matches!(c.name.as_str(), "t" | "r"))
         {
-            s.push_str(&c.content());
+            s.push_str(&c.content()?);
         }
-        s
+        Ok(s)
     }
 }
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -2498,7 +2543,6 @@ fn capacity_plain_node(node: &Xml) -> bool {
         _ => return false,
     };
     if node.ns != namespace
-        || (matches!(node.name.as_str(), "t" | "v") && st_xstring(&node.text))
         || !node.plain_attribute_namespaces
         || !node.plain_lexical_values
         || !node.namespace_declarations.iter().all(|uri| {
@@ -2888,7 +2932,7 @@ fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
 }
 fn cell_value(
     cell: &Xml,
-    shared: &[String],
+    shared: &[Result<String>],
     style: &CellStyle,
     date1904: bool,
 ) -> Result<SourceValue> {
@@ -2907,12 +2951,18 @@ fn cell_value(
                     .map_err(|_| InteropError::Invalid("Invalid shared string index".into()))?,
             )
             .cloned()
-            .map(|value| SourceValue::Text { value })
-            .ok_or_else(|| InteropError::Invalid("Shared string index out of bounds".into())),
+            .ok_or_else(|| InteropError::Invalid("Shared string index out of bounds".into()))?
+            .map(|value| SourceValue::Text { value }),
         "inlineStr" => Ok(SourceValue::Text {
-            value: cell.child("is").map(Xml::content).unwrap_or_default(),
+            value: cell
+                .child("is")
+                .map(Xml::content)
+                .transpose()?
+                .unwrap_or_default(),
         }),
-        "str" => Ok(SourceValue::Text { value: raw.into() }),
+        "str" => Ok(SourceValue::Text {
+            value: decode_xstring(raw)?,
+        }),
         "b" => match raw {
             "1" => Ok(SourceValue::Boolean { value: true }),
             "0" => Ok(SourceValue::Boolean { value: false }),
@@ -3352,6 +3402,9 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 let formula = c.child("f");
                 let mut value = match cell_value(c, &shared, &style, date1904) {
                     Ok(value) => value,
+                    Err(InteropError::InvalidText(message)) => {
+                        return fail(format!("{location}: {message}"));
+                    }
                     Err(error) if formula.is_some() && ignorable_formula_cache(c, &style) => {
                         ledger.push(finding(FidelityCategory::Converted, "formula_cache_ignored", &location, &format!("Cached formula result is unusable and ignored: {error}. Rust must bind and recalculate the source formula"), false));
                         SourceValue::Empty
@@ -3361,7 +3414,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                             FidelityCategory::UnsupportedSafeDisabled,
                             "scalar_mapping_rejected",
                             &location,
-                            &error.to_string(),
+                            &format!("{location}: {error}"),
                             true,
                         ));
                         SourceValue::Empty
@@ -3635,7 +3688,6 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
         validate_capacity_source_inspection(&workbook)?;
         return Ok(workbook);
     }
-    validate_large_sheet_strings(&workbook)?;
     validate_import_geometry(&workbook)?;
     Ok(finish_source_admission(workbook))
 }
@@ -4157,23 +4209,6 @@ pub(super) fn keep_cached_value(
 
 /// Every parsed source uses the same representation predicate as output. Existing
 /// blockers retain their original inventory and are never replaced by a generic error.
-fn validate_large_sheet_strings(workbook: &SourceWorkbook) -> Result<()> {
-    // Preserve the former >64-row refusal until XLSX ST_Xstring decoding (#637).
-    if workbook.sheets.iter().any(|sheet| {
-        sheet.rows.len() >= TEXT_CAPACITY_MIN_ROWS
-            && (st_xstring(&sheet.name)
-                || sheet.columns.iter().any(|column| st_xstring(&column.name))
-                || sheet.rows.iter().flatten().any(
-                    |cell| matches!(&cell.value, SourceValue::Text { value } if st_xstring(value)),
-                ))
-    }) {
-        return fail(
-            "Sheets above 64 data rows refuse SpreadsheetML _xHHHH_ escapes until decoded (#637)",
-        );
-    }
-    Ok(())
-}
-
 fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
     if !workbook.ledger.iter().any(|finding| finding.blocking) {
         if let Err(error) = validate_output(&workbook) {
@@ -4353,6 +4388,21 @@ fn escape(value: &str) -> String {
         .replace('\r', "&#13;")
 }
 
+// Encode cell Text only; worksheet names retain their escape-pattern refusal.
+fn escape_xstring(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for (index, character) in value.char_indices() {
+        if character == '_' && xstring_unit(&value.as_bytes()[index..]).is_some() {
+            encoded.push_str("_x005F_");
+        } else if character == '\r' {
+            encoded.push_str("_x000D_");
+        } else {
+            encoded.push(character);
+        }
+    }
+    escape(&encoded)
+}
+
 fn capacity_attribute(value: &str) -> String {
     escape(value).replace('\n', "&#10;").replace('\t', "&#9;")
 }
@@ -4440,6 +4490,12 @@ pub(crate) fn validate_output_for_profile(
     let mut names = BTreeSet::new();
     let mut formulas = 0;
     for s in &workbook.sheets {
+        if st_xstring(&s.name) {
+            return fail(format!(
+                "native_tables_xlsx_escape_sequence at worksheet {:?}/sheet-name: SpreadsheetML escape patterns in worksheet names are refused",
+                s.name
+            ));
+        }
         if !xml_text_valid(&s.name) || s.columns.iter().any(|c| !xml_text_valid(&c.name)) {
             return fail("Invalid XML character in sheet or header");
         }
@@ -4663,7 +4719,7 @@ pub(crate) fn export_xlsx_for_profile(
         let mut headers = String::new();
         for column in &workbook.sheets[0].columns {
             headers.push_str("<si><t xml:space=\"preserve\">");
-            headers.push_str(&escape(&column.name));
+            headers.push_str(&escape_xstring(&column.name));
             headers.push_str("</t></si>");
         }
         parts.insert(
@@ -4760,11 +4816,14 @@ pub(crate) fn export_xlsx_for_profile(
                 } else {
                     match &c.value {
                         SourceValue::Empty => ("n", formula.clone()),
+                        SourceValue::Text { value } if c.formula.is_some() => {
+                            ("str", format!("{formula}<v>{}</v>", escape_xstring(value)))
+                        }
                         SourceValue::Text { value } => (
                             "inlineStr",
                             format!(
                                 "{formula}<is><t xml:space=\"preserve\">{}</t></is>",
-                                escape(value)
+                                escape_xstring(value)
                             ),
                         ),
                         SourceValue::Number { value }
@@ -5026,7 +5085,18 @@ mod capacity_proof_tests {
             value: "&<>\"'\r\n雪".into(),
         };
         workbook.sheets[0].rows[0][1].value = SourceValue::Empty;
-        for value in ["plain雪\t\n", "&", "<", ">", "\"", "'", "\r"] {
+        for value in [
+            "plain雪\t\n",
+            "&",
+            "<",
+            ">",
+            "\"",
+            "'",
+            "\r",
+            "_x0041_",
+            "_x005F_x0041_",
+            "_x0041_x0042_",
+        ] {
             workbook.sheets[0].rows[0][0].value = SourceValue::Text {
                 value: value.into(),
             };
@@ -5257,16 +5327,8 @@ mod native_tables_output_tests {
                 Some("native_tables_xlsx_xml_character"),
             ),
             ("XML maximum scalar", text("\u{10ffff}"), None),
-            (
-                "escape",
-                text("_x000D_"),
-                Some("native_tables_xlsx_escape_sequence"),
-            ),
-            (
-                "mixed hex",
-                text("_xAbCd_"),
-                Some("native_tables_xlsx_escape_sequence"),
-            ),
+            ("escape", text("_x000D_"), None),
+            ("mixed hex", text("_xAbCd_"), None),
             ("near escape length", text("_x00D_"), None),
             ("near escape digit", text("_x000G_"), None),
             ("normal positive", number(f64::MIN_POSITIVE), None),
@@ -5338,23 +5400,18 @@ mod native_tables_output_tests {
         }
         // Every string rule applies to both source worksheet labels and headers.
         for worksheet in [false, true] {
-            for (value, code) in [
-                ("a\0b", "native_tables_xlsx_xml_character"),
-                ("_xAbCd_", "native_tables_xlsx_escape_sequence"),
-            ] {
-                let finding = native_tables_compatibility(
-                    NativeTablesCheck::Name {
-                        value,
-                        worksheet,
-                        used: &mut BTreeSet::new(),
-                        allocate: true,
-                    },
-                    "sheet 1/header/column 1",
-                )
-                .unwrap_err();
-                assert_eq!(finding.code, code);
-                assert!(finding.blocking);
-            }
+            let finding = native_tables_compatibility(
+                NativeTablesCheck::Name {
+                    value: "a\0b",
+                    worksheet,
+                    used: &mut BTreeSet::new(),
+                    allocate: true,
+                },
+                "sheet 1/header/column 1",
+            )
+            .unwrap_err();
+            assert_eq!(finding.code, "native_tables_xlsx_xml_character");
+            assert!(finding.blocking);
         }
     }
 
@@ -5777,6 +5834,30 @@ mod native_tables_output_tests {
     }
 
     #[test]
+    fn worksheet_escape_patterns_refuse_in_every_xlsx_output_profile() {
+        for profile in [
+            OutputProfile::Shared,
+            OutputProfile::TextCapacity,
+            OutputProfile::NativeTables,
+        ] {
+            let mut workbook = SourceWorkbook {
+                sheets: vec![sheet(1, 200)],
+                ledger: vec![],
+            };
+            if profile != OutputProfile::TextCapacity {
+                workbook.sheets[0].rows.truncate(1);
+            }
+            assert!(export_xlsx_for_profile(&workbook, profile).is_ok());
+            workbook.sheets[0].name = "_x0041_".into();
+            let error = export_xlsx_for_profile(&workbook, profile)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("worksheet"), "{error}");
+            assert!(error.contains("escape"), "{error}");
+        }
+    }
+
+    #[test]
     fn native_tables_writer_enforces_caseless_names_without_changing_shared_profile() {
         for (first, second, shared_sheets_accepted) in
             [("σ", "ς", true), ("ß", "ẞ", false), ("ẞ", "ß", false)]
@@ -6063,5 +6144,37 @@ mod column_number_format_inference_tests {
         let inferred = infer_column_number_format(&rows, 0);
         assert!(inferred.format.is_none());
         assert!(inferred.rejected);
+    }
+}
+
+#[cfg(test)]
+mod xstring_tests {
+    use super::decode_xstring;
+
+    #[test]
+    fn decodes_utf16_once_and_preserves_malformed_patterns() {
+        for (source, expected) in [
+            ("_x000D_", "\r"),
+            ("_x000d_", "\r"),
+            ("_x005F_x0041_", "_x0041_"),
+            ("_x0041_", "A"),
+            ("_x000G_", "_x000G_"),
+            ("_x00", "_x00"),
+            ("_xD83D__xde00_", "😀"),
+            ("雪_x0041_", "雪A"),
+            ("_x0041_x0042_", "Ax0042_"),
+        ] {
+            assert_eq!(decode_xstring(source).unwrap(), expected);
+        }
+        for source in [
+            "_xD800_",
+            "_xDC00_",
+            "_xD800__x0041_",
+            "_x0001_",
+            "_xFFFE_",
+            "_xFFFF_",
+        ] {
+            assert!(decode_xstring(source).is_err(), "{source}");
+        }
     }
 }

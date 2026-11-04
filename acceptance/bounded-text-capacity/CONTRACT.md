@@ -79,7 +79,9 @@ The worksheet XML-node upper bound is
 Independently check the actual escaped worksheet, all auxiliary members, ZIP
 framing, expanded size, compressed source size and fresh-reader limits. The old
 three-header 16 KiB auxiliary allowance alone is not evidence for the new shape.
-Existing unsafe Text, invalid XML and conservative OOXML escape refusals remain.
+Existing unsafe Text and invalid XML refusals remain. #637 supersedes the
+cell/header OOXML escape refusal with ST_Xstring decoding and encoding;
+worksheet-name escape refusals remain.
 
 ## Required acceptance before the implementation child is Ready
 
@@ -234,13 +236,14 @@ generic typed-XLSX-only behavior is not removed. Embedded CRLF must survive a
 standards-compliant independent XML parser; literal XML line normalization is
 not an acceptable fidelity loss.
 
-The capacity profile conservatively excludes every seven-byte
-`_x[0-9A-Fa-f]{4}_` sequence anywhere in decoded Text, a header or a sheet name.
-Only lowercase `x` matches; hexadecimal letters may use either case. Literal
-spellings, escaped-escape forms such as `_x005F_x0041_` and sequences produced
-by XML character references are refused. This bounds OOXML ST_Xstring exposure
-without introducing an escape codec. Nearby nonmatches and generic behavior
-remain unchanged. #495 reconciliation `5977017424` governs this clarification.
+#637 supersedes #495 reconciliation `5977017424` for cell Text and headers:
+XLSX import decodes ST_Xstring once, and export encodes literal escape prefixes.
+Saved Text, scalar edits and CSV retain literal spellings, including lowercase
+hexadecimal letters and escaped-escape forms such as `_x005F_x0041_`. Capacity
+and generic saved opens preserve these values exactly, including XLSX export
+and reimport. Invalid decoded Text and malformed XML still refuse. Worksheet
+names remain literal on import; escape patterns in capacity worksheet metadata
+and XLSX output names remain refused. Nearby nonmatches remain literal.
 
 The metadata-capable spreadsheet ABI caps its arena at 4 MiB before inspection.
 Above 64 KiB, a byte-bounded object discriminator/JSON-skip pass permits only

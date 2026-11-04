@@ -6,7 +6,7 @@ use serde_json::{Value as Json, json};
 use tachiko_designer_runtime::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, FieldBatchProjection,
     InteropMetadata, OpenedProjection, ScalarEditInput, TableProjection,
-    interop_adapter::{export_csv, export_xlsx},
+    interop_adapter::{export_csv, export_xlsx, import_xlsx},
     open_local_document, process_wire_request, validate_import_metadata,
 };
 use tachiko_storage::to_canonical_string;
@@ -529,30 +529,35 @@ fn ineligible() {
 }
 
 fn string_escape_profile() {
-    for value in ["left_x0041_right", "_x00aF_", "_x005F_x0041_"] {
-        let mut candidate = document(129);
-        set_text(&mut candidate, "r00000", "a", value.into());
-        refused_open_preserves(&candidate);
-        let mut generic = document(2);
-        set_text(&mut generic, "r00000", "a", value.into());
-        assert_eq!(
-            opened(&generic).unwrap().table.rows[0].fields[0].stored,
-            Some(tachiko_designer_runtime::StoredValueProjection::Text {
-                value: value.into()
-            })
-        );
+    for value in [
+        "left_x0041_right",
+        "_x00aF_",
+        "_x005F_x0041_",
+        "_X0041_",
+        "_x041_",
+        "_x00G1_",
+    ] {
+        for rows in [129, 2] {
+            let mut candidate = document(rows);
+            set_text(&mut candidate, "r00000", "a", value.into());
+            let projection = opened(&candidate).unwrap();
+            assert_eq!(projection.table.rows.len(), rows);
+            assert_eq!(
+                projection.table.rows[0].fields[0].stored,
+                Some(tachiko_designer_runtime::StoredValueProjection::Text {
+                    value: value.into()
+                })
+            );
+            let metadata = metadata(&candidate);
+            let current = runtime(candidate);
+            let workbook = current
+                .export_workbook(&current.observe_occurrence().revision, &metadata)
+                .unwrap();
+            let reimported = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+            assert_eq!(reimported.sheets, workbook.sheets);
+        }
     }
-    for value in ["_X0041_", "_x041_", "_x00G1_"] {
-        let mut candidate = document(129);
-        set_text(&mut candidate, "r00000", "a", value.into());
-        assert_eq!(
-            opened(&candidate).unwrap().table.rows[0].fields[0].stored,
-            Some(tachiko_designer_runtime::StoredValueProjection::Text {
-                value: value.into()
-            })
-        );
-    }
-    println!("PASS ST_Xstring capacity reopen refusal, near-matches and generic preservation");
+    println!("PASS ST_Xstring capacity and generic reopen preservation and XLSX roundtrip");
 }
 
 fn main() {

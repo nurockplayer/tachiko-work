@@ -13,7 +13,10 @@ use tachiko_formula_engine::{
 
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
     match error {
-        super::interop_adapter::InteropError::Invalid(message) => super::tracker_error(&message),
+        super::interop_adapter::InteropError::Invalid(message)
+        | super::interop_adapter::InteropError::InvalidText(message) => {
+            super::tracker_error(&message)
+        }
         super::interop_adapter::InteropError::Capacity(capacity) => {
             DesignerError::ImportCapacityExceeded {
                 capacity,

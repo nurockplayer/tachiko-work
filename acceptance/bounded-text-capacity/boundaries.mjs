@@ -222,6 +222,22 @@ try {
       await roundtripMetadata("xlsx", valid);
       unchanged(before);
     });
+    for (const pattern of ["_x0041_", "_x00aF_", "_x005F_x0041_"]) {
+      const value = `left${pattern}right`;
+      await probe(`ST edit ${pattern}`, () => {
+        publish("edit_scalar", { target, input: { kind: "text", value } });
+        const fields = okay(ordinary({ type: "query_fields", expected_revision: revision, fields: [target] }), "fields");
+        assert.deepEqual(fields.fields[0].stored, { kind: "text", value });
+        for (const format of ["csv", "xlsx"]) {
+          okay(spreadsheet(exportOperation(format)), "spreadsheet_exported");
+          const candidate = okay(importing(output(), format, { install: false }), "imported");
+          assert.deepEqual(candidate.opened.table.rows[0].fields[0].stored, { kind: "text", value });
+        }
+        publish("undo");
+        const restored = okay(ordinary({ type: "query_fields", expected_revision: revision, fields: [target] }), "fields");
+        assert.equal(restored.fields[0].stored.value, baselineValue);
+      });
+    }
     // Establish both history stacks, then prove each refusal preserves them.
     publish("edit_scalar", { target, input: { kind: "text", value: "history-earlier" } });
     publish("edit_scalar", { target, input: { kind: "text", value: "history-marker" } });
@@ -231,7 +247,7 @@ try {
     for (const item of JSON.parse(await readFile(join(fixtures, "string-escape-manifest.json"), "utf8"))) {
       const bytes = await readFile(join(fixtures, item.file));
       if (item.refuse) await refuse(`ST refusal ${item.file}`, () => importing(bytes, "xlsx"));
-      else await probe(`ST near-match ${item.file}`, () => {
+      else await probe(`ST preservation ${item.file}`, () => {
         const candidate = okay(importing(bytes, "xlsx", { install: false }), "imported");
         assert.equal(candidate.opened.table.rows.length, item.rows);
         const sheet = candidate.metadata.sheets[0];
@@ -243,19 +259,43 @@ try {
     }
     for (const pattern of ["_x0041_", "_x00aF_", "_x005F_x0041_"]) {
       const value = `left${pattern}right`;
-      await refuse(`ST edit ${pattern}`, () => ordinary({ type: "edit_scalar", expected_revision: revision, target, input: { kind: "text", value } }));
       for (const count of [8, 8406]) for (const header of [false, true]) {
         const rows = Array.from({ length: count }, () => Array(3).fill("v".repeat(count === 8 ? 4096 : 1)));
         if (!header) rows[0][0] = value;
         const input = csv(rows, header ? [value, "b", "c"] : ["a", "b", "c"]);
-        await refuse(`ST CSV ${count} header=${header} ${pattern}`, () => importing(input));
+        await probe(`ST CSV ${count} header=${header} ${pattern}`, () => {
+          const candidate = okay(importing(input, "csv", { install: false }), "imported");
+          assert.equal(candidate.opened.table.rows.length, count);
+          if (header) assert.equal(candidate.metadata.sheets[0].columns[0].name, value);
+          else assert.deepEqual(candidate.opened.table.rows[0].fields[0].stored, { kind: "text", value });
+          unchanged(stable);
+        });
       }
       for (const header of [false, true]) {
         const changed = structuredClone(metadata);
         changed.sheets[0].columns.forEach((column, index) => { column.name = ["a", "b", "c"][index]; });
         if (header) changed.sheets[0].columns[0].name = value; else changed.sheets[0].name = value;
-        for (const format of ["csv", "xlsx"]) await refuse(`ST metadata ${format} header=${header} ${pattern}`, () => spreadsheet({ ...exportOperation(format), metadata: changed }));
-        await refuse(`ST metadata inspect header=${header} ${pattern}`, () => spreadsheet({ type: "inspect_project", metadata: changed }, save(revision)));
+        for (const format of ["csv", "xlsx"]) {
+          const name = `ST metadata ${format} header=${header} ${pattern}`;
+          const action = () => spreadsheet({ ...exportOperation(format), metadata: changed });
+          if (!header) await refuse(name, action);
+          else await probe(name, () => {
+            okay(action(), "spreadsheet_exported");
+            const candidate = okay(importing(output(), format, { install: false }), "imported");
+            assert.equal(candidate.metadata.sheets[0].columns[0].name, value);
+            assert.deepEqual(candidate.opened.table.rows.map(row => row.fields.map(field => field.stored)),
+              completeTable().rows.map(row => row.fields.map(field => field.stored)));
+            unchanged(stable);
+          });
+        }
+        const name = `ST metadata inspect header=${header} ${pattern}`;
+        const action = () => spreadsheet({ type: "inspect_project", metadata: changed }, save(revision));
+        if (!header) await refuse(name, action);
+        else await probe(name, () => {
+          const candidate = okay(action(), "opened");
+          assert.deepEqual(candidate.table.rows, completeTable().rows);
+          unchanged(stable);
+        });
       }
     }
     for (const format of ["csv", "xlsx"]) {
