@@ -1471,7 +1471,7 @@ fn keep_import_cache(
 
 // Excel skips blank direct references in MIN/MAX; Tachiko reads them as zero.
 // This conversion is only applied to newly imported formulas.
-fn excel_extremum(
+pub(super) fn excel_extremum(
     mut expression: Expression,
     owner: &FieldRef,
     document: &Document,
@@ -1628,11 +1628,149 @@ mod extremum_tests {
     }
 }
 
-#[allow(clippy::too_many_lines)] // One token loop over the bounded A1 profile.
+// Both explicit A1 boundaries share tokenization; geometry owns address resolution.
+pub(super) trait A1Geometry {
+    fn sheet(&self, name: &str) -> Result<usize, DesignerError>;
+    fn cell(
+        &mut self,
+        sheet: usize,
+        address: &str,
+        document: &Document,
+        references: &mut BTreeSet<FieldRef>,
+    ) -> Result<String, DesignerError>;
+    fn aggregate(
+        &mut self,
+        argument: &str,
+        current: usize,
+        aggregate: SummaryAggregate,
+        document: &Document,
+        references: &mut BTreeSet<FieldRef>,
+    ) -> Result<String, DesignerError>;
+    fn record_token(
+        &mut self,
+        _start: usize,
+        _end: usize,
+        _output_start: usize,
+        _output_end: usize,
+    ) {
+    }
+    fn unknown_function(&self) -> DesignerError {
+        tracker_error("unsupported source function")
+    }
+    fn locate(&self, error: DesignerError, _start: usize, _end: usize) -> DesignerError {
+        error
+    }
+    fn operator(&self, _ch: char) -> Result<(), DesignerError> {
+        Ok(())
+    }
+}
+
+struct ImportA1Geometry<'a> {
+    metadata: &'a InteropMetadata,
+    sources: &'a [SourceSheet],
+}
+
+impl A1Geometry for ImportA1Geometry<'_> {
+    fn sheet(&self, name: &str) -> Result<usize, DesignerError> {
+        self.metadata
+            .sheets
+            .iter()
+            .position(|sheet| sheet.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| tracker_error("formula worksheet name is unavailable"))
+    }
+    fn aggregate(
+        &mut self,
+        argument: &str,
+        current: usize,
+        aggregate: SummaryAggregate,
+        document: &Document,
+        references: &mut BTreeSet<FieldRef>,
+    ) -> Result<String, DesignerError> {
+        let (sheet, column) = whole_column_argument(argument, current, self.sources)
+            .ok_or_else(|| tracker_error("aggregate range must cover one whole data column"))?;
+        column_aggregate_source(
+            aggregate,
+            column,
+            sheet,
+            self.metadata,
+            document,
+            references,
+        )
+    }
+    fn cell(
+        &mut self,
+        sheet_index: usize,
+        address: &str,
+        document: &Document,
+        references: &mut BTreeSet<FieldRef>,
+    ) -> Result<String, DesignerError> {
+        let metadata = self.metadata;
+        let sources = self.sources;
+        let (column, sheet_row) = parse_a1_address(address)?;
+        let layout = &sources
+            .get(sheet_index)
+            .ok_or_else(|| tracker_error("formula worksheet is unavailable"))?
+            .layout;
+        if let Some(summary) = layout
+            .summary_row
+            .as_ref()
+            .filter(|summary| usize::try_from(summary.row).is_ok_and(|row| row == sheet_row + 1))
+        {
+            return column_aggregate_source(
+                summary_cell_aggregate(summary, column)?,
+                column,
+                sheet_index,
+                metadata,
+                document,
+                references,
+            );
+        }
+        let above = usize::try_from(layout.rows_above_header)
+            .map_err(|_| tracker_error("header offset exceeds the row bound"))?;
+        let row = sheet_row
+            .checked_sub(above + usize::from(metadata.sheets[sheet_index].has_header))
+            .ok_or_else(|| tracker_error("formula cannot bind a header or title cell"))?;
+        let reference = metadata_target(metadata, sheet_index, row, column)?;
+        // The shared binder checks numeric uses after translation, when it
+        // can distinguish an ISBLANK presence probe from a numeric operand.
+        declared_type(document, &reference)?;
+        let entity = &document.entities[&reference.entity];
+        let field = &document.schemas[&entity.schema].fields[&reference.field];
+        let mut output = String::from("[");
+        output.push_str(entity.key.as_str());
+        output.push('.');
+        output.push_str(field.key.as_str());
+        output.push(']');
+        references.insert(reference);
+        Ok(output)
+    }
+}
+
 fn translate_a1(
     source: &str,
     metadata: &InteropMetadata,
     sources: &[SourceSheet],
+    current_sheet: usize,
+    document: &Document,
+) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
+    // Import counts the optional leading equals sign in its existing input bound.
+    if source.len() > MAX_PROFILE_STRING_BYTES {
+        return Err(tracker_error(
+            "source formula exceeds the bounded authoring limit",
+        ));
+    }
+    translate_a1_with(
+        source.strip_prefix('=').unwrap_or(source),
+        &mut ImportA1Geometry { metadata, sources },
+        current_sheet,
+        document,
+    )
+}
+
+#[allow(clippy::too_many_lines)] // One bounded token loop shared by import and the read-only kit call.
+pub(super) fn translate_a1_with(
+    source: &str,
+    geometry: &mut impl A1Geometry,
     current_sheet: usize,
     document: &Document,
 ) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
@@ -1641,7 +1779,6 @@ fn translate_a1(
             "source formula exceeds the bounded authoring limit",
         ));
     }
-    let source = source.strip_prefix('=').unwrap_or(source);
     let mut output = String::new();
     let mut references = BTreeSet::new();
     let mut cursor = 0;
@@ -1650,141 +1787,108 @@ fn translate_a1(
             .chars()
             .next()
             .expect("cursor stays on characters");
-        if ch.is_alphabetic() || ch == '_' || ch == '$' || ch == '\'' {
-            let start = cursor;
-            let sheet_name = if ch == '\'' {
-                Some(quoted_sheet_name(source, &mut cursor)?)
-            } else {
-                None
-            };
-            let token_start = cursor;
-            while let Some(next) = source[cursor..].chars().next() {
-                if !(next.is_alphanumeric() || "_$!.".contains(next)) {
-                    break;
-                }
-                cursor += next.len_utf8();
-            }
-            let token = &source[token_start..cursor];
-            if sheet_name.is_none() && !token.contains('!') {
-                let name = token.to_ascii_uppercase();
-                let aggregate = match name.as_str() {
-                    "SUM" => Some(SummaryAggregate::Total),
-                    "AVERAGE" => Some(SummaryAggregate::Average),
-                    "COUNT" => Some(SummaryAggregate::Count),
-                    _ => None,
+        let token_start = cursor;
+        let output_start = output.len();
+        let result = (|| -> Result<(), DesignerError> {
+            if ch.is_alphabetic() || ch == '_' || ch == '$' || ch == '\'' {
+                let start = cursor;
+                let sheet_name = if ch == '\'' {
+                    Some(quoted_sheet_name(source, &mut cursor)?)
+                } else {
+                    None
                 };
-                if let Some(aggregate) = aggregate {
-                    let call = skip_spaces(source, cursor);
-                    if source[call..].starts_with('(') {
-                        let (argument, consumed) = call_argument(&source[call..])
-                            .ok_or_else(|| tracker_error("unterminated source formula call"))?;
-                        match whole_column_argument(argument, current_sheet, sources) {
-                            Some((sheet_index, column)) => {
-                                output.push_str(&column_aggregate_source(
-                                    aggregate,
-                                    column,
-                                    sheet_index,
-                                    metadata,
-                                    document,
-                                    &mut references,
-                                )?);
-                                cursor = call + consumed;
-                                continue;
-                            }
-                            None => {
-                                return Err(tracker_error(
-                                    "aggregate range must cover one whole data column",
-                                ));
-                            }
+                let token_start = cursor;
+                while let Some(next) = source[cursor..].chars().next() {
+                    if !(next.is_alphanumeric() || "_$!.".contains(next)) {
+                        break;
+                    }
+                    cursor += next.len_utf8();
+                }
+                let token = &source[token_start..cursor];
+                if sheet_name.is_none() && !token.contains('!') {
+                    let name = token.to_ascii_uppercase();
+                    let aggregate = match name.as_str() {
+                        "SUM" => Some(SummaryAggregate::Total),
+                        "AVERAGE" => Some(SummaryAggregate::Average),
+                        "COUNT" => Some(SummaryAggregate::Count),
+                        _ => None,
+                    };
+                    if let Some(aggregate) = aggregate {
+                        let call = skip_spaces(source, cursor);
+                        if source[call..].starts_with('(') {
+                            let (argument, consumed) = call_argument(&source[call..])
+                                .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+                            cursor = call + consumed;
+                            output.push_str(&geometry.aggregate(
+                                argument,
+                                current_sheet,
+                                aggregate,
+                                document,
+                                &mut references,
+                            )?);
+                            cursor = call + consumed;
+                            return Ok(());
                         }
                     }
+                    if matches!(
+                        name.as_str(),
+                        "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
+                    ) {
+                        output.push_str(&name.to_ascii_lowercase());
+                        return Ok(());
+                    }
                 }
-                if matches!(
-                    name.as_str(),
-                    "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
-                ) {
-                    output.push_str(&name.to_ascii_lowercase());
-                    continue;
+                if source[skip_spaces(source, cursor)..].starts_with('(') {
+                    return Err(geometry.unknown_function());
                 }
-            }
-            let (sheet_name, address) = if let Some(name) = sheet_name {
-                (Some(name), token)
-            } else if let Some((name, address)) = token.split_once('!') {
-                (Some(name.to_owned()), address)
-            } else {
-                (None, token)
-            };
-            let sheet_index = if let Some(name) = sheet_name {
-                metadata
-                    .sheets
-                    .iter()
-                    .position(|sheet| sheet.name.eq_ignore_ascii_case(&name))
-                    .ok_or_else(|| tracker_error("formula worksheet name is unavailable"))?
-            } else {
-                current_sheet
-            };
-            if cursor == start {
-                return Err(tracker_error("invalid source formula token"));
-            }
-            let (column, sheet_row) = parse_a1_address(address)?;
-            let layout = &sources
-                .get(sheet_index)
-                .ok_or_else(|| tracker_error("formula worksheet is unavailable"))?
-                .layout;
-            if let Some(summary) = layout.summary_row.as_ref().filter(|summary| {
-                usize::try_from(summary.row).is_ok_and(|row| row == sheet_row + 1)
-            }) {
-                output.push_str(&column_aggregate_source(
-                    summary_cell_aggregate(summary, column)?,
-                    column,
-                    sheet_index,
-                    metadata,
-                    document,
-                    &mut references,
-                )?);
-                continue;
-            }
-            let above = usize::try_from(layout.rows_above_header)
-                .map_err(|_| tracker_error("header offset exceeds the row bound"))?;
-            let row = sheet_row
-                .checked_sub(above + usize::from(metadata.sheets[sheet_index].has_header))
-                .ok_or_else(|| tracker_error("formula cannot bind a header or title cell"))?;
-            let reference = metadata_target(metadata, sheet_index, row, column)?;
-            // The shared binder checks numeric uses after translation, when it
-            // can distinguish an ISBLANK presence probe from a numeric operand.
-            declared_type(document, &reference)?;
-            let entity = &document.entities[&reference.entity];
-            let field = &document.schemas[&entity.schema].fields[&reference.field];
-            output.push('[');
-            output.push_str(entity.key.as_str());
-            output.push('.');
-            output.push_str(field.key.as_str());
-            output.push(']');
-            references.insert(reference);
-        } else if ch.is_ascii_digit() || ch == '.' {
-            // Keep numeric spelling for the existing Rust parser, including
-            // scientific notation; never reinterpret an exponent as A1.
-            let start = cursor;
-            cursor += ch.len_utf8();
-            while cursor < source.len()
-                && (source.as_bytes()[cursor].is_ascii_digit() || source.as_bytes()[cursor] == b'.')
-            {
-                cursor += 1;
-            }
-            if cursor < source.len() && matches!(source.as_bytes()[cursor], b'e' | b'E') {
-                cursor += 1;
-                if cursor < source.len() && matches!(source.as_bytes()[cursor], b'+' | b'-') {
+                let (sheet_name, address) = if let Some(name) = sheet_name {
+                    (Some(name), token)
+                } else if let Some((name, address)) = token.split_once('!') {
+                    (Some(name.to_owned()), address)
+                } else {
+                    (None, token)
+                };
+                let sheet_index = if let Some(name) = sheet_name {
+                    geometry.sheet(&name)?
+                } else {
+                    current_sheet
+                };
+                if cursor == start {
+                    return Err(tracker_error("invalid source formula token"));
+                }
+                output.push_str(&geometry.cell(sheet_index, address, document, &mut references)?);
+            } else if ch.is_ascii_digit() || ch == '.' {
+                // Keep numeric spelling for the existing Rust parser, including
+                // scientific notation; never reinterpret an exponent as A1.
+                let start = cursor;
+                cursor += ch.len_utf8();
+                while cursor < source.len()
+                    && (source.as_bytes()[cursor].is_ascii_digit()
+                        || source.as_bytes()[cursor] == b'.')
+                {
                     cursor += 1;
                 }
-                while cursor < source.len() && source.as_bytes()[cursor].is_ascii_digit() {
+                if cursor < source.len() && matches!(source.as_bytes()[cursor], b'e' | b'E') {
                     cursor += 1;
+                    if cursor < source.len() && matches!(source.as_bytes()[cursor], b'+' | b'-') {
+                        cursor += 1;
+                    }
+                    while cursor < source.len() && source.as_bytes()[cursor].is_ascii_digit() {
+                        cursor += 1;
+                    }
                 }
+                output.push_str(&source[start..cursor]);
+            } else {
+                geometry.operator(ch)?;
+                output.push(ch);
+                cursor += ch.len_utf8();
             }
-            output.push_str(&source[start..cursor]);
-        } else {
-            output.push(ch);
-            cursor += ch.len_utf8();
-        }
+            Ok(())
+        })();
+        result.map_err(|error| {
+            geometry.locate(error, token_start, cursor.max(token_start + ch.len_utf8()))
+        })?;
+        geometry.record_token(token_start, cursor, output_start, output.len());
     }
     Ok((output, references))
 }
@@ -1854,7 +1958,7 @@ fn column_aggregate_source(
     ))
 }
 
-fn parse_a1_address(address: &str) -> Result<(usize, usize), DesignerError> {
+pub(super) fn parse_a1_address(address: &str) -> Result<(usize, usize), DesignerError> {
     let address = address.strip_prefix('$').unwrap_or(address);
     let letters = address.bytes().take_while(u8::is_ascii_alphabetic).count();
     if letters == 0 {
@@ -3613,4 +3717,19 @@ fn export_binary(
         operator,
         export_in(right, owner, addresses, columns, present)?
     ))
+}
+
+#[cfg(test)]
+mod a1_import_boundary_tests {
+    #[test]
+    fn translate_a1_import_keeps_original_input_length_bound() {
+        let source = format!("=1{}", " ".repeat(super::MAX_PROFILE_STRING_BYTES - 1));
+        let metadata = super::InteropMetadata {
+            version: 1,
+            sheets: Vec::new(),
+        };
+        let document = tachiko_workspace_engine::Document::empty("bound", "Bound");
+        assert!(super::translate_a1(&source, &metadata, &[], 0, &document).is_err());
+        assert!(super::translate_a1(&source[1..], &metadata, &[], 0, &document).is_ok());
+    }
 }

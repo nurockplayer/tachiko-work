@@ -6,6 +6,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Experimental kit: read-only `translateA1Formula` converts explicit grid A1 formulas, discloses changed reference/range semantics, and dry-run checks types and cycles.
+
 - XLSX cell Text and headers decode SpreadsheetML `_xHHHH_` escapes in one
   pass, including UTF-16 surrogate pairs; invalid decoded Text is refused with
   its cell location, including formula caches and large imports. All XLSX

@@ -793,6 +793,7 @@ fn too_large_project(runtime: Option<&DesignerRuntime>) -> DesignerWireReply {
 fn no_project_open() -> DesignerWireReply {
     DesignerWireReply::Error {
         error: FailureProjection {
+            span: None,
             code: "no_project_open".to_owned(),
             message: "No Designer project is open.".to_owned(),
             current_revision: "unavailable".to_owned(),
