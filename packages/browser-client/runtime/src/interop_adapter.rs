@@ -2960,7 +2960,9 @@ fn cell_value(
                 .transpose()?
                 .unwrap_or_default(),
         }),
-        "str" => Ok(SourceValue::Text { value: raw.into() }),
+        "str" => Ok(SourceValue::Text {
+            value: decode_xstring(raw)?,
+        }),
         "b" => match raw {
             "1" => Ok(SourceValue::Boolean { value: true }),
             "0" => Ok(SourceValue::Boolean { value: false }),
@@ -4814,6 +4816,9 @@ pub(crate) fn export_xlsx_for_profile(
                 } else {
                     match &c.value {
                         SourceValue::Empty => ("n", formula.clone()),
+                        SourceValue::Text { value } if c.formula.is_some() => {
+                            ("str", format!("{formula}<v>{}</v>", escape_xstring(value)))
+                        }
                         SourceValue::Text { value } => (
                             "inlineStr",
                             format!(

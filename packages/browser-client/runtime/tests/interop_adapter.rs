@@ -2504,6 +2504,83 @@ fn xlsx_cell_text_decodes_st_xstring_with_located_refusals() {
 }
 
 #[test]
+fn string_formula_caches_decode_st_xstring_before_fallback() {
+    let bytes = export_xlsx(&simple()).unwrap();
+    for (encoded, expected) in [
+        ("_x005F_x0041_", Some("_x0041_")),
+        ("_x000D_", Some("\r")),
+        ("_xD800_", None),
+        ("_x0001_", None),
+    ] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+            let original = "t=\"inlineStr\"><is><t xml:space=\"preserve\">Ada</t></is>";
+            assert!(xml.contains(original));
+            xml.replace(
+                original,
+                &format!(
+                    "t=\"str\"><f>CONCAT(&quot;_x&quot;,&quot;0041_&quot;)</f><v>{encoded}</v>"
+                ),
+            )
+        });
+        if let Some(expected) = expected {
+            let parsed = import_xlsx(&changed).unwrap();
+            let cell = &parsed.sheets[0].rows[0][0];
+            assert_eq!(
+                cell.value,
+                SourceValue::Text {
+                    value: expected.into()
+                }
+            );
+            assert!(cell.formula.is_none());
+            assert!(parsed.ledger.iter().any(|finding| {
+                finding.code == "unsupported_formula_kept_value"
+                    && finding.location == "Imported table!A2"
+            }));
+            assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+        } else {
+            let error = import_xlsx(&changed).unwrap_err().to_string();
+            assert!(error.contains("Imported table!A2"), "{error}");
+            assert!(error.contains("Invalid ST_Xstring Text"), "{error}");
+        }
+    }
+}
+
+#[test]
+fn exported_string_formula_caches_round_trip_st_xstring() {
+    for value in ["_x0041_", "_x005F_x0041_", "CR\rLF\n & < 😀"] {
+        let mut book = simple();
+        book.sheets[0].rows[0][0].value = SourceValue::Text {
+            value: value.into(),
+        };
+        book.sheets[0].rows[0][1].value = SourceValue::Text {
+            value: value.into(),
+        };
+        book.sheets[0].rows[0][1].formula = Some("A2".into());
+        let bytes = export_xlsx(&book).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut xml = String::new();
+        archive
+            .by_name("xl/worksheets/sheet1.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("t=\"str\"><f>A2</f><v>"), "{xml}");
+        if value == "_x0041_" {
+            assert!(xml.contains("<v>_x005F_x0041_</v>"), "{xml}");
+        }
+        let parsed = import_xlsx(&bytes).unwrap();
+        let cell = &parsed.sheets[0].rows[0][1];
+        assert_eq!(cell.value, book.sheets[0].rows[0][1].value);
+        assert_eq!(cell.formula.as_deref(), Some("A2"));
+        assert!(
+            !parsed.ledger.iter().any(|finding| finding.blocking),
+            "{:?}",
+            parsed.ledger
+        );
+    }
+}
+
+#[test]
 fn invalid_st_xstring_cannot_hide_in_formula_caches_or_capacity_errors() {
     for rows in [10, 100, 200] {
         let csv = format!("Name\n{}", "value\n".repeat(rows));
