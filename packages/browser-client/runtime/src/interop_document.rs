@@ -1628,6 +1628,28 @@ mod extremum_tests {
     }
 }
 
+// Formula translation reads source layout through this interface so that a
+// caller can provide a live grid without constructing import source data.
+trait A1Geometry {
+    fn target(&self, sheet: usize, row: usize, column: usize) -> Result<FieldRef, DesignerError>;
+    fn whole_column(&self, argument: &str, current: usize) -> Option<(usize, usize)>;
+}
+
+struct ImportA1Geometry<'a> {
+    metadata: &'a InteropMetadata,
+    sources: &'a [SourceSheet],
+}
+
+impl A1Geometry for ImportA1Geometry<'_> {
+    fn target(&self, sheet: usize, row: usize, column: usize) -> Result<FieldRef, DesignerError> {
+        metadata_target(self.metadata, sheet, row, column)
+    }
+
+    fn whole_column(&self, argument: &str, current: usize) -> Option<(usize, usize)> {
+        whole_column_argument(argument, current, self.sources)
+    }
+}
+
 #[allow(clippy::too_many_lines)] // One token loop over the bounded A1 profile.
 fn translate_a1(
     source: &str,
@@ -1642,6 +1664,7 @@ fn translate_a1(
         ));
     }
     let source = source.strip_prefix('=').unwrap_or(source);
+    let geometry = ImportA1Geometry { metadata, sources };
     let mut output = String::new();
     let mut references = BTreeSet::new();
     let mut cursor = 0;
@@ -1678,7 +1701,7 @@ fn translate_a1(
                     if source[call..].starts_with('(') {
                         let (argument, consumed) = call_argument(&source[call..])
                             .ok_or_else(|| tracker_error("unterminated source formula call"))?;
-                        match whole_column_argument(argument, current_sheet, sources) {
+                        match geometry.whole_column(argument, current_sheet) {
                             Some((sheet_index, column)) => {
                                 output.push_str(&column_aggregate_source(
                                     aggregate,
@@ -1749,7 +1772,7 @@ fn translate_a1(
             let row = sheet_row
                 .checked_sub(above + usize::from(metadata.sheets[sheet_index].has_header))
                 .ok_or_else(|| tracker_error("formula cannot bind a header or title cell"))?;
-            let reference = metadata_target(metadata, sheet_index, row, column)?;
+            let reference = geometry.target(sheet_index, row, column)?;
             // The shared binder checks numeric uses after translation, when it
             // can distinguish an ISBLANK presence probe from a numeric operand.
             declared_type(document, &reference)?;
