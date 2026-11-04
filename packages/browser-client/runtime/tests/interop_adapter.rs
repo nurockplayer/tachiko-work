@@ -2452,8 +2452,8 @@ fn xlsx_cell_text_decodes_st_xstring_with_located_refusals() {
             let changed = mutate(bytes, path, |xml| {
                 xml.replacen(&format!(">{original}</t>"), &format!(">{encoded}</t>"), 1)
             });
-            let parsed = import_xlsx(&changed).unwrap();
             if let Some(expected) = expected {
+                let parsed = import_xlsx(&changed).unwrap();
                 if header {
                     assert_eq!(parsed.sheets[0].columns[0].name, expected);
                 } else {
@@ -2470,17 +2470,12 @@ fn xlsx_cell_text_decodes_st_xstring_with_located_refusals() {
                     parsed.ledger
                 );
             } else {
-                let finding = parsed
-                    .ledger
-                    .iter()
-                    .find(|finding| finding.blocking && finding.code == "scalar_mapping_rejected")
-                    .unwrap();
+                let error = import_xlsx(&changed).unwrap_err().to_string();
                 assert!(
-                    finding
-                        .location
-                        .ends_with(if header { "!A1" } else { "!A2" })
+                    error.contains(if header { "!A1" } else { "!A2" }),
+                    "{error}"
                 );
-                assert!(finding.message.contains(&finding.location));
+                assert!(error.contains("Invalid ST_Xstring Text"), "{error}");
             }
         }
     }
@@ -2506,4 +2501,36 @@ fn xlsx_cell_text_decodes_st_xstring_with_located_refusals() {
         xml.replace("name=\"Imported table\"", "name=\"_x0041_\"")
     });
     assert_eq!(import_xlsx(&named).unwrap().sheets[0].name, "_x0041_");
+}
+
+#[test]
+fn invalid_st_xstring_cannot_hide_in_formula_caches_or_capacity_errors() {
+    for rows in [10, 100, 200] {
+        let csv = format!("Name\n{}", "value\n".repeat(rows));
+        let source = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
+        let bytes = export_xlsx(&source).unwrap();
+        for encoded in ["_xD800_", "_x0001_"] {
+            for formula in ["", "<f>1+2</f>"] {
+                let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
+                    let original = "<is><t xml:space=\"preserve\">value</t></is>";
+                    assert!(xml.contains(original));
+                    xml.replacen(original, &format!("{formula}<is><t>{encoded}</t></is>"), 1)
+                });
+                let error = import_xlsx(&changed).unwrap_err().to_string();
+                assert!(error.contains("Imported table!A2"), "{rows}: {error}");
+                assert!(error.contains("Invalid ST_Xstring Text"), "{rows}: {error}");
+            }
+        }
+    }
+    let shared = include_bytes!("../../tests/fixtures/interop/reference-two-sheet.xlsx");
+    let changed = mutate(shared, "xl/sharedStrings.xml", |xml| {
+        xml.replace(">00123</t>", ">_xD800_</t>")
+    });
+    let changed = mutate(&changed, "xl/worksheets/sheet1.xml", |xml| {
+        assert!(xml.contains("<v>12</v>"));
+        xml.replacen("<v>12</v>", "<f>1+2</f><v>12</v>", 1)
+    });
+    let error = import_xlsx(&changed).unwrap_err().to_string();
+    assert!(error.contains("!A2"), "{error}");
+    assert!(error.contains("Invalid ST_Xstring Text"), "{error}");
 }

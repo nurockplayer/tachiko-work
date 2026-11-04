@@ -117,7 +117,8 @@ remain literal. All XLSX profiles share this encoder (Issue #637). Worksheet
 name attributes remain literal under the lead's Excel compatibility boundary;
 existing name allocation still applies. The reader decodes shared and inline
 cell Text in one non-recursive pass, combines adjacent high/low surrogate
-escapes, and refuses unsupported decoded Text with a cell location.
+escapes, and refuses unsupported decoded Text with a cell location before
+formula-cache fallback or capacity-profile selection.
 
 Native-tables XLSX also refuses Text cell values and headers longer than
 **32,767 UTF-16 code units**, Excel's per-cell text limit. ASCII and BMP

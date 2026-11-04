@@ -176,7 +176,8 @@ also types `name` as ST_Xstring; the schema alone does not establish Excel's
 cell-versus-attribute behavior. Issue #637's lead decision keeps worksheet names
 literal and limits decoding to `<t>` under shared `<si>` and inline `<is>`.
 Numeric `<v>` is never decoded. Malformed patterns stay literal; unpaired
-surrogates, forbidden controls and U+FFFE/U+FFFF produce a blocking cell finding.
+surrogates, forbidden controls and U+FFFE/U+FFFF refuse import with the cell
+location before formula-cache fallback or capacity-profile selection.
 TextCapacity uses the same encoded worksheet for byte admission and writing,
 and its plain-source proof admits these patterns.
 

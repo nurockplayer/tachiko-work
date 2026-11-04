@@ -374,7 +374,9 @@ fn decode_xstring(value: &str) -> Result<String> {
                 let Some(low) =
                     xstring_unit(rest.as_bytes()).filter(|low| (0xdc00..=0xdfff).contains(low))
                 else {
-                    return fail("Invalid ST_Xstring Text: unpaired UTF-16 surrogate");
+                    return Err(InteropError::InvalidText(
+                        "Invalid ST_Xstring Text: unpaired UTF-16 surrogate".into(),
+                    ));
                 };
                 rest = &rest[7..];
                 0x10000 + ((u32::from(unit) - 0xd800) << 10) + u32::from(low) - 0xdc00
@@ -382,7 +384,9 @@ fn decode_xstring(value: &str) -> Result<String> {
                 u32::from(unit)
             };
             let Some(character) = char::from_u32(scalar) else {
-                return fail("Invalid ST_Xstring Text: unpaired UTF-16 surrogate");
+                return Err(InteropError::InvalidText(
+                    "Invalid ST_Xstring Text: unpaired UTF-16 surrogate".into(),
+                ));
             };
             decoded.push(character);
         } else {
@@ -392,7 +396,9 @@ fn decode_xstring(value: &str) -> Result<String> {
         }
     }
     if !xml_text_valid(&decoded) {
-        return fail("Invalid ST_Xstring Text: character is not supported by Tachiko Text");
+        return Err(InteropError::InvalidText(
+            "Invalid ST_Xstring Text: character is not supported by Tachiko Text".into(),
+        ));
     }
     Ok(decoded)
 }
@@ -1460,6 +1466,8 @@ impl Default for ImportOptions {
 pub enum InteropError {
     #[error("{0}")]
     Invalid(String),
+    #[error("{0}")]
+    InvalidText(String),
     #[error(transparent)]
     Capacity(#[from] crate::CapacityExceeded),
     #[error(transparent)]
@@ -3379,6 +3387,9 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 let formula = c.child("f");
                 let mut value = match cell_value(c, &shared, &style, date1904) {
                     Ok(value) => value,
+                    Err(InteropError::InvalidText(message)) => {
+                        return fail(format!("{location}: {message}"));
+                    }
                     Err(error) if formula.is_some() && ignorable_formula_cache(c, &style) => {
                         ledger.push(finding(FidelityCategory::Converted, "formula_cache_ignored", &location, &format!("Cached formula result is unusable and ignored: {error}. Rust must bind and recalculate the source formula"), false));
                         SourceValue::Empty

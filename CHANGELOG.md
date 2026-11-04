@@ -8,7 +8,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 - XLSX cell Text and headers decode SpreadsheetML `_xHHHH_` escapes in one
   pass, including UTF-16 surrogate pairs; invalid decoded Text is refused with
-  its cell location. All XLSX writers encode literal escape prefixes and carriage
+  its cell location, including formula caches and large imports. All XLSX
+  writers encode literal escape prefixes and carriage
   returns. Shared and TextCapacity imports now admit literal patterns at every
   supported row count; CSV Text stays literal (Work #637).
 

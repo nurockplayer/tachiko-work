@@ -279,7 +279,9 @@ fn import_capacity_errors_survive_runtime_host_and_wasm_wire() {
             InteropError::Capacity(capacity) | InteropError::CapacityLowerBound(capacity) => {
                 capacity
             }
-            InteropError::Invalid(message) => panic!("{message}"),
+            InteropError::Invalid(message) | InteropError::InvalidText(message) => {
+                panic!("{message}")
+            }
         };
         assert_eq!(actual, expected);
         wire_refusal(&bytes, "xlsx", Some(&expected), lower_bound);
