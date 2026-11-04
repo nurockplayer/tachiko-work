@@ -44,22 +44,27 @@ fn source_xlsx(sheets: usize, columns: usize, rows: usize, extra: bool, formulas
         if name == "xl/workbook.xml" {
             let start = xml.find("<sheets>").unwrap() + "<sheets>".len();
             let end = xml.find("</sheets>").unwrap();
-            let nodes = (1..=sheets)
-                .map(|sheet| {
-                    format!(
-                        "<sheet name=\"Sales{sheet}\" sheetId=\"{sheet}\" r:id=\"rId{sheet}\"/>"
-                    )
-                })
-                .collect::<String>();
+            let mut nodes = String::new();
+            for sheet in 1..=sheets {
+                nodes.push_str(&format!(
+                    "<sheet name=\"Sales{sheet}\" sheetId=\"{sheet}\" r:id=\"rId{sheet}\"/>"
+                ));
+            }
             xml.replace_range(start..end, &nodes);
         } else if name == "xl/_rels/workbook.xml.rels" {
             // Keep styles and the first worksheet relationship.
-            let nodes = (2..=sheets).map(|sheet| format!("<Relationship Id=\"sheet{sheet}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{sheet}.xml\"/>")).collect::<String>();
+            let mut nodes = String::new();
+            for sheet in 2..=sheets {
+                nodes.push_str(&format!("<Relationship Id=\"sheet{sheet}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{sheet}.xml\"/>"));
+            }
             xml = xml.replace("</Relationships>", &format!("{nodes}</Relationships>"));
             // Export uses rId1 for the first worksheet; new ids cannot collide
             // with its styles relationship.
         } else if name == "[Content_Types].xml" {
-            let nodes = (2..=sheets).map(|sheet| format!("<Override PartName=\"/xl/worksheets/sheet{sheet}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")).collect::<String>();
+            let mut nodes = String::new();
+            for sheet in 2..=sheets {
+                nodes.push_str(&format!("<Override PartName=\"/xl/worksheets/sheet{sheet}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"));
+            }
             xml = xml.replace("</Types>", &format!("{nodes}</Types>"));
         }
         if name == "xl/workbook.xml" {
@@ -159,7 +164,7 @@ fn wire_refusal(
             request["install"] = true.into();
         }
         let request = serde_json::to_vec(&request).unwrap();
-        REQUEST.with(|slot| *slot.borrow_mut() = request.clone());
+        REQUEST.with(|slot| slot.borrow_mut().clone_from(&request));
         PROJECT.with(|slot| *slot.borrow_mut() = source.to_vec());
         tachiko_designer_spreadsheet_run();
         let native = host.spreadsheet(&request, source);
@@ -274,11 +279,15 @@ fn import_capacity_errors_survive_runtime_host_and_wasm_wire() {
             InteropError::Capacity(capacity) | InteropError::CapacityLowerBound(capacity) => {
                 capacity
             }
-            other => panic!("{other}"),
+            InteropError::Invalid(message) => panic!("{message}"),
         };
         assert_eq!(actual, expected);
         wire_refusal(&bytes, "xlsx", Some(&expected), lower_bound);
     }
+}
+
+#[test]
+fn csv_column_capacity_survives_host_and_wasm_wire() {
     let csv = format!(
         "{}\n",
         (0..33)
@@ -361,9 +370,8 @@ fn direct_runtime_selection_capacity_names_the_source_sheet() {
             column_types: vec![vec![ImportFieldType::Number; columns]; sheets],
             extra_columns: vec![Vec::new(); sheets],
         };
-        let error = match import_workbook(&book, &selection, OCCURRENCE) {
-            Err(error) => error,
-            Ok(_) => panic!("over-limit workbook imported"),
+        let Err(error) = import_workbook(&book, &selection, OCCURRENCE) else {
+            panic!("over-limit workbook imported");
         };
         assert!(matches!(
             error,
