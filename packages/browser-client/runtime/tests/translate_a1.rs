@@ -331,8 +331,35 @@ fn translate_a1_existing_formula_and_indirect_cycle() {
 }
 
 #[test]
+fn translate_a1_qualified_current_collection_keeps_relative_row() {
+    let mut rt = Some(fixture());
+    for (text, source) in [("Items!B3", "[.qty]"), ("Items!$B$3", "[r2.qty]")] {
+        let mut input = request(text);
+        input["geometry"]["sheets"] = serde_json::from_str(
+            r#"{"Items":{"collection_id":"Items","header_row":1,"rows":["r1","r2","r3"],"columns":["name","qty","price","total"]}}"#,
+        )
+        .unwrap();
+        let reply = call(&mut rt, &input);
+        assert_eq!(reply["status"], "ok", "{text}: {reply}");
+        assert_eq!(reply["response"]["payload"]["source"], source, "{text}");
+        assert_eq!(
+            reply["response"]["payload"]["notes"],
+            serde_json::from_str::<Json>("[]").unwrap(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
 fn translate_a1_scalar_extremum_preserves_excel_blank_semantics() {
-    for text in ["MIN(B3,C3)", "MAX(B3,C3)"] {
+    for (text, price) in [
+        ("MIN(B3,C3)", 2.0),
+        ("MAX(B3,C3)", 2.0),
+        ("MIN (B3,C3)", 2.0),
+        ("MAX (B3,C3)", -2.0),
+        ("mIn \t(B3,C3)", 2.0),
+        ("mAx \t(B3,C3)", -2.0),
+    ] {
         let mut document = fixture_document();
         document
             .schemas
@@ -348,6 +375,12 @@ fn translate_a1_scalar_extremum_preserves_excel_blank_semantics() {
             .unwrap()
             .fields
             .remove("qty");
+        document
+            .entities
+            .get_mut("r2")
+            .unwrap()
+            .fields
+            .insert("price".into(), Value::Number(Number::new(price).unwrap()));
         let mut rt = Some(
             DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
                 .unwrap(),
@@ -372,7 +405,7 @@ fn translate_a1_scalar_extremum_preserves_excel_blank_semantics() {
         let reply = call(&mut rt, &query);
         assert_eq!(
             reply["response"]["payload"]["fields"][0]["calculated"]["value"].as_f64(),
-            Some(2.0),
+            Some(price),
             "{reply}"
         );
     }

@@ -199,7 +199,9 @@ impl A1Geometry for GridGeometry<'_> {
             .chars()
             .find(|character| !character.is_ascii_alphabetic())
             == Some('$');
-        let same_row = sheet == 0 && entity_id == self.owner && !row_absolute;
+        let same_row = grid.collection_id == self.sheets[0].1.collection_id
+            && entity_id == self.owner
+            && !row_absolute;
         if !same_row && !row_absolute {
             self.notes
                 .insert(A1TranslationNote::RelativeCopySemanticsChanged);
@@ -432,13 +434,10 @@ impl DesignerRuntime {
             )
         })?;
         // Apply precisely the import's Excel blank-reference guard to scalar MIN/MAX.
-        let source = if source.contains("min(") || source.contains("max(") {
-            let position = source
-                .find("min(")
-                .into_iter()
-                .chain(source.find("max("))
-                .min()
-                .unwrap_or(0);
+        let extremum_position = geometry.tokens.iter().find_map(|(_, output)| {
+            matches!(&source[output.clone()], "min" | "max").then_some(output.start)
+        });
+        let source = if let Some(position) = extremum_position {
             let guard_refusal = || DesignerError::A1Translation {
                 code: FormulaSyntax,
                 span: geometry.source_span(position),
