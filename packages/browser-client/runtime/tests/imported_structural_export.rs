@@ -991,6 +991,66 @@ fn imported_formula_literals_and_cached_results_share_the_number_policy() {
     all.capture("formula-output-policy");
 }
 
+/// Issue #643: XLSX output inserts the declared header row for a headerless
+/// import before formula coordinates are projected, so a same-row formula in
+/// the first data row still lands on row 2.
+#[test]
+fn headerless_xlsx_export_inserts_a_header_and_keeps_same_row_coordinates() {
+    let mut j = Journey::default();
+    let (reply, _) = j.sheet(
+        &json!({
+            "type":"import","format":"csv","csv_options":{"delimiter":",","header":false},
+            "selection":{"column_types":[["number","number"]],"extra_columns":[[]]},
+            "occurrence_id":ORIGINAL,"install":true,
+        }),
+        b"1,2\n3,4\n",
+    );
+    assert_eq!(reply["status"], "ok", "{reply}");
+    j.metadata = reply["response"]["payload"]["metadata"].clone();
+    let table = j.table();
+    let columns = table["columns"].as_array().unwrap();
+    let source_key = columns[0]["key"].as_str().unwrap().to_owned();
+    let total = columns[1]["id"].clone();
+    let entities: Vec<Value> = table["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].clone())
+        .collect();
+    for entity in entities {
+        j.mutate(json!({
+            "type":"formula_update",
+            "target":{"entity":entity,"field":total},
+            "source":format!("[.{source_key}]*2"),
+        }));
+    }
+    let (reply, bytes) = j.current_export("xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    assert!(
+        reply["response"]["payload"]["ledger"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "xlsx_header_inserted"),
+        "{reply}"
+    );
+    let book = import_xlsx(&bytes.unwrap()).unwrap();
+    assert!(book.sheets[0].has_header);
+    assert_eq!(
+        book.sheets[0].columns[0].name,
+        j.metadata["sheets"][0]["columns"][0]["name"]
+            .as_str()
+            .unwrap()
+    );
+    for (i, row) in book.sheets[0].rows.iter().enumerate() {
+        let row_number = i + 2;
+        assert_eq!(
+            row[1].formula.as_deref(),
+            Some(format!("(A{row_number}*2)").as_str())
+        );
+    }
+}
+
 #[test]
 fn imported_csv_checks_only_selected_emitted_values_and_headers() {
     let mut j = formula_journey("'Data'!$B$2+1", "Data");

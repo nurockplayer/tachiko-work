@@ -425,7 +425,7 @@ test("spreadsheet export discloses saved definitions through the actual Worker",
   for (const record of records) for (const exported of record.exports) {
     const base = {
       category: "converted", code: "bound_formula_absolute_a1", location: "workbook",
-      message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.", blocking: false,
+      message: "Export is rebuilt from current stable identities and authoritative values. Same-row references export as relative A1 so a spreadsheet fill-down follows the row; other formula references use current absolute worksheet coordinates. Deleted rows are omitted.", blocking: false,
     };
     const formatFinding = exported.ledger.find(finding => finding.code === (exported.format === "csv" ? "csv_values_only" : "xlsx_header_inserted"));
     expect(formatFinding).toBeDefined();

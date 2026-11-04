@@ -929,7 +929,7 @@ fn finish_import(
     let table = runtime.query_table(&bootstrap.default_collection)?;
     ledger.push(FidelityFinding {
         category: FidelityCategory::Converted, code: "stable_reference_binding".into(), location: "workbook".into(),
-        message: "Worksheet coordinates and selected types were accepted as stable semantic identities; formula export uses absolute references to those identities.".into(), blocking: false,
+        message: "Worksheet coordinates and selected types were accepted as stable semantic identities; same-row references export as relative A1 so a spreadsheet fill-down follows the row, and other references as absolute coordinates to those identities.".into(), blocking: false,
     });
     let mut projection = ImportedProjection {
         opened: OpenedProjection { bootstrap, table },
@@ -1308,7 +1308,7 @@ fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, Designe
 fn export_a1_maps(
     document: &Document,
     metadata: &InteropMetadata,
-) -> (BTreeMap<FieldRef, String>, BTreeMap<ColumnRef, String>) {
+) -> (BTreeMap<FieldRef, ExportCell>, BTreeMap<ColumnRef, String>) {
     let mut addresses = BTreeMap::new();
     // One whole-column range per exported column, so a column total keeps
     // meaning every exported row instead of the rows present today.
@@ -1325,16 +1325,14 @@ fn export_a1_maps(
             .collect();
         let first = 1 + usize::from(sheet.has_header);
         let last = present.len() + usize::from(sheet.has_header);
+        let quoted = sheet.name.replace('\'', "''");
         for (column, definition) in sheet.columns.iter().enumerate() {
             let letters = column_letters(column);
             // An exported table without rows maps its columns to no range.
             let range = if present.is_empty() {
                 String::new()
             } else {
-                format!(
-                    "'{}'!${letters}${first}:${letters}${last}",
-                    sheet.name.replace('\'', "''")
-                )
+                format!("'{quoted}'!${letters}${first}:${letters}${last}")
             };
             columns.insert(
                 ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
@@ -1345,11 +1343,10 @@ fn export_a1_maps(
             for (column, definition) in sheet.columns.iter().enumerate() {
                 addresses.insert(
                     FieldRef::new(row.entity_id.clone(), definition.field_id.clone()),
-                    format!(
-                        "'{}'!${}${}",
-                        sheet.name.replace('\'', "''"),
+                    ExportCell::new(
+                        quoted.clone(),
                         column_letters(column),
-                        row_index + 1 + usize::from(sheet.has_header)
+                        row_index + 1 + usize::from(sheet.has_header),
                     ),
                 );
             }
@@ -1365,7 +1362,7 @@ fn bind_import_formula(
     source: &str,
     cell: &SourceCell,
     location: &str,
-    export_maps: &(BTreeMap<FieldRef, String>, BTreeMap<ColumnRef, String>),
+    export_maps: &(BTreeMap<FieldRef, ExportCell>, BTreeMap<ColumnRef, String>),
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<(), DesignerError> {
     let snapshot = runtime.session.export_snapshot();
@@ -2931,7 +2928,7 @@ impl DesignerRuntime {
         }
         let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
             category: FidelityCategory::Converted, code: "bound_formula_absolute_a1".into(), location: "workbook".into(),
-            message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(), blocking: false,
+            message: "Export is rebuilt from current stable identities and authoritative values. Same-row references export as relative A1 so a spreadsheet fill-down follows the row; other formula references use current absolute worksheet coordinates. Deleted rows are omitted.".into(), blocking: false,
         }] };
         Ok(workbook)
     }
@@ -3489,6 +3486,32 @@ pub(crate) fn column_letters(mut index: usize) -> String {
     reversed.into_iter().rev().collect()
 }
 
+/// One exported cell's address: its quoted worksheet name, column letters and
+/// 1-based row number.
+#[derive(Clone)]
+pub(crate) struct ExportCell {
+    sheet: String,
+    column: String,
+    row: usize,
+}
+
+impl ExportCell {
+    pub(crate) fn new(sheet: String, column: String, row: usize) -> Self {
+        Self { sheet, column, row }
+    }
+
+    /// The absolute, sheet-qualified address of a stable identity.
+    fn absolute(&self) -> String {
+        format!("'{}'!${}${}", self.sheet, self.column, self.row)
+    }
+
+    /// The relative, unqualified address of the owner's own row, so a
+    /// spreadsheet fill-down keeps Tachiko's same-row meaning.
+    fn relative(&self) -> String {
+        format!("{}{}", self.column, self.row)
+    }
+}
+
 pub(crate) fn export_scalar(value: Option<&Value>) -> Result<SourceValue, DesignerError> {
     match value {
         None => Ok(SourceValue::Empty),
@@ -3511,7 +3534,7 @@ pub(crate) fn export_scalar(value: Option<&Value>) -> Result<SourceValue, Design
 pub(crate) fn export_expression(
     expression: &Expression,
     owner: &FieldRef,
-    addresses: &BTreeMap<FieldRef, String>,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
     columns: &BTreeMap<ColumnRef, String>,
 ) -> Result<String, DesignerError> {
     export_in(
@@ -3551,19 +3574,22 @@ fn guarded_present(
 fn export_in(
     expression: &Expression,
     owner: &FieldRef,
-    addresses: &BTreeMap<FieldRef, String>,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
     columns: &BTreeMap<ColumnRef, String>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     match expression {
         Expression::Number(number) => Ok(number.get().to_string()),
+        // Same row means same sheet, so an unqualified relative address keeps
+        // the meaning through a spreadsheet fill-down.
         Expression::SameRowReference(field) => addresses
             .get(&FieldRef::new(owner.entity.clone(), field.clone()))
-            .cloned()
+            .map(ExportCell::relative)
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
+        // A fixed identity keeps pointing at that identity when filled down.
         Expression::Reference(reference) => addresses
             .get(reference)
-            .cloned()
+            .map(ExportCell::absolute)
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::ColumnTotal(column) => export_column("SUM", column, columns),
         Expression::ColumnAggregate { function, column } => {
@@ -3658,7 +3684,7 @@ fn export_in(
 fn export_extremum_argument(
     argument: &Expression,
     owner: &FieldRef,
-    addresses: &BTreeMap<FieldRef, String>,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
     columns: &BTreeMap<ColumnRef, String>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
@@ -3692,7 +3718,7 @@ fn export_function(
     name: &str,
     arguments: &[Expression],
     owner: &FieldRef,
-    addresses: &BTreeMap<FieldRef, String>,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
     columns: &BTreeMap<ColumnRef, String>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
@@ -3707,7 +3733,7 @@ fn export_binary(
     operator: &str,
     right: &Expression,
     owner: &FieldRef,
-    addresses: &BTreeMap<FieldRef, String>,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
     columns: &BTreeMap<ColumnRef, String>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
