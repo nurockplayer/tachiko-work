@@ -100,7 +100,8 @@ schema ID. The independently admitted Text-capacity metadata rules remain intact
 
 XLSX inventories formula **tokens independently of cached results**. Its closed
 emitted grammar consists of finite Number literals, stable references projected
-to quoted worksheet names plus absolute A1 coordinates, arithmetic and MIN/MAX.
+to an unqualified relative A1 address for a same-row reference or a quoted
+worksheet name plus absolute A1 coordinates for another, arithmetic and MIN/MAX.
 Every numeric literal passes the same Cell Number policy, including subnormals
 and precision disclosure. Semantic Numbers normalize either zero sign to `0`;
 NaN/infinity cannot enter the typed document. String and Boolean formula literals
@@ -148,9 +149,11 @@ New worksheet/style/format/width refusals affect output that could previously be
 changed, truncated or rounded by Excel, or refused only with a generic workbook
 diagnostic. Scalar precision
 policy remains disclosure, without rounding the file's decimal text. Formulas are
-rebuilt from stable references using current absolute A1 coordinates, including
-column removal and row deletion; missing references or unsupported formulas
-refuse the whole export. Calculation and formula-editing rules do not change.
+rebuilt from stable references using relative A1 for a same-row reference (so a
+spreadsheet fill-down follows the row) and current absolute A1 coordinates for
+other references, including column removal and row deletion; missing references
+or unsupported formulas refuse the whole export. Calculation and formula-editing
+rules do not change.
 
 An absent optional value is an Empty cell. Present empty Text remains Text in
 XLSX; CSV represents both with an empty field and discloses this in
@@ -205,7 +208,7 @@ integers, never raw source markup.
 | Formula text/operators/functions | Closed numeric/reference/arithmetic/MIN/MAX wire grammar; 4,096-byte / 32-formula bounds; XML text escaping | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Every formula numeric literal | Same Cell Number policy, independently of cache; includes subnormal, minimum normal, canonical -0, precision | `imported_formula_literals_and_cached_results_share_the_number_policy` |
 | Formula string/Boolean/NaN/infinity literals | No corresponding AST variant or nonfinite Number; reject before publication; unknown future wire tokens also refuse | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output` |
-| References and names inside formulas | Stable binding, current absolute coordinates; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
+| References and names inside formulas | Stable binding, relative A1 for same-row references and current absolute coordinates for other references; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Headers | Current/historical fallback and caseless allocation; format-specific text checks; XML/CSV escaping and header-insertion disclosure | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `header_mapping_discloses_requested_spelling_even_when_output_equals_history`, `unrepresentable_structures_refuse_whole_files_with_located_findings` |
 | Worksheet names | Name policy: 31 UTF-16 units, illegal/reserved/escape/caseless checks; no rename; CSV does not emit them | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`, `imported_reference_names_headers_and_csv_quoting_preserve_spelling` |
 | Number-format codes and literal display text | Closed classifier; ST_Xstring/XML refusal, <255 UTF-16 units; attribute character references preserve TAB/LF/CR | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks` |

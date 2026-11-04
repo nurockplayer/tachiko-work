@@ -1193,7 +1193,7 @@ fn expected_summary_export_ledger(has_definitions: bool) -> Vec<FidelityFinding>
         category: FidelityCategory::Converted,
         code: "bound_formula_absolute_a1".into(),
         location: "workbook".into(),
-        message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(),
+        message: "Export is rebuilt from current stable identities and authoritative values. Same-row references export as relative A1 so a spreadsheet fill-down follows the row; other formula references use current absolute worksheet coordinates. Deleted rows are omitted.".into(),
         blocking: false,
     }];
     if has_definitions {

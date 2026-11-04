@@ -1913,18 +1913,32 @@ fn formula_document() -> Document {
     document
 }
 
+/// The same formula document with each row's total written as a same-row
+/// reference, as the authoring path binds `[.a]*[.b]`.
+fn same_row_formula_document() -> Document {
+    let mut document = formula_document();
+    for entity in ["calc-r000", "calc-r001"] {
+        document.entities.get_mut(entity).unwrap().fields.insert(
+            "total".into(),
+            Value::Formula(Expression::Multiply {
+                left: Box::new(Expression::SameRowReference("a".into())),
+                right: Box::new(Expression::SameRowReference("b".into())),
+            }),
+        );
+    }
+    document
+}
+
 #[test]
 fn native_tables_formula_cells_export_formulas_to_xlsx_and_computed_values_to_csv() {
-    let mut host = host_for(formula_document());
+    let mut host = host_for(same_row_formula_document());
     let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
     assert_eq!(reply["status"], "ok", "{reply}");
     let bytes = bytes.unwrap();
     let sheet = xml(&bytes, "xl/worksheets/sheet1.xml");
     for (row, value) in [(2, 6), (3, 20)] {
         assert!(
-            sheet.contains(&format!(
-                "<f>(&apos;Calculated&apos;!$A${row}*&apos;Calculated&apos;!$B${row})</f><v>{value}</v>"
-            )),
+            sheet.contains(&format!("<f>(A{row}*B{row})</f><v>{value}</v>")),
             "{sheet}"
         );
     }
@@ -1943,7 +1957,7 @@ fn native_tables_formula_cells_export_formulas_to_xlsx_and_computed_values_to_cs
         let row_number = i + 2;
         assert_eq!(
             row[2].formula.as_deref(),
-            Some(format!("('Calculated'!$A${row_number}*'Calculated'!$B${row_number})").as_str())
+            Some(format!("(A{row_number}*B{row_number})").as_str())
         );
     }
     assert_eq!(
@@ -1970,6 +1984,143 @@ fn native_tables_formula_cells_export_formulas_to_xlsx_and_computed_values_to_cs
         "native_tables_formula_values_only",
         "lossy_on_export",
     );
+}
+
+/// A same-row reference exports as relative A1 and a fixed reference keeps its
+/// absolute worksheet address.
+#[test]
+fn native_xlsx_relative_and_absolute_references_export_side_by_side() {
+    let mut document = Document::empty("formula-export", "Formula export");
+    add_table(
+        &mut document,
+        "calc",
+        "calc",
+        "Calculated",
+        vec![
+            field("a", FieldType::Number, true),
+            field("total", FieldType::Number, true),
+        ],
+        vec![vec![
+            Some(Value::Number(Number::new(2.0).unwrap())),
+            Some(Value::Formula(Expression::Add {
+                left: Box::new(Expression::SameRowReference("a".into())),
+                right: Box::new(Expression::Reference(FieldRef::new("data-r002", "z"))),
+            })),
+        ]],
+    );
+    add_table(
+        &mut document,
+        "data",
+        "data",
+        "Data",
+        vec![
+            field("x", FieldType::Number, false),
+            field("y", FieldType::Number, false),
+            field("z", FieldType::Number, false),
+        ],
+        vec![
+            vec![Some(Value::Number(Number::new(1.0).unwrap()))],
+            vec![Some(Value::Number(Number::new(2.0).unwrap()))],
+            vec![None],
+        ],
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let sheet = xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml");
+    // The blank optional target reads as 0 in the cached value.
+    assert!(
+        sheet.contains("<f>(A2+&apos;Data&apos;!$C$4)</f><v>2</v>"),
+        "{sheet}"
+    );
+}
+
+/// A fixed reference to the owner's own entity stays an absolute,
+/// sheet-qualified address, so a fill-down keeps pointing at that entity.
+#[test]
+fn native_xlsx_fixed_reference_to_the_owner_row_stays_absolute() {
+    let mut document = Document::empty("formula-export", "Formula export");
+    add_table(
+        &mut document,
+        "calc",
+        "calc",
+        "Calculated",
+        vec![
+            field("a", FieldType::Number, true),
+            field("copy", FieldType::Number, true),
+        ],
+        vec![
+            vec![
+                Some(Value::Number(Number::new(2.0).unwrap())),
+                Some(Value::Formula(Expression::Reference(FieldRef::new(
+                    "calc-r000",
+                    "a",
+                )))),
+            ],
+            vec![
+                Some(Value::Number(Number::new(3.0).unwrap())),
+                Some(Value::Formula(Expression::Reference(FieldRef::new(
+                    "calc-r000",
+                    "a",
+                )))),
+            ],
+        ],
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let sheet = xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml");
+    assert!(
+        sheet.contains("<f>&apos;Calculated&apos;!$A$2</f><v>2</v>"),
+        "{sheet}"
+    );
+}
+
+/// The relative formulas survive the export, the file readback and a host
+/// reimport; the reimported fixed identities keep the same values and targets.
+#[test]
+fn native_xlsx_relative_formulas_roundtrip_through_host() {
+    let mut host = host_for(same_row_formula_document());
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let bytes = bytes.unwrap();
+    let workbook = import_xlsx(&bytes).unwrap();
+    let mut imported = DesignerHost::new();
+    let imported_reply = imported.spreadsheet(
+        &serde_json::to_vec(&json!({
+            "type":"import", "format":"xlsx", "csv_options":{"delimiter":",", "header":true},
+            "selection":{"column_types":[["number","number","number"],["number"]], "extra_columns":[[],[]]},
+            "occurrence_id":NEXT, "install":true,
+        }))
+        .unwrap(),
+        &bytes,
+    );
+    let reply: Json = serde_json::from_slice(&imported_reply.reply).unwrap();
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let collection = reply["response"]["payload"]["opened"]["bootstrap"]["default_collection"]
+        .as_str()
+        .unwrap();
+    let (reply, bytes) = export(&mut imported, "resident/0", collection, "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let again = import_xlsx(&bytes.unwrap()).unwrap();
+    assert!(!again.ledger.iter().any(|finding| finding.blocking));
+    assert_eq!(
+        source_values(&again.sheets[0]),
+        source_values(&workbook.sheets[0])
+    );
+    // Reimport binds each cell to its fixed identity, which re-exports as an
+    // absolute address of the regenerated worksheet.
+    let calculated_sheet = format!("'{}'!", again.sheets[0].name.replace('\'', "''"));
+    for (i, row) in again.sheets[0].rows.iter().enumerate() {
+        let row_number = i + 2;
+        assert_eq!(
+            row[2].formula.as_deref(),
+            Some(
+                format!("({calculated_sheet}$A${row_number}*{calculated_sheet}$B${row_number})")
+                    .as_str()
+            )
+        );
+    }
 }
 
 #[test]
@@ -2065,9 +2216,7 @@ fn native_xlsx_minimum_over_a_blank_optional_number_keeps_tachiko_zero() {
         vec![vec![
             None,
             Some(Value::Formula(Expression::Minimum {
-                left: Box::new(Expression::Reference(
-                    tachiko_workspace_engine::FieldRef::new("calc-r000", "a"),
-                )),
+                left: Box::new(Expression::SameRowReference("a".into())),
                 right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
             })),
         ]],
@@ -2079,7 +2228,7 @@ fn native_xlsx_minimum_over_a_blank_optional_number_keeps_tachiko_zero() {
     // Excel's MIN skips a blank cell argument; `+0` keeps Tachiko's 0.
     assert_eq!(
         workbook.sheets[0].rows[0][1].formula.as_deref(),
-        Some("MIN(('Calculated'!$A$2+0),5)")
+        Some("MIN((A2+0),5)")
     );
     assert_eq!(
         workbook.sheets[0].rows[0][1].value,
