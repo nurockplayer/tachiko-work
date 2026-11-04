@@ -450,7 +450,14 @@ fn import_source(
 fn interop_error(error: InteropError) -> DesignerError {
     match error {
         InteropError::Invalid(message) => DesignerError::InvalidProjectTransfer { message },
-        InteropError::Capacity(capacity) => capacity.into(),
+        InteropError::Capacity(capacity) => DesignerError::ImportCapacityExceeded {
+            capacity,
+            at_least: false,
+        },
+        InteropError::CapacityLowerBound(capacity) => DesignerError::ImportCapacityExceeded {
+            capacity,
+            at_least: true,
+        },
     }
 }
 

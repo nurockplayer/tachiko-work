@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Over-limit XLSX/CSV imports return typed `capacity_exceeded` errors naming
+  the source sheet, attempted count and maximum. Workbook-wide limits omit the
+  sheet; early parser refusals say "at least". The whole workbook is refused (#638).
+
 - XLSX/CSV import and round-trip export admit 32 sheets, 32 columns and 128 data
   rows per sheet, within 1,024 total rows (Work #635). CSV stays one sheet; the
   restricted Text-capacity exception and byte/ZIP/formula bounds are unchanged.

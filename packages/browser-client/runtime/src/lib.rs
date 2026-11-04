@@ -1417,6 +1417,11 @@ pub struct PortableRoVerification {
 pub enum DesignerError {
     #[error(transparent)]
     CapacityExceeded(#[from] CapacityExceeded),
+    #[error("{}", capacity.import_message(*at_least))]
+    ImportCapacityExceeded {
+        capacity: CapacityExceeded,
+        at_least: bool,
+    },
     #[error("Designer workspace operation failed: {0}")]
     Workspace(#[from] WorkspaceError),
     #[error("canonical project failed complete workspace validation: {source}")]
@@ -1557,7 +1562,8 @@ impl DesignerError {
                 _ => None,
             },
             capacity: match self {
-                Self::CapacityExceeded(capacity) => Some(capacity.clone()),
+                Self::CapacityExceeded(capacity)
+                | Self::ImportCapacityExceeded { capacity, .. } => Some(capacity.clone()),
                 _ => None,
             },
             row_count: match self {
@@ -1570,7 +1576,9 @@ impl DesignerError {
     #[allow(clippy::too_many_lines)] // One exhaustive error-to-wire-code table; splitting it hides missing arms.
     fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
-            Self::CapacityExceeded(_) => ("capacity_exceeded", Vec::new()),
+            Self::CapacityExceeded(_) | Self::ImportCapacityExceeded { .. } => {
+                ("capacity_exceeded", Vec::new())
+            }
             Self::Lifecycle(PatchLifecycleError::Stale) | Self::StaleQuery { .. } => {
                 ("stale_revision", Vec::new())
             }

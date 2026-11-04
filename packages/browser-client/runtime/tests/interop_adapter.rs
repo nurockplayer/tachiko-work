@@ -107,7 +107,7 @@ fn capacity_source_cannot_hide_header_style_or_out_of_grid_width() {
         import_xlsx(&styled)
             .unwrap_err()
             .to_string()
-            .contains("default source headers")
+            .contains("TableRows capacity exceeded")
     );
     let width = mutate(&bytes, "xl/worksheets/sheet1.xml", |xml| {
         xml.replace(
@@ -119,7 +119,7 @@ fn capacity_source_cannot_hide_header_style_or_out_of_grid_width() {
         import_xlsx(&width)
             .unwrap_err()
             .to_string()
-            .contains("column widths")
+            .contains("TableRows capacity exceeded")
     );
     // Existing small generic source-only losses keep their original behavior.
     let small = export_xlsx(&simple()).unwrap();

@@ -731,26 +731,19 @@ fn text_capacity_usage_refreshes_after_clear_undo_and_redo() {
 }
 
 #[test]
-fn xlsx_rows_past_the_text_capacity_profile_are_typed_capacity_refusals() {
-    let maximum = super::interop_adapter::MAX_TEXT_CAPACITY_ROWS;
-    // Row 1 is the header, so the last admitted data row is `maximum + 1`.
-    assert_eq!(
-        super::interop_adapter::coordinate(&format!("A{}", maximum + 1)).unwrap(),
-        (maximum, 0)
-    );
-    match super::interop_adapter::coordinate(&format!("A{}", maximum + 2)) {
-        Err(super::interop_adapter::InteropError::Capacity(error)) => {
-            assert_eq!(error.limit, CapacityLimit::TableRows);
-            assert_eq!(error.maximum, maximum);
-            assert_eq!(error.attempted, maximum + 1);
-            assert_eq!(error.collection.as_deref(), Some("Imported table"));
-        }
-        other => panic!("expected a capacity refusal, got {other:?}"),
+fn xlsx_coordinates_separate_syntax_from_capacity_admission() {
+    for row in [8_407, 8_408, 1_048_576] {
+        assert_eq!(
+            super::interop_adapter::coordinate(&format!("A{row}")).unwrap(),
+            (row - 1, 0)
+        );
     }
-    assert!(matches!(
-        super::interop_adapter::coordinate("A0"),
-        Err(super::interop_adapter::InteropError::Invalid(_))
-    ));
+    for address in ["A0", "A+1", "AGbad", "XFE1", "A1048577"] {
+        assert!(matches!(
+            super::interop_adapter::coordinate(address),
+            Err(super::interop_adapter::InteropError::Invalid(_))
+        ));
+    }
 }
 
 #[test]

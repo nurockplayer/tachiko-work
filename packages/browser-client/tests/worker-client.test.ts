@@ -87,6 +87,37 @@ describe("capacity refusal wire validation", () => {
   });
 
   it.each([
+    {format: "xlsx", limit: "collections", attempted: 33, maximum: 32},
+    {format: "xlsx", limit: "table_fields", collection: "Sales", attempted: 33, maximum: 32},
+    {format: "csv", limit: "table_fields", collection: "Imported table", attempted: 33, maximum: 32},
+    {format: "xlsx", limit: "table_rows", collection: "Sales", attempted: 129, maximum: 128},
+    {format: "xlsx", limit: "total_entities", attempted: 1025, maximum: 1024},
+    {format: "xlsx", limit: "formulas", attempted: 33, maximum: 32},
+  ] as const)("accepts $format import refusal for $limit", async ({format, ...capacity}) => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    vi.stubGlobal("crypto", {randomUUID: () => "00000000-0000-4000-8000-000000000638"});
+    const failure = {
+      ...failureBase, ...capacity,
+      message: `Workbook has at least ${capacity.attempted} items; the maximum is ${capacity.maximum}. The workbook was not imported.`,
+    };
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: {id: number; kind: string; operation: {type: string}}) => {
+        expect(request.kind).toBe("spreadsheet");
+        expect(["inspect", "import"]).toContain(request.operation.type);
+        receive?.({data: {id: request.id, status: "error", error: failure}} as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    const options = {delimiter: "," as const, header: true};
+    await expect(client.inspectSpreadsheet(new ArrayBuffer(1), format, options)).rejects.toMatchObject({failure});
+    await expect(client.importSpreadsheet(new ArrayBuffer(1), format, options, {column_types: [], extra_columns: []})).rejects.toMatchObject({failure});
+  });
+
+  it.each([
     ["unknown limit", {...failureBase, limit: "wat", maximum: 1, attempted: 2}],
     ["negative maximum", {...failureBase, limit: "collections", maximum: -1, attempted: 0}],
     ["fractional maximum", {...failureBase, limit: "collections", maximum: 1.5, attempted: 2}],

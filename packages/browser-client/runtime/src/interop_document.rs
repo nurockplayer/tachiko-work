@@ -14,7 +14,18 @@ use tachiko_formula_engine::{
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
     match error {
         super::interop_adapter::InteropError::Invalid(message) => super::tracker_error(&message),
-        super::interop_adapter::InteropError::Capacity(capacity) => capacity.into(),
+        super::interop_adapter::InteropError::Capacity(capacity) => {
+            DesignerError::ImportCapacityExceeded {
+                capacity,
+                at_least: false,
+            }
+        }
+        super::interop_adapter::InteropError::CapacityLowerBound(capacity) => {
+            DesignerError::ImportCapacityExceeded {
+                capacity,
+                at_least: true,
+            }
+        }
     }
 }
 
@@ -606,9 +617,9 @@ fn deduplicate(
 use super::interop_adapter::{
     CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS,
     MAX_NATIVE_BUDGET_COLUMNS, MAX_NATIVE_BUDGET_DATA_ROWS, MAX_NATIVE_BUDGET_SHEETS, MAX_SHEETS,
-    MAX_TEXT_CAPACITY_COLUMNS, MAX_TOTAL_DATA_ROWS, OutputProfile, SourceCell, SourceColumn,
-    SourceLayout, SourceSheet, SourceValue, SourceWorkbook, SummaryAggregate, SummaryRow,
-    call_argument, whole_column_argument,
+    MAX_TEXT_CAPACITY_COLUMNS, OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet,
+    SourceValue, SourceWorkbook, SummaryAggregate, SummaryRow, call_argument,
+    whole_column_argument,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use std::collections::BTreeMap;
@@ -988,11 +999,11 @@ fn validate_selection(
             "8,406-row capacity requires selected Text, Number, Date or Boolean fields and no extra columns",
         ));
     }
+    super::interop_adapter::validate_import_geometry(workbook).map_err(interop_admission_error)?;
     if workbook.ledger.iter().any(|finding| finding.blocking) {
         return Err(tracker_error("blocking fidelity findings prevent import"));
     }
     if workbook.sheets.is_empty()
-        || workbook.sheets.len() > MAX_SHEETS
         || selection.column_types.len() != workbook.sheets.len()
         || selection.extra_columns.len() != workbook.sheets.len()
     {
@@ -1000,38 +1011,30 @@ fn validate_selection(
             "import sheet and selection dimensions do not match the declared profile",
         ));
     }
-    if !capacity {
-        super::capacity::check_limit(
-            super::CapacityLimit::TotalEntities,
-            MAX_TOTAL_DATA_ROWS,
-            workbook.sheets.iter().map(|sheet| sheet.rows.len()).sum(),
-            None,
-        )?;
-    }
     let mut names = BTreeSet::new();
     let mut formulas = 0;
     for (index, sheet) in workbook.sheets.iter().enumerate() {
         check_label(&sheet.name)?;
         if !names.insert(sheet.name.to_ascii_lowercase())
             || sheet.columns.is_empty()
-            || sheet.columns.len() + selection.extra_columns[index].len()
-                > if capacity {
-                    MAX_TEXT_CAPACITY_COLUMNS
-                } else {
-                    MAX_COLUMNS
-                }
-            || sheet.rows.len()
-                > if capacity {
-                    super::interop_adapter::MAX_TEXT_CAPACITY_ROWS
-                } else {
-                    MAX_DATA_ROWS
-                }
             || selection.column_types[index].len() != sheet.columns.len()
         {
             return Err(tracker_error(
                 "import sheet names, columns, rows, or selected types are invalid",
             ));
         }
+        super::interop_adapter::check_import_limit(
+            super::CapacityLimit::TableFields,
+            if capacity {
+                MAX_TEXT_CAPACITY_COLUMNS
+            } else {
+                MAX_COLUMNS
+            },
+            sheet.columns.len() + selection.extra_columns[index].len(),
+            Some(&sheet.name),
+            false,
+        )
+        .map_err(interop_admission_error)?;
         let mut columns = BTreeSet::new();
         for name in sheet.columns.iter().map(|column| &column.name).chain(
             selection.extra_columns[index]
@@ -1050,12 +1053,14 @@ fn validate_selection(
             formulas += row.iter().filter(|cell| cell.formula.is_some()).count();
         }
     }
-    super::capacity::check_limit(
+    super::interop_adapter::check_import_limit(
         super::CapacityLimit::Formulas,
         super::capacity::DEFAULT_LIMITS.formulas,
         formulas,
         None,
-    )?;
+        false,
+    )
+    .map_err(interop_admission_error)?;
     if serde_json::to_vec(workbook)
         .map_err(|_| tracker_error("source workbook is not encodable"))?
         .len()
