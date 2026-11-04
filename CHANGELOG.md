@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- XLSX cell Text and headers decode SpreadsheetML `_xHHHH_` escapes in one
+  pass, including UTF-16 surrogate pairs; invalid decoded Text is refused with
+  its cell location. All XLSX writers encode literal escape prefixes and carriage
+  returns. Shared and TextCapacity imports now admit literal patterns at every
+  supported row count; CSV Text stays literal (Work #637).
+
 - Over-limit XLSX/CSV imports return typed `capacity_exceeded` errors naming
   the source sheet, attempted count and maximum. Workbook-wide limits omit the
   sheet; early parser refusals say "at least". The whole workbook is refused (#638).
@@ -13,8 +19,6 @@ All notable changes to Tachiko Work are documented in this file.
 - XLSX/CSV import and round-trip export admit 32 sheets, 32 columns and 128 data
   rows per sheet, within 1,024 total rows (Work #635). CSV stays one sheet; the
   restricted Text-capacity exception and byte/ZIP/formula bounds are unchanged.
-  XLSX sheets above 64 data rows still refuse SpreadsheetML `_xHHHH_` escapes
-  until decoding is implemented (Work #637); smaller sheets and CSV are unchanged.
 
 - Imports over 64 rows can select Date and Yes/No columns (Work #610): the
   large-import profile admits them with the existing conversion rules

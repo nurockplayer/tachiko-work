@@ -311,9 +311,8 @@ fn capacity_requires_complete_plain_source_at_small_and_large_sizes() {
                     .replace("uniqueCount=\"3\"", "uniqueCount=\"4\"")
                     .replace("</sst>", &format!("<si><t>{text}</t></si></sst>"))
             });
-            assert_eq!(
+            assert!(
                 capacity_source_admits(&changed),
-                text == "_x000G_",
                 "unused shared string {rows}: {text}"
             );
         }
@@ -2424,4 +2423,87 @@ fn part_text(bytes: &[u8], name: &str) -> String {
         .read_to_string(&mut text)
         .unwrap();
     text
+}
+
+#[test]
+fn xlsx_cell_text_decodes_st_xstring_with_located_refusals() {
+    let shared = include_bytes!("../../tests/fixtures/interop/reference-two-sheet.xlsx");
+    let inline = export_xlsx(&simple()).unwrap();
+    for (encoded, expected) in [
+        ("_x000D_", Some("\r")),
+        ("_x000d_", Some("\r")),
+        ("_x005F_x0041_", Some("_x0041_")),
+        ("_x0041_", Some("A")),
+        ("_x000G_", Some("_x000G_")),
+        ("_x00", Some("_x00")),
+        ("_xD83D__xDE00_", Some("😀")),
+        ("_xD800_", None),
+        ("_xDC00_", None),
+        ("_x0001_", None),
+        ("_xFFFE_", None),
+        ("_xFFFF_", None),
+    ] {
+        for (bytes, path, original, header) in [
+            (shared.as_slice(), "xl/sharedStrings.xml", "Item", true),
+            (shared.as_slice(), "xl/sharedStrings.xml", "00123", false),
+            (inline.as_slice(), "xl/worksheets/sheet1.xml", "Name", true),
+            (inline.as_slice(), "xl/worksheets/sheet1.xml", "Ada", false),
+        ] {
+            let changed = mutate(bytes, path, |xml| {
+                xml.replacen(&format!(">{original}</t>"), &format!(">{encoded}</t>"), 1)
+            });
+            let parsed = import_xlsx(&changed).unwrap();
+            if let Some(expected) = expected {
+                if header {
+                    assert_eq!(parsed.sheets[0].columns[0].name, expected);
+                } else {
+                    assert_eq!(
+                        parsed.sheets[0].rows[0][0].value,
+                        SourceValue::Text {
+                            value: expected.into()
+                        }
+                    );
+                }
+                assert!(
+                    !parsed.ledger.iter().any(|finding| finding.blocking),
+                    "{encoded}: {:?}",
+                    parsed.ledger
+                );
+            } else {
+                let finding = parsed
+                    .ledger
+                    .iter()
+                    .find(|finding| finding.blocking && finding.code == "scalar_mapping_rejected")
+                    .unwrap();
+                assert!(
+                    finding
+                        .location
+                        .ends_with(if header { "!A1" } else { "!A2" })
+                );
+                assert!(finding.message.contains(&finding.location));
+            }
+        }
+    }
+    // Numeric <v> and workbook sheet attributes are outside cell Text decoding.
+    let mut numeric_book = simple();
+    numeric_book.sheets[0].rows[0][1].value = SourceValue::Number { value: 12.0 };
+    let numeric = mutate(
+        &export_xlsx(&numeric_book).unwrap(),
+        "xl/worksheets/sheet1.xml",
+        |xml| {
+            assert!(xml.contains("<v>12</v>"));
+            xml.replace("<v>12</v>", "<v>_x0031_</v>")
+        },
+    );
+    assert!(
+        import_xlsx(&numeric)
+            .unwrap()
+            .ledger
+            .iter()
+            .any(|finding| finding.blocking)
+    );
+    let named = mutate(&inline, "xl/workbook.xml", |xml| {
+        xml.replace("name=\"Imported table\"", "name=\"_x0041_\"")
+    });
+    assert_eq!(import_xlsx(&named).unwrap().sheets[0].name, "_x0041_");
 }

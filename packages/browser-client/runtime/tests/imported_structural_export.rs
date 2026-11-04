@@ -466,14 +466,9 @@ fn unrepresentable_structures_refuse_whole_files_with_located_findings() {
     let note = j.table()["columns"][0]["id"].clone();
     j.mutate(json!({"type":"rename_column","collection":"sheet_1","field":note,"name":"_x0041_"}));
     let (reply, bytes) = j.current_export("xlsx");
-    assert_eq!(reply["status"], "error");
-    assert!(bytes.is_none());
-    assert!(
-        reply["error"]["diagnostics"][0]["path"]
-            .as_str()
-            .unwrap()
-            .contains(note.as_str().unwrap())
-    );
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let book = import_xlsx(&bytes.unwrap()).unwrap();
+    assert_eq!(book.sheets[0].columns[0].name, "_x0041_");
     assert_eq!(j.current_export("csv").0["status"], "ok");
     j.mutate(json!({"type":"undo"}));
     // A caseless collision with an original header uses the existing suffix mapping.
@@ -578,16 +573,8 @@ fn compatibility_cells(source: &str) {
     let mut errors = Vec::new();
     // At the boundary, the emoji uses two UTF-16 units and four UTF-8 bytes.
     for (label, text, refusal) in [
-        (
-            "escape",
-            "literal_x0041_value".into(),
-            Some("escape_sequence"),
-        ),
-        (
-            "escape-cr",
-            "literal_x000D_value".into(),
-            Some("escape_sequence"),
-        ),
+        ("escape", "literal_x0041_value".into(), None),
+        ("escape-cr", "literal_x000D_value".into(), None),
         ("near-miss", "literal_x00D_value".into(), None),
         ("ascii-exact", "a".repeat(32_767), None),
         ("ascii-over", "a".repeat(32_768), Some("text_limit")),
@@ -811,11 +798,11 @@ fn untouched_imported_text_is_checked_before_xlsx_encoding() {
         assert_eq!(csv["status"], "ok", "{csv}");
         assert!(bytes.is_some());
         let (xlsx, bytes) = j.current_export("xlsx");
-        if xlsx["status"] == "error" {
-            assert!(bytes.is_none());
-        } else {
-            errors.push("untouched unrepresentable Text exported as XLSX".to_owned());
+        let expected = if text.len() > 32_767 { "error" } else { "ok" };
+        if xlsx["status"] != expected {
+            errors.push(format!("untouched Text expected {expected}: {xlsx}"));
         }
+        assert_eq!(bytes.is_some(), expected == "ok");
         let before = j.table();
         for portable in [false, true] {
             j.reopen(portable);
@@ -824,8 +811,8 @@ fn untouched_imported_text_is_checked_before_xlsx_encoding() {
             assert_eq!(reopened["rows"], before["rows"]);
             assert_eq!(j.current_export("csv").0["status"], "ok");
             let (reply, bytes) = j.current_export("xlsx");
-            assert_eq!(reply["status"], "error", "{reply}");
-            assert!(bytes.is_none());
+            assert_eq!(reply["status"], expected, "{reply}");
+            assert_eq!(bytes.is_some(), expected == "ok");
         }
     }
     j.capture("untouched-compatibility");
@@ -1076,13 +1063,12 @@ fn assert_headerless_csv_output_scope(j: &mut Journey) {
 
 fn imported_presentation_cases() -> Vec<(&'static str, Value, &'static str, &'static str)> {
     vec![
-        ("sheet", json!("_x0041_"), "escape_sequence", "/sheet-name"),
         ("sheet", json!("😀".repeat(16)), "name", "/sheet-name"),
         ("sheet", json!("History"), "name", "/sheet-name"),
         (
             "number_format",
-            json!("0\"_x0041_\""),
-            "escape_sequence",
+            serde_json::from_str(r#""0\"_x0041_\"""#).unwrap(),
+            "style",
             "/number-format",
         ),
         (

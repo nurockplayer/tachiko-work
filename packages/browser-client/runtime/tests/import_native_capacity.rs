@@ -131,9 +131,9 @@ fn refused_source(bytes: &[u8]) {
 }
 
 #[test]
-fn shared_xlsx_escape_refusal_preserves_the_old_row_threshold() {
+fn xlsx_escape_text_round_trips_across_shared_and_capacity_profiles() {
     let pattern = "_x005F_x0041_";
-    for rows in [64, 65, 100, 128] {
+    for rows in [10, 64, 65, 100, 128, 200] {
         for location in ["sheet", "column", "text"] {
             let mut source = workbook(1, 1, rows);
             for cell in source.sheets[0].rows.iter_mut().flatten() {
@@ -153,24 +153,17 @@ fn shared_xlsx_escape_refusal_preserves_the_old_row_threshold() {
                 _ => unreachable!(),
             }
             let bytes = export_xlsx(&source).unwrap();
-            if rows > 64 {
-                let error = import_xlsx(&bytes).unwrap_err();
-                assert!(
-                    error.to_string().contains(
-                        "Sheets above 64 data rows refuse SpreadsheetML _xHHHH_ escapes until decoded (#637)"
-                    ),
-                    "{rows} rows, {location}: {error}"
-                );
-            } else {
-                let parsed = import_xlsx(&bytes).unwrap();
-                assert_eq!(parsed.sheets, source.sheets);
-            }
+            let parsed = import_xlsx(&bytes).unwrap();
+            assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+            assert_eq!(parsed.sheets, source.sheets, "{rows} rows, {location}");
+            let reopened = import_xlsx(&export_xlsx(&parsed).unwrap()).unwrap();
+            assert_eq!(reopened.sheets, parsed.sheets);
         }
     }
 }
 
 #[test]
-fn shared_xlsx_escape_guard_is_local_to_each_large_sheet() {
+fn shared_xlsx_escape_text_round_trips_in_mixed_sheet_sizes() {
     let mut source = workbook(2, 1, 100);
     source.sheets[0].rows.truncate(64);
     source.sheets[0].name = "_x005F_x0041_".into();
@@ -209,8 +202,8 @@ fn shared_hundred_row_xlsx_and_csv_keep_their_admission() {
 }
 
 #[test]
-fn csv_escape_refusal_preserves_the_old_row_threshold() {
-    for rows in [64, 65, 128] {
+fn csv_escape_text_stays_literal_through_xlsx_and_project_reopen() {
+    for rows in [10, 64, 65, 100, 128, 200] {
         for location in ["column", "text"] {
             let options = ImportOptions::default();
             let header = if location == "column" {
@@ -224,34 +217,25 @@ fn csv_escape_refusal_preserves_the_old_row_threshold() {
                 "value"
             };
             let csv = format!("{header}\n{}", format!("{value}\n").repeat(rows));
-            let result = import_csv(csv.as_bytes(), &options);
-            if rows > 64 {
-                assert!(result.unwrap_err().to_string().contains("#637"));
-            } else {
-                let source = result.unwrap();
-                let selected = ImportSelection {
-                    column_types: vec![vec![ImportFieldType::Text]],
-                    extra_columns: vec![Vec::new()],
-                };
-                if location == "column" {
-                    // Source inspection is unchanged; semantic field names still
-                    // obey the existing XLSX compatibility restriction.
-                    let error = import_workbook(&source, &selected, ORIGINAL).err().unwrap();
-                    assert!(error.to_string().contains("escape sequences"));
-                    continue;
-                }
-                let (runtime, imported) = import_workbook(&source, &selected, ORIGINAL).unwrap();
-                let saved = runtime
-                    .export_project_v3(&runtime.observe_occurrence().revision)
-                    .unwrap()
-                    .bytes;
-                let mut resident = None;
-                open_imported_project(&mut resident, &saved, &imported.metadata, FRESH).unwrap();
-                assert_eq!(
-                    export_csv(&source.sheets[0]).unwrap(),
-                    csv.replace('\n', "\r\n").as_bytes()
-                );
-            }
+            let source = import_csv(csv.as_bytes(), &options).unwrap();
+            let selected = ImportSelection {
+                column_types: vec![vec![ImportFieldType::Text]],
+                extra_columns: vec![Vec::new()],
+            };
+            let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+            assert_eq!(parsed.sheets, source.sheets);
+
+            let (runtime, imported) = import_workbook(&source, &selected, ORIGINAL).unwrap();
+            let saved = runtime
+                .export_project_v3(&runtime.observe_occurrence().revision)
+                .unwrap()
+                .bytes;
+            let mut resident = None;
+            open_imported_project(&mut resident, &saved, &imported.metadata, FRESH).unwrap();
+            assert_eq!(
+                export_csv(&source.sheets[0]).unwrap(),
+                csv.replace('\n', "\r\n").as_bytes()
+            );
         }
     }
 }

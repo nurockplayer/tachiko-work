@@ -7,7 +7,8 @@ use std::io::{Cursor, Read};
 use serde_json::{Value as Json, json};
 use tachiko_designer_runtime::host_bridge::{DesignerHost, HostReply};
 use tachiko_designer_runtime::interop_adapter::{
-    FidelityCategory, ImportOptions, SourceValue, SourceWorkbook, import_csv, import_xlsx,
+    FidelityCategory, ImportOptions, SourceValue, SourceWorkbook, export_xlsx, import_csv,
+    import_xlsx,
 };
 use tachiko_designer_runtime::{
     DesignerRequest, DesignerResponse, DesignerRuntime, ImportFieldType, ImportSelection,
@@ -968,33 +969,42 @@ fn literal_text_document(text: &str, location: &str) -> Document {
 }
 
 #[test]
-fn native_tables_xlsx_refuses_literal_spreadsheetml_escapes_at_each_location_only() {
-    for text in ["_x000D_", "prefix_xabcd_suffix", "_xABCD_", "_xAbCd_"] {
+fn native_tables_xlsx_encodes_literal_spreadsheetml_escapes() {
+    for text in [
+        "_x000D_",
+        "prefix_xabcd_suffix",
+        "_xABCD_",
+        "_xAbCd_",
+        "_x005F_x0041_",
+    ] {
         for location in ["cell", "header", "sheet-name"] {
-            let document = literal_text_document(text, location);
-            let runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
-            let error = runtime
-                .export_native_tables_workbook("resident/0", "s")
-                .unwrap_err();
-            let tachiko_designer_runtime::DesignerError::NativeTablesExport { finding } = error
-            else {
-                panic!("native finding")
-            };
-            assert!(finding.blocking);
-            assert_eq!(finding.category, FidelityCategory::UnsupportedSafeDisabled);
-            assert_eq!(finding.code, "native_tables_xlsx_escape_sequence");
-            if location == "cell" {
-                for coordinate in ["sheet 1", "row 2", "column 1"] {
-                    assert!(finding.location.contains(coordinate), "{finding:?}");
-                }
-            } else {
-                assert!(finding.location.contains(location), "{finding:?}");
-            }
-            let mut host = host_for(document);
+            let mut host = host_for(literal_text_document(text, location));
             let (reply, bytes) = export(&mut host, "resident/0", "s", "xlsx");
-            assert_eq!(reply["error"]["code"], "native_tables_export_refused");
-            assert_eq!(reply["error"]["diagnostics"][0]["path"], finding.location);
-            assert!(bytes.is_none());
+            assert_eq!(reply["status"], "ok", "{reply}");
+            let bytes = bytes.unwrap();
+            let parsed = import_xlsx(&bytes).unwrap();
+            assert!(!parsed.ledger.iter().any(|finding| finding.blocking));
+            match location {
+                "cell" => assert_eq!(
+                    parsed.sheets[0].rows[0][0].value,
+                    SourceValue::Text { value: text.into() }
+                ),
+                "header" => assert_eq!(parsed.sheets[0].columns[0].name, text),
+                "sheet-name" => assert_eq!(parsed.sheets[0].name, text),
+                _ => unreachable!(),
+            }
+            let reopened = import_xlsx(&export_xlsx(&parsed).unwrap()).unwrap();
+            assert_eq!(reopened.sheets, parsed.sheets);
+            let path = if location == "sheet-name" {
+                "xl/workbook.xml"
+            } else {
+                "xl/worksheets/sheet1.xml"
+            };
+            assert!(xml(&bytes, path).contains(if location == "sheet-name" {
+                text
+            } else {
+                "_x005F_"
+            }));
             let (reply, bytes) = export(&mut host, "resident/0", "s", "csv");
             assert_eq!(reply["status"], "ok", "{reply}");
             if location != "sheet-name" {
@@ -1002,26 +1012,15 @@ fn native_tables_xlsx_refuses_literal_spreadsheetml_escapes_at_each_location_onl
             }
         }
     }
-    // A source sequence must not disappear silently through name truncation.
-    let runtime = DesignerRuntime::from_document(
-        literal_text_document(&format!("{}_x000D_", "s".repeat(31)), "sheet-name"),
-        OCCURRENCE,
-    )
-    .unwrap();
-    assert!(
+    // Existing worksheet allocation still truncates and sanitizes names.
+    for name in [format!("{}_x000D_", "s".repeat(31)), "_x000D[".into()] {
+        let runtime =
+            DesignerRuntime::from_document(literal_text_document(&name, "sheet-name"), OCCURRENCE)
+                .unwrap();
         runtime
             .export_native_tables_workbook("resident/0", "s")
-            .is_err()
-    );
-    // Sanitization can also create a sequence; validate the emitted name too.
-    let runtime =
-        DesignerRuntime::from_document(literal_text_document("_x000D[", "sheet-name"), OCCURRENCE)
             .unwrap();
-    assert!(
-        runtime
-            .export_native_tables_workbook("resident/0", "s")
-            .is_err()
-    );
+    }
 }
 
 #[test]
@@ -1601,7 +1600,7 @@ fn native_tables_text_and_header_whitespace_survive_typed_readback() {
     let bytes = bytes.unwrap();
     let sheet_xml = xml(&bytes, "xl/worksheets/sheet1.xml");
     assert_eq!(sheet_xml.matches("xml:space=\"preserve\"").count(), 2);
-    assert!(sheet_xml.contains("&#13;"));
+    assert!(sheet_xml.contains("_x000D_"));
     let imported = import_xlsx(&bytes).unwrap();
     assert!(
         !imported.ledger.iter().any(|f| f.blocking),

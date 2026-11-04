@@ -141,16 +141,11 @@ fn admitted_profiles_survive_host_and_wasm_export_reimport_save_reopen() {
 }
 
 #[test]
-fn large_csv_escapes_are_refused_at_host_and_wasm_admission() {
-    tachiko_designer_project_close();
-    let mut host = DesignerHost::new();
-    for (header, value) in [("Name", "_x0041_"), ("_x0041_", "value")] {
-        let csv = format!("{header}\n{}", format!("{value}\n").repeat(65));
-        let (reply, bytes) =
-            spreadsheet(&mut host, &import_request(&["text"], "csv"), csv.as_bytes());
-        assert_eq!(reply["status"], "error", "{reply}");
-        assert!(reply.to_string().contains("#637"));
-        assert_eq!(bytes, Vec::<u8>::new());
+fn csv_escape_text_survives_host_and_wasm_xlsx_export_reimport_save_reopen() {
+    for rows in [10, 100, 200] {
+        for (header, value) in [("Name", "_x0041_"), ("_x0041_", "value")] {
+            let csv = format!("{header}\n{}", format!("{value}\n").repeat(rows));
+            lifecycle(csv.as_bytes(), "csv", &["text"], "xlsx");
+        }
     }
-    tachiko_designer_project_close();
 }

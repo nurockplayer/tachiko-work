@@ -51,8 +51,7 @@ canonical field order (including its fixed stock Tracker field order); rows
 follow canonical entity identity order. View sorting and filtering do not affect
 output. Empty tables still emit their declared header.
 
-Each worksheet starts with its table display name. Refuse XML-illegal characters
-and literal SpreadsheetML escapes before allocation. Replace XML-legal controls
+Each worksheet starts with its table display name. Refuse XML-illegal characters before allocation. Replace XML-legal controls
 and `[]:*?/\` with `_`, repeatedly trim surrounding whitespace and boundary
 apostrophes until neither remains, use `Table` if empty, and take at most **31 UTF-16 code units**, never splitting
 an astral character. Repeat boundary normalization after truncation. The
@@ -111,14 +110,14 @@ any cell is affected. The count states the total affected cells, the number of
 locations shown and the number omitted. This cap applies across the entire
 workbook. No value is rounded or dropped to satisfy the ledger cap.
 
-Native-tables XLSX refuses literal SpreadsheetML escape sequences matching
-`_x[0-9A-Fa-f]{4}_` in Text cell values, headers and worksheet names. Hex digits
-may use either case; the literal prefix is `_x`. Excel decodes these sequences,
-so emitting them unchanged would silently alter the source Text. Check source
-table/column display names before mapping and all emitted names and Text after
-mapping: truncation must not hide a source sequence, and sanitization must not
-introduce one. Near-misses such as `_x00D_` and `_x000G_` remain literal and
-exportable. The shared XLSX text encoder and reader are unchanged.
+Native-tables XLSX encodes literal SpreadsheetML escape prefixes in Text cells
+and headers: the initial underscore of `_x[0-9A-Fa-f]{4}_` becomes `_x005F_`.
+Carriage return becomes `_x000D_`; near-misses such as `_x00D_` and `_x000G_`
+remain literal. All XLSX profiles share this encoder (Issue #637). Worksheet
+name attributes remain literal under the lead's Excel compatibility boundary;
+existing name allocation still applies. The reader decodes shared and inline
+cell Text in one non-recursive pass, combines adjacent high/low surrogate
+escapes, and refuses unsupported decoded Text with a cell location.
 
 Native-tables XLSX also refuses Text cell values and headers longer than
 **32,767 UTF-16 code units**, Excel's per-cell text limit. ASCII and BMP
@@ -154,7 +153,7 @@ sanitization as well as the encoded headers. Typed XLSX remains the escape for
 formula-like literal Text. Selected-collection Text and headers with XML-illegal
 characters are refused before CSV sanitization or encoding, with a located
 blocking `native_tables_csv_xml_character` finding. TAB/LF/CR remain legal.
-This shares XLSX's XML-character rule; CSV does not inherit XLSX's escape,
+This shares XLSX's XML-character rule; CSV does not inherit XLSX's encoding,
 Text-length, line-feed-count, Date-range or subnormal limits.
 
 XLSX refuses the entire request if any collection lacks the native mapping.
@@ -184,9 +183,9 @@ constraints do not restrict CSV.
 | Headers: nonempty and unique | [Issue #545](https://github.com/nurockplayer/tachiko-work/issues/545), adapter contract (stronger than plain Excel cells) | Empty becomes `Column`; use the same caseless suffix allocator; changed mappings are `Converted`; never truncate. An added suffix exceeding the cell limit is refused. |
 | Text/headers: at most 32,767 UTF-16 units | [Excel limits][excel-limits]; conservative UTF-16 measurement required by the lead disposition | Refuse 32,768; accept 32,767 for ASCII, BMP and astral values and headers. |
 | Text/headers: at most 253 line feeds | [Excel limits][excel-limits] | Refuse 254; preserve all 253 at the boundary. Applies to cells/headers, not allocated worksheet names. |
-| Text/headers/names: literal `_x[0-9A-Fa-f]{4}_` | ECMA-376 Part 1 §22.9.2.19 `ST_Xstring`; [lead fidelity disposition](https://github.com/nurockplayer/tachiko-work/pull/546#issuecomment-6262364908) | Refuse source and emitted escapes because consumers decode them; accept near-misses. No encoder/reader changes. |
+| Text/headers/names: literal `_x[0-9A-Fa-f]{4}_` | ECMA-376 Part 1 §22.9.2.19 `ST_Xstring`; [lead fidelity disposition](https://github.com/nurockplayer/tachiko-work/pull/546#issuecomment-6262364908) | Encode literal prefixes in cell Text/headers; leave worksheet attributes literal. Decode cell Text on import in one pass (Issue #637). |
 | Text/headers/names: XML-legal characters | [XML 1.0 §2.2][xml-characters] | Refuse forbidden controls, U+FFFE/U+FFFF. CSV applies the same rule to selected Text and original/emitted headers, with a located finding. Rust strings cannot contain surrogates. Accept TAB/LF/CR and other XML-legal scalars, including astral characters. |
-| Text/headers: leading/trailing whitespace | [XML 1.0 §2.10][xml-space] | Inline Text with `xml:space="preserve"`; CR encoded as `&#13;`. Verify exact Work readback and independent-reader spaces/TAB/LF. Worksheet names retain their explicit rename rules. |
+| Text/headers: leading/trailing whitespace | [XML 1.0 §2.10][xml-space] | Inline Text with `xml:space="preserve"`; CR encoded as `_x000D_`. Verify exact Work readback and independent-reader spaces/TAB/LF. Worksheet names retain their explicit rename rules. |
 | Numbers: finite | [Microsoft numeric behavior][excel-numbers] | Refuse NaN/infinities with a cell finding; emit finite numeric cells. |
 | Numbers: no nonzero subnormals | [Microsoft numeric behavior][excel-numbers] | Refuse magnitude below `f64::MIN_POSITIVE`; accept both minimum-normal signs. Emit both zero signs as `0`. |
 | Numbers: precision above 15 significant decimal digits | [Excel limits][excel-limits] | Export the shortest round-trip value unchanged; `LossyOnExport` at first 20 locations plus total count. CSV ledger states full precision. |
@@ -276,7 +275,7 @@ session state changes on success or refusal.
   explicit CSV reimport, independent ZIP/XML structure assertions, empty/missing
   values, stable order, collision chains, geometry limits/+1, mixed documents,
   stale revisions, source/history preservation and ledger coverage; literal
-  SpreadsheetML escape/near-miss locations and native-only XLSX Text refusal;
+  SpreadsheetML escape/near-miss locations, encoded Text readback and XLSX Text limits;
   deterministic Greek/German/Turkish/ASCII caseless mappings, including both
   `ß`/`ẞ` allocation orders as worksheets and headers with source/output ledger
   mappings, located subnormal

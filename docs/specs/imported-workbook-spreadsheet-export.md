@@ -56,7 +56,7 @@ WASM, including fractional widths in tagged metadata requests.
 Current headers use deterministic caseless collision suffixes without truncation.
 XLSX uses the shared native compatibility name/Text policy. CSV uses the same
 collision key and suffix allocation with its own XML-character and formula-leading
-Text policy; literal SpreadsheetML escape text and XLSX-only string limits do not
+Text policy; XLSX-only string limits do not
 restrict CSV headers.
 Renames and mapped spellings have `converted` findings at collection/field IDs.
 `imported_current_header` is emitted whenever the written spelling differs from
@@ -65,7 +65,7 @@ returns to the historical header still discloses its requested/output mapping.
 Structural changes have `imported_current_structure` at the stable collection.
 XLSX source worksheet names remain unchanged and pass the shared native name
 policy: at most 31 UTF-16 units, legal characters/boundaries, no reserved `History`,
-no literal SpreadsheetML escapes and no fixed-point caseless duplicates. Refuse
+no fixed-point caseless duplicates. Literal escape patterns remain literal in worksheet attributes. Refuse
 rather than allocate a new worksheet name and change formula references. XLSX
 inserts headers for headerless input as before, with disclosure.
 
@@ -76,8 +76,9 @@ or file encoding. Native tables and this route call the same
 `validate_xlsx_compatibility` inventory; profile-specific grid bounds remain
 separate:
 
-- XML-illegal Text and literal `_x[0-9A-Fa-f]{4}_` sequences refuse; strings are
-  never silently changed or Office-escaped by this route.
+- XML-illegal Text refuses. Literal `_x[0-9A-Fa-f]{4}_` prefixes in cell
+  Text/headers are encoded with `_x005F_`, and CR with `_x000D_` (Issue #637).
+  CSV Text remains literal.
 - Text may contain at most **32,767 UTF-16 code units** (astral characters count
   as two) and **253 LF characters**. Refuse excess without truncation.
 - Numbers must be finite and either zero or at least `f64::MIN_POSITIVE` in
@@ -129,7 +130,7 @@ and [Excel resource limits](https://support.microsoft.com/en-us/excel/excel-spec
 Failures carry the shared policy's specific code and current worksheet/row/column
 location, with formula/literal, number-format/condition, sheet-name or width context
 where applicable. No bytes are returned. CSV keeps its lexical representation and existing
-formula-leading refusal; XLSX-only length, escapes, line-feed, subnormal and Date
+formula-leading refusal; XLSX-only length, line-feed, subnormal and Date
 rules do not restrict CSV cells. CSV XML-character refusals also identify the
 current row/column. The format-neutral Rust `export_workbook` projection is not
 an XLSX compatibility claim; both host and WASM file exports use the format-aware
@@ -159,18 +160,28 @@ Text/headers; it does not rewrite them. XLSX covers every mapped worksheet.
 
 ### Issue #547 boundary
 
-This repair guards **every emitted imported-route text surface**: cells,
-headers, worksheet/reference names and number-format codes. Generated formulas
-cannot contain string literals. It widens batch 1's imported-cell boundary and
-removes imported export from the known unguarded `_xHHHH_` writer routes, by
-whole-file refusal. It does not close [#547](https://github.com/nurockplayer/tachiko-work/issues/547):
-native Tracker and native Budget still use the general shared writer without
-this compatibility preflight; that writer still lacks Office literal escaping.
-The reader still lacks SpreadsheetML escape decoding and its fidelity ledger,
-and independent-reader qualification across every export profile remains open.
-Native tables already uses the same refusal policy. Attribute whitespace encoding
-is repaired in the shared writer; no reader decoding or global Office escaping
-change is claimed.
+This route guards cells, headers, worksheet/reference names and number-format
+codes. Generated formulas cannot contain string literals. Issue #637 adds the
+shared ST_Xstring cell Text encoder to imported workbooks, native tables,
+TextCapacity, Tracker and Budget writers, and cell Text decoding on import.
+This does not claim independent-reader qualification across every export profile
+or close [#547](https://github.com/nurockplayer/tachiko-work/issues/547).
+Number-format attributes retain their escape-pattern refusal under the existing
+style finding; they are outside the cell Text encoder. Attribute whitespace
+continues to use XML character references.
+
+Microsoft's [ST_Xstring implementation notes][st-xstring] require CR escaping
+and escaping underscores that begin literal patterns. The [sheet schema][sheet-schema]
+also types `name` as ST_Xstring; the schema alone does not establish Excel's
+cell-versus-attribute behavior. Issue #637's lead decision keeps worksheet names
+literal and limits decoding to `<t>` under shared `<si>` and inline `<is>`.
+Numeric `<v>` is never decoded. Malformed patterns stay literal; unpaired
+surrogates, forbidden controls and U+FFFE/U+FFFF produce a blocking cell finding.
+TextCapacity uses the same encoded worksheet for byte admission and writing,
+and its plain-source proof admits these patterns.
+
+[st-xstring]: https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oe376/bd0aa042-434a-4ca7-b25f-4e1fd25a954d
+[sheet-schema]: https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.sheet?view=openxml-3.0.1
 
 ## Output-element coverage
 
@@ -185,7 +196,7 @@ integers, never raw source markup.
 | Element | Check / emitted representation | Test name |
 | --- | --- | --- |
 | CSV scope | Select stable schema before reconstruction; only selected emitted headers/scalars; headerless names neither checked as file text nor disclosed as written; global identity map still checked | `imported_csv_checks_only_selected_emitted_values_and_headers`, `foreign_current_fields_entities_and_schema_mappings_are_not_tombstones` |
-| Text scalars, including untouched/inserted/added | XLSX Cell XML/escape/32,767 UTF-16/253 LF checks; CSV CsvCell/CsvText XML and formula-leading refusal, RFC quoting | `csv_import_every_current_cell_has_format_specific_compatibility`, `xlsx_import_every_current_cell_has_format_specific_compatibility`, `untouched_imported_text_is_checked_before_xlsx_encoding` |
+| Text scalars, including untouched/inserted/added | XLSX Cell XML/32,767 UTF-16/253 LF checks and ST_Xstring encoding; CSV CsvCell/CsvText XML and formula-leading refusal, RFC quoting | `csv_import_every_current_cell_has_format_specific_compatibility`, `xlsx_import_every_current_cell_has_format_specific_compatibility`, `untouched_imported_text_is_checked_before_xlsx_encoding` |
 | Number scalars and formula caches | Finite semantic Number; canonical zero; XLSX normal-or-zero and 15-digit disclosure; CSV round-trip scalar decimal | `imported_numbers_and_dates_follow_the_shared_cell_policy_without_changing_csv`, `imported_formula_literals_and_cached_results_share_the_number_policy` |
 | Boolean, Date, Empty scalars | Typed XLSX boolean 0/1, Gregorian Date range, Empty distinct from Text; CSV lexical/empty fields with disclosure | `imported_boolean_values_use_typed_xlsx_and_lexical_csv`, `imported_numbers_and_dates_follow_the_shared_cell_policy_without_changing_csv`, `csv_insert_blank`, `xlsx_insert_blank` |
 | Formula text/operators/functions | Closed numeric/reference/arithmetic/MIN/MAX wire grammar; 4,096-byte / 32-formula bounds; XML text escaping | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
@@ -193,7 +204,7 @@ integers, never raw source markup.
 | Formula string/Boolean/NaN/infinity literals | No corresponding AST variant or nonfinite Number; reject before publication; unknown future wire tokens also refuse | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output` |
 | References and names inside formulas | Stable binding, current absolute coordinates; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Headers | Current/historical fallback and caseless allocation; format-specific text checks; XML/CSV escaping and header-insertion disclosure | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `header_mapping_discloses_requested_spelling_even_when_output_equals_history`, `unrepresentable_structures_refuse_whole_files_with_located_findings` |
-| Worksheet names | Name policy: 31 UTF-16 units, illegal/reserved/escape/caseless checks; no rename; CSV does not emit them | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`, `imported_reference_names_headers_and_csv_quoting_preserve_spelling` |
+| Worksheet names | Name policy: 31 UTF-16 units, illegal/reserved/caseless checks; no rename; CSV does not emit them | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`, `imported_reference_names_headers_and_csv_quoting_preserve_spelling` |
 | Number-format codes and literal display text | Closed classifier; ST_Xstring/XML refusal, <255 UTF-16 units; attribute character references preserve TAB/LF/CR | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks` |
 | Numeric format conditions / locale and color tokens | Same format tokenizer inventories numeric conditions for Cell checks; existing closed color/locale grammar; precision disclosure | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`; `interop_number_format::tests` |
 | Fill/alignment/bold/wrap/border and generated font/style attributes | Hex/enumeration/typed boolean checks; fixed generated Arial/size/border vocabulary; preserve supported presentation | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks` |
