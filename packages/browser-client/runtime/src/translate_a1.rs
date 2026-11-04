@@ -389,19 +389,29 @@ impl DesignerRuntime {
                                 return None;
                             };
                             let entity = document.entities.get(&reference.entity)?;
-                            let field = document
-                                .schemas
-                                .get(&entity.schema)?
-                                .fields
-                                .get(&reference.field)?;
+                            let schema = document.schemas.get(&entity.schema)?;
+                            let field = schema.fields.get(&reference.field)?;
                             let fixed = format!("[{}.{}]", entity.key.as_str(), field.key.as_str());
-                            source.find(&fixed).or_else(|| {
-                                if reference.entity.as_str() == input.row_entity_id {
-                                    source.find(&format!("[.{}]", field.key.as_str()))
-                                } else {
-                                    None
-                                }
-                            })
+                            source
+                                .find(&fixed)
+                                .or_else(|| {
+                                    if reference.entity.as_str() == input.row_entity_id {
+                                        source.find(&format!("[.{}]", field.key.as_str()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .or_else(|| {
+                                    let aggregate =
+                                        format!("[{}.{}:", schema.key.as_str(), field.key.as_str());
+                                    geometry
+                                        .tokens
+                                        .iter()
+                                        .find(|(_, output)| {
+                                            source[output.clone()].starts_with(&aggregate)
+                                        })
+                                        .map(|(_, output)| output.start)
+                                })
                         })
                         .min()
                 })
