@@ -266,3 +266,53 @@ at `/sheet-name`, no partial file and unchanged resident state. A separate
 roundtrips with the same 39-byte header row. Promoted-capacity Worker probes and
 the independent XML oracle require the valid name and retain the negative
 control-name case; they do not claim Excel can retain control-bearing names.
+
+## Read-only kit call: translateA1Formula
+
+Issue [#641](https://github.com/nurockplayer/tachiko-work/issues/641) owns this
+explicit A1 authoring boundary. It shares the import tokenizer and scalar
+MIN/MAX blank guard; existing import output is unchanged.
+
+`translateA1Formula({expectedRevision, collectionId, rowEntityId, targetFieldId,
+text, geometry})` returns `{revision, source, notes}`. Text has no leading `=`.
+The ordinary worker/WASM/host request is `translate_a1_formula`; its fields
+use snake_case, and its success response is `a1_translation`.
+
+TypeScript geometry uses `headerRow` and sheet `collectionId`; the worker maps
+these to wire `header_row` and `collection_id`. Wire geometry supplies `header_row` (one-based A1 header row), ordered `rows` (entity
+ids for consecutive visible data rows), ordered `columns` (field ids from A),
+and optional `sheets: {name: {collection_id, header_row, rows, columns}}`.
+Columns must cover the collection exactly, without duplicate or unknown ids.
+Rows may be filtered or reordered, but must be distinct members of the named
+collection. The owner and target must be in the current geometry. Sheet names
+resolve case-insensitively and must be nonempty and unambiguous. Header offsets
+must be positive and representable.
+
+A same-row reference with a relative row becomes `[.field]`. A fixed row or
+other row becomes `[entity.field]`. Relative references becoming fixed identities
+carry `relative_copy_semantics_changed`; a `$` column alone has no effect.
+`SUM`, `AVERAGE`, and `COUNT` over exactly one whole numeric data column, starting
+at the header or first data row and ending at the last data row, become
+`[collection.field:total]`, `:average`, and `:count`, with `range_tracks_collection`.
+Collection and field spellings in formulas use semantic keys, not ids. Aggregates
+require all collection rows; filtered geometry still supports cell references.
+Notes are unique and returned in deterministic order.
+
+Arithmetic, comparisons, parentheses, numeric/percent literals and `IF`, `AND`,
+`OR`, `NOT`, `ROUND`, `ISBLANK`, scalar `MIN`/`MAX` use the engine's grammar and
+import semantics. Partial ranges, range `MIN`/`MAX`, text concatenation and
+other functions are outside this call's profile.
+
+Typed refusals are `unknown_sheet`, `out_of_bounds`, `header_reference`,
+`unsupported_range`, `unsupported_function`, `unsupported_operator`,
+`formula_syntax`, `formula_type_mismatch`, `formula_cycle`, `invalid_geometry`,
+and `stale_revision`. Each carries `span: {start, end}`, half-open UTF-8 byte
+offsets in the original input. Geometry and revision refusals use the empty span
+at zero because they have no offending text token.
+
+Before returning, the runtime dry-run binds and previews the formula against
+`targetFieldId` using the same proposal admission as formula updates, including
+type and dependency-cycle validation. It never executes or publishes the
+proposal. Revision, document, history, proposal counters, and occurrence remain
+unchanged. Equal inputs at the same revision return equal results. Sheet owns
+the editing UI and any user-confirmed formula publication.

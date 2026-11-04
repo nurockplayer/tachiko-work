@@ -128,3 +128,30 @@ describe("private metadata request transport", () => {
     expect(reserve).not.toHaveBeenCalled();
   });
 });
+
+describe("A1 translation WASM wire transport", () => {
+  it.each(["B3*C3", "SUM(B2:B3)"])("preserves the request and reply for %s", async text => {
+    const memory = new WebAssembly.Memory({initial: 1});
+    const request = {type: "translate_a1_formula" as const, expected_revision: "resident/0", collection_id: "Items",
+      row_entity_id: "r2", target_field_id: "total", text,
+      geometry: {header_row: 1, rows: ["r1", "r2", "r3"], columns: ["name", "qty", "price", "total"]}};
+    const reply = text === "B3*C3"
+      ? {status: "ok", response: {type: "a1_translation", payload: {revision: "resident/0", source: "[.qty]*[.price]", notes: []}}}
+      : {status: "error", error: {code: "unsupported_range", message: "Unsupported range", current_revision: "resident/0", diagnostics: [], span: {start: 0, end: 10}}};
+    const encoded = new TextEncoder().encode(JSON.stringify(reply));
+    let length = 0;
+    const run = vi.fn(() => {
+      expect(JSON.parse(new TextDecoder().decode(new Uint8Array(memory.buffer, 0, length)))).toEqual(request);
+      new Uint8Array(memory.buffer, 8192, encoded.length).set(encoded);
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response()));
+    vi.spyOn(WebAssembly, "instantiateStreaming").mockResolvedValue({instance: {exports: {
+      memory, tachiko_designer_request_reserve: (size: number) => {length = size; return 0;},
+      tachiko_designer_request_run: run, tachiko_designer_response_ptr: () => 8192,
+      tachiko_designer_response_len: () => encoded.length,
+    }}, module: {}});
+    const bridge = await createDesignerWasmBridge("/runtime.wasm");
+    expect(bridge.request(request)).toEqual(reply);
+    expect(run).toHaveBeenCalledOnce();
+  });
+});

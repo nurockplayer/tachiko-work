@@ -3,6 +3,12 @@
 //! This crate is app-local composition code. Its DTOs and WASM ABI are
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
+mod translate_a1;
+pub use translate_a1::{
+    A1GeometryInput, A1RefusalCode, A1SheetGeometry, A1TokenSpan, A1Translation, A1TranslationNote,
+    TranslateA1FormulaInput,
+};
+
 mod capacity;
 pub use capacity::{
     CapacityExceeded, CapacityLimit, CapacityLimits, CapacityProjection, CapacityUsage,
@@ -341,6 +347,10 @@ pub enum DesignerRequest {
         target: FieldTarget,
         input: ScalarEditInput,
     },
+    TranslateA1Formula {
+        #[serde(flatten)]
+        input: TranslateA1FormulaInput,
+    },
     PreviewCleanup {
         expected_revision: String,
         operation: CleanupOperation,
@@ -388,6 +398,7 @@ pub enum DesignerResponse {
     Published(PublicationProjection),
     Duplicated(DuplicateCollectionProjection),
     CleanupPreview(CleanupPreview),
+    A1Translation(A1Translation),
     ImportPreview(Box<interop_adapter::SourceWorkbook>),
     Imported(Box<ImportedProjection>),
     SpreadsheetExported(SpreadsheetExportProjection),
@@ -1223,6 +1234,8 @@ pub struct DiagnosticFactProjection {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FailureProjection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<A1TokenSpan>,
     pub code: String,
     pub message: String,
     pub current_revision: String,
@@ -1415,6 +1428,11 @@ pub struct PortableRoVerification {
 
 #[derive(Debug, Error)]
 pub enum DesignerError {
+    #[error("A1 translation refused: {code:?}")]
+    A1Translation {
+        code: A1RefusalCode,
+        span: A1TokenSpan,
+    },
     #[error(transparent)]
     CapacityExceeded(#[from] CapacityExceeded),
     #[error("{}", capacity.import_message(*at_least))]
@@ -1536,6 +1554,10 @@ impl DesignerError {
             None => self.generic_failure(),
         };
         FailureProjection {
+            span: match self {
+                Self::A1Translation { span, .. } => Some(*span),
+                _ => None,
+            },
             code: code.to_owned(),
             message: message.unwrap_or_else(|| self.to_string()),
             current_revision: current_revision.to_owned(),
@@ -1576,6 +1598,7 @@ impl DesignerError {
     #[allow(clippy::too_many_lines)] // One exhaustive error-to-wire-code table; splitting it hides missing arms.
     fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
+            Self::A1Translation { code, .. } => (code.as_str(), Vec::new()),
             Self::CapacityExceeded(_) | Self::ImportCapacityExceeded { .. } => {
                 ("capacity_exceeded", Vec::new())
             }
@@ -2833,6 +2856,9 @@ impl DesignerRuntime {
                 &target,
                 &input,
             )?)),
+            DesignerRequest::TranslateA1Formula { input } => Ok(DesignerResponse::A1Translation(
+                self.translate_a1_formula(&input)?,
+            )),
             DesignerRequest::PreviewCleanup {
                 expected_revision,
                 operation,
@@ -7492,6 +7518,7 @@ fn request_too_large_reply(runtime: Option<&DesignerRuntime>) -> Vec<u8> {
 fn failure_reply(code: &str, message: String, current_revision: &str) -> DesignerWireReply {
     DesignerWireReply::Error {
         error: FailureProjection {
+            span: None,
             code: code.to_owned(),
             message,
             current_revision: current_revision.to_owned(),

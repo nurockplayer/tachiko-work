@@ -1,3 +1,4 @@
+import type { A1Translation, TranslateA1FormulaInput } from "./protocol.ts";
 import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
 import { projectTransferFromEntries } from "../host/project-transfer.ts";
 import { isCapacityFailure } from "./protocol.ts";
@@ -143,6 +144,17 @@ export class WorkerDesignerClient implements DesignerClient {
     const reply = await this.#spreadsheet({type: "export_native_budget", expected_revision: expectedRevision, presentation, format});
     if (reply.status !== "spreadsheet_exported") throw new Error("Expected native Budget spreadsheet export.");
     return reply.export;
+  }
+
+  async translateA1Formula(input: TranslateA1FormulaInput): Promise<A1Translation> {
+    return expectResponse("a1_translation", await this.#command({type: "translate_a1_formula",
+      expected_revision: input.expectedRevision, collection_id: input.collectionId,
+      row_entity_id: input.rowEntityId, target_field_id: input.targetFieldId,
+      text: input.text, geometry: {
+        header_row: input.geometry.headerRow, rows: input.geometry.rows, columns: input.geometry.columns,
+        ...(input.geometry.sheets === undefined ? {} : {sheets: Object.fromEntries(Object.entries(input.geometry.sheets).map(([name, sheet]) =>
+          [name, {collection_id: sheet.collectionId, header_row: sheet.headerRow, rows: sheet.rows, columns: sheet.columns}]))}),
+      }}));
   }
 
   async previewCleanup(expectedRevision: string, operation: CleanupOperation): Promise<CleanupPreview> {
@@ -589,6 +601,7 @@ export function freshOccurrenceId(): string {
   )}-${hex.slice(20)}`;
 }
 
+function expectResponse(type: "a1_translation", response: DesignerResponse): A1Translation;
 function expectResponse(type: "import_preview", response: DesignerResponse): SourceWorkbook;
 function expectResponse(type: "imported", response: DesignerResponse): ImportedProjection;
 function expectResponse(type: "cleanup_preview", response: DesignerResponse): CleanupPreview;

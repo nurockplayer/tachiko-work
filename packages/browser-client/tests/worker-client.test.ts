@@ -300,3 +300,27 @@ describe("duplicate collection column names", () => {
     await expect(client.duplicateCollection("resident/1", "items", "Copy", { column_1: "Amount" })).resolves.toEqual(duplicated);
   });
 });
+
+describe("A1 translation transport", () => {
+  it("round-trips same-row translation and the partial-range refusal", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => { if (type === "message") receive = callback; },
+      postMessage: (request: {id: number; kind: string; request: {type: string; text: string; geometry: unknown}}) => {
+        expect(request.kind).toBe("command");
+        expect(request.request.type).toBe("translate_a1_formula");
+        expect(request.request.geometry).toEqual({header_row: 1, rows: ["r1", "r2", "r3"], columns: ["name", "qty", "price", "total"]});
+        const reply = request.request.text === "B3*C3"
+          ? {status: "ok", response: {type: "a1_translation", payload: {revision: "resident/0", source: "[.qty]*[.price]", notes: []}}}
+          : {status: "error", error: {code: "unsupported_range", message: "Unsupported range", current_revision: "resident/0", diagnostics: [], span: {start: 0, end: 10}}};
+        receive?.({data: {id: request.id, ...reply}} as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    const input = {expectedRevision: "resident/0", collectionId: "Items", rowEntityId: "r2", targetFieldId: "total",
+      geometry: {headerRow: 1, rows: ["r1", "r2", "r3"], columns: ["name", "qty", "price", "total"]}};
+    await expect(client.translateA1Formula({...input, text: "B3*C3"})).resolves.toEqual({revision: "resident/0", source: "[.qty]*[.price]", notes: []});
+    await expect(client.translateA1Formula({...input, text: "SUM(B2:B3)"})).rejects.toMatchObject({failure: {code: "unsupported_range", span: {start: 0, end: 10}}});
+  });
+});

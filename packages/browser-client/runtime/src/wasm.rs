@@ -795,6 +795,7 @@ pub extern "C" fn tachiko_designer_project_export() {
         } else {
             DesignerWireReply::Error {
                 error: crate::FailureProjection {
+                    span: None,
                     code: "no_project_open".to_owned(),
                     message: "No Designer project is open.".to_owned(),
                     current_revision: "unavailable".to_owned(),
@@ -850,6 +851,7 @@ pub extern "C" fn tachiko_designer_occurrence_observe() {
             },
             None => DesignerWireReply::Error {
                 error: crate::FailureProjection {
+                    span: None,
                     code: "no_project_open".to_owned(),
                     message: "No Designer project is open.".to_owned(),
                     current_revision: "unavailable".to_owned(),
@@ -908,6 +910,7 @@ fn export_project_bytes<E>(
         } else {
             DesignerWireReply::Error {
                 error: crate::FailureProjection {
+                    span: None,
                     code: "no_project_open".to_owned(),
                     message: "No Designer project is open.".to_owned(),
                     current_revision: "unavailable".to_owned(),
