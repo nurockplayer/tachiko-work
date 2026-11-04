@@ -208,7 +208,7 @@ integers, never raw source markup.
 | Formula text/operators/functions | Closed numeric/reference/arithmetic/MIN/MAX wire grammar; 4,096-byte / 32-formula bounds; XML text escaping | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Every formula numeric literal | Same Cell Number policy, independently of cache; includes subnormal, minimum normal, canonical -0, precision | `imported_formula_literals_and_cached_results_share_the_number_policy` |
 | Formula string/Boolean/NaN/infinity literals | No corresponding AST variant or nonfinite Number; reject before publication; unknown future wire tokens also refuse | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output` |
-| References and names inside formulas | Stable binding, relative A1 for same-row references and current absolute coordinates for other references; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
+| References and names inside formulas | Import binds a row-relative reference to the formula's own row as a same-row reference and a `$`-row or other-row reference as a stable identity; export writes a same-row reference as unqualified relative A1 and any other reference as a quoted worksheet plus current absolute coordinates; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Headers | Current/historical fallback and caseless allocation; format-specific text checks; XML/CSV escaping and header-insertion disclosure | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `header_mapping_discloses_requested_spelling_even_when_output_equals_history`, `unrepresentable_structures_refuse_whole_files_with_located_findings` |
 | Worksheet names | Name policy: 31 UTF-16 units, illegal/reserved/escape/caseless checks; no rename; CSV does not emit them | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`, `imported_reference_names_headers_and_csv_quoting_preserve_spelling` |
 | Number-format codes and literal display text | Closed classifier; ST_Xstring/XML refusal, <255 UTF-16 units; attribute character references preserve TAB/LF/CR | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks` |
@@ -273,8 +273,11 @@ control-name case; they do not claim Excel can retain control-bearing names.
 ## Read-only kit call: translateA1Formula
 
 Issue [#641](https://github.com/nurockplayer/tachiko-work/issues/641) owns this
-explicit A1 authoring boundary. It shares the import tokenizer and scalar
-MIN/MAX blank guard; existing import output is unchanged.
+explicit A1 authoring boundary. It shares the import tokenizer, the
+row-absolute test and the scalar MIN/MAX blank guard. Import applies the
+same row rule below: a row-relative reference to the formula's own row is
+stored as a same-row reference, while a `$`-row or other-row reference
+stays a fixed identity.
 
 `translateA1Formula({expectedRevision, collectionId, rowEntityId, targetFieldId,
 text, geometry})` returns `{revision, source, notes}`. Text has no leading `=`.

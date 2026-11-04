@@ -2077,7 +2077,7 @@ fn native_xlsx_fixed_reference_to_the_owner_row_stays_absolute() {
 }
 
 /// The relative formulas survive the export, the file readback and a host
-/// reimport; the reimported fixed identities keep the same values and targets.
+/// reimport; the reimported same-row references keep the same values and cells.
 #[test]
 fn native_xlsx_relative_formulas_roundtrip_through_host() {
     let mut host = host_for(same_row_formula_document());
@@ -2108,17 +2108,13 @@ fn native_xlsx_relative_formulas_roundtrip_through_host() {
         source_values(&again.sheets[0]),
         source_values(&workbook.sheets[0])
     );
-    // Reimport binds each cell to its fixed identity, which re-exports as an
-    // absolute address of the regenerated worksheet.
-    let calculated_sheet = format!("'{}'!", again.sheets[0].name.replace('\'', "''"));
+    // Reimport keeps each relative same-row reference, so the regenerated
+    // worksheet exports the same relative address.
     for (i, row) in again.sheets[0].rows.iter().enumerate() {
         let row_number = i + 2;
         assert_eq!(
             row[2].formula.as_deref(),
-            Some(
-                format!("({calculated_sheet}$A${row_number}*{calculated_sheet}$B${row_number})")
-                    .as_str()
-            )
+            Some(format!("(A{row_number}*B{row_number})").as_str())
         );
     }
 }

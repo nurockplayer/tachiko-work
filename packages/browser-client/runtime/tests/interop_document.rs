@@ -902,7 +902,7 @@ fn imported_minimum_of_populated_optional_reference_keeps_blank_guard() {
         .unwrap();
     assert_eq!(
         exported.sheets[0].rows[0][0].formula.as_deref(),
-        Some("IF(ISBLANK('Data'!$E$2),5,MIN('Data'!$E$2,5))")
+        Some("IF(ISBLANK(E2),5,MIN(E2,5))")
     );
 }
 

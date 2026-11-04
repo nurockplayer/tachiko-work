@@ -7,7 +7,9 @@ use tachiko_workspace_engine::patch_lifecycle::{ProposalId, SemanticRevision, Tr
 use tachiko_workspace_engine::{Document, FieldRef, FieldType};
 
 use crate::interop_adapter::SummaryAggregate;
-use crate::interop_document::{A1Geometry, excel_extremum, parse_a1_address, translate_a1_with};
+use crate::interop_document::{
+    A1Geometry, excel_extremum, parse_a1_address, row_is_absolute, translate_a1_with,
+};
 use crate::{
     DesignerError, DesignerRuntime, FormulaUpdateRequest, designer_lifecycle, designer_preview,
 };
@@ -194,11 +196,7 @@ impl A1Geometry for GridGeometry<'_> {
             .ok_or_else(|| refusal(A1RefusalCode::OutOfBounds))?;
         let entity = &document.entities[entity_id.as_str()];
         let field = &document.schemas[&entity.schema].fields[field_id.as_str()];
-        let row_absolute = address
-            .trim_start_matches('$')
-            .chars()
-            .find(|character| !character.is_ascii_alphabetic())
-            == Some('$');
+        let row_absolute = row_is_absolute(address);
         let same_row = grid.collection_id == self.sheets[0].1.collection_id
             && entity_id == self.owner
             && !row_absolute;
