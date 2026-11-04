@@ -1437,11 +1437,70 @@ pub enum InteropError {
     Invalid(String),
     #[error(transparent)]
     Capacity(#[from] crate::CapacityExceeded),
+    #[error(transparent)]
+    CapacityLowerBound(crate::CapacityExceeded),
 }
 type Result<T> = std::result::Result<T, InteropError>;
 fn fail<T>(message: impl Into<String>) -> Result<T> {
     Err(InteropError::Invalid(message.into()))
 }
+pub(crate) fn check_import_limit(
+    limit: crate::CapacityLimit,
+    maximum: usize,
+    attempted: usize,
+    collection: Option<&str>,
+    at_least: bool,
+) -> Result<()> {
+    crate::capacity::check_limit(limit, maximum, attempted, collection).map_err(|capacity| {
+        if at_least {
+            InteropError::CapacityLowerBound(capacity)
+        } else {
+            InteropError::Capacity(capacity)
+        }
+    })
+}
+
+pub(crate) fn validate_import_geometry(workbook: &SourceWorkbook) -> Result<()> {
+    check_import_limit(
+        crate::CapacityLimit::Collections,
+        MAX_SHEETS,
+        workbook.sheets.len(),
+        None,
+        false,
+    )?;
+    let capacity = output_profile(workbook) == OutputProfile::TextCapacity;
+    for sheet in &workbook.sheets {
+        check_import_limit(
+            crate::CapacityLimit::TableFields,
+            MAX_COLUMNS,
+            sheet.columns.len(),
+            Some(&sheet.name),
+            false,
+        )?;
+        check_import_limit(
+            crate::CapacityLimit::TableRows,
+            if capacity {
+                MAX_TEXT_CAPACITY_ROWS
+            } else {
+                MAX_DATA_ROWS
+            },
+            sheet.rows.len(),
+            Some(&sheet.name),
+            false,
+        )?;
+    }
+    if !capacity {
+        check_import_limit(
+            crate::CapacityLimit::TotalEntities,
+            MAX_TOTAL_DATA_ROWS,
+            workbook.sheets.iter().map(|sheet| sheet.rows.len()).sum(),
+            None,
+            false,
+        )?;
+    }
+    Ok(())
+}
+
 fn finding(
     category: FidelityCategory,
     code: &str,
@@ -1522,14 +1581,19 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         } else {
             field.push(ch);
         }
-        if row.len() > MAX_COLUMNS {
-            return fail("CSV exceeds column bounds");
-        }
-        crate::capacity::check_limit(
+        check_import_limit(
+            crate::CapacityLimit::TableFields,
+            MAX_COLUMNS,
+            row.len(),
+            Some("Imported table"),
+            true,
+        )?;
+        check_import_limit(
             crate::CapacityLimit::TableRows,
             MAX_TEXT_CAPACITY_ROWS,
             rows.len().saturating_sub(usize::from(options.header)),
             Some("Imported table"),
+            true,
         )?;
     }
     if quoted {
@@ -1546,9 +1610,16 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         rows.len().saturating_sub(usize::from(options.header)),
         Some("Imported table"),
     )?;
-    if width == 0 || width > MAX_COLUMNS {
-        return fail("CSV exceeds profile bounds");
+    if width == 0 {
+        return fail("CSV has no columns");
     }
+    check_import_limit(
+        crate::CapacityLimit::TableFields,
+        MAX_COLUMNS,
+        width,
+        Some("Imported table"),
+        false,
+    )?;
     let headers = if options.header {
         rows.remove(0)
     } else {
@@ -1616,6 +1687,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         validate_capacity_source_inspection(&workbook)?;
         return Ok(workbook);
     }
+    validate_import_geometry(&workbook)?;
     Ok(finish_source_admission(workbook))
 }
 
@@ -2760,23 +2832,18 @@ pub(crate) fn coordinate(address: &str) -> Result<(usize, usize)> {
             .checked_mul(26)
             .and_then(|n| n.checked_add(usize::from(b.to_ascii_uppercase() - b'A' + 1)))
             .ok_or_else(|| InteropError::Invalid("Cell column overflow".into()))?;
-        if col > MAX_COLUMNS {
-            return fail("Cell column exceeds profile");
-        }
     }
     let row = address[split..]
         .parse::<usize>()
         .map_err(|_| InteropError::Invalid("Invalid cell row".into()))?;
-    if col == 0 || row == 0 {
+    if col == 0
+        || col > 16_384
+        || row == 0
+        || row > 1_048_576
+        || !address[split..].bytes().all(|byte| byte.is_ascii_digit())
+    {
         return fail("Invalid cell coordinate");
     }
-    // Row 1 is the header, so data rows are `row - 1`.
-    crate::capacity::check_limit(
-        crate::CapacityLimit::TableRows,
-        MAX_TEXT_CAPACITY_ROWS,
-        row - 1,
-        Some("Imported table"),
-    )?;
     Ok((row - 1, col - 1))
 }
 use crate::interop_number_format::NumberFormatKind;
@@ -3131,9 +3198,16 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
         .ok_or_else(|| InteropError::Invalid("Missing worksheets".into()))?
         .kids("sheet")
         .collect::<Vec<_>>();
-    if sheet_nodes.is_empty() || sheet_nodes.len() > MAX_SHEETS {
-        return fail(format!("Workbook must have 1..={MAX_SHEETS} sheets"));
+    if sheet_nodes.is_empty() {
+        return fail("Workbook must have at least one sheet");
     }
+    check_import_limit(
+        crate::CapacityLimit::Collections,
+        MAX_SHEETS,
+        sheet_nodes.len(),
+        None,
+        false,
+    )?;
     if options.header_rows.len() > sheet_nodes.len() {
         return fail("header_rows has more entries than the workbook has sheets");
     }
@@ -3193,6 +3267,17 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
             )?;
         }
         inventory_worksheet_children(&xml, &name, &mut ledger);
+        if let Some(dimension) = xml.child("dimension") {
+            let reference = dimension
+                .attr("ref")
+                .ok_or_else(|| InteropError::Invalid("Missing worksheet dimension".into()))?;
+            let mut ends = reference.split(':');
+            let start = coordinate(ends.next().unwrap_or_default())?;
+            let end = ends.next().map(coordinate).transpose()?.unwrap_or(start);
+            if ends.next().is_some() || start.0 > end.0 || start.1 > end.1 {
+                return fail("Invalid worksheet dimension");
+            }
+        }
         let mut rows: Vec<Vec<SourceCell>> = Vec::new();
         let mut seen = BTreeSet::new();
         let mut width = 0;
@@ -3225,14 +3310,15 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 .ok_or_else(|| InteropError::Invalid("Missing worksheet row index".into()))?
                 .parse::<usize>()
                 .map_err(|_| InteropError::Invalid("Invalid row index".into()))?;
-            if row_index == 0 {
+            if row_index == 0 || row_index > 1_048_576 {
                 return fail("Invalid row index");
             }
-            crate::capacity::check_limit(
+            check_import_limit(
                 crate::CapacityLimit::TableRows,
                 MAX_TEXT_CAPACITY_ROWS,
                 row_index - 1,
-                Some("Imported table"),
+                Some(&name),
+                true,
             )?;
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
@@ -3243,6 +3329,13 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 if r + 1 != row_index || !seen.insert((r, col)) {
                     return fail("Duplicate or inconsistent cell coordinate");
                 }
+                check_import_limit(
+                    crate::CapacityLimit::TableFields,
+                    MAX_COLUMNS,
+                    col + 1,
+                    Some(&name),
+                    true,
+                )?;
                 width = width.max(col + 1);
                 let new_width = rows[r].len().max(col + 1);
                 rows[r].resize(new_width, SourceCell::default());
@@ -3277,15 +3370,13 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 let mut source = formula.map(|f| f.text.clone());
                 if let Some(f) = formula {
                     formula_count += 1;
-                    if formula_count > MAX_FORMULAS {
-                        return Err(crate::CapacityExceeded {
-                            limit: crate::CapacityLimit::Formulas,
-                            maximum: MAX_FORMULAS,
-                            attempted: formula_count,
-                            collection: None,
-                        }
-                        .into());
-                    }
+                    check_import_limit(
+                        crate::CapacityLimit::Formulas,
+                        MAX_FORMULAS,
+                        formula_count,
+                        None,
+                        true,
+                    )?;
                     if f.attr("t").is_some_and(|t| t != "normal") || f.text.is_empty() {
                         ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled,"shared_array_dynamic_formula",&location,"Shared, empty, array or dynamic formula is safe-disabled; cached value is not semantic truth",true));
                         value = SourceValue::Empty;
@@ -3494,13 +3585,18 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 capacity_plain &= w.is_none();
                 if min == 0
                     || max < min
+                    || max > 16_384
                     || w.is_some_and(|w| !w.is_finite() || w <= 0.0 || w > 255.0)
                 {
                     return fail("Invalid column width");
                 }
-                if max > MAX_COLUMNS {
-                    return fail(format!("Column width range exceeds {MAX_COLUMNS} columns"));
-                }
+                check_import_limit(
+                    crate::CapacityLimit::TableFields,
+                    MAX_COLUMNS,
+                    max,
+                    Some(&name),
+                    true,
+                )?;
                 if max > columns.len() && w.is_some() {
                     ledger.push(finding(FidelityCategory::LossyOnExport, "column_width_outside_grid", &format!("{name}:columns {min}..{max}"), "Column width outside the represented cell grid remains source-only and is omitted on export", false));
                 }
@@ -3510,9 +3606,13 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
             }
         }
         if rows.len() > MAX_DATA_ROWS && !capacity_plain {
-            return fail(
-                "8,406-row capacity requires default source headers and no column widths, including outside the grid",
-            );
+            check_import_limit(
+                crate::CapacityLimit::TableRows,
+                MAX_DATA_ROWS,
+                rows.len(),
+                Some(&name),
+                false,
+            )?;
         }
         sheets.push(SourceSheet {
             name,
@@ -3536,6 +3636,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
         return Ok(workbook);
     }
     validate_large_sheet_strings(&workbook)?;
+    validate_import_geometry(&workbook)?;
     Ok(finish_source_admission(workbook))
 }
 

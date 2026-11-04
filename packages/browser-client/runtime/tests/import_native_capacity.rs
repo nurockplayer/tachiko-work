@@ -1,12 +1,12 @@
 //! Shared import geometry, direct selection and metadata-backed save/reopen (#635).
 use std::io::{Cursor, Read, Write};
 use tachiko_designer_runtime::interop_adapter::{
-    CellStyle, ImportOptions, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
-    SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
+    CellStyle, ImportOptions, InteropError, SourceCell, SourceColumn, SourceLayout, SourceSheet,
+    SourceValue, SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
 };
 use tachiko_designer_runtime::{
-    DesignerError, ImportColumnSpec, ImportFieldType, ImportSelection, import_workbook,
-    inspect_imported_project, open_imported_project,
+    CapacityLimit, DesignerError, ImportColumnSpec, ImportFieldType, ImportSelection,
+    import_workbook, inspect_imported_project, open_imported_project,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -400,14 +400,20 @@ fn wide_csv_shared_row_boundary_and_plus_one() {
     let row = ["value"; 20].join(",") + "\n";
     for rows in [128, 129] {
         let csv = format!("{header}\n{}", row.repeat(rows));
-        let book = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
-        assert_eq!(book.sheets[0].rows.len(), rows);
+        let parsed = import_csv(csv.as_bytes(), &ImportOptions::default());
         if rows == 128 {
+            let book = parsed.unwrap();
+            assert_eq!(book.sheets[0].rows.len(), rows);
             assert!(!book.ledger.iter().any(|finding| finding.blocking));
             export_csv(&book.sheets[0]).unwrap();
         } else {
-            assert!(book.ledger.iter().any(|finding| finding.blocking));
-            assert!(export_csv(&book.sheets[0]).is_err());
+            let InteropError::Capacity(capacity) = parsed.unwrap_err() else {
+                panic!("expected a typed row-capacity refusal");
+            };
+            assert_eq!(capacity.limit, CapacityLimit::TableRows);
+            assert_eq!(capacity.collection.as_deref(), Some("Imported table"));
+            assert_eq!(capacity.attempted, 129);
+            assert_eq!(capacity.maximum, 128);
         }
     }
 }

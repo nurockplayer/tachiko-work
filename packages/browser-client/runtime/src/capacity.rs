@@ -69,6 +69,27 @@ pub struct CapacityExceeded {
     pub collection: Option<String>,
 }
 
+impl CapacityExceeded {
+    pub(crate) fn import_message(&self, at_least: bool) -> String {
+        let subject = self
+            .collection
+            .as_ref()
+            .map_or_else(|| "Workbook".to_owned(), |name| format!("Sheet ‘{name}’"));
+        let unit = match self.limit {
+            CapacityLimit::Collections => "sheets",
+            CapacityLimit::TableFields => "columns",
+            CapacityLimit::TableRows | CapacityLimit::TotalEntities => "data rows",
+            CapacityLimit::Formulas => "formulas",
+            _ => "items",
+        };
+        let bound = if at_least { "at least " } else { "" };
+        format!(
+            "{subject} has {bound}{} {unit}; the maximum is {}. The workbook was not imported.",
+            self.attempted, self.maximum
+        )
+    }
+}
+
 /// Use the same typed refusal for inexpensive operation-specific preflights
 /// and the complete candidate check.
 pub(crate) fn check_limit(
