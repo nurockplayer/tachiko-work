@@ -844,45 +844,7 @@ fn compatible_formula(
     let mut literal = 0;
     while !remaining.is_empty() {
         if remaining.starts_with('\'') {
-            let mut name = String::new();
-            remaining = &remaining[1..];
-            loop {
-                let c = remaining.chars().next().ok_or_else(refuse)?;
-                remaining = &remaining[c.len_utf8()..];
-                if c == '\'' {
-                    if remaining.starts_with('\'') {
-                        remaining = &remaining[1..];
-                        name.push('\'');
-                    } else {
-                        break;
-                    }
-                } else {
-                    name.push(c);
-                }
-            }
-            native_tables_compatibility(
-                NativeTablesCheck::Name {
-                    value: &name,
-                    worksheet: true,
-                    used: &mut BTreeSet::new(),
-                    allocate: false,
-                },
-                &format!("{location}/reference/sheet-name"),
-            )?;
-            remaining = remaining.strip_prefix("!$").ok_or_else(refuse)?;
-            let columns = remaining.bytes().take_while(u8::is_ascii_uppercase).count();
-            if columns == 0 {
-                return Err(refuse());
-            }
-            remaining = remaining[columns..].strip_prefix('$').ok_or_else(refuse)?;
-            let rows = remaining.bytes().take_while(u8::is_ascii_digit).count();
-            if rows == 0 {
-                return Err(refuse());
-            }
-            remaining = &remaining[rows..];
-            // A column reference is followed by an optional whole-column range
-            // end in the same `$COL$ROW` shape.
-            remaining = strip_column_range(remaining).ok_or_else(refuse)?;
+            remaining = strip_quoted_formula_reference(remaining, location, &refuse)?;
         } else if remaining.starts_with("SUM(")
             || remaining.starts_with("AVERAGE(")
             || remaining.starts_with("COUNT(")
@@ -945,6 +907,52 @@ fn compatible_formula(
         precision_loss,
         ..NativeTablesCompatibility::default()
     })
+}
+
+/// Consume one quoted, sheet-qualified absolute A1 reference, including an
+/// optional whole-column range end in the same `$COL$ROW` shape.
+fn strip_quoted_formula_reference<'a>(
+    mut remaining: &'a str,
+    location: &str,
+    refuse: &dyn Fn() -> FidelityFinding,
+) -> std::result::Result<&'a str, FidelityFinding> {
+    let mut name = String::new();
+    remaining = &remaining[1..];
+    loop {
+        let c = remaining.chars().next().ok_or_else(refuse)?;
+        remaining = &remaining[c.len_utf8()..];
+        if c == '\'' {
+            if remaining.starts_with('\'') {
+                remaining = &remaining[1..];
+                name.push('\'');
+            } else {
+                break;
+            }
+        } else {
+            name.push(c);
+        }
+    }
+    native_tables_compatibility(
+        NativeTablesCheck::Name {
+            value: &name,
+            worksheet: true,
+            used: &mut BTreeSet::new(),
+            allocate: false,
+        },
+        &format!("{location}/reference/sheet-name"),
+    )?;
+    remaining = remaining.strip_prefix("!$").ok_or_else(refuse)?;
+    let columns = remaining.bytes().take_while(u8::is_ascii_uppercase).count();
+    if columns == 0 {
+        return Err(refuse());
+    }
+    remaining = remaining[columns..].strip_prefix('$').ok_or_else(refuse)?;
+    let rows = remaining.bytes().take_while(u8::is_ascii_digit).count();
+    if rows == 0 {
+        return Err(refuse());
+    }
+    remaining = &remaining[rows..];
+    strip_column_range(remaining).ok_or_else(refuse)
 }
 
 pub(crate) fn validate_native_tables_xlsx(
