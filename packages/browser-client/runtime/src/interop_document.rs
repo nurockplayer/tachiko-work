@@ -832,6 +832,7 @@ pub fn import_workbook(
             &metadata,
             &workbook.sheets,
             sheet_index,
+            &target,
             runtime.session.export_snapshot().document(),
         )?;
         pending.insert(target, (source, references, (sheet_index, row, column)));
@@ -1665,6 +1666,7 @@ pub(super) trait A1Geometry {
 struct ImportA1Geometry<'a> {
     metadata: &'a InteropMetadata,
     sources: &'a [SourceSheet],
+    owner: &'a FieldRef,
 }
 
 impl A1Geometry for ImportA1Geometry<'_> {
@@ -1728,18 +1730,20 @@ impl A1Geometry for ImportA1Geometry<'_> {
             .checked_sub(above + usize::from(metadata.sheets[sheet_index].has_header))
             .ok_or_else(|| tracker_error("formula cannot bind a header or title cell"))?;
         let reference = metadata_target(metadata, sheet_index, row, column)?;
+        // A row-relative reference to the owner's own row keeps Excel's
+        // fill-down meaning as a same-row Tachiko reference.
+        let same_row = reference.entity == self.owner.entity && !row_is_absolute(address);
         // The shared binder checks numeric uses after translation, when it
         // can distinguish an ISBLANK presence probe from a numeric operand.
         declared_type(document, &reference)?;
         let entity = &document.entities[&reference.entity];
         let field = &document.schemas[&entity.schema].fields[&reference.field];
-        let mut output = String::from("[");
-        output.push_str(entity.key.as_str());
-        output.push('.');
-        output.push_str(field.key.as_str());
-        output.push(']');
         references.insert(reference);
-        Ok(output)
+        Ok(format!(
+            "[{}.{}]",
+            if same_row { "" } else { entity.key.as_str() },
+            field.key.as_str()
+        ))
     }
 }
 
@@ -1748,6 +1752,7 @@ fn translate_a1(
     metadata: &InteropMetadata,
     sources: &[SourceSheet],
     current_sheet: usize,
+    owner: &FieldRef,
     document: &Document,
 ) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
     // Import counts the optional leading equals sign in its existing input bound.
@@ -1758,7 +1763,11 @@ fn translate_a1(
     }
     translate_a1_with(
         source.strip_prefix('=').unwrap_or(source),
-        &mut ImportA1Geometry { metadata, sources },
+        &mut ImportA1Geometry {
+            metadata,
+            sources,
+            owner,
+        },
         current_sheet,
         document,
     )
@@ -1953,6 +1962,15 @@ fn column_aggregate_source(
         field.key.as_str(),
         aggregate.suffix()
     ))
+}
+
+/// Whether an A1 address anchors its row with `$`, so a copy keeps that row.
+pub(super) fn row_is_absolute(address: &str) -> bool {
+    address
+        .trim_start_matches('$')
+        .chars()
+        .find(|character| !character.is_ascii_alphabetic())
+        == Some('$')
 }
 
 pub(super) fn parse_a1_address(address: &str) -> Result<(usize, usize), DesignerError> {
@@ -3755,7 +3773,8 @@ mod a1_import_boundary_tests {
             sheets: Vec::new(),
         };
         let document = tachiko_workspace_engine::Document::empty("bound", "Bound");
-        assert!(super::translate_a1(&source, &metadata, &[], 0, &document).is_err());
-        assert!(super::translate_a1(&source[1..], &metadata, &[], 0, &document).is_ok());
+        let owner = tachiko_workspace_engine::FieldRef::new("entity", "field");
+        assert!(super::translate_a1(&source, &metadata, &[], 0, &owner, &document).is_err());
+        assert!(super::translate_a1(&source[1..], &metadata, &[], 0, &owner, &document).is_ok());
     }
 }

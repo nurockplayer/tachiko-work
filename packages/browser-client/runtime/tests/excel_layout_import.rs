@@ -270,14 +270,116 @@ fn invoice_formulas_bind_and_export_from_the_imported_columns() {
     let exported = runtime
         .export_workbook(&imported.opened.bootstrap.revision, &imported.metadata)
         .unwrap();
-    let formula = exported.sheets[0].rows[0][3]
-        .formula
-        .as_deref()
-        .expect("the Amount formula is exported");
-    for reference in ["$B$2", "$C$2"] {
-        assert!(formula.contains(reference), "{reference} in {formula}");
-    }
+    assert_eq!(
+        exported.sheets[0].rows[0][3].formula.as_deref(),
+        Some("(B2*C2)")
+    );
     export_xlsx(&exported).expect("the exported invoice is an XLSX workbook");
+}
+
+fn amount_sheet(source: &str) -> SourceSheet {
+    SourceSheet {
+        name: "Data".into(),
+        has_header: true,
+        columns: ["Code", "Qty", "Price", "Amount"]
+            .into_iter()
+            .map(|name| SourceColumn {
+                name: name.into(),
+                width: None,
+                number_format: None,
+            })
+            .collect(),
+        rows: vec![
+            vec![number(0.0), number(1.0), number(2.0), formula(source)],
+            vec![number(0.0), number(3.0), number(4.0), number(0.0)],
+        ],
+        layout: SourceLayout::default(),
+    }
+}
+
+fn other_sheet() -> SourceSheet {
+    SourceSheet {
+        name: "Other".into(),
+        has_header: true,
+        columns: vec![SourceColumn {
+            name: "Value".into(),
+            width: None,
+            number_format: None,
+        }],
+        rows: vec![vec![number(5.0)]],
+        layout: SourceLayout::default(),
+    }
+}
+
+/// The stored Amount formula and its exported text for a formula in Data row 2.
+fn imported_amount_formula(source: &str, extra_sheets: Vec<SourceSheet>) -> (String, String) {
+    let mut sheets = vec![amount_sheet(source)];
+    sheets.extend(extra_sheets);
+    let column_types = sheets
+        .iter()
+        .map(|sheet| vec![ImportFieldType::Number; sheet.columns.len()])
+        .collect();
+    let extra_columns = sheets.iter().map(|_| Vec::new()).collect();
+    let workbook = SourceWorkbook {
+        sheets,
+        ledger: Vec::new(),
+    };
+    let selection = ImportSelection {
+        column_types,
+        extra_columns,
+    };
+    let (runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
+    let stored = imported.opened.table.rows[0].fields[3]
+        .formula
+        .as_ref()
+        .expect("the Amount formula is stored")
+        .source
+        .clone();
+    let exported = runtime
+        .export_workbook(&imported.opened.bootstrap.revision, &imported.metadata)
+        .unwrap();
+    let exported = exported.sheets[0].rows[0][3]
+        .formula
+        .clone()
+        .expect("the Amount formula is exported");
+    (stored, exported)
+}
+
+#[test]
+fn imported_same_row_relative_references_stay_same_row() {
+    for (source, stored, exported) in [
+        ("B2*C2", "([.column_2] * [.column_3])", "(B2*C2)"),
+        (
+            "$B$2*C2",
+            "([sheet_1_row_1.column_2] * [.column_3])",
+            "('Data'!$B$2*C2)",
+        ),
+        ("Data!B2", "[.column_2]", "B2"),
+    ] {
+        assert_eq!(
+            imported_amount_formula(source, Vec::new()),
+            (stored.to_owned(), exported.to_owned()),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn imported_other_row_and_other_sheet_references_stay_fixed() {
+    assert_eq!(
+        imported_amount_formula("B3", Vec::new()),
+        (
+            "[sheet_1_row_2.column_2]".to_owned(),
+            "'Data'!$B$3".to_owned()
+        )
+    );
+    assert_eq!(
+        imported_amount_formula("'Other'!A2", vec![other_sheet()]),
+        (
+            "[sheet_2_row_1.column_1]".to_owned(),
+            "'Other'!$A$2".to_owned()
+        )
+    );
 }
 
 #[test]
