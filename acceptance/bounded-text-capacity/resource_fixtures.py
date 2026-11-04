@@ -99,11 +99,19 @@ def string_escape_variants(folder):
                 records.append(
                     {
                         "file": name,
-                        "refuse": index < 4,
+                        "refuse": location == "sheet" and index < 4,
                         "rows": count,
                         "xml_valid": True,
                         "location": location,
-                        "value": ET.fromstring(b"<t>" + value + b"</t>").text,
+                        "value": (
+                            ET.fromstring(b"<t>" + value + b"</t>").text
+                            if location == "sheet"
+                            else "left"
+                            + [
+                                "A", "¯", "_x0041_", "A", "_X0041_", "_x041_", "_x00G1_"
+                            ][index]
+                            + "right"
+                        ),
                     }
                 )
         malformed = [

@@ -9,6 +9,7 @@ import hashlib
 import io
 import math
 from rss_oracle import check_rss_budget
+from rectangle_oracle import decoded_text
 import json
 import sys
 import xml.etree.ElementTree as ET
@@ -127,7 +128,7 @@ def parse_xlsx(path):
                     value = shared[int(value)]
                 elif kind == "inlineStr":
                     value = "".join(cell.find(f"{{{MAIN}}}is").itertext())
-                values_out.append(value)
+                values_out.append(decoded_text(value))
             rows.append(values_out)
         return rows
 
@@ -230,7 +231,7 @@ def verify(directory):
     )
     assert len(string_cases) == 88
     required.update(
-        f"ST {'refusal' if case['refuse'] else 'near-match'} {case['file']}"
+        f"ST {'refusal' if case['refuse'] else 'preservation'} {case['file']}"
         for case in string_cases
     )
     for pattern in ["_x0041_", "_x00aF_", "_x005F_x0041_"]:
@@ -253,7 +254,7 @@ def verify(directory):
         "PASS unchanged ordinary queryFields complete reply65536/65537",
         "PASS large Number admission and constraint/multiple-schema/formula/saved-definition disqualification",
         "PASS row-limit refusal preserves None, complete resident, exports and both history stacks",
-        "PASS ST_Xstring capacity reopen refusal, near-matches and generic preservation",
+        "PASS ST_Xstring capacity and generic reopen preservation and XLSX roundtrip",
     ]:
         assert marker in profile, f"missing profile group: {marker}"
     expected = values()
