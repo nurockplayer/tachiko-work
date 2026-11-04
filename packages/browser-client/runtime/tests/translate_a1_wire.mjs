@@ -21,7 +21,8 @@ const opened = ok({type: "new_table", occurrence_id: "00000000-0000-4000-8000-00
 const collection = opened.table.collection.id;
 let revision = opened.table.revision;
 for (let i = 0; i < 3; i++) {
-  const publication = ok({type: "insert_row", expected_revision: revision, collection, initializers: []});
+  const publication = ok({type: "insert_row", expected_revision: revision, collection, initializers: opened.table.columns.map((column, index) => ({field: column.id,
+    input: index === 0 ? {kind: "text", value: "x"} : {kind: "number", input: "2"}}))});
   revision = publication.resulting_revision;
 }
 const table = ok({type: "query_table", collection});

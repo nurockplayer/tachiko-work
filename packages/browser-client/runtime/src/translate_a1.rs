@@ -103,6 +103,23 @@ fn refusal(code: A1RefusalCode) -> DesignerError {
     }
 }
 
+fn grid_address(address: &str) -> Result<(usize, usize), DesignerError> {
+    parse_a1_address(address).map_err(|_| {
+        let address = address.strip_prefix('$').unwrap_or(address);
+        let letters = address.bytes().take_while(u8::is_ascii_alphabetic).count();
+        let row = address[letters..]
+            .strip_prefix('$')
+            .unwrap_or(&address[letters..]);
+        let code =
+            if letters > 0 && !row.is_empty() && row.bytes().all(|byte| byte.is_ascii_digit()) {
+                A1RefusalCode::OutOfBounds
+            } else {
+                A1RefusalCode::FormulaSyntax
+            };
+        refusal(code)
+    })
+}
+
 fn validate_sheet(sheet: &A1SheetGeometry, document: &Document) -> Result<(), DesignerError> {
     let invalid = || refusal(A1RefusalCode::InvalidGeometry);
     let schema = document
@@ -151,7 +168,7 @@ impl A1Geometry for GridGeometry<'_> {
     fn sheet(&self, name: &str) -> Result<usize, DesignerError> {
         self.sheets
             .iter()
-            .position(|(label, _)| label.eq_ignore_ascii_case(name))
+            .position(|(label, _)| label.to_lowercase() == name.to_lowercase())
             .ok_or_else(|| refusal(A1RefusalCode::UnknownSheet))
     }
 
@@ -162,8 +179,7 @@ impl A1Geometry for GridGeometry<'_> {
         document: &Document,
         references: &mut BTreeSet<FieldRef>,
     ) -> Result<String, DesignerError> {
-        let (column, row) =
-            parse_a1_address(address).map_err(|_| refusal(A1RefusalCode::FormulaSyntax))?;
+        let (column, row) = grid_address(address)?;
         let grid = &self.sheets[sheet].1;
         if row < grid.header_row {
             return Err(refusal(A1RefusalCode::HeaderReference));
@@ -259,7 +275,7 @@ impl A1Geometry for GridGeometry<'_> {
         if ch == ':' {
             return Err(refusal(A1RefusalCode::UnsupportedRange));
         }
-        if ch == '&' {
+        if matches!(ch, '&' | '^' | '@' | '#') {
             return Err(refusal(A1RefusalCode::UnsupportedOperator));
         }
         Ok(())
@@ -314,7 +330,7 @@ impl DesignerRuntime {
         };
         let mut names = BTreeSet::new();
         for (name, sheet) in &input.geometry.sheets {
-            if name.is_empty() || !names.insert(name.to_ascii_lowercase()) {
+            if name.is_empty() || !names.insert(name.to_lowercase()) {
                 return Err(refusal(InvalidGeometry));
             }
             validate_sheet(sheet, document)?;
@@ -417,9 +433,19 @@ impl DesignerRuntime {
         })?;
         // Apply precisely the import's Excel blank-reference guard to scalar MIN/MAX.
         let source = if source.contains("min(") || source.contains("max(") {
-            let guarded = excel_extremum(expression, &target, document)
-                .map_err(|_| refusal(FormulaSyntax))?;
-            project_expression(document, &target, &guarded).map_err(|_| refusal(FormulaSyntax))?
+            let position = source
+                .find("min(")
+                .into_iter()
+                .chain(source.find("max("))
+                .min()
+                .unwrap_or(0);
+            let guard_refusal = || DesignerError::A1Translation {
+                code: FormulaSyntax,
+                span: geometry.source_span(position),
+            };
+            let guarded =
+                excel_extremum(expression, &target, document).map_err(|_| guard_refusal())?;
+            project_expression(document, &target, &guarded).map_err(|_| guard_refusal())?
         } else {
             source.clone()
         };

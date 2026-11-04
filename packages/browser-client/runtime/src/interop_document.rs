@@ -1753,6 +1753,12 @@ fn translate_a1(
     current_sheet: usize,
     document: &Document,
 ) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
+    // Import counts the optional leading equals sign in its existing input bound.
+    if source.len() > MAX_PROFILE_STRING_BYTES {
+        return Err(tracker_error(
+            "source formula exceeds the bounded authoring limit",
+        ));
+    }
     translate_a1_with(
         source.strip_prefix('=').unwrap_or(source),
         &mut ImportA1Geometry { metadata, sources },
@@ -3711,4 +3717,19 @@ fn export_binary(
         operator,
         export_in(right, owner, addresses, columns, present)?
     ))
+}
+
+#[cfg(test)]
+mod a1_import_boundary_tests {
+    #[test]
+    fn translate_a1_import_keeps_original_input_length_bound() {
+        let source = format!("=1{}", " ".repeat(super::MAX_PROFILE_STRING_BYTES - 1));
+        let metadata = super::InteropMetadata {
+            version: 1,
+            sheets: Vec::new(),
+        };
+        let document = tachiko_workspace_engine::Document::empty("bound", "Bound");
+        assert!(super::translate_a1(&source, &metadata, &[], 0, &document).is_err());
+        assert!(super::translate_a1(&source[1..], &metadata, &[], 0, &document).is_ok());
+    }
 }

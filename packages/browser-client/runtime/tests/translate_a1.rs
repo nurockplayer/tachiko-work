@@ -75,11 +75,9 @@ fn fixture_document() -> Document {
     doc
 }
 
-fn fixture() -> Option<DesignerRuntime> {
-    Some(
-        DesignerRuntime::from_document(fixture_document(), "00000000-0000-4000-8000-000000000000")
-            .unwrap(),
-    )
+fn fixture() -> DesignerRuntime {
+    DesignerRuntime::from_document(fixture_document(), "00000000-0000-4000-8000-000000000000")
+        .unwrap()
 }
 
 fn request(text: &str) -> Json {
@@ -113,7 +111,7 @@ fn refused(runtime: &mut Option<DesignerRuntime>, request: &Json, code: &str) {
 #[test]
 #[allow(clippy::too_many_lines)] // Preserve the Steward's ordered 20-case acceptance table.
 fn translate_a1_steward_acceptance() {
-    let mut rt = fixture();
+    let mut rt = Some(fixture());
     ok(&mut rt, "B3*C3", "[.qty]*[.price]", &[]);
     ok(
         &mut rt,
@@ -213,7 +211,7 @@ fn translate_a1_steward_acceptance() {
 
 #[test]
 fn translate_a1_geometry_and_spans() {
-    let mut rt = fixture();
+    let mut rt = Some(fixture());
     for (text, code, start, end) in [
         ("2+B9", "out_of_bounds", 2, 4),
         ("2+A3", "formula_type_mismatch", 2, 4),
@@ -250,7 +248,7 @@ fn translate_a1_geometry_and_spans() {
 
 #[test]
 fn translate_a1_engine_functions_and_numeric_syntax() {
-    let mut rt = fixture();
+    let mut rt = Some(fixture());
     for (text, source) in [
         (
             "IF(AND(B3>0,NOT(C3=0)),ROUND(B3/C3,2),0)",
@@ -288,7 +286,7 @@ fn translate_a1_engine_functions_and_numeric_syntax() {
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn translate_a1_native_host_dispatch() {
-    let rt = fixture().unwrap();
+    let rt = fixture();
     let project = rt.export_project_v3("resident/0").unwrap();
     let mut host = tachiko_designer_runtime::host_bridge::DesignerHost::new();
     let opened: Json = serde_json::from_slice(
@@ -313,7 +311,7 @@ fn translate_a1_native_host_dispatch() {
 
 #[test]
 fn translate_a1_existing_formula_and_indirect_cycle() {
-    let mut rt = fixture();
+    let mut rt = Some(fixture());
     let update: Json = serde_json::from_str(r#"{"type":"formula_update","expected_revision":"resident/0","target":{"entity":"r2","field":"qty"},"source":"[.total]*2"}"#).unwrap();
     let reply = call(&mut rt, &update);
     assert_eq!(reply["status"], "ok", "{reply}");
@@ -378,4 +376,61 @@ fn translate_a1_scalar_extremum_preserves_excel_blank_semantics() {
             "{reply}"
         );
     }
+}
+
+#[test]
+fn translate_a1_review_coordinate_operator_and_unicode_regressions() {
+    let mut rt = Some(fixture());
+    for text in [
+        "B0*2",
+        "B18446744073709551616*2",
+        "ZZZZZZZZZZZZZZZZZZZZZZ3*2",
+    ] {
+        refused(&mut rt, &request(text), "out_of_bounds");
+        let reply = call(&mut rt, &request(text));
+        assert_eq!(reply["error"]["span"]["start"], 0, "{reply}");
+        assert_eq!(
+            usize::try_from(reply["error"]["span"]["end"].as_u64().unwrap()).unwrap(),
+            text.find('*').unwrap()
+        );
+    }
+    refused(&mut rt, &request("B$z*2"), "formula_syntax");
+    for text in ["B3^2", "B3#", "B3@2"] {
+        let reply = call(&mut rt, &request(text));
+        assert_eq!(reply["error"]["code"], "unsupported_operator", "{reply}");
+        assert_eq!(reply["error"]["span"]["start"], 2, "{reply}");
+        assert_eq!(reply["error"]["span"]["end"], 3, "{reply}");
+    }
+    let mut cross = request("'été'!A2");
+    cross["geometry"]["sheets"] = serde_json::from_str(
+        r#"{"Été":{"collection_id":"Other","header_row":1,"rows":["o1"],"columns":["x"]}}"#,
+    )
+    .unwrap();
+    let reply = call(&mut rt, &cross);
+    assert_eq!(reply["response"]["payload"]["source"], "[o1.x]", "{reply}");
+    cross["geometry"]["sheets"]["été"] = cross["geometry"]["sheets"]["Été"].clone();
+    refused(&mut rt, &cross, "invalid_geometry");
+}
+
+#[test]
+fn translate_a1_review_guard_expansion_has_source_token_span() {
+    let mut document = fixture_document();
+    for field in ["qty", "price"] {
+        document
+            .schemas
+            .get_mut("Items")
+            .unwrap()
+            .fields
+            .get_mut(field)
+            .unwrap()
+            .required = false;
+    }
+    let mut rt = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap(),
+    );
+    let text = format!("1+{}", vec!["MIN(B3,C3)"; 30].join("+"));
+    let reply = call(&mut rt, &request(&text));
+    assert_eq!(reply["error"]["code"], "formula_syntax", "{reply}");
+    assert_eq!(reply["error"]["span"]["start"], 2, "{reply}");
+    assert_eq!(reply["error"]["span"]["end"], 5, "{reply}");
 }
