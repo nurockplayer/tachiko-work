@@ -100,8 +100,7 @@ jobs:
 
   browser-client-release-gate:
     name: Browser client release-equivalent gate
-    needs: quality
-    if: ${{ always() && !cancelled() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -199,10 +198,9 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-  browser-client-carrier-capacity:
-    name: Browser client carrier and capacity qualification
-    needs: quality
-    if: ${{ always() && !cancelled() }}
+  carrier-native:
+    name: Browser client carrier native acceptance
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -217,10 +215,51 @@ jobs:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
 
-      - name: Cache browser carrier Rust dependencies
+      - name: Cache browser carrier native Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          shared-key: browser-carrier-capacity
+          shared-key: browser-carrier-capacity-native
+
+      - name: Exercise focused native scalar-carrier acceptance
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          mkdir -p "${evidence}"
+          cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --locked --test interop_adapter 2>&1 | tee "${evidence}/native-acceptance.log"
+
+      - name: Preserve carrier-native evidence on success or failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carrier-native-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  carrier-foundation:
+    name: Browser client carrier foundation
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust
+        id: rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Cache browser carrier foundation Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: browser-carrier-capacity-foundation
 
       - name: Install pnpm
         uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
@@ -236,24 +275,6 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: packages/browser-client/pnpm-lock.yaml
-
-      - name: Install browser client qualification dependencies
-        run: pnpm --dir packages/browser-client install --frozen-lockfile
-
-      - name: Install ripgrep for source-boundary checks
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ripgrep
-
-      - name: Install Chromium
-        run: pnpm --dir packages/browser-client exec playwright install --with-deps chromium
-
-      - name: Exercise focused native scalar-carrier acceptance
-        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -o pipefail
-          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
-          mkdir -p "${evidence}"
-          cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --locked --test interop_adapter 2>&1 | tee "${evidence}/native-acceptance.log"
 
       - name: Build exact scalar-carrier WASM evidence
         id: scalar-carrier-build
@@ -311,8 +332,8 @@ jobs:
           python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \
             "${evidence}/rectangle/wire" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/wire-oracle.log"
 
-      - name: Qualify exact rectangular-capacity kit and browser Worker
-        id: rectangle-worker
+      - name: Qualify exact rectangular-capacity kit ABI
+        id: rectangle-kit
         if: ${{ !cancelled() && steps.rectangle-wire.outcome == 'success' }}
         shell: bash
         run: |
@@ -331,10 +352,150 @@ jobs:
               "${evidence}/rectangle/kit-wire" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/kit-wire-oracle.log"
             echo 'exported kit WASM independently passed scalar and rectangular ABI proof' >"${evidence}/rectangle/kit-abi-binding.txt"
           fi
+
+      - name: Record foundation evidence hashes
+        id: foundation-hashes
+        if: ${{ !cancelled() && steps.rectangle-kit.outcome == 'success' && steps.rectangle-fixtures.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
+          (
+            cd "${evidence}"
+            find runtime/designer_runtime.wasm rectangle/kit rectangle/fixtures -type f -print0 |
+              sort -z | xargs -0 sha256sum
+          ) >"${evidence}/foundation.sha256"
+
+      - name: Preserve carrier-foundation evidence on success or failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carrier-foundation-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  carrier-worker:
+    name: Browser client carrier Worker acceptance
+    needs: carrier-foundation
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download carrier-foundation evidence
+        id: download-foundation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: carrier-foundation-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+
+      - name: Verify foundation evidence hashes
+        id: verify-foundation
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "${RUNNER_TEMP}/scalar-carrier-evidence"
+          sha256sum -c foundation.sha256
+
+      - name: Install pnpm
+        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+        with:
+          node-version-file: false
+          version: 12.11.2
+          install: false
+
+      - name: Install Node.js
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: packages/browser-client/pnpm-lock.yaml
+
+      - name: Install browser client qualification dependencies
+        run: pnpm --dir packages/browser-client install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --dir packages/browser-client exec playwright install --with-deps chromium
+
+      - name: Exercise rectangular-capacity browser Worker acceptance
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.verify-foundation.outcome == 'success' && steps.node.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
           pnpm --dir packages/browser-client exec node e2e/rectangular-capacity.mjs \
             "${evidence}/rectangle/kit" "${evidence}/rectangle/fixtures" "${evidence}/rectangle/worker" 2>&1 | tee "${evidence}/rectangle/worker.log"
           python3 acceptance/bounded-text-capacity/rectangle_oracle.py verify \
             "${evidence}/rectangle/worker" "${evidence}/rectangle/fixtures" 2>&1 | tee "${evidence}/rectangle/worker-oracle.log"
+
+      - name: Preserve carrier-worker evidence on success or failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carrier-worker-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/worker
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/worker.log
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/worker-oracle.log
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  carrier-boundaries:
+    name: Browser client carrier capacity boundaries
+    needs: carrier-foundation
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download carrier-foundation evidence
+        id: download-foundation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: carrier-foundation-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+
+      - name: Verify foundation evidence hashes
+        id: verify-foundation
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "${RUNNER_TEMP}/scalar-carrier-evidence"
+          sha256sum -c foundation.sha256
+
+      - name: Install Rust
+        id: rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Cache browser carrier boundaries Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: browser-carrier-capacity-boundaries
+
+      - name: Install Node.js
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Exercise capacity boundaries against foundation bytes
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.rust.outcome == 'success' && steps.node.outcome == 'success' && steps.verify-foundation.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          evidence="${RUNNER_TEMP}/scalar-carrier-evidence"
           cargo run --release --locked --manifest-path packages/browser-client/runtime/Cargo.toml \
             --example capacity_saved_open_boundaries -- all "${evidence}/rectangle/ordinary" 2>&1 | tee "${evidence}/rectangle/ordinary.log"
           node acceptance/bounded-text-capacity/ordinary-saved-open-wire.mjs \
@@ -345,6 +506,85 @@ jobs:
           PYTHONDONTWRITEBYTECODE=1 python3 acceptance/bounded-text-capacity/resource_fixtures.py "${evidence}/rectangle/legacy-fixtures"
           node acceptance/bounded-text-capacity/boundaries.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" \
             "${evidence}/rectangle/legacy-fixtures" "${evidence}/rectangle/legacy-boundaries.json"
+
+      - name: Preserve carrier-boundaries evidence on success or failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carrier-boundaries-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/ordinary
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/ordinary.log
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/ordinary-wire.json
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/profile-boundaries.log
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/legacy-fixtures
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/legacy-fixtures.log
+            ${{ runner.temp }}/scalar-carrier-evidence/rectangle/legacy-boundaries.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  carrier-evidence:
+    name: Browser client carrier evidence
+    needs: [carrier-native, carrier-foundation, carrier-worker, carrier-boundaries]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every carrier lane to succeed
+        env:
+          CARRIER_NATIVE_RESULT: ${{ needs.carrier-native.result }}
+          CARRIER_FOUNDATION_RESULT: ${{ needs.carrier-foundation.result }}
+          CARRIER_WORKER_RESULT: ${{ needs.carrier-worker.result }}
+          CARRIER_BOUNDARIES_RESULT: ${{ needs.carrier-boundaries.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+          for lane in native foundation worker boundaries; do
+            variable="CARRIER_$(echo "${lane}" | tr '[:lower:]' '[:upper:]')_RESULT"
+            result="${!variable}"
+            echo "carrier-${lane}: ${result}"
+            if [[ "${result}" != 'success' ]]; then
+              failed=1
+            fi
+          done
+          exit "${failed}"
+
+      - name: Download carrier-native evidence
+        if: ${{ always() }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: carrier-native-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+
+      - name: Download carrier-foundation evidence
+        if: ${{ always() }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: carrier-foundation-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/
+
+      - name: Download carrier-worker evidence
+        if: ${{ always() }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: carrier-worker-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/rectangle/
+
+      - name: Download carrier-boundaries evidence
+        if: ${{ always() }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: carrier-boundaries-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scalar-carrier-evidence/rectangle/
+
+      - name: Verify foundation evidence hashes
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "${RUNNER_TEMP}/scalar-carrier-evidence"
+          sha256sum -c foundation.sha256
 
       - name: Preserve scalar-carrier evidence on success or failure
         if: ${{ always() }}
