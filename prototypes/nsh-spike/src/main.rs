@@ -18,7 +18,7 @@ fn main() -> impl std::process::Termination {
             title: "Tachiko NSH Spike".to_owned(),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             app_id: "com.example.tachikonshspike".to_owned(),
-            size: (480, 640),
+            size: (1180, 800),
             ..Default::default()
         },
     )
