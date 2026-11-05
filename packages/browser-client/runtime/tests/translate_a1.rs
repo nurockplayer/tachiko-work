@@ -497,5 +497,8 @@ fn translate_a1_leaves_column_rules_to_the_commit() {
     let update: Json = serde_json::from_str(r#"{"type":"formula_update","expected_revision":"resident/0","target":{"entity":"r2","field":"total"},"source":"2*3"}"#).unwrap();
     let reply = call(&mut rt, &update);
     assert_eq!(reply["status"], "error", "{reply}");
-    assert_eq!(reply["error"]["code"], "field_constraint_violation", "{reply}");
+    assert_eq!(
+        reply["error"]["code"], "field_constraint_violation",
+        "{reply}"
+    );
 }
