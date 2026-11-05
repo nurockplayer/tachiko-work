@@ -241,6 +241,118 @@ pub fn field_id(column: usize) -> FieldId {
     column_id(column)
 }
 
+/// Number of populated data columns in every formula-sweep table.
+pub const SWEEP_DATA_COLUMNS: usize = 3;
+
+/// Build the formula-count sweep fixture.
+///
+/// The document holds `tables` Number tables named `t0..`, each with
+/// `rows_per_table` rows. Every row populates the three data columns `c0..c2`
+/// and carries `formula_columns` same-row formula columns `f0..`, each
+/// `c0 * 2`. Entity ids are `t{table}-r{row:05}` and every entity key is
+/// unique across the document.
+#[must_use]
+pub fn formula_sweep_document(
+    tables: usize,
+    rows_per_table: usize,
+    formula_columns: usize,
+) -> Document {
+    assert!(tables > 0, "a formula sweep needs at least one table");
+    assert!(rows_per_table > 0, "a formula sweep needs at least one row");
+    let mut document = Document::empty("capacity-benchmark", "Formula Sweep");
+    for table in 0..tables {
+        let schema_id = SchemaId::from(format!("t{table}"));
+        let mut schema = Schema {
+            field_order: None,
+            id: schema_id.clone(),
+            key: SchemaKey::from(format!("t{table}")),
+            display_name: None,
+            fields: BTreeMap::new(),
+        };
+        for column in 0..SWEEP_DATA_COLUMNS {
+            let id = FieldId::from(sweep_data_column(column));
+            schema.fields.insert(id.clone(), number_field(id));
+        }
+        for column in 0..formula_columns {
+            let id = FieldId::from(sweep_formula_column(column));
+            schema.fields.insert(id.clone(), number_field(id));
+        }
+        document.schemas.insert(schema_id.clone(), schema);
+
+        for row in 0..rows_per_table {
+            let entity_id = sweep_entity_id(table, row);
+            let mut fields = BTreeMap::new();
+            for column in 0..SWEEP_DATA_COLUMNS {
+                fields.insert(
+                    FieldId::from(sweep_data_column(column)),
+                    Value::Number(number(sweep_data_value(row, column))),
+                );
+            }
+            for column in 0..formula_columns {
+                fields.insert(
+                    FieldId::from(sweep_formula_column(column)),
+                    Value::Formula(sweep_formula()),
+                );
+            }
+            document.entities.insert(
+                entity_id.clone(),
+                Entity {
+                    id: entity_id.clone(),
+                    key: EntityKey::from(format!("t{table}-r{row:05}")),
+                    schema: schema_id.clone(),
+                    fields,
+                },
+            );
+        }
+    }
+    document
+}
+
+/// Stable entity identity of one formula-sweep row.
+#[must_use]
+pub fn sweep_entity_id(table: usize, row: usize) -> EntityId {
+    EntityId::from(format!("t{table}-r{row:05}"))
+}
+
+fn sweep_data_column(column: usize) -> String {
+    format!("c{column}")
+}
+
+fn sweep_formula_column(column: usize) -> String {
+    format!("f{column}")
+}
+
+fn sweep_formula() -> Expression {
+    Expression::Multiply {
+        left: Box::new(Expression::SameRowReference(FieldId::from(
+            sweep_data_column(0),
+        ))),
+        right: Box::new(Expression::Number(number(2.0))),
+    }
+}
+
+fn sweep_data_value(row: usize, column: usize) -> f64 {
+    let raw = u32::try_from(
+        row.saturating_mul(SWEEP_DATA_COLUMNS)
+            .saturating_add(column)
+            % 997,
+    )
+    .expect("the modulus bounds the value");
+    1.0 + f64::from(raw)
+}
+
+fn number_field(id: FieldId) -> FieldDefinition {
+    FieldDefinition {
+        key: FieldKey::from(id.to_string()),
+        id,
+        display_name: None,
+        field_type: FieldType::Number,
+        required: false,
+        constraint: FieldConstraint::None,
+        number_format: None,
+    }
+}
+
 /// Small deterministic `SplitMix64` stream; reproducibility matters more than
 /// statistical quality.
 struct SplitMix64(u64);
