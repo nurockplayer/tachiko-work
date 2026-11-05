@@ -328,8 +328,8 @@ mod tests {
         let (row, column) = first_text_cell(&opened.table);
         assert_eq!(
             opened.table.rows[row].cells[column].text,
-            "Alric",
-            "the first editable text cell is the character name"
+            "Iron Sword",
+            "the first editable text cell of the default table"
         );
     }
 

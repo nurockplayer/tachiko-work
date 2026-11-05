@@ -8,11 +8,10 @@ mod work;
 
 use std::collections::HashMap;
 
-use nsh_base::data_table::{
+use nsh_base::{
     DataTable, DataTableApi, DataTableCell, DataTableColumn, DataTableRange, DataTableRows,
-    DataTableSelection, DataTableTarget, data_table,
+    DataTableSelection, DataTableTarget, data_table, input, theme,
 };
-use nsh_base::theme;
 use nsh_core::prelude::*;
 
 /// The app's UI set (`nsh.json` `"rust"`): what a TSX entry may import from
@@ -50,12 +49,21 @@ pub fn App() -> impl IntoElement {
                 .child(button("tab-work", "Work table", move || tab.set(0)))
                 .child(button("tab-grid", "Grid stress", move || tab.set(1))),
         )
+        // Both screens stay mounted; the tab hides the one not shown, as
+        // `nsh_base::tabs` hides its panels (`style_when(.., |s| s.hidden())`).
+        // A `when(..)` region over the same signal left the first screen on
+        // screen in the headless runner (REPORT.md, Gaps).
         .child(
-            when(
-                move || tab.get() == 0,
-                move || work_screen(work_state),
-            )
-            .otherwise(move || grid_screen(grid_state)),
+            view()
+                .flex_1()
+                .style_when(move || tab.get() != 0, |s| s.hidden())
+                .child(work_screen(work_state)),
+        )
+        .child(
+            view()
+                .flex_1()
+                .style_when(move || tab.get() != 1, |s| s.hidden())
+                .child(grid_screen(grid_state)),
         )
 }
 
@@ -264,7 +272,6 @@ fn work_screen(state: WorkState) -> impl IntoElement {
         )
         .child(
             data_table()
-                .test_id("work-table")
                 .flex_1()
                 .columns(columns)
                 .data(client_rows)
@@ -465,7 +472,6 @@ fn grid_screen(state: GridState) -> impl IntoElement {
         )
         .child(
             data_table()
-                .test_id("grid-table")
                 .component_ref(&state.table)
                 .flex_1()
                 .columns(grid_columns())
