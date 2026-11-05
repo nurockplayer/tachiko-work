@@ -470,3 +470,32 @@ fn translate_a1_review_guard_expansion_has_source_token_span() {
     assert_eq!(reply["error"]["span"]["start"], 2, "{reply}");
     assert_eq!(reply["error"]["span"]["end"], 5, "{reply}");
 }
+
+#[test]
+fn translate_a1_leaves_column_rules_to_the_commit() {
+    let mut document = fixture_document();
+    let constraint = tachiko_workspace_engine::FieldConstraint::NumberInclusiveRange {
+        min: Number::new(1.0).unwrap(),
+        max: Number::new(5.0).unwrap(),
+    };
+    document
+        .schemas
+        .get_mut("Items")
+        .unwrap()
+        .fields
+        .get_mut("total")
+        .unwrap()
+        .constraint = constraint;
+    let mut rt = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap(),
+    );
+    // A valid formula outside the rule is translated; the rule is judged at commit.
+    ok(&mut rt, "2*3", "2*3", &[]);
+    ok(&mut rt, "2+1", "2+1", &[]);
+    refused(&mut rt, &request("D3*2"), "formula_cycle");
+    refused(&mut rt, &request("2*"), "formula_syntax");
+    let update: Json = serde_json::from_str(r#"{"type":"formula_update","expected_revision":"resident/0","target":{"entity":"r2","field":"total"},"source":"2*3"}"#).unwrap();
+    let reply = call(&mut rt, &update);
+    assert_eq!(reply["status"], "error", "{reply}");
+    assert_eq!(reply["error"]["code"], "field_constraint_violation", "{reply}");
+}

@@ -490,6 +490,10 @@ impl DesignerRuntime {
             | Err(DesignerError::Lifecycle(
                 tachiko_workspace_engine::patch_lifecycle::PatchLifecycleError::NoChange,
             )) => {}
+            // The target column's value rule is judged when the update is committed, not here.
+            Err(error)
+                if error.failure_projection(self.current_revision()).code
+                    == "field_constraint_violation" => {}
             Err(error) => return Err(locate(error)),
         }
         Ok(A1Translation {
