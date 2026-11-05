@@ -11,7 +11,8 @@ use crate::interop_document::{
     A1Geometry, excel_extremum, parse_a1_address, row_is_absolute, translate_a1_with,
 };
 use crate::{
-    DesignerError, DesignerRuntime, FormulaUpdateRequest, designer_lifecycle, designer_preview,
+    DesignerError, DesignerRuntime, FormulaUpdateRequest, constraint_failure, designer_lifecycle,
+    designer_preview,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -485,11 +486,25 @@ impl DesignerRuntime {
                     TrustedInstant::new(2),
                 )
             });
+        // Name a preview's constraint refusal the way the commit does, so it is not
+        // mistaken for a syntax failure below.
+        let preview = preview.map_err(|error| match &error {
+            DesignerError::Lifecycle(
+                tachiko_workspace_engine::patch_lifecycle::PatchLifecycleError::ValidationFailed {
+                    report,
+                },
+            ) => constraint_failure(document, &BTreeSet::new(), report).unwrap_or(error),
+            _ => error,
+        });
         match preview {
             Ok(_)
             | Err(DesignerError::Lifecycle(
                 tachiko_workspace_engine::patch_lifecycle::PatchLifecycleError::NoChange,
             )) => {}
+            // The target column's value rule is judged when the update is committed, not here.
+            Err(error)
+                if error.failure_projection(self.current_revision()).code
+                    == "field_constraint_violation" => {}
             Err(error) => return Err(locate(error)),
         }
         Ok(A1Translation {
