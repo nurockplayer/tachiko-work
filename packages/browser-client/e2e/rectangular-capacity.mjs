@@ -31,7 +31,12 @@ try {
       for (const phase of ["saved", "reopened"]) {
         const start = performance.now();
         const laps = {};
-        const lap = name => { laps[name] = +(performance.now() - start).toFixed(1); };
+        let lapMark = start;
+        const lap = name => {
+          const mark = performance.now();
+          laps[name] = +(mark - lapMark).toFixed(1);
+          lapMark = mark;
+        };
         const browser = await chromium.launch({ headless: true });
         lap("launch");
         const version = browser.version();
@@ -43,14 +48,30 @@ try {
           await page.goto(origin);
           lap("pageLoad");
           observed = await page.evaluate(async ({ origin, caseValue, sourceFormat, carrier, phase, saved, rejected }) => {
+            const bodyStart = performance.now();
             const check = (ok, label) => { if (!ok) throw Error(label); };
             const same = (a, b, label) => check(JSON.stringify(a) === JSON.stringify(b), label);
             const ms = before => +(performance.now() - before).toFixed(1);
             const initStart = performance.now();
             const kit = await import(`${origin}/kit/experimental-client.js`);
             const client = kit.createExperimentalDesignerClient();
-            const timings = { init: ms(initStart), import: 0, inspect: 0, open: 0, tableReads: [], snapshots: [], rejects: [] };
+            // A round trip with no project open only reaches the Worker runtime
+            // through closeProject; every command answers `no_project_open`.
+            await client.closeProject();
+            const timings = { init: ms(initStart), evaluateBody: 0, import: 0, inspect: 0, open: 0, tableReads: [], snapshots: [], rejects: [] };
             const byteList = bytes => Array.from(new Uint8Array(bytes));
+            // Number arrays cost far more than base64 strings to cross page.evaluate,
+            // so every byte payload is base64 on the wire and restored here.
+            const encodeBytes = bytes => {
+              let text = "";
+              for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+              return btoa(text);
+            };
+            const decodeBytes = text => Uint8Array.from(atob(text), character => character.charCodeAt(0));
+            const toBase64 = value => encodeBytes(Uint8Array.from(value));
+            if (saved !== undefined) saved = { ...saved,
+              opaque: byteList(decodeBytes(saved.opaque)),
+              files: saved.files.map(file => ({ path: file.path, bytes: byteList(decodeBytes(file.bytes)) })) };
             const transfer = state => carrier === "opaque" ? Uint8Array.from(state.opaque).buffer
               : kit.projectTransferFromEntries(state.files.map(f => ({ path: f.path, bytes: Uint8Array.from(f.bytes).buffer })));
             const values = structuredClone(phase === "saved" ? caseValue.values : saved.values);
@@ -186,22 +207,27 @@ try {
                 same(carrier === "opaque" ? resaved.opaque : resaved.files, carrier === "opaque" ? saved.opaque : saved.files, "same carrier bytes after fresh reopen");
               }
               const final = await snapshot();
-              return { saved: { metadata, opaque: final.opaque, files: final.files, values, scope: final.occurrence.scope }, exports: final.exports, durations, timings };
+              const payload = { saved: { metadata, opaque: toBase64(final.opaque),
+                  files: final.files.map(file => ({ path: file.path, bytes: toBase64(file.bytes) })), values, scope: final.occurrence.scope },
+                exports: Object.fromEntries(Object.entries(final.exports).map(([format, bytes]) => [format, toBase64(bytes)])), durations, timings };
+              timings.evaluateBody = ms(bodyStart);
+              return payload;
             } finally { await client.close(); }
           }, { origin, caseValue, sourceFormat, carrier, phase, saved, rejected: manifest.refused });
+          lap("evaluate");
           assert.equal(workerUrls.length, 1);
           assert(workerUrls[0].endsWith("/kit/experimental-client.worker.js"));
           saved = observed.saved;
           for (const format of ["csv", "xlsx"]) {
             const file = `${caseValue.name}-${sourceFormat}-${carrier}-${phase}.${format}`;
-            await writeFile(resolve(destination, file), Uint8Array.from(observed.exports[format]), { flag: "wx" });
+            await writeFile(resolve(destination, file), Buffer.from(observed.exports[format], "base64"), { flag: "wx" });
             captures.push({ case: caseValue.name, file, state: "edited", phase, sourceFormat, carrier });
           }
-        } finally { await browser.close(); lap("close"); }
-        lap("total");
+        } finally { lap("assertsAndCaptures"); await browser.close(); lap("close"); }
+        laps.total = +(performance.now() - start).toFixed(1);
         const { timings: cellTimings } = observed;
         const summary = values => values.reduce((sum, value) => sum + value, 0).toFixed(1);
-        console.log(`timing ${caseValue.name} ${sourceFormat} ${carrier} ${phase} total=${laps.total}ms launch=${laps.launch} init=${cellTimings.init} import=${cellTimings.import} tableReads=${cellTimings.tableReads.length}/${summary(cellTimings.tableReads.map(read => read.ms))}ms snapshots=${cellTimings.snapshots.length}/${summary(cellTimings.snapshots.map(entry => entry.ms))}ms rejects=${summary(cellTimings.rejects.map(entry => entry.ms))}ms close=${laps.close}`);
+        console.log(`timing ${caseValue.name} ${sourceFormat} ${carrier} ${phase} total=${laps.total}ms launch=${laps.launch} pageLoad=${laps.pageLoad} evaluate=${laps.evaluate} evaluateBody=${cellTimings.evaluateBody} init=${cellTimings.init} import=${cellTimings.import} tableReads=${cellTimings.tableReads.length}/${summary(cellTimings.tableReads.map(read => read.ms))}ms snapshots=${cellTimings.snapshots.length}/${summary(cellTimings.snapshots.map(entry => entry.ms))}ms rejects=${summary(cellTimings.rejects.map(entry => entry.ms))}ms asserts+captures=${laps.assertsAndCaptures} close=${laps.close}`);
         records.push({ case: caseValue.name, sourceFormat, carrier, phase, workerUrls,
           browser: version, durations: observed.durations, milliseconds: laps.total, outcome: "PASS" });
         timingCells.push({ case: caseValue.name, sourceFormat, carrier, phase, node: laps,
