@@ -206,6 +206,7 @@ fn document() -> Document {
                 },
             ),
         ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -440,31 +441,31 @@ fn a_criterion_can_read_another_cell() {
     );
 
     // A Text cell holding a plain word.
-    let mut document = document();
-    document
+    let mut fixture = document();
+    fixture
         .entities
         .get_mut("rent")
         .unwrap()
         .fields
         .insert(FieldId::from("category"), Value::Text("Food".to_owned()));
-    document
+    fixture
         .entities
         .get_mut("tools")
         .unwrap()
         .fields
         .insert(FieldId::from("category"), Value::Text("food".to_owned()));
-    document.entities.get_mut("summary").unwrap().fields.insert(
+    fixture.entities.get_mut("summary").unwrap().fields.insert(
         FieldId::from("criterion_text"),
         Value::Text("Food".to_owned()),
     );
     set_result(
-        &mut document,
+        &mut fixture,
         conditional(
             ConditionalAggregate::Count,
             vec![cell_criterion("category", "criterion_text")],
         ),
     );
-    assert_eq!(result(&document), value(2.0));
+    assert_eq!(result(&fixture), value(2.0));
 
     // A Text cell holding a wildcard, a relational number and a boolean.
     for (text, expected) in [("f*", 2.0), (">5", 3.0), ("TRUE", 3.0)] {

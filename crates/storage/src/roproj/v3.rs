@@ -1048,63 +1048,7 @@ impl ExpressionV3 {
                     require_id("formula field id", &column.field)?;
                 }
                 Self::ColumnConditional(arguments) => {
-                    let aggregate = conditional_aggregate(&arguments.aggregate)?;
-                    match (aggregate, &arguments.values) {
-                        (ConditionalAggregateKind::Count, Some(_)) => {
-                            return invalid_representation(
-                                "a count conditional aggregate has no value column".to_owned(),
-                            );
-                        }
-                        (
-                            ConditionalAggregateKind::Sum | ConditionalAggregateKind::Average,
-                            None,
-                        ) => {
-                            return invalid_representation(
-                                "a sum or average conditional aggregate requires a value column"
-                                    .to_owned(),
-                            );
-                        }
-                        _ => {}
-                    }
-                    if let Some(values) = &arguments.values {
-                        require_id("formula schema id", &values.schema)?;
-                        require_id("formula field id", &values.field)?;
-                    }
-                    if arguments.criteria.is_empty() {
-                        return invalid_representation(
-                            "a conditional aggregate requires at least one criterion".to_owned(),
-                        );
-                    }
-                    if arguments.criteria.len() > MAX_CONDITIONAL_CRITERIA {
-                        return invalid_representation(format!(
-                            "a conditional aggregate admits at most {MAX_CONDITIONAL_CRITERIA} criteria"
-                        ));
-                    }
-                    for criterion in &arguments.criteria {
-                        require_id("formula schema id", &criterion.column.schema)?;
-                        require_id("formula field id", &criterion.column.field)?;
-                        match (comparison_operator(&criterion.operator)?, &criterion.value) {
-                            (ComparisonOperator::Equal, Some(value)) => {
-                                stack.push((value, depth + 1));
-                            }
-                            (ComparisonOperator::Equal | ComparisonOperator::NotEqual, None) => {}
-                            (operator, Some(value)) => {
-                                if !matches!(value.as_ref(), ExpressionV3::Number(_)) {
-                                    return invalid_representation(format!(
-                                        "a relational criterion requires a number literal, found '{}'",
-                                        operator.as_str()
-                                    ));
-                                }
-                                stack.push((value, depth + 1));
-                            }
-                            (operator, None) => {
-                                return invalid_representation(format!(
-                                    "a blank criterion admits only '=' or '<>', found '{}'",
-                                    operator.as_str()
-                                ));
-                            }
-                        }
-                    }
+                    validate_conditional(arguments, depth, &mut stack)?;
                 }
                 Self::Add(arguments)
                 | Self::Subtract(arguments)
@@ -1173,48 +1117,7 @@ impl ExpressionV3 {
                     FieldId::from(args.column.field),
                 ),
             },
-            Self::ColumnConditional(args) => {
-                let criteria = args
-                    .criteria
-                    .into_iter()
-                    .map(|criterion| {
-                        Ok(ColumnCriterion {
-                            operator: comparison_operator(&criterion.operator)?,
-                            column: column_ref(criterion.column.schema, criterion.column.field),
-                            value: match criterion.value {
-                                Some(expression) => Some(Box::new(expression.into_semantic()?)),
-                                None => None,
-                            },
-                        })
-                    })
-                    .collect::<Result<Vec<_>, FormatError>>()?;
-                let aggregate = match conditional_aggregate(&args.aggregate)? {
-                    ConditionalAggregateKind::Sum => ConditionalAggregate::Sum(match args.values {
-                        Some(values) => column_ref(values.schema, values.field),
-                        None => {
-                            return invalid_representation(
-                                "a sum conditional aggregate requires a value column".to_owned(),
-                            );
-                        }
-                    }),
-                    ConditionalAggregateKind::Average => {
-                        ConditionalAggregate::Average(match args.values {
-                            Some(values) => column_ref(values.schema, values.field),
-                            None => {
-                                return invalid_representation(
-                                    "an average conditional aggregate requires a value column"
-                                        .to_owned(),
-                                );
-                            }
-                        })
-                    }
-                    ConditionalAggregateKind::Count => ConditionalAggregate::Count,
-                };
-                Expression::ColumnConditional {
-                    aggregate,
-                    criteria,
-                }
-            }
+            Self::ColumnConditional(args) => column_conditional_into_semantic(args)?,
             Self::Add(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Add { left, right })?
             }
@@ -1263,6 +1166,101 @@ impl ExpressionV3 {
             Self::IsBlank(expression) => Expression::IsBlank(Box::new(expression.into_semantic()?)),
         })
     }
+}
+
+fn validate_conditional<'a>(
+    arguments: &'a ColumnConditionalArgsV3,
+    depth: usize,
+    stack: &mut Vec<(&'a ExpressionV3, usize)>,
+) -> Result<(), FormatError> {
+    let aggregate = conditional_aggregate(&arguments.aggregate)?;
+    match (aggregate, &arguments.values) {
+        (ConditionalAggregateKind::Count, Some(_)) => {
+            return invalid_representation(
+                "a count conditional aggregate has no value column".to_owned(),
+            );
+        }
+        (ConditionalAggregateKind::Sum | ConditionalAggregateKind::Average, None) => {
+            return invalid_representation(
+                "a sum or average conditional aggregate requires a value column".to_owned(),
+            );
+        }
+        _ => {}
+    }
+    if let Some(values) = &arguments.values {
+        require_id("formula schema id", &values.schema)?;
+        require_id("formula field id", &values.field)?;
+    }
+    if arguments.criteria.is_empty() {
+        return invalid_representation(
+            "a conditional aggregate requires at least one criterion".to_owned(),
+        );
+    }
+    if arguments.criteria.len() > MAX_CONDITIONAL_CRITERIA {
+        return invalid_representation(format!(
+            "a conditional aggregate admits at most {MAX_CONDITIONAL_CRITERIA} criteria"
+        ));
+    }
+    for criterion in &arguments.criteria {
+        require_id("formula schema id", &criterion.column.schema)?;
+        require_id("formula field id", &criterion.column.field)?;
+        match (comparison_operator(&criterion.operator)?, &criterion.value) {
+            (ComparisonOperator::Equal, Some(value)) => {
+                stack.push((value, depth + 1));
+            }
+            (ComparisonOperator::Equal | ComparisonOperator::NotEqual, None) => {}
+            (operator, Some(value)) => {
+                if !matches!(value.as_ref(), ExpressionV3::Number(_)) {
+                    return invalid_representation(format!(
+                        "a relational criterion requires a number literal, found '{}'",
+                        operator.as_str()
+                    ));
+                }
+                stack.push((value, depth + 1));
+            }
+            (operator, None) => {
+                return invalid_representation(format!(
+                    "a blank criterion admits only '=' or '<>', found '{}'",
+                    operator.as_str()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn column_conditional_into_semantic(
+    args: ColumnConditionalArgsV3,
+) -> Result<Expression, FormatError> {
+    let criteria = args
+        .criteria
+        .into_iter()
+        .map(|criterion| {
+            Ok(ColumnCriterion {
+                operator: comparison_operator(&criterion.operator)?,
+                column: column_ref(criterion.column.schema, criterion.column.field),
+                value: match criterion.value {
+                    Some(expression) => Some(Box::new(expression.into_semantic()?)),
+                    None => None,
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, FormatError>>()?;
+    let value_column = || match args.values {
+        Some(values) => Ok(column_ref(values.schema, values.field)),
+        None => invalid_representation(
+            "a sum or average conditional aggregate requires a value column".to_owned(),
+        ),
+    };
+    let aggregate = match conditional_aggregate(&args.aggregate)? {
+        ConditionalAggregateKind::Sum => ConditionalAggregate::Sum(value_column()?),
+        ConditionalAggregateKind::Average => ConditionalAggregate::Average(value_column()?),
+        ConditionalAggregateKind::Count => ConditionalAggregate::Count,
+    };
+    Ok(Expression::ColumnConditional {
+        aggregate,
+        criteria,
+    })
 }
 
 impl BinaryArgumentsV3 {

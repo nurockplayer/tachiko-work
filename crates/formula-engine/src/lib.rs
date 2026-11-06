@@ -811,13 +811,12 @@ fn extract_value_columns(expression: &Expression) -> BTreeSet<ColumnRef> {
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 columns.insert(column.clone());
             }
-            Expression::ColumnConditional { aggregate, .. } => {
-                if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
-                    aggregate
-                {
+            Expression::ColumnConditional { aggregate, .. } => match aggregate {
+                ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
                     columns.insert(column.clone());
                 }
-            }
+                ConditionalAggregate::Count => {}
+            },
             _ => {}
         }
         pending.extend(node.children());

@@ -184,15 +184,15 @@ impl Evaluation<'_> {
             if entity.schema != schema {
                 continue;
             }
-            let mut matches = true;
+            let mut included = true;
             for (criterion, test) in criteria.iter().zip(&tests) {
                 let cell = self.criterion_cell(entity, &criterion.column.field)?;
                 if !test.matches(cell) {
-                    matches = false;
+                    included = false;
                     break;
                 }
             }
-            if !matches {
+            if !included {
                 continue;
             }
             matched += 1;

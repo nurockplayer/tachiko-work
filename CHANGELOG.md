@@ -6,6 +6,18 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Conditional aggregates (Work #681): `SUMIFS`, `COUNTIFS` and `AVERAGEIFS`
+  sum, count or average one Number column over the rows that satisfy up to
+  sixteen column criteria; `SUMIF` and `COUNTIF` are their shorter spellings.
+  Criterion text follows Excel's rules (operators, case-insensitive Text,
+  `*`/`?`/`~` wildcards, numbers, dates, yes/no, blank tests) and is usually
+  read from a Text cell, so editing that cell updates the projection. Written
+  string literals are limited to numbers and blank tests until stored text is
+  accepted; any other written criterion refuses with a message asking for a
+  cell reference. `.roproj/v3` stores the comparison and an optional value
+  expression, while `.roproj/v1`/`v2` and direct `.ro/v2` refuse the form and
+  XLSX export falls back to the computed value.
+
 - A native column changes type as one operation (Work #660): the experimental
   client's `changeColumnType` and the `change_column_type` tracker command
   convert every stored value of one scalar column to Text, Number, Boolean or
