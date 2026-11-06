@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use super::{
     AuthorizationAction, Document, DocumentScopeId, Entity, FieldConstraint, FieldDefinition,
     FieldRef, FieldType, Grant, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
-    PatchLifecycleError, PrincipalKind, ScopedSemanticSubject, SemanticCommand, SemanticPatch,
+    PatchLifecycleError, PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticCommand,
     SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
     SemanticScope, TrustedInstant, V2ReceiptEvidence, Value,
 };
@@ -128,14 +128,16 @@ fn propose(
     document: &Document,
     id: &str,
     body: SemanticPatchBody,
-) -> Result<SemanticPatch, PatchLifecycleError> {
-    lifecycle.propose(
-        &"scope".into(),
-        document,
-        &"r1".into(),
-        super::ProposalRequest::new(id.into(), "r1".into(), body, "human".into()),
-        TrustedInstant::new(1),
-    )
+) -> Result<ProposalId, PatchLifecycleError> {
+    lifecycle
+        .propose(
+            &"scope".into(),
+            document,
+            &"r1".into(),
+            super::ProposalRequest::new(id.into(), "r1".into(), body, "human".into()),
+            TrustedInstant::new(1),
+        )
+        .map(|patch| patch.id().clone())
 }
 
 struct Host {
