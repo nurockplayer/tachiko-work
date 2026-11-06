@@ -8,10 +8,11 @@ use std::{
 use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
-    ColumnAggregateFunction, ColumnRef, ComparisonOperator, Document, DocumentId, Entity, EntityId,
-    EntityKey, Expression, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
-    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
+    CriterionTest, CriterionValue, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
+    FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_CONDITIONAL_CRITERIA,
     MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
     validate_document, validate_keyed_grouped_sum_definitions,
 };
@@ -369,6 +370,7 @@ enum ExpressionV3 {
     SameRowReference(String),
     ColumnTotal(ColumnRefV3),
     ColumnAggregate(ColumnAggregateArgsV3),
+    ColumnConditional(ColumnConditionalArgsV3),
     Add(BinaryArgumentsV3),
     Subtract(BinaryArgumentsV3),
     Multiply(BinaryArgumentsV3),
@@ -396,6 +398,36 @@ struct FieldRefV3 {
 struct ColumnAggregateArgsV3 {
     function: ColumnAggregateFunction,
     column: ColumnRefV3,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColumnConditionalArgsV3 {
+    aggregate: String,
+    #[serde(default)]
+    values: Option<ColumnRefV3>,
+    criteria: Vec<ColumnCriterionV3>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ColumnCriterionV3 {
+    Text(TextCriterionV3),
+    Expression(ExpressionCriterionV3),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextCriterionV3 {
+    column: ColumnRefV3,
+    text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpressionCriterionV3 {
+    column: ColumnRefV3,
+    expression: Box<ExpressionV3>,
 }
 
 #[derive(Deserialize)]
@@ -1027,6 +1059,56 @@ impl ExpressionV3 {
                     require_id("formula schema id", &column.schema)?;
                     require_id("formula field id", &column.field)?;
                 }
+                Self::ColumnConditional(arguments) => {
+                    let aggregate = conditional_aggregate(&arguments.aggregate)?;
+                    match (aggregate, &arguments.values) {
+                        (ConditionalAggregateKind::Count, Some(_)) => {
+                            return invalid_representation(
+                                "a count conditional aggregate has no value column".to_owned(),
+                            );
+                        }
+                        (ConditionalAggregateKind::Sum | ConditionalAggregateKind::Average, None) => {
+                            return invalid_representation(
+                                "a sum or average conditional aggregate requires a value column"
+                                    .to_owned(),
+                            );
+                        }
+                        _ => {}
+                    }
+                    if let Some(values) = &arguments.values {
+                        require_id("formula schema id", &values.schema)?;
+                        require_id("formula field id", &values.field)?;
+                    }
+                    if arguments.criteria.is_empty() {
+                        return invalid_representation(
+                            "a conditional aggregate requires at least one criterion".to_owned(),
+                        );
+                    }
+                    if arguments.criteria.len() > MAX_CONDITIONAL_CRITERIA {
+                        return invalid_representation(format!(
+                            "a conditional aggregate admits at most {MAX_CONDITIONAL_CRITERIA} criteria"
+                        ));
+                    }
+                    for criterion in &arguments.criteria {
+                        let column = match criterion {
+                            ColumnCriterionV3::Text(criterion) => {
+                                if let Err(error) = CriterionTest::parse(&criterion.text) {
+                                    return invalid_representation(format!(
+                                        "invalid criterion text '{}': {error}",
+                                        criterion.text
+                                    ));
+                                }
+                                &criterion.column
+                            }
+                            ColumnCriterionV3::Expression(criterion) => {
+                                stack.push((&criterion.expression, depth + 1));
+                                &criterion.column
+                            }
+                        };
+                        require_id("formula schema id", &column.schema)?;
+                        require_id("formula field id", &column.field)?;
+                    }
+                }
                 Self::Add(arguments)
                 | Self::Subtract(arguments)
                 | Self::Multiply(arguments)
@@ -1094,6 +1176,57 @@ impl ExpressionV3 {
                     FieldId::from(args.column.field),
                 ),
             },
+            Self::ColumnConditional(args) => {
+                let criteria = args
+                    .criteria
+                    .into_iter()
+                    .map(|criterion| {
+                        Ok(match criterion {
+                            ColumnCriterionV3::Text(criterion) => ColumnCriterion {
+                                column: column_ref(
+                                    criterion.column.schema,
+                                    criterion.column.field,
+                                ),
+                                value: CriterionValue::Text(criterion.text),
+                            },
+                            ColumnCriterionV3::Expression(criterion) => ColumnCriterion {
+                                column: column_ref(
+                                    criterion.column.schema,
+                                    criterion.column.field,
+                                ),
+                                value: CriterionValue::Expression(Box::new(
+                                    criterion.expression.into_semantic()?,
+                                )),
+                            },
+                        })
+                    })
+                    .collect::<Result<Vec<_>, FormatError>>()?;
+                let aggregate = match conditional_aggregate(&args.aggregate)? {
+                    ConditionalAggregateKind::Sum => ConditionalAggregate::Sum(match args.values {
+                        Some(values) => column_ref(values.schema, values.field),
+                        None => {
+                            return invalid_representation(
+                                "a sum conditional aggregate requires a value column",
+                            );
+                        }
+                    }),
+                    ConditionalAggregateKind::Average => {
+                        ConditionalAggregate::Average(match args.values {
+                            Some(values) => column_ref(values.schema, values.field),
+                            None => {
+                                return invalid_representation(
+                                    "an average conditional aggregate requires a value column",
+                                );
+                            }
+                        })
+                    }
+                    ConditionalAggregateKind::Count => ConditionalAggregate::Count,
+                };
+                Expression::ColumnConditional {
+                    aggregate,
+                    criteria,
+                }
+            }
             Self::Add(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Add { left, right })?
             }
@@ -1284,6 +1417,39 @@ impl ExpressionV3 {
                         schema: column.schema.to_string(),
                         field: column.field.to_string(),
                     },
+                })
+            }
+            Expression::ColumnConditional {
+                aggregate,
+                criteria,
+            } => {
+                let (aggregate, values) = match aggregate {
+                    ConditionalAggregate::Sum(column) => ("sum", Some(wire_column(column))),
+                    ConditionalAggregate::Average(column) => {
+                        ("average", Some(wire_column(column)))
+                    }
+                    ConditionalAggregate::Count => ("count", None),
+                };
+                Self::ColumnConditional(ColumnConditionalArgsV3 {
+                    aggregate: aggregate.to_owned(),
+                    values,
+                    criteria: criteria
+                        .iter()
+                        .map(|criterion| match &criterion.value {
+                            CriterionValue::Text(text) => {
+                                ColumnCriterionV3::Text(TextCriterionV3 {
+                                    column: wire_column(&criterion.column),
+                                    text: text.clone(),
+                                })
+                            }
+                            CriterionValue::Expression(expression) => {
+                                ColumnCriterionV3::Expression(ExpressionCriterionV3 {
+                                    column: wire_column(&criterion.column),
+                                    expression: Box::new(Self::from_semantic(expression)),
+                                })
+                            }
+                        })
+                        .collect(),
                 })
             }
             Expression::Add { left, right } => {
@@ -1760,6 +1926,43 @@ fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<()
             compact_member_string(output, "field", &args.column.field, false)?;
             output.push_str("}}");
         }
+        ExpressionV3::ColumnConditional(args) => {
+            compact_member_string(output, "op", "column_conditional", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "aggregate", &args.aggregate, true)?;
+            if let Some(values) = &args.values {
+                compact_member_prefix(output, "values")?;
+                write_compact_column(output, values)?;
+                output.push(',');
+            }
+            compact_member_prefix(output, "criteria")?;
+            output.push('[');
+            for (index, criterion) in args.criteria.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                output.push('{');
+                match criterion {
+                    ColumnCriterionV3::Text(criterion) => {
+                        compact_member_prefix(output, "column")?;
+                        write_compact_column(output, &criterion.column)?;
+                        output.push(',');
+                        compact_member_string(output, "text", &criterion.text, false)?;
+                    }
+                    ColumnCriterionV3::Expression(criterion) => {
+                        compact_member_prefix(output, "column")?;
+                        write_compact_column(output, &criterion.column)?;
+                        output.push(',');
+                        compact_member_prefix(output, "expression")?;
+                        write_expression(output, &criterion.expression)?;
+                    }
+                }
+                output.push('}');
+            }
+            output.push(']');
+            output.push('}');
+        }
         ExpressionV3::Add(args) => write_binary_expression(output, "add", args)?,
         ExpressionV3::Subtract(args) => write_binary_expression(output, "subtract", args)?,
         ExpressionV3::Multiply(args) => write_binary_expression(output, "multiply", args)?,
@@ -1830,6 +2033,14 @@ fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<()
             output.push('}');
         }
     }
+    output.push('}');
+    Ok(())
+}
+
+fn write_compact_column(output: &mut String, column: &ColumnRefV3) -> Result<(), FormatError> {
+    output.push('{');
+    compact_member_string(output, "schema", &column.schema, true)?;
+    compact_member_string(output, "field", &column.field, false)?;
     output.push('}');
     Ok(())
 }
@@ -2021,6 +2232,16 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                         }
                         stack.push((expression, depth + 1));
                     }
+                    Expression::ColumnConditional { criteria, .. } => {
+                        stack.extend(criteria.iter().filter_map(|criterion| {
+                            match &criterion.value {
+                                CriterionValue::Expression(expression) => {
+                                    Some((expression.as_ref(), depth + 1))
+                                }
+                                CriterionValue::Text(_) => None,
+                            }
+                        }));
+                    }
                     Expression::Number(_)
                     | Expression::Reference(_)
                     | Expression::SameRowReference(_)
@@ -2100,6 +2321,35 @@ fn ensure_increasing(kind: &str, previous: Option<&str>, current: &str) -> Resul
 
 fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
     Err(FormatError::InvalidRoProjectRepresentation { message })
+}
+
+fn column_ref(schema: String, field: String) -> ColumnRef {
+    ColumnRef::new(SchemaId::from(schema), FieldId::from(field))
+}
+
+fn wire_column(column: &ColumnRef) -> ColumnRefV3 {
+    ColumnRefV3 {
+        schema: column.schema.to_string(),
+        field: column.field.to_string(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConditionalAggregateKind {
+    Sum,
+    Average,
+    Count,
+}
+
+fn conditional_aggregate(name: &str) -> Result<ConditionalAggregateKind, FormatError> {
+    match name {
+        "sum" => Ok(ConditionalAggregateKind::Sum),
+        "average" => Ok(ConditionalAggregateKind::Average),
+        "count" => Ok(ConditionalAggregateKind::Count),
+        _ => invalid_representation(format!(
+            "unknown conditional aggregate '{name}'; expected sum, average, or count"
+        )),
+    }
 }
 
 fn comparison_operator(operator: &str) -> Result<ComparisonOperator, FormatError> {

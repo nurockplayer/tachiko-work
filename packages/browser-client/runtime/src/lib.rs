@@ -51,8 +51,9 @@ use tachiko_storage::{
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, ColumnRef, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey,
-    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError,
+    CalculationFailure, ColumnRef, ConditionalAggregate, CriterionValue, Date, DiagnosticCode,
+    Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, FormulaBindError,
     IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
     SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
@@ -7907,6 +7908,21 @@ fn map_copy_references(
         | Expression::SameRowReference(_)
         | Expression::ColumnTotal(_)
         | Expression::ColumnAggregate { .. } => Ok(()),
+        // A column argument names a schema column, but a criterion expression
+        // can read a cell of the copied row and must be rebased like any
+        // other formula text.
+        Expression::ColumnConditional { criteria, .. } => {
+            for criterion in criteria {
+                if let CriterionValue::Expression(expression) = &mut criterion.value {
+                    match expression.as_mut() {
+                        Expression::Reference(reference) => visit(reference, false)?,
+                        Expression::SameRowReference(_) => {}
+                        other => map_copy_references(other, visit)?,
+                    }
+                }
+            }
+            Ok(())
+        }
         Expression::Reference(reference) => visit(reference, true),
         Expression::IsBlank(reference) => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
@@ -8027,17 +8043,24 @@ fn map_duplicate_expression(
             Ok(())
         }
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
-            // A total of the copied table's own column follows the copy; a
-            // total of any other table keeps pointing at that table.
-            if let Some(schema) = schemas.get(&column.schema) {
-                let field = fields.get(&column.field).cloned().ok_or_else(|| {
-                    table_error(&format!(
-                        "internal column-total field '{}' has no copied field",
-                        column.field
-                    ))
-                })?;
-                column.schema = schema.clone();
-                column.field = field;
+            map_duplicate_column(column, fields, schemas)
+        }
+        // Every column of the node follows the copy, and a criterion
+        // expression is remapped like any other formula subtree.
+        Expression::ColumnConditional {
+            aggregate,
+            criteria,
+        } => {
+            if let ConditionalAggregate::Sum(column)
+            | ConditionalAggregate::Average(column) = aggregate
+            {
+                map_duplicate_column(column, fields, schemas)?;
+            }
+            for criterion in criteria {
+                map_duplicate_column(&mut criterion.column, fields, schemas)?;
+                if let CriterionValue::Expression(expression) = &mut criterion.value {
+                    map_duplicate_expression(expression, entities, fields, schemas)?;
+                }
             }
             Ok(())
         }
@@ -8048,6 +8071,26 @@ fn map_duplicate_expression(
             Ok(())
         }
     }
+}
+
+/// A column of the copied table's own schema follows the copy; any other
+/// table's column keeps pointing at that table.
+fn map_duplicate_column(
+    column: &mut ColumnRef,
+    fields: &BTreeMap<FieldId, FieldId>,
+    schemas: &BTreeMap<SchemaId, SchemaId>,
+) -> Result<(), DesignerError> {
+    if let Some(schema) = schemas.get(&column.schema) {
+        let field = fields.get(&column.field).cloned().ok_or_else(|| {
+            table_error(&format!(
+                "internal column-total field '{}' has no copied field",
+                column.field
+            ))
+        })?;
+        column.schema = schema.clone();
+        column.field = field;
+    }
+    Ok(())
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
@@ -8570,6 +8613,41 @@ fn ensure_formula_reference_profile(
                     "formula column field identity",
                     column.field.as_str(),
                 )?;
+            }
+            Expression::ColumnConditional {
+                aggregate,
+                criteria,
+            } => {
+                let values = match aggregate {
+                    ConditionalAggregate::Sum(column)
+                    | ConditionalAggregate::Average(column) => Some(column),
+                    ConditionalAggregate::Count => None,
+                };
+                for column in values
+                    .into_iter()
+                    .chain(criteria.iter().map(|criterion| &criterion.column))
+                {
+                    ensure_profile_string(
+                        profile_string_bytes,
+                        "formula column schema identity",
+                        column.schema.as_str(),
+                    )?;
+                    ensure_profile_string(
+                        profile_string_bytes,
+                        "formula column field identity",
+                        column.field.as_str(),
+                    )?;
+                }
+                for criterion in criteria {
+                    if let CriterionValue::Text(text) = &criterion.value {
+                        ensure_profile_string(
+                            profile_string_bytes,
+                            "formula criterion text",
+                            text,
+                        )?;
+                    }
+                }
+                pending.extend(expression.children());
             }
             _ => pending.extend(expression.children()),
         }
@@ -9393,6 +9471,22 @@ fn expression_references(
         }
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
             columns.insert(column.clone());
+        }
+        Expression::ColumnConditional {
+            aggregate,
+            criteria,
+        } => {
+            if let ConditionalAggregate::Sum(column)
+            | ConditionalAggregate::Average(column) = aggregate
+            {
+                columns.insert(column.clone());
+            }
+            for criterion in criteria {
+                columns.insert(criterion.column.clone());
+                if let CriterionValue::Expression(expression) = &criterion.value {
+                    expression_references(owner, expression, references, columns);
+                }
+            }
         }
         _ => expression
             .children()

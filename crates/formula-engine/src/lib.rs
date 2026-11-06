@@ -7,15 +7,17 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use tachiko_semantic_core::{
-    AddressIndex, AddressIndexError, ColumnAddress, ColumnRef, Document, Expression, FieldAddress,
+    AddressIndex, AddressIndexError, ColumnAddress, ColumnCriterion, ColumnRef,
+    ConditionalAggregate, CriterionTest, CriterionValue, Document, Expression, FieldAddress,
     FieldId, FieldRef, FieldType, FormulaExpressionType, MAX_EXPRESSION_DEPTH,
     MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
 
 pub use parser::{
-    ExpressionComplexityError, FormulaParseError, UnboundExpression, format_unbound_expression,
-    parse_expression, validate_unbound_expression_structure,
+    ExpressionComplexityError, FormulaParseError, UnboundColumnCriterion,
+    UnboundConditionalAggregate, UnboundCriterionValue, UnboundExpression,
+    format_unbound_expression, parse_expression, validate_unbound_expression_structure,
 };
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -172,6 +174,103 @@ fn bind_column_reference(
     Ok(ColumnRef::new(schema, field))
 }
 
+/// Resolve one criterion column without requiring a Number type; reference
+/// fields cannot hold a criterion cell.
+fn bind_criterion_column(
+    document: &Document,
+    index: &AddressIndex,
+    address: &ColumnAddress,
+) -> Result<ColumnRef, FormulaBindError> {
+    let unresolved = |source: AddressIndexError| FormulaBindError::Column {
+        address: address.clone(),
+        source: Box::new(source),
+    };
+    let schema = index
+        .schema_id(&address.schema)
+        .map_err(unresolved)?
+        .clone();
+    let field = index
+        .schema_field_id(&schema, &address.field)
+        .map_err(unresolved)?
+        .clone();
+    let definition = document
+        .schemas
+        .get(&schema)
+        .and_then(|schema| schema.fields.get(&field))
+        .ok_or_else(|| {
+            unresolved(AddressIndexError::MissingSchemaFieldKey {
+                schema: schema.clone(),
+                field: address.field.clone(),
+            })
+        })?;
+    if matches!(definition.field_type, FieldType::Reference { .. }) {
+        return Err(FormulaBindError::TypeMismatch {
+            message: format!("criterion column '{address}' targets a reference field"),
+        });
+    }
+    Ok(ColumnRef::new(schema, field))
+}
+
+fn bind_conditional(
+    document: &Document,
+    index: &AddressIndex,
+    owner: &FieldRef,
+    aggregate: &UnboundConditionalAggregate,
+    criteria: &[UnboundColumnCriterion],
+) -> Result<Expression, FormulaBindError> {
+    let mut schema: Option<tachiko_semantic_core::SchemaId> = None;
+    let mut bound_criteria = Vec::with_capacity(criteria.len());
+    for criterion in criteria {
+        let column = bind_criterion_column(document, index, &criterion.column)?;
+        match &schema {
+            None => schema = Some(column.schema.clone()),
+            Some(schema) if schema != &column.schema => {
+                return Err(FormulaBindError::TypeMismatch {
+                    message: "conditional aggregate columns must all belong to one schema"
+                        .into(),
+                });
+            }
+            Some(_) => {}
+        }
+        let value = match &criterion.value {
+            UnboundCriterionValue::Text(text) => CriterionValue::Text(text.clone()),
+            UnboundCriterionValue::Expression(expression) => CriterionValue::Expression(Box::new(
+                bind_node(document, index, owner, expression)?,
+            )),
+        };
+        bound_criteria.push(ColumnCriterion { column, value });
+    }
+    let aggregate = match aggregate {
+        UnboundConditionalAggregate::Sum(address) => {
+            let column = bind_column_reference(document, index, address)?;
+            schema.get_or_insert_with(|| column.schema.clone());
+            if schema.as_ref() != Some(&column.schema) {
+                return Err(FormulaBindError::TypeMismatch {
+                    message: "conditional aggregate columns must all belong to one schema"
+                        .into(),
+                });
+            }
+            ConditionalAggregate::Sum(column)
+        }
+        UnboundConditionalAggregate::Average(address) => {
+            let column = bind_column_reference(document, index, address)?;
+            schema.get_or_insert_with(|| column.schema.clone());
+            if schema.as_ref() != Some(&column.schema) {
+                return Err(FormulaBindError::TypeMismatch {
+                    message: "conditional aggregate columns must all belong to one schema"
+                        .into(),
+                });
+            }
+            ConditionalAggregate::Average(column)
+        }
+        UnboundConditionalAggregate::Count => ConditionalAggregate::Count,
+    };
+    Ok(Expression::ColumnConditional {
+        aggregate,
+        criteria: bound_criteria,
+    })
+}
+
 fn bind_node(
     document: &Document,
     index: &AddressIndex,
@@ -203,6 +302,10 @@ fn bind_node(
             function: *function,
             column: bind_column_reference(document, index, column)?,
         },
+        UnboundExpression::ColumnConditional {
+            aggregate,
+            criteria,
+        } => bind_conditional(document, index, owner, aggregate, criteria)?,
         UnboundExpression::Add { left, right } => Expression::Add {
             left: Box::new(bind_node(document, index, owner, left)?),
             right: Box::new(bind_node(document, index, owner, right)?),
@@ -411,8 +514,9 @@ fn project_through_index(
 
     let mut columns = BTreeMap::new();
     let mut unresolved_columns = BTreeSet::new();
+    let numeric_columns = extract_value_columns(expression);
     for column in extract_column_totals(expression) {
-        match column_address(document, &column) {
+        match column_address(document, &column, numeric_columns.contains(&column)) {
             Some(address) => {
                 columns.insert(column, address);
             }
@@ -465,6 +569,10 @@ fn render_bound(
                 function.suffix()
             )
         }
+        Expression::ColumnConditional {
+            aggregate,
+            criteria,
+        } => render_conditional(aggregate, criteria, owner, addresses, columns),
         Expression::Add { left, right } => {
             render_bound_binary(left, "+", right, owner, addresses, columns)
         }
@@ -556,17 +664,86 @@ fn render_bound_binary(
     )
 }
 
+fn render_conditional(
+    aggregate: &ConditionalAggregate,
+    criteria: &[ColumnCriterion],
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, FieldAddress>,
+    columns: &BTreeMap<ColumnRef, ColumnAddress>,
+) -> String {
+    let mut arguments = Vec::new();
+    let name = match aggregate {
+        ConditionalAggregate::Sum(values) => {
+            arguments.push(render_column(&columns[values]));
+            "SUMIFS"
+        }
+        ConditionalAggregate::Average(values) => {
+            arguments.push(render_column(&columns[values]));
+            "AVERAGEIFS"
+        }
+        ConditionalAggregate::Count => "COUNTIFS",
+    };
+    for criterion in criteria {
+        arguments.push(render_column(&columns[&criterion.column]));
+        arguments.push(match &criterion.value {
+            CriterionValue::Text(text) => format!("\"{}\"", text.replace('"', "\"\"")),
+            CriterionValue::Expression(expression) => {
+                render_bound(expression, owner, addresses, columns)
+            }
+        });
+    }
+    format!("{name}({})", arguments.join(", "))
+}
+
+fn render_column(address: &ColumnAddress) -> String {
+    format!("[{}.{}:column]", address.schema, address.field)
+}
+
 /// Resolve a column identity to the document's current human keys.
 ///
-/// The field must still be a Number column, because canonical text only
+/// A value column must still be a Number column, because canonical text only
 /// round-trips if the projected address binds back to the same column total.
-fn column_address(document: &Document, column: &ColumnRef) -> Option<ColumnAddress> {
+/// A criterion column may hold any scalar.
+fn column_address(
+    document: &Document,
+    column: &ColumnRef,
+    require_number: bool,
+) -> Option<ColumnAddress> {
     let schema = document.schemas.get(&column.schema)?;
     let field = schema.fields.get(&column.field)?;
-    if field.field_type != FieldType::Number {
+    if matches!(field.field_type, FieldType::Reference { .. }) {
+        return None;
+    }
+    if require_number && field.field_type != FieldType::Number {
         return None;
     }
     Some(ColumnAddress::new(schema.key.clone(), field.key.clone()))
+}
+
+/// The columns whose cells the aggregate sums: the values column of a total or
+/// aggregate, and a conditional node's values column. Criterion columns feed
+/// row membership but are read whatever their scalar type.
+fn extract_value_columns(expression: &Expression) -> BTreeSet<ColumnRef> {
+    let mut columns = BTreeSet::new();
+    let mut pending = vec![expression];
+    while let Some(node) = pending.pop() {
+        match node {
+            Expression::ColumnTotal(column)
+            | Expression::ColumnAggregate { column, .. } => {
+                columns.insert(column.clone());
+            }
+            Expression::ColumnConditional { aggregate, .. } => {
+                if let ConditionalAggregate::Sum(column)
+                | ConditionalAggregate::Average(column) = aggregate
+                {
+                    columns.insert(column.clone());
+                }
+            }
+            _ => {}
+        }
+        pending.extend(node.children());
+    }
+    columns
 }
 
 /// Collect every column identity named by a bound expression.
@@ -1757,12 +1934,17 @@ fn column_failures(
     expression: &Expression,
 ) -> BTreeMap<ColumnRef, ColumnFailure> {
     let mut failures = BTreeMap::new();
+    let value_columns = extract_value_columns(expression);
     for column in extract_column_totals(expression) {
+        let needs_number = value_columns.contains(&column);
         let failure = match document.schemas.get(&column.schema) {
             None => Some(ColumnFailure::MissingSchema),
             Some(schema) => match schema.fields.get(&column.field) {
                 None => Some(ColumnFailure::MissingField),
-                Some(definition) if definition.field_type != FieldType::Number => {
+                Some(definition)
+                    if (needs_number && definition.field_type != FieldType::Number)
+                        || matches!(definition.field_type, FieldType::Reference { .. }) =>
+                {
                     Some(ColumnFailure::NonNumeric)
                 }
                 Some(_) => None,
