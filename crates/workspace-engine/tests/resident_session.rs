@@ -1267,13 +1267,13 @@ fn formula_failure_and_recovery_invalidate_the_formula_field_through_diagnostics
     let gained = publish_candidate(&mut session, failing);
     // The edit itself only touched the interval; dps enters through the
     // diagnostic that the failing formula gained.
-    assert_eq!(gained.fields, [dps.clone(), interval.clone()]);
+    assert_eq!(gained.fields, [interval.clone(), dps.clone()]);
     assert!(gained.affected_calculations.contains(&dps));
 
     let mut fixed = session.export_snapshot().document().clone();
     set_number(&mut fixed, "sword", "attack_interval", 2.0);
     let lost = publish_candidate(&mut session, fixed);
     // dps is not edited here; it enters because its diagnostic disappeared.
-    assert_eq!(lost.fields, [dps.clone(), interval]);
+    assert_eq!(lost.fields, [interval, dps.clone()]);
     assert!(lost.affected_calculations.contains(&dps));
 }
