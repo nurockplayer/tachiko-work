@@ -2,7 +2,7 @@ use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use tachiko_designer_runtime::{DesignerRuntime, process_wire_request};
 use tachiko_workspace_engine::{
-    Document, Entity, FieldDefinition, FieldType, Number, Schema, Value,
+    Date, Document, Entity, FieldConstraint, FieldDefinition, FieldType, Number, Schema, Value,
 };
 
 fn fixture_document() -> Document {
@@ -469,6 +469,190 @@ fn translate_a1_review_guard_expansion_has_source_token_span() {
     assert_eq!(reply["error"]["code"], "formula_syntax", "{reply}");
     assert_eq!(reply["error"]["span"]["start"], 2, "{reply}");
     assert_eq!(reply["error"]["span"]["end"], 5, "{reply}");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // Preserve the brief's ordered conditional-call table.
+fn translate_a1_conditional_aggregates_translate_whole_columns() {
+    let mut rt = Some(fixture());
+    for (text, source) in [
+        (
+            "SUMIF(B2:B4,B3,C2:C4)",
+            "SUMIF([items.qty:column],[.qty],[items.price:column])",
+        ),
+        (
+            "sumif(B2:B4,B3,C2:C4)",
+            "SUMIF([items.qty:column],[.qty],[items.price:column])",
+        ),
+        (
+            "SUMIF(B1:B4,B3,C1:C4)",
+            "SUMIF([items.qty:column],[.qty],[items.price:column])",
+        ),
+        (
+            "SUMIF($B$2:$B$4,$B$3,$C$2:$C$4)",
+            "SUMIF([items.qty:column],[r2.qty],[items.price:column])",
+        ),
+        (
+            "SUMIF(B2:B4,B$3,C2:C4)",
+            "SUMIF([items.qty:column],[r2.qty],[items.price:column])",
+        ),
+        (
+            "SUMIF(B2:B4,\">=5\",C2:C4)",
+            "SUMIF([items.qty:column],\">=5\",[items.price:column])",
+        ),
+        (
+            "SUMIF(B2:B4,\"\",C2:C4)",
+            "SUMIF([items.qty:column],\"\",[items.price:column])",
+        ),
+        ("SUMIF(B2:B4,\">=5\")", "SUMIF([items.qty:column],\">=5\")"),
+        (
+            "COUNTIF(B2:B4,\"<>\")",
+            "COUNTIF([items.qty:column],\"<>\")",
+        ),
+        ("COUNTIF(B2:B4,5)", "COUNTIF([items.qty:column],5)"),
+        (
+            "SUMIFS(C2:C4,A2:A4,B3)",
+            "SUMIFS([items.price:column],[items.name:column],[.qty])",
+        ),
+        (
+            "AVERAGEIF(C2:C4,B3,B2:B4)",
+            "AVERAGEIF([items.price:column],[.qty],[items.qty:column])",
+        ),
+        (
+            "AVERAGEIFS(C2:C4,B2:B4,\"2\")",
+            "AVERAGEIFS([items.price:column],[items.qty:column],\"2\")",
+        ),
+        (
+            "SUMIFS(C2:C4,A2:A4,\"5\")",
+            "SUMIFS([items.price:column],[items.name:column],\"5\")",
+        ),
+        (
+            "COUNTIFS(A2:A4,B3,C2:C4,\"<>\")",
+            "COUNTIFS([items.name:column],[.qty],[items.price:column],\"<>\")",
+        ),
+        (
+            "IF(SUMIF(B2:B4,B3,C2:C4)>0,1,2)",
+            "if(SUMIF([items.qty:column],[.qty],[items.price:column])>0,1,2)",
+        ),
+    ] {
+        ok(&mut rt, text, source, &["range_tracks_collection"]);
+    }
+    let mut cross = request("SUMIFS(Other!A2:A2,Other!A2:A2,B3)");
+    cross["geometry"]["sheets"] = serde_json::from_str(
+        r#"{"Other":{"collection_id":"Other","header_row":1,"rows":["o1"],"columns":["x"]}}"#,
+    )
+    .unwrap();
+    let reply = call(&mut rt, &cross);
+    assert_eq!(
+        reply["response"]["payload"]["source"], "SUMIFS([other.x:column],[other.x:column],[.qty])",
+        "{reply}"
+    );
+    assert_eq!(
+        reply["response"]["payload"]["notes"],
+        serde_json::from_str::<Json>(r#"["range_tracks_collection"]"#).unwrap(),
+        "{reply}"
+    );
+    for (text, code) in [
+        ("SUMIF(B2:B4,\"Food\",C2:C4)", "unsupported_criterion"),
+        ("SUMIF(B2:B3,B3,C2:C4)", "unsupported_range"),
+        ("SUMIF(B2:B4,B3,C1:C4)", "unsupported_range"),
+        ("SUMIF(B2:B4)", "unsupported_function"),
+        ("SUMIFS(C2:C4,A2:A4)", "unsupported_function"),
+    ] {
+        refused(&mut rt, &request(text), code);
+    }
+    refused(
+        &mut rt,
+        &cross_with_other(&cross, "SUMIFS(B2:B4,Other!A2:A2,B3)"),
+        "unsupported_range",
+    );
+}
+
+fn cross_with_other(base: &Json, text: &str) -> Json {
+    let mut request = request(text);
+    request["geometry"]["sheets"] = base["geometry"]["sheets"].clone();
+    request
+}
+
+#[test]
+fn translate_a1_conditional_criterion_spans_and_date_rules() {
+    let mut rt = Some(fixture());
+    for (text, code, start, end) in [
+        (
+            "SUMIF(B2:B4,\"Food\",C2:C4)",
+            "unsupported_criterion",
+            12,
+            18,
+        ),
+        (
+            "1+SUMIF(B2:B4,\"Food\",C2:C4)",
+            "unsupported_criterion",
+            14,
+            20,
+        ),
+        (
+            "SUMIF(B2:B4,\">\"&B3,C2:C4)",
+            "unsupported_operator",
+            15,
+            16,
+        ),
+    ] {
+        let reply = call(&mut rt, &request(text));
+        assert_eq!(reply["error"]["code"], code, "{text}: {reply}");
+        assert_eq!(reply["error"]["span"]["start"], start, "{text}: {reply}");
+        assert_eq!(reply["error"]["span"]["end"], end, "{text}: {reply}");
+    }
+}
+
+fn date_runtime() -> DesignerRuntime {
+    let mut document = fixture_document();
+    let schema = document.schemas.get_mut("Items").unwrap();
+    schema.fields.insert(
+        "when".into(),
+        FieldDefinition {
+            id: "when".into(),
+            key: "when".into(),
+            display_name: None,
+            number_format: None,
+            field_type: FieldType::Date,
+            required: true,
+            constraint: FieldConstraint::None,
+        },
+    );
+    for row in ["r1", "r2", "r3"] {
+        document.entities.get_mut(row).unwrap().fields.insert(
+            "when".into(),
+            Value::Date(Date::parse("2026-09-05").unwrap()),
+        );
+    }
+    DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap()
+}
+
+fn date_request(text: &str) -> Json {
+    let mut request = request(text);
+    request["geometry"]["columns"] =
+        serde_json::from_str(r#"["name","qty","price","total","when"]"#).unwrap();
+    request
+}
+
+#[test]
+fn translate_a1_conditional_number_criteria_cannot_test_a_date_column() {
+    let mut rt = Some(date_runtime());
+    for (text, start, end) in [
+        ("SUMIF(E2:E4,5,B2:B4)", 12, 13),
+        ("SUMIF(E2:E4,B2,B2:B4)", 12, 14),
+    ] {
+        let reply = call(&mut rt, &date_request(text));
+        assert_eq!(reply["error"]["code"], "formula_type_mismatch", "{reply}");
+        assert_eq!(reply["error"]["span"]["start"], start, "{reply}");
+        assert_eq!(reply["error"]["span"]["end"], end, "{reply}");
+    }
+    let reply = call(&mut rt, &date_request("SUMIF(E2:E4,A2,B2:B4)"));
+    assert_eq!(reply["status"], "ok", "{reply}");
+    assert_eq!(
+        reply["response"]["payload"]["source"],
+        "SUMIF([items.when:column],[r1.name],[items.qty:column])"
+    );
 }
 
 #[test]

@@ -65,6 +65,7 @@ pub enum A1RefusalCode {
     OutOfBounds,
     HeaderReference,
     UnsupportedRange,
+    UnsupportedCriterion,
     UnsupportedFunction,
     UnsupportedOperator,
     FormulaSyntax,
@@ -81,6 +82,7 @@ impl A1RefusalCode {
             Self::OutOfBounds => "out_of_bounds",
             Self::HeaderReference => "header_reference",
             Self::UnsupportedRange => "unsupported_range",
+            Self::UnsupportedCriterion => "unsupported_criterion",
             Self::UnsupportedFunction => "unsupported_function",
             Self::UnsupportedOperator => "unsupported_operator",
             Self::FormulaSyntax => "formula_syntax",
@@ -155,6 +157,20 @@ struct GridGeometry<'a> {
     owner: &'a str,
     notes: BTreeSet<A1TranslationNote>,
     tokens: Vec<(A1TokenSpan, std::ops::Range<usize>)>,
+    /// The first conditional column's sheet and row span, for the same-rows rule.
+    conditional_span: Option<(usize, usize, usize)>,
+}
+
+/// One whole-column range argument of an aggregate, resolved against a grid.
+struct GridColumn<'a, 'doc> {
+    sheet: usize,
+    first_row: usize,
+    last_row: usize,
+    field_id: &'a str,
+    schema_key: &'doc str,
+    field_key: &'doc str,
+    field_type: FieldType,
+    rows: &'a [String],
 }
 
 impl GridGeometry<'_> {
@@ -164,6 +180,59 @@ impl GridGeometry<'_> {
             .find(|(_, output)| output.contains(&position))
             .or_else(|| self.tokens.last())
             .map_or(A1TokenSpan { start: 0, end: 0 }, |(span, _)| *span)
+    }
+
+    /// Resolve `argument` as one range covering exactly one whole data column.
+    fn whole_column<'doc>(
+        &self,
+        argument: &str,
+        current: usize,
+        document: &'doc Document,
+    ) -> Result<GridColumn<'_, 'doc>, DesignerError> {
+        let invalid = || refusal(A1RefusalCode::UnsupportedRange);
+        let argument = argument.trim();
+        let (sheet, range) = if let Some((name, range)) = argument.rsplit_once('!') {
+            (
+                self.sheet(&name.trim_matches('\'').replace("''", "'"))?,
+                range,
+            )
+        } else {
+            (current, argument)
+        };
+        let (first, last) = range.split_once(':').ok_or_else(invalid)?;
+        let (column, first_row) = parse_a1_address(first.trim()).map_err(|_| invalid())?;
+        let (last_column, last_row) = parse_a1_address(last.trim()).map_err(|_| invalid())?;
+        let grid = &self.sheets[sheet].1;
+        let schema = document
+            .schemas
+            .get(grid.collection_id.as_str())
+            .ok_or_else(invalid)?;
+        let field_id = grid.columns.get(column).ok_or_else(invalid)?;
+        let field = schema.fields.get(field_id.as_str()).ok_or_else(invalid)?;
+        let whole = document
+            .entities
+            .values()
+            .filter(|entity| entity.schema == schema.id)
+            .count()
+            == grid.rows.len();
+        if column != last_column
+            || grid.rows.is_empty()
+            || !whole
+            || !(first_row == grid.header_row || first_row == grid.header_row - 1)
+            || last_row != grid.header_row + grid.rows.len() - 1
+        {
+            return Err(invalid());
+        }
+        Ok(GridColumn {
+            sheet,
+            first_row,
+            last_row,
+            field_id,
+            schema_key: schema.key.as_str(),
+            field_key: field.key.as_str(),
+            field_type: field.field_type.clone(),
+            rows: &grid.rows,
+        })
     }
 }
 
@@ -221,48 +290,46 @@ impl A1Geometry for GridGeometry<'_> {
         document: &Document,
         references: &mut BTreeSet<FieldRef>,
     ) -> Result<String, DesignerError> {
-        let invalid = || refusal(A1RefusalCode::UnsupportedRange);
-        let argument = argument.trim();
-        let (sheet, range) = if let Some((name, range)) = argument.rsplit_once('!') {
-            (
-                self.sheet(&name.trim_matches('\'').replace("''", "'"))?,
-                range,
-            )
-        } else {
-            (current, argument)
-        };
-        let (first, last) = range.split_once(':').ok_or_else(invalid)?;
-        let (column, first) = parse_a1_address(first.trim()).map_err(|_| invalid())?;
-        let (last_column, last) = parse_a1_address(last.trim()).map_err(|_| invalid())?;
-        let grid = &self.sheets[sheet].1;
-        let schema = &document.schemas[grid.collection_id.as_str()];
-        let field_id = grid.columns.get(column).ok_or_else(invalid)?;
-        let field = &schema.fields[field_id.as_str()];
-        let whole = document
-            .entities
-            .values()
-            .filter(|entity| entity.schema == schema.id)
-            .count()
-            == grid.rows.len();
-        if column != last_column
-            || grid.rows.is_empty()
-            || !whole
-            || !(first == grid.header_row || first == grid.header_row - 1)
-            || last != grid.header_row + grid.rows.len() - 1
-            || field.field_type != FieldType::Number
-        {
-            return Err(invalid());
+        let column = self.whole_column(argument, current, document)?;
+        if column.field_type != FieldType::Number {
+            return Err(refusal(A1RefusalCode::UnsupportedRange));
         }
-        for row in &grid.rows {
-            references.insert(FieldRef::new(row.clone(), field_id.clone()));
+        for row in column.rows {
+            references.insert(FieldRef::new(row.clone(), column.field_id.to_owned()));
         }
+        let suffix = aggregate.suffix();
+        let rendered = format!("[{}.{}:{suffix}]", column.schema_key, column.field_key);
         self.notes.insert(A1TranslationNote::RangeTracksCollection);
-        Ok(format!(
-            "[{}.{}:{}]",
-            schema.key.as_str(),
-            field.key.as_str(),
-            aggregate.suffix()
-        ))
+        Ok(rendered)
+    }
+
+    fn column(
+        &mut self,
+        argument: &str,
+        current: usize,
+        numeric: bool,
+        document: &Document,
+        references: &mut BTreeSet<FieldRef>,
+    ) -> Result<String, DesignerError> {
+        let column = self.whole_column(argument, current, document)?;
+        if numeric && column.field_type != FieldType::Number {
+            return Err(refusal(A1RefusalCode::UnsupportedRange));
+        }
+        let span = (column.sheet, column.first_row, column.last_row);
+        if self.conditional_span.is_some_and(|first| first != span) {
+            return Err(refusal(A1RefusalCode::UnsupportedRange));
+        }
+        for row in column.rows {
+            references.insert(FieldRef::new(row.clone(), column.field_id.to_owned()));
+        }
+        let rendered = format!("[{}.{}:column]", column.schema_key, column.field_key);
+        self.conditional_span = Some(span);
+        self.notes.insert(A1TranslationNote::RangeTracksCollection);
+        Ok(rendered)
+    }
+
+    fn begin_conditional(&mut self) {
+        self.conditional_span = None;
     }
 
     fn record_token(&mut self, start: usize, end: usize, output_start: usize, output_end: usize) {
@@ -328,6 +395,7 @@ impl DesignerRuntime {
             owner: &input.row_entity_id,
             notes: BTreeSet::new(),
             tokens: Vec::new(),
+            conditional_span: None,
         };
         let mut names = BTreeSet::new();
         for (name, sheet) in &input.geometry.sheets {

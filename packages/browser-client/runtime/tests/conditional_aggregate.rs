@@ -445,15 +445,17 @@ fn duplicating_the_table_keeps_the_copied_formula_on_the_copy() {
     assert_eq!(summary_value(&mut runtime), Some(6.0));
 }
 
+/// #681 changed this expectation on purpose: export now writes the canonical
+/// plural `SUMIFS` call over whole-column ranges instead of refusing it.
 #[test]
-fn xlsx_export_refuses_the_conditional_aggregate_and_keeps_the_value() {
+fn xlsx_export_writes_the_conditional_aggregate_formula() {
     let runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
     let bytes = runtime.export_project_v3("resident/0").unwrap().bytes;
     let mut host = DesignerHost::new();
     let reply: serde_json::Value =
         serde_json::from_slice(&host.open_project(&bytes, EXPORTED.as_bytes())).unwrap();
     assert_eq!(reply["status"], "ok", "{reply}");
-    let HostReply { reply, .. } = host.spreadsheet(
+    let HostReply { reply, bytes } = host.spreadsheet(
         &serde_json::to_vec(&json!({
             "type": "export_native_tables",
             "expected_revision": "resident/0",
@@ -464,16 +466,27 @@ fn xlsx_export_refuses_the_conditional_aggregate_and_keeps_the_value() {
         &[],
     );
     let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+    assert_eq!(reply["status"], "ok", "{reply}");
     let ledger = reply["response"]["payload"]["ledger"]
         .as_array()
         .unwrap_or_else(|| panic!("the export reports a ledger: {reply}"));
-    let finding = ledger
-        .iter()
-        .find(|finding| {
+    assert!(
+        !ledger.iter().any(|finding| {
             finding["message"].as_str().is_some_and(|message| {
                 message.contains("conditional aggregates are outside the export mapping")
             })
-        })
-        .unwrap_or_else(|| panic!("conditional aggregate export is refused: {reply}"));
-    assert_eq!(finding["category"], "lossy_on_export");
+        }),
+        "{reply}"
+    );
+    let bytes = bytes.unwrap_or_else(|| panic!("the export returns xlsx bytes: {reply}"));
+    let exported = tachiko_designer_runtime::interop_adapter::import_xlsx(&bytes).unwrap();
+    let summary = exported
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name == "Summary")
+        .expect("the summary sheet is exported");
+    assert_eq!(
+        summary.rows[0][0].formula.as_deref(),
+        Some("SUMIFS('Plan'!$E$2:$E$4,'Plan'!$A$2:$A$4,'Settings'!$A$2)")
+    );
 }

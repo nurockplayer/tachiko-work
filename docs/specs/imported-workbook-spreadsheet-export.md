@@ -152,8 +152,12 @@ policy remains disclosure, without rounding the file's decimal text. Formulas ar
 rebuilt from stable references using relative A1 for a same-row reference (so a
 spreadsheet fill-down follows the row) and current absolute A1 coordinates for
 other references, including column removal and row deletion; missing references
-or unsupported formulas refuse the whole export. Calculation and formula-editing
-rules do not change.
+or unsupported formulas refuse the whole export. A conditional aggregate exports
+as Excel's plural `SUMIFS`, `AVERAGEIFS` or `COUNTIFS` call over whole-column
+ranges: a blank test writes `""` or `"<>"`, a written number keeps its operator
+inside a quoted criterion, and an equality test writes its expression. A written
+number criterion over a Date column refuses because Excel compares by serial
+number. Calculation and formula-editing rules do not change.
 
 An absent optional value is an Empty cell. Present empty Text remains Text in
 XLSX; CSV represents both with an empty field and discloses this in
@@ -300,6 +304,13 @@ carry `relative_copy_semantics_changed`; a `$` column alone has no effect.
 `SUM`, `AVERAGE`, and `COUNT` over exactly one whole numeric data column, starting
 at the header or first data row and ending at the last data row, become
 `[collection.field:total]`, `:average`, and `:count`, with `range_tracks_collection`.
+`SUMIF`, `AVERAGEIF` and `COUNTIF` (and their plural `*IFS` forms) keep the
+caller's function spelling when every column argument is one whole data column
+of the same sheet covering the same first and last row. Their value column must
+be numeric; a criterion column may hold any scalar. A criterion that is one
+written literal stays verbatim when the formula parser accepts it, and any other
+criterion expression is translated recursively. A written number or a reference
+to a Number field tested against a Date column is `formula_type_mismatch`.
 Collection and field spellings in formulas use semantic keys, not ids. Aggregates
 require all collection rows; filtered geometry still supports cell references.
 Notes are unique and returned in deterministic order.
@@ -310,9 +321,10 @@ import semantics. Partial ranges, range `MIN`/`MAX`, text concatenation and
 other functions are outside this call's profile.
 
 Typed refusals are `unknown_sheet`, `out_of_bounds`, `header_reference`,
-`unsupported_range`, `unsupported_function`, `unsupported_operator`,
-`formula_syntax`, `formula_type_mismatch`, `formula_cycle`, `invalid_geometry`,
-and `stale_revision`. Each carries `span: {start, end}`, half-open UTF-8 byte
+`unsupported_range`, `unsupported_criterion`, `unsupported_function`,
+`unsupported_operator`, `formula_syntax`, `formula_type_mismatch`,
+`formula_cycle`, `invalid_geometry`, and `stale_revision`. Each carries
+`span: {start, end}`, half-open UTF-8 byte
 offsets in the original input. Geometry and revision refusals use the empty span
 at zero because they have no offending text token.
 

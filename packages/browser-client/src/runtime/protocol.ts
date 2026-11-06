@@ -491,8 +491,8 @@ export type TranslateA1FormulaInput = {
 };
 export type A1TranslationNote = "relative_copy_semantics_changed" | "range_tracks_collection";
 export type A1RefusalCode = "unknown_sheet" | "out_of_bounds" | "header_reference" | "unsupported_range"
-  | "unsupported_function" | "unsupported_operator" | "formula_syntax" | "formula_type_mismatch"
-  | "formula_cycle" | "invalid_geometry" | "stale_revision";
+  | "unsupported_criterion" | "unsupported_function" | "unsupported_operator" | "formula_syntax"
+  | "formula_type_mismatch" | "formula_cycle" | "invalid_geometry" | "stale_revision";
 export type A1Translation = {revision: string; source: string; notes: A1TranslationNote[]};
 
 export type DesignerRequest =

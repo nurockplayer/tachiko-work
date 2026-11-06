@@ -113,8 +113,8 @@ use tachiko_workspace_engine::patch_lifecycle::{
     ProposalRequest, SemanticPatchBody, SemanticRevision,
 };
 use tachiko_workspace_engine::{
-    ColumnAggregateFunction, ColumnRef, Date, Document, EntityId, FieldId, FieldRef, FieldType,
-    Number, Value,
+    ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
+    Date, Document, EntityId, FieldId, FieldRef, FieldType, Number, Value,
 };
 
 impl DesignerRuntime {
@@ -618,13 +618,14 @@ fn deduplicate(
 }
 
 use super::interop_adapter::{
-    CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS,
+    CellStyle, CriterionKind, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS,
     MAX_NATIVE_BUDGET_COLUMNS, MAX_NATIVE_BUDGET_DATA_ROWS, MAX_NATIVE_BUDGET_SHEETS, MAX_SHEETS,
     MAX_TEXT_CAPACITY_COLUMNS, OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet,
-    SourceValue, SourceWorkbook, SummaryAggregate, SummaryRow, call_argument,
-    whole_column_argument,
+    SourceValue, SourceWorkbook, SummaryAggregate, SummaryRow, call_argument, conditional_shape,
+    criterion_literal, split_arguments, whole_column_argument, writable_criterion,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
+use crate::translate_a1::{A1RefusalCode, A1TokenSpan};
 use std::collections::BTreeMap;
 use tachiko_workspace_engine::{
     Entity, EntityKey, Expression, FieldDefinition, FieldKey, Schema, SchemaId, SchemaKey,
@@ -1338,7 +1339,10 @@ fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, Designe
 fn export_a1_maps(
     document: &Document,
     metadata: &InteropMetadata,
-) -> (BTreeMap<FieldRef, ExportCell>, BTreeMap<ColumnRef, String>) {
+) -> (
+    BTreeMap<FieldRef, ExportCell>,
+    BTreeMap<ColumnRef, ExportColumn>,
+) {
     let mut addresses = BTreeMap::new();
     // One whole-column range per exported column, so a column total keeps
     // meaning every exported row instead of the rows present today.
@@ -1364,9 +1368,14 @@ fn export_a1_maps(
             } else {
                 format!("'{quoted}'!${letters}${first}:${letters}${last}")
             };
+            let field_type = document
+                .schemas
+                .get(sheet.schema_id.as_str())
+                .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
+                .map(|field| field.field_type.clone());
             columns.insert(
                 ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
-                range,
+                ExportColumn::new(range, field_type),
             );
         }
         for (row_index, row) in present.iter().enumerate() {
@@ -1392,7 +1401,10 @@ fn bind_import_formula(
     source: &str,
     cell: &SourceCell,
     location: &str,
-    export_maps: &(BTreeMap<FieldRef, ExportCell>, BTreeMap<ColumnRef, String>),
+    export_maps: &(
+        BTreeMap<FieldRef, ExportCell>,
+        BTreeMap<ColumnRef, ExportColumn>,
+    ),
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<(), DesignerError> {
     let snapshot = runtime.session.export_snapshot();
@@ -1673,6 +1685,19 @@ pub(super) trait A1Geometry {
         document: &Document,
         references: &mut BTreeSet<FieldRef>,
     ) -> Result<String, DesignerError>;
+    /// One column argument of a conditional aggregate, as `[schema.field:column]`.
+    /// `numeric` is true for the value column.
+    fn column(
+        &mut self,
+        argument: &str,
+        current: usize,
+        numeric: bool,
+        document: &Document,
+        references: &mut BTreeSet<FieldRef>,
+    ) -> Result<String, DesignerError>;
+    /// Start one conditional call so `column` can enforce its same-rows rule
+    /// across that call's column arguments.
+    fn begin_conditional(&mut self) {}
     fn record_token(
         &mut self,
         _start: usize,
@@ -1696,6 +1721,8 @@ struct ImportA1Geometry<'a> {
     metadata: &'a InteropMetadata,
     sources: &'a [SourceSheet],
     owner: &'a FieldRef,
+    /// The first conditional column's sheet and row span, for the same-rows rule.
+    conditional_span: Option<(usize, usize, usize)>,
 }
 
 impl A1Geometry for ImportA1Geometry<'_> {
@@ -1714,16 +1741,40 @@ impl A1Geometry for ImportA1Geometry<'_> {
         document: &Document,
         references: &mut BTreeSet<FieldRef>,
     ) -> Result<String, DesignerError> {
-        let (sheet, column) = whole_column_argument(argument, current, self.sources)
+        let (sheet, column, _, _) = whole_column_argument(argument, current, self.sources, true)
             .ok_or_else(|| tracker_error("aggregate range must cover one whole data column"))?;
-        column_aggregate_source(
-            aggregate,
+        column_source(
+            aggregate.suffix(),
             column,
             sheet,
             self.metadata,
             document,
             references,
         )
+    }
+    fn column(
+        &mut self,
+        argument: &str,
+        current: usize,
+        numeric: bool,
+        document: &Document,
+        references: &mut BTreeSet<FieldRef>,
+    ) -> Result<String, DesignerError> {
+        let (sheet, column, first_row, last_row) =
+            whole_column_argument(argument, current, self.sources, numeric).ok_or_else(|| {
+                tracker_error("conditional range must cover one whole data column")
+            })?;
+        let span = (sheet, first_row, last_row);
+        if self.conditional_span.is_some_and(|first| first != span) {
+            return Err(tracker_error(
+                "conditional aggregate columns must cover the same rows",
+            ));
+        }
+        self.conditional_span = Some(span);
+        column_source("column", column, sheet, self.metadata, document, references)
+    }
+    fn begin_conditional(&mut self) {
+        self.conditional_span = None;
     }
     fn cell(
         &mut self,
@@ -1744,8 +1795,8 @@ impl A1Geometry for ImportA1Geometry<'_> {
             .as_ref()
             .filter(|summary| usize::try_from(summary.row).is_ok_and(|row| row == sheet_row + 1))
         {
-            return column_aggregate_source(
-                summary_cell_aggregate(summary, column)?,
+            return column_source(
+                summary_cell_aggregate(summary, column)?.suffix(),
                 column,
                 sheet_index,
                 metadata,
@@ -1796,18 +1847,29 @@ fn translate_a1(
             metadata,
             sources,
             owner,
+            conditional_span: None,
         },
         current_sheet,
         document,
     )
 }
 
-#[allow(clippy::too_many_lines)] // One bounded token loop shared by import and the read-only kit call.
 pub(super) fn translate_a1_with(
     source: &str,
     geometry: &mut impl A1Geometry,
     current_sheet: usize,
     document: &Document,
+) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
+    translate_a1_inner(source, geometry, current_sheet, document, true)
+}
+
+#[allow(clippy::too_many_lines)] // One bounded token loop shared by import and the read-only kit call.
+fn translate_a1_inner(
+    source: &str,
+    geometry: &mut impl A1Geometry,
+    current_sheet: usize,
+    document: &Document,
+    record_tokens: bool,
 ) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
     if source.len() > MAX_PROFILE_STRING_BYTES {
         return Err(tracker_error(
@@ -1872,6 +1934,27 @@ pub(super) fn translate_a1_with(
                         output.push_str(&name.to_ascii_lowercase());
                         return Ok(());
                     }
+                    if matches!(
+                        name.as_str(),
+                        "SUMIF" | "SUMIFS" | "AVERAGEIF" | "AVERAGEIFS" | "COUNTIF" | "COUNTIFS"
+                    ) {
+                        let call = skip_spaces(source, cursor);
+                        if source[call..].starts_with('(') {
+                            let (argument, consumed) = call_argument(&source[call..])
+                                .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+                            output.push_str(&translate_conditional_call(
+                                &name,
+                                argument,
+                                call + 1,
+                                current_sheet,
+                                geometry,
+                                document,
+                                &mut references,
+                            )?);
+                            cursor = call + consumed;
+                            return Ok(());
+                        }
+                    }
                 }
                 if source[skip_spaces(source, cursor)..].starts_with('(') {
                     return Err(geometry.unknown_function());
@@ -1920,12 +2003,166 @@ pub(super) fn translate_a1_with(
             }
             Ok(())
         })();
+        // A conditional criterion is translated against its own slice, so an
+        // already located refusal keeps its exact original-text span instead of
+        // being widened to the whole call.
         result.map_err(|error| {
-            geometry.locate(error, token_start, cursor.max(token_start + ch.len_utf8()))
+            if matches!(
+                &error,
+                DesignerError::A1Translation { span, .. } if span.start != 0 || span.end != 0
+            ) {
+                error
+            } else {
+                geometry.locate(error, token_start, cursor.max(token_start + ch.len_utf8()))
+            }
         })?;
-        geometry.record_token(token_start, cursor, output_start, output.len());
+        if record_tokens {
+            geometry.record_token(token_start, cursor, output_start, output.len());
+        }
     }
     Ok((output, references))
+}
+
+/// Translate one `SUMIF`-family call to canonical Tachiko text, keeping the
+/// caller's function spelling. `base` is the call argument's offset in the
+/// formula being translated.
+fn translate_conditional_call(
+    name: &str,
+    argument: &str,
+    base: usize,
+    current_sheet: usize,
+    geometry: &mut impl A1Geometry,
+    document: &Document,
+    references: &mut BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
+    let parts = split_arguments(argument)
+        .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+    let shape = conditional_shape(name, parts.len()).ok_or_else(|| geometry.unknown_function())?;
+    geometry.begin_conditional();
+    let mut rendered = vec![String::new(); parts.len()];
+    for &(index, numeric) in &shape.columns {
+        rendered[index] = geometry.column(
+            parts[index].1.trim(),
+            current_sheet,
+            numeric,
+            document,
+            references,
+        )?;
+    }
+    for &(criterion_index, column_index) in &shape.criteria {
+        let (offset, part) = parts[criterion_index];
+        let text = part.trim();
+        let start = base + offset + (part.len() - part.trim_start().len());
+        let (criterion, number) = translate_conditional_criterion(
+            text,
+            start,
+            current_sheet,
+            geometry,
+            document,
+            references,
+        )?;
+        // A written number or a Number-field reference cannot test a date
+        // column: Excel compares dates by serial number, Tachiko by date.
+        if number && column_field_type(&rendered[column_index], document) == Some(FieldType::Date) {
+            return Err(DesignerError::A1Translation {
+                code: A1RefusalCode::FormulaTypeMismatch,
+                span: A1TokenSpan {
+                    start,
+                    end: start + text.len(),
+                },
+            });
+        }
+        rendered[criterion_index] = criterion;
+    }
+    Ok(format!("{name}({})", rendered.join(",")))
+}
+
+/// One criterion: a written literal stays verbatim when the formula parser
+/// accepts it, anything else is recursively translated as an expression.
+fn translate_conditional_criterion(
+    text: &str,
+    base: usize,
+    current_sheet: usize,
+    geometry: &mut impl A1Geometry,
+    document: &Document,
+    references: &mut BTreeSet<FieldRef>,
+) -> Result<(String, bool), DesignerError> {
+    if criterion_literal(text) {
+        return match writable_criterion(text) {
+            Some(kind) => Ok((text.to_owned(), kind == CriterionKind::Number)),
+            None => Err(DesignerError::A1Translation {
+                code: A1RefusalCode::UnsupportedCriterion,
+                span: A1TokenSpan {
+                    start: base,
+                    end: base + text.len(),
+                },
+            }),
+        };
+    }
+    let (translated, nested) = translate_a1_inner(text, geometry, current_sheet, document, false)
+        .map_err(|error| offset_translation(error, base))?;
+    let number = translated_criterion_is_number(&translated, &nested, document);
+    references.extend(nested);
+    Ok((translated, number))
+}
+
+/// Shift a nested translation's source span to its place in the original text.
+fn offset_translation(error: DesignerError, base: usize) -> DesignerError {
+    match error {
+        DesignerError::A1Translation { code, span } => DesignerError::A1Translation {
+            code,
+            span: A1TokenSpan {
+                start: base + span.start,
+                end: base + span.end,
+            },
+        },
+        other => other,
+    }
+}
+
+/// Whether a translated criterion is a number literal or exactly one reference
+/// to a Number field.
+fn translated_criterion_is_number(
+    translated: &str,
+    references: &BTreeSet<FieldRef>,
+    document: &Document,
+) -> bool {
+    if translated.parse::<f64>().is_ok_and(f64::is_finite) {
+        return true;
+    }
+    let single_reference = translated
+        .strip_prefix('[')
+        .and_then(|text| text.strip_suffix(']'))
+        .is_some_and(|text| !text.contains('[') && !text.contains(']'));
+    if !single_reference || references.len() != 1 {
+        return false;
+    }
+    references
+        .iter()
+        .next()
+        .and_then(|reference| {
+            document
+                .entities
+                .get(&reference.entity)
+                .and_then(|entity| document.schemas.get(&entity.schema))
+                .and_then(|schema| schema.fields.get(&reference.field))
+        })
+        .is_some_and(|field| field.field_type == FieldType::Number)
+}
+
+/// The declared type of one translated column argument,
+/// `[schema.field:column]`.
+fn column_field_type(translated: &str, document: &Document) -> Option<FieldType> {
+    let inner = translated.strip_prefix('[')?.strip_suffix(":column]")?;
+    let (schema_key, field_key) = inner.split_once('.')?;
+    document
+        .schemas
+        .values()
+        .find(|schema| schema.key.as_str() == schema_key)?
+        .fields
+        .values()
+        .find(|field| field.key.as_str() == field_key)
+        .map(|field| field.field_type.clone())
 }
 
 fn skip_spaces(source: &str, mut cursor: usize) -> usize {
@@ -1953,10 +2190,11 @@ fn summary_cell_aggregate(
         })
 }
 
-/// The semantic spelling of one sheet column's aggregate, as
-/// `[schema.field:total]`, binding every row of that column.
-fn column_aggregate_source(
-    aggregate: SummaryAggregate,
+/// The semantic spelling of one sheet column with `suffix`, as
+/// `[schema.field:total]` or `[schema.field:column]`, binding every row of that
+/// column.
+fn column_source(
+    suffix: &str,
     column: usize,
     sheet_index: usize,
     metadata: &InteropMetadata,
@@ -1989,7 +2227,7 @@ fn column_aggregate_source(
         "[{}.{}:{}]",
         schema.key.as_str(),
         field.key.as_str(),
-        aggregate.suffix()
+        suffix
     ))
 }
 
@@ -3559,6 +3797,20 @@ impl ExportCell {
     }
 }
 
+/// One exported column's whole range, with the declared type a conditional
+/// criterion needs.
+#[derive(Clone)]
+pub(crate) struct ExportColumn {
+    range: String,
+    field_type: Option<FieldType>,
+}
+
+impl ExportColumn {
+    pub(crate) fn new(range: String, field_type: Option<FieldType>) -> Self {
+        Self { range, field_type }
+    }
+}
+
 pub(crate) fn export_scalar(value: Option<&Value>) -> Result<SourceValue, DesignerError> {
     match value {
         None => Ok(SourceValue::Empty),
@@ -3582,7 +3834,7 @@ pub(crate) fn export_expression(
     expression: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, ExportCell>,
-    columns: &BTreeMap<ColumnRef, String>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
 ) -> Result<String, DesignerError> {
     export_in(
         expression,
@@ -3622,7 +3874,7 @@ fn export_in(
     expression: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, ExportCell>,
-    columns: &BTreeMap<ColumnRef, String>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     match expression {
@@ -3640,22 +3892,12 @@ fn export_in(
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::ColumnTotal(column) => export_column("SUM", column, columns),
         Expression::ColumnAggregate { function, column } => {
-            let name = match function {
-                ColumnAggregateFunction::Average => "AVERAGE",
-                ColumnAggregateFunction::Count => "COUNT",
-                // Excel's range MIN/MAX is 0 over an all-blank column where
-                // Tachiko's fails, and import refuses it, so neither exports.
-                ColumnAggregateFunction::Minimum | ColumnAggregateFunction::Maximum => {
-                    return Err(tracker_error(
-                        "column minimum and maximum are outside the export mapping",
-                    ));
-                }
-            };
-            export_column(name, column, columns)
+            export_column_aggregate(*function, column, columns)
         }
-        Expression::ColumnConditional { .. } => Err(tracker_error(
-            "conditional aggregates are outside the export mapping",
-        )),
+        Expression::ColumnConditional {
+            aggregate,
+            criteria,
+        } => export_conditional(aggregate, criteria, owner, addresses, columns, present),
         Expression::Add { left, right } => {
             export_binary(left, "+", right, owner, addresses, columns, present)
         }
@@ -3735,7 +3977,7 @@ fn export_extremum_argument(
     argument: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, ExportCell>,
-    columns: &BTreeMap<ColumnRef, String>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     let exported = export_in(argument, owner, addresses, columns, present)?;
@@ -3752,14 +3994,127 @@ fn export_extremum_argument(
 fn export_column(
     name: &str,
     column: &ColumnRef,
-    columns: &BTreeMap<ColumnRef, String>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
 ) -> Result<String, DesignerError> {
-    match columns.get(column).map(String::as_str) {
-        Some(range) if !range.is_empty() => Ok(format!("{name}({range})")),
+    let (range, _) = export_column_range(column, columns)?;
+    Ok(format!("{name}({range})"))
+}
+
+fn export_column_aggregate(
+    function: ColumnAggregateFunction,
+    column: &ColumnRef,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
+) -> Result<String, DesignerError> {
+    let name = match function {
+        ColumnAggregateFunction::Average => "AVERAGE",
+        ColumnAggregateFunction::Count => "COUNT",
+        // Excel's range MIN/MAX is 0 over an all-blank column where Tachiko's
+        // fails, and import refuses it, so neither exports.
+        ColumnAggregateFunction::Minimum | ColumnAggregateFunction::Maximum => {
+            return Err(tracker_error(
+                "column minimum and maximum are outside the export mapping",
+            ));
+        }
+    };
+    export_column(name, column, columns)
+}
+
+/// The exported range of a column a formula reads, with the declared type the
+/// conditional criterion rule needs.
+fn export_column_range<'a>(
+    column: &ColumnRef,
+    columns: &'a BTreeMap<ColumnRef, ExportColumn>,
+) -> Result<(&'a str, Option<FieldType>), DesignerError> {
+    match columns.get(column) {
+        Some(entry) if !entry.range.is_empty() => {
+            Ok((entry.range.as_str(), entry.field_type.clone()))
+        }
         // A column of a table outside this export, or of an exported table
         // without rows, has no range that would follow rows added later.
         _ => Err(tracker_error(
             "column totals are outside the export mapping",
+        )),
+    }
+}
+
+/// A conditional aggregate exports as Excel's plural `*IFS` call over whole
+/// column ranges, the canonical spelling Tachiko reads back.
+fn export_conditional(
+    aggregate: &ConditionalAggregate,
+    criteria: &[ColumnCriterion],
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
+    present: &std::collections::BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
+    if criteria.is_empty() {
+        return Err(tracker_error(
+            "conditional aggregates without criteria are outside the export mapping",
+        ));
+    }
+    let mut arguments = Vec::new();
+    let name = match aggregate {
+        ConditionalAggregate::Sum(column) => {
+            arguments.push(export_column_range(column, columns)?.0.to_owned());
+            "SUMIFS"
+        }
+        ConditionalAggregate::Average(column) => {
+            arguments.push(export_column_range(column, columns)?.0.to_owned());
+            "AVERAGEIFS"
+        }
+        ConditionalAggregate::Count => "COUNTIFS",
+    };
+    for criterion in criteria {
+        let (range, field_type) = export_column_range(&criterion.column, columns)?;
+        let criterion = export_criterion(
+            criterion,
+            field_type.as_ref(),
+            owner,
+            addresses,
+            columns,
+            present,
+        )?;
+        arguments.push(range.to_owned());
+        arguments.push(criterion);
+    }
+    Ok(format!("{name}({})", arguments.join(",")))
+}
+
+/// One criterion as Excel text: a blank test is the empty literal, a written
+/// number keeps its operator inside a literal, and an equality test against an
+/// expression exports that expression.
+fn export_criterion(
+    criterion: &ColumnCriterion,
+    column_type: Option<&FieldType>,
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
+    present: &std::collections::BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
+    let number = match criterion.value.as_deref() {
+        Some(Expression::Number(number)) => Some(*number),
+        _ => None,
+    };
+    // Excel would compare dates by serial number, while Tachiko compares dates,
+    // so a written number over a date column has no faithful spreadsheet text.
+    if number.is_some() && column_type == Some(&FieldType::Date) {
+        return Err(tracker_error(
+            "a number criterion cannot test a date column",
+        ));
+    }
+    match (criterion.operator, criterion.value.as_deref()) {
+        (ComparisonOperator::Equal, None) => Ok("\"\"".to_owned()),
+        (ComparisonOperator::NotEqual, None) => Ok("\"<>\"".to_owned()),
+        (ComparisonOperator::Equal, Some(value)) => {
+            export_in(value, owner, addresses, columns, present)
+        }
+        (_, Some(Expression::Number(number))) => Ok(format!(
+            "\"{}{}\"",
+            criterion.operator.as_str(),
+            number.get()
+        )),
+        _ => Err(tracker_error(
+            "criterion is outside the exported spreadsheet formula grammar",
         )),
     }
 }
@@ -3769,7 +4124,7 @@ fn export_function(
     arguments: &[Expression],
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, ExportCell>,
-    columns: &BTreeMap<ColumnRef, String>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     let mut exported = Vec::with_capacity(arguments.len());
@@ -3784,7 +4139,7 @@ fn export_binary(
     right: &Expression,
     owner: &FieldRef,
     addresses: &BTreeMap<FieldRef, ExportCell>,
-    columns: &BTreeMap<ColumnRef, String>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
     Ok(format!(

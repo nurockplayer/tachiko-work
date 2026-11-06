@@ -136,6 +136,10 @@ text, date and yes/no criteria can't be written in the formula yet; put the valu
 That is the workaround: put the criterion text in a Text cell and reference it.
 A relational criterion (`>`, `>=`, `<`, `<=`) must be followed by a number
 literal or a Number-typed expression; `=` and `<>` also accept a bare reference.
+A1 entry translates all six names when every range is one whole data column of
+the same rows, and refuses a non-writable literal with `unsupported_criterion`.
+XLSX import keeps Excel's last calculated value, with a finding, for a
+conditional call it cannot translate, rather than failing the import.
 Removing or retyping a criterion column is refused while the formula reads it.
 `.roproj/v3` stores the column, the comparison, and an optional value
 expression; the frozen `.roproj/v1` and `.roproj/v2` formats and direct `.ro/v2`
