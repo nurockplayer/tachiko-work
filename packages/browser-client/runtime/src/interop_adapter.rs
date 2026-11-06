@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-pub const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
+// Plan A-06b scratch measurement: lifted so a 100k-cell text-capacity
+// occurrence can be opened and edited. Never merge.
+pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_EXPANDED_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_ZIP_ENTRIES: usize = 256;
 pub const MAX_SHEETS: usize = crate::capacity::DEFAULT_LIMITS.collections;
@@ -30,8 +32,8 @@ const MAX_NATIVE_TABLES_PRECISION_LOCATIONS: usize = 20;
 pub const MAX_FORMULAS: usize = crate::capacity::DEFAULT_LIMITS.formulas;
 pub(crate) const MAX_TEXT_CAPACITY_COLUMNS: usize = 16;
 pub(crate) const TEXT_CAPACITY_MIN_ROWS: usize = 65;
-pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 8_406;
-pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 25_218;
+pub(crate) const MAX_TEXT_CAPACITY_ROWS: usize = 200_000;
+pub(crate) const MAX_TEXT_CAPACITY_CELLS: usize = 2_000_000;
 pub(crate) const MAX_TEXT_CAPACITY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_TEXT_CAPACITY_HEADER_BYTES: usize = 39;
 

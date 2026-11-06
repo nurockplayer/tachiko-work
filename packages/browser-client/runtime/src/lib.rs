@@ -60,7 +60,7 @@ use tachiko_workspace_engine::{
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
-    formula_source_projections,
+    formula_source_projections, instrumentation,
     keyed_grouped_sum_operations::{KeyedGroupedSumOutcome, evaluate_keyed_grouped_sum},
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -111,20 +111,22 @@ const MAX_COLLECTIONS: usize = capacity::DEFAULT_LIMITS.collections;
 const MAX_TABLE_FIELDS: usize = capacity::DEFAULT_LIMITS.table_fields;
 const MAX_TABLE_ROWS: usize = capacity::DEFAULT_LIMITS.table_rows;
 const MAX_TOTAL_ENTITIES: usize = capacity::DEFAULT_LIMITS.total_entities;
-const MAX_FIELD_QUERY_TARGETS: usize = 1024;
-const MAX_FORMULA_PROFILE_NODES: usize = 256;
+// Plan A-06b scratch measurement: limits lifted past the 100k-cell fixtures so
+// one runtime edit can be timed with the real projections in place. Never merge.
+const MAX_FIELD_QUERY_TARGETS: usize = 1_000_000;
+const MAX_FORMULA_PROFILE_NODES: usize = 1_000_000;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
-const MAX_PROJECTION_BYTES: usize = 65_536;
+const MAX_PROJECTION_BYTES: usize = 1024 * 1024 * 1024;
 /// Largest number of groups one grouped-totals reply may carry.
 const MAX_GROUPS: usize = 200;
-pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 1024 * 1024 * 1024;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) const MAX_SPREADSHEET_METADATA_REQUEST_BYTES: usize = 4 * 1024 * 1024;
-const MAX_TEXT_CAPACITY_PROFILE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_TEXT_CAPACITY_PROFILE_BYTES: usize = 1024 * 1024 * 1024;
 /// Whole-table `queryTable` compatibility bound. At or below it the legacy
 /// complete projection keeps working; above it the typed `use_window_query`
 /// refusal points callers at [`DesignerRequest::QueryTableWindow`].
-const MAX_QUERY_TABLE_ROWS: usize = 1_000;
+const MAX_QUERY_TABLE_ROWS: usize = 1_000_000;
 /// Largest bounded window one request may ask for; `0` returns totals only.
 const MAX_TABLE_WINDOW_ROWS: usize = 256;
 /// Largest `view.keep_entities` set admitted by one request.
@@ -2589,8 +2591,17 @@ impl DesignerRuntime {
     /// # Errors
     ///
     /// Returns a typed adapter or workspace failure.
-    #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
     pub fn handle(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
+        // Plan A-06b scratch measurement: the whole request as one phase.
+        let _phase = instrumentation::PhaseTimer::new("handle");
+        self.handle_inner(request)
+    }
+
+    #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
+    fn handle_inner(
+        &mut self,
+        request: DesignerRequest,
+    ) -> Result<DesignerResponse, DesignerError> {
         match request {
             DesignerRequest::NewTracker { occurrence_id } => {
                 let candidate = Self::tracker(&occurrence_id)?;
@@ -2851,11 +2862,11 @@ impl DesignerRuntime {
                 expected_revision,
                 target,
                 input,
-            } => Ok(DesignerResponse::Published(self.edit_scalar(
-                &expected_revision,
-                &target,
-                &input,
-            )?)),
+            } => {
+                let publication = self.edit_scalar(&expected_revision, &target, &input)?;
+                let _phase = instrumentation::PhaseTimer::new("handle/build_response");
+                Ok(DesignerResponse::Published(publication))
+            }
             DesignerRequest::TranslateA1Formula { input } => Ok(DesignerResponse::A1Translation(
                 self.translate_a1_formula(&input)?,
             )),
@@ -5060,175 +5071,184 @@ impl DesignerRuntime {
         commands: Vec<SemanticCommand>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
-        let snapshot = self.session.export_snapshot();
-        let mut candidate = snapshot.document().clone();
-        for command in &commands {
-            match command {
-                SemanticCommand::AppendCollection { schema, entities } => {
-                    candidate.schemas.insert(schema.id.clone(), schema.clone());
-                    for entity in entities {
+        let (snapshot, mut candidate) = {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/export_snapshot_clone");
+            let snapshot = self.session.export_snapshot();
+            let candidate = snapshot.document().clone();
+            (snapshot, candidate)
+        };
+        {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/apply_commands");
+            for command in &commands {
+                match command {
+                    SemanticCommand::AppendCollection { schema, entities } => {
+                        candidate.schemas.insert(schema.id.clone(), schema.clone());
+                        for entity in entities {
+                            candidate.entities.insert(entity.id.clone(), entity.clone());
+                        }
+                    }
+                    SemanticCommand::RemoveCollection { schema, entities } => {
+                        for entity in entities {
+                            candidate.entities.remove(entity);
+                        }
+                        candidate.schemas.remove(schema);
+                    }
+                    SemanticCommand::SetFieldValue { field, value } => {
+                        if let Some(entity) = candidate.entities.get_mut(&field.entity) {
+                            entity.fields.insert(field.field.clone(), value.clone());
+                        }
+                    }
+                    SemanticCommand::AppendEntity { entity } => {
                         candidate.entities.insert(entity.id.clone(), entity.clone());
                     }
-                }
-                SemanticCommand::RemoveCollection { schema, entities } => {
-                    for entity in entities {
+                    SemanticCommand::RemoveEntity { entity } => {
                         candidate.entities.remove(entity);
                     }
-                    candidate.schemas.remove(schema);
-                }
-                SemanticCommand::SetFieldValue { field, value } => {
-                    if let Some(entity) = candidate.entities.get_mut(&field.entity) {
-                        entity.fields.insert(field.field.clone(), value.clone());
+                    SemanticCommand::AppendSchemaField {
+                        schema,
+                        field,
+                        values,
+                    } => {
+                        let definition = candidate
+                            .schemas
+                            .get_mut(schema)
+                            .ok_or_else(|| table_error("native table schema is unavailable"))?;
+                        definition.insert_field(field.clone());
+                        for (entity, value) in values {
+                            candidate
+                                .entities
+                                .get_mut(entity)
+                                .ok_or_else(|| table_error("native row is unavailable"))?
+                                .fields
+                                .insert(field.id.clone(), value.clone());
+                        }
                     }
-                }
-                SemanticCommand::AppendEntity { entity } => {
-                    candidate.entities.insert(entity.id.clone(), entity.clone());
-                }
-                SemanticCommand::RemoveEntity { entity } => {
-                    candidate.entities.remove(entity);
-                }
-                SemanticCommand::AppendSchemaField {
-                    schema,
-                    field,
-                    values,
-                } => {
-                    let definition = candidate
-                        .schemas
-                        .get_mut(schema)
-                        .ok_or_else(|| table_error("native table schema is unavailable"))?;
-                    definition.insert_field(field.clone());
-                    for (entity, value) in values {
+                    SemanticCommand::RemoveSchemaField {
+                        schema,
+                        field,
+                        values,
+                    } => {
+                        let definition = candidate
+                            .schemas
+                            .get_mut(schema)
+                            .ok_or_else(|| table_error("native table schema is unavailable"))?;
+                        definition.fields.remove(&field.id);
+                        definition.normalize_field_order();
+                        for entity in values.keys() {
+                            candidate
+                                .entities
+                                .get_mut(entity)
+                                .ok_or_else(|| table_error("native row is unavailable"))?
+                                .fields
+                                .remove(&field.id);
+                        }
+                    }
+                    SemanticCommand::RenameSchemaField { schema, field, key } => {
                         candidate
-                            .entities
-                            .get_mut(entity)
-                            .ok_or_else(|| table_error("native row is unavailable"))?
-                            .fields
-                            .insert(field.id.clone(), value.clone());
+                            .schemas
+                            .get_mut(schema)
+                            .and_then(|schema| schema.fields.get_mut(field))
+                            .ok_or_else(|| table_error("column is unavailable"))?
+                            .key = key.clone();
                     }
-                }
-                SemanticCommand::RemoveSchemaField {
-                    schema,
-                    field,
-                    values,
-                } => {
-                    let definition = candidate
-                        .schemas
-                        .get_mut(schema)
-                        .ok_or_else(|| table_error("native table schema is unavailable"))?;
-                    definition.fields.remove(&field.id);
-                    definition.normalize_field_order();
-                    for entity in values.keys() {
+                    SemanticCommand::SetSchemaFieldDisplayName {
+                        schema,
+                        field,
+                        display_name,
+                    } => {
                         candidate
-                            .entities
-                            .get_mut(entity)
-                            .ok_or_else(|| table_error("native row is unavailable"))?
-                            .fields
-                            .remove(&field.id);
+                            .schemas
+                            .get_mut(schema)
+                            .and_then(|schema| schema.fields.get_mut(field))
+                            .ok_or_else(|| table_error("column is unavailable"))?
+                            .display_name
+                            .clone_from(display_name);
                     }
-                }
-                SemanticCommand::RenameSchemaField { schema, field, key } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .key = key.clone();
-                }
-                SemanticCommand::SetSchemaFieldDisplayName {
-                    schema,
-                    field,
-                    display_name,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .display_name
-                        .clone_from(display_name);
-                }
-                SemanticCommand::SetSchemaFieldRequiredness {
-                    schema,
-                    field,
-                    required,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .required = *required;
-                }
-                SemanticCommand::UnsetField { field } => {
-                    if let Some(entity) = candidate.entities.get_mut(&field.entity) {
-                        entity.fields.remove(&field.field);
+                    SemanticCommand::SetSchemaFieldRequiredness {
+                        schema,
+                        field,
+                        required,
+                    } => {
+                        candidate
+                            .schemas
+                            .get_mut(schema)
+                            .and_then(|schema| schema.fields.get_mut(field))
+                            .ok_or_else(|| table_error("column is unavailable"))?
+                            .required = *required;
                     }
-                }
-                SemanticCommand::FormulaInverseRestore(command) => {
-                    if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
-                        entity.fields.insert(
-                            command.target().field.clone(),
-                            Value::Number(command.value()),
-                        );
+                    SemanticCommand::UnsetField { field } => {
+                        if let Some(entity) = candidate.entities.get_mut(&field.entity) {
+                            entity.fields.remove(&field.field);
+                        }
                     }
-                }
-                SemanticCommand::SetSchemaFieldOrder { schema, order } => {
-                    let definition = candidate
-                        .schemas
-                        .get_mut(schema)
-                        .ok_or_else(|| table_error("column is unavailable"))?;
-                    definition.field_order.clone_from(order);
-                    definition.normalize_field_order();
-                }
-                SemanticCommand::SetFieldNumberFormat {
-                    schema,
-                    field,
-                    number_format,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .number_format
-                        .clone_from(number_format);
-                }
-                SemanticCommand::FormulaRestore(command) => {
-                    if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
-                        entity.fields.insert(
-                            command.target().field.clone(),
-                            Value::Formula(command.expression().clone()),
-                        );
+                    SemanticCommand::FormulaInverseRestore(command) => {
+                        if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
+                            entity.fields.insert(
+                                command.target().field.clone(),
+                                Value::Number(command.value()),
+                            );
+                        }
                     }
-                }
-                SemanticCommand::SetFieldConstraint {
-                    schema,
-                    field,
-                    constraint,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .constraint
-                        .clone_from(constraint);
-                }
-                SemanticCommand::FormulaUpdate(_) => {
-                    return Err(tracker_error("unsupported history command"));
-                }
-                SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
-                    candidate
-                        .keyed_grouped_sum_definitions
-                        .insert(definition.id.clone(), definition.clone());
-                }
-                SemanticCommand::RemoveKeyedGroupedSumDefinition { definition } => {
-                    candidate.keyed_grouped_sum_definitions.remove(definition);
+                    SemanticCommand::SetSchemaFieldOrder { schema, order } => {
+                        let definition = candidate
+                            .schemas
+                            .get_mut(schema)
+                            .ok_or_else(|| table_error("column is unavailable"))?;
+                        definition.field_order.clone_from(order);
+                        definition.normalize_field_order();
+                    }
+                    SemanticCommand::SetFieldNumberFormat {
+                        schema,
+                        field,
+                        number_format,
+                    } => {
+                        candidate
+                            .schemas
+                            .get_mut(schema)
+                            .and_then(|schema| schema.fields.get_mut(field))
+                            .ok_or_else(|| table_error("column is unavailable"))?
+                            .number_format
+                            .clone_from(number_format);
+                    }
+                    SemanticCommand::FormulaRestore(command) => {
+                        if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
+                            entity.fields.insert(
+                                command.target().field.clone(),
+                                Value::Formula(command.expression().clone()),
+                            );
+                        }
+                    }
+                    SemanticCommand::SetFieldConstraint {
+                        schema,
+                        field,
+                        constraint,
+                    } => {
+                        candidate
+                            .schemas
+                            .get_mut(schema)
+                            .and_then(|schema| schema.fields.get_mut(field))
+                            .ok_or_else(|| table_error("column is unavailable"))?
+                            .constraint
+                            .clone_from(constraint);
+                    }
+                    SemanticCommand::FormulaUpdate(_) => {
+                        return Err(tracker_error("unsupported history command"));
+                    }
+                    SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
+                        candidate
+                            .keyed_grouped_sum_definitions
+                            .insert(definition.id.clone(), definition.clone());
+                    }
+                    SemanticCommand::RemoveKeyedGroupedSumDefinition { definition } => {
+                        candidate.keyed_grouped_sum_definitions.remove(definition);
+                    }
                 }
             }
         }
-        let capacity_usage =
-            capacity::check_document(&candidate, capacity::limits_for_profile(self.text_capacity))?;
+        let capacity_usage = {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/capacity_check");
+            capacity::check_document(&candidate, capacity::limits_for_profile(self.text_capacity))?
+        };
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -5238,8 +5258,13 @@ impl DesignerRuntime {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
-        match validate(&candidate) {
+        let validation = {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/validate");
+            validate(&candidate)
+        };
+        match validation {
             Ok(()) => {
+                let _phase = instrumentation::PhaseTimer::new("publish_commands/preflight");
                 // A v3-origin text-capacity occurrence edits like any other
                 // capacity occurrence; only strict v3 origins keep the strict
                 // preflight.
@@ -5720,10 +5745,13 @@ impl DesignerRuntime {
             return Err(PatchLifecycleError::NoChange.into());
         }
         let publication = self.publish_commands(expected, forward.clone())?;
-        self.record_history_entry(HistoryEntry {
-            forward: HistoryAction::Commands(forward),
-            inverse: HistoryAction::Commands(inverse),
-        });
+        {
+            let _phase = instrumentation::PhaseTimer::new("record_edit/history");
+            self.record_history_entry(HistoryEntry {
+                forward: HistoryAction::Commands(forward),
+                inverse: HistoryAction::Commands(inverse),
+            });
+        }
         Ok(publication)
     }
 
@@ -5732,75 +5760,81 @@ impl DesignerRuntime {
         expected: &str,
         edits: &[CellEdit],
     ) -> Result<PublicationProjection, DesignerError> {
+        let _whole = instrumentation::PhaseTimer::new("edit_cells");
         self.check_revision(expected)?;
         if edits.is_empty() || edits.len() > MAX_FIELD_QUERY_TARGETS {
             return Err(tracker_error("the edit range is empty or too large"));
         }
-        let snapshot = (!self.text_capacity).then(|| self.session.export_snapshot());
-        let mut seen = BTreeSet::new();
-        let mut forward = Vec::new();
-        let mut inverse = Vec::new();
-        for edit in edits {
-            let field = edit.target.as_field_ref();
-            if !seen.insert(field.clone()) {
-                return Err(tracker_error("duplicate cell targets are unsupported"));
+        let (forward, inverse) = {
+            let _phase = instrumentation::PhaseTimer::new("edit_cells/pre_publish");
+            let snapshot = (!self.text_capacity).then(|| self.session.export_snapshot());
+            let mut seen = BTreeSet::new();
+            let mut forward = Vec::new();
+            let mut inverse = Vec::new();
+            for edit in edits {
+                let field = edit.target.as_field_ref();
+                if !seen.insert(field.clone()) {
+                    return Err(tracker_error("duplicate cell targets are unsupported"));
+                }
+                let spec = self
+                    .collection_specs
+                    .values()
+                    .find(|spec| spec.entities.contains(&field.entity))
+                    .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                        field: field.clone(),
+                    })?;
+                let column = spec
+                    .columns
+                    .iter()
+                    .find(|column| column.id == field.field)
+                    .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                        field: field.clone(),
+                    })?;
+                let present = if let Some(snapshot) = &snapshot {
+                    snapshot.document().entities[&field.entity]
+                        .fields
+                        .contains_key(&field.field)
+                } else {
+                    self.session
+                        .query_entities(std::slice::from_ref(&field.entity))?
+                        .value()[0]
+                        .fields
+                        .contains(&field.field)
+                };
+                if (!present || matches!(edit.input, ScalarEditInput::Clear))
+                    && !spec.native_table_rows
+                {
+                    return Err(DesignerError::UnsupportedScalarEdit { field });
+                }
+                let projection = if self.text_capacity && present {
+                    Some(self.session.query_fields(std::slice::from_ref(&field))?)
+                } else {
+                    None
+                };
+                let old = if self.text_capacity {
+                    projection
+                        .as_ref()
+                        .and_then(|query| query.value().first())
+                        .and_then(|value| value.stored_value.as_ref())
+                } else {
+                    snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
+                        .and_then(|entity| entity.fields.get(&field.field))
+                };
+                // A formula is not a blank scalar slot.
+                if present && old.is_none() {
+                    return Err(DesignerError::UnsupportedScalarEdit { field });
+                }
+                let value = cell_edit_value(column, old, &edit.input, &field)?;
+                if value.as_ref() != old {
+                    let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
+                    forward.push(command);
+                    inverse.extend(undo);
+                }
             }
-            let spec = self
-                .collection_specs
-                .values()
-                .find(|spec| spec.entities.contains(&field.entity))
-                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
-                    field: field.clone(),
-                })?;
-            let column = spec
-                .columns
-                .iter()
-                .find(|column| column.id == field.field)
-                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
-                    field: field.clone(),
-                })?;
-            let present = if let Some(snapshot) = &snapshot {
-                snapshot.document().entities[&field.entity]
-                    .fields
-                    .contains_key(&field.field)
-            } else {
-                self.session
-                    .query_entities(std::slice::from_ref(&field.entity))?
-                    .value()[0]
-                    .fields
-                    .contains(&field.field)
-            };
-            if (!present || matches!(edit.input, ScalarEditInput::Clear)) && !spec.native_table_rows
-            {
-                return Err(DesignerError::UnsupportedScalarEdit { field });
-            }
-            let projection = if self.text_capacity && present {
-                Some(self.session.query_fields(std::slice::from_ref(&field))?)
-            } else {
-                None
-            };
-            let old = if self.text_capacity {
-                projection
-                    .as_ref()
-                    .and_then(|query| query.value().first())
-                    .and_then(|value| value.stored_value.as_ref())
-            } else {
-                snapshot
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
-                    .and_then(|entity| entity.fields.get(&field.field))
-            };
-            // A formula is not a blank scalar slot.
-            if present && old.is_none() {
-                return Err(DesignerError::UnsupportedScalarEdit { field });
-            }
-            let value = cell_edit_value(column, old, &edit.input, &field)?;
-            if value.as_ref() != old {
-                let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
-                forward.push(command);
-                inverse.extend(undo);
-            }
-        }
+            (forward, inverse)
+        };
         self.record_edit(expected, forward, inverse)
     }
 

@@ -21,15 +21,17 @@ pub struct CapacityLimits {
     pub dependency_edges: usize,
 }
 
+// Plan A-06b scratch measurement: the admission profile is lifted far beyond
+// the 100k-cell fixtures so one runtime edit can be timed. Never merge.
 pub(crate) const DEFAULT_LIMITS: CapacityLimits = CapacityLimits {
     collections: 32,
     table_fields: 32,
-    table_rows: 128,
-    total_entities: 1_024,
-    populated_cells: 100_000,
-    formulas: 256,
-    formula_ast_nodes: 100_000,
-    dependency_edges: 200_000,
+    table_rows: 1_000_000,
+    total_entities: 1_000_000,
+    populated_cells: 10_000_000,
+    formulas: 1_000_000,
+    formula_ast_nodes: 10_000_000,
+    dependency_edges: 20_000_000,
 };
 
 /// Preserve the independently admitted Text/Number rectangle. Its content and

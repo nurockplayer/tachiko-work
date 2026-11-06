@@ -7,6 +7,67 @@
 //! With the `capacity-instrumentation` feature disabled — the default, and the
 //! only configuration for release WASM — every recorder below is an empty
 //! inline function, so call sites compile away to nothing.
+//!
+//! This branch also carries unconditional wall-clock phase timers (Plan A-06b
+//! scratch measurement). They are thread-local and never part of the product
+//! surface; remove them before any merge.
+
+use std::cell::RefCell;
+use std::time::Instant;
+
+thread_local! {
+    /// Completed phases for the current measurement window: label and
+    /// microseconds. Nested phases each record their own inclusive duration.
+    static PHASES: RefCell<Vec<(&'static str, u128)>> = const { RefCell::new(Vec::new()) };
+    /// Phases currently open, innermost last.
+    static PHASE_STACK: RefCell<Vec<(&'static str, Instant)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Discard every completed phase and any still-open one.
+pub fn reset_phases() {
+    PHASES.with(|phases| phases.borrow_mut().clear());
+    PHASE_STACK.with(|stack| stack.borrow_mut().clear());
+}
+
+/// Open one named phase on the calling thread's stack.
+pub fn phase_start(name: &'static str) {
+    PHASE_STACK.with(|stack| stack.borrow_mut().push((name, Instant::now())));
+}
+
+/// Close the innermost open phase and record its inclusive duration.
+pub fn phase_end() {
+    let opened = PHASE_STACK.with(|stack| stack.borrow_mut().pop());
+    if let Some((name, started)) = opened {
+        let micros = started.elapsed().as_micros();
+        PHASES.with(|phases| phases.borrow_mut().push((name, micros)));
+    }
+}
+
+/// Take the completed phases recorded since the last reset.
+#[must_use]
+pub fn take_phases() -> Vec<(&'static str, u128)> {
+    PHASES.with(|phases| std::mem::take(&mut *phases.borrow_mut()))
+}
+
+/// RAII phase timer: opens on construction, closes on drop.
+pub struct PhaseTimer {
+    _private: (),
+}
+
+impl PhaseTimer {
+    /// Open the named phase until the returned timer is dropped.
+    #[must_use]
+    pub fn new(name: &'static str) -> Self {
+        phase_start(name);
+        Self { _private: () }
+    }
+}
+
+impl Drop for PhaseTimer {
+    fn drop(&mut self) {
+        phase_end();
+    }
+}
 
 /// Cumulative counters recorded by one instrumented process.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
