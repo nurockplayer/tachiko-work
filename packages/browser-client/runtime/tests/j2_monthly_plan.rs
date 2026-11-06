@@ -864,10 +864,11 @@ fn optional_formula_column_starts_new_rows_blank_and_clears() {
         .find(|row| row.key != first_key)
         .expect("the second row is present");
     assert!(
-        second.blank_fields.contains(&reserve),
-        "an optional formula column starts blank in a new row"
+        second
+            .fields
+            .iter()
+            .any(|field| field.target.field == reserve && field.formula.is_some())
     );
-    assert!(second.fields.iter().all(|field| field.formula.is_none()));
 
     // Clear removes an optional cell's formula.
     let target = format!("{first_id}.{reserve}");
@@ -893,19 +894,36 @@ fn optional_formula_column_starts_new_rows_blank_and_clears() {
     );
     assert_eq!(plan.native_table_profile, Some(true));
 
+    // The cleared row breaks qualification, so a later row starts blank.
+    assert_eq!(
+        insert(
+            &mut runtime,
+            "resident/4",
+            "plan",
+            vec![number_input(&expense, "5")]
+        ),
+        "resident/5"
+    );
+    let plan = table(&mut runtime, "plan");
+    assert!(
+        plan.rows
+            .iter()
+            .any(|row| row.key != first_key && row.blank_fields.contains(&reserve))
+    );
+
     // A cleared optional cell accepts a typed scalar again.
     assert_eq!(
         published(
             &mut runtime,
             DesignerRequest::EditScalar {
-                expected_revision: "resident/4".to_owned(),
+                expected_revision: "resident/5".to_owned(),
                 target: target.as_str().into(),
                 input: ScalarEditInput::Number {
                     input: "7".to_owned(),
                 },
             },
         ),
-        "resident/5"
+        "resident/6"
     );
     let plan = table(&mut runtime, "plan");
     let refilled = projected(&plan, &first_key, "reserve");
