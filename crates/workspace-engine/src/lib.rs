@@ -2138,6 +2138,7 @@ pub(crate) fn finalize_edit_with_validation(
         return Err(invalid_document(report, ValidationRole::Candidate));
     };
     preflight_formula_projections(&edited)?;
+    tachiko_diff_engine::require_diff_supported(document, &edited)?;
     let base_calculation = calculate(document)
         .map_err(|source| WorkspaceError::Diff(DiffError::BeforeCalculation(source)))?;
     let semantic_diff = diff_with_calculations(document, &edited, &base_calculation, &calculation)?;

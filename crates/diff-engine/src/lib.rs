@@ -272,7 +272,7 @@ pub enum DiffError {
 ///
 /// Returns [`DiffError`] when either document cannot be calculated.
 pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {
-    require_supported(before, after)?;
+    require_diff_supported(before, after)?;
     let before_calculation = calculate(before).map_err(DiffError::BeforeCalculation)?;
     let after_calculation = calculate(after).map_err(DiffError::AfterCalculation)?;
     diff_with_calculations(before, after, &before_calculation, &after_calculation)
@@ -293,7 +293,7 @@ pub fn diff_with_calculations(
     before_calculation: &Calculation,
     after_calculation: &Calculation,
 ) -> Result<SemanticDiff, DiffError> {
-    require_supported(before, after)?;
+    require_diff_supported(before, after)?;
     let mut changes = Vec::new();
     let mut changed_fields = BTreeSet::new();
     let mut descriptors = BTreeMap::new();
@@ -376,7 +376,12 @@ pub fn diff_with_calculations(
     })
 }
 
-fn require_supported(before: &Document, after: &Document) -> Result<(), DiffError> {
+/// Refuse a document pair that [`diff`] does not support, before any calculation.
+///
+/// # Errors
+///
+/// Returns the first unsupported [`DiffError`] for the pair.
+pub fn require_diff_supported(before: &Document, after: &Document) -> Result<(), DiffError> {
     if before.has_number_formats() || after.has_number_formats() {
         return Err(DiffError::UnsupportedNumberFormat);
     }
