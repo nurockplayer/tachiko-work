@@ -4438,7 +4438,7 @@ fn criterion_form(
             CriterionOperandKind::Date => CriterionKind::Date,
             CriterionOperandKind::Text | CriterionOperandKind::Boolean => CriterionKind::Other,
         },
-        _ => CriterionKind::Other,
+        SourceValue::Boolean { .. } => CriterionKind::Other,
     })
 }
 
