@@ -962,6 +962,32 @@ impl Expression {
         uses
     }
 
+    /// Every column whose cells the expression reads as numbers. A conditional
+    /// aggregate's criterion columns are read whatever their scalar type, so
+    /// only its value column counts.
+    #[must_use]
+    pub fn numeric_columns(&self) -> Vec<&ColumnRef> {
+        let mut columns = Vec::new();
+        let mut pending = vec![self];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::ColumnTotal(column) | Self::ColumnAggregate { column, .. } => {
+                    columns.push(column);
+                }
+                Self::ColumnConditional { aggregate, .. } => {
+                    if let ConditionalAggregate::Sum(column)
+                    | ConditionalAggregate::Average(column) = aggregate.as_ref()
+                    {
+                        columns.push(column);
+                    }
+                }
+                _ => {}
+            }
+            pending.extend(node.children().into_iter().rev());
+        }
+        columns
+    }
+
     /// Every column total the expression reads, in evaluation order.
     #[must_use]
     pub fn column_totals(&self) -> Vec<&ColumnRef> {

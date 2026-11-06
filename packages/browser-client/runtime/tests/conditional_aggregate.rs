@@ -41,6 +41,12 @@ fn column(key: &str, name: &str, field_type: FieldType) -> (FieldId, FieldDefini
     )
 }
 
+fn optional_column(key: &str, name: &str, field_type: FieldType) -> (FieldId, FieldDefinition) {
+    let (id, mut definition) = column(key, name, field_type);
+    definition.required = false;
+    (id, definition)
+}
+
 fn number(value: f64) -> Value {
     Value::Number(Number::new(value).expect("fixture numbers are finite"))
 }
@@ -94,6 +100,7 @@ fn fixture() -> Document {
                 column("category", "Category", FieldType::Text),
                 column("quantity", "Quantity", FieldType::Number),
                 column("matching", "Matching", FieldType::Number),
+                optional_column("copied", "Copied", FieldType::Number),
             ]),
         },
     );
@@ -255,6 +262,30 @@ fn edit_text(runtime: &mut DesignerRuntime, expected: &str, target: &str, value:
             },
         },
     )
+}
+
+#[test]
+fn a_formula_with_a_text_criterion_column_can_be_copied() {
+    let mut runtime = open_fixture();
+    published(
+        &mut runtime,
+        DesignerRequest::CopyFormula {
+            expected_revision: "resident/0".to_owned(),
+            source: FieldTarget {
+                entity: "ads".to_owned(),
+                field: "matching".to_owned(),
+            },
+            destinations: vec![FieldTarget {
+                entity: "ads".to_owned(),
+                field: "copied".to_owned(),
+            }],
+            fixed_references: Vec::new(),
+            relative_rows: true,
+            relative_columns: false,
+        },
+    );
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(number_of(projected(&plan, "Ads", "copied")), Some(3.0));
 }
 
 #[test]

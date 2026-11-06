@@ -804,24 +804,7 @@ fn column_address(
 /// aggregate, and a conditional node's values column. Criterion columns feed
 /// row membership but are read whatever their scalar type.
 fn extract_value_columns(expression: &Expression) -> BTreeSet<ColumnRef> {
-    let mut columns = BTreeSet::new();
-    let mut pending = vec![expression];
-    while let Some(node) = pending.pop() {
-        match node {
-            Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
-                columns.insert(column.clone());
-            }
-            Expression::ColumnConditional { aggregate, .. } => match aggregate.as_ref() {
-                ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
-                    columns.insert(column.clone());
-                }
-                ConditionalAggregate::Count => {}
-            },
-            _ => {}
-        }
-        pending.extend(node.children());
-    }
-    columns
+    expression.numeric_columns().into_iter().cloned().collect()
 }
 
 /// Collect every column identity named by a bound expression.

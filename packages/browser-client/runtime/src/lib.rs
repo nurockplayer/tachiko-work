@@ -7872,7 +7872,7 @@ fn require_copy_expression_numbers(
     for (reference, numeric) in expression.reference_uses(owner) {
         require_copy_reference(document, &reference, numeric)?;
     }
-    for column in expression.column_totals() {
+    for column in expression.numeric_columns() {
         require_copy_column_number(document, column)?;
     }
     Ok(())
