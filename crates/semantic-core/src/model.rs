@@ -620,7 +620,8 @@ pub enum Value {
 }
 
 /// Maximum number of nodes admitted in a semantic formula expression.
-pub const MAX_EXPRESSION_NODES: usize = 256;
+/// Scratch (Plan A-06b): raised from 256 so the 255-term balanced total validates.
+pub const MAX_EXPRESSION_NODES: usize = 65_536;
 
 /// Maximum root-to-leaf node depth admitted in a semantic formula expression.
 pub const MAX_EXPRESSION_DEPTH: usize = 64;

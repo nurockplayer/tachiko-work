@@ -281,8 +281,9 @@ pub(crate) fn validate_text_capacity(workbook: &SourceWorkbook) -> Result<()> {
     // Worksheet nodes: row + (c,is,t) for populated Text cells. Empty and
     // Number cells use fewer nodes; a Date or Boolean cell adds only c and v,
     // so the 3-per-cell bound still holds. Other parts are independent XML documents.
-    if 2 + (sheet.rows.len() + 1) * (1 + 3 * sheet.columns.len()) > 100_000 {
-        return fail("Text capacity XML exceeds 100000 nodes");
+    // Scratch (Plan A-06b): raised from 100_000 so a 100k-cell document opens.
+    if 2 + (sheet.rows.len() + 1) * (1 + 3 * sheet.columns.len()) > 10_000_000 {
+        return fail("Text capacity XML exceeds 10000000 nodes");
     }
     for column in &sheet.columns {
         if csv_formula_text(&column.name) || !xml_text_valid(&column.name) {

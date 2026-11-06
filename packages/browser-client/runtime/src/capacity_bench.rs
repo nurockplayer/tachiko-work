@@ -1083,6 +1083,14 @@ fn measure_phase_fixture(
         println!("fixture {label}: no edit completed");
         return;
     }
+    // The first edit pays one-off lazy setup; keep only the steady-state edits.
+    if samples.len() > 1 {
+        samples.remove(0);
+        wall_millis.remove(0);
+        clone_counts.remove(0);
+        edits_run -= 1;
+        println!("first edit dropped as warm-up");
+    }
     #[allow(clippy::cast_precision_loss)]
     let clones = median(clone_counts.iter().map(|count| *count as f64).collect());
     let whole = median(wall_millis);
@@ -1135,12 +1143,13 @@ fn measure_phase_fixture(
 
 /// Plan A-06b: where one runtime `EditScalar` spends its time at 100k cells.
 ///
-/// A, B, C and D through the ordinary constructor; A and B also through the
-/// text-capacity constructor. Every fixture keeps all its samples.
+/// A, B, C and D through the ordinary constructor, then through the
+/// text-capacity constructor (refused for the readable profiles). Seven edits
+/// per run; the first is dropped as warm-up and the remaining six are reported.
 #[test]
 #[ignore = "capacity phase breakdown; run explicitly in release with --features capacity-bench"]
 fn capacity_edit_phase_breakdown() {
-    const EDITS: usize = 3;
+    const EDITS: usize = 7;
     const FIXTURE_TIME_LIMIT_MILLIS: f64 = 600_000.0;
     let fixtures = [
         (
@@ -1186,8 +1195,6 @@ fn capacity_edit_phase_breakdown() {
     ];
     for (label, spec, target) in fixtures {
         measure_phase_fixture(label, spec, target, false, EDITS, FIXTURE_TIME_LIMIT_MILLIS);
-        if matches!(label, "A" | "B") {
-            measure_phase_fixture(label, spec, target, true, EDITS, FIXTURE_TIME_LIMIT_MILLIS);
-        }
+        measure_phase_fixture(label, spec, target, true, EDITS, FIXTURE_TIME_LIMIT_MILLIS);
     }
 }
