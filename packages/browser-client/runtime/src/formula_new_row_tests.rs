@@ -71,7 +71,10 @@ fn inherited_formula_is_published_and_undoable() {
         .iter()
         .find(|f| f.target.field == ids[2])
         .unwrap();
-    assert_eq!(field.formula.as_ref().unwrap().source, "[.hours]*[.rate]");
+    assert_eq!(
+        field.formula.as_ref().unwrap().source,
+        "([.hours] * [.rate])"
+    );
     assert!(
         matches!(field.calculated, Some(CalculationProjection::Value { value }) if value == 20.0)
     );
@@ -103,7 +106,7 @@ fn inherited_formula_is_published_and_undoable() {
             .as_ref()
             .unwrap()
             .source,
-        "[.hours]*[.rate]"
+        "([.hours] * [.rate])"
     );
 }
 
@@ -254,12 +257,12 @@ fn differing_formula_and_blank_row_end_qualification() {
     let before = runtime.query_table(&collection).unwrap().rows;
     insert(&mut runtime, &collection, &ids, &[]);
     let after = runtime.query_table(&collection).unwrap().rows;
-    assert_eq!(&after[..2], &before[..]);
-    assert!(after[2].blank_fields.contains(&ids[2]));
+    assert_eq!(&after[1..], &before[..]);
+    assert!(after[0].blank_fields.contains(&ids[2]));
     let (mut runtime, collection, ids) = document_fixture(vec![Some(literal(1.0)), None], false);
     insert(&mut runtime, &collection, &ids, &[]);
     assert!(
-        runtime.query_table(&collection).unwrap().rows[2]
+        runtime.query_table(&collection).unwrap().rows[0]
             .blank_fields
             .contains(&ids[2])
     );
@@ -280,7 +283,7 @@ fn empty_and_absolute_reference_qualification() {
     );
     insert(&mut runtime, &collection, &ids, &[]);
     assert!(
-        runtime.query_table(&collection).unwrap().rows[2]
+        runtime.query_table(&collection).unwrap().rows[0]
             .blank_fields
             .contains(&ids[2])
     );
@@ -290,7 +293,7 @@ fn empty_and_absolute_reference_qualification() {
     );
     insert(&mut runtime, &collection, &ids, &[]);
     assert_eq!(
-        amount_formula(&runtime, &collection, 2).as_deref(),
+        amount_formula(&runtime, &collection, 0).as_deref(),
         Some("[.hours]")
     );
 }
@@ -306,7 +309,7 @@ fn totals_and_literals_qualify() {
     ] {
         let (mut runtime, collection, ids) = document_fixture(vec![Some(formula)], false);
         insert(&mut runtime, &collection, &ids, &[]);
-        assert!(amount_formula(&runtime, &collection, 1).is_some());
+        assert!(amount_formula(&runtime, &collection, 0).is_some());
     }
 }
 
@@ -318,10 +321,10 @@ fn required_formula_fills_or_restores_default_when_calculation_fails() {
     };
     let (mut runtime, collection, ids) = document_fixture(vec![Some(division)], true);
     insert(&mut runtime, &collection, &ids, &[(0, "4"), (1, "2")]);
-    assert!(amount_formula(&runtime, &collection, 1).is_some());
+    assert!(amount_formula(&runtime, &collection, 0).is_some());
     insert(&mut runtime, &collection, &ids, &[]);
     let table = runtime.query_table(&collection).unwrap();
-    let field = table.rows[2]
+    let field = table.rows[0]
         .fields
         .iter()
         .find(|field| field.target.field == ids[2])
@@ -338,9 +341,17 @@ fn paste_append_fills_blank_cells_and_preserves_typed_values_in_one_undo() {
     let (mut runtime, collection, ids) = fixture("[.hours]*[.rate]");
     let revision = runtime.current_revision().to_owned();
     let rows = vec![
-        vec!["2".into(), "3".into(), "".into()],
+        vec![
+            "2".into(),
+            "3".into(),
+            PasteCellInput::Typed(ScalarEditInput::Clear),
+        ],
         vec!["4".into(), "5".into(), "9".into()],
-        vec!["6".into(), "7".into(), "".into()],
+        vec![
+            "6".into(),
+            "7".into(),
+            PasteCellInput::Typed(ScalarEditInput::Clear),
+        ],
     ];
     let publication = runtime
         .paste_cell_inputs(&revision, &collection, None, &ids[0], &rows)
@@ -390,8 +401,8 @@ fn paste_overwrite_existing_formula_disables_append_fill() {
     let revision = runtime.current_revision().to_owned();
     let rows = vec![
         vec![PasteCellInput::from("7")],
-        vec![PasteCellInput::from("")],
-        vec![PasteCellInput::from("")],
+        vec![PasteCellInput::Typed(ScalarEditInput::Clear)],
+        vec![PasteCellInput::Typed(ScalarEditInput::Clear)],
     ];
     runtime
         .paste_cell_inputs(&revision, &collection, Some(&first), &ids[2], &rows)
