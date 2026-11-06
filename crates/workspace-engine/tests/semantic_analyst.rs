@@ -4,7 +4,7 @@ use common::game_balance_document;
 use tachiko_workspace_engine::{
     DiagnosticCode, EntityId, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     Number, SchemaId, SemanticChange, WorkspaceError, analyze_changes, analyze_field,
-    analyze_validation, inspect_document,
+    analyze_validation, formula_source_projections, inspect_document,
 };
 
 fn add_power_formula(document: &mut tachiko_workspace_engine::Document) {
@@ -32,6 +32,55 @@ fn add_power_formula(document: &mut tachiko_workspace_engine::Document) {
                 right: Box::new(Expression::Number(Number::new(5.0).unwrap())),
             }),
         );
+}
+
+#[test]
+fn formula_source_projections_match_field_analysis() {
+    let mut document = game_balance_document("game", "Game");
+    add_power_formula(&mut document);
+
+    let sources = formula_source_projections(&document).unwrap();
+
+    let formulas = document
+        .entities
+        .values()
+        .flat_map(|entity| {
+            entity
+                .fields
+                .iter()
+                .filter(|(_, value)| matches!(value, tachiko_workspace_engine::Value::Formula(_)))
+                .map(|(field, _)| FieldRef::new(entity.id.clone(), field.clone()))
+        })
+        .collect::<Vec<_>>();
+    assert!(formulas.len() > 1);
+    assert_eq!(sources.len(), formulas.len());
+    for field in formulas {
+        let analysis = analyze_field(&document, "analysis", &field).unwrap();
+        assert_eq!(sources.get(&field), analysis.formula_source.as_ref());
+    }
+}
+
+#[test]
+fn formula_source_projections_refuse_an_invalid_document() {
+    let mut document = game_balance_document("game", "Game");
+    add_power_formula(&mut document);
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("power"),
+            tachiko_workspace_engine::Value::Formula(Expression::Reference(FieldRef::new(
+                "iron_sword",
+                "power",
+            ))),
+        );
+
+    assert!(matches!(
+        formula_source_projections(&document),
+        Err(WorkspaceError::InvalidDocument { .. })
+    ));
 }
 
 #[test]

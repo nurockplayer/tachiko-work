@@ -670,11 +670,14 @@ fn capacity_accounting_baseline() {
 fn capacity_formula_count_sweep() {
     /// Shapes as (tables, rows per table, formula columns). Every shape fits
     /// the current 8-table/128-row/1,024-entity limits.
-    const SHAPES: [(usize, usize, usize); 13] = [
+    const SHAPES: [(usize, usize, usize); 16] = [
         (1, 64, 1),
         (1, 64, 2),
         (1, 64, 4),
         (1, 64, 8),
+        (1, 64, 12),
+        (8, 8, 8),
+        (8, 4, 24),
         (1, 128, 1),
         (1, 128, 2),
         (1, 128, 4),
@@ -816,7 +819,7 @@ fn capacity_formula_count_sweep() {
                 entity: last_entity.clone(),
                 field: "c0".to_owned(),
             };
-            let value = 10.0 + f64::from(u32::try_from(iteration).expect("bounded iteration"));
+            let value = 1_000.0 + f64::from(u32::try_from(iteration).expect("bounded iteration"));
             let ((), sample) = observe(|| {
                 let response = runtime
                     .handle(DesignerRequest::EditScalar {

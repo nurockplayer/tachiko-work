@@ -786,6 +786,41 @@ pub fn inspect_document(
     }
 }
 
+/// Project the canonical source of every stored formula in one pass.
+///
+/// Admits the same documents as calling [`analyze_field`] for each formula, and
+/// returns the same `formula_source` text, but validates and indexes the
+/// document once rather than once per formula.
+///
+/// # Errors
+///
+/// Returns an explicit semantic validation, address projection, or formula
+/// projection failure.
+pub fn formula_source_projections(
+    document: &Document,
+) -> Result<BTreeMap<FieldRef, String>, WorkspaceError> {
+    require_validated_calculation(document)?;
+    let index = AddressIndex::build(document)?;
+    let mut sources = BTreeMap::new();
+    for entity in document.entities.values() {
+        for (field_id, value) in &entity.fields {
+            let Value::Formula(expression) = value else {
+                continue;
+            };
+            let field = FieldRef::new(entity.id.clone(), field_id.clone());
+            index.field_address(document, &field)?;
+            let source = project_expression(document, &field, expression).map_err(|source| {
+                WorkspaceError::FormulaProjection {
+                    field: field.clone(),
+                    source,
+                }
+            })?;
+            sources.insert(field, source);
+        }
+    }
+    Ok(sources)
+}
+
 /// Analyze one stable field through the shared formula/dependency authority.
 ///
 /// # Errors

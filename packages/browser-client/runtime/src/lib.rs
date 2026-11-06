@@ -54,10 +54,11 @@ use tachiko_workspace_engine::{
     IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
     SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
-    WorkspaceError, analyze_field, create_document, diagnostic_codes,
+    WorkspaceError, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
+    formula_source_projections,
     keyed_grouped_sum_operations::{KeyedGroupedSumOutcome, evaluate_keyed_grouped_sum},
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -1489,8 +1490,6 @@ pub enum DesignerError {
     FieldQueryTooLarge { requested: usize, maximum: usize },
     #[error("projection is {actual} bytes; the bounded maximum is {maximum}")]
     ProjectionTooLarge { actual: usize, maximum: usize },
-    #[error("formula projection is unavailable for '{field}'")]
-    MissingFormulaProjection { field: FieldRef },
     #[error("Designer lifecycle failed: {0}")]
     Lifecycle(#[from] PatchLifecycleError),
     #[error("'{input}' is not a finite Number")]
@@ -1702,10 +1701,9 @@ impl DesignerError {
             Self::InvalidView { .. } => ("invalid_view", Vec::new()),
             Self::UnknownViewField { .. } => ("unknown_view_field", Vec::new()),
             Self::UnknownEntity { .. } => ("unknown_entity", Vec::new()),
-            Self::Workspace(_)
-            | Self::MissingFormulaProjection { .. }
-            | Self::Lifecycle(_)
-            | Self::MissingInvalidation => ("runtime_failure", Vec::new()),
+            Self::Workspace(_) | Self::Lifecycle(_) | Self::MissingInvalidation => {
+                ("runtime_failure", Vec::new())
+            }
         };
         (code, None, diagnostics)
     }
@@ -8474,25 +8472,7 @@ fn ensure_static_profile(
 }
 
 fn formula_sources(document: &Document) -> Result<BTreeMap<FieldRef, String>, DesignerError> {
-    document
-        .entities
-        .values()
-        .flat_map(|entity| {
-            entity
-                .fields
-                .iter()
-                .filter(|(_, value)| matches!(value, Value::Formula(_)))
-                .map(|(field, _)| FieldRef::new(entity.id.clone(), field.clone()))
-        })
-        .map(|field| {
-            let source = analyze_field(document, "designer-formula-projection", &field)?
-                .formula_source
-                .ok_or_else(|| DesignerError::MissingFormulaProjection {
-                    field: field.clone(),
-                })?;
-            Ok((field, source))
-        })
-        .collect()
+    formula_source_projections(document).map_err(DesignerError::from)
 }
 
 fn designer_preview(

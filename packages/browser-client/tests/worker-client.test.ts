@@ -150,7 +150,7 @@ describe("capacity query wire validation", () => {
     },
     limits: {
       collections: 32, table_fields: 32, table_rows: 128, total_entities: 1024,
-      populated_cells: 100_000, formulas: 32, formula_ast_nodes: 100_000, dependency_edges: 200_000,
+      populated_cells: 100_000, formulas: 256, formula_ast_nodes: 100_000, dependency_edges: 200_000,
     },
   };
 
