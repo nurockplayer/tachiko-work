@@ -15,8 +15,10 @@ All notable changes to Tachiko Work are documented in this file.
   string literals are limited to numbers and blank tests until stored text is
   accepted; any other written criterion refuses with a message asking for a
   cell reference. `.roproj/v3` stores the comparison and an optional value
-  expression, while `.roproj/v1`/`v2` and direct `.ro/v2` refuse the form and
-  XLSX export falls back to the computed value.
+  expression, while `.roproj/v1`/`v2` and direct `.ro/v2` refuse the form.
+  `translateA1Formula` and XLSX import and export carry these formulas over
+  whole columns. A written text, date or yes/no criterion refuses in A1 entry
+  with `unsupported_criterion` and keeps Excel's last value on import.
 
 - A native column changes type as one operation (Work #660): the experimental
   client's `changeColumnType` and the `change_column_type` tracker command
