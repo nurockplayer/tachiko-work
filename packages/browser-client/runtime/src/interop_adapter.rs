@@ -1,4 +1,5 @@
 //! Private bounded file adapter. This module never evaluates formulas or executes source content.
+use crate::interop_document::quoted_sheet_name;
 use quick_xml::{Reader, events::Event};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -4448,10 +4449,10 @@ fn criterion_cell(
     current: usize,
     sheets: &[SourceSheet],
 ) -> Option<(usize, usize, usize)> {
-    let (name, address) = if let Some(rest) = criterion.strip_prefix('\'') {
-        let close = rest.find('\'')?;
-        let name = rest[..close].replace("''", "'");
-        (Some(name), rest[close + 1..].strip_prefix('!')?)
+    let (name, address) = if criterion.starts_with('\'') {
+        let mut cursor = 0;
+        let name = quoted_sheet_name(criterion, &mut cursor).ok()?;
+        (Some(name), &criterion[cursor..])
     } else if let Some((name, address)) = criterion.split_once('!') {
         (Some(name.to_owned()), address)
     } else {

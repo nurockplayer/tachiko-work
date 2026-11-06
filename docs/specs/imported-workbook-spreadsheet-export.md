@@ -155,9 +155,9 @@ other references, including column removal and row deletion; missing references
 or unsupported formulas refuse the whole export. A conditional aggregate exports
 as Excel's plural `SUMIFS`, `AVERAGEIFS` or `COUNTIFS` call over whole-column
 ranges: a blank test writes `""` or `"<>"`, a written number keeps its operator
-inside a quoted criterion, and an equality test writes its expression. A written
-number criterion over a Date column refuses because Excel compares by serial
-number. Calculation and formula-editing rules do not change.
+inside a quoted criterion, and an equality test writes its expression. A number
+criterion over a Date column, written or read from a Number cell, refuses because
+Excel compares by serial number. Calculation and formula-editing rules do not change.
 
 An absent optional value is an Empty cell. Present empty Text remains Text in
 XLSX; CSV represents both with an empty field and discloses this in

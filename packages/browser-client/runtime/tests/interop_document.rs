@@ -2049,6 +2049,35 @@ fn conditional_aggregate_imports_live_and_editing_updates_values() {
 }
 
 #[test]
+fn a_criterion_on_a_sheet_with_an_apostrophe_imports_live() {
+    use tachiko_designer_runtime::interop_adapter::{ImportOptions, export_xlsx, import_xlsx_with};
+    let (mut workbook, _) = conditional_workbook([
+        Some("=SUMIF($A$2:$A$4,'Owner''s Data'!$D2,$B$2:$B$4)"),
+        None,
+        None,
+    ]);
+    workbook.sheets[0].name = "Owner's Data".into();
+    let bytes = export_xlsx(&workbook).unwrap();
+    let source = import_xlsx_with(
+        &bytes,
+        &ImportOptions {
+            header_rows: vec![Some(1)],
+            ..ImportOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(source.sheets[0].rows[0][2].formula.is_some());
+    assert!(
+        !source
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value"),
+        "{:?}",
+        source.ledger
+    );
+}
+
+#[test]
 fn a_date_cell_criterion_on_a_date_column_imports_live() {
     let (workbook, selection) = conditional_workbook([Some("=COUNTIF($E$2:$E$4,$E2)"), None, None]);
     let (runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
@@ -2207,28 +2236,34 @@ fn conditional_aggregates_round_trip_through_xlsx() {
 
 #[test]
 fn export_refuses_a_number_criterion_over_a_date_column() {
-    let (source, selection) = workbook_fixture();
-    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
-    let DesignerResponse::Published(published) = runtime
-        .handle(DesignerRequest::FormulaUpdate {
-            expected_revision: "resident/0".into(),
-            target: FieldTarget {
-                entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
-                field: imported.metadata.sheets[0].columns[2].field_id.clone(),
-            },
-            source: "COUNTIFS([sheet_1.column_4:column], 5)".into(),
-        })
-        .unwrap()
-    else {
-        panic!("updating a formula publishes");
-    };
-    let error = runtime
-        .export_workbook(&published.resulting_revision, &imported.metadata)
-        .expect_err("a number criterion over a date column has no faithful export");
-    assert!(
-        error
-            .to_string()
-            .contains("a number criterion cannot test a date column"),
-        "{error}"
-    );
+    for source_text in [
+        "COUNTIFS([sheet_1.column_4:column], 5)",
+        "COUNTIFS([sheet_1.column_4:column], [.column_2])",
+        "COUNTIFS([sheet_1.column_4:column], 1+1)",
+    ] {
+        let (source, selection) = workbook_fixture();
+        let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        let DesignerResponse::Published(published) = runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: "resident/0".into(),
+                target: FieldTarget {
+                    entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[2].field_id.clone(),
+                },
+                source: source_text.into(),
+            })
+            .unwrap()
+        else {
+            panic!("updating a formula publishes");
+        };
+        let error = runtime
+            .export_workbook(&published.resulting_revision, &imported.metadata)
+            .expect_err("a number criterion over a date column has no faithful export");
+        assert!(
+            error
+                .to_string()
+                .contains("a number criterion cannot test a date column"),
+            "{source_text}: {error}"
+        );
+    }
 }

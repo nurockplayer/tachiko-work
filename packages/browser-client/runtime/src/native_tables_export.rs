@@ -181,7 +181,12 @@ fn write_formulas(
             for (i, entity) in spec.entities.iter().enumerate() {
                 addresses.insert(
                     FieldRef::new(entity.clone(), column.id.clone()),
-                    ExportCell::new(quoted.clone(), letters.clone(), i + 2),
+                    ExportCell::new(
+                        quoted.clone(),
+                        letters.clone(),
+                        i + 2,
+                        column.field_type == FieldType::Number,
+                    ),
                 );
                 count += usize::from(matches!(
                     document.entities[entity].fields.get(&column.id),

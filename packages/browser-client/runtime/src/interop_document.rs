@@ -1305,7 +1305,7 @@ fn metadata_target(
     ))
 }
 
-fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, DesignerError> {
+pub(crate) fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<String, DesignerError> {
     *cursor += 1;
     let mut name = String::new();
     loop {
@@ -1386,6 +1386,11 @@ fn export_a1_maps(
                         quoted.clone(),
                         column_letters(column),
                         row_index + 1 + usize::from(sheet.has_header),
+                        document
+                            .schemas
+                            .get(sheet.schema_id.as_str())
+                            .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
+                            .is_some_and(|field| field.field_type == FieldType::Number),
                     ),
                 );
             }
@@ -3778,11 +3783,17 @@ pub(crate) struct ExportCell {
     sheet: String,
     column: String,
     row: usize,
+    number: bool,
 }
 
 impl ExportCell {
-    pub(crate) fn new(sheet: String, column: String, row: usize) -> Self {
-        Self { sheet, column, row }
+    pub(crate) fn new(sheet: String, column: String, row: usize, number: bool) -> Self {
+        Self {
+            sheet,
+            column,
+            row,
+            number,
+        }
     }
 
     /// The absolute, sheet-qualified address of a stable identity.
@@ -4091,13 +4102,22 @@ fn export_criterion(
     columns: &BTreeMap<ColumnRef, ExportColumn>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
+    let number_cell = |reference: &FieldRef| {
+        addresses
+            .get(reference)
+            .is_some_and(|address| address.number)
+    };
     let number = match criterion.value.as_deref() {
-        Some(Expression::Number(number)) => Some(*number),
-        _ => None,
+        None => false,
+        Some(Expression::Reference(reference)) => number_cell(reference),
+        Some(Expression::SameRowReference(field)) => {
+            number_cell(&FieldRef::new(owner.entity.clone(), field.clone()))
+        }
+        Some(_) => true,
     };
     // Excel would compare dates by serial number, while Tachiko compares dates,
-    // so a written number over a date column has no faithful spreadsheet text.
-    if number.is_some() && column_type == Some(&FieldType::Date) {
+    // so a number over a date column has no faithful spreadsheet text.
+    if number && column_type == Some(&FieldType::Date) {
         return Err(tracker_error(
             "a number criterion cannot test a date column",
         ));
