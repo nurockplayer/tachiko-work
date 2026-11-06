@@ -173,17 +173,18 @@ test("#553 exported kit preserves optional blanks, explicit clears and requiredn
       await roundTrip("clear Number", () => client.clearField(revision, amountTarget));
       await roundTrip("optional column without initializers", () => history({type: "add_column", expected_revision: revision,
         collection, name: "extra", field_type: "text", required: false}));
+      await roundTrip("change blank Number to Text", () => client.changeColumnType(revision, collection, amount.id, "text"));
       return {columns: opened.table.columns, stages, refusals, roundTrips};
     } finally { await client.close(); }
   });
   expect(workers).toHaveLength(1);
   expect(workers[0]).toContain("/vendor/tachiko/experimental-client.worker.js");
   expect(evidence.columns.map(column => column.required)).toEqual([true, false, false]);
-  expect(evidence.roundTrips).toBe(10);
+  expect(evidence.roundTrips).toBe(11);
   expect(evidence.refusals.map(refusal => refusal.stage)).toEqual(["strengthen blank", "clear already blank", "clear required"]);
   expect(evidence.refusals[1]?.code).toBe("no_change");
   const snapshots = evidence.stages.map(stage => stage.snapshot as {
-    columns: Array<{id: string; required: boolean}>;
+    columns: Array<{id: string; required: boolean; field_type: string}>;
     rows: Array<{blank_fields?: string[]; fields: Array<{stored: unknown}>}>;
     fields: Array<{blank?: boolean; stored: unknown}>;
   });
@@ -200,6 +201,7 @@ test("#553 exported kit preserves optional blanks, explicit clears and requiredn
   expect(snapshots[7]?.columns[2]?.required).toBe(false);
   expect(snapshots[8]?.rows[0]?.blank_fields).toEqual([amount!.id]);
   expect(snapshots[9]?.rows[0]?.blank_fields).toEqual([amount!.id, snapshots[9]!.columns[3]!.id]);
+  expect(snapshots[10]?.columns[2]?.field_type).toBe("text");
   expect(label?.required).toBe(true);
 });
 

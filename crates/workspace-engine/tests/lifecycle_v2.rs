@@ -1,5 +1,7 @@
 mod common;
 
+use std::collections::BTreeMap;
+
 use common::game_balance_document;
 use tachiko_diff_engine::CanonicalDirectFact;
 use tachiko_workspace_engine::{
@@ -1638,4 +1640,226 @@ fn constraint_review_requires_disclosure_before_review_credit() {
             TrustedInstant::new(10),
         )
         .unwrap();
+}
+
+fn single_item_document() -> Document {
+    let amount = FieldDefinition {
+        id: "amount".into(),
+        key: "amount".into(),
+        display_name: None,
+        field_type: FieldType::Number,
+        required: true,
+        constraint: FieldConstraint::None,
+        number_format: None,
+    };
+    let mut document = Document::empty("game", "One column");
+    document.schemas.insert(
+        "items".into(),
+        Schema {
+            field_order: None,
+            id: "items".into(),
+            key: "items".into(),
+            display_name: None,
+            fields: BTreeMap::from([("amount".into(), amount)]),
+        },
+    );
+    document.entities.insert(
+        "item".into(),
+        Entity {
+            id: "item".into(),
+            key: "item".into(),
+            schema: "items".into(),
+            fields: BTreeMap::from([("amount".into(), Value::Number(Number::new(3.0).unwrap()))]),
+        },
+    );
+    document
+}
+
+fn schema_field_editor(lifecycle: &mut PatchLifecycle) {
+    let mut requirements = vec![query(OperationFamily::SchemaFieldMutation)];
+    for action in [AuthorizationAction::Propose, AuthorizationAction::Execute] {
+        for class in [
+            MutationClass::Structure,
+            MutationClass::Schema,
+            MutationClass::Destructive,
+        ] {
+            for field in ["amount", "label"] {
+                requirements.push(write(
+                    action,
+                    OperationFamily::SchemaFieldMutation,
+                    class,
+                    SemanticScope::SchemaField {
+                        schema: "items".into(),
+                        field: field.into(),
+                    },
+                ));
+            }
+        }
+    }
+    grant(lifecycle, "schema-field-editor", "editor", requirements);
+}
+
+fn amount_definition(document: &Document) -> FieldDefinition {
+    document.schemas["items"].fields["amount"].clone()
+}
+
+#[test]
+fn v2_batch_replacing_a_field_definition_under_one_id_publishes_as_a_type_change() {
+    let document = single_item_document();
+    let before = amount_definition(&document);
+    let mut after = before.clone();
+    after.field_type = FieldType::Text;
+    let mut lifecycle = lifecycle(true);
+    schema_field_editor(&mut lifecycle);
+    let mut host = Host {
+        document: document.clone(),
+        revision: revision("r1"),
+        publications: 0,
+    };
+
+    let body = SemanticPatchBody::atomic_batch(vec![
+        SemanticCommand::RemoveSchemaField {
+            schema: "items".into(),
+            field: before,
+            values: BTreeMap::from([("item".into(), Value::Number(Number::new(3.0).unwrap()))]),
+        },
+        SemanticCommand::AppendSchemaField {
+            schema: "items".into(),
+            field: after,
+            values: BTreeMap::from([("item".into(), Value::Text("3".into()))]),
+        },
+    ])
+    .unwrap();
+    let id = propose_body(&mut lifecycle, &host.document, "replace-amount", body).unwrap();
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &host.document,
+            &revision("r1"),
+            &id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert!(preview.delta.facts().iter().any(|fact| matches!(
+        fact,
+        CanonicalDirectFact::SchemaFieldTypeChanged { schema, field, before: was, after: now }
+            if schema.as_str() == "items"
+                && field.as_str() == "amount"
+                && *was == FieldType::Number
+                && *now == FieldType::Text
+    )));
+
+    let receipt = lifecycle
+        .execute_v2(
+            &id,
+            None,
+            &"editor".into(),
+            &mut host,
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert_eq!(receipt.delta().unwrap(), &preview.delta);
+    assert_eq!(host.publications, 1);
+    assert_eq!(host.revision, revision("r2"));
+    assert_eq!(
+        host.document.schemas["items"].fields["amount"].field_type,
+        FieldType::Text
+    );
+    assert_eq!(
+        host.document.entities["item"].fields["amount"],
+        Value::Text("3".into())
+    );
+}
+
+#[test]
+fn v2_batch_removing_one_field_and_appending_another_keeps_its_existing_admission() {
+    let document = single_item_document();
+    let before = amount_definition(&document);
+    let added = FieldDefinition {
+        id: "label".into(),
+        key: "label".into(),
+        display_name: None,
+        field_type: FieldType::Text,
+        required: true,
+        constraint: FieldConstraint::None,
+        number_format: None,
+    };
+    let mut lifecycle = lifecycle(true);
+    schema_field_editor(&mut lifecycle);
+    let mut host = Host {
+        document: document.clone(),
+        revision: revision("r1"),
+        publications: 0,
+    };
+
+    let body = SemanticPatchBody::atomic_batch(vec![
+        SemanticCommand::RemoveSchemaField {
+            schema: "items".into(),
+            field: before,
+            values: BTreeMap::from([("item".into(), Value::Number(Number::new(3.0).unwrap()))]),
+        },
+        SemanticCommand::AppendSchemaField {
+            schema: "items".into(),
+            field: added,
+            values: BTreeMap::from([("item".into(), Value::Text("sword".into()))]),
+        },
+    ])
+    .unwrap();
+    let id = propose_body(
+        &mut lifecycle,
+        &host.document,
+        "swap-amount-for-label",
+        body,
+    )
+    .unwrap();
+    let preview = lifecycle
+        .preview_v2(
+            &scope(),
+            &host.document,
+            &revision("r1"),
+            &id,
+            &"editor".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert!(preview.delta.facts().iter().any(|fact| matches!(
+        fact,
+        CanonicalDirectFact::SchemaFieldDeleted { schema, field, .. }
+            if schema.as_str() == "items" && field.as_str() == "amount"
+    )));
+    assert!(preview.delta.facts().iter().any(|fact| matches!(
+        fact,
+        CanonicalDirectFact::SchemaFieldCreated { schema, field, .. }
+            if schema.as_str() == "items" && field.as_str() == "label"
+    )));
+    assert!(
+        !preview
+            .delta
+            .facts()
+            .iter()
+            .any(|fact| matches!(fact, CanonicalDirectFact::SchemaFieldTypeChanged { .. }))
+    );
+
+    let receipt = lifecycle
+        .execute_v2(
+            &id,
+            None,
+            &"editor".into(),
+            &mut host,
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert_eq!(receipt.delta().unwrap(), &preview.delta);
+    assert_eq!(host.publications, 1);
+    assert_eq!(host.revision, revision("r2"));
+    assert!(!host.document.schemas["items"].fields.contains_key("amount"));
+    assert_eq!(
+        host.document.schemas["items"].fields["label"].field_type,
+        FieldType::Text
+    );
+    assert_eq!(
+        host.document.entities["item"].fields["label"],
+        Value::Text("sword".into())
+    );
 }

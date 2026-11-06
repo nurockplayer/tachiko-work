@@ -244,6 +244,25 @@ When strengthening is refused for blank values, the failure code is
 reports the authoritative blank count. The message says how many rows have no
 value in the column.
 
+## Changing a column's type
+
+`changeColumnType(expectedRevision, collection, field, fieldType)` encodes
+`change_column_type` with the column's stable ID and one of `text`, `number`,
+`boolean` or `date`. The whole column changes type as one revision-pinned
+publication and one `undo` step: every stored value is converted, then the
+definition keeps its ID, key and display name, keeps its `required` flag, keeps
+`number_format` only when the new type is Number, and resets its constraint.
+A column that already has the target type refuses.
+
+The command converts present values and never invents data. An empty Text cell
+becomes blank in an optional column; in a required column it refuses.
+Any conversion the column cannot express refuses the whole command without
+changing anything, and the message names the row, column and value, for example
+`row 3 of column 'amount' holds 'twelve': conversion requires an unambiguous
+finite decimal Number`. A column holding formula cells, or one a surviving
+formula reads, refuses: a calculated column keeps its type. There is no preview
+in this slice; use the returned `PublicationProjection` for the new revision.
+
 `ScalarEditInput` adds `{kind: "clear"}` alongside typed sets. `edit_cells`
 can mix both atomically. `paste_cells.rows` accepts `PasteCellInput[][]`:
 each cell is a raw string or a typed scalar input, including explicit clear.

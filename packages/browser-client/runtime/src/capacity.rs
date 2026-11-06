@@ -57,6 +57,7 @@ pub enum CapacityLimit {
     Formulas,
     FormulaAstNodes,
     DependencyEdges,
+    ProjectionBytes,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Error, PartialEq, Serialize)]
@@ -71,6 +72,12 @@ pub struct CapacityExceeded {
 
 impl CapacityExceeded {
     pub(crate) fn import_message(&self, at_least: bool) -> String {
+        if self.limit == CapacityLimit::ProjectionBytes {
+            return format!(
+                "Workbook is too large to open: it needs {} bytes and the limit is {}. The workbook was not imported.",
+                self.attempted, self.maximum
+            );
+        }
         let subject = self
             .collection
             .as_ref()

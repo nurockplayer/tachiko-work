@@ -6,6 +6,16 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A native column changes type as one operation (Work #660): the experimental
+  client's `changeColumnType` and the `change_column_type` tracker command
+  convert every stored value of one scalar column to Text, Number, Boolean or
+  Date as one revision-pinned publication and one undo step. The definition
+  keeps its ID, key, display name and requiredness, keeps `number_format` only
+  when the new type is Number, and resets its constraint; an empty Text cell
+  becomes blank in an optional column and refuses in a required one. Any value
+  that cannot convert, a formula cell, or a column a surviving formula reads
+  refuses the whole command with no change.
+
 - Experimental kit: read-only `translateA1Formula` converts explicit grid A1 formulas, discloses changed reference/range semantics, and dry-run checks types and cycles.
 
 - XLSX cell Text and headers decode SpreadsheetML `_xHHHH_` escapes in one

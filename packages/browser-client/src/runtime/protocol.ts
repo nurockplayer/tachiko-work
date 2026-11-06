@@ -20,7 +20,8 @@ export type BootstrapProjection = {
   keyed_grouped_sum_definition_ids?: string[];
 };
 
-export type CapacityLimits = Record<CapacityLimitName, number>;
+/** `projection_bytes` refuses an import; it is not a counted resource. */
+export type CapacityLimits = Record<Exclude<CapacityLimitName, "projection_bytes">, number>;
 
 export type CapacityUsage = {
   collections: number;
@@ -372,7 +373,8 @@ export type CapacityLimitName =
   | "populated_cells"
   | "formulas"
   | "formula_ast_nodes"
-  | "dependency_edges";
+  | "dependency_edges"
+  | "projection_bytes";
 
 export type CapacityFailureProjection = FailureProjection & {
   code: "capacity_exceeded";
@@ -393,6 +395,7 @@ const CAPACITY_LIMIT_NAMES: readonly CapacityLimitName[] = [
   "formulas",
   "formula_ast_nodes",
   "dependency_edges",
+  "projection_bytes",
 ];
 
 /** Validate the detailed wire payload for a capacity refusal. */
@@ -449,6 +452,7 @@ export type TrackerCommand =
   | { type: "insert_row"; expected_revision: string; collection: string; initializers: Array<{field: string; input: ScalarEditInput}> }
   | { type: "remove_table_rows"; expected_revision: string; collection: string; entities: string[] }
   | { type: "add_column"; expected_revision: string; collection: string; name: string; field_type: string; required?: boolean; initializers?: Array<{entity: string; input: ScalarEditInput}> }
+  | { type: "change_column_type"; expected_revision: string; collection: string; field: string; field_type: string }
   | { type: "set_column_requiredness"; expected_revision: string; collection: string; field: string; required: boolean }
   | { type: "set_column_constraint"; expected_revision: string; collection: string; field: string; constraint: FieldConstraintInput }
   | { type: "set_column_number_format"; expected_revision: string; collection: string; field: string; number_format: NumberFormat | null }
