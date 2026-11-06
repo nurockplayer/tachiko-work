@@ -125,7 +125,9 @@ fn set_number(document: &mut Document, entity: &str, field: &str, value: f64) {
         .insert(FieldId::from(field), number(value));
 }
 
-fn mixed_edits() -> [(&'static str, fn(&mut Document)); 9] {
+type NamedEdit = (&'static str, fn(&mut Document));
+
+fn mixed_edits() -> [NamedEdit; 9] {
     [
         ("set a value", |document| {
             set_number(document, "sword_a", "damage", 50.0);
