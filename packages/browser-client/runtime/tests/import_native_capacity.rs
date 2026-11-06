@@ -484,6 +484,134 @@ fn text_capacity_csv_still_refuses_extra_columns() {
     assert!(error.to_string().contains("no extra columns"), "{error}");
 }
 
+/// One Number column and one same-row formula column, so each data row adds
+/// exactly one source formula.
+fn formula_workbook(sheets: usize, rows: usize) -> SourceWorkbook {
+    SourceWorkbook {
+        sheets: (0..sheets)
+            .map(|index| SourceSheet {
+                name: format!("Sheet{}", index + 1),
+                has_header: true,
+                columns: vec![
+                    SourceColumn {
+                        name: "Value".into(),
+                        width: None,
+                        number_format: None,
+                    },
+                    SourceColumn {
+                        name: "Double".into(),
+                        width: None,
+                        number_format: None,
+                    },
+                ],
+                rows: (0..rows)
+                    .map(|row| {
+                        vec![
+                            SourceCell {
+                                value: SourceValue::Number { value: 1.25 },
+                                ..SourceCell::default()
+                            },
+                            SourceCell {
+                                value: SourceValue::Number { value: 2.5 },
+                                formula: Some(format!("A{}*2", row + 2)),
+                                ..SourceCell::default()
+                            },
+                        ]
+                    })
+                    .collect(),
+                layout: SourceLayout::default(),
+            })
+            .collect(),
+        ledger: Vec::new(),
+    }
+}
+
+fn assert_formula_column(book: &SourceWorkbook, rows: usize) {
+    for (sheet_index, sheet) in book.sheets.iter().enumerate() {
+        assert_eq!(sheet.rows.len(), rows, "sheet {}", sheet_index + 1);
+        for (row, cells) in sheet.rows.iter().enumerate() {
+            assert_eq!(cells[0].value, SourceValue::Number { value: 1.25 });
+            assert_eq!(cells[0].formula, None);
+            assert_eq!(
+                cells[1].formula.as_deref(),
+                Some(format!("(A{}*2)", row + 2).as_str()),
+                "sheet {} row {}",
+                sheet_index + 1,
+                row + 1
+            );
+            assert_eq!(cells[1].value, SourceValue::Number { value: 2.5 });
+        }
+    }
+}
+
+fn formula_round_trip(source: &SourceWorkbook) {
+    let parsed = import_xlsx(&export_xlsx(source).unwrap()).unwrap();
+    assert_eq!(parsed.sheets, source.sheets);
+    let (runtime, imported) = import_workbook(&parsed, &selection(&parsed), ORIGINAL).unwrap();
+    let exported = runtime
+        .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
+        .unwrap();
+    assert_formula_column(&exported, source.sheets[0].rows.len());
+    let saved = runtime
+        .export_project_v3(&runtime.observe_occurrence().revision)
+        .unwrap()
+        .bytes;
+    inspect_imported_project(&saved, &imported.metadata).unwrap();
+    let mut resident = None;
+    open_imported_project(&mut resident, &saved, &imported.metadata, FRESH).unwrap();
+    let reopened = resident.unwrap();
+    let after = reopened
+        .export_workbook(&reopened.observe_occurrence().revision, &imported.metadata)
+        .unwrap();
+    assert_formula_column(&after, source.sheets[0].rows.len());
+    assert_eq!(after.sheets, exported.sheets);
+    assert_eq!(
+        export_xlsx(&after).unwrap(),
+        export_xlsx(&exported).unwrap()
+    );
+}
+
+#[test]
+fn xlsx_formulas_round_trip_above_the_old_bound() {
+    // A single sheet admits at most 66 of these formulas; the ordinary
+    // 64 KiB opened projection refuses the next row before the 256-formula
+    // bound is reachable. Two sheets carry 100 formulas with 50 rows each.
+    for (sheets, rows) in [(1, 33), (1, 66), (2, 50)] {
+        formula_round_trip(&formula_workbook(sheets, rows));
+    }
+}
+
+#[test]
+fn xlsx_formula_growth_stops_at_the_ordinary_projection_gate() {
+    let source = formula_workbook(1, 67);
+    let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    assert_eq!(parsed.sheets, source.sheets);
+    let Err(error) = import_workbook(&parsed, &selection(&parsed), ORIGINAL) else {
+        panic!("67-formula sheet imported");
+    };
+    let DesignerError::ProjectionTooLarge { actual, maximum } = error else {
+        panic!("expected the opened projection refusal, got {error}");
+    };
+    // MAX_PROJECTION_BYTES, the ordinary-profile complete opened projection.
+    assert_eq!(maximum, 65_536);
+    assert!(actual > maximum);
+
+    let source = formula_workbook(2, 52);
+    let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    assert_eq!(parsed.sheets, source.sheets);
+    let Err(error) = import_workbook(&parsed, &selection(&parsed), ORIGINAL) else {
+        panic!("104-formula workbook imported");
+    };
+    let DesignerError::UnsupportedProject { message } = error else {
+        panic!("expected the post-edit refresh refusal, got {error}");
+    };
+    assert!(
+        message.contains("worst-case post-edit refresh"),
+        "{message}"
+    );
+    assert!(message.contains("65536"), "{message}");
+}
+
 fn date_workbook(rows: usize, columns: usize) -> SourceWorkbook {
     let mut source = workbook(1, columns, rows);
     for cell in source.sheets[0].rows.iter_mut().flatten() {
