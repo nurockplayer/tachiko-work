@@ -1,6 +1,7 @@
 use tachiko_semantic_core::{
     ColumnAddress, ColumnAggregateFunction, ComparisonOperator, CriterionTest, FieldAddress,
-    FieldKey, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, is_valid_identifier,
+    FieldKey, MAX_CONDITIONAL_CRITERIA, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number,
+    is_valid_identifier,
 };
 use thiserror::Error;
 
@@ -849,6 +850,11 @@ impl<'input> Parser<'input> {
             };
             let mut criteria = Vec::new();
             loop {
+                if criteria.len() == MAX_CONDITIONAL_CRITERIA {
+                    return Err(self.error(format!(
+                        "a conditional aggregate admits at most {MAX_CONDITIONAL_CRITERIA} criteria"
+                    )));
+                }
                 criteria.push(self.parse_column_criterion()?);
                 self.skip_whitespace();
                 if self.peek() != Some(b',') {

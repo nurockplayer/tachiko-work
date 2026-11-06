@@ -900,6 +900,20 @@ fn incremental_calculation_equals_full() {
 }
 
 #[test]
+fn more_than_sixteen_criteria_refuse_at_parse() {
+    let pairs = |count: usize| {
+        (0..count)
+            .map(|_| "[plan.quota:column], 1")
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    parse_expression(&format!("COUNTIFS({})", pairs(16))).expect("sixteen criteria are admitted");
+    let error =
+        parse_expression(&format!("COUNTIFS({})", pairs(17))).expect_err("seventeen refuse");
+    assert!(error.message.contains("at most 16"), "{}", error.message);
+}
+
+#[test]
 fn a_column_read_inside_a_criterion_renders_and_is_a_dependency() {
     let input = "COUNTIFS([plan.quota:column], [plan.reserve:average])";
     let summary = owner("summary", "result");
