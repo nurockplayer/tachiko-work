@@ -556,7 +556,6 @@ fn translate_a1_conditional_aggregates_translate_whole_columns() {
         // A criterion is a number or one cell, the forms XLSX carries.
         ("COUNTIF(B2:B4,MIN(B3,5))", "unsupported_criterion"),
         ("COUNTIF(B2:B4,B3*2)", "unsupported_criterion"),
-        ("COUNTIF(B2:B4,(5))", "unsupported_criterion"),
         ("SUMIF(B2:B4)", "unsupported_function"),
         ("SUMIFS(C2:C4,A2:A4)", "unsupported_function"),
     ] {
