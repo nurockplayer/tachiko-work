@@ -799,14 +799,14 @@ fn validate_column_conditional(
         validate_formula_scalar_column(document, owner, &criterion.column, path, diagnostics);
         schemas.insert(&criterion.column.schema);
         let valid = match (&criterion.operator, criterion.value.as_deref()) {
-            (ComparisonOperator::Equal | ComparisonOperator::NotEqual, None) => true,
+            (ComparisonOperator::Equal | ComparisonOperator::NotEqual, None)
+            | (_, Some(Expression::Number(_))) => true,
             (ComparisonOperator::Equal, Some(expression)) => {
                 matches!(
                     expression,
                     Expression::Reference(_) | Expression::SameRowReference(_)
                 ) || expression.expression_type() == Some(FormulaExpressionType::Number)
             }
-            (_, Some(Expression::Number(_))) => true,
             (_, Some(_) | None) => false,
         };
         if !valid {

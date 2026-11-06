@@ -413,7 +413,7 @@ struct ColumnConditionalArgsV3 {
 #[serde(deny_unknown_fields)]
 struct ColumnCriterionV3 {
     column: ColumnRefV3,
-    operator: ComparisonOperator,
+    operator: String,
     #[serde(default)]
     value: Option<Box<ExpressionV3>>,
 }
@@ -1083,7 +1083,7 @@ impl ExpressionV3 {
                     for criterion in &arguments.criteria {
                         require_id("formula schema id", &criterion.column.schema)?;
                         require_id("formula field id", &criterion.column.field)?;
-                        match (criterion.operator, &criterion.value) {
+                        match (comparison_operator(&criterion.operator)?, &criterion.value) {
                             (ComparisonOperator::Equal, Some(value)) => {
                                 stack.push((value, depth + 1));
                             }
@@ -1179,8 +1179,8 @@ impl ExpressionV3 {
                     .into_iter()
                     .map(|criterion| {
                         Ok(ColumnCriterion {
+                            operator: comparison_operator(&criterion.operator)?,
                             column: column_ref(criterion.column.schema, criterion.column.field),
-                            operator: criterion.operator,
                             value: match criterion.value {
                                 Some(expression) => Some(Box::new(expression.into_semantic()?)),
                                 None => None,
@@ -1423,7 +1423,7 @@ impl ExpressionV3 {
                         .iter()
                         .map(|criterion| ColumnCriterionV3 {
                             column: wire_column(&criterion.column),
-                            operator: criterion.operator,
+                            operator: criterion.operator.as_str().to_owned(),
                             value: criterion
                                 .value
                                 .as_ref()
@@ -1926,12 +1926,7 @@ fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<()
                 compact_member_prefix(output, "column")?;
                 write_compact_column(output, &criterion.column)?;
                 output.push(',');
-                compact_member_string(
-                    output,
-                    "operator",
-                    comparison_operator_wire_name(criterion.operator),
-                    false,
-                )?;
+                compact_member_string(output, "operator", &criterion.operator, false)?;
                 if let Some(value) = &criterion.value {
                     output.push(',');
                     compact_member_prefix(output, "value")?;
@@ -2338,16 +2333,5 @@ fn comparison_operator(operator: &str) -> Result<ComparisonOperator, FormatError
         ">" => Ok(ComparisonOperator::Greater),
         ">=" => Ok(ComparisonOperator::GreaterOrEqual),
         _ => invalid_representation(format!("unknown formula comparison operator '{operator}'")),
-    }
-}
-
-const fn comparison_operator_wire_name(operator: ComparisonOperator) -> &'static str {
-    match operator {
-        ComparisonOperator::Equal => "equal",
-        ComparisonOperator::NotEqual => "not_equal",
-        ComparisonOperator::Less => "less",
-        ComparisonOperator::LessOrEqual => "less_or_equal",
-        ComparisonOperator::Greater => "greater",
-        ComparisonOperator::GreaterOrEqual => "greater_or_equal",
     }
 }

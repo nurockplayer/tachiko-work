@@ -223,7 +223,7 @@ fn roproj_v3_decoding_refuses_impossible_criteria() {
         }],
     ));
     let tree = encode_roproj_v3(&blank).unwrap();
-    let candidate = replace_in_tree(&tree, "\"operator\":\"equal\"", "\"operator\":\"greater\"");
+    let candidate = replace_in_tree(&tree, "\"operator\":\"=\"", "\"operator\":\">\"");
     let message = CanonicalRoProjectV3::try_from_files(candidate)
         .unwrap_err()
         .to_string();
