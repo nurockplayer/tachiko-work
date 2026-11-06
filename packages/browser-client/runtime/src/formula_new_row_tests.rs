@@ -403,14 +403,25 @@ fn paste_overwrite_existing_formula_disables_append_fill() {
 
 #[test]
 fn formula_capacity_refuses_insert_without_publication() {
-    let (mut runtime, collection, ids) =
-        document_fixture((0..256).map(|_| Some(literal(1.0))).collect(), false);
+    let (seed, collection, ids) =
+        document_fixture((0..86).map(|_| Some(literal(1.0))).collect(), false);
+    let mut document = seed.session.export_snapshot().document().clone();
+    for (index, row) in document.entities.values_mut().enumerate() {
+        row.fields
+            .insert(FieldId::from("hours"), Value::Formula(literal(1.0)));
+        if index < 84 {
+            row.fields
+                .insert(FieldId::from("rate"), Value::Formula(literal(1.0)));
+        }
+    }
+    let mut runtime =
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000593").unwrap();
     let revision = runtime.current_revision().to_owned();
     let error = runtime.insert_row(&revision, &collection, &[]).unwrap_err();
     assert!(
         matches!(error, DesignerError::CapacityExceeded(error) if error.limit == CapacityLimit::Formulas)
     );
     assert_eq!(runtime.current_revision(), revision);
-    assert_eq!(runtime.query_table(&collection).unwrap().rows.len(), 256);
+    assert_eq!(runtime.query_table(&collection).unwrap().rows.len(), 86);
     assert_eq!(ids[2], "amount");
 }
