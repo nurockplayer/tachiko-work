@@ -623,6 +623,43 @@ jobs:
       - name: Validate strict operational evidence
         run: bash scripts/operational-evidence-check.sh
 
+  native-platforms:
+    name: Native platform ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.target }}
+          workspaces: |
+            .
+            packages/browser-client/runtime
+
+      - name: Test native runtime crate
+        run: cargo test --manifest-path packages/browser-client/runtime/Cargo.toml --locked --no-fail-fast --target ${{ matrix.target }}
+
+      - name: Check release CLI
+        run: cargo check --package tachiko-cli --locked --target ${{ matrix.target }}
+
   minimum-rust:
     name: Minimum supported Rust 1.85.0
     if: ${{ always() && !cancelled() }}
