@@ -232,8 +232,9 @@ fn preview_with_a_different_document_reevaluates_without_replacing_the_memo() {
     let mut lifecycle = lifecycle(false);
     let document = document();
     let proposal = propose(&mut lifecycle, &document, "proposal", set_f("new")).unwrap();
-    let mut other = document.clone();
-    other.entities.remove("e1");
+    // A different document under the same revision: v1 rejects display names
+    // during final evaluation, after planning the same commands.
+    let other = named_document();
 
     let error = lifecycle
         .preview(
