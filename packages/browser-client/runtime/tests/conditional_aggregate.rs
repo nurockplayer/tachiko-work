@@ -24,7 +24,6 @@ const EXPORTED: &str = "00000000-0000-4000-8000-000000000683";
 
 const SUMMARY: &str =
     "SUMIFS([plan.quantity:column], [plan.category:column], [settings.criterion])";
-const MATCHING: &str = "SUMIFS([plan.quantity:column], [plan.category:column], [.category])";
 
 fn column(key: &str, name: &str, field_type: FieldType) -> (FieldId, FieldDefinition) {
     let id = FieldId::from(key);
@@ -119,7 +118,9 @@ fn fixture() -> Document {
         },
     );
     let matching = Expression::ColumnConditional {
-        aggregate: ConditionalAggregate::Sum(ColumnRef::new("plan", "quantity")),
+        aggregate: Box::new(ConditionalAggregate::Sum(ColumnRef::new(
+            "plan", "quantity",
+        ))),
         criteria: vec![same_row_criterion()],
     };
     for (key, item, category, quantity) in [
@@ -154,7 +155,9 @@ fn fixture() -> Document {
         BTreeMap::from([(
             FieldId::from("result"),
             Value::Formula(Expression::ColumnConditional {
-                aggregate: ConditionalAggregate::Sum(ColumnRef::new("plan", "quantity")),
+                aggregate: Box::new(ConditionalAggregate::Sum(ColumnRef::new(
+                    "plan", "quantity",
+                ))),
                 criteria: vec![cell_criterion("category")],
             }),
         )]),
@@ -327,7 +330,7 @@ fn a_criterion_column_cannot_be_removed_or_retyped() {
             subject,
         } => {
             assert_eq!(dependent_cells, 4);
-            assert!(subject.contains("category"), "{subject}");
+            assert!(subject.contains("Category"), "{subject}");
         }
         other => panic!("expected a dependency refusal: {other:?}"),
     }

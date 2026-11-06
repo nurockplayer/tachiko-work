@@ -38,7 +38,7 @@ impl Evaluation<'_> {
                     criteria,
                 } => {
                     if let ConditionalAggregate::Sum(column)
-                    | ConditionalAggregate::Average(column) = aggregate
+                    | ConditionalAggregate::Average(column) = aggregate.as_ref()
                     {
                         references.extend(column_cells(self.document, column));
                     }

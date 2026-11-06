@@ -1258,7 +1258,7 @@ fn column_conditional_into_semantic(
         ConditionalAggregateKind::Count => ConditionalAggregate::Count,
     };
     Ok(Expression::ColumnConditional {
-        aggregate,
+        aggregate: Box::new(aggregate),
         criteria,
     })
 }
@@ -1409,7 +1409,7 @@ impl ExpressionV3 {
                 aggregate,
                 criteria,
             } => {
-                let (aggregate, values) = match aggregate {
+                let (aggregate, values) = match aggregate.as_ref() {
                     ConditionalAggregate::Sum(column) => ("sum", Some(wire_column(column))),
                     ConditionalAggregate::Average(column) => ("average", Some(wire_column(column))),
                     ConditionalAggregate::Count => ("count", None),

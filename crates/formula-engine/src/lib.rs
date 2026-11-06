@@ -293,7 +293,7 @@ fn bind_conditional(
         UnboundConditionalAggregate::Count => ConditionalAggregate::Count,
     };
     Ok(Expression::ColumnConditional {
-        aggregate,
+        aggregate: Box::new(aggregate),
         criteria: bound_criteria,
     })
 }
@@ -811,7 +811,7 @@ fn extract_value_columns(expression: &Expression) -> BTreeSet<ColumnRef> {
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 columns.insert(column.clone());
             }
-            Expression::ColumnConditional { aggregate, .. } => match aggregate {
+            Expression::ColumnConditional { aggregate, .. } => match aggregate.as_ref() {
                 ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
                     columns.insert(column.clone());
                 }

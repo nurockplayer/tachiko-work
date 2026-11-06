@@ -707,7 +707,8 @@ pub enum Expression {
     // columns satisfy every criterion. The node names schemas and fields, so
     // row membership is part of its dependencies.
     ColumnConditional {
-        aggregate: ConditionalAggregate,
+        // Boxed so this rare node doesn't grow every other expression node.
+        aggregate: Box<ConditionalAggregate>,
         criteria: Vec<ColumnCriterion>,
     },
     Add {
@@ -978,7 +979,7 @@ impl Expression {
                     criteria,
                 } => {
                     if let ConditionalAggregate::Sum(column)
-                    | ConditionalAggregate::Average(column) = aggregate
+                    | ConditionalAggregate::Average(column) = aggregate.as_ref()
                     {
                         columns.push(column);
                     }

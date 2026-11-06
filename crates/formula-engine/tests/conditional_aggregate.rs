@@ -213,7 +213,7 @@ fn document() -> Document {
 
 fn conditional(aggregate: ConditionalAggregate, criteria: Vec<ColumnCriterion>) -> Expression {
     Expression::ColumnConditional {
-        aggregate,
+        aggregate: Box::new(aggregate),
         criteria,
     }
 }
@@ -508,7 +508,7 @@ fn a_criterion_can_read_another_cell() {
     assert_eq!(result(&document), value(1.0));
 
     // A blank criterion cell compares as zero.
-    let mut document = document();
+    let mut document = self::document();
     document
         .entities
         .get_mut("summary")

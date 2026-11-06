@@ -271,7 +271,7 @@ fn formula_usage<'a>(
                 criteria,
             } => {
                 if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
-                    aggregate
+                    aggregate.as_ref()
                 {
                     columns.insert((&column.schema, &column.field));
                 }

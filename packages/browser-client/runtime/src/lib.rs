@@ -8051,7 +8051,7 @@ fn map_duplicate_expression(
             criteria,
         } => {
             if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
-                aggregate
+                aggregate.as_mut()
             {
                 map_duplicate_column(column, fields, schemas)?;
             }
@@ -8617,7 +8617,7 @@ fn ensure_formula_reference_profile(
                 aggregate,
                 criteria,
             } => {
-                let values = match aggregate {
+                let values = match aggregate.as_ref() {
                     ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
                         Some(column)
                     }
@@ -9468,7 +9468,7 @@ fn expression_references(
             criteria,
         } => {
             if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
-                aggregate
+                aggregate.as_ref()
             {
                 columns.insert(column.clone());
             }

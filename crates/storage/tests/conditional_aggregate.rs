@@ -33,7 +33,7 @@ fn column(field: &str) -> ColumnRef {
 
 fn conditional(aggregate: ConditionalAggregate, criteria: Vec<ColumnCriterion>) -> Expression {
     Expression::ColumnConditional {
-        aggregate,
+        aggregate: Box::new(aggregate),
         criteria,
     }
 }
