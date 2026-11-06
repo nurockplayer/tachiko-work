@@ -3,3 +3,6 @@
 **/*.roproj/manifest.json text eol=lf diff
 **/*.roproj/schemas.json text eol=lf diff
 **/*.roproj/entities/*.jsonl text eol=lf diff
+# Fixtures are compared byte for byte, so no checkout may convert them.
+acceptance/** -text
+docs/research/fixtures/** -text
