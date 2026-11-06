@@ -735,13 +735,15 @@ fn admission_bounds_formula_analysis_before_per_formula_projection() {
             .resolve_field(&FieldAddress::new(template_key, field_key))
             .expect("fixture Number field should resolve");
         let template = document.entities[&target.entity].clone();
-        for index in 0..17 {
+        for index in 0..120 {
             let id = format!("{prefix}_entity_{index:02}");
             let key = format!("{prefix}_{index:02}");
             let mut entity = template.clone();
             entity.id = EntityId::from(id.as_str());
             entity.key = EntityKey::from(key.as_str());
-            entity.fields.insert(target.field.clone(), formula.clone());
+            for value in entity.fields.values_mut() {
+                *value = formula.clone();
+            }
             document.entities.insert(entity.id.clone(), entity);
         }
     }
@@ -751,7 +753,7 @@ fn admission_bounds_formula_analysis_before_per_formula_projection() {
         .flat_map(|entity| entity.fields.values())
         .filter(|value| matches!(value, Value::Formula(_)))
         .count();
-    assert!(formula_count > 32);
+    assert!(formula_count > 256);
     document
         .schemas
         .values_mut()
@@ -768,7 +770,7 @@ fn admission_bounds_formula_analysis_before_per_formula_projection() {
         failure.capacity,
         Some(CapacityExceeded {
             limit: CapacityLimit::Formulas,
-            maximum: 32,
+            maximum: 256,
             attempted: formula_count,
             collection: None,
         })

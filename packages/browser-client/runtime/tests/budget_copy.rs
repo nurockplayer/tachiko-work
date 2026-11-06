@@ -312,7 +312,6 @@ fn accepted_copy_preserves_scalar_history_but_rejected_copy_preserves_redo() {
 fn formula_capacity_fixture() -> DesignerRuntime {
     let mut document = Document::empty("formula_capacity", "Formula capacity");
     let schema = SchemaId::from("items");
-    let field_id = FieldId::from("n");
     document.schemas.insert(
         schema.clone(),
         Schema {
@@ -320,40 +319,52 @@ fn formula_capacity_fixture() -> DesignerRuntime {
             id: schema.clone(),
             key: SchemaKey::from("items"),
             display_name: None,
-            fields: BTreeMap::from([(
-                field_id.clone(),
-                FieldDefinition {
-                    id: field_id.clone(),
-                    key: FieldKey::from("n"),
-                    display_name: None,
-                    number_format: None,
-                    field_type: FieldType::Number,
-                    required: true,
-                    constraint: tachiko_workspace_engine::FieldConstraint::None,
-                },
-            )]),
+            fields: (0..3)
+                .map(|column| {
+                    let field_id = FieldId::from(format!("n{column}"));
+                    (
+                        field_id.clone(),
+                        FieldDefinition {
+                            id: field_id.clone(),
+                            key: FieldKey::from(field_id.to_string()),
+                            display_name: None,
+                            number_format: None,
+                            field_type: FieldType::Number,
+                            required: true,
+                            constraint: tachiko_workspace_engine::FieldConstraint::None,
+                        },
+                    )
+                })
+                .collect(),
         },
     );
-    for index in 0..33 {
+    for index in 0..86 {
         let id = EntityId::from(format!("r{index:02}"));
-        let value = if index < 32 {
-            Value::Formula(tachiko_workspace_engine::Expression::Number(
-                Number::new(1.0).unwrap(),
-            ))
-        } else {
-            Value::Number(Number::new(2.0).unwrap())
-        };
+        let fields = (0..3)
+            .filter(|column| index * 3 + column <= 256)
+            .map(|column| {
+                let field_id = FieldId::from(format!("n{column}"));
+                let value = if index * 3 + column < 256 {
+                    Value::Formula(tachiko_workspace_engine::Expression::Number(
+                        Number::new(1.0).unwrap(),
+                    ))
+                } else {
+                    Value::Number(Number::new(2.0).unwrap())
+                };
+                (field_id, value)
+            })
+            .collect();
         document.entities.insert(
             id.clone(),
             Entity {
                 id: id.clone(),
-                key: EntityKey::from(if index == 32 {
+                key: EntityKey::from(if index == 85 {
                     "long_but_valid_input_reference_key".to_owned()
                 } else {
                     id.to_string()
                 }),
                 schema: schema.clone(),
-                fields: BTreeMap::from([(field_id.clone(), value)]),
+                fields,
             },
         );
     }
@@ -383,8 +394,8 @@ fn assert_formula_rejection_preserves_reopen(
             failure.capacity,
             Some(CapacityExceeded {
                 limit: CapacityLimit::Formulas,
-                maximum: 32,
-                attempted: 33,
+                maximum: 256,
+                attempted: 257,
                 collection: None,
             })
         );
@@ -413,15 +424,15 @@ fn assert_formula_rejection_preserves_reopen(
 }
 
 #[test]
-fn formula_authoring_rejects_33rd_formula_before_publication_and_keeps_32_reopenable() {
+fn formula_authoring_rejects_257th_formula_before_publication_and_keeps_256_reopenable() {
     let mut runtime = formula_capacity_fixture();
-    assert_formula_rejection_preserves_reopen(&mut runtime, 0, "r32.n", "3", true);
+    assert_formula_rejection_preserves_reopen(&mut runtime, 0, "r85.n1", "3", true);
 }
 
 #[test]
 fn formula_authoring_preflights_complete_projection_budget_for_long_sources() {
     let mut runtime = formula_capacity_fixture();
-    let mut terms = vec!["[long_but_valid_input_reference_key.n]".to_owned(); 80];
+    let mut terms = vec!["[long_but_valid_input_reference_key.n1]".to_owned(); 80];
     while terms.len() > 1 {
         terms = terms
             .chunks(2)
@@ -436,8 +447,8 @@ fn formula_authoring_preflights_complete_projection_budget_for_long_sources() {
     }
     let source = terms.remove(0);
     let mut rejected = false;
-    for index in 0..32 {
-        let target = format!("r{index:02}.n");
+    for index in 0..256 {
+        let target = format!("r{:02}.n{}", index / 3, index % 3);
         let before = runtime
             .export_project(&format!("resident/{index}"))
             .unwrap()
@@ -464,6 +475,6 @@ fn formula_authoring_preflights_complete_projection_budget_for_long_sources() {
     }
     assert!(
         rejected,
-        "32 long formulas must exceed the bounded aggregate projection"
+        "256 long formulas must exceed the bounded aggregate projection"
     );
 }
