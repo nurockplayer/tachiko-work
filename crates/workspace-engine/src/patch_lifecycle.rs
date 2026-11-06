@@ -27,7 +27,7 @@ use thiserror::Error;
 use super::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
-    apply_field_value_candidate, finalize_edit, unset_field_candidate,
+    apply_field_value_candidate, finalize_edit, instrumentation, unset_field_candidate,
 };
 
 #[cfg(test)]
@@ -1456,6 +1456,7 @@ impl PatchLifecycle {
         request: ProposalRequest,
         now: TrustedInstant,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
+        let _phase = instrumentation::PhaseTimer::new("propose");
         self.require_document(document_scope, document)?;
         if self.proposals.contains_key(&request.id) {
             return Err(PatchLifecycleError::ProposalIdAlreadyExists);
@@ -1883,11 +1884,15 @@ impl PatchLifecycle {
         now: TrustedInstant,
         expected_profile: EvidenceProfile,
     ) -> Result<ProfiledReceipt, PatchLifecycleError> {
+        let _phase = instrumentation::PhaseTimer::new("publish_commands/execute/execute_profile");
         // Taking the slot up front makes the memo unusable after this
         // execution whatever its outcome, so no base document outlives it and
         // a retried execute evaluates again.
         let retained = self.evaluation_memo.take();
-        let (current_document_scope, document, current_revision) = publication.current_snapshot();
+        let (current_document_scope, document, current_revision) = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/current_snapshot");
+            publication.current_snapshot()
+        };
         if self
             .require_document(&current_document_scope, &document)
             .is_err()
@@ -1939,20 +1944,26 @@ impl PatchLifecycle {
             &footprint,
             now,
         )?;
-        let candidate = evaluated.document.clone();
-        let published = self.publish_candidate(
-            publication,
-            PublicationAttempt {
-                proposal_id,
-                proposal: &proposal,
-                approval,
-                executor,
-                footprint: &footprint,
-                current_document_scope: &current_document_scope,
-                current_revision: &current_revision,
-                candidate: evaluated.document,
-            },
-        )?;
+        let candidate = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/candidate_clone");
+            evaluated.document.clone()
+        };
+        let published = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/publish_candidate");
+            self.publish_candidate(
+                publication,
+                PublicationAttempt {
+                    proposal_id,
+                    proposal: &proposal,
+                    approval,
+                    executor,
+                    footprint: &footprint,
+                    current_document_scope: &current_document_scope,
+                    current_revision: &current_revision,
+                    candidate: evaluated.document,
+                },
+            )?
+        };
         let can_disclose = published.authorization.can_disclose;
         let mut receipt = match evaluated.evidence {
             PatchEvidence::V1(semantic_changes) => {
@@ -1998,14 +2009,18 @@ impl PatchLifecycle {
                 ProfiledReceipt::V2(receipt)
             }
         };
-        let verification_report = match self.verify_publication(
-            proposal_id,
-            &current_revision,
-            &published.revision,
-            &candidate,
-            &published.document_scope,
-            &published.document,
-        ) {
+        let verification = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/verify_publication");
+            self.verify_publication(
+                proposal_id,
+                &current_revision,
+                &published.revision,
+                &candidate,
+                &published.document_scope,
+                &published.document,
+            )
+        };
+        let verification_report = match verification {
             Ok(report) => report,
             Err(error) if can_disclose => return Err(error),
             Err(_) => return Err(PatchLifecycleError::AuthorizationDenied),
@@ -3192,6 +3207,7 @@ impl PatchLifecycle {
         document: &Document,
         body: &SemanticPatchBody,
     ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
+        let _phase = instrumentation::PhaseTimer::new("propose/plan_commands");
         admit_command_names(body)?;
         let mut candidate = document.clone();
         let mut writes = BTreeSet::new();
@@ -3574,6 +3590,7 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        let _phase = instrumentation::PhaseTimer::new("propose/finalize_evaluation");
         #[cfg(test)]
         self.evaluations.set(self.evaluations.get() + 1);
         if self.evidence_profile == EvidenceProfile::V2 {
@@ -3634,9 +3651,18 @@ impl PatchLifecycle {
                     });
                 }
             }
-            let disclosure_requirements = self.derive_disclosures(base, &candidate, body, &[])?;
+            let disclosure_requirements = {
+                let _phase =
+                    instrumentation::PhaseTimer::new("finalize_evaluation/derive_disclosures");
+                self.derive_disclosures(base, &candidate, body, &[])?
+            };
+            let validation_report = {
+                let _phase =
+                    instrumentation::PhaseTimer::new("finalize_evaluation/validation_report");
+                super::validation_report(&candidate)
+            };
             return Ok(EvaluatedPatch {
-                validation_report: super::validation_report(&candidate),
+                validation_report,
                 document: candidate,
                 evidence: PatchEvidence::V1(Vec::new()),
                 formula_impacts: Vec::new(),
@@ -3659,9 +3685,14 @@ impl PatchLifecycle {
         };
         let semantic_changes = edit.diff.changes().to_vec();
         let formula_impacts = formula_impacts(&semantic_changes);
-        let validation_report = super::validation_report(&edit.document);
-        let disclosure_requirements =
-            self.derive_disclosures(base, &edit.document, body, &semantic_changes)?;
+        let validation_report = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/validation_report");
+            super::validation_report(&edit.document)
+        };
+        let disclosure_requirements = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/derive_disclosures");
+            self.derive_disclosures(base, &edit.document, body, &semantic_changes)?
+        };
         Ok(EvaluatedPatch {
             document: edit.document,
             evidence: PatchEvidence::V1(semantic_changes),
@@ -3682,12 +3713,21 @@ impl PatchLifecycle {
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
         for document in [base, &candidate] {
-            match super::validate(document) {
-                Ok(()) => super::preflight_formula_projections(document).map_err(|source| {
-                    PatchLifecycleError::CommandRejected {
-                        source: Box::new(source),
-                    }
-                })?,
+            let validation = {
+                let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/validate");
+                super::validate(document)
+            };
+            match validation {
+                Ok(()) => {
+                    let _phase = instrumentation::PhaseTimer::new(
+                        "finalize_evaluation/preflight_formula_projections",
+                    );
+                    super::preflight_formula_projections(document).map_err(|source| {
+                        PatchLifecycleError::CommandRejected {
+                            source: Box::new(source),
+                        }
+                    })?;
+                }
                 Err(WorkspaceError::InvalidDocument { report, .. }) => {
                     return Err(PatchLifecycleError::ValidationFailed { report });
                 }
@@ -3699,29 +3739,39 @@ impl PatchLifecycle {
             }
         }
 
-        let delta =
+        let delta = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/canonical_delta");
             canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &candidate).map_err(|source| {
                 PatchLifecycleError::CommandRejected {
                     source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
                 }
-            })?;
+            })?
+        };
 
         // Formula impact remains derived evidence. Run the frozen formula/diff
         // projection over snapshots without names, constraints, or saved definitions.
         // Formulas cannot read definitions; both real snapshots passed complete
         // validation above. Direct v2 evidence is always produced separately.
-        let formula_projection = super::diff(
-            &formula_projection_document(base),
-            &formula_projection_document(&candidate),
-        )
-        .map_err(|source| PatchLifecycleError::CommandRejected {
-            source: Box::new(source.into()),
-        })?;
+        let formula_projection = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/diff");
+            super::diff(
+                &formula_projection_document(base),
+                &formula_projection_document(&candidate),
+            )
+            .map_err(|source| PatchLifecycleError::CommandRejected {
+                source: Box::new(source.into()),
+            })?
+        };
         let formula_changes = formula_projection.changes().to_vec();
         let formula_impacts = formula_impacts(&formula_changes);
-        let disclosure_requirements =
-            self.derive_disclosures(base, &candidate, body, &formula_changes)?;
-        let validation_report = super::validation_report(&candidate);
+        let disclosure_requirements = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/derive_disclosures");
+            self.derive_disclosures(base, &candidate, body, &formula_changes)?
+        };
+        let validation_report = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/validation_report");
+            super::validation_report(&candidate)
+        };
         Ok(EvaluatedPatch {
             document: candidate,
             evidence: PatchEvidence::V2(delta),

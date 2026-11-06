@@ -268,31 +268,36 @@ impl ResidentDerivedState {
             self.address_index = AddressIndex::build(document);
         }
         let incremental_safe = previous_address_index_valid && self.address_index.is_ok();
-        let calculation = if incremental_safe {
-            self.calculation_state
-                .update(document, &changes.calculation_roots)
-        } else {
-            let before = self.calculation_state.outcome();
-            let old_affected = self
-                .calculation_state
-                .affected_by_all(&changes.calculation_roots);
-            let (rebuilt, work) = RetainedCalculationState::rebuild(document);
-            let new_affected = rebuilt.affected_by_all(&changes.calculation_roots);
-            let after = rebuilt.outcome();
-            self.calculation_state = rebuilt;
-            IncrementalCalculationTransition {
-                work,
-                affected_calculations: old_affected
-                    .into_iter()
-                    .chain(new_affected)
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect(),
-                changed_calculation_projections: changed_calculation_outcomes(&before, &after),
+        let calculation = {
+            let _phase = instrumentation::PhaseTimer::new("retained_update/calculation_update");
+            if incremental_safe {
+                self.calculation_state
+                    .update(document, &changes.calculation_roots)
+            } else {
+                let before = self.calculation_state.outcome();
+                let old_affected = self
+                    .calculation_state
+                    .affected_by_all(&changes.calculation_roots);
+                let (rebuilt, work) = RetainedCalculationState::rebuild(document);
+                let new_affected = rebuilt.affected_by_all(&changes.calculation_roots);
+                let after = rebuilt.outcome();
+                self.calculation_state = rebuilt;
+                IncrementalCalculationTransition {
+                    work,
+                    affected_calculations: old_affected
+                        .into_iter()
+                        .chain(new_affected)
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
+                    changed_calculation_projections: changed_calculation_outcomes(&before, &after),
+                }
             }
         };
-        self.validation_report =
-            validation_report_for_retained_calculation(document, &self.calculation_state);
+        self.validation_report = {
+            let _phase = instrumentation::PhaseTimer::new("retained_update/validation_report");
+            validation_report_for_retained_calculation(document, &self.calculation_state)
+        };
         self.diagnostics_by_field = index_field_diagnostics(&self.validation_report);
         DerivedStateTransition {
             work: DerivedStateTransitionWork {
@@ -611,6 +616,7 @@ where
         (DocumentScopeId, Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
+        let _phase = instrumentation::PhaseTimer::new("publish_if_current");
         self.projection_invalidation = None;
         if expected_document_scope != &self.session.document_scope {
             return Err(SemanticPublicationError::DocumentScopeMismatch);
@@ -623,8 +629,12 @@ where
         if candidate.id != self.session.document.id {
             return Err(SemanticPublicationError::Conflict);
         }
-        instrumentation::record_publication_document_comparison();
-        if candidate == self.session.document {
+        let unchanged = {
+            let _phase = instrumentation::PhaseTimer::new("publish_if_current/equality");
+            instrumentation::record_publication_document_comparison();
+            candidate == self.session.document
+        };
+        if unchanged {
             return Err(SemanticPublicationError::NoChange);
         }
         let next_generation = self
@@ -633,14 +643,18 @@ where
             .checked_add(1)
             .ok_or(SemanticPublicationError::Conflict)?;
         let resulting_revision = revision_for(next_generation);
-        let (projection_invalidation, transition_work) = projection_invalidation(
-            &self.session.document,
-            &mut self.session.retained,
-            &candidate,
-            self.session.document_scope.clone(),
-            expected_revision.clone(),
-            resulting_revision.clone(),
-        );
+        let (projection_invalidation, transition_work) = {
+            let _phase =
+                instrumentation::PhaseTimer::new("publish_if_current/projection_invalidation");
+            projection_invalidation(
+                &self.session.document,
+                &mut self.session.retained,
+                &candidate,
+                self.session.document_scope.clone(),
+                expected_revision.clone(),
+                resulting_revision.clone(),
+            )
+        };
 
         self.session.document = candidate;
         self.session.generation = next_generation;
@@ -648,9 +662,13 @@ where
         self.session.measurements.record_transition(transition_work);
         self.projection_invalidation = Some(projection_invalidation);
 
+        let returned_document = {
+            let _phase = instrumentation::PhaseTimer::new("publish_if_current/return_clone");
+            self.session.document.clone()
+        };
         Ok((
             self.session.document_scope.clone(),
-            self.session.document.clone(),
+            returned_document,
             resulting_revision,
             authorization,
         ))
@@ -678,7 +696,10 @@ fn projection_invalidation(
     collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
     collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
     let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
-    let transition = retained.update(after, &changes);
+    let transition = {
+        let _phase = instrumentation::PhaseTimer::new("projection_invalidation/retained_update");
+        retained.update(after, &changes)
+    };
     collect_diagnostic_projection_changes(
         before,
         &before_diagnostics,

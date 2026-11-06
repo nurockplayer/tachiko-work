@@ -2109,9 +2109,19 @@ pub(crate) fn formula_restore_candidate(
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
-    require_validated_calculation_for(&edited, ValidationRole::Candidate)?;
-    preflight_formula_projections(&edited)?;
-    let semantic_diff = diff(document, &edited)?;
+    {
+        let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/validate");
+        require_validated_calculation_for(&edited, ValidationRole::Candidate)?;
+    }
+    {
+        let _phase =
+            instrumentation::PhaseTimer::new("finalize_evaluation/preflight_formula_projections");
+        preflight_formula_projections(&edited)?;
+    }
+    let semantic_diff = {
+        let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/diff");
+        diff(document, &edited)?
+    };
     Ok(EditPreview {
         document: edited,
         diff: semantic_diff,

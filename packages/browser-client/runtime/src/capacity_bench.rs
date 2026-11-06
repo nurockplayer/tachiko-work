@@ -18,6 +18,7 @@
 //! retention included — not live heap. Non-Linux targets report "unavailable"
 //! instead of failing the run.
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use tachiko_storage::{decode_roproj_v3, encode_roproj_v3};
@@ -907,4 +908,286 @@ fn capacity_formula_count_sweep() {
         );
     }
     print_report(&rows);
+}
+
+/// Which cell one measured edit touches.
+#[derive(Clone, Copy)]
+enum PhaseTarget {
+    /// `c0` of the last row: an existing Number no fixture formula reads.
+    LastRowFirstColumn,
+    /// Row 0 `rate`: the driver of the 99 same-row formulas plus the total.
+    Driver,
+}
+
+/// Display order and nesting depth of every phase the timers record.
+const PHASE_ORDER: &[(&str, usize)] = &[
+    ("handle", 0),
+    ("edit_cells", 0),
+    ("edit_cells/pre_publish", 1),
+    ("record_edit/history", 1),
+    ("publish_commands", 1),
+    ("publish_commands/export_snapshot_clone", 2),
+    ("publish_commands/apply_commands", 2),
+    ("publish_commands/capacity_check", 2),
+    ("publish_commands/validate", 2),
+    ("publish_commands/preflight", 2),
+    ("propose", 2),
+    ("propose/plan_commands", 3),
+    ("propose/finalize_evaluation", 3),
+    ("finalize_evaluation/validate", 4),
+    ("finalize_evaluation/preflight_formula_projections", 4),
+    ("finalize_evaluation/canonical_delta", 4),
+    ("finalize_evaluation/diff", 4),
+    ("finalize_evaluation/derive_disclosures", 4),
+    ("finalize_evaluation/validation_report", 4),
+    ("publish_commands/preview", 2),
+    ("publish_commands/execute", 2),
+    ("publish_commands/execute/execute_profile", 3),
+    ("execute_profile/current_snapshot", 4),
+    ("execute_profile/candidate_clone", 4),
+    ("execute_profile/publish_candidate", 4),
+    ("publish_if_current", 5),
+    ("publish_if_current/equality", 6),
+    ("publish_if_current/projection_invalidation", 6),
+    ("projection_invalidation/retained_update", 7),
+    ("retained_update/calculation_update", 8),
+    ("retained_update/validation_report", 8),
+    ("publish_if_current/return_clone", 6),
+    ("execute_profile/verify_publication", 4),
+    ("publish_commands/refresh_structure", 2),
+    ("refresh_structure/capacity_measure", 3),
+    ("handle/build_response", 1),
+];
+
+fn median(mut values: Vec<f64>) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values[values.len() / 2]
+}
+
+/// Inclusive milliseconds per label for one edit; a phase entered more than
+/// once (the v2 path validates twice) is summed under its one label.
+fn phase_millis(phases: &[(&'static str, u128)]) -> BTreeMap<&'static str, f64> {
+    let mut map = BTreeMap::new();
+    for (name, micros) in phases {
+        #[allow(clippy::cast_precision_loss)]
+        let millis = *micros as f64 / 1_000.0;
+        *map.entry(*name).or_insert(0.0) += millis;
+    }
+    map
+}
+
+fn edit_target(spec: &FixtureSpec, target: PhaseTarget) -> (String, String) {
+    match target {
+        PhaseTarget::LastRowFirstColumn => (
+            entity_id(spec.rows - 1).to_string(),
+            field_id(0).to_string(),
+        ),
+        PhaseTarget::Driver => (entity_id(0).to_string(), RATE_FIELD.to_owned()),
+    }
+}
+
+/// Open one fixture, run some scalar edits through `handle`, print the median
+/// phase table for its whole request.
+fn measure_phase_fixture(
+    label: &str,
+    spec: FixtureSpec,
+    target: PhaseTarget,
+    text_capacity: bool,
+    edits: usize,
+    fixture_time_limit_ms: f64,
+) {
+    let constructor = if text_capacity {
+        "text-capacity constructor"
+    } else {
+        "ordinary constructor"
+    };
+    let document = capacity_document(spec);
+    let occurrence = format!(
+        "00000000-0000-4000-8000-{:012x}",
+        if text_capacity { 0x200 } else { 0x100 }
+    );
+    let started = Instant::now();
+    let opened = if text_capacity {
+        DesignerRuntime::from_document_profile(document, &occurrence, true)
+    } else {
+        DesignerRuntime::from_document(document, &occurrence)
+    };
+    let open_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    let mut runtime = match opened {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            println!(
+                "\nfixture {label} ({}x{} = {} cells, {constructor}): open refused after {open_ms:.1} ms: {error}",
+                spec.rows,
+                spec.columns,
+                spec.cells(),
+            );
+            return;
+        }
+    };
+    println!(
+        "\n### fixture {label}: {} rows x {} columns = {} cells, {constructor}, open {open_ms:.1} ms",
+        spec.rows,
+        spec.columns,
+        spec.cells(),
+    );
+
+    let mut edits_run = 0usize;
+    let mut wall_millis = Vec::new();
+    let mut clone_counts = Vec::new();
+    let mut samples: Vec<BTreeMap<&'static str, f64>> = Vec::new();
+    let fixture_started = Instant::now();
+    for iteration in 0..edits {
+        if iteration > 0 {
+            let elapsed = fixture_started.elapsed().as_secs_f64() * 1_000.0;
+            if elapsed > fixture_time_limit_ms {
+                println!(
+                    "fixture {label}: stopping after {iteration} edits ({elapsed:.0} ms > {fixture_time_limit_ms:.0} ms)"
+                );
+                break;
+            }
+        }
+        let revision = runtime.observe_occurrence().revision;
+        let (entity, field) = edit_target(&spec, target);
+        #[allow(clippy::cast_precision_loss)]
+        let value = 1_000.0 + iteration as f64;
+        instrumentation::reset();
+        instrumentation::reset_phases();
+        let started = Instant::now();
+        let response = runtime.handle(DesignerRequest::EditScalar {
+            expected_revision: revision,
+            target: FieldTarget { entity, field },
+            input: ScalarEditInput::Number {
+                input: format!("{value}"),
+            },
+        });
+        let millis = started.elapsed().as_secs_f64() * 1_000.0;
+        match response {
+            Ok(super::DesignerResponse::Published(_)) => {}
+            Ok(_) => {
+                println!("fixture {label}: edit {iteration} returned an unexpected response");
+                break;
+            }
+            Err(error) => {
+                println!("fixture {label}: edit {iteration} refused: {error}");
+                break;
+            }
+        }
+        let counters = instrumentation::counters();
+        samples.push(phase_millis(&instrumentation::take_phases()));
+        wall_millis.push(millis);
+        clone_counts.push(counters.document_clones);
+        edits_run += 1;
+    }
+    if samples.is_empty() {
+        println!("fixture {label}: no edit completed");
+        return;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let clones = median(clone_counts.iter().map(|count| *count as f64).collect());
+    let whole = median(wall_millis);
+    println!(
+        "edits measured: {edits_run}; document clones per edit (median): {clones:.0}; whole edit median: {whole:.3} ms"
+    );
+    println!("| phase | median ms | share of edit |");
+    println!("| --- | ---: | ---: |");
+    for (name, depth) in PHASE_ORDER {
+        if !samples.iter().any(|sample| sample.contains_key(name)) {
+            continue;
+        }
+        let median_ms = median(
+            samples
+                .iter()
+                .map(|sample| sample.get(name).copied().unwrap_or(0.0))
+                .collect(),
+        );
+        let share = if whole > 0.0 {
+            median_ms / whole * 100.0
+        } else {
+            0.0
+        };
+        let indent = "  ".repeat(*depth);
+        println!("| {indent}`{name}` | {median_ms:.3} | {share:.1}% |");
+    }
+    let mut unknown: Vec<&'static str> = Vec::new();
+    for sample in &samples {
+        for name in sample.keys() {
+            if !PHASE_ORDER.iter().any(|(known, _)| known == name) && !unknown.contains(name) {
+                unknown.push(name);
+            }
+        }
+    }
+    for name in unknown {
+        let median_ms = median(
+            samples
+                .iter()
+                .map(|sample| sample.get(name).copied().unwrap_or(0.0))
+                .collect(),
+        );
+        let share = if whole > 0.0 {
+            median_ms / whole * 100.0
+        } else {
+            0.0
+        };
+        println!("| `{name}` | {median_ms:.3} | {share:.1}% |");
+    }
+}
+
+/// Plan A-06b: where one runtime `EditScalar` spends its time at 100k cells.
+///
+/// A, B, C and D through the ordinary constructor; A and B also through the
+/// text-capacity constructor. Every fixture keeps all its samples.
+#[test]
+#[ignore = "capacity phase breakdown; run explicitly in release with --features capacity-bench"]
+fn capacity_edit_phase_breakdown() {
+    const EDITS: usize = 3;
+    const FIXTURE_TIME_LIMIT_MILLIS: f64 = 600_000.0;
+    let fixtures = [
+        (
+            "A",
+            FixtureSpec {
+                rows: 1_000,
+                columns: 10,
+                formula_cells: 0,
+                seed: SEED ^ 0xA1A1,
+            },
+            PhaseTarget::LastRowFirstColumn,
+        ),
+        (
+            "B",
+            FixtureSpec {
+                rows: 10_000,
+                columns: 10,
+                formula_cells: 0,
+                seed: SEED ^ 0xB2B2,
+            },
+            PhaseTarget::LastRowFirstColumn,
+        ),
+        (
+            "C",
+            FixtureSpec {
+                rows: 10_000,
+                columns: 10,
+                formula_cells: DEPENDENT_FORMULAS,
+                seed: SEED ^ 0xC3C3,
+            },
+            PhaseTarget::Driver,
+        ),
+        (
+            "D",
+            FixtureSpec {
+                rows: 10_000,
+                columns: 10,
+                formula_cells: 255,
+                seed: SEED ^ 0xD4D4,
+            },
+            PhaseTarget::LastRowFirstColumn,
+        ),
+    ];
+    for (label, spec, target) in fixtures {
+        measure_phase_fixture(label, spec, target, false, EDITS, FIXTURE_TIME_LIMIT_MILLIS);
+        if matches!(label, "A" | "B") {
+            measure_phase_fixture(label, spec, target, true, EDITS, FIXTURE_TIME_LIMIT_MILLIS);
+        }
+    }
 }

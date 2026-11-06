@@ -5420,6 +5420,7 @@ impl DesignerRuntime {
         };
         self.capacity_usage = capacity_usage;
         if !capacity_text_edit && !value_only {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/refresh_structure");
             self.refresh_structure();
             if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
                 self.formula_sources = sources;
@@ -5465,7 +5466,10 @@ impl DesignerRuntime {
 
     fn refresh_structure(&mut self) {
         let snapshot = self.session.export_snapshot();
-        self.capacity_usage = CapacityUsage::measure(snapshot.document());
+        self.capacity_usage = {
+            let _phase = instrumentation::PhaseTimer::new("refresh_structure/capacity_measure");
+            CapacityUsage::measure(snapshot.document())
+        };
         self.collection_specs = collection_specs(snapshot.document());
         self.collections = self
             .collection_specs
@@ -8545,6 +8549,7 @@ fn designer_preview(
     principal: &PrincipalId,
     now: TrustedInstant,
 ) -> Result<SemanticPatch, DesignerError> {
+    let _phase = instrumentation::PhaseTimer::new("publish_commands/preview");
     if lifecycle.uses_v2_evidence() {
         Ok(lifecycle
             .preview_v2(
@@ -8582,6 +8587,7 @@ fn designer_execute(
     publication: &mut impl SemanticPublicationAuthority,
     now: TrustedInstant,
 ) -> Result<DesignerReceipt, DesignerError> {
+    let _phase = instrumentation::PhaseTimer::new("publish_commands/execute");
     if lifecycle.uses_v2_evidence() {
         let receipt = lifecycle.execute_v2(proposal, None, principal, publication, now)?;
         Ok(DesignerReceipt {
