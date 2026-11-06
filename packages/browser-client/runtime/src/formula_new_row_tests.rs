@@ -324,7 +324,11 @@ fn required_formula_fills_or_restores_default_when_calculation_fails() {
     assert!(amount_formula(&runtime, &collection, 0).is_some());
     insert(&mut runtime, &collection, &ids, &[]);
     let table = runtime.query_table(&collection).unwrap();
-    let field = table.rows[0]
+    let field = table
+        .rows
+        .iter()
+        .find(|row| row.key == "row_0002")
+        .unwrap()
         .fields
         .iter()
         .find(|field| field.target.field == ids[2])
