@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 use tachiko_formula_engine::{UnboundExpression, parse_expression};
+use tachiko_workspace_engine::{CriterionOperandKind, CriterionTest};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 pub const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
@@ -4083,6 +4084,7 @@ pub(crate) fn criterion_literal(text: &str) -> bool {
 pub(crate) enum CriterionKind {
     Number,
     Blank,
+    Date,
     Other,
 }
 
@@ -4361,6 +4363,13 @@ fn conditional_admission(
         else {
             return FormulaAdmission::Refused(None);
         };
+        // A range holding the header could match the header in Excel, and the
+        // column form reads data rows only.
+        if last_row + 1 - first_row != sheets[sheet].rows.len() {
+            return FormulaAdmission::Refused(Some(
+                "a conditional range that includes the header row isn't supported",
+            ));
+        }
         let span = (sheet, first_row, last_row);
         if bounds.is_some_and(|bounds| bounds != span) {
             return FormulaAdmission::Refused(None);
@@ -4389,8 +4398,16 @@ fn conditional_admission(
             };
             kind
         };
-        if kind == CriterionKind::Number && date_column(sheet, column, sheets) {
-            return FormulaAdmission::Refused(Some("a number criterion can't test a date column"));
+        // Excel compares dates by serial number and reads more date spellings
+        // than Tachiko, so only an exact date or a blank means the same in both.
+        let date = date_column(sheet, column, sheets);
+        if date && !matches!(kind, CriterionKind::Date | CriterionKind::Blank) {
+            return FormulaAdmission::Refused(Some(
+                "a date column can only be tested against a date",
+            ));
+        }
+        if !date && kind == CriterionKind::Date {
+            return FormulaAdmission::Refused(Some("a date criterion only tests a date column"));
         }
     }
     FormulaAdmission::Admitted
@@ -4410,8 +4427,17 @@ fn criterion_form(
     let above = usize::try_from(sheets[sheet].layout.rows_above_header).ok()?;
     let data_row = row.checked_sub(above + 1 + usize::from(sheets[sheet].has_header))?;
     let cell = sheets[sheet].rows.get(data_row)?.get(column)?;
-    Some(match cell.value {
+    Some(match &cell.value {
         SourceValue::Number { .. } => CriterionKind::Number,
+        SourceValue::Date { .. } => CriterionKind::Date,
+        SourceValue::Empty => CriterionKind::Blank,
+        // Tachiko reads a Text cell as a criterion when it calculates, so it's
+        // judged the same way here. Text it refuses would fail the formula.
+        SourceValue::Text { value } => match CriterionTest::parse(value).ok()?.operand_kind() {
+            CriterionOperandKind::Number => CriterionKind::Number,
+            CriterionOperandKind::Date => CriterionKind::Date,
+            CriterionOperandKind::Text | CriterionOperandKind::Boolean => CriterionKind::Other,
+        },
         _ => CriterionKind::Other,
     })
 }

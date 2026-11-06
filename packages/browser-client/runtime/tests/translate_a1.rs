@@ -485,10 +485,6 @@ fn translate_a1_conditional_aggregates_translate_whole_columns() {
             "SUMIF([items.qty:column],[.qty],[items.price:column])",
         ),
         (
-            "SUMIF(B1:B4,B3,C1:C4)",
-            "SUMIF([items.qty:column],[.qty],[items.price:column])",
-        ),
-        (
             "SUMIF($B$2:$B$4,$B$3,$C$2:$C$4)",
             "SUMIF([items.qty:column],[r2.qty],[items.price:column])",
         ),
@@ -556,6 +552,7 @@ fn translate_a1_conditional_aggregates_translate_whole_columns() {
         ("SUMIF(B2:B4,\"Food\",C2:C4)", "unsupported_criterion"),
         ("SUMIF(B2:B3,B3,C2:C4)", "unsupported_range"),
         ("SUMIF(B2:B4,B3,C1:C4)", "unsupported_range"),
+        ("SUMIF(B1:B4,B3,C1:C4)", "unsupported_range"),
         ("SUMIF(B2:B4)", "unsupported_function"),
         ("SUMIFS(C2:C4,A2:A4)", "unsupported_function"),
     ] {

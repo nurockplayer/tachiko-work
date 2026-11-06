@@ -310,7 +310,13 @@ of the same sheet covering the same first and last row. Their value column must
 be numeric; a criterion column may hold any scalar. A criterion that is one
 written literal stays verbatim when the formula parser accepts it, and any other
 criterion expression is translated recursively. A written number or a reference
-to a Number field tested against a Date column is `formula_type_mismatch`.
+to a Number field tested against a Date column is `formula_type_mismatch`. A range
+that includes the header row is `unsupported_range`, because Excel could match
+the header and the column form reads data rows only. XLSX import applies these
+rules and keeps Excel's last value when one fails. It also keeps the value when a
+Text cell criterion would fail to calculate (`">abc"`), and when a Date column is
+tested against anything but an exact date or a blank, since Excel compares serial
+numbers and reads more date spellings than Tachiko.
 Collection and field spellings in formulas use semantic keys, not ids. Aggregates
 require all collection rows; filtered geometry still supports cell references.
 Notes are unique and returned in deterministic order.

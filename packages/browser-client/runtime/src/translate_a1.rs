@@ -315,6 +315,11 @@ impl A1Geometry for GridGeometry<'_> {
         if numeric && column.field_type != FieldType::Number {
             return Err(refusal(A1RefusalCode::UnsupportedRange));
         }
+        // A criterion range holding the header could match the header in Excel,
+        // and the column form reads data rows only.
+        if column.last_row + 1 - column.first_row != column.rows.len() {
+            return Err(refusal(A1RefusalCode::UnsupportedRange));
+        }
         let span = (column.sheet, column.first_row, column.last_row);
         if self.conditional_span.is_some_and(|first| first != span) {
             return Err(refusal(A1RefusalCode::UnsupportedRange));

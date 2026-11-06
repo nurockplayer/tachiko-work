@@ -2049,20 +2049,64 @@ fn conditional_aggregate_imports_live_and_editing_updates_values() {
 }
 
 #[test]
+fn a_date_cell_criterion_on_a_date_column_imports_live() {
+    let (workbook, selection) = conditional_workbook([Some("=COUNTIF($E$2:$E$4,$E2)"), None, None]);
+    let (runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][2].formula.as_deref(),
+        Some("COUNTIFS('Data'!$E$2:$E$4,E2)")
+    );
+    assert_eq!(
+        exported.sheets[0].rows[0][2].value,
+        SourceValue::Number { value: 3.0 }
+    );
+}
+
+#[test]
 fn untranslatable_conditional_aggregates_keep_the_cached_value() {
     use tachiko_designer_runtime::interop_adapter::{ImportOptions, export_xlsx, import_xlsx_with};
-    for (formula, reason) in [
+    for (formula, filter, reason) in [
         (
             "=SUMIF($A$2:$A$4,\"housing\",$B$2:$B$4)",
+            None,
             Some("text criteria can't be written in a Tachiko formula yet"),
         ),
-        ("=SUMIF($A$2:$A$3,$D2,$B$2:$B$4)", None),
+        ("=SUMIF($A$2:$A$3,$D2,$B$2:$B$4)", None, None),
         (
             "=SUMIF($E$2:$E$4,5,$B$2:$B$4)",
-            Some("a number criterion can't test a date column"),
+            None,
+            Some("a date column can only be tested against a date"),
         ),
+        // Excel would match the header row, which the column form doesn't read.
+        (
+            "=COUNTIF($A$1:$A$4,$D2)",
+            Some("Category"),
+            Some("includes the header row"),
+        ),
+        // Excel compares a date's serial number with text holding a number.
+        (
+            "=COUNTIF($E$2:$E$4,$D2)",
+            Some(">=45000"),
+            Some("a date column can only be tested against a date"),
+        ),
+        // Excel reads this as a date; Tachiko reads only `YYYY-MM-DD`.
+        (
+            "=COUNTIF($E$2:$E$4,$D2)",
+            Some("9/5/2026"),
+            Some("a date column can only be tested against a date"),
+        ),
+        // Tachiko refuses relational text, so calculating it would fail.
+        ("=COUNTIF($A$2:$A$4,$D2)", Some(">abc"), None),
     ] {
-        let (workbook, selection) = conditional_workbook([Some(formula), None, None]);
+        let (mut workbook, selection) = conditional_workbook([Some(formula), None, None]);
+        if let Some(filter) = filter {
+            workbook.sheets[0].rows[0][3].value = SourceValue::Text {
+                value: filter.into(),
+            };
+        }
         // The conditional admission lives in the XLSX reader, so round-trip the
         // source through real workbook bytes before importing the projection.
         let bytes =
