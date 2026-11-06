@@ -27,6 +27,8 @@ mod field_order_tests;
 #[cfg(test)]
 mod formula_blank_tests;
 #[cfg(test)]
+mod formula_new_row_tests;
+#[cfg(test)]
 mod number_format_tests;
 #[cfg(test)]
 mod optional_date_boolean_tests;
@@ -5941,6 +5943,7 @@ impl DesignerRuntime {
                 "native table schema is not a scalar row profile",
             ));
         }
+        let fills = column_fill_formulas(snapshot.document(), &spec);
         let columns = spec
             .columns
             .iter()
@@ -5963,11 +5966,9 @@ impl DesignerRuntime {
                 parse_column_initializer(&column.field_type, &initializer.input)?,
             );
         }
-        if spec
-            .columns
-            .iter()
-            .any(|column| column.required && !values.contains_key(&column.id))
-        {
+        if spec.columns.iter().any(|column| {
+            column.required && !values.contains_key(&column.id) && !fills.contains_key(&column.id)
+        }) {
             return Err(table_error(
                 "initializers must name each declared column exactly once",
             ));
@@ -5976,9 +5977,17 @@ impl DesignerRuntime {
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
         let mut entity =
             native_table_row(snapshot.document(), &spec, &mut row_ids, &mut allocated)?;
+        let typed = values.keys().cloned().collect();
         for (field, value) in values {
             entity.fields.insert(field, value);
         }
+        fill_new_rows(
+            snapshot.document(),
+            &[],
+            &fills,
+            std::slice::from_mut(&mut entity),
+            &[typed],
+        );
         let entity_id = entity.id.clone();
         let publication = self.record_edit(
             expected,
@@ -6117,6 +6126,14 @@ impl DesignerRuntime {
         let document = snapshot.document();
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
+        let mut fills = if native_table {
+            column_fill_formulas(document, &spec)
+        } else {
+            BTreeMap::new()
+        };
+        let mut new_rows = Vec::new();
+        let mut typed_rows = Vec::new();
+        let mut edited = Vec::new();
         let mut allocated = BTreeSet::new();
         let mut row_ids = RowIds::new(
             &self.row_namespace,
@@ -6135,7 +6152,9 @@ impl DesignerRuntime {
             if existing.is_none()
                 && !tracker
                 && spec.columns.iter().enumerate().any(|(index, field)| {
-                    field.required && (index < column || index >= column + row.len())
+                    field.required
+                        && !fills.contains_key(&field.id)
+                        && (index < column || index >= column + row.len())
                 })
             {
                 return Err(table_error(
@@ -6152,6 +6171,7 @@ impl DesignerRuntime {
                 },
                 Ok,
             )?;
+            let mut typed = BTreeSet::new();
             for (offset, cell) in row.iter().enumerate() {
                 let column = &spec.columns[column + offset];
                 let field = FieldRef::new(entity.id.clone(), column.id.clone());
@@ -6162,22 +6182,31 @@ impl DesignerRuntime {
                 };
                 let value = cell_edit_value(column, old, &input, &field)?;
                 if existing.is_some() && value.as_ref() != old {
+                    fills.remove(&field.field);
                     let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
                     forward.push(command);
                     inverse.extend(undo);
                 }
                 if let Some(value) = value {
+                    typed.insert(field.field.clone());
                     entity.fields.insert(field.field, value);
                 } else {
                     entity.fields.remove(&field.field);
                 }
             }
             if existing.is_none() {
-                inverse.push(SemanticCommand::RemoveEntity {
-                    entity: entity.id.clone(),
-                });
-                forward.push(SemanticCommand::AppendEntity { entity });
+                new_rows.push(entity);
+                typed_rows.push(typed);
+            } else {
+                edited.push(entity);
             }
+        }
+        fill_new_rows(document, &edited, &fills, &mut new_rows, &typed_rows);
+        for entity in new_rows {
+            inverse.push(SemanticCommand::RemoveEntity {
+                entity: entity.id.clone(),
+            });
+            forward.push(SemanticCommand::AppendEntity { entity });
         }
         inverse.reverse();
         let publication = self.record_edit(expected, forward, inverse)?;
@@ -8957,6 +8986,121 @@ fn tracker_row(
                 .into_iter()
                 .collect(),
             };
+        }
+    }
+}
+
+/// Return formulas shared by every row after own-row references are normalized.
+fn column_fill_formulas(
+    document: &Document,
+    spec: &CollectionSpec,
+) -> BTreeMap<FieldId, Expression> {
+    let mut fills = BTreeMap::new();
+    if spec.entities.is_empty() {
+        return fills;
+    }
+    for column in &spec.columns {
+        if column.field_type != FieldType::Number {
+            continue;
+        }
+        let mut shared = None;
+        for id in &spec.entities {
+            let Some(Value::Formula(formula)) = document
+                .entities
+                .get(id)
+                .and_then(|row| row.fields.get(&column.id))
+            else {
+                shared = None;
+                break;
+            };
+            let mut formula = formula.clone();
+            if !row_relative_formula(&mut formula, id)
+                || shared.as_ref().is_some_and(|previous| previous != &formula)
+            {
+                shared = None;
+                break;
+            }
+            shared = Some(formula);
+        }
+        if let Some(formula) = shared {
+            fills.insert(column.id.clone(), formula);
+        }
+    }
+    fills
+}
+
+fn row_relative_formula(expression: &mut Expression, owner: &EntityId) -> bool {
+    if let Expression::Reference(reference) = expression {
+        if reference.entity != *owner {
+            return false;
+        }
+        *expression = Expression::SameRowReference(reference.field.clone());
+        return true;
+    }
+    expression
+        .children_mut()
+        .into_iter()
+        .all(|child| row_relative_formula(child, owner))
+}
+
+/// Fill new cells where possible without making an otherwise valid addition fail.
+fn fill_new_rows(
+    document: &Document,
+    edited: &[Entity],
+    fills: &BTreeMap<FieldId, Expression>,
+    new_rows: &mut [Entity],
+    typed: &[BTreeSet<FieldId>],
+) {
+    if fills.is_empty() {
+        return;
+    }
+    let mut originals = BTreeMap::new();
+    for (row, typed) in new_rows.iter_mut().zip(typed) {
+        for (field, formula) in fills {
+            if !typed.contains(field) {
+                originals.insert(
+                    FieldRef::new(row.id.clone(), field.clone()),
+                    row.fields
+                        .insert(field.clone(), Value::Formula(formula.clone())),
+                );
+            }
+        }
+    }
+    let mut candidate = document.clone();
+    for row in edited.iter().chain(new_rows.iter()) {
+        candidate.entities.insert(row.id.clone(), row.clone());
+    }
+    if tachiko_workspace_engine::validation_report(&candidate).is_valid() {
+        return;
+    }
+    if let tachiko_formula_engine::CalculationOutcome::Failed(failures) =
+        tachiko_formula_engine::calculate_complete(&candidate)
+    {
+        for row in new_rows.iter_mut() {
+            for (field, old) in &originals {
+                if field.entity == row.id && failures.failures().contains_key(field) {
+                    if let Some(value) = old {
+                        row.fields.insert(field.field.clone(), value.clone());
+                    } else {
+                        row.fields.remove(&field.field);
+                    }
+                }
+            }
+            candidate.entities.insert(row.id.clone(), row.clone());
+        }
+    }
+    if tachiko_workspace_engine::validation_report(&candidate).is_valid() {
+        return;
+    }
+    for row in new_rows {
+        for (field, old) in &originals {
+            if field.entity == row.id {
+                if let Some(value) = old {
+                    row.fields.insert(field.field.clone(), value.clone());
+                } else {
+                    row.fields.remove(&field.field);
+                }
+            }
         }
     }
 }
