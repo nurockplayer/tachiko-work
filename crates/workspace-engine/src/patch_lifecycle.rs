@@ -38,6 +38,10 @@ mod candidate_allocation_tests;
 #[path = "name_admission_tests.rs"]
 mod name_admission_tests;
 
+#[cfg(test)]
+#[path = "evaluation_memo_tests.rs"]
+mod evaluation_memo_tests;
+
 macro_rules! opaque_text_id {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1099,6 +1103,13 @@ struct EvaluatedPatch {
     footprint: AuthorizationFootprint,
 }
 
+/// The last successful evaluation, reused only for an identical base document and patch.
+struct EvaluationMemo {
+    base: Document,
+    patch: SemanticPatch,
+    evaluated: EvaluatedPatch,
+}
+
 enum ProfiledPreview {
     V1(PatchPreview),
     V2(PatchPreviewV2),
@@ -1157,6 +1168,9 @@ pub struct PatchLifecycle {
     policy_meanings: BTreeMap<AuthorizationPolicyVersion, PolicyMeaningId>,
     effective_policy: AuthorizationPolicyVersion,
     policy_selection: u64,
+    evaluation_memo: Option<EvaluationMemo>,
+    #[cfg(test)]
+    evaluations: std::cell::Cell<u32>,
 }
 
 impl PatchLifecycle {
@@ -1230,6 +1244,9 @@ impl PatchLifecycle {
             policy_meanings: self.policy_meanings.clone(),
             effective_policy: self.effective_policy.clone(),
             policy_selection: self.policy_selection,
+            evaluation_memo: None,
+            #[cfg(test)]
+            evaluations: std::cell::Cell::new(0),
         }
     }
 
@@ -1257,6 +1274,9 @@ impl PatchLifecycle {
             policy_meanings: BTreeMap::from([(effective_policy.clone(), policy_meaning)]),
             effective_policy,
             policy_selection: 0,
+            evaluation_memo: None,
+            #[cfg(test)]
+            evaluations: std::cell::Cell::new(0),
         }
     }
 
@@ -1521,6 +1541,8 @@ impl PatchLifecycle {
                 .clone(),
         });
 
+        // A failed evaluation must not leave an earlier evaluation reusable.
+        self.evaluation_memo = None;
         let evaluated = match self.finalize_evaluation(
             document,
             candidate,
@@ -1547,8 +1569,13 @@ impl PatchLifecycle {
                 return Err(error);
             }
         };
-        record.footprint = Some(evaluated.footprint);
+        record.footprint = Some(evaluated.footprint.clone());
         self.proposals.insert(patch.id.clone(), record);
+        self.evaluation_memo = Some(EvaluationMemo {
+            base: document.clone(),
+            patch: patch.clone(),
+            evaluated,
+        });
         Ok(patch)
     }
 
@@ -1638,7 +1665,7 @@ impl PatchLifecycle {
             self.append_state(proposal_id, PatchLifecycleState::Stale);
             return Err(PatchLifecycleError::Stale);
         }
-        let evaluated = self.evaluate_patch(document, &record.patch)?;
+        let evaluated = self.evaluate_retained(document, &record.patch)?;
         if evaluated.footprint != stored_footprint {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);
             return Err(PatchLifecycleError::ApprovalBindingMismatch);
@@ -1738,7 +1765,7 @@ impl PatchLifecycle {
             self.append_state(&request.proposal_id, PatchLifecycleState::Stale);
             return Err(PatchLifecycleError::Stale);
         }
-        let evaluated = self.evaluate_patch(document, &proposal.patch)?;
+        let evaluated = self.evaluate_retained(document, &proposal.patch)?;
         if evaluated.footprint != footprint {
             return Err(PatchLifecycleError::ApprovalBindingMismatch);
         }
@@ -1856,6 +1883,10 @@ impl PatchLifecycle {
         now: TrustedInstant,
         expected_profile: EvidenceProfile,
     ) -> Result<ProfiledReceipt, PatchLifecycleError> {
+        // Taking the slot up front makes the memo unusable after this
+        // execution whatever its outcome, so no base document outlives it and
+        // a retried execute evaluates again.
+        let retained = self.evaluation_memo.take();
         let (current_document_scope, document, current_revision) = publication.current_snapshot();
         if self
             .require_document(&current_document_scope, &document)
@@ -1894,7 +1925,10 @@ impl PatchLifecycle {
             now,
         )?;
 
-        let evaluated = self.evaluate_patch(&document, &proposal.patch)?;
+        let evaluated = match retained {
+            Some(memo) if memo.base == document && memo.patch == proposal.patch => memo.evaluated,
+            _ => self.evaluate_patch(&document, &proposal.patch)?,
+        };
         if evaluated.footprint != footprint {
             return Err(PatchLifecycleError::ApprovalBindingMismatch);
         }
@@ -3540,6 +3574,8 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        #[cfg(test)]
+        self.evaluations.set(self.evaluations.get() + 1);
         if self.evidence_profile == EvidenceProfile::V2 {
             return self.finalize_evaluation_v2(
                 base,
@@ -3709,6 +3745,21 @@ impl PatchLifecycle {
                 source: Box::new(source),
             })?;
         self.finalize_evaluation(document, candidate, patch.exact_change.body(), writes)
+    }
+
+    /// Evaluate a patch, reusing the retained result only for the exact same
+    /// base document and patch. A miss leaves the retained slot untouched.
+    fn evaluate_retained(
+        &self,
+        document: &Document,
+        patch: &SemanticPatch,
+    ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        if let Some(memo) = &self.evaluation_memo {
+            if memo.base == *document && memo.patch == *patch {
+                return Ok(memo.evaluated.clone());
+            }
+        }
+        self.evaluate_patch(document, patch)
     }
 
     pub(crate) fn field_scope(
