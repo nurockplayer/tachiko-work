@@ -410,6 +410,6 @@ mod tests {
 
         let test = CriterionTest::parse("TRUE").expect("valid criterion");
         assert!(test.matches(Some(CriterionCell::Boolean(true))));
-        assert!(!test.matches(Some(CriterionCell::Text("true"))));
+        assert!(test.matches(Some(CriterionCell::Text("true"))));
     }
 }

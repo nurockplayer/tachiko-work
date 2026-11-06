@@ -118,7 +118,7 @@ fn roproj_v3_round_trips_every_aggregate_and_criterion_shape() {
         column: column("category"),
         operator: ComparisonOperator::Equal,
         value: Some(Box::new(Expression::SameRowReference(FieldId::from(
-            "category",
+            "criterion_text",
         )))),
     };
     let cases = [

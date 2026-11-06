@@ -1617,7 +1617,7 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     | Expression::ColumnTotal(_)
                     | Expression::ColumnAggregate { .. } => {}
                     Expression::ColumnConditional { .. } => {
-                        return invalid_representation("column totals and conditional aggregates are not representable in frozen .roproj/v2".to_owned());
+                        return invalid_representation("conditional aggregates are not representable in frozen .roproj/v2; use .roproj/v3".to_owned());
                     }
                 }
             }
