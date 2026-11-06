@@ -202,3 +202,22 @@ it("preserves required_values_missing diagnostics through the public Worker clie
     vi.unstubAllGlobals();
   }
 });
+
+it("encodes change_column_type from the public Worker client", () => {
+  const requests: WorkerRequest[] = [];
+  vi.stubGlobal("Worker", class {
+    addEventListener() {}
+    postMessage(request: WorkerRequest) { requests.push(structuredClone(request)); }
+    terminate() {}
+  });
+  const client = createExperimentalDesignerClient();
+  try {
+    void client.changeColumnType("resident/7", "items", "amount", "text");
+    expect(requests).toEqual([{id: 1, kind: "command", request: {
+      type: "change_column_type", expected_revision: "resident/7", collection: "items", field: "amount", field_type: "text",
+    }}]);
+  } finally {
+    client.close();
+    vi.unstubAllGlobals();
+  }
+});
