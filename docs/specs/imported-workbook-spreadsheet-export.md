@@ -315,7 +315,8 @@ written literal stays verbatim when the formula parser accepts it. Otherwise it
 must be a number or one cell reference, and any other expression is
 `unsupported_criterion`. A number or a reference to a Number field tested against
 a Date column, or a reference to a Date field tested against any other column, is
-`formula_type_mismatch`. A range
+`formula_type_mismatch`. A reference to a Text cell counts by its content at
+translation, as at export. A range
 that includes the header row is `unsupported_range`, because Excel could match
 the header and the column form reads data rows only. XLSX import applies these
 rules and keeps Excel's last value when one fails. It also keeps the value when a

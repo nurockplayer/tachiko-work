@@ -610,6 +610,11 @@ fn translate_a1_conditional_criterion_spans_and_date_rules() {
 }
 
 fn date_runtime() -> DesignerRuntime {
+    let document = date_document();
+    DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap()
+}
+
+fn date_document() -> Document {
     let mut document = fixture_document();
     let schema = document.schemas.get_mut("Items").unwrap();
     schema.fields.insert(
@@ -630,7 +635,7 @@ fn date_runtime() -> DesignerRuntime {
             Value::Date(Date::parse("2026-09-05").unwrap()),
         );
     }
-    DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap()
+    document
 }
 
 fn date_request(text: &str) -> Json {
@@ -652,6 +657,19 @@ fn translate_a1_conditional_number_criteria_cannot_test_a_date_column() {
         assert_eq!(reply["error"]["span"]["start"], start, "{reply}");
         assert_eq!(reply["error"]["span"]["end"], end, "{reply}");
     }
+    // A Text cell counts by its content: Excel compares this with date serials.
+    let mut document = date_document();
+    document
+        .entities
+        .get_mut("r1")
+        .unwrap()
+        .fields
+        .insert("name".into(), Value::Text(">=45000".into()));
+    let mut text_cell = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap(),
+    );
+    let reply = call(&mut text_cell, &date_request("COUNTIF(E2:E4,A2)"));
+    assert_eq!(reply["error"]["code"], "formula_type_mismatch", "{reply}");
     // Excel matches a Date cell with a number's serial; Tachiko doesn't.
     let reply = call(&mut rt, &date_request("COUNTIF(B2:B4,E2)"));
     assert_eq!(reply["error"]["code"], "formula_type_mismatch", "{reply}");

@@ -2164,17 +2164,19 @@ fn translated_criterion_kind(
         return None;
     }
     let reference = references.iter().next()?;
+    let entity = document.entities.get(&reference.entity)?;
     let field_type = document
-        .entities
-        .get(&reference.entity)
-        .and_then(|entity| document.schemas.get(&entity.schema))
+        .schemas
+        .get(&entity.schema)
         .and_then(|schema| schema.fields.get(&reference.field))
         .map(|field| &field.field_type);
-    Some(match field_type {
-        Some(FieldType::Number) => CriterionKind::Number,
-        Some(FieldType::Date) => CriterionKind::Date,
-        _ => CriterionKind::Other,
-    })
+    Some(
+        match criterion_type(field_type, entity.fields.get(&reference.field)) {
+            Some(FieldType::Number) => CriterionKind::Number,
+            Some(FieldType::Date) => CriterionKind::Date,
+            _ => CriterionKind::Other,
+        },
+    )
 }
 
 /// The declared type of one translated column argument,

@@ -4242,7 +4242,7 @@ pub(crate) fn whole_column_argument(
         return None;
     }
     let column = column_index(&start_column)?;
-    (!numeric || numeric_column(&sheet.rows, column))
+    (column < sheet.columns.len() && (!numeric || numeric_column(&sheet.rows, column)))
         .then_some((target, column, start_row, end_row))
 }
 

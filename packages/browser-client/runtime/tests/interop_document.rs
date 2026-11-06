@@ -2179,6 +2179,8 @@ fn untranslatable_conditional_aggregates_keep_the_cached_value() {
             None,
             Some("a date criterion only tests a date column"),
         ),
+        // A column past the table's own has no field, so it keeps the value too.
+        ("=COUNTIF($Z$2:$Z$4,1)", None, None),
         // The formula parser takes sixteen criteria, so a seventeenth keeps the
         // value instead of failing the import.
         (seventeen_criteria.as_str(), None, None),
