@@ -2129,9 +2129,29 @@ fn untranslatable_conditional_aggregates_keep_the_cached_value() {
         ),
         // Tachiko refuses relational text, so calculating it would fail.
         ("=COUNTIF($A$2:$A$4,$D2)", Some(">abc"), None),
+        // Excel matches a number with a date's serial; Tachiko doesn't.
+        (
+            "=COUNTIF($B$2:$B$4,$E2)",
+            None,
+            Some("a date criterion only tests a date column"),
+        ),
+        // Only a number or one cell survives a round trip.
+        (
+            "=COUNTIF($B$2:$B$4,$B2*2)",
+            None,
+            Some("the criterion isn't a cell reference or a writable literal yet"),
+        ),
+        // A blank cell in a Number column still reads as that column's type.
+        (
+            "=COUNTIF($E$2:$E$4,$B3)",
+            Some("blank B3"),
+            Some("a date column can only be tested against a date"),
+        ),
     ] {
         let (mut workbook, selection) = conditional_workbook([Some(formula), None, None]);
-        if let Some(filter) = filter {
+        if filter == Some("blank B3") {
+            workbook.sheets[0].rows[1][1].value = SourceValue::Empty;
+        } else if let Some(filter) = filter {
             workbook.sheets[0].rows[0][3].value = SourceValue::Text {
                 value: filter.into(),
             };
@@ -2236,10 +2256,23 @@ fn conditional_aggregates_round_trip_through_xlsx() {
 
 #[test]
 fn export_refuses_a_number_criterion_over_a_date_column() {
-    for source_text in [
-        "COUNTIFS([sheet_1.column_4:column], 5)",
-        "COUNTIFS([sheet_1.column_4:column], [.column_2])",
-        "COUNTIFS([sheet_1.column_4:column], 1+1)",
+    for (source_text, message) in [
+        (
+            "COUNTIFS([sheet_1.column_4:column], 5)",
+            "a number criterion cannot test a date column",
+        ),
+        (
+            "COUNTIFS([sheet_1.column_4:column], [.column_2])",
+            "a number criterion cannot test a date column",
+        ),
+        (
+            "COUNTIFS([sheet_1.column_2:column], [.column_4])",
+            "a date criterion only tests a date column",
+        ),
+        (
+            "COUNTIFS([sheet_1.column_2:column], 1+1)",
+            "a criterion expression is outside the export mapping",
+        ),
     ] {
         let (source, selection) = workbook_fixture();
         let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
@@ -2258,11 +2291,9 @@ fn export_refuses_a_number_criterion_over_a_date_column() {
         };
         let error = runtime
             .export_workbook(&published.resulting_revision, &imported.metadata)
-            .expect_err("a number criterion over a date column has no faithful export");
+            .expect_err("this criterion has no faithful export");
         assert!(
-            error
-                .to_string()
-                .contains("a number criterion cannot test a date column"),
+            error.to_string().contains(message),
             "{source_text}: {error}"
         );
     }

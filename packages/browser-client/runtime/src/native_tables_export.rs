@@ -185,7 +185,7 @@ fn write_formulas(
                         quoted.clone(),
                         letters.clone(),
                         i + 2,
-                        column.field_type == FieldType::Number,
+                        Some(column.field_type.clone()),
                     ),
                 );
                 count += usize::from(matches!(

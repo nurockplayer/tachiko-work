@@ -4421,8 +4421,8 @@ fn criterion_form(
     current: usize,
     sheets: &[SourceSheet],
 ) -> Option<CriterionKind> {
-    if criterion.parse::<f64>().is_ok_and(f64::is_finite) {
-        return Some(CriterionKind::Number);
+    if let Some(kind) = writable_criterion(criterion) {
+        return Some(kind);
     }
     let (sheet, column, row) = criterion_cell(criterion, current, sheets)?;
     let above = usize::try_from(sheets[sheet].layout.rows_above_header).ok()?;
@@ -4431,6 +4431,16 @@ fn criterion_form(
     Some(match &cell.value {
         SourceValue::Number { .. } => CriterionKind::Number,
         SourceValue::Date { .. } => CriterionKind::Date,
+        // The translator judges a reference by its column's type, blank or not.
+        SourceValue::Empty if date_column(sheet, column, sheets) => CriterionKind::Date,
+        SourceValue::Empty
+            if sheets[sheet].rows.iter().any(|row| {
+                row.get(column)
+                    .is_some_and(|cell| matches!(cell.value, SourceValue::Number { .. }))
+            }) =>
+        {
+            CriterionKind::Number
+        }
         SourceValue::Empty => CriterionKind::Blank,
         // Tachiko reads a Text cell as a criterion when it calculates, so it's
         // judged the same way here. Text it refuses would fail the formula.

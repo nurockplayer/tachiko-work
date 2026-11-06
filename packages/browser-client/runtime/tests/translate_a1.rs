@@ -553,6 +553,10 @@ fn translate_a1_conditional_aggregates_translate_whole_columns() {
         ("SUMIF(B2:B3,B3,C2:C4)", "unsupported_range"),
         ("SUMIF(B2:B4,B3,C1:C4)", "unsupported_range"),
         ("SUMIF(B1:B4,B3,C1:C4)", "unsupported_range"),
+        // A criterion is a number or one cell, the forms XLSX carries.
+        ("COUNTIF(B2:B4,MIN(B3,5))", "unsupported_criterion"),
+        ("COUNTIF(B2:B4,B3*2)", "unsupported_criterion"),
+        ("COUNTIF(B2:B4,(5))", "unsupported_criterion"),
         ("SUMIF(B2:B4)", "unsupported_function"),
         ("SUMIFS(C2:C4,A2:A4)", "unsupported_function"),
     ] {
@@ -593,6 +597,7 @@ fn translate_a1_conditional_criterion_spans_and_date_rules() {
             15,
             16,
         ),
+        ("1+COUNTIF(B2:B4,B3*2)", "unsupported_criterion", 16, 20),
     ] {
         let reply = call(&mut rt, &request(text));
         assert_eq!(reply["error"]["code"], code, "{text}: {reply}");

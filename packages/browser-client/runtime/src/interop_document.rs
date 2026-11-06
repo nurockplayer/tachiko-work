@@ -1390,7 +1390,7 @@ fn export_a1_maps(
                             .schemas
                             .get(sheet.schema_id.as_str())
                             .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
-                            .is_some_and(|field| field.field_type == FieldType::Number),
+                            .map(|field| field.field_type.clone()),
                     ),
                 );
             }
@@ -2058,7 +2058,7 @@ fn translate_conditional_call(
         let (offset, part) = parts[criterion_index];
         let text = part.trim();
         let start = base + offset + (part.len() - part.trim_start().len());
-        let (criterion, number) = translate_conditional_criterion(
+        let (criterion, kind) = translate_conditional_criterion(
             text,
             start,
             current_sheet,
@@ -2066,9 +2066,10 @@ fn translate_conditional_call(
             document,
             references,
         )?;
-        // A written number or a Number-field reference cannot test a date
-        // column: Excel compares dates by serial number, Tachiko by date.
-        if number && column_field_type(&rendered[column_index], document) == Some(FieldType::Date) {
+        // Excel compares dates by serial number, Tachiko by date, so a number
+        // cannot test a date column and a date only tests a date column.
+        let date = column_field_type(&rendered[column_index], document) == Some(FieldType::Date);
+        if (kind == CriterionKind::Number && date) || (kind == CriterionKind::Date && !date) {
             return Err(DesignerError::A1Translation {
                 code: A1RefusalCode::FormulaTypeMismatch,
                 span: A1TokenSpan {
@@ -2083,7 +2084,8 @@ fn translate_conditional_call(
 }
 
 /// One criterion: a written literal stays verbatim when the formula parser
-/// accepts it, anything else is recursively translated as an expression.
+/// accepts it, and anything else must translate to a number or one cell. XLSX
+/// import and export carry only those forms.
 fn translate_conditional_criterion(
     text: &str,
     base: usize,
@@ -2091,24 +2093,23 @@ fn translate_conditional_criterion(
     geometry: &mut impl A1Geometry,
     document: &Document,
     references: &mut BTreeSet<FieldRef>,
-) -> Result<(String, bool), DesignerError> {
+) -> Result<(String, CriterionKind), DesignerError> {
+    let unsupported = || DesignerError::A1Translation {
+        code: A1RefusalCode::UnsupportedCriterion,
+        span: A1TokenSpan {
+            start: base,
+            end: base + text.len(),
+        },
+    };
     if criterion_literal(text) {
-        return match writable_criterion(text) {
-            Some(kind) => Ok((text.to_owned(), kind == CriterionKind::Number)),
-            None => Err(DesignerError::A1Translation {
-                code: A1RefusalCode::UnsupportedCriterion,
-                span: A1TokenSpan {
-                    start: base,
-                    end: base + text.len(),
-                },
-            }),
-        };
+        let kind = writable_criterion(text).ok_or_else(unsupported)?;
+        return Ok((text.to_owned(), kind));
     }
     let (translated, nested) = translate_a1_inner(text, geometry, current_sheet, document, false)
         .map_err(|error| offset_translation(error, base))?;
-    let number = translated_criterion_is_number(&translated, &nested, document);
+    let kind = translated_criterion_kind(&translated, &nested, document).ok_or_else(unsupported)?;
     references.extend(nested);
-    Ok((translated, number))
+    Ok((translated, kind))
 }
 
 /// Shift a nested translation's source span to its place in the original text.
@@ -2125,34 +2126,32 @@ fn offset_translation(error: DesignerError, base: usize) -> DesignerError {
     }
 }
 
-/// Whether a translated criterion is a number literal or exactly one reference
-/// to a Number field.
-fn translated_criterion_is_number(
+/// The value class of a translated criterion that is a number or exactly one
+/// reference, or `None` for any other expression.
+fn translated_criterion_kind(
     translated: &str,
     references: &BTreeSet<FieldRef>,
     document: &Document,
-) -> bool {
-    if translated.parse::<f64>().is_ok_and(f64::is_finite) {
-        return true;
+) -> Option<CriterionKind> {
+    if writable_criterion(translated) == Some(CriterionKind::Number) {
+        return Some(CriterionKind::Number);
     }
-    let single_reference = translated
-        .strip_prefix('[')
-        .and_then(|text| text.strip_suffix(']'))
-        .is_some_and(|text| !text.contains('[') && !text.contains(']'));
-    if !single_reference || references.len() != 1 {
-        return false;
+    let inner = translated.strip_prefix('[')?.strip_suffix(']')?;
+    if inner.contains(['[', ']']) || references.len() != 1 {
+        return None;
     }
-    references
-        .iter()
-        .next()
-        .and_then(|reference| {
-            document
-                .entities
-                .get(&reference.entity)
-                .and_then(|entity| document.schemas.get(&entity.schema))
-                .and_then(|schema| schema.fields.get(&reference.field))
-        })
-        .is_some_and(|field| field.field_type == FieldType::Number)
+    let reference = references.iter().next()?;
+    let field_type = document
+        .entities
+        .get(&reference.entity)
+        .and_then(|entity| document.schemas.get(&entity.schema))
+        .and_then(|schema| schema.fields.get(&reference.field))
+        .map(|field| &field.field_type);
+    Some(match field_type {
+        Some(FieldType::Number) => CriterionKind::Number,
+        Some(FieldType::Date) => CriterionKind::Date,
+        _ => CriterionKind::Other,
+    })
 }
 
 /// The declared type of one translated column argument,
@@ -3783,16 +3782,21 @@ pub(crate) struct ExportCell {
     sheet: String,
     column: String,
     row: usize,
-    number: bool,
+    field_type: Option<FieldType>,
 }
 
 impl ExportCell {
-    pub(crate) fn new(sheet: String, column: String, row: usize, number: bool) -> Self {
+    pub(crate) fn new(
+        sheet: String,
+        column: String,
+        row: usize,
+        field_type: Option<FieldType>,
+    ) -> Self {
         Self {
             sheet,
             column,
             row,
-            number,
+            field_type,
         }
     }
 
@@ -4102,25 +4106,34 @@ fn export_criterion(
     columns: &BTreeMap<ColumnRef, ExportColumn>,
     present: &std::collections::BTreeSet<FieldRef>,
 ) -> Result<String, DesignerError> {
-    let number_cell = |reference: &FieldRef| {
+    let cell_type = |reference: &FieldRef| {
         addresses
             .get(reference)
-            .is_some_and(|address| address.number)
+            .and_then(|address| address.field_type.as_ref())
     };
-    let number = match criterion.value.as_deref() {
-        None => false,
-        Some(Expression::Reference(reference)) => number_cell(reference),
+    // XLSX import carries a number or one cell, so nothing else may be written.
+    let value_type = match criterion.value.as_deref() {
+        None => None,
+        Some(Expression::Number(_)) => Some(&FieldType::Number),
+        Some(Expression::Reference(reference)) => cell_type(reference),
         Some(Expression::SameRowReference(field)) => {
-            number_cell(&FieldRef::new(owner.entity.clone(), field.clone()))
+            cell_type(&FieldRef::new(owner.entity.clone(), field.clone()))
         }
-        Some(_) => true,
+        Some(_) => {
+            return Err(tracker_error(
+                "a criterion expression is outside the export mapping",
+            ));
+        }
     };
-    // Excel would compare dates by serial number, while Tachiko compares dates,
-    // so a number over a date column has no faithful spreadsheet text.
-    if number && column_type == Some(&FieldType::Date) {
+    // Excel would compare dates by serial number, while Tachiko compares dates.
+    let date_column = column_type == Some(&FieldType::Date);
+    if date_column && value_type == Some(&FieldType::Number) {
         return Err(tracker_error(
             "a number criterion cannot test a date column",
         ));
+    }
+    if !date_column && value_type == Some(&FieldType::Date) {
+        return Err(tracker_error("a date criterion only tests a date column"));
     }
     match (criterion.operator, criterion.value.as_deref()) {
         (ComparisonOperator::Equal, None) => Ok("\"\"".to_owned()),

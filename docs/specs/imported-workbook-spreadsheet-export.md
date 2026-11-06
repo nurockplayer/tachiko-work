@@ -155,9 +155,10 @@ other references, including column removal and row deletion; missing references
 or unsupported formulas refuse the whole export. A conditional aggregate exports
 as Excel's plural `SUMIFS`, `AVERAGEIFS` or `COUNTIFS` call over whole-column
 ranges: a blank test writes `""` or `"<>"`, a written number keeps its operator
-inside a quoted criterion, and an equality test writes its expression. A number
-criterion over a Date column, written or read from a Number cell, refuses because
-Excel compares by serial number. Calculation and formula-editing rules do not change.
+inside a quoted criterion, and an equality test writes its number or cell. Any
+other criterion expression refuses, because import wouldn't carry it back. A
+number or Number cell over a Date column, or a Date cell over any other column,
+refuses because Excel compares by serial number. Calculation and formula-editing rules do not change.
 
 An absent optional value is an Empty cell. Present empty Text remains Text in
 XLSX; CSV represents both with an empty field and discloses this in
@@ -308,9 +309,11 @@ at the header or first data row and ending at the last data row, become
 caller's function spelling when every column argument is one whole data column
 of the same sheet covering the same first and last row. Their value column must
 be numeric; a criterion column may hold any scalar. A criterion that is one
-written literal stays verbatim when the formula parser accepts it, and any other
-criterion expression is translated recursively. A written number or a reference
-to a Number field tested against a Date column is `formula_type_mismatch`. A range
+written literal stays verbatim when the formula parser accepts it. Otherwise it
+must be a number or one cell reference, and any other expression is
+`unsupported_criterion`. A number or a reference to a Number field tested against
+a Date column, or a reference to a Date field tested against any other column, is
+`formula_type_mismatch`. A range
 that includes the header row is `unsupported_range`, because Excel could match
 the header and the column form reads data rows only. XLSX import applies these
 rules and keeps Excel's last value when one fails. It also keeps the value when a
