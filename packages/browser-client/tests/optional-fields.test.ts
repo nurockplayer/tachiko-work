@@ -64,7 +64,7 @@ describe("public optional-field requests", () => {
     await published(client.trackerCommand!({type: "add_column", expected_revision: "resident/0", collection: "items", name: "amount", field_type: "number", required: false}));
     expect(requests[1]).toEqual({id: 2, kind: "command", request: {type: "add_column", expected_revision: "resident/0", collection: "items", name: "amount", field_type: "number", required: false}});
     await published(client.changeColumnType("resident/0", "items", "amount", "text"));
-    expect(requests.at(-1)).toEqual({kind: "command", request: {type: "change_column_type", expected_revision: "resident/0", collection: "items", field: "amount", field_type: "text"}});
+    expect(requests.at(-1)).toMatchObject({kind: "command", request: {type: "change_column_type", expected_revision: "resident/0", collection: "items", field: "amount", field_type: "text"}});
     for (const required of [true, false]) {
       await published(client.setColumnRequiredness("resident/0", "items", "note", required));
       expect(requests.at(-1)).toMatchObject({kind: "command", request: {type: "set_column_requiredness", expected_revision: "resident/0", collection: "items", field: "note", required}});

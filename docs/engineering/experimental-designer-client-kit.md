@@ -252,7 +252,7 @@ value in the column.
 publication and one `undo` step: every stored value is converted, then the
 definition keeps its ID, key and display name, keeps its `required` flag, keeps
 `number_format` only when the new type is Number, and resets its constraint.
-A column that already has the target type is `no_change`.
+A column that already has the target type refuses.
 
 The command converts present values and never invents data. An empty Text cell
 becomes blank in an optional column; in a required column it refuses.
