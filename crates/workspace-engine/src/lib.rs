@@ -6,7 +6,7 @@ use std::{
 };
 
 use serde::{Serialize, Serializer, ser::Error as _};
-use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, diff};
+use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, diff, diff_with_calculations};
 pub use tachiko_diff_engine::{
     CanonicalDirectFact, CanonicalSemanticDelta, DiffError, SemanticChange, SemanticDiff,
     canonical_delta,
@@ -15,7 +15,8 @@ pub use tachiko_diff_engine::{
 pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
 use tachiko_formula_engine::{
     Calculation, CalculationOutcome, FormulaParseError, RetainedCalculationState, bind_expression,
-    calculate_complete, parse_expression, project_expression, validate_expression_structure,
+    calculate, calculate_complete, parse_expression, project_expression,
+    project_expression_with_index, validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CanonicalAuthoringProjectionError, ColumnFailure,
@@ -673,9 +674,22 @@ pub fn create_document(
 ///
 /// Returns the shared semantic or calculation failure for this snapshot.
 pub fn validate(document: &Document) -> Result<(), WorkspaceError> {
+    validated_calculation_and_report(document).map(|_| ())
+}
+
+/// Validate one snapshot and return its authoritative report and calculation.
+///
+/// Callers that also need the report reuse the same validation and calculation
+/// instead of running them twice.
+pub(crate) fn validated_calculation_and_report(
+    document: &Document,
+) -> Result<(ValidationReport, Calculation), WorkspaceError> {
     validate_keyed_grouped_sum_definitions(document)?;
-    require_validated_calculation(document)?;
-    Ok(())
+    let (report, calculation) = semantic_validation(document);
+    let Some(calculation) = calculation else {
+        return Err(invalid_document(report, ValidationRole::Current));
+    };
+    Ok((report, calculation))
 }
 
 /// Calculate every numeric field and project it through current human keys.
@@ -809,12 +823,11 @@ pub fn formula_source_projections(
             };
             let field = FieldRef::new(entity.id.clone(), field_id.clone());
             index.field_address(document, &field)?;
-            let source = project_expression(document, &field, expression).map_err(|source| {
-                WorkspaceError::FormulaProjection {
+            let source = project_expression_with_index(document, &index, &field, expression)
+                .map_err(|source| WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,
-                }
-            })?;
+                })?;
             sources.insert(field, source);
         }
     }
@@ -2109,13 +2122,33 @@ pub(crate) fn formula_restore_candidate(
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
-    require_validated_calculation_for(&edited, ValidationRole::Candidate)?;
+    finalize_edit_with_validation(document, edited).map(|(preview, _report)| preview)
+}
+
+/// Finalize one edited candidate, returning its authoritative report too.
+///
+/// The candidate is validated and calculated once; the base is calculated once
+/// and the semantic diff reuses both calculations.
+pub(crate) fn finalize_edit_with_validation(
+    document: &Document,
+    edited: Document,
+) -> Result<(EditPreview, ValidationReport), WorkspaceError> {
+    let (report, calculation) = semantic_validation(&edited);
+    let Some(calculation) = calculation else {
+        return Err(invalid_document(report, ValidationRole::Candidate));
+    };
     preflight_formula_projections(&edited)?;
-    let semantic_diff = diff(document, &edited)?;
-    Ok(EditPreview {
-        document: edited,
-        diff: semantic_diff,
-    })
+    tachiko_diff_engine::require_diff_supported(document, &edited)?;
+    let base_calculation = calculate(document)
+        .map_err(|source| WorkspaceError::Diff(DiffError::BeforeCalculation(source)))?;
+    let semantic_diff = diff_with_calculations(document, &edited, &base_calculation, &calculation)?;
+    Ok((
+        EditPreview {
+            document: edited,
+            diff: semantic_diff,
+        },
+        report,
+    ))
 }
 
 /// Build the authoritative full semantic validation report.
@@ -2657,15 +2690,21 @@ fn field_ref_fact(field: &FieldRef) -> String {
 }
 
 fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceError> {
+    // One index serves every formula. When it cannot be built, each formula
+    // keeps the per-formula projection failure reported before the shared
+    // index, so the first formula still decides the error.
+    let index = AddressIndex::build(document);
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
             if let Value::Formula(expression) = value {
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
-                project_expression(document, &field, expression).map_err(|source| {
-                    WorkspaceError::FormulaProjection {
-                        field: field.clone(),
-                        source,
-                    }
+                let projection = match &index {
+                    Ok(index) => project_expression_with_index(document, index, &field, expression),
+                    Err(_) => project_expression(document, &field, expression),
+                };
+                projection.map_err(|source| WorkspaceError::FormulaProjection {
+                    field: field.clone(),
+                    source,
                 })?;
             }
         }
@@ -3229,3 +3268,6 @@ fn format_number(number: Number) -> String {
 
 #[cfg(test)]
 mod merge_v2_tests;
+
+#[cfg(test)]
+mod projection_tests;

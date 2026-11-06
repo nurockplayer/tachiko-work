@@ -3,10 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use tachiko_formula_engine::{
     CanonicalAuthoringProjectionError, ExpressionComplexityError, FormulaBindError,
     UnboundExpression, bind_expression, extract_dependencies, parse_expression, project_expression,
+    project_expression_with_index,
 };
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    AddressIndex, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey,
+    Value,
 };
 
 fn document() -> Document {
@@ -155,6 +157,35 @@ fn projection_uses_current_keys_without_rewriting_bound_ast() {
         "([moonblade.power] + 5)"
     );
     assert_eq!(bound, before);
+}
+
+#[test]
+fn indexed_projection_matches_the_rebuilt_index() {
+    let document = document();
+    let owner = FieldRef::new("entity-stable", "dps-stable");
+    let bound = bind_expression(
+        &document,
+        &owner,
+        &parse_expression("[.damage] + [iron_sword.damage] + [weapon.damage:total]").unwrap(),
+    )
+    .unwrap();
+    let index = AddressIndex::build(&document).unwrap();
+    let rebuilt = project_expression(&document, &owner, &bound).unwrap();
+
+    assert_eq!(
+        project_expression_with_index(&document, &index, &owner, &bound).unwrap(),
+        rebuilt
+    );
+
+    let missing = Expression::Reference(FieldRef::new("entity-missing", "damage-stable"));
+    assert_eq!(
+        project_expression_with_index(&document, &index, &owner, &missing),
+        project_expression(&document, &owner, &missing)
+    );
+    assert!(matches!(
+        project_expression_with_index(&document, &index, &owner, &missing),
+        Err(CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. })
+    ));
 }
 
 #[test]

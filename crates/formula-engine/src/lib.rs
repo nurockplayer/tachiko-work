@@ -358,6 +358,37 @@ pub fn project_expression(
             },
         );
     };
+    project_through_index(document, &index, owner, expression, references)
+}
+
+/// Project a bound formula through an [`AddressIndex`] the caller built once.
+///
+/// Returns the same value as [`project_expression`]; callers that project every
+/// formula of one document reuse a single index instead of rebuilding it.
+///
+/// # Errors
+///
+/// Returns a typed stable-target set or structural/canonical-length failure.
+pub fn project_expression_with_index(
+    document: &Document,
+    index: &AddressIndex,
+    owner: &FieldRef,
+    expression: &Expression,
+) -> Result<String, CanonicalAuthoringProjectionError> {
+    validate_expression_structure(expression)?;
+    // Column totals are projected through their own identity, so only the
+    // direct references need a human-address round-trip proof here.
+    let references = direct_references(owner, expression);
+    project_through_index(document, index, owner, expression, references)
+}
+
+fn project_through_index(
+    document: &Document,
+    index: &AddressIndex,
+    owner: &FieldRef,
+    expression: &Expression,
+    references: BTreeSet<FieldRef>,
+) -> Result<String, CanonicalAuthoringProjectionError> {
     let mut addresses = BTreeMap::new();
     let mut unresolved = BTreeSet::new();
     for target in references {

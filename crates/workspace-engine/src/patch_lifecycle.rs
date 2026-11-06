@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta};
+use tachiko_formula_engine::Calculation;
 use tachiko_semantic_core::{
     FieldConstraint, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
 };
@@ -27,7 +28,7 @@ use thiserror::Error;
 use super::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
-    apply_field_value_candidate, finalize_edit, unset_field_candidate,
+    apply_field_value_candidate, finalize_edit_with_validation, unset_field_candidate,
 };
 
 #[cfg(test)]
@@ -1940,6 +1941,7 @@ impl PatchLifecycle {
             now,
         )?;
         let candidate = evaluated.document.clone();
+        let evaluated_report = evaluated.validation_report.clone();
         let published = self.publish_candidate(
             publication,
             PublicationAttempt {
@@ -2002,7 +2004,7 @@ impl PatchLifecycle {
             proposal_id,
             &current_revision,
             &published.revision,
-            &candidate,
+            (&candidate, &evaluated_report),
             &published.document_scope,
             &published.document,
         ) {
@@ -2464,23 +2466,26 @@ impl PatchLifecycle {
         proposal_id: &ProposalId,
         base_revision: &SemanticRevision,
         resulting_revision: &SemanticRevision,
-        candidate: &Document,
+        evaluated: (&Document, &ValidationReport),
         installed_document_scope: &DocumentScopeId,
         installed_document: &Document,
     ) -> Result<ValidationReport, PatchLifecycleError> {
+        let (candidate, evaluated_report) = evaluated;
         if installed_document_scope != &self.document_scope {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);
             return Err(PatchLifecycleError::VerificationFailed);
         }
-        let report = super::validation_report(installed_document);
+        // The installed document must be the evaluated candidate itself, so the
+        // evaluated report is the installed document's report by construction:
+        // validation is a pure function of the document.
         if resulting_revision == base_revision
             || installed_document != candidate
-            || !report.is_valid()
+            || !evaluated_report.is_valid()
         {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);
             return Err(PatchLifecycleError::VerificationFailed);
         }
-        Ok(report)
+        Ok(evaluated_report.clone())
     }
 
     /// Read the unredacted trusted in-process receipt store.
@@ -3567,6 +3572,30 @@ impl PatchLifecycle {
         Ok((candidate, writes))
     }
 
+    /// Validate one snapshot and preflight its formula projections.
+    ///
+    /// Invalid documents keep the `ValidationFailed` shape; every other
+    /// failure keeps the `CommandRejected` shape.
+    fn validate_and_preflight(
+        document: &Document,
+    ) -> Result<(ValidationReport, Calculation), PatchLifecycleError> {
+        let (report, calculation) =
+            super::validated_calculation_and_report(document).map_err(|error| match error {
+                WorkspaceError::InvalidDocument { report, .. } => {
+                    PatchLifecycleError::ValidationFailed { report }
+                }
+                source => PatchLifecycleError::CommandRejected {
+                    source: Box::new(source),
+                },
+            })?;
+        super::preflight_formula_projections(document).map_err(|source| {
+            PatchLifecycleError::CommandRejected {
+                source: Box::new(source),
+            }
+        })?;
+        Ok((report, calculation))
+    }
+
     fn finalize_evaluation(
         &self,
         base: &Document,
@@ -3621,22 +3650,10 @@ impl PatchLifecycle {
                     )),
                 });
             }
-            match super::validate(&candidate)
-                .and_then(|()| super::preflight_formula_projections(&candidate))
-            {
-                Ok(()) => {}
-                Err(WorkspaceError::InvalidDocument { report, .. }) => {
-                    return Err(PatchLifecycleError::ValidationFailed { report });
-                }
-                Err(source) => {
-                    return Err(PatchLifecycleError::CommandRejected {
-                        source: Box::new(source),
-                    });
-                }
-            }
+            let (validation_report, _calculation) = Self::validate_and_preflight(&candidate)?;
             let disclosure_requirements = self.derive_disclosures(base, &candidate, body, &[])?;
             return Ok(EvaluatedPatch {
-                validation_report: super::validation_report(&candidate),
+                validation_report,
                 document: candidate,
                 evidence: PatchEvidence::V1(Vec::new()),
                 formula_impacts: Vec::new(),
@@ -3646,8 +3663,8 @@ impl PatchLifecycle {
                 },
             });
         }
-        let edit = match finalize_edit(base, candidate) {
-            Ok(edit) => edit,
+        let (edit, validation_report) = match finalize_edit_with_validation(base, candidate) {
+            Ok(result) => result,
             Err(WorkspaceError::InvalidDocument { report, .. }) => {
                 return Err(PatchLifecycleError::ValidationFailed { report });
             }
@@ -3659,7 +3676,6 @@ impl PatchLifecycle {
         };
         let semantic_changes = edit.diff.changes().to_vec();
         let formula_impacts = formula_impacts(&semantic_changes);
-        let validation_report = super::validation_report(&edit.document);
         let disclosure_requirements =
             self.derive_disclosures(base, &edit.document, body, &semantic_changes)?;
         Ok(EvaluatedPatch {
@@ -3681,23 +3697,8 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
-        for document in [base, &candidate] {
-            match super::validate(document) {
-                Ok(()) => super::preflight_formula_projections(document).map_err(|source| {
-                    PatchLifecycleError::CommandRejected {
-                        source: Box::new(source),
-                    }
-                })?,
-                Err(WorkspaceError::InvalidDocument { report, .. }) => {
-                    return Err(PatchLifecycleError::ValidationFailed { report });
-                }
-                Err(source) => {
-                    return Err(PatchLifecycleError::CommandRejected {
-                        source: Box::new(source),
-                    });
-                }
-            }
-        }
+        let (_, base_calculation) = Self::validate_and_preflight(base)?;
+        let (validation_report, candidate_calculation) = Self::validate_and_preflight(&candidate)?;
 
         let delta =
             canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &candidate).map_err(|source| {
@@ -3710,9 +3711,11 @@ impl PatchLifecycle {
         // projection over snapshots without names, constraints, or saved definitions.
         // Formulas cannot read definitions; both real snapshots passed complete
         // validation above. Direct v2 evidence is always produced separately.
-        let formula_projection = super::diff(
+        let formula_projection = super::diff_with_calculations(
             &formula_projection_document(base),
             &formula_projection_document(&candidate),
+            &base_calculation,
+            &candidate_calculation,
         )
         .map_err(|source| PatchLifecycleError::CommandRejected {
             source: Box::new(source.into()),
@@ -3721,7 +3724,6 @@ impl PatchLifecycle {
         let formula_impacts = formula_impacts(&formula_changes);
         let disclosure_requirements =
             self.derive_disclosures(base, &candidate, body, &formula_changes)?;
-        let validation_report = super::validation_report(&candidate);
         Ok(EvaluatedPatch {
             document: candidate,
             evidence: PatchEvidence::V2(delta),

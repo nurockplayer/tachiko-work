@@ -376,6 +376,139 @@ fn revoked_grant_still_denies_execution_with_a_retained_evaluation() {
 }
 
 #[test]
+fn published_receipt_reports_the_installed_document() {
+    let mut lifecycle = lifecycle(false);
+    let document = document();
+    let proposal = propose(&mut lifecycle, &document, "proposal", set_f("new")).unwrap();
+    let mut host = Host::new(document);
+    let receipt = lifecycle
+        .execute(
+            &proposal,
+            None,
+            &"human".into(),
+            &mut host,
+            TrustedInstant::new(20),
+        )
+        .unwrap();
+    let installed = host.published.expect("the host installs the candidate");
+
+    assert_eq!(
+        receipt.validation_report,
+        Some(crate::validation_report(&installed))
+    );
+}
+
+#[test]
+fn published_v2_receipt_reports_the_installed_document() {
+    let mut lifecycle = lifecycle(true);
+    let document = document();
+    let proposal = propose(&mut lifecycle, &document, "proposal", set_f("new")).unwrap();
+    let mut host = Host::new(document);
+    let receipt = lifecycle
+        .execute_v2(
+            &proposal,
+            None,
+            &"human".into(),
+            &mut host,
+            TrustedInstant::new(20),
+        )
+        .unwrap();
+    let installed = host.published.expect("the host installs the candidate");
+
+    assert_eq!(
+        receipt.validation_report,
+        Some(crate::validation_report(&installed))
+    );
+}
+
+struct InstallingHost {
+    snapshot: Document,
+    revision: SemanticRevision,
+    installed: Document,
+}
+
+impl SemanticPublicationAuthority for InstallingHost {
+    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
+        ("scope".into(), self.snapshot.clone(), self.revision.clone())
+    }
+
+    fn publish_if_current<A>(
+        &mut self,
+        expected_scope: &DocumentScopeId,
+        expected_revision: &SemanticRevision,
+        _candidate: Document,
+        authorize: impl FnOnce(TrustedInstant) -> Option<A>,
+    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+        if expected_scope != &DocumentScopeId::from("scope") || expected_revision != &self.revision
+        {
+            return Err(SemanticPublicationError::Stale);
+        }
+        let authorization = authorize(TrustedInstant::new(30))
+            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
+        Ok((
+            "scope".into(),
+            self.installed.clone(),
+            "r2".into(),
+            authorization,
+        ))
+    }
+}
+
+#[test]
+fn a_host_that_installs_another_document_fails_verification() {
+    let mut lifecycle = lifecycle(false);
+    let document = document();
+    let proposal = propose(&mut lifecycle, &document, "proposal", set_f("new")).unwrap();
+    let mut host = InstallingHost {
+        snapshot: document.clone(),
+        revision: "r1".into(),
+        installed: with_f_set(document, "different"),
+    };
+
+    let error = lifecycle
+        .execute(
+            &proposal,
+            None,
+            &"human".into(),
+            &mut host,
+            TrustedInstant::new(20),
+        )
+        .unwrap_err();
+
+    assert!(
+        matches!(error, PatchLifecycleError::VerificationFailed),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_host_that_installs_another_document_fails_v2_verification() {
+    let mut lifecycle = lifecycle(true);
+    let document = document();
+    let proposal = propose(&mut lifecycle, &document, "proposal", set_f("new")).unwrap();
+    let mut host = InstallingHost {
+        snapshot: document.clone(),
+        revision: "r1".into(),
+        installed: with_f_set(document, "different"),
+    };
+
+    let error = lifecycle
+        .execute_v2(
+            &proposal,
+            None,
+            &"human".into(),
+            &mut host,
+            TrustedInstant::new(20),
+        )
+        .unwrap_err();
+
+    assert!(
+        matches!(error, PatchLifecycleError::VerificationFailed),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn v2_propose_preview_execute_evaluates_once() {
     let mut lifecycle = lifecycle(true);
     let document = document();
