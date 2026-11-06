@@ -967,11 +967,14 @@ impl ExpressionV1 {
                     "conditional and rounding formula expressions are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
                 );
             }
-            Expression::ColumnTotal(_)
-            | Expression::ColumnAggregate { .. }
-            | Expression::ColumnConditional { .. } => {
+            Expression::ColumnConditional { .. } => {
                 return invalid_representation(
-                    "column totals and conditional aggregates are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
+                    "conditional aggregates are not representable in frozen .roproj/v1; use .roproj/v3".to_owned(),
+                );
+            }
+            Expression::ColumnTotal(_) | Expression::ColumnAggregate { .. } => {
+                return invalid_representation(
+                    "column totals are not representable in frozen .roproj/v1; use .roproj/v3 or direct-ro/v2".to_owned(),
                 );
             }
             Expression::Add { left, right } => {

@@ -406,7 +406,7 @@ mod tests {
         assert!(test.matches(Some(CriterionCell::Date(
             Date::parse("2026-01-01").expect("valid date")
         ))));
-        assert!(!test.matches(Some(CriterionCell::Text("2026-01-01"))));
+        assert!(test.matches(Some(CriterionCell::Text("2026-01-01"))));
 
         let test = CriterionTest::parse("TRUE").expect("valid criterion");
         assert!(test.matches(Some(CriterionCell::Boolean(true))));

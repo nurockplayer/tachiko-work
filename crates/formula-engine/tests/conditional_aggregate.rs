@@ -259,6 +259,7 @@ fn result(document: &Document) -> Option<Number> {
     calculation.value(&owner("summary", "result"))
 }
 
+#[allow(clippy::unnecessary_wraps)] // compared with `Calculation::value`
 fn value(expected: f64) -> Option<Number> {
     Some(Number::new(expected).unwrap())
 }
@@ -430,6 +431,7 @@ fn an_empty_match_sums_zero_and_averages_to_empty() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn a_criterion_can_read_another_cell() {
     // A Number cell.
     let number_criterion = conditional(
@@ -469,13 +471,16 @@ fn a_criterion_can_read_another_cell() {
     assert_eq!(result(&fixture), value(2.0));
 
     // A Text cell holding a wildcard, a relational number and a boolean.
-    for (text, expected) in [("f*", 2.0), (">5", 3.0), ("TRUE", 3.0)] {
+    for (text, column, expected) in [
+        ("h*", "category", 2.0),
+        (">1", "quota", 3.0),
+        ("TRUE", "active", 3.0),
+    ] {
         let mut document = document();
         document.entities.get_mut("summary").unwrap().fields.insert(
             FieldId::from("criterion_text"),
             Value::Text(text.to_owned()),
         );
-        let column = if text == "TRUE" { "active" } else { "category" };
         set_result(
             &mut document,
             conditional(
@@ -740,6 +745,7 @@ fn row_roots(document: &Document, entity: &str) -> BTreeSet<FieldRef> {
         .collect()
 }
 
+#[allow(clippy::needless_pass_by_value)] // callers build the set inline
 fn update(retained: &mut RetainedCalculationState, document: &Document, roots: BTreeSet<FieldRef>) {
     let _ = retained.update(document, &roots);
     assert_eq!(
@@ -911,7 +917,12 @@ fn a_conditional_aggregate_over_its_own_row_is_a_cycle() {
     assert_eq!(
         failures.failures().get(&owner("rent", "computed")),
         Some(&CalculationFailure::Cycle {
-            members: Arc::new(BTreeSet::from([owner("rent", "computed")])),
+            members: Arc::new(BTreeSet::from([
+                owner("ads", "computed"),
+                owner("blank", "computed"),
+                owner("rent", "computed"),
+                owner("tools", "computed"),
+            ])),
         })
     );
 }

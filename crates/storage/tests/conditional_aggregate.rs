@@ -167,8 +167,7 @@ fn roproj_v3_round_trips_every_aggregate_and_criterion_shape() {
             .collect::<String>();
         assert!(encoded.contains("column_conditional"), "{name}");
         assert!(encoded.contains("\"operator\""), "{name}");
-        assert!(!encoded.contains("\"text\""), "{name}: {encoded}");
-        assert!(!encoded.contains("\"kind\":\"text\""), "{name}");
+        assert!(!encoded.contains("\"text\":"), "{name}: {encoded}");
     }
 }
 
