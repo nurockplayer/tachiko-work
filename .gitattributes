@@ -3,5 +3,5 @@
 **/*.roproj/manifest.json text eol=lf diff
 **/*.roproj/schemas.json text eol=lf diff
 **/*.roproj/entities/*.jsonl text eol=lf diff
-# Fixture trees compared byte for byte with the runtime's LF output.
-acceptance/native-display-names/tree/** text eol=lf
+# Acceptance fixtures are compared byte for byte, so no checkout may convert them.
+acceptance/** -text
