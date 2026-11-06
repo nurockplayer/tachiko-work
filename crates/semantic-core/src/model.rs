@@ -984,6 +984,7 @@ impl Expression {
                         columns.push(column);
                     }
                     columns.extend(criteria.iter().map(|criterion| &criterion.column));
+                    pending.extend(node.children().into_iter().rev());
                 }
                 _ => pending.extend(node.children().into_iter().rev()),
             }

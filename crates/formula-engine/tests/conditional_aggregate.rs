@@ -900,6 +900,41 @@ fn incremental_calculation_equals_full() {
 }
 
 #[test]
+fn a_column_read_inside_a_criterion_renders_and_is_a_dependency() {
+    let input = "COUNTIFS([plan.quota:column], [plan.reserve:average])";
+    let summary = owner("summary", "result");
+    let mut document = document();
+    let parsed = parse_expression(input).expect("valid formula");
+    let bound = bind_expression(&document, &summary, &parsed).expect("binds");
+    assert_eq!(
+        project_expression(&document, &summary, &bound).expect("projects"),
+        input
+    );
+    set_result(&mut document, bound);
+    assert_eq!(result(&document), value(0.0));
+
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    for (row, reserve) in [("rent", 1.0), ("ads", 2.0), ("blank", 3.0)] {
+        document
+            .entities
+            .get_mut(row)
+            .unwrap()
+            .fields
+            .insert(FieldId::from("reserve"), number(reserve));
+    }
+    update(
+        &mut retained,
+        &document,
+        BTreeSet::from([
+            owner("rent", "reserve"),
+            owner("ads", "reserve"),
+            owner("blank", "reserve"),
+        ]),
+    );
+    assert_eq!(result(&document), value(2.0));
+}
+
+#[test]
 fn a_conditional_aggregate_over_its_own_row_is_a_cycle() {
     let mut document = document();
     for row in ["rent", "ads", "tools", "blank"] {
