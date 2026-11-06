@@ -3653,6 +3653,9 @@ fn export_in(
             };
             export_column(name, column, columns)
         }
+        Expression::ColumnConditional { .. } => Err(tracker_error(
+            "conditional aggregates are outside the export mapping",
+        )),
         Expression::Add { left, right } => {
             export_binary(left, "+", right, owner, addresses, columns, present)
         }

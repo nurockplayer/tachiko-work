@@ -4,7 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
-use tachiko_workspace_engine::{Document, EntityId, Expression, FieldId, SchemaId, Value};
+use tachiko_workspace_engine::{
+    ConditionalAggregate, Document, EntityId, Expression, FieldId, SchemaId, Value,
+};
 use thiserror::Error;
 
 use crate::DesignerError;
@@ -263,6 +265,22 @@ fn formula_usage<'a>(
             }
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 columns.insert((&column.schema, &column.field));
+            }
+            Expression::ColumnConditional {
+                aggregate,
+                criteria,
+            } => {
+                if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                    aggregate.as_ref()
+                {
+                    columns.insert((&column.schema, &column.field));
+                }
+                for criterion in criteria {
+                    columns.insert((&criterion.column.schema, &criterion.column.field));
+                    if let Some(expression) = &criterion.value {
+                        pending.push(expression.as_ref());
+                    }
+                }
             }
             _ => pending.extend(expression.children()),
         }

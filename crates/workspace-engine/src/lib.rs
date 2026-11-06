@@ -39,14 +39,14 @@ use tachiko_semantic_core::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
-    ColumnAggregateFunction, ColumnRef, ComparisonOperator, Date, Diagnostic, DiagnosticCode,
-    DiagnosticFact, DiagnosticLocation, DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure,
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldConstraint,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
-    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    MAX_DISPLAY_NAME_BYTES, Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema,
-    SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
-    display_name_failures, trim_display_name,
+    ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
+    Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
+    DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity, EntityId, EntityKey,
+    Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
+    NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey,
+    SemanticSubject, StableDiagnosticObservation, Value, display_name_failures, trim_display_name,
 };
 use thiserror::Error;
 
@@ -2755,6 +2755,13 @@ fn drop_expression_iteratively(expression: Expression) {
             Expression::Not(value)
             | Expression::Round { value, .. }
             | Expression::IsBlank(value) => stack.push(*value),
+            Expression::ColumnConditional { criteria, .. } => {
+                stack.extend(
+                    criteria
+                        .into_iter()
+                        .filter_map(|criterion| criterion.value.map(|expression| *expression)),
+                );
+            }
             Expression::Number(_)
             | Expression::Reference(_)
             | Expression::SameRowReference(_)
