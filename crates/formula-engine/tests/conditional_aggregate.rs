@@ -85,6 +85,7 @@ fn plan_row(id: &str, fields: &[(&str, Value)]) -> Entity {
 
 /// Four plan rows and one summary row. `summary.result` holds the formula
 /// under test, and the `criterion*` cells feed criteria references.
+#[allow(clippy::too_many_lines)]
 fn document() -> Document {
     let plan = schema(
         "plan",
@@ -748,6 +749,7 @@ fn update(retained: &mut RetainedCalculationState, document: &Document, roots: B
     );
 }
 
+#[allow(clippy::too_many_lines)]
 #[test]
 fn incremental_calculation_equals_full() {
     let mut document = document();
