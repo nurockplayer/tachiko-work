@@ -11618,6 +11618,7 @@ mod tests {
             let mut extra = field.clone();
             extra.id = super::FieldId::from(format!("planned{column}"));
             extra.key = super::FieldKey::from(format!("planned{column}"));
+            extra.required = column != 2;
             schema.fields.insert(extra.id.clone(), extra);
         }
         let template = document.entities[&super::EntityId::from("rent")].clone();

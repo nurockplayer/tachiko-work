@@ -330,7 +330,7 @@ fn formula_capacity_fixture() -> DesignerRuntime {
                             display_name: None,
                             number_format: None,
                             field_type: FieldType::Number,
-                            required: true,
+                            required: column != 2,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,
                         },
                     )
@@ -426,7 +426,13 @@ fn assert_formula_rejection_preserves_reopen(
 #[test]
 fn formula_authoring_rejects_257th_formula_before_publication_and_keeps_256_reopenable() {
     let mut runtime = formula_capacity_fixture();
-    assert_formula_rejection_preserves_reopen(&mut runtime, 0, "r85.n1", "3", true);
+    assert_formula_rejection_preserves_reopen(
+        &mut runtime,
+        0,
+        "long_but_valid_input_reference_key.n1",
+        "3",
+        true,
+    );
 }
 
 #[test]

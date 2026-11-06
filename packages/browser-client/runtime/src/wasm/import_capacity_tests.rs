@@ -349,6 +349,9 @@ fn direct_runtime_selection_capacity_names_the_source_sheet() {
         let mut book: SourceWorkbook = import_xlsx(&source_xlsx(1, 1, 1, false, false)).unwrap();
         book.sheets[0].name = "Sales1".into();
         book.sheets[0].columns = vec![book.sheets[0].columns[0].clone(); columns];
+        for (index, column) in book.sheets[0].columns.iter_mut().enumerate() {
+            column.name = format!("C{index}");
+        }
         let mut cell = book.sheets[0].rows[0][0].clone();
         if formulas {
             cell.formula = Some("1+1".into());
