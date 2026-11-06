@@ -1492,6 +1492,12 @@ pub enum DesignerError {
     FieldQueryTooLarge { requested: usize, maximum: usize },
     #[error("projection is {actual} bytes; the bounded maximum is {maximum}")]
     ProjectionTooLarge { actual: usize, maximum: usize },
+    /// The post-edit refresh exceeded the projection bound. Keeps the ordinary
+    /// `UnsupportedProject` presentation while carrying the measured sizes.
+    #[error(
+        "this canonical project is outside the bounded Designer profile: the worst-case post-edit refresh is not bounded: projection is {actual} bytes; the bounded maximum is {maximum}"
+    )]
+    PostEditRefreshTooLarge { actual: usize, maximum: usize },
     #[error("Designer lifecycle failed: {0}")]
     Lifecycle(#[from] PatchLifecycleError),
     #[error("'{input}' is not a finite Number")]
@@ -1693,7 +1699,9 @@ impl DesignerError {
             | Self::InvalidProjectWorkspace { .. }
             | Self::InvalidProjectTransfer { .. } => ("invalid_project", Vec::new()),
             Self::ProjectTransferTooLarge { .. } => ("project_too_large", Vec::new()),
-            Self::UnsupportedProject { .. } => ("unsupported_project", Vec::new()),
+            Self::UnsupportedProject { .. } | Self::PostEditRefreshTooLarge { .. } => {
+                ("unsupported_project", Vec::new())
+            }
             Self::InvalidOccurrenceIdentity => ("invalid_occurrence", Vec::new()),
             Self::MissingCollection { .. } => ("missing_collection", Vec::new()),
             Self::CollectionTooLarge { .. }
@@ -3070,9 +3078,7 @@ impl DesignerRuntime {
                 self.current_revision(),
                 &post_edit_fields.into_iter().collect::<Vec<_>>(),
             )
-            .map_err(|error| DesignerError::UnsupportedProject {
-                message: format!("the worst-case post-edit refresh is not bounded: {error}"),
-            })?;
+            .map_err(post_edit_refresh_failure)?;
         "resident/18446744073709551615".clone_into(&mut post_edit_refresh.revision);
         for field in &mut post_edit_refresh.fields {
             if let Some(StoredValueProjection::Number { value }) = &mut field.stored {
@@ -3082,11 +3088,7 @@ impl DesignerRuntime {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
             }
         }
-        ensure_projection_size(&post_edit_refresh).map_err(|error| {
-            DesignerError::UnsupportedProject {
-                message: format!("the worst-case post-edit refresh is not bounded: {error}"),
-            }
-        })?;
+        ensure_projection_size(&post_edit_refresh).map_err(post_edit_refresh_failure)?;
         Ok(())
     }
 
@@ -6911,6 +6913,19 @@ fn admit_document(
 /// Destroy the current semantic occurrence without touching durable host data.
 pub fn close_project(runtime: &mut Option<DesignerRuntime>) {
     *runtime = None;
+}
+
+/// Keep the ordinary post-edit refusal presentation while carrying the measured
+/// projection sizes for import, which reports them as a capacity refusal.
+fn post_edit_refresh_failure(error: DesignerError) -> DesignerError {
+    match error {
+        DesignerError::ProjectionTooLarge { actual, maximum } => {
+            DesignerError::PostEditRefreshTooLarge { actual, maximum }
+        }
+        error => DesignerError::UnsupportedProject {
+            message: format!("the worst-case post-edit refresh is not bounded: {error}"),
+        },
+    }
 }
 
 fn ensure_projection_size(projection: &impl Serialize) -> Result<(), DesignerError> {

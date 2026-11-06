@@ -792,7 +792,36 @@ impl IdGenerator for ImportIds<'_> {
 /// # Errors
 /// Rejects blocked fidelity, selection mismatches, invalid scalar conversions,
 /// unsupported formulas, cycles, or any normal Designer admission failure.
+/// A workbook that exceeds the projection profile refuses with the typed
+/// `projection_bytes` capacity limit instead of a raw projection error.
 pub fn import_workbook(
+    workbook: &SourceWorkbook,
+    selection: &ImportSelection,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, ImportedProjection), DesignerError> {
+    import_workbook_candidate(workbook, selection, occurrence_id).map_err(import_capacity_refusal)
+}
+
+/// Name the ordinary projection bound as an import capacity refusal, so the
+/// host can say why the workbook did not open.
+fn import_capacity_refusal(error: DesignerError) -> DesignerError {
+    let (actual, maximum) = match error {
+        DesignerError::ProjectionTooLarge { actual, maximum }
+        | DesignerError::PostEditRefreshTooLarge { actual, maximum } => (actual, maximum),
+        error => return error,
+    };
+    DesignerError::ImportCapacityExceeded {
+        capacity: super::CapacityExceeded {
+            limit: super::CapacityLimit::ProjectionBytes,
+            maximum,
+            attempted: actual,
+            collection: None,
+        },
+        at_least: false,
+    }
+}
+
+fn import_workbook_candidate(
     workbook: &SourceWorkbook,
     selection: &ImportSelection,
     occurrence_id: &str,
