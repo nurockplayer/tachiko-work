@@ -52,6 +52,8 @@ export interface DesignerClient {
   duplicateCollection?(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   clearField?(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
+  /** Convert every value of one scalar column to another scalar type as one undoable edit. */
+  changeColumnType?(expectedRevision: string, collection: string, field: string, fieldType: string): Promise<PublicationProjection>;
   setColumnRequiredness?(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection>;
   /** Replace one durable constraint; `none` clears it. Constrained projects export as v3 only. */
   setColumnConstraint?(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection>;

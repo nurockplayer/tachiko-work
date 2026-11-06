@@ -449,6 +449,7 @@ export type TrackerCommand =
   | { type: "insert_row"; expected_revision: string; collection: string; initializers: Array<{field: string; input: ScalarEditInput}> }
   | { type: "remove_table_rows"; expected_revision: string; collection: string; entities: string[] }
   | { type: "add_column"; expected_revision: string; collection: string; name: string; field_type: string; required?: boolean; initializers?: Array<{entity: string; input: ScalarEditInput}> }
+  | { type: "change_column_type"; expected_revision: string; collection: string; field: string; field_type: string }
   | { type: "set_column_requiredness"; expected_revision: string; collection: string; field: string; required: boolean }
   | { type: "set_column_constraint"; expected_revision: string; collection: string; field: string; constraint: FieldConstraintInput }
   | { type: "set_column_number_format"; expected_revision: string; collection: string; field: string; number_format: NumberFormat | null }

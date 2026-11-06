@@ -522,7 +522,7 @@ fn input_value(input: &ScalarEditInput) -> Result<Value, DesignerError> {
     }
 }
 
-fn convert_value(value: &Value, kind: &FieldType) -> Result<Value, DesignerError> {
+pub(crate) fn convert_value(value: &Value, kind: &FieldType) -> Result<Value, DesignerError> {
     let text = match value {
         Value::Text(text) => text.clone(),
         Value::Number(number) => number.get().to_string(),

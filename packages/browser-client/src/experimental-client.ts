@@ -39,6 +39,8 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   queryCapacity(expectedRevision?: string): Promise<CapacityProjection>;
   /** Explicit absence for one optional native Text/Number slot. */
   clearField(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
+  /** Convert every value of one scalar column to another scalar type as one undoable edit. */
+  changeColumnType(expectedRevision: string, collection: string, field: string, fieldType: string): Promise<PublicationProjection>;
   /** Strengthening refuses while any entity lacks a value; never fills or coerces. */
   setColumnRequiredness(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection>;
   /** Replace one durable Text/Number constraint; `none` clears it. */

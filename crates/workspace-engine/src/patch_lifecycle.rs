@@ -4033,6 +4033,19 @@ impl PatchLifecycle {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
                 Ok(())
             }
+            // Removing a field and appending it under the same id in one batch
+            // replaces its definition, which nets out to one changed field.
+            SemanticChange::SchemaFieldChanged { schema, field, .. }
+                if body.commands().iter().any(|command| matches!(command,
+                    SemanticCommand::RemoveSchemaField { schema: command_schema, field: definition, .. }
+                    if command_schema == schema && definition.id == *field
+                )) && body.commands().iter().any(|command| matches!(command,
+                    SemanticCommand::AppendSchemaField { schema: command_schema, field: definition, .. }
+                    if command_schema == schema && definition.id == *field
+                )) => {
+                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
+                Ok(())
+            }
             SemanticChange::FieldKeyChanged { schema, field, .. }
                 if body.commands().iter().any(|command| matches!(command,
                     SemanticCommand::RenameSchemaField { schema: command_schema, field: command_field, .. }
