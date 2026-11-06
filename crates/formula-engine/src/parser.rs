@@ -4,7 +4,8 @@ use tachiko_semantic_core::{
 };
 use thiserror::Error;
 
-pub(crate) const MAX_INPUT_BYTES: usize = 4_096;
+// Scratch (Plan A-06b): raised from 4_096 so the 255-term total renders and parses.
+pub(crate) const MAX_INPUT_BYTES: usize = 1024 * 1024;
 
 /// Parsed formula structure whose references are still human addresses.
 #[derive(Clone, Debug, Eq, PartialEq)]
