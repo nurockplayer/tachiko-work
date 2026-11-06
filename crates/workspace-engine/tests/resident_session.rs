@@ -1,10 +1,14 @@
 mod common;
 
+use std::collections::BTreeMap;
+
 use common::game_balance_document;
 use tachiko_workspace_engine::{
-    CalculationFailure, DiagnosticCode, DocumentId, EntityId, EntityKey, Expression, FieldAddress,
-    FieldRef, Number, SemanticSubject, Value, diagnostic_codes,
+    CalculationFailure, DiagnosticCode, Document, DocumentId, Entity, EntityId, EntityKey,
+    Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldRef, FieldType,
+    Number, Schema, SchemaId, SemanticSubject, Value, diagnostic_codes,
     formula_operations::FormulaCalculationOutcome,
+    instrumentation,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         ExecutionReceipt, Grant, GrantId, GrantRequirement, MutationClass, OperationFamily,
@@ -191,6 +195,145 @@ fn execute_damage(
         (receipt, invalidation)
     };
     (receipt, invalidation, time.calls)
+}
+
+fn text_definition(id: &str, required: bool) -> FieldDefinition {
+    FieldDefinition {
+        id: id.into(),
+        key: id.into(),
+        display_name: None,
+        number_format: None,
+        field_type: FieldType::Text,
+        required,
+        constraint: FieldConstraint::None,
+    }
+}
+
+fn number_definition(id: &str, required: bool) -> FieldDefinition {
+    FieldDefinition {
+        id: id.into(),
+        key: id.into(),
+        display_name: None,
+        number_format: None,
+        field_type: FieldType::Number,
+        required,
+        constraint: FieldConstraint::None,
+    }
+}
+
+/// A flat document with `rows` entities and no formulas or diagnostics.
+fn row_document(rows: usize) -> Document {
+    let mut document = Document::empty("rows", "Rows");
+    document.schemas.insert(
+        SchemaId::from("rows"),
+        Schema {
+            field_order: None,
+            id: "rows".into(),
+            key: "rows".into(),
+            display_name: None,
+            fields: BTreeMap::from([
+                ("name".into(), text_definition("name", false)),
+                ("value".into(), number_definition("value", false)),
+            ]),
+        },
+    );
+    for index in 0..rows {
+        let id = EntityId::from(format!("row-{index}"));
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("row-{index}")),
+                schema: SchemaId::from("rows"),
+                fields: BTreeMap::from([
+                    ("name".into(), Value::Text(format!("Row {index}"))),
+                    ("value".into(), value(0.0)),
+                ]),
+            },
+        );
+    }
+    document
+}
+
+/// One document with a formula field that can be made to fail by editing its
+/// denominator.
+fn formula_document() -> Document {
+    let mut document = Document::empty("formulas", "Formulas");
+    document.schemas.insert(
+        SchemaId::from("weapons"),
+        Schema {
+            field_order: None,
+            id: "weapons".into(),
+            key: "weapons".into(),
+            display_name: None,
+            fields: BTreeMap::from([
+                (
+                    "attack_interval".into(),
+                    number_definition("attack_interval", false),
+                ),
+                ("damage".into(), number_definition("damage", false)),
+                ("dps".into(), number_definition("dps", false)),
+            ]),
+        },
+    );
+    document.entities.insert(
+        EntityId::from("sword"),
+        Entity {
+            id: "sword".into(),
+            key: "sword".into(),
+            schema: "weapons".into(),
+            fields: BTreeMap::from([
+                ("attack_interval".into(), value(2.0)),
+                ("damage".into(), value(40.0)),
+                (
+                    "dps".into(),
+                    Value::Formula(Expression::Divide {
+                        left: Box::new(Expression::Reference(FieldRef::new("sword", "damage"))),
+                        right: Box::new(Expression::Reference(FieldRef::new(
+                            "sword",
+                            "attack_interval",
+                        ))),
+                    }),
+                ),
+            ]),
+        },
+    );
+    document
+}
+
+fn set_number(document: &mut Document, entity: &str, field: &str, number: f64) {
+    document
+        .entities
+        .get_mut(&EntityId::from(entity))
+        .unwrap()
+        .fields
+        .insert(FieldId::from(field), value(number));
+}
+
+fn publish_candidate(
+    session: &mut ResidentWorkspaceSession,
+    candidate: Document,
+) -> ResidentProjectionInvalidation {
+    let snapshot = session.export_snapshot();
+    let mut time = FixedTrustedTime { calls: 0 };
+    let mut publication = session.publication_authority(&mut time);
+    let resulting_revision = publication
+        .publish_if_current(
+            snapshot.document_scope(),
+            snapshot.revision(),
+            candidate,
+            |_| Some(()),
+        )
+        .unwrap()
+        .2;
+    publication
+        .projection_invalidation_for(
+            snapshot.document_scope(),
+            snapshot.revision(),
+            &resulting_revision,
+        )
+        .unwrap()
+        .clone()
 }
 
 #[test]
@@ -967,4 +1110,171 @@ fn inverse_commands_in_separate_executions_are_two_real_publications() {
     let after = session.export_snapshot();
     assert_eq!(after.document(), before.document());
     assert_ne!(after.revision(), before.revision());
+}
+
+#[test]
+fn scalar_edit_invalidates_only_the_edited_field() {
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), row_document(3));
+    let mut candidate = session.export_snapshot().document().clone();
+    set_number(&mut candidate, "row-1", "value", 7.0);
+
+    let invalidation = publish_candidate(&mut session, candidate);
+
+    assert_eq!(invalidation.schemas, []);
+    assert_eq!(invalidation.schema_fields, []);
+    assert_eq!(invalidation.entities, []);
+    assert_eq!(invalidation.fields, [FieldRef::new("row-1", "value")]);
+    assert_eq!(invalidation.affected_calculations, []);
+}
+
+#[cfg(feature = "capacity-instrumentation")]
+fn scalar_edit_fields_inspected(rows: usize) -> u64 {
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), row_document(rows));
+    let mut candidate = session.export_snapshot().document().clone();
+    set_number(&mut candidate, "row-1", "value", 7.0);
+    let before = instrumentation::counters().publication_fields_inspected;
+    publish_candidate(&mut session, candidate);
+    instrumentation::counters().publication_fields_inspected - before
+}
+
+#[test]
+#[cfg(feature = "capacity-instrumentation")]
+#[ignore = "reads process-global counters; run with --ignored --test-threads=1"]
+fn scalar_edit_inspection_does_not_grow_with_row_count() {
+    let three_rows = scalar_edit_fields_inspected(3);
+    let three_hundred_rows = scalar_edit_fields_inspected(300);
+
+    assert_eq!(three_hundred_rows, three_rows);
+}
+
+#[test]
+fn entity_key_change_invalidates_the_whole_renamed_entity() {
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), row_document(3));
+    let mut candidate = session.export_snapshot().document().clone();
+    candidate
+        .entities
+        .get_mut(&EntityId::from("row-2"))
+        .unwrap()
+        .key = EntityKey::from("row-two");
+
+    let invalidation = publish_candidate(&mut session, candidate);
+
+    assert_eq!(invalidation.schemas, []);
+    assert_eq!(invalidation.schema_fields, []);
+    assert_eq!(invalidation.entities, [EntityId::from("row-2")]);
+    assert_eq!(
+        invalidation.fields,
+        [
+            FieldRef::new("row-2", "name"),
+            FieldRef::new("row-2", "value")
+        ]
+    );
+    assert_eq!(invalidation.affected_calculations, []);
+}
+
+#[test]
+fn appended_entity_invalidates_its_whole_row() {
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), row_document(3));
+    let mut candidate = session.export_snapshot().document().clone();
+    candidate.entities.insert(
+        EntityId::from("row-new"),
+        Entity {
+            id: "row-new".into(),
+            key: "row-new".into(),
+            schema: SchemaId::from("rows"),
+            fields: BTreeMap::from([
+                ("name".into(), Value::Text("New".into())),
+                ("value".into(), value(0.0)),
+            ]),
+        },
+    );
+
+    let invalidation = publish_candidate(&mut session, candidate);
+
+    assert_eq!(invalidation.schemas, []);
+    assert_eq!(invalidation.schema_fields, []);
+    assert_eq!(invalidation.entities, [EntityId::from("row-new")]);
+    assert_eq!(
+        invalidation.fields,
+        [
+            FieldRef::new("row-new", "name"),
+            FieldRef::new("row-new", "value")
+        ]
+    );
+    assert_eq!(invalidation.affected_calculations, []);
+}
+
+#[test]
+fn removed_entity_invalidates_its_whole_row() {
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), row_document(3));
+    let mut candidate = session.export_snapshot().document().clone();
+    candidate.entities.remove(&EntityId::from("row-2"));
+
+    let invalidation = publish_candidate(&mut session, candidate);
+
+    assert_eq!(invalidation.schemas, []);
+    assert_eq!(invalidation.schema_fields, []);
+    assert_eq!(invalidation.entities, [EntityId::from("row-2")]);
+    assert_eq!(
+        invalidation.fields,
+        [
+            FieldRef::new("row-2", "name"),
+            FieldRef::new("row-2", "value")
+        ]
+    );
+    assert_eq!(invalidation.affected_calculations, []);
+}
+
+#[test]
+fn schema_required_flip_invalidates_that_field_on_every_row() {
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), row_document(3));
+    let mut candidate = session.export_snapshot().document().clone();
+    candidate
+        .schemas
+        .get_mut(&SchemaId::from("rows"))
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from("value"))
+        .unwrap()
+        .required = true;
+
+    let invalidation = publish_candidate(&mut session, candidate);
+
+    assert_eq!(invalidation.schemas, []);
+    assert_eq!(
+        invalidation.schema_fields,
+        [(SchemaId::from("rows"), FieldId::from("value"))]
+    );
+    assert_eq!(invalidation.entities, []);
+    assert_eq!(
+        invalidation.fields,
+        [
+            FieldRef::new("row-0", "value"),
+            FieldRef::new("row-1", "value"),
+            FieldRef::new("row-2", "value")
+        ]
+    );
+    assert_eq!(invalidation.affected_calculations, []);
+}
+
+#[test]
+fn formula_failure_and_recovery_invalidate_the_formula_field_through_diagnostics() {
+    let dps = FieldRef::new("sword", "dps");
+    let interval = FieldRef::new("sword", "attack_interval");
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), formula_document());
+
+    let mut failing = session.export_snapshot().document().clone();
+    set_number(&mut failing, "sword", "attack_interval", 0.0);
+    let gained = publish_candidate(&mut session, failing);
+    // The edit itself only touched the interval; dps enters through the
+    // diagnostic that the failing formula gained.
+    assert_eq!(gained.fields, [dps.clone(), interval.clone()]);
+    assert!(gained.affected_calculations.contains(&dps));
+
+    let mut fixed = session.export_snapshot().document().clone();
+    set_number(&mut fixed, "sword", "attack_interval", 2.0);
+    let lost = publish_candidate(&mut session, fixed);
+    // dps is not edited here; it enters because its diagnostic disappeared.
+    assert_eq!(lost.fields, [dps.clone(), interval]);
+    assert!(lost.affected_calculations.contains(&dps));
 }
