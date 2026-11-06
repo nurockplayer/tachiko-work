@@ -673,7 +673,6 @@ fn projection_invalidation(
         .entities
         .keys()
         .chain(after.entities.keys())
-        .cloned()
         .collect::<BTreeSet<_>>();
     let mut changes = ProjectionChanges::default();
     collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
@@ -685,7 +684,6 @@ fn projection_invalidation(
         &before_diagnostics,
         after,
         &retained.diagnostics_by_field,
-        &entity_ids,
         &mut changes,
     );
 
@@ -723,18 +721,22 @@ struct ProjectionChanges {
 fn collect_entity_projection_changes(
     before: &Document,
     after: &Document,
-    entity_ids: &BTreeSet<EntityId>,
+    entity_ids: &BTreeSet<&EntityId>,
     changes: &mut ProjectionChanges,
 ) {
     instrumentation::record_publication_entities_inspected(
         u64::try_from(entity_ids.len()).unwrap_or(u64::MAX),
     );
     for entity_id in entity_ids {
+        let entity_id = *entity_id;
         match (
             before.entities.get(entity_id),
             after.entities.get(entity_id),
         ) {
             (Some(before_entity), Some(after_entity)) => {
+                if before_entity == after_entity {
+                    continue;
+                }
                 let field_ids = before_entity
                     .fields
                     .keys()
@@ -799,7 +801,7 @@ fn collect_entity_projection_changes(
 fn collect_schema_projection_changes(
     before: &Document,
     after: &Document,
-    entity_ids: &BTreeSet<EntityId>,
+    entity_ids: &BTreeSet<&EntityId>,
     changes: &mut ProjectionChanges,
 ) {
     let schema_ids = before
@@ -872,6 +874,7 @@ fn collect_schema_projection_changes(
             };
 
             for entity_id in entity_ids {
+                let entity_id = *entity_id;
                 instrumentation::record_publication_fields_inspected(1);
                 let before_has_field = before.entities.get(entity_id).is_some_and(|entity| {
                     entity.schema == schema_id && entity.fields.contains_key(&field_id)
@@ -896,33 +899,32 @@ fn collect_diagnostic_projection_changes(
     before_diagnostics: &BTreeMap<FieldRef, Vec<Diagnostic>>,
     after: &Document,
     after_diagnostics: &BTreeMap<FieldRef, Vec<Diagnostic>>,
-    entity_ids: &BTreeSet<EntityId>,
     changes: &mut ProjectionChanges,
 ) {
-    for entity_id in entity_ids {
-        let field_ids = before
+    if before_diagnostics == after_diagnostics {
+        return;
+    }
+    let field_refs = before_diagnostics
+        .keys()
+        .chain(after_diagnostics.keys())
+        .collect::<BTreeSet<_>>();
+    instrumentation::record_publication_fields_inspected(
+        u64::try_from(field_refs.len()).unwrap_or(u64::MAX),
+    );
+    for field in field_refs {
+        if before_diagnostics.get(field) == after_diagnostics.get(field) {
+            continue;
+        }
+        let present = before
             .entities
-            .get(entity_id)
-            .into_iter()
-            .flat_map(|entity| entity.fields.keys())
-            .chain(
-                after
-                    .entities
-                    .get(entity_id)
-                    .into_iter()
-                    .flat_map(|entity| entity.fields.keys()),
-            )
-            .cloned()
-            .collect::<BTreeSet<_>>();
-
-        instrumentation::record_publication_fields_inspected(
-            u64::try_from(field_ids.len()).unwrap_or(u64::MAX),
-        );
-        for field_id in field_ids {
-            let field = FieldRef::new(entity_id.clone(), field_id);
-            if before_diagnostics.get(&field) != after_diagnostics.get(&field) {
-                changes.fields.insert(field);
-            }
+            .get(&field.entity)
+            .is_some_and(|entity| entity.fields.contains_key(&field.field))
+            || after
+                .entities
+                .get(&field.entity)
+                .is_some_and(|entity| entity.fields.contains_key(&field.field));
+        if present {
+            changes.fields.insert(field.clone());
         }
     }
 }
@@ -958,6 +960,10 @@ fn retained_calculation_for(
         )
     }
 }
+
+#[cfg(test)]
+#[path = "projection_diff_tests.rs"]
+mod projection_diff_tests;
 
 #[cfg(test)]
 mod tests {
