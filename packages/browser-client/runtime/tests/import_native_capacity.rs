@@ -1,12 +1,17 @@
 //! Shared import geometry, direct selection and metadata-backed save/reopen (#635).
+use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Write};
 use tachiko_designer_runtime::interop_adapter::{
     CellStyle, ImportOptions, InteropError, SourceCell, SourceColumn, SourceLayout, SourceSheet,
     SourceValue, SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
 };
 use tachiko_designer_runtime::{
-    CapacityLimit, DesignerError, ImportColumnSpec, ImportFieldType, ImportSelection,
-    import_workbook, inspect_imported_project, open_imported_project,
+    CapacityLimit, DesignerError, DesignerRuntime, ImportColumnSpec, ImportFieldType,
+    ImportSelection, import_workbook, inspect_imported_project, open_imported_project,
+};
+use tachiko_workspace_engine::{
+    Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition, FieldId,
+    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -272,8 +277,13 @@ fn shared_xlsx_and_direct_selection_geometry_boundaries() {
         match import_workbook(&parsed, &selection(&parsed), ORIGINAL) {
             Ok(_) => {}
             // Geometry does not waive the existing complete-publication cap.
-            Err(DesignerError::ProjectionTooLarge { actual, maximum }) => {
-                assert!(actual > maximum, "{dimension}");
+            Err(DesignerError::ImportCapacityExceeded { capacity, .. }) => {
+                assert_eq!(
+                    capacity.limit,
+                    CapacityLimit::ProjectionBytes,
+                    "{dimension}"
+                );
+                assert!(capacity.attempted > capacity.maximum, "{dimension}");
             }
             Err(error) => panic!("{dimension}: {error}"),
         }
@@ -552,6 +562,7 @@ fn formula_round_trip(source: &SourceWorkbook) {
         .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
         .unwrap();
     assert_formula_column(&exported, source.sheets[0].rows.len());
+    assert_eq!(exported.sheets.len(), source.sheets.len());
     let saved = runtime
         .export_project_v3(&runtime.observe_occurrence().revision)
         .unwrap()
@@ -564,6 +575,7 @@ fn formula_round_trip(source: &SourceWorkbook) {
         .export_workbook(&reopened.observe_occurrence().revision, &imported.metadata)
         .unwrap();
     assert_formula_column(&after, source.sheets[0].rows.len());
+    assert_eq!(after.sheets.len(), source.sheets.len());
     assert_eq!(after.sheets, exported.sheets);
     assert_eq!(
         export_xlsx(&after).unwrap(),
@@ -583,33 +595,137 @@ fn xlsx_formulas_round_trip_above_the_old_bound() {
 
 #[test]
 fn xlsx_formula_growth_stops_at_the_ordinary_projection_gate() {
-    let source = formula_workbook(1, 67);
-    let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
-    assert_eq!(parsed.sheets, source.sheets);
-    let Err(error) = import_workbook(&parsed, &selection(&parsed), ORIGINAL) else {
-        panic!("67-formula sheet imported");
-    };
-    let DesignerError::ProjectionTooLarge { actual, maximum } = error else {
-        panic!("expected the opened projection refusal, got {error}");
-    };
-    // MAX_PROJECTION_BYTES, the ordinary-profile complete opened projection.
-    assert_eq!(maximum, 65_536);
-    assert!(actual > maximum);
+    for (sheets, rows) in [(1, 67), (2, 52)] {
+        let source = formula_workbook(sheets, rows);
+        let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+        assert_eq!(parsed.sheets, source.sheets);
+        let Err(error) = import_workbook(&parsed, &selection(&parsed), ORIGINAL) else {
+            panic!("{sheets}x{rows} formula workbook imported");
+        };
+        let DesignerError::ImportCapacityExceeded { capacity, at_least } = &error else {
+            panic!("expected the import capacity refusal, got {error}");
+        };
+        assert!(!at_least);
+        assert_eq!(capacity.limit, CapacityLimit::ProjectionBytes);
+        // MAX_PROJECTION_BYTES, the ordinary-profile complete opened projection.
+        assert_eq!(capacity.maximum, 65_536);
+        assert!(capacity.attempted > capacity.maximum);
+        assert!(capacity.collection.is_none());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Workbook is too large to open: it needs {} bytes and the limit is 65536. The workbook was not imported.",
+                capacity.attempted
+            )
+        );
+        // The wire shape the kit's `isCapacityFailure` accepts.
+        let failure = serde_json::to_value(error.failure_projection("unavailable")).unwrap();
+        assert_eq!(failure["code"], "capacity_exceeded", "{failure}");
+        assert_eq!(failure["limit"], "projection_bytes", "{failure}");
+        assert_eq!(failure["maximum"], 65_536, "{failure}");
+        assert_eq!(
+            failure["attempted"].as_u64(),
+            u64::try_from(capacity.attempted).ok(),
+            "{failure}"
+        );
+        assert!(failure.get("collection").is_none(), "{failure}");
+    }
+}
 
-    let source = formula_workbook(2, 52);
-    let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
-    assert_eq!(parsed.sheets, source.sheets);
-    let Err(error) = import_workbook(&parsed, &selection(&parsed), ORIGINAL) else {
-        panic!("104-formula workbook imported");
-    };
-    let DesignerError::UnsupportedProject { message } = error else {
+/// The canonical shape behind the 2×52 import: two tables whose Number and
+/// formula columns overflow the complete post-edit refresh. Import cannot
+/// expose its intermediate document, so this builds the same canonical
+/// geometry directly.
+fn oversized_post_edit_document() -> Document {
+    let mut document = Document::empty("refresh_overflow", "Oversized post-edit refresh");
+    for sheet in 0..2 {
+        let schema_id = SchemaId::from(format!("sheet_{sheet}"));
+        let value = FieldId::from(format!("value_column_{sheet:05}"));
+        let formula = FieldId::from(format!("double_column_{sheet:04}"));
+        document.schemas.insert(
+            schema_id.clone(),
+            Schema {
+                id: schema_id.clone(),
+                key: SchemaKey::from(format!("sheet_{sheet}")),
+                display_name: None,
+                fields: BTreeMap::from([
+                    (
+                        value.clone(),
+                        FieldDefinition {
+                            id: value.clone(),
+                            key: FieldKey::from("value"),
+                            display_name: None,
+                            field_type: FieldType::Number,
+                            required: false,
+                            constraint: FieldConstraint::None,
+                            number_format: None,
+                        },
+                    ),
+                    (
+                        formula.clone(),
+                        FieldDefinition {
+                            id: formula.clone(),
+                            key: FieldKey::from("double"),
+                            display_name: None,
+                            field_type: FieldType::Number,
+                            required: false,
+                            constraint: FieldConstraint::None,
+                            number_format: None,
+                        },
+                    ),
+                ]),
+                field_order: None,
+            },
+        );
+        for row in 0..100 {
+            let entity_id = EntityId::from(format!("row_entity_{sheet:05}_{row:05}"));
+            document.entities.insert(
+                entity_id.clone(),
+                Entity {
+                    id: entity_id.clone(),
+                    key: EntityKey::from(format!("row_{sheet}_{row}")),
+                    schema: schema_id.clone(),
+                    fields: BTreeMap::from([
+                        (
+                            value.clone(),
+                            Value::Number(Number::new(1.25).expect("finite fixture number")),
+                        ),
+                        (
+                            formula.clone(),
+                            Value::Formula(Expression::Reference(FieldRef::new(
+                                entity_id,
+                                value.clone(),
+                            ))),
+                        ),
+                    ]),
+                },
+            );
+        }
+    }
+    document
+}
+
+#[test]
+fn non_import_open_keeps_todays_post_edit_refresh_refusal() {
+    let error = DesignerRuntime::from_document(oversized_post_edit_document(), ORIGINAL)
+        .err()
+        .expect("the document must exceed the post-edit refresh bound");
+    let DesignerError::PostEditRefreshTooLarge { actual, maximum } = &error else {
         panic!("expected the post-edit refresh refusal, got {error}");
     };
-    assert!(
-        message.contains("worst-case post-edit refresh"),
-        "{message}"
+    assert_eq!(*maximum, 65_536);
+    assert!(*actual > *maximum);
+    // The Display text and wire code non-import callers see are unchanged.
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "this canonical project is outside the bounded Designer profile: the worst-case post-edit refresh is not bounded: projection is {actual} bytes; the bounded maximum is 65536"
+        )
     );
-    assert!(message.contains("65536"), "{message}");
+    let failure = serde_json::to_value(error.failure_projection("unavailable")).unwrap();
+    assert_eq!(failure["code"], "unsupported_project", "{failure}");
+    assert_eq!(failure["message"], error.to_string(), "{failure}");
+    assert!(failure.get("limit").is_none(), "{failure}");
 }
 
 fn date_workbook(rows: usize, columns: usize) -> SourceWorkbook {
