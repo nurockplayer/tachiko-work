@@ -108,7 +108,8 @@ including rows whose criterion columns are blank. `Sum` and `Average` read the
 value column on each matching row and skip rows where it is blank: an empty or
 all-blank match sums semantic zero, and `Average` over no present value fails
 with `aggregate_empty`. A failed or non-Number contributor makes the aggregate
-unavailable rather than partially aggregated. Each criterion column and every
+unavailable rather than partially aggregated, on a matching row or not, which is
+stricter than Excel. Each criterion column and every
 reference inside a criterion expression is a static dependency, so removal,
 retyping, or cycle detection treat them like any other column read.
 
@@ -118,17 +119,20 @@ rule: a leading operator is optional and defaults to `=`.
 
 | Criterion text | Matches |
 | --- | --- |
-| `""` | a blank cell only |
-| `"<>"` | every non-blank cell |
+| `""` or `"="` | a blank cell or empty Text |
+| `"<>"` | every other cell |
 | `"Food"` | a Text cell equal ignoring case; `*`, `?`, and `~` wildcards apply |
 | `"5"` or `"=5"` | a Number cell equal to 5, or a Text cell whose whole content parses as 5 |
 | `">5"`, `">=5"`, `"<5"`, `"<=5"` | a Number cell compared with the number |
 | `"<>5"` | every cell not equal to 5, including a blank cell |
-| `"TRUE"` or `"FALSE"` | that Boolean, ignoring case |
-| `"2026-01-01"` | a Date cell equal to that date |
+| `"TRUE"` or `"FALSE"` | that Boolean, or a Text cell spelled the same ignoring case |
+| `"2026-01-01"` | a Date cell equal to that date, or a Text cell spelled the same |
 | `">=2026-01-01"` | a Date cell on or after that date |
 
-A relational operator never matches a Text or Boolean cell. Criterion text is
+A relational operator never matches a Text or Boolean cell, and text such as
+`">abc"` is refused because Excel's text ordering depends on collation. A number
+never matches a Date cell, since a Date here is not a serial number. A blank cell
+that a criterion reads compares as zero. Criterion text is
 read from a cell at evaluation, so a Text cell may hold any of these spellings,
 including dates, booleans, wildcards, and text operands.
 
@@ -142,9 +146,9 @@ text, date and yes/no criteria can't be written in the formula yet; put the
 value in a cell and reference it
 ```
 
-A relational criterion also requires a number literal or a number expression;
-a bare cell reference and any Number-typed expression are admitted for `=` and
-`<>`. Canonical text prints a blank test as `""` or `"<>"`, a number criterion
+A criterion with an operator other than `=` holds a number literal or is a blank
+test. A `=` criterion also admits a bare cell reference or any Number-typed
+expression. Canonical text prints a blank test as `""` or `"<>"`, a number criterion
 in its operator form (`">=5"`), and a reference or other expression as itself.
 The stored semantic form keeps the column, the comparison, and an optional
 value expression, so `.roproj/v3` can decode a blank test and a number
