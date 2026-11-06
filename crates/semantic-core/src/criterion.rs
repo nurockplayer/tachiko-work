@@ -97,6 +97,47 @@ impl CriterionTest {
         })
     }
 
+    /// The operator this criterion applies.
+    #[must_use]
+    pub fn operator(&self) -> ComparisonOperator {
+        self.operator
+    }
+
+    /// The number operand, when the criterion text names one.
+    #[must_use]
+    pub fn number_operand(&self) -> Option<f64> {
+        match self.operand {
+            Operand::Number(value) => Some(value),
+            Operand::Text | Operand::Boolean(_) | Operand::Date(_) => None,
+        }
+    }
+
+    /// Whether the criterion tests for the blank cell text, `""`.
+    #[must_use]
+    pub fn is_blank(&self) -> bool {
+        matches!(self.operand, Operand::Text) && self.text.is_empty()
+    }
+
+    /// A test for a blank cell: `""` with `Equal` and `"<>"` with `NotEqual`.
+    #[must_use]
+    pub fn blank(operator: ComparisonOperator) -> Self {
+        Self {
+            operator,
+            operand: Operand::Text,
+            text: String::new(),
+        }
+    }
+
+    /// A test that compares a number with `operator`.
+    #[must_use]
+    pub fn number(operator: ComparisonOperator, value: f64) -> Self {
+        Self {
+            operator,
+            operand: Operand::Number(value),
+            text: value.to_string(),
+        }
+    }
+
     /// A test that a cell equals a number.
     #[must_use]
     pub fn equal_number(value: f64) -> Self {
@@ -150,7 +191,9 @@ impl CriterionTest {
                 }
                 _ => wildcard_match(text, &self.text),
             },
-            Some(CriterionCell::Boolean(boolean)) => matches!(self.operand, Operand::Boolean(operand) if boolean == operand),
+            Some(CriterionCell::Boolean(boolean)) => {
+                matches!(self.operand, Operand::Boolean(operand) if boolean == operand)
+            }
             Some(CriterionCell::Date(date)) => {
                 matches!(self.operand, Operand::Date(operand) if date == operand)
             }
@@ -296,11 +339,7 @@ fn pattern_tokens(pattern: &str) -> Vec<PatternToken> {
 }
 
 fn push_literal(tokens: &mut Vec<PatternToken>, character: char) {
-    tokens.extend(
-        character
-            .to_lowercase()
-            .map(PatternToken::Literal),
-    );
+    tokens.extend(character.to_lowercase().map(PatternToken::Literal));
 }
 
 fn lowercase(text: &str) -> Vec<char> {

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use tachiko_workspace_engine::{
-    ConditionalAggregate, CriterionValue, Document, EntityId, Expression, FieldId, SchemaId, Value,
+    ConditionalAggregate, Document, EntityId, Expression, FieldId, SchemaId, Value,
 };
 use thiserror::Error;
 
@@ -270,14 +270,14 @@ fn formula_usage<'a>(
                 aggregate,
                 criteria,
             } => {
-                if let ConditionalAggregate::Sum(column)
-                | ConditionalAggregate::Average(column) = aggregate
+                if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                    aggregate
                 {
                     columns.insert((&column.schema, &column.field));
                 }
                 for criterion in criteria {
                     columns.insert((&criterion.column.schema, &criterion.column.field));
-                    if let CriterionValue::Expression(expression) = &criterion.value {
+                    if let Some(expression) = &criterion.value {
                         pending.push(expression.as_ref());
                     }
                 }

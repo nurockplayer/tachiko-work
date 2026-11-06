@@ -673,20 +673,17 @@ pub enum ConditionalAggregate {
     Count,
 }
 
-/// One column/value pair a conditional aggregate tests on every row.
+/// One column/operator/value triple a conditional aggregate tests on every
+/// row. An absent value tests for a blank cell: `""` with `Equal` and `"<>"`
+/// with `NotEqual`. Only `Equal` admits a non-literal value; a relational
+/// operator requires a number literal until stored text is allowed.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ColumnCriterion {
     pub column: ColumnRef,
-    pub value: CriterionValue,
-}
-
-/// The right-hand side of one criterion: literal text or a formula expression.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum CriterionValue {
-    Text(String),
-    Expression(Box<Expression>),
+    pub operator: ComparisonOperator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Box<Expression>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -801,10 +798,7 @@ impl Expression {
             | Self::ColumnAggregate { .. } => Vec::new(),
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter()
-                .filter_map(|criterion| match &criterion.value {
-                    CriterionValue::Expression(expression) => Some(expression.as_ref()),
-                    CriterionValue::Text(_) => None,
-                })
+                .filter_map(|criterion| criterion.value.as_deref())
                 .collect(),
             Self::Add { left, right }
             | Self::Subtract { left, right }
@@ -833,10 +827,7 @@ impl Expression {
             | Self::ColumnAggregate { .. } => Vec::new(),
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter_mut()
-                .filter_map(|criterion| match &mut criterion.value {
-                    CriterionValue::Expression(expression) => Some(expression.as_mut()),
-                    CriterionValue::Text(_) => None,
-                })
+                .filter_map(|criterion| criterion.value.as_deref_mut())
                 .collect(),
             Self::Add { left, right }
             | Self::Subtract { left, right }
@@ -867,11 +858,11 @@ impl Expression {
             | Self::ColumnAggregate { .. } => Some(Number),
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter()
-                .all(|criterion| match &criterion.value {
-                    CriterionValue::Text(_) => true,
-                    CriterionValue::Expression(expression) => {
-                        expression.expression_type() == Some(Number)
-                    }
+                .all(|criterion| {
+                    criterion
+                        .value
+                        .as_deref()
+                        .is_none_or(|expression| expression.expression_type() == Some(Number))
                 })
                 .then_some(Number),
             Self::Add { left, right }
@@ -950,7 +941,7 @@ impl Expression {
                 // the cell's value whatever the column type, like ISBLANK.
                 Self::ColumnConditional { criteria, .. } => {
                     for criterion in criteria {
-                        if let CriterionValue::Expression(expression) = &criterion.value {
+                        if let Some(expression) = &criterion.value {
                             let bare = matches!(
                                 expression.as_ref(),
                                 Self::Reference(_) | Self::SameRowReference(_)
@@ -982,7 +973,10 @@ impl Expression {
                 }
                 // Row membership comes from every column the node reads: the
                 // values column when there is one, and every criterion column.
-                Self::ColumnConditional { aggregate, criteria } => {
+                Self::ColumnConditional {
+                    aggregate,
+                    criteria,
+                } => {
                     if let ConditionalAggregate::Sum(column)
                     | ConditionalAggregate::Average(column) = aggregate
                     {

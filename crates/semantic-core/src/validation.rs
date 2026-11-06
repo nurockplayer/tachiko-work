@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    ColumnRef, ConditionalAggregate, CriterionTest, CriterionValue, Diagnostic, DiagnosticCode,
+    ColumnRef, ComparisonOperator, ConditionalAggregate, Diagnostic, DiagnosticCode,
     DiagnosticFact, DiagnosticProvider, DiagnosticSeverity, Document, Expression, FieldConstraint,
-    FieldRef, FieldType, MAX_CONDITIONAL_CRITERIA, Number, Schema, SemanticSubject, Value,
+    FieldRef, FieldType, FormulaExpressionType, MAX_CONDITIONAL_CRITERIA, Number, Schema,
+    SemanticSubject, Value,
 };
 
 const CORE_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.semantic-core");
@@ -740,8 +741,18 @@ fn validate_expression(
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 validate_formula_column(document, owner, column, path, diagnostics);
             }
-            Expression::ColumnConditional { aggregate, criteria } => {
-                validate_column_conditional(document, owner, aggregate, criteria, path, diagnostics);
+            Expression::ColumnConditional {
+                aggregate,
+                criteria,
+            } => {
+                validate_column_conditional(
+                    document,
+                    owner,
+                    aggregate,
+                    criteria,
+                    path,
+                    diagnostics,
+                );
             }
             _ => {}
         }
@@ -787,18 +798,31 @@ fn validate_column_conditional(
     for criterion in criteria {
         validate_formula_scalar_column(document, owner, &criterion.column, path, diagnostics);
         schemas.insert(&criterion.column.schema);
-        if let CriterionValue::Text(text) = &criterion.value {
-            if let Err(error) = CriterionTest::parse(text) {
-                diagnostics.push(
-                    core_diagnostic(
-                        path,
-                        DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
-                        format!("criterion text '{text}' is invalid: {error}"),
-                        vec![SemanticSubject::EntityField(owner.clone())],
-                    )
-                    .with_fact(DiagnosticFact::new("criterion", text)),
-                );
+        let valid = match (&criterion.operator, criterion.value.as_deref()) {
+            (ComparisonOperator::Equal | ComparisonOperator::NotEqual, None) => true,
+            (ComparisonOperator::Equal, Some(expression)) => {
+                matches!(
+                    expression,
+                    Expression::Reference(_) | Expression::SameRowReference(_)
+                ) || expression.expression_type() == Some(FormulaExpressionType::Number)
             }
+            (_, Some(Expression::Number(_))) => true,
+            (_, Some(_) | None) => false,
+        };
+        if !valid {
+            let message = if criterion.value.is_none() {
+                "a blank criterion admits only '=' or '<>'"
+            } else if criterion.operator == ComparisonOperator::Equal {
+                "a conditional criterion value must be a number or a cell reference"
+            } else {
+                "a relational criterion requires a number literal"
+            };
+            diagnostics.push(core_diagnostic(
+                path,
+                DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+                message,
+                vec![SemanticSubject::EntityField(owner.clone())],
+            ));
         }
     }
     if schemas.len() > 1 {
@@ -1552,7 +1576,10 @@ mod issue_175_research {
                 Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                     validate_formula_column(document, owner, column, path, diagnostics);
                 }
-                Expression::ColumnConditional { aggregate, criteria } => {
+                Expression::ColumnConditional {
+                    aggregate,
+                    criteria,
+                } => {
                     super::validate_column_conditional(
                         document,
                         owner,
@@ -1562,7 +1589,7 @@ mod issue_175_research {
                         diagnostics,
                     );
                     for criterion in criteria {
-                        if let super::CriterionValue::Expression(expression) = &criterion.value {
+                        if let Some(expression) = &criterion.value {
                             let bare = matches!(
                                 expression.as_ref(),
                                 Expression::Reference(_) | Expression::SameRowReference(_)

@@ -14,18 +14,14 @@ pub enum UnboundConditionalAggregate {
     Count,
 }
 
-/// One column/criterion pair whose addresses are still human keys.
+/// One column/operator/value triple whose addresses are still human keys.
+/// `value` is `None` for a blank test (`""` with `Equal` and `"<>"` with
+/// `NotEqual`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnboundColumnCriterion {
     pub column: ColumnAddress,
-    pub value: UnboundCriterionValue,
-}
-
-/// The right-hand side of a parsed criterion.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum UnboundCriterionValue {
-    Text(String),
-    Expression(Box<UnboundExpression>),
+    pub operator: ComparisonOperator,
+    pub value: Option<Box<UnboundExpression>>,
 }
 
 /// Parsed formula structure whose references are still human addresses.
@@ -276,14 +272,29 @@ fn format_conditional(
     };
     for criterion in criteria {
         arguments.push(format_column(&criterion.column));
-        arguments.push(match &criterion.value {
-            UnboundCriterionValue::Text(text) => format_string_literal(text),
-            UnboundCriterionValue::Expression(expression) => {
-                format_unbound_expression(expression)
-            }
-        });
+        arguments.push(format_criterion(criterion));
     }
     format!("{name}({})", arguments.join(", "))
+}
+
+fn format_criterion(criterion: &UnboundColumnCriterion) -> String {
+    match criterion.value.as_deref() {
+        None => format_string_literal(if criterion.operator == ComparisonOperator::Equal {
+            ""
+        } else {
+            "<>"
+        }),
+        Some(expression) if criterion.operator == ComparisonOperator::Equal => {
+            format_unbound_expression(expression)
+        }
+        Some(UnboundExpression::Number(number)) => format_string_literal(&format!(
+            "{}{}",
+            criterion.operator.as_str(),
+            format_number(*number)
+        )),
+        // Parsing only admits a number literal with a relational operator.
+        Some(expression) => format_unbound_expression(expression),
+    }
 }
 
 fn format_column(column: &ColumnAddress) -> String {
@@ -291,7 +302,7 @@ fn format_column(column: &ColumnAddress) -> String {
 }
 
 fn format_string_literal(text: &str) -> String {
-    format!("\"{}\"", text.replace('"', "\"\""))
+    format!("\"{text}\"")
 }
 
 fn format_function(name: &str, arguments: &[UnboundExpression]) -> String {
@@ -370,12 +381,10 @@ fn push_children<'expression>(
         }
         UnboundExpression::ColumnConditional { criteria, .. } => {
             stack.extend(criteria.iter().rev().filter_map(|criterion| {
-                match &criterion.value {
-                    UnboundCriterionValue::Expression(expression) => {
-                        Some((expression.as_ref(), child_depth))
-                    }
-                    UnboundCriterionValue::Text(_) => None,
-                }
+                criterion
+                    .value
+                    .as_deref()
+                    .map(|expression| (expression, child_depth))
             }));
         }
         UnboundExpression::Number(_)
@@ -866,14 +875,16 @@ impl<'input> Parser<'input> {
         }
     }
 
-    fn parse_column_criterion(
-        &mut self,
-    ) -> Result<UnboundColumnCriterion, FormulaParseError> {
+    fn parse_column_criterion(&mut self) -> Result<UnboundColumnCriterion, FormulaParseError> {
         let column = self.parse_column_argument()?;
         self.skip_whitespace();
         self.expect(b',', "expected ',' after the criterion column")?;
-        let value = self.parse_criterion()?;
-        Ok(UnboundColumnCriterion { column, value })
+        let (operator, value) = self.parse_criterion()?;
+        Ok(UnboundColumnCriterion {
+            column,
+            operator,
+            value,
+        })
     }
 
     fn parse_column_argument(&mut self) -> Result<ColumnAddress, FormulaParseError> {
@@ -924,17 +935,22 @@ impl<'input> Parser<'input> {
         Ok(ColumnAddress::new(entity, field))
     }
 
-    fn parse_criterion(&mut self) -> Result<UnboundCriterionValue, FormulaParseError> {
+    fn parse_criterion(
+        &mut self,
+    ) -> Result<(ComparisonOperator, Option<Box<UnboundExpression>>), FormulaParseError> {
         self.skip_whitespace();
         if self.peek() == Some(b'"') {
-            return self.parse_string_literal();
+            return self.parse_criterion_literal();
         }
-        Ok(UnboundCriterionValue::Expression(Box::new(
-            self.parse_additive()?,
-        )))
+        Ok((
+            ComparisonOperator::Equal,
+            Some(Box::new(self.parse_additive()?)),
+        ))
     }
 
-    fn parse_string_literal(&mut self) -> Result<UnboundCriterionValue, FormulaParseError> {
+    fn parse_criterion_literal(
+        &mut self,
+    ) -> Result<(ComparisonOperator, Option<Box<UnboundExpression>>), FormulaParseError> {
         let start = self.position;
         self.position += 1;
         let mut value = String::new();
@@ -960,13 +976,22 @@ impl<'input> Parser<'input> {
                 self.position += character.len_utf8();
             }
         }
-        if let Err(error) = CriterionTest::parse(&value) {
-            return Err(FormulaParseError::new(
-                start,
-                format!("invalid criterion literal: {error}"),
-            ));
+        let test = CriterionTest::parse(&value).map_err(|error| {
+            FormulaParseError::new(start, format!("invalid criterion literal: {error}"))
+        })?;
+        let operator = test.operator();
+        if test.is_blank() {
+            return Ok((operator, None));
         }
-        Ok(UnboundCriterionValue::Text(value))
+        if let Some(value) = test.number_operand() {
+            let number = Number::new(value)
+                .map_err(|_| FormulaParseError::new(start, "criterion number is not finite"))?;
+            return Ok((operator, Some(Box::new(UnboundExpression::Number(number)))));
+        }
+        Err(FormulaParseError::new(
+            start,
+            "text, date and yes/no criteria can't be written in the formula yet; put the value in a cell and reference it",
+        ))
     }
 
     fn consume_digits(&mut self) -> bool {

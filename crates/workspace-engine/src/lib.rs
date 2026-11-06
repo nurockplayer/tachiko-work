@@ -39,8 +39,7 @@ use tachiko_semantic_core::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
-    ColumnAggregateFunction, ColumnRef, ComparisonOperator, CriterionValue, Date, Diagnostic,
-    DiagnosticCode,
+    ColumnAggregateFunction, ColumnRef, ComparisonOperator, Date, Diagnostic, DiagnosticCode,
     DiagnosticFact, DiagnosticLocation, DiagnosticProvider, DiagnosticSeverity, DisplayNameFailure,
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldConstraint,
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
@@ -2757,12 +2756,11 @@ fn drop_expression_iteratively(expression: Expression) {
             | Expression::Round { value, .. }
             | Expression::IsBlank(value) => stack.push(*value),
             Expression::ColumnConditional { criteria, .. } => {
-                stack.extend(criteria.into_iter().filter_map(|criterion| {
-                    match criterion.value {
-                        CriterionValue::Expression(expression) => Some(*expression),
-                        CriterionValue::Text(_) => None,
-                    }
-                }));
+                stack.extend(
+                    criteria
+                        .into_iter()
+                        .filter_map(|criterion| criterion.value.map(|expression| *expression)),
+                );
             }
             Expression::Number(_)
             | Expression::Reference(_)

@@ -51,10 +51,9 @@ use tachiko_storage::{
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, ColumnRef, ConditionalAggregate, CriterionValue, Date, DiagnosticCode,
-    Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, FormulaBindError,
-    IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    CalculationFailure, ColumnRef, ConditionalAggregate, Date, DiagnosticCode, Document, Entity,
+    EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    FormulaBindError, IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
     SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
     WorkspaceError, create_document, diagnostic_codes,
@@ -7913,7 +7912,7 @@ fn map_copy_references(
         // other formula text.
         Expression::ColumnConditional { criteria, .. } => {
             for criterion in criteria {
-                if let CriterionValue::Expression(expression) = &mut criterion.value {
+                if let Some(expression) = &mut criterion.value {
                     match expression.as_mut() {
                         Expression::Reference(reference) => visit(reference, false)?,
                         Expression::SameRowReference(_) => {}
@@ -8051,14 +8050,14 @@ fn map_duplicate_expression(
             aggregate,
             criteria,
         } => {
-            if let ConditionalAggregate::Sum(column)
-            | ConditionalAggregate::Average(column) = aggregate
+            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                aggregate
             {
                 map_duplicate_column(column, fields, schemas)?;
             }
             for criterion in criteria {
                 map_duplicate_column(&mut criterion.column, fields, schemas)?;
-                if let CriterionValue::Expression(expression) = &mut criterion.value {
+                if let Some(expression) = &mut criterion.value {
                     map_duplicate_expression(expression, entities, fields, schemas)?;
                 }
             }
@@ -8619,8 +8618,9 @@ fn ensure_formula_reference_profile(
                 criteria,
             } => {
                 let values = match aggregate {
-                    ConditionalAggregate::Sum(column)
-                    | ConditionalAggregate::Average(column) => Some(column),
+                    ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
+                        Some(column)
+                    }
                     ConditionalAggregate::Count => None,
                 };
                 for column in values
@@ -8637,15 +8637,6 @@ fn ensure_formula_reference_profile(
                         "formula column field identity",
                         column.field.as_str(),
                     )?;
-                }
-                for criterion in criteria {
-                    if let CriterionValue::Text(text) = &criterion.value {
-                        ensure_profile_string(
-                            profile_string_bytes,
-                            "formula criterion text",
-                            text,
-                        )?;
-                    }
                 }
                 pending.extend(expression.children());
             }
@@ -9476,14 +9467,14 @@ fn expression_references(
             aggregate,
             criteria,
         } => {
-            if let ConditionalAggregate::Sum(column)
-            | ConditionalAggregate::Average(column) = aggregate
+            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                aggregate
             {
                 columns.insert(column.clone());
             }
             for criterion in criteria {
                 columns.insert(criterion.column.clone());
-                if let CriterionValue::Expression(expression) = &criterion.value {
+                if let Some(expression) = &criterion.value {
                     expression_references(owner, expression, references, columns);
                 }
             }

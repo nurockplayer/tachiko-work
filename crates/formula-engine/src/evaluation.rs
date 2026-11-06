@@ -2,8 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
     ColumnAggregateFunction, ColumnCriterion, ComparisonOperator, ConditionalAggregate,
-    CriterionCell, CriterionTest, CriterionValue, Document, Expression, FieldRef, FieldType,
-    Number, Value,
+    CriterionCell, CriterionTest, Document, Expression, FieldRef, FieldType, Number, Value,
 };
 
 use crate::{CalculationFailure, column_cells};
@@ -34,7 +33,10 @@ impl Evaluation<'_> {
                 // A conditional aggregate reads every cell of every column it
                 // names, matched row or not, so any failed contributor fails
                 // the formula. That is stricter than Excel and visible.
-                Expression::ColumnConditional { aggregate, criteria } => {
+                Expression::ColumnConditional {
+                    aggregate,
+                    criteria,
+                } => {
                     if let ConditionalAggregate::Sum(column)
                     | ConditionalAggregate::Average(column) = aggregate
                     {
@@ -42,7 +44,7 @@ impl Evaluation<'_> {
                     }
                     for criterion in criteria {
                         references.extend(column_cells(self.document, &criterion.column));
-                        if let CriterionValue::Expression(expression) = &criterion.value {
+                        if let Some(expression) = &criterion.value {
                             match expression.as_ref() {
                                 Expression::Reference(reference) => {
                                     references.insert(reference.clone());
@@ -194,8 +196,8 @@ impl Evaluation<'_> {
                 continue;
             }
             matched += 1;
-            if let ConditionalAggregate::Sum(column)
-            | ConditionalAggregate::Average(column) = aggregate
+            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                aggregate
             {
                 if entity.fields.contains_key(&column.field) {
                     let reference = FieldRef::new(entity.id.clone(), column.field.clone());
@@ -224,20 +226,25 @@ impl Evaluation<'_> {
         &self,
         criterion: &ColumnCriterion,
     ) -> Result<CriterionTest, CalculationFailure> {
-        match &criterion.value {
-            CriterionValue::Text(text) => {
-                CriterionTest::parse(text).map_err(|_| CalculationFailure::TypeMismatch)
+        match (criterion.operator, criterion.value.as_deref()) {
+            (ComparisonOperator::Equal, None) => {
+                Ok(CriterionTest::blank(ComparisonOperator::Equal))
             }
-            CriterionValue::Expression(expression) => match expression.as_ref() {
-                Expression::Reference(reference) => self.reference_criterion_test(reference),
-                Expression::SameRowReference(field) => {
-                    self.reference_criterion_test(&FieldRef::new(
-                        self.owner.entity.clone(),
-                        field.clone(),
-                    ))
-                }
-                other => Ok(CriterionTest::equal_number(self.number(other)?.get())),
-            },
+            (ComparisonOperator::NotEqual, None) => {
+                Ok(CriterionTest::blank(ComparisonOperator::NotEqual))
+            }
+            (ComparisonOperator::Equal, Some(Expression::Reference(reference))) => {
+                self.reference_criterion_test(reference)
+            }
+            (ComparisonOperator::Equal, Some(Expression::SameRowReference(field))) => self
+                .reference_criterion_test(&FieldRef::new(self.owner.entity.clone(), field.clone())),
+            (_, Some(Expression::Number(number))) => {
+                Ok(CriterionTest::number(criterion.operator, number.get()))
+            }
+            (ComparisonOperator::Equal, Some(other)) => {
+                Ok(CriterionTest::equal_number(self.number(other)?.get()))
+            }
+            _ => Err(CalculationFailure::TypeMismatch),
         }
     }
 

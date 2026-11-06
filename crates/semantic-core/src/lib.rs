@@ -10,6 +10,7 @@ mod model;
 mod validation;
 
 pub use address::{AddressIndex, AddressIndexError};
+pub use criterion::{CriterionCell, CriterionTest, InvalidCriterion, MAX_CONDITIONAL_CRITERIA};
 pub use diagnostic::{
     Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, SemanticSubject, StableDiagnosticObservation,
@@ -23,14 +24,12 @@ pub use keyed_grouped_sum::{
     KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
     validate_keyed_grouped_sum_definitions,
 };
-pub use criterion::{CriterionCell, CriterionTest, InvalidCriterion, MAX_CONDITIONAL_CRITERIA};
 pub use model::{
-    ColumnAddress, ColumnAggregateFunction, ColumnCriterion, ColumnRef,
-    ComparisonOperator, ConditionalAggregate, CriterionValue, Date, Document, DocumentId, Entity,
-    EntityId, EntityKey, Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, FormulaExpressionType, InvalidDate, InvalidNumber,
-    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, NumberFormat, NumberFormatError,
-    NumberFormatKind, Schema, SchemaId, SchemaKey, Value,
+    ColumnAddress, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
+    ConditionalAggregate, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
+    FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    FormulaExpressionType, InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES,
+    Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey, Value,
 };
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;
