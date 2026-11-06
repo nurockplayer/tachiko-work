@@ -256,13 +256,13 @@ fn import_capacity_errors_survive_runtime_host_and_wasm_wire() {
         ),
         (
             1,
-            1,
-            33,
+            3,
+            86,
             false,
             true,
             CapacityLimit::Formulas,
-            33,
-            32,
+            257,
+            256,
             None,
             true,
         ),
@@ -344,11 +344,14 @@ fn direct_runtime_selection_capacity_names_the_source_sheet() {
             1024,
             None,
         ),
-        (1, 1, 33, true, CapacityLimit::Formulas, 33, 32, None),
+        (1, 3, 86, true, CapacityLimit::Formulas, 258, 256, None),
     ] {
         let mut book: SourceWorkbook = import_xlsx(&source_xlsx(1, 1, 1, false, false)).unwrap();
         book.sheets[0].name = "Sales1".into();
         book.sheets[0].columns = vec![book.sheets[0].columns[0].clone(); columns];
+        for (index, column) in book.sheets[0].columns.iter_mut().enumerate() {
+            column.name = format!("C{index}");
+        }
         let mut cell = book.sheets[0].rows[0][0].clone();
         if formulas {
             cell.formula = Some("1+1".into());

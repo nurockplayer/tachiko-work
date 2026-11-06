@@ -36,7 +36,8 @@ use super::{
     select_default_collection,
 };
 use crate::capacity_fixtures::{
-    DEPENDENT_FORMULAS, FixtureSpec, RATE_FIELD, capacity_document, entity_id, field_id,
+    DEPENDENT_FORMULAS, FixtureSpec, RATE_FIELD, SWEEP_DATA_COLUMNS, capacity_document, entity_id,
+    field_id, formula_sweep_document,
 };
 
 /// Stage A fixtures: 1k, 10k and 100k grid cells at ten columns (about 91%
@@ -167,7 +168,7 @@ struct Row {
     cells: usize,
     rows: usize,
     columns: usize,
-    operation: &'static str,
+    operation: String,
     sample: Sample,
     output_bytes: usize,
 }
@@ -175,7 +176,7 @@ struct Row {
 fn report_row(
     rows: &mut Vec<Row>,
     size: (usize, usize),
-    operation: &'static str,
+    operation: impl Into<String>,
     samples: &[Sample],
     output_bytes: usize,
 ) {
@@ -183,7 +184,7 @@ fn report_row(
         cells: size.0 * size.1,
         rows: size.0,
         columns: size.1,
-        operation,
+        operation: operation.into(),
         sample: summarize(samples),
         output_bytes,
     });
@@ -532,38 +533,61 @@ fn measure_history() {
     );
 }
 
-fn print_report(rows: &[Row]) {
+fn print_report_header() {
     println!(
         "\n| cells | rows | columns | operation | median ms | document clones | entities inspected | fields inspected | document comparisons | formula nodes | JSON bytes | output bytes | peak RSS delta MiB |"
     );
     println!(
         "| ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
     );
+}
+
+fn print_row(row: &Row) {
+    let cells = row.cells;
+    let row_count = row.rows;
+    let columns = row.columns;
+    let operation = &row.operation;
+    let sample = row.sample;
+    let millis = sample.millis;
+    let output_bytes = row.output_bytes;
+    let counters = sample.counters;
+    let clones = counters.document_clones;
+    let entities = counters.publication_entities_inspected;
+    let fields = counters.publication_fields_inspected;
+    let comparisons = counters.publication_document_comparisons;
+    let formula_nodes = sample.formula_nodes;
+    let json_bytes = counters.json_bytes_serialized;
+    let peak_mib = sample.peak_delta_bytes.map_or_else(
+        || "unavailable".to_owned(),
+        |bytes| {
+            let tenths = bytes.saturating_mul(10) / (1024 * 1024);
+            format!("{}.{}", tenths / 10, tenths % 10)
+        },
+    );
+    println!(
+        "| {cells} | {row_count} | {columns} | {operation} | {millis:.3} | {clones} | {entities} | {fields} | {comparisons} | {formula_nodes} | {json_bytes} | {output_bytes} | {peak_mib} |"
+    );
+}
+
+fn print_report(rows: &[Row]) {
+    print_report_header();
     for row in rows {
-        let cells = row.cells;
-        let row_count = row.rows;
-        let columns = row.columns;
-        let operation = row.operation;
-        let sample = row.sample;
-        let millis = sample.millis;
-        let output_bytes = row.output_bytes;
-        let counters = sample.counters;
-        let clones = counters.document_clones;
-        let entities = counters.publication_entities_inspected;
-        let fields = counters.publication_fields_inspected;
-        let comparisons = counters.publication_document_comparisons;
-        let formula_nodes = sample.formula_nodes;
-        let json_bytes = counters.json_bytes_serialized;
-        let peak_mib = sample.peak_delta_bytes.map_or_else(
-            || "unavailable".to_owned(),
-            |bytes| {
-                let tenths = bytes.saturating_mul(10) / (1024 * 1024);
-                format!("{}.{}", tenths / 10, tenths % 10)
-            },
-        );
-        println!(
-            "| {cells} | {row_count} | {columns} | {operation} | {millis:.3} | {clones} | {entities} | {fields} | {comparisons} | {formula_nodes} | {json_bytes} | {output_bytes} | {peak_mib} |"
-        );
+        print_row(row);
+    }
+}
+
+/// Append one sweep row and print it immediately: a cancelled run still
+/// reports every completed operation.
+fn sweep_report_row(
+    rows: &mut Vec<Row>,
+    size: (usize, usize),
+    operation: impl Into<String>,
+    samples: &[Sample],
+    output_bytes: usize,
+) {
+    report_row(rows, size, operation, samples, output_bytes);
+    if let Some(row) = rows.last() {
+        print_row(row);
     }
 }
 
@@ -630,6 +654,257 @@ fn capacity_accounting_baseline() {
             })
             .collect::<Vec<_>>();
         report_row(&mut rows, size, "capacity accounting", &samples, 0);
+    }
+    print_report(&rows);
+}
+
+/// Formula-count sweep through the real admitted runtime.
+///
+/// Every shape stays inside today's row and entity limits, so the sweep shows
+/// where formula count stops being serviceable rather than where the row
+/// profile refuses. A refusal is a result: the shape reports the error verbatim
+/// and moves on. The sweep stops at the first sample above 120 seconds.
+#[test]
+#[ignore = "capacity formula sweep; run explicitly in release with --features capacity-bench"]
+#[allow(clippy::too_many_lines)] // One linear sweep script is easier to audit.
+fn capacity_formula_count_sweep() {
+    /// Shapes as (tables, rows per table, formula columns). Every shape fits
+    /// the current 8-table/128-row/1,024-entity limits.
+    const SHAPES: [(usize, usize, usize); 16] = [
+        (1, 64, 1),
+        (1, 64, 2),
+        (1, 64, 4),
+        (1, 64, 8),
+        (1, 64, 12),
+        (8, 8, 8),
+        (8, 4, 24),
+        (1, 128, 1),
+        (1, 128, 2),
+        (1, 128, 4),
+        (1, 32, 1),
+        (2, 128, 1),
+        (8, 128, 1),
+        (8, 128, 4),
+        (8, 128, 16),
+        (8, 128, 29),
+    ];
+    const OPEN_ITERATIONS: usize = 3;
+    const FORMULA_ITERATIONS: usize = 3;
+    const SAMPLE_LIMIT_MILLIS: f64 = 120_000.0;
+    print_report_header();
+    let mut rows = Vec::new();
+    for (tables, rows_per_table, formula_columns) in SHAPES {
+        let formula_count = tables * rows_per_table * formula_columns;
+        let size = (
+            tables * rows_per_table,
+            SWEEP_DATA_COLUMNS + formula_columns,
+        );
+        let document = formula_sweep_document(tables, rows_per_table, formula_columns);
+        validate(&document).expect("formula sweep fixture validates");
+        let usage = crate::CapacityUsage::measure(&document);
+        println!(
+            "\nformulas={formula_count} ({tables} tables x {rows_per_table} rows x {formula_columns} formula columns): populated_cells={} measured_formulas={} formula_ast_nodes={} dependency_edges={}",
+            usage.populated_cells, usage.formulas, usage.formula_ast_nodes, usage.dependency_edges,
+        );
+
+        let mut open_samples = Vec::with_capacity(OPEN_ITERATIONS);
+        let mut runtime = None;
+        let mut refused = false;
+        for iteration in 0..OPEN_ITERATIONS {
+            let candidate = document.clone();
+            let occurrence = format!(
+                "00000000-0000-4000-8000-{:012x}",
+                0x100 + u64::try_from(iteration).expect("bounded iteration")
+            );
+            let (opened, sample) =
+                observe(|| DesignerRuntime::from_document(candidate, &occurrence));
+            match opened {
+                Ok(opened) => runtime = Some(opened),
+                Err(error) => {
+                    println!("formulas={formula_count} refused: {error}");
+                    refused = true;
+                    break;
+                }
+            }
+            open_samples.push(sample);
+            if sample.millis > SAMPLE_LIMIT_MILLIS {
+                println!(
+                    "formulas={formula_count}: stopping the sweep because runtime open took {:.3} s (> 120 s)",
+                    sample.millis / 1_000.0
+                );
+                sweep_report_row(
+                    &mut rows,
+                    size,
+                    format!("formulas={formula_count}: runtime open"),
+                    &open_samples,
+                    0,
+                );
+                print_report(&rows);
+                return;
+            }
+        }
+        if refused || open_samples.is_empty() {
+            continue;
+        }
+        sweep_report_row(
+            &mut rows,
+            size,
+            format!("formulas={formula_count}: runtime open"),
+            &open_samples,
+            0,
+        );
+        let Some(mut runtime) = runtime else {
+            continue;
+        };
+        let bootstrap_bytes = serde_json::to_vec(&runtime.bootstrap_projection())
+            .map(|bytes| bytes.len())
+            .ok();
+        println!(
+            "formulas={formula_count}: bootstrap projection {} bytes (wire limit {}, native tracker limit {})",
+            describe_bytes(bootstrap_bytes.map(|bytes| u64::try_from(bytes).unwrap_or(u64::MAX))),
+            crate::MAX_PROJECTION_BYTES,
+            crate::MAX_NATIVE_TRACKER_PROJECTION_BYTES,
+        );
+
+        let last_entity = format!("t{}-r{:05}", tables - 1, rows_per_table - 1);
+        let mut unrelated_samples = Vec::with_capacity(EDIT_ITERATIONS);
+        for iteration in 0..EDIT_ITERATIONS {
+            let revision = runtime.observe_occurrence().revision;
+            let target = FieldTarget {
+                entity: last_entity.clone(),
+                field: "c1".to_owned(),
+            };
+            let value = 100.0 + f64::from(u32::try_from(iteration).expect("bounded iteration"));
+            let ((), sample) = observe(|| {
+                let response = runtime
+                    .handle(DesignerRequest::EditScalar {
+                        expected_revision: revision.clone(),
+                        target: target.clone(),
+                        input: ScalarEditInput::Number {
+                            input: format!("{value}"),
+                        },
+                    })
+                    .expect("admitted unrelated edit succeeds");
+                assert!(matches!(response, super::DesignerResponse::Published(_)));
+            });
+            unrelated_samples.push(sample);
+            if sample.millis > SAMPLE_LIMIT_MILLIS {
+                println!(
+                    "formulas={formula_count}: stopping the sweep because an unrelated edit took {:.3} s (> 120 s)",
+                    sample.millis / 1_000.0
+                );
+                sweep_report_row(
+                    &mut rows,
+                    size,
+                    format!("formulas={formula_count}: unrelated edit (c1)"),
+                    &unrelated_samples,
+                    0,
+                );
+                print_report(&rows);
+                return;
+            }
+        }
+        sweep_report_row(
+            &mut rows,
+            size,
+            format!("formulas={formula_count}: unrelated edit (c1)"),
+            &unrelated_samples,
+            0,
+        );
+
+        let mut dependent_samples = Vec::with_capacity(EDIT_ITERATIONS);
+        for iteration in 0..EDIT_ITERATIONS {
+            let revision = runtime.observe_occurrence().revision;
+            let target = FieldTarget {
+                entity: last_entity.clone(),
+                field: "c0".to_owned(),
+            };
+            let value = 1_000.0 + f64::from(u32::try_from(iteration).expect("bounded iteration"));
+            let ((), sample) = observe(|| {
+                let response = runtime
+                    .handle(DesignerRequest::EditScalar {
+                        expected_revision: revision.clone(),
+                        target: target.clone(),
+                        input: ScalarEditInput::Number {
+                            input: format!("{value}"),
+                        },
+                    })
+                    .expect("admitted dependent edit succeeds");
+                assert!(matches!(response, super::DesignerResponse::Published(_)));
+            });
+            dependent_samples.push(sample);
+            if sample.millis > SAMPLE_LIMIT_MILLIS {
+                println!(
+                    "formulas={formula_count}: stopping the sweep because a dependent edit took {:.3} s (> 120 s)",
+                    sample.millis / 1_000.0
+                );
+                sweep_report_row(
+                    &mut rows,
+                    size,
+                    format!("formulas={formula_count}: dependent edit (c0)"),
+                    &dependent_samples,
+                    0,
+                );
+                print_report(&rows);
+                return;
+            }
+        }
+        sweep_report_row(
+            &mut rows,
+            size,
+            format!("formulas={formula_count}: dependent edit (c0)"),
+            &dependent_samples,
+            0,
+        );
+
+        if formula_columns == 0 {
+            println!("formulas={formula_count}: formula edit skipped (no formula columns)");
+            continue;
+        }
+        let mut formula_samples = Vec::with_capacity(FORMULA_ITERATIONS);
+        for iteration in 0..FORMULA_ITERATIONS {
+            let revision = runtime.observe_occurrence().revision;
+            let target = FieldTarget {
+                entity: last_entity.clone(),
+                field: "f0".to_owned(),
+            };
+            // Start above the fixture's literal 2 so every sample is a real
+            // change; an identical formula is refused as `NoChange`.
+            let source = format!("[.c0] * {}", 3 + iteration);
+            let ((), sample) = observe(|| {
+                let response = runtime
+                    .handle(DesignerRequest::FormulaUpdate {
+                        expected_revision: revision.clone(),
+                        target: target.clone(),
+                        source: source.clone(),
+                    })
+                    .expect("admitted formula edit succeeds");
+                assert!(matches!(response, super::DesignerResponse::Published(_)));
+            });
+            formula_samples.push(sample);
+            if sample.millis > SAMPLE_LIMIT_MILLIS {
+                println!(
+                    "formulas={formula_count}: stopping the sweep because a formula edit took {:.3} s (> 120 s)",
+                    sample.millis / 1_000.0
+                );
+                sweep_report_row(
+                    &mut rows,
+                    size,
+                    format!("formulas={formula_count}: formula edit (f0)"),
+                    &formula_samples,
+                    0,
+                );
+                print_report(&rows);
+                return;
+            }
+        }
+        sweep_report_row(
+            &mut rows,
+            size,
+            format!("formulas={formula_count}: formula edit (f0)"),
+            &formula_samples,
+            0,
+        );
     }
     print_report(&rows);
 }

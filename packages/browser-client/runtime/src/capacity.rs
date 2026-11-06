@@ -27,7 +27,7 @@ pub(crate) const DEFAULT_LIMITS: CapacityLimits = CapacityLimits {
     table_rows: 128,
     total_entities: 1_024,
     populated_cells: 100_000,
-    formulas: 32,
+    formulas: 256,
     formula_ast_nodes: 100_000,
     dependency_edges: 200_000,
 };

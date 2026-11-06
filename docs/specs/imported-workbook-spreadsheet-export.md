@@ -108,7 +108,7 @@ NaN/infinity cannot enter the typed document. String and Boolean formula literal
 have no AST variant and fail import/authoring; any future token outside the output
 grammar refuses until governed. Numeric-looking text in a quoted worksheet name
 is a name, not a literal. References resolve only through current mapped identities.
-Formula source retains the existing 4,096-byte bound and 32-formula workbook bound;
+Formula source retains the existing 4,096-byte bound and the shared 256-formula workbook bound;
 no formulas or expression grammar are added by this repair.
 
 All retained presentation also passes the shared policy. Number-format codes use
@@ -205,7 +205,7 @@ integers, never raw source markup.
 | Text scalars, including untouched/inserted/added | XLSX Cell XML/32,767 UTF-16/253 LF checks and ST_Xstring encoding; CSV CsvCell/CsvText XML and formula-leading refusal, RFC quoting | `csv_import_every_current_cell_has_format_specific_compatibility`, `xlsx_import_every_current_cell_has_format_specific_compatibility`, `untouched_imported_text_is_checked_before_xlsx_encoding` |
 | Number scalars and formula caches | Finite semantic Number; canonical zero; XLSX normal-or-zero and 15-digit disclosure; CSV round-trip scalar decimal | `imported_numbers_and_dates_follow_the_shared_cell_policy_without_changing_csv`, `imported_formula_literals_and_cached_results_share_the_number_policy` |
 | Boolean, Date, Empty scalars | Typed XLSX boolean 0/1, Gregorian Date range, Empty distinct from Text; CSV lexical/empty fields with disclosure | `imported_boolean_values_use_typed_xlsx_and_lexical_csv`, `imported_numbers_and_dates_follow_the_shared_cell_policy_without_changing_csv`, `csv_insert_blank`, `xlsx_insert_blank` |
-| Formula text/operators/functions | Closed numeric/reference/arithmetic/MIN/MAX wire grammar; 4,096-byte / 32-formula bounds; XML text escaping | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
+| Formula text/operators/functions | Closed numeric/reference/arithmetic/MIN/MAX wire grammar; 4,096-byte / 256-formula bounds; XML text escaping | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Every formula numeric literal | Same Cell Number policy, independently of cache; includes subnormal, minimum normal, canonical -0, precision | `imported_formula_literals_and_cached_results_share_the_number_policy` |
 | Formula string/Boolean/NaN/infinity literals | No corresponding AST variant or nonfinite Number; reject before publication; unknown future wire tokens also refuse | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output` |
 | References and names inside formulas | Import binds a row-relative reference to the formula's own row as a same-row reference and a `$`-row or other-row reference as a stable identity; export writes a same-row reference as unqualified relative A1 and any other reference as a quoted worksheet plus current absolute coordinates; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
@@ -223,8 +223,8 @@ integers, never raw source markup.
 ## Limits and atomic refusal
 
 The shared import/round-trip output profile explicitly expands to 32 sheets,
-32 columns, 128 data rows per sheet and 1,024 total data rows, with unchanged
-32-formula, 2 MiB encoded and 8 MiB expanded XLSX bounds. The compatibility inventory
+32 columns, 128 data rows per sheet and 1,024 total data rows, with a 256-formula bound and
+unchanged 2 MiB encoded and 8 MiB expanded XLSX bounds. The compatibility inventory
 also enforces the Office presentation limits above. The existing separately
 admitted Text-capacity exception keeps its exact bounds and metadata rules.
 Native authoring beyond this explicit shared profile does not widen metadata

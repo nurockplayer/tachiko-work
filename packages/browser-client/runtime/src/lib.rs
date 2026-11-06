@@ -54,10 +54,11 @@ use tachiko_workspace_engine::{
     IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
     SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
-    WorkspaceError, analyze_field, create_document, diagnostic_codes,
+    WorkspaceError, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
+    formula_source_projections,
     keyed_grouped_sum_operations::{KeyedGroupedSumOutcome, evaluate_keyed_grouped_sum},
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -1489,8 +1490,6 @@ pub enum DesignerError {
     FieldQueryTooLarge { requested: usize, maximum: usize },
     #[error("projection is {actual} bytes; the bounded maximum is {maximum}")]
     ProjectionTooLarge { actual: usize, maximum: usize },
-    #[error("formula projection is unavailable for '{field}'")]
-    MissingFormulaProjection { field: FieldRef },
     #[error("Designer lifecycle failed: {0}")]
     Lifecycle(#[from] PatchLifecycleError),
     #[error("'{input}' is not a finite Number")]
@@ -1702,10 +1701,9 @@ impl DesignerError {
             Self::InvalidView { .. } => ("invalid_view", Vec::new()),
             Self::UnknownViewField { .. } => ("unknown_view_field", Vec::new()),
             Self::UnknownEntity { .. } => ("unknown_entity", Vec::new()),
-            Self::Workspace(_)
-            | Self::MissingFormulaProjection { .. }
-            | Self::Lifecycle(_)
-            | Self::MissingInvalidation => ("runtime_failure", Vec::new()),
+            Self::Workspace(_) | Self::Lifecycle(_) | Self::MissingInvalidation => {
+                ("runtime_failure", Vec::new())
+            }
         };
         (code, None, diagnostics)
     }
@@ -8474,25 +8472,7 @@ fn ensure_static_profile(
 }
 
 fn formula_sources(document: &Document) -> Result<BTreeMap<FieldRef, String>, DesignerError> {
-    document
-        .entities
-        .values()
-        .flat_map(|entity| {
-            entity
-                .fields
-                .iter()
-                .filter(|(_, value)| matches!(value, Value::Formula(_)))
-                .map(|(field, _)| FieldRef::new(entity.id.clone(), field.clone()))
-        })
-        .map(|field| {
-            let source = analyze_field(document, "designer-formula-projection", &field)?
-                .formula_source
-                .ok_or_else(|| DesignerError::MissingFormulaProjection {
-                    field: field.clone(),
-                })?;
-            Ok((field, source))
-        })
-        .collect()
+    formula_source_projections(document).map_err(DesignerError::from)
 }
 
 fn designer_preview(
@@ -11632,20 +11612,37 @@ mod tests {
             .schemas
             .values_mut()
             .for_each(|schema| schema.fields.retain(|id, _| id.as_str() == "planned"));
+        let schema = document.schemas.values_mut().next().unwrap();
+        let field = schema.fields[&super::FieldId::from("planned")].clone();
+        for column in 1..3 {
+            let mut extra = field.clone();
+            extra.id = super::FieldId::from(format!("planned{column}"));
+            extra.key = super::FieldKey::from(format!("planned{column}"));
+            extra.required = column != 2;
+            schema.fields.insert(extra.id.clone(), extra);
+        }
         let template = document.entities[&super::EntityId::from("rent")].clone();
         document.entities.clear();
-        for index in 0..33 {
+        for index in 0..86 {
             let mut entity = template.clone();
             entity.id = super::EntityId::from(format!("r{index:02}"));
             entity.key = super::EntityKey::from(entity.id.to_string());
-            let number = super::Number::new(1.0).unwrap();
-            let value = if index < 32 {
-                super::Value::Formula(super::Expression::Number(number))
-            } else {
-                super::Value::Number(number)
-            };
-            entity.fields = [(super::FieldId::from("planned"), value)]
-                .into_iter()
+            entity.fields = (0..3)
+                .filter(|column| index * 3 + column <= 256)
+                .map(|column| {
+                    let field = if column == 0 {
+                        "planned".to_owned()
+                    } else {
+                        format!("planned{column}")
+                    };
+                    let number = super::Number::new(1.0).unwrap();
+                    let value = if index * 3 + column < 256 {
+                        super::Value::Formula(super::Expression::Number(number))
+                    } else {
+                        super::Value::Number(number)
+                    };
+                    (super::FieldId::from(field), value)
+                })
                 .collect();
             document.entities.insert(entity.id.clone(), entity);
         }
@@ -11655,14 +11652,14 @@ mod tests {
         let before = runtime.export_test_project("resident/0").unwrap().bytes;
         for serial in 1..=32 {
             let error = runtime
-                .update_formula("resident/0", &"r32.planned".into(), "3")
+                .update_formula("resident/0", &"r85.planned1".into(), "3")
                 .unwrap_err();
             assert!(matches!(
                 error,
                 DesignerError::CapacityExceeded(capacity)
                     if capacity.limit == super::CapacityLimit::Formulas
-                        && capacity.maximum == 32
-                        && capacity.attempted == 33
+                        && capacity.maximum == 256
+                        && capacity.attempted == 257
             ));
             assert!(
                 runtime
