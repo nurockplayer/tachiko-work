@@ -649,6 +649,9 @@ fn translate_a1_conditional_number_criteria_cannot_test_a_date_column() {
         assert_eq!(reply["error"]["span"]["start"], start, "{reply}");
         assert_eq!(reply["error"]["span"]["end"], end, "{reply}");
     }
+    // Excel matches a Date cell with a number's serial; Tachiko doesn't.
+    let reply = call(&mut rt, &date_request("COUNTIF(B2:B4,E2)"));
+    assert_eq!(reply["error"]["code"], "formula_type_mismatch", "{reply}");
     let reply = call(&mut rt, &date_request("SUMIF(E2:E4,A2,B2:B4)"));
     assert_eq!(reply["status"], "ok", "{reply}");
     assert_eq!(
