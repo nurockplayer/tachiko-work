@@ -75,8 +75,9 @@ fn inherited_formula_is_published_and_undoable() {
         field.formula.as_ref().unwrap().source,
         "([.hours] * [.rate])"
     );
-    assert!(
-        matches!(field.calculated, Some(CalculationProjection::Value { value }) if value == 20.0)
+    assert_eq!(
+        field.calculated,
+        Some(CalculationProjection::Value { value: 20.0 })
     );
     assert!(publication.fields.contains(&field.target));
     for redo in [false, true] {
@@ -125,8 +126,9 @@ fn typed_value_ends_qualification_and_blank_dependency_is_zero() {
         .iter()
         .find(|f| f.target.field == ids[2])
         .unwrap();
-    assert!(
-        matches!(field.calculated, Some(CalculationProjection::Value { value }) if value == 0.0)
+    assert_eq!(
+        field.calculated,
+        Some(CalculationProjection::Value { value: 0.0 })
     );
     insert(&mut runtime, &collection, &ids, &[(2, "7")]);
     let table = runtime.query_table(&collection).unwrap();
