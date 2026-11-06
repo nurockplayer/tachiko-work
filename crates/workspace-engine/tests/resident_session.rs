@@ -8,7 +8,6 @@ use tachiko_workspace_engine::{
     Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldRef, FieldType,
     Number, Schema, SchemaId, SemanticSubject, Value, diagnostic_codes,
     formula_operations::FormulaCalculationOutcome,
-    instrumentation,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         ExecutionReceipt, Grant, GrantId, GrantRequirement, MutationClass, OperationFamily,
@@ -1132,9 +1131,9 @@ fn scalar_edit_fields_inspected(rows: usize) -> u64 {
     let mut session = ResidentWorkspaceSession::new(document_scope_id(), row_document(rows));
     let mut candidate = session.export_snapshot().document().clone();
     set_number(&mut candidate, "row-1", "value", 7.0);
-    let before = instrumentation::counters().publication_fields_inspected;
+    let before = tachiko_workspace_engine::instrumentation::counters().publication_fields_inspected;
     publish_candidate(&mut session, candidate);
-    instrumentation::counters().publication_fields_inspected - before
+    tachiko_workspace_engine::instrumentation::counters().publication_fields_inspected - before
 }
 
 #[test]
