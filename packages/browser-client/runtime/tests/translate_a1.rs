@@ -558,6 +558,10 @@ fn translate_a1_conditional_aggregates_translate_whole_columns() {
         ("COUNTIF(B2:B4,B3*2)", "unsupported_criterion"),
         ("SUMIF(B2:B4)", "unsupported_function"),
         ("SUMIFS(C2:C4,A2:A4)", "unsupported_function"),
+        (
+            format!("COUNTIFS({})", ["B2:B4,5"; 17].join(",")).as_str(),
+            "unsupported_function",
+        ),
     ] {
         refused(&mut rt, &request(text), code);
     }

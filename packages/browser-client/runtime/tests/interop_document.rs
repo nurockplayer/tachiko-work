@@ -2078,6 +2078,49 @@ fn a_criterion_on_a_sheet_with_an_apostrophe_imports_live() {
 }
 
 #[test]
+fn export_judges_a_text_cell_criterion_by_its_content() {
+    for (filter, refusal) in [
+        (
+            ">=45000",
+            Some("a number criterion cannot test a date column"),
+        ),
+        ("2026-09-05", None),
+    ] {
+        let (mut workbook, selection) = conditional_workbook([None, None, None]);
+        workbook.sheets[0].rows[0][3].value = SourceValue::Text {
+            value: filter.into(),
+        };
+        let (mut runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
+        let DesignerResponse::Published(published) = runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: "resident/0".into(),
+                target: FieldTarget {
+                    entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[2].field_id.clone(),
+                },
+                source: "COUNTIFS([sheet_1.column_5:column], [.column_4])".into(),
+            })
+            .unwrap()
+        else {
+            panic!("updating a formula publishes");
+        };
+        let exported = runtime.export_workbook(&published.resulting_revision, &imported.metadata);
+        match (exported, refusal) {
+            (Err(error), Some(refusal)) => {
+                assert!(error.to_string().contains(refusal), "{filter}: {error}");
+            }
+            (Ok(exported), None) => assert_eq!(
+                exported.sheets[0].rows[0][2].formula.as_deref(),
+                Some("COUNTIFS('Data'!$E$2:$E$4,D2)"),
+                "{filter}"
+            ),
+            (Err(error), None) => panic!("{filter}: {error}"),
+            (Ok(_), Some(_)) => panic!("{filter} has no faithful export"),
+        }
+    }
+}
+
+#[test]
 fn a_date_cell_criterion_on_a_date_column_imports_live() {
     let (workbook, selection) = conditional_workbook([Some("=COUNTIF($E$2:$E$4,$E2)"), None, None]);
     let (runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
@@ -2097,6 +2140,7 @@ fn a_date_cell_criterion_on_a_date_column_imports_live() {
 #[test]
 fn untranslatable_conditional_aggregates_keep_the_cached_value() {
     use tachiko_designer_runtime::interop_adapter::{ImportOptions, export_xlsx, import_xlsx_with};
+    let seventeen_criteria = format!("=COUNTIFS({})", ["$B$2:$B$4,5"; 17].join(","));
     for (formula, filter, reason) in [
         (
             "=SUMIF($A$2:$A$4,\"housing\",$B$2:$B$4)",
@@ -2135,6 +2179,9 @@ fn untranslatable_conditional_aggregates_keep_the_cached_value() {
             None,
             Some("a date criterion only tests a date column"),
         ),
+        // The formula parser takes sixteen criteria, so a seventeenth keeps the
+        // value instead of failing the import.
+        (seventeen_criteria.as_str(), None, None),
         // Only a number or one cell survives a round trip.
         (
             "=COUNTIF($B$2:$B$4,$B2*2)",

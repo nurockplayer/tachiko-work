@@ -628,7 +628,8 @@ use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use crate::translate_a1::{A1RefusalCode, A1TokenSpan};
 use std::collections::BTreeMap;
 use tachiko_workspace_engine::{
-    Entity, EntityKey, Expression, FieldDefinition, FieldKey, Schema, SchemaId, SchemaKey,
+    CriterionOperandKind, CriterionTest, Entity, EntityKey, Expression, FieldDefinition, FieldKey,
+    Schema, SchemaId, SchemaKey,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1334,6 +1335,22 @@ pub(crate) fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<Stri
     Ok(name)
 }
 
+/// What one cell compares as when it's a criterion: a Text cell's type comes
+/// from its content, as the engine reads it, and any other cell's from its field.
+pub(crate) fn criterion_type(
+    field_type: Option<&FieldType>,
+    value: Option<&Value>,
+) -> Option<FieldType> {
+    let Some(Value::Text(text)) = value else {
+        return field_type.cloned();
+    };
+    match CriterionTest::parse(text).map(|test| test.operand_kind()) {
+        Ok(CriterionOperandKind::Number) => Some(FieldType::Number),
+        Ok(CriterionOperandKind::Date) => Some(FieldType::Date),
+        _ => field_type.cloned(),
+    }
+}
+
 /// The A1 address of every exported cell and one whole-column range per
 /// exported column, as the imported-workbook export writes them.
 fn export_a1_maps(
@@ -1386,11 +1403,17 @@ fn export_a1_maps(
                         quoted.clone(),
                         column_letters(column),
                         row_index + 1 + usize::from(sheet.has_header),
-                        document
-                            .schemas
-                            .get(sheet.schema_id.as_str())
-                            .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
-                            .map(|field| field.field_type.clone()),
+                        criterion_type(
+                            document
+                                .schemas
+                                .get(sheet.schema_id.as_str())
+                                .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
+                                .map(|field| &field.field_type),
+                            document
+                                .entities
+                                .get(row.entity_id.as_str())
+                                .and_then(|entity| entity.fields.get(definition.field_id.as_str())),
+                        ),
                     ),
                 );
             }
@@ -3782,7 +3805,7 @@ pub(crate) struct ExportCell {
     sheet: String,
     column: String,
     row: usize,
-    field_type: Option<FieldType>,
+    criterion_type: Option<FieldType>,
 }
 
 impl ExportCell {
@@ -3790,13 +3813,13 @@ impl ExportCell {
         sheet: String,
         column: String,
         row: usize,
-        field_type: Option<FieldType>,
+        criterion_type: Option<FieldType>,
     ) -> Self {
         Self {
             sheet,
             column,
             row,
-            field_type,
+            criterion_type,
         }
     }
 
@@ -4109,7 +4132,7 @@ fn export_criterion(
     let cell_type = |reference: &FieldRef| {
         addresses
             .get(reference)
-            .and_then(|address| address.field_type.as_ref())
+            .and_then(|address| address.criterion_type.as_ref())
     };
     // XLSX import carries a number or one cell, so nothing else may be written.
     let value_type = match criterion.value.as_deref() {

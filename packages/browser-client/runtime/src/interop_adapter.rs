@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 use tachiko_formula_engine::{UnboundExpression, parse_expression};
-use tachiko_workspace_engine::{CriterionOperandKind, CriterionTest};
+use tachiko_workspace_engine::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 pub const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
@@ -4114,7 +4114,7 @@ pub(crate) struct ConditionalShape {
 }
 
 /// The argument layout of a conditional aggregate, or `None` for a wrong
-/// argument count.
+/// argument count or more criteria than the formula parser accepts.
 pub(crate) fn conditional_shape(name: &str, count: usize) -> Option<ConditionalShape> {
     let mut shape = ConditionalShape {
         columns: Vec::new(),
@@ -4164,7 +4164,7 @@ pub(crate) fn conditional_shape(name: &str, count: usize) -> Option<ConditionalS
         }
         _ => return None,
     }
-    Some(shape)
+    (shape.criteria.len() <= MAX_CONDITIONAL_CRITERIA).then_some(shape)
 }
 
 /// `argument` is the exact argument of an aggregate call. It must be one range

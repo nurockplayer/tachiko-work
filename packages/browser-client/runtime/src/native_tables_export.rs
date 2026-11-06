@@ -11,7 +11,9 @@ use crate::interop_adapter::{
     native_tables_trim_worksheet_name, native_tables_xlsx_number_findings, st_xstring,
     validate_native_tables_csv, validate_native_tables_xlsx, validate_output_for_profile,
 };
-use crate::interop_document::{ExportCell, ExportColumn, column_letters, export_expression};
+use crate::interop_document::{
+    ExportCell, ExportColumn, column_letters, criterion_type, export_expression,
+};
 use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
     SpreadsheetExportProjection,
@@ -185,7 +187,10 @@ fn write_formulas(
                         quoted.clone(),
                         letters.clone(),
                         i + 2,
-                        Some(column.field_type.clone()),
+                        criterion_type(
+                            Some(&column.field_type),
+                            document.entities[entity].fields.get(&column.id),
+                        ),
                     ),
                 );
                 count += usize::from(matches!(

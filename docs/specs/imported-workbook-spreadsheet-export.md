@@ -158,7 +158,8 @@ ranges: a blank test writes `""` or `"<>"`, a written number keeps its operator
 inside a quoted criterion, and an equality test writes its number or cell. Any
 other criterion expression refuses, because import wouldn't carry it back. A
 number or Number cell over a Date column, or a Date cell over any other column,
-refuses because Excel compares by serial number. Calculation and formula-editing rules do not change.
+refuses because Excel compares by serial number. A Text cell counts by its content
+at export: `">=45000"` is a number and `2026-09-05` is a date. Calculation and formula-editing rules do not change.
 
 An absent optional value is an Empty cell. Present empty Text remains Text in
 XLSX; CSV represents both with an empty field and discloses this in
@@ -308,7 +309,8 @@ at the header or first data row and ending at the last data row, become
 `SUMIF`, `AVERAGEIF` and `COUNTIF` (and their plural `*IFS` forms) keep the
 caller's function spelling when every column argument is one whole data column
 of the same sheet covering the same first and last row. Their value column must
-be numeric; a criterion column may hold any scalar. A criterion that is one
+be numeric; a criterion column may hold any scalar. A call takes at most sixteen
+criteria, the formula parser's limit; more is `unsupported_function`. A criterion that is one
 written literal stays verbatim when the formula parser accepts it. Otherwise it
 must be a number or one cell reference, and any other expression is
 `unsupported_criterion`. A number or a reference to a Number field tested against

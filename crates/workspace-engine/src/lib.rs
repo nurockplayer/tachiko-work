@@ -48,7 +48,7 @@ pub use tachiko_semantic_core::{
     NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey,
     SemanticSubject, StableDiagnosticObservation, Value, display_name_failures, trim_display_name,
 };
-pub use tachiko_semantic_core::{CriterionOperandKind, CriterionTest};
+pub use tachiko_semantic_core::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use thiserror::Error;
 
 pub mod analysis_operations;
