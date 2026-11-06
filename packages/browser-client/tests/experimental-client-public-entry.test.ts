@@ -212,7 +212,7 @@ it("encodes change_column_type from the public Worker client", () => {
   });
   const client = createExperimentalDesignerClient();
   try {
-    void client.changeColumnType("resident/7", "items", "amount", "text");
+    void client.changeColumnType("resident/7", "items", "amount", "text").catch(() => undefined);
     expect(requests).toEqual([{id: 1, kind: "command", request: {
       type: "change_column_type", expected_revision: "resident/7", collection: "items", field: "amount", field_type: "text",
     }}]);
