@@ -673,7 +673,22 @@ fn translate_a1_conditional_number_criteria_cannot_test_a_date_column() {
     // Excel matches a Date cell with a number's serial; Tachiko doesn't.
     let reply = call(&mut rt, &date_request("COUNTIF(B2:B4,E2)"));
     assert_eq!(reply["error"]["code"], "formula_type_mismatch", "{reply}");
+    // Text that isn't an exact date refuses, since Excel reads more spellings.
     let reply = call(&mut rt, &date_request("SUMIF(E2:E4,A2,B2:B4)"));
+    assert_eq!(reply["error"]["code"], "formula_type_mismatch", "{reply}");
+    let reply = call(&mut rt, &date_request("COUNTIF(E2:E4,\"\")"));
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let mut document = date_document();
+    document
+        .entities
+        .get_mut("r1")
+        .unwrap()
+        .fields
+        .insert("name".into(), Value::Text("2026-09-05".into()));
+    let mut date_text = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap(),
+    );
+    let reply = call(&mut date_text, &date_request("SUMIF(E2:E4,A2,B2:B4)"));
     assert_eq!(reply["status"], "ok", "{reply}");
     assert_eq!(
         reply["response"]["payload"]["source"],

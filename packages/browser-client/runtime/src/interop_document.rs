@@ -1335,18 +1335,21 @@ pub(crate) fn quoted_sheet_name(source: &str, cursor: &mut usize) -> Result<Stri
     Ok(name)
 }
 
-/// What one cell compares as when it's a criterion: a Text cell's type comes
-/// from its content, as the engine reads it, and any other cell's from its field.
+/// What one cell compares as when it's a criterion, or `None` for a blank test.
+/// A Text cell's type comes from its content, as the engine reads it, and any
+/// other cell's from its field. A blank Number or Date cell keeps its field's type.
 pub(crate) fn criterion_type(
     field_type: Option<&FieldType>,
     value: Option<&Value>,
 ) -> Option<FieldType> {
-    let Some(Value::Text(text)) = value else {
-        return field_type.cloned();
-    };
-    match CriterionTest::parse(text).map(|test| test.operand_kind()) {
-        Ok(CriterionOperandKind::Number) => Some(FieldType::Number),
-        Ok(CriterionOperandKind::Date) => Some(FieldType::Date),
+    match value {
+        Some(Value::Text(text)) => match CriterionTest::parse(text).map(|test| test.operand_kind())
+        {
+            Ok(CriterionOperandKind::Number) => Some(FieldType::Number),
+            Ok(CriterionOperandKind::Date) => Some(FieldType::Date),
+            _ => field_type.cloned(),
+        },
+        None if !matches!(field_type, Some(FieldType::Number | FieldType::Date)) => None,
         _ => field_type.cloned(),
     }
 }
@@ -2089,10 +2092,12 @@ fn translate_conditional_call(
             document,
             references,
         )?;
-        // Excel compares dates by serial number, Tachiko by date, so a number
-        // cannot test a date column and a date only tests a date column.
+        // Excel compares dates by serial number and reads more date spellings
+        // than Tachiko, so a date column only takes an exact date or a blank,
+        // and a date only tests a date column.
         let date = column_field_type(&rendered[column_index], document) == Some(FieldType::Date);
-        if (kind == CriterionKind::Number && date) || (kind == CriterionKind::Date && !date) {
+        let matching = matches!(kind, CriterionKind::Date | CriterionKind::Blank);
+        if (date && !matching) || (!date && kind == CriterionKind::Date) {
             return Err(DesignerError::A1Translation {
                 code: A1RefusalCode::FormulaTypeMismatch,
                 span: A1TokenSpan {
@@ -2174,6 +2179,7 @@ fn translated_criterion_kind(
         match criterion_type(field_type, entity.fields.get(&reference.field)) {
             Some(FieldType::Number) => CriterionKind::Number,
             Some(FieldType::Date) => CriterionKind::Date,
+            None => CriterionKind::Blank,
             _ => CriterionKind::Other,
         },
     )
@@ -4150,11 +4156,12 @@ fn export_criterion(
             ));
         }
     };
-    // Excel would compare dates by serial number, while Tachiko compares dates.
+    // Excel compares dates by serial number and reads more date spellings than
+    // Tachiko, so a date column only takes an exact date or a blank.
     let date_column = column_type == Some(&FieldType::Date);
-    if date_column && value_type == Some(&FieldType::Number) {
+    if date_column && !matches!(value_type, None | Some(FieldType::Date)) {
         return Err(tracker_error(
-            "a number criterion cannot test a date column",
+            "a date column can only be tested against a date",
         ));
     }
     if !date_column && value_type == Some(&FieldType::Date) {

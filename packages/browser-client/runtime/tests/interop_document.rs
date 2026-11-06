@@ -2082,7 +2082,15 @@ fn export_judges_a_text_cell_criterion_by_its_content() {
     for (filter, refusal) in [
         (
             ">=45000",
-            Some("a number criterion cannot test a date column"),
+            Some("a date column can only be tested against a date"),
+        ),
+        (
+            "9/5/2026",
+            Some("a date column can only be tested against a date"),
+        ),
+        (
+            "housing",
+            Some("a date column can only be tested against a date"),
         ),
         ("2026-09-05", None),
     ] {
@@ -2308,11 +2316,11 @@ fn export_refuses_a_number_criterion_over_a_date_column() {
     for (source_text, message) in [
         (
             "COUNTIFS([sheet_1.column_4:column], 5)",
-            "a number criterion cannot test a date column",
+            "a date column can only be tested against a date",
         ),
         (
             "COUNTIFS([sheet_1.column_4:column], [.column_2])",
-            "a number criterion cannot test a date column",
+            "a date column can only be tested against a date",
         ),
         (
             "COUNTIFS([sheet_1.column_2:column], [.column_4])",
