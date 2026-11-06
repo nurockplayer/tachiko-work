@@ -624,8 +624,8 @@ fn xlsx_formula_growth_stops_at_the_ordinary_projection_gate() {
         assert_eq!(failure["limit"], "projection_bytes", "{failure}");
         assert_eq!(failure["maximum"], 65_536, "{failure}");
         assert_eq!(
-            failure["attempted"],
-            serde_json::json!(capacity.attempted),
+            failure["attempted"].as_u64(),
+            u64::try_from(capacity.attempted).ok(),
             "{failure}"
         );
         assert!(failure.get("collection").is_none(), "{failure}");
