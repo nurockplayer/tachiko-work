@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use tachiko_diff_engine::{SemanticChange, diff};
+use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff, diff, diff_with_calculations};
+use tachiko_formula_engine::calculate;
 use tachiko_semantic_core::{
     Date, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
@@ -343,6 +344,76 @@ fn schema_field_changes_preserve_typed_definitions_and_order() {
     assert_eq!(
         semantic_diff.render_text(),
         "Schema metadata\nlegacy removed: text (optional)\nmode: text (optional) -> boolean (optional)\nweight added: number (optional)\n"
+    );
+}
+
+fn diff_reusing_calculations(before: &Document, after: &Document) -> SemanticDiff {
+    diff_with_calculations(
+        before,
+        after,
+        &calculate(before).unwrap(),
+        &calculate(after).unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn diff_with_calculations_matches_diff_for_value_formula_and_entity_changes() {
+    let before = balance_document(10.0);
+
+    let changed_value = balance_document(12.0);
+    assert_eq!(
+        diff_reusing_calculations(&before, &changed_value),
+        diff(&before, &changed_value).unwrap()
+    );
+
+    let mut changed_formula = balance_document(10.0);
+    changed_formula
+        .entities
+        .get_mut(&EntityId::from("sword"))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("burst"),
+            Value::Formula(Expression::Multiply {
+                left: Box::new(reference("sword", "dps")),
+                right: Box::new(numeric(3.0)),
+            }),
+        );
+    assert_eq!(
+        diff_reusing_calculations(&before, &changed_formula),
+        diff(&before, &changed_formula).unwrap()
+    );
+
+    let mut removed = balance_document(10.0);
+    removed.entities.remove(&EntityId::from("sword"));
+    assert_eq!(
+        diff_reusing_calculations(&before, &removed),
+        diff(&before, &removed).unwrap()
+    );
+}
+
+#[test]
+fn diff_with_calculations_still_refuses_unsupported_documents() {
+    let before = balance_document(10.0);
+    let mut named = balance_document(10.0);
+    named
+        .schemas
+        .get_mut(&SchemaId::from("weapon"))
+        .unwrap()
+        .display_name = Some("Weapon".to_owned());
+
+    let error = diff_with_calculations(
+        &before,
+        &named,
+        &calculate(&before).unwrap(),
+        &calculate(&named).unwrap(),
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(error, DiffError::UnsupportedDisplayName),
+        "{error:?}"
     );
 }
 

@@ -2,10 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_formula_engine::{CalculationError, calculate, project_expression};
+use tachiko_formula_engine::{
+    Calculation, CalculationError, calculate, project_expression, project_expression_with_index,
+};
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey,
-    FieldRef, Number, Schema, SchemaId, SchemaKey, Value,
+    AddressIndex, Document, DocumentId, Entity, EntityId, EntityKey, FieldDefinition, FieldId,
+    FieldKey, FieldRef, Number, Schema, SchemaId, SchemaKey, Value,
 };
 use thiserror::Error;
 
@@ -155,6 +157,10 @@ impl SemanticDiff {
             return "No semantic changes.\n".to_owned();
         }
 
+        // One index per document serves every rendered formula change.
+        let before_index = AddressIndex::build(&self.before).ok();
+        let after_index = AddressIndex::build(&self.after).ok();
+
         let mut sections = Vec::new();
         let document_changes: Vec<_> = self
             .changes
@@ -163,11 +169,15 @@ impl SemanticDiff {
             .collect();
         if !document_changes.is_empty() {
             let mut lines = vec!["Document".to_owned()];
-            lines.extend(
-                document_changes
-                    .into_iter()
-                    .map(|change| render_change(change, &self.before, &self.after)),
-            );
+            lines.extend(document_changes.into_iter().map(|change| {
+                render_change(
+                    change,
+                    &self.before,
+                    &self.after,
+                    before_index.as_ref(),
+                    after_index.as_ref(),
+                )
+            }));
             sections.push(lines.join("\n"));
         }
 
@@ -188,11 +198,15 @@ impl SemanticDiff {
                     |definition| definition.key.to_string(),
                 );
             let mut lines = vec![format!("Schema {key}")];
-            lines.extend(
-                changes
-                    .into_iter()
-                    .map(|change| render_change(change, &self.before, &self.after)),
-            );
+            lines.extend(changes.into_iter().map(|change| {
+                render_change(
+                    change,
+                    &self.before,
+                    &self.after,
+                    before_index.as_ref(),
+                    after_index.as_ref(),
+                )
+            }));
             sections.push(lines.join("\n"));
         }
 
@@ -206,11 +220,15 @@ impl SemanticDiff {
         for (entity_id, changes) in grouped {
             let descriptor = &self.descriptors[entity_id];
             let mut lines = vec![descriptor.heading()];
-            lines.extend(
-                changes
-                    .into_iter()
-                    .map(|change| render_change(change, &self.before, &self.after)),
-            );
+            lines.extend(changes.into_iter().map(|change| {
+                render_change(
+                    change,
+                    &self.before,
+                    &self.after,
+                    before_index.as_ref(),
+                    after_index.as_ref(),
+                )
+            }));
             sections.push(lines.join("\n"));
         }
 
@@ -254,23 +272,28 @@ pub enum DiffError {
 ///
 /// Returns [`DiffError`] when either document cannot be calculated.
 pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {
-    if before.has_number_formats() || after.has_number_formats() {
-        return Err(DiffError::UnsupportedNumberFormat);
-    }
-    if before.has_field_orders() || after.has_field_orders() {
-        return Err(DiffError::UnsupportedFieldOrder);
-    }
-    if before.has_display_names() || after.has_display_names() {
-        return Err(DiffError::UnsupportedDisplayName);
-    }
-    if has_field_constraints(before) || has_field_constraints(after) {
-        return Err(DiffError::UnsupportedFieldConstraintChange);
-    }
-    if before.keyed_grouped_sum_definitions != after.keyed_grouped_sum_definitions {
-        return Err(DiffError::UnsupportedKeyedGroupedSumDefinitionChange);
-    }
+    require_supported(before, after)?;
     let before_calculation = calculate(before).map_err(DiffError::BeforeCalculation)?;
     let after_calculation = calculate(after).map_err(DiffError::AfterCalculation)?;
+    diff_with_calculations(before, after, &before_calculation, &after_calculation)
+}
+
+/// Compare two documents using calculations the caller already produced.
+///
+/// Returns the same value as [`diff`] when each calculation is the one
+/// [`calculate`] produces for its document.
+///
+/// # Errors
+///
+/// Returns [`DiffError`] for the same unsupported document pair [`diff`]
+/// refuses.
+pub fn diff_with_calculations(
+    before: &Document,
+    after: &Document,
+    before_calculation: &Calculation,
+    after_calculation: &Calculation,
+) -> Result<SemanticDiff, DiffError> {
+    require_supported(before, after)?;
     let mut changes = Vec::new();
     let mut changed_fields = BTreeSet::new();
     let mut descriptors = BTreeMap::new();
@@ -351,6 +374,25 @@ pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffErr
         before: before.clone(),
         after: after.clone(),
     })
+}
+
+fn require_supported(before: &Document, after: &Document) -> Result<(), DiffError> {
+    if before.has_number_formats() || after.has_number_formats() {
+        return Err(DiffError::UnsupportedNumberFormat);
+    }
+    if before.has_field_orders() || after.has_field_orders() {
+        return Err(DiffError::UnsupportedFieldOrder);
+    }
+    if before.has_display_names() || after.has_display_names() {
+        return Err(DiffError::UnsupportedDisplayName);
+    }
+    if has_field_constraints(before) || has_field_constraints(after) {
+        return Err(DiffError::UnsupportedFieldConstraintChange);
+    }
+    if before.keyed_grouped_sum_definitions != after.keyed_grouped_sum_definitions {
+        return Err(DiffError::UnsupportedKeyedGroupedSumDefinitionChange);
+    }
+    Ok(())
 }
 
 fn has_field_constraints(document: &Document) -> bool {
@@ -574,6 +616,8 @@ fn render_change(
     change: &SemanticChange,
     before_document: &Document,
     after_document: &Document,
+    before_index: Option<&AddressIndex>,
+    after_index: Option<&AddressIndex>,
 ) -> String {
     match change {
         SemanticChange::DocumentIdChanged { before, after } => {
@@ -622,14 +666,14 @@ fn render_change(
             format!(
                 "{} added: {}",
                 field_key(after_document, field),
-                format_value(field, value, after_document)
+                format_value(field, value, after_document, after_index)
             )
         }
         SemanticChange::FieldRemoved { field, value } => {
             format!(
                 "{} removed: {}",
                 field_key(before_document, field),
-                format_value(field, value, before_document)
+                format_value(field, value, before_document, before_index)
             )
         }
         SemanticChange::FieldChanged {
@@ -639,8 +683,8 @@ fn render_change(
         } => format!(
             "{}: {} -> {}",
             field_key(after_document, field),
-            format_value(field, before, before_document),
-            format_value(field, after, after_document)
+            format_value(field, before, before_document, before_index),
+            format_value(field, after, after_document, after_index)
         ),
         SemanticChange::FormulaImpact {
             field,
@@ -674,7 +718,12 @@ fn format_definition(definition: &FieldDefinition, document: &Document) -> Strin
     format!("{field_type} ({presence})")
 }
 
-fn format_value(field: &FieldRef, value: &Value, document: &Document) -> String {
+fn format_value(
+    field: &FieldRef,
+    value: &Value,
+    document: &Document,
+    index: Option<&AddressIndex>,
+) -> String {
     match value {
         Value::Number(number) => format_number(*number),
         Value::Text(text) => format!("\"{text}\""),
@@ -687,8 +736,13 @@ fn format_value(field: &FieldRef, value: &Value, document: &Document) -> String 
                 .get(entity)
                 .map_or_else(|| entity.to_string(), |target| target.key.to_string())
         ),
-        Value::Formula(expression) => project_expression(document, field, expression)
-            .unwrap_or_else(|error| format!("<unprojectable formula: {error}>")),
+        Value::Formula(expression) => {
+            let projection = match index {
+                Some(index) => project_expression_with_index(document, index, field, expression),
+                None => project_expression(document, field, expression),
+            };
+            projection.unwrap_or_else(|error| format!("<unprojectable formula: {error}>"))
+        }
     }
 }
 
