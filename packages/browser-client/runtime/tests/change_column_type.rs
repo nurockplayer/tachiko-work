@@ -471,17 +471,17 @@ fn formula_cells_and_formula_dependents_refuse_without_a_change() {
             number_initializer(&other, "2"),
         ],
     );
-    let row = table(&mut runtime).rows[0].id.clone();
+    let row = table(&mut runtime).rows[0].clone();
     let revision = table(&mut runtime).revision;
     publish(
         &mut runtime,
         DesignerRequest::FormulaUpdate {
             expected_revision: revision,
             target: FieldTarget {
-                entity: row.clone(),
+                entity: row.id,
                 field: amount.clone(),
             },
-            source: format!("[{row}.{other}]"),
+            source: format!("[{}.other]", row.key),
         },
     );
     let before = table(&mut runtime);
@@ -510,17 +510,17 @@ fn formula_cells_and_formula_dependents_refuse_without_a_change() {
             number_initializer(&dependent, "0"),
         ],
     );
-    let row = table(&mut reader).rows[0].id.clone();
+    let row = table(&mut reader).rows[0].clone();
     let revision = table(&mut reader).revision;
     publish(
         &mut reader,
         DesignerRequest::FormulaUpdate {
             expected_revision: revision,
             target: FieldTarget {
-                entity: row.clone(),
+                entity: row.id,
                 field: dependent.clone(),
             },
-            source: format!("[{row}.{source}]"),
+            source: format!("[{}.source]", row.key),
         },
     );
     let before = table(&mut reader);
