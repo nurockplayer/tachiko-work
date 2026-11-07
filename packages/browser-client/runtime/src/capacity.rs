@@ -34,6 +34,17 @@ pub(crate) const DEFAULT_LIMITS: CapacityLimits = CapacityLimits {
     dependency_edges: 200_000,
 };
 
+/// Sheet's native-table target: 10,000 rows, with 100,000 cells and formulas.
+pub(crate) const WORKING_LIMITS: CapacityLimits = CapacityLimits {
+    table_rows: 10_000,
+    total_entities: 10_000,
+    populated_cells: 100_000,
+    formulas: 100_000,
+    formula_ast_nodes: 1_000_000,
+    dependency_edges: 1_000_000,
+    ..DEFAULT_LIMITS
+};
+
 /// What a session was admitted under. Chosen when the occurrence is created and
 /// kept through every edit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,9 +58,8 @@ pub(crate) enum SessionProfile {
 /// encoding restrictions remain owned by the existing profile gates.
 pub(crate) const fn limits_for_profile(profile: SessionProfile) -> CapacityLimits {
     match profile {
-        // Working size deliberately keeps today's ordinary limits. A later
-        // profile raises these numbers; nothing here does yet.
-        SessionProfile::Ordinary | SessionProfile::WorkingSize => DEFAULT_LIMITS,
+        SessionProfile::Ordinary => DEFAULT_LIMITS,
+        SessionProfile::WorkingSize => WORKING_LIMITS,
         SessionProfile::TextCapacity => CapacityLimits {
             table_rows: crate::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
             total_entities: crate::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
@@ -157,7 +167,12 @@ pub struct CapacityProjection {
 }
 
 impl CapacityUsage {
+    #[cfg(test)]
     pub(crate) fn measure(document: &Document) -> Self {
+        Self::measure_for(document, SessionProfile::Ordinary)
+    }
+
+    pub(crate) fn measure_for(document: &Document, profile: SessionProfile) -> Self {
         let mut usage = Self {
             collections: document.schemas.len(),
             total_entities: document.entities.len(),
@@ -194,7 +209,8 @@ impl CapacityUsage {
             for value in entity.fields.values() {
                 if let Value::Formula(expression) = value {
                     usage.formulas += 1;
-                    let (nodes, edges) = formula_usage(&rows_per_schema, &entity.id, expression);
+                    let (nodes, edges) =
+                        formula_usage(profile, &rows_per_schema, &entity.id, expression);
                     usage.formula_ast_nodes += nodes;
                     usage.dependency_edges += edges;
                 }
@@ -255,6 +271,7 @@ impl CapacityUsage {
 }
 
 fn formula_usage<'a>(
+    profile: SessionProfile,
     rows_per_schema: &BTreeMap<&SchemaId, usize>,
     owner: &'a EntityId,
     expression: &'a Expression,
@@ -297,19 +314,33 @@ fn formula_usage<'a>(
     }
     // A column total depends on that column in every row of its table. Count
     // the rows instead of listing them, so accounting stays linear in the
-    // document even with many totals.
-    let column_edges = columns
-        .iter()
-        .map(|(schema, _)| rows_per_schema.get(schema).copied().unwrap_or(0))
-        .sum::<usize>();
+    // document even with many totals. A working-size session reads each
+    // column once, so it counts one edge per column instead.
+    let column_edges = match profile {
+        SessionProfile::WorkingSize => columns.len(),
+        SessionProfile::Ordinary | SessionProfile::TextCapacity => columns
+            .iter()
+            .map(|(schema, _)| rows_per_schema.get(schema).copied().unwrap_or(0))
+            .sum::<usize>(),
+    };
     (nodes, dependencies.len() + column_edges)
 }
 
+#[cfg(test)]
 pub(crate) fn check_document(
     document: &Document,
     limits: CapacityLimits,
 ) -> Result<CapacityUsage, DesignerError> {
     let usage = CapacityUsage::measure(document);
     usage.check(limits)?;
+    Ok(usage)
+}
+
+pub(crate) fn check_document_for(
+    document: &Document,
+    profile: SessionProfile,
+) -> Result<CapacityUsage, DesignerError> {
+    let usage = CapacityUsage::measure_for(document, profile);
+    usage.check(limits_for_profile(profile))?;
     Ok(usage)
 }

@@ -856,12 +856,13 @@ fn working_size_import_keeps_todays_geometry_for_a_promoted_csv() {
         "the metadata profile refuses above today's geometry: {reply}"
     );
     assert_eq!(
-        reply["error"]["code"], "capacity_exceeded",
-        "the working-size profile keeps today's table-row limit: {reply}"
+        reply["error"]["code"], "imported_spreadsheet_export_refused",
+        "the import path keeps today's 128-row metadata geometry: {reply}"
     );
-    assert_eq!(reply["error"]["limit"], "table_rows", "{reply}");
-    assert_eq!(reply["error"]["maximum"], 128, "{reply}");
-    assert_eq!(reply["error"]["attempted"], 200, "{reply}");
+    assert_eq!(
+        reply["error"]["diagnostics"][0]["code"], "imported_spreadsheet_unrepresentable",
+        "{reply}"
+    );
     assert_eq!(
         host.observe_occurrence(),
         observed,

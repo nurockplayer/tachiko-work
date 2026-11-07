@@ -5,10 +5,13 @@ use std::collections::BTreeMap;
 
 use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation};
 use tachiko_workspace_engine::{
-    Expression, FieldConstraint, Number, PresentationStore, TablePresentation, Value,
+    ColumnRef, Expression, FieldConstraint, Number, PresentationStore, TablePresentation, Value,
 };
 
-use super::capacity::{CapacityExceeded, CapacityLimit, SessionProfile};
+use super::capacity::{
+    CapacityExceeded, CapacityLimit, CapacityLimits, CapacityUsage, DEFAULT_LIMITS, SessionProfile,
+    TableCapacityUsage, limits_for_profile,
+};
 use super::capacity_fixtures::{CALC_FIELD, FixtureSpec, capacity_document, entity_id};
 use super::interop_document::CleanupOperation;
 use super::{
@@ -271,12 +274,7 @@ fn failed_working_size_open_keeps_the_previous_occurrence() {
     let before = runtime.session.export_snapshot().into_document();
     let mut resident = Some(runtime);
 
-    let too_large = capacity_document(FixtureSpec {
-        rows: 129,
-        columns: 28,
-        formula_cells: 128,
-        seed: 678,
-    });
+    let too_large = text_grid(10_001, 1);
     let bundle = project_bundle(&too_large);
     let raw = raw_document(&too_large);
     let portable = portable_ro(&too_large);
@@ -286,7 +284,7 @@ fn failed_working_size_open_keeps_the_previous_occurrence() {
         open_local_document_working_size(&mut resident, &raw, OCCURRENCE).unwrap_err(),
         open_portable_ro_working_size(&mut resident, &portable, OCCURRENCE).unwrap_err(),
     ] {
-        assert_capacity_refusal(&error, CapacityLimit::TableRows, 128, 129);
+        assert_capacity_refusal(&error, CapacityLimit::TableRows, 10_000, 10_001);
     }
 
     let resident = resident.unwrap();
@@ -296,36 +294,261 @@ fn failed_working_size_open_keeps_the_previous_occurrence() {
 }
 
 #[test]
-fn new_working_size_table_keeps_its_profile_up_to_todays_row_limit() {
-    let columns = [NewTableColumnInput {
-        name: "amount".into(),
-        field_type: "number".into(),
-        required: true,
-    }];
+fn a_ten_thousand_row_document_opens_at_working_size_only() {
+    let raw = raw_document(&text_grid(10_000, 1));
+
+    let mut resident: Option<DesignerRuntime> = None;
+    let opened = open_local_document_working_size(&mut resident, &raw, OCCURRENCE).unwrap();
+    assert_eq!(
+        resident.as_ref().unwrap().profile,
+        SessionProfile::WorkingSize
+    );
+    assert_eq!(opened.window.total_rows, 10_000);
+    assert_eq!(opened.window.rows.len(), 100);
+
+    // The same bytes still refuse today's ordinary open.
+    let mut ordinary: Option<DesignerRuntime> = None;
+    let error = open_local_document(&mut ordinary, &raw, OCCURRENCE).unwrap_err();
+    assert_capacity_refusal(&error, CapacityLimit::TableRows, 128, 10_000);
+    assert!(ordinary.is_none());
+
+    let mut resident: Option<DesignerRuntime> = None;
+    let error = open_local_document_working_size(
+        &mut resident,
+        &raw_document(&text_grid(10_001, 1)),
+        OCCURRENCE,
+    )
+    .unwrap_err();
+    assert_capacity_refusal(&error, CapacityLimit::TableRows, 10_000, 10_001);
+    assert!(resident.is_none());
+}
+
+#[test]
+fn working_size_admits_ten_thousand_rows_and_refuses_the_next() {
     let mut runtime =
-        DesignerRuntime::new_working_size_table(OCCURRENCE, "Growth", &columns).unwrap();
-    let collection = runtime.collection_specs.keys().next().unwrap().clone();
-    let column = runtime.query_table(&collection).unwrap().columns[0]
-        .id
-        .clone();
-    let initializers = [RowInitializer {
-        field: column,
-        input: ScalarEditInput::Number { input: "1".into() },
-    }];
-    for _ in 0..128 {
-        let current = revision(&runtime);
-        runtime
-            .insert_row(&current, &collection, &initializers)
-            .unwrap();
-    }
+        DesignerRuntime::from_document_working_size(text_grid(10_000, 1), OCCURRENCE).unwrap();
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
     let current = revision(&runtime);
-    let error = runtime
-        .insert_row(&current, &collection, &initializers)
-        .unwrap_err();
-    assert_capacity_refusal(&error, CapacityLimit::TableRows, 128, 129);
+    let error = runtime.insert_row(&current, "grid", &[]).unwrap_err();
+    assert_capacity_refusal(&error, CapacityLimit::TableRows, 10_000, 10_001);
     assert_eq!(runtime.current_revision(), current);
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
+}
+
+#[test]
+fn working_limits_admit_at_the_bound_and_refuse_one_above() {
+    let limits = limits_for_profile(SessionProfile::WorkingSize);
+    assert_eq!(limits.table_rows, 10_000);
+    let at_limit = CapacityUsage {
+        collections: limits.collections,
+        tables: BTreeMap::from([(
+            "grid".to_owned(),
+            TableCapacityUsage {
+                rows: limits.table_rows,
+                fields: limits.table_fields,
+            },
+        )]),
+        total_entities: limits.total_entities,
+        populated_cells: limits.populated_cells,
+        formulas: limits.formulas,
+        formula_ast_nodes: limits.formula_ast_nodes,
+        dependency_edges: limits.dependency_edges,
+    };
+    assert!(at_limit.check(limits).is_ok());
+
+    let mut over = at_limit.clone();
+    over.tables.get_mut("grid").unwrap().rows += 1;
+    assert_capacity_refusal(
+        &over.check(limits).unwrap_err(),
+        CapacityLimit::TableRows,
+        10_000,
+        10_001,
+    );
+
+    let mut over = at_limit.clone();
+    over.total_entities += 1;
+    assert_capacity_refusal(
+        &over.check(limits).unwrap_err(),
+        CapacityLimit::TotalEntities,
+        10_000,
+        10_001,
+    );
+
+    let mut over = at_limit.clone();
+    over.populated_cells += 1;
+    assert_capacity_refusal(
+        &over.check(limits).unwrap_err(),
+        CapacityLimit::PopulatedCells,
+        100_000,
+        100_001,
+    );
+
+    let mut over = at_limit.clone();
+    over.formulas += 1;
+    assert_capacity_refusal(
+        &over.check(limits).unwrap_err(),
+        CapacityLimit::Formulas,
+        100_000,
+        100_001,
+    );
+
+    let mut over = at_limit.clone();
+    over.formula_ast_nodes += 1;
+    assert_capacity_refusal(
+        &over.check(limits).unwrap_err(),
+        CapacityLimit::FormulaAstNodes,
+        1_000_000,
+        1_000_001,
+    );
+
+    let mut over = at_limit.clone();
+    over.dependency_edges += 1;
+    assert_capacity_refusal(
+        &over.check(limits).unwrap_err(),
+        CapacityLimit::DependencyEdges,
+        1_000_000,
+        1_000_001,
+    );
+}
+
+/// A working-size session reads a whole column once, so accounting counts one
+/// edge per formula instead of one per row.
+#[test]
+fn working_size_counts_a_column_read_once() {
+    let mut document = capacity_document(FixtureSpec {
+        rows: 200,
+        columns: 1,
+        formula_cells: 0,
+        seed: 21,
+    });
+    for row in 0..3 {
+        document
+            .entities
+            .get_mut(&entity_id(row))
+            .unwrap()
+            .fields
+            .insert(
+                FieldId::from(format!("agg{row}")),
+                Value::Formula(Expression::ColumnTotal(ColumnRef::new("grid", "c0"))),
+            );
+    }
+    assert_eq!(
+        CapacityUsage::measure_for(&document, SessionProfile::WorkingSize).dependency_edges,
+        3
+    );
+    assert_eq!(CapacityUsage::measure(&document).dependency_edges, 200 * 3);
+
+    document
+        .entities
+        .get_mut(&entity_id(0))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("same_row"),
+            Value::Formula(Expression::SameRowReference(FieldId::from("c0"))),
+        );
+    assert_eq!(
+        CapacityUsage::measure_for(&document, SessionProfile::WorkingSize).dependency_edges,
+        4
+    );
+    assert_eq!(
+        CapacityUsage::measure(&document).dependency_edges,
+        200 * 3 + 1
+    );
+}
+
+#[test]
+fn ordinary_and_text_capacity_limits_are_unchanged() {
+    assert_eq!(limits_for_profile(SessionProfile::Ordinary), DEFAULT_LIMITS);
+    assert_eq!(
+        limits_for_profile(SessionProfile::TextCapacity),
+        CapacityLimits {
+            table_rows: 8_406,
+            total_entities: 8_406,
+            ..DEFAULT_LIMITS
+        }
+    );
+}
+
+#[test]
+fn working_size_native_row_removal_follows_the_working_row_limit() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(text_grid(300, 1), OCCURRENCE).unwrap();
+    let removed = (0..200).map(|row| format!("r{row:05}")).collect::<Vec<_>>();
+    let current = revision(&runtime);
+    runtime
+        .remove_table_rows(&current, "grid", &removed)
+        .unwrap();
+    assert_eq!(
+        runtime.session.export_snapshot().document().entities.len(),
+        100
+    );
+
+    let current = revision(&runtime);
+    runtime.history_edit(&current, false).unwrap();
+    assert_eq!(
+        runtime.session.export_snapshot().document().entities.len(),
+        300
+    );
+
+    // A selection above the working row limit is refused before any lookup.
+    let current = revision(&runtime);
+    let rows = (0..=10_000)
+        .map(|row| format!("x{row}"))
+        .collect::<Vec<_>>();
+    let error = runtime
+        .remove_table_rows(&current, "grid", &rows)
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            DesignerError::InvalidTableOperation { ref message }
+                if message == "the row selection is empty or too large"
+        ),
+        "{error:?}"
+    );
+    assert_eq!(runtime.current_revision(), current);
+
+    // Today's ordinary profile still refuses a 129-row selection.
+    let mut ordinary = DesignerRuntime::from_document_profile(
+        text_grid(128, 1),
+        OCCURRENCE,
+        SessionProfile::Ordinary,
+    )
+    .unwrap();
+    let rows = (0..=128).map(|row| format!("x{row}")).collect::<Vec<_>>();
+    let current = revision(&ordinary);
+    let error = ordinary
+        .remove_table_rows(&current, "grid", &rows)
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            DesignerError::InvalidTableOperation { ref message }
+                if message == "the row selection is empty or too large"
+        ),
+        "{error:?}"
+    );
+    assert_eq!(ordinary.current_revision(), current);
+}
+
+#[test]
+fn working_size_capacity_query_reports_the_working_limits() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(text_grid(2, 1), OCCURRENCE).unwrap();
+    let response = runtime
+        .handle(DesignerRequest::QueryCapacity {
+            expected_revision: None,
+        })
+        .unwrap();
+    let DesignerResponse::Capacity(projection) = response else {
+        panic!("queryCapacity replies a capacity projection");
+    };
+    assert_eq!(
+        projection.limits,
+        limits_for_profile(SessionProfile::WorkingSize)
+    );
+    assert_eq!(projection.limits.table_rows, 10_000);
 }
 
 #[test]
