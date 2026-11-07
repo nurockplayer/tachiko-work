@@ -431,4 +431,8 @@ fn present_empty_text_stays_apart_from_a_blank_cell() {
         values: vec![String::new()],
     });
     assert!(!order(&mut runtime, blank).contains(&"z_empty".to_owned()));
+    let values = distinct(&mut runtime, TableView::default(), "f01_name", 10)
+        .expect("the distinct query is bounded");
+    assert_eq!(values.values[0], "");
+    assert!(values.values.contains(&quotes));
 }
