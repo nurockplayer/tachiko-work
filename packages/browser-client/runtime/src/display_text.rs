@@ -153,7 +153,8 @@ fn format_unformatted(value: f64) -> String {
 }
 
 const fn is_zero(value: f64) -> bool {
-    value.to_bits() & 0x7fff_ffff_ffff_ffff == 0
+    // Positive zero has 64 zero bits; negative zero has 63.
+    value.to_bits().trailing_zeros() >= 63
 }
 
 /// A finite, non-negative decimal spelling of a double: the value is
@@ -376,9 +377,10 @@ fn js_number_to_string(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_number;
+    use super::{display_text, format_number};
+    use crate::ViewValue;
     use serde::Deserialize;
-    use tachiko_workspace_engine::NumberFormat;
+    use tachiko_workspace_engine::{Date, NumberFormat, NumberFormatKind};
 
     #[derive(Deserialize)]
     struct Case {
@@ -391,6 +393,41 @@ mod tests {
     #[derive(Deserialize)]
     struct Corpus {
         cases: Vec<Case>,
+    }
+
+    #[test]
+    fn display_text_maps_each_value_kind() {
+        let plain = NumberFormat {
+            decimals: 2,
+            kind: NumberFormatKind::Plain,
+            thousands_separator: true,
+        };
+        assert_eq!(
+            display_text(&ViewValue::Number(1234.5), Some(&plain)),
+            Some("1,234.50".to_owned())
+        );
+        assert_eq!(
+            display_text(&ViewValue::Number(1234.5), None),
+            Some("1234.5".to_owned())
+        );
+        assert_eq!(
+            display_text(&ViewValue::Text("hello".to_owned()), None),
+            Some("hello".to_owned())
+        );
+        assert_eq!(
+            display_text(&ViewValue::Boolean(true), None),
+            Some("true".to_owned())
+        );
+        assert_eq!(
+            display_text(&ViewValue::Boolean(false), None),
+            Some("false".to_owned())
+        );
+        let date = Date::parse("2026-01-02").expect("fixed Gregorian date");
+        assert_eq!(
+            display_text(&ViewValue::Date(date), Some(&plain)),
+            Some(date.to_string())
+        );
+        assert_eq!(display_text(&ViewValue::Reference, Some(&plain)), None);
     }
 
     /// The committed corpus is generated with Node's `Intl` by the adjacent
