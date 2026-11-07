@@ -2395,7 +2395,7 @@ fn import_binds_the_same_document_as_per_formula_updates() {
         column_types: vec![vec![ImportFieldType::Number; 8]],
         extra_columns: vec![vec![]],
     };
-    let (runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
+    let (mut runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
     let imported_bytes = runtime.export_project_v3("resident/0").unwrap().bytes;
     let row = &imported.metadata.sheets[0].rows[0];
     let mut sources = Vec::new();
