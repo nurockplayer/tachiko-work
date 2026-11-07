@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
@@ -439,6 +440,10 @@ impl Evaluation<'_> {
                 return result.clone();
             }
         }
+        if !bypass {
+            self.columns
+                .criterion_index(self.document, self.values, &criteria[0].column);
+        }
         let candidates = if bypass {
             None
         } else {
@@ -458,15 +463,12 @@ impl Evaluation<'_> {
     /// any later criterion reads it, so a superset of the rows it matches, in
     /// entity order, gives the same matched rows, errors and sum order.
     fn candidates(
-        &mut self,
+        &self,
         criteria: &[ColumnCriterion],
         tests: &[CriterionTest],
-    ) -> Option<Vec<EntityId>> {
-        let column = &criteria[0].column;
+    ) -> Option<Cow<'_, [EntityId]>> {
         let keys = tests[0].keys()?;
-        self.columns
-            .criterion_index(self.document, self.values, column);
-        let index = &self.columns.indexes[column];
+        let index = &self.columns.indexes[&criteria[0].column];
         if index.scan {
             return None;
         }
@@ -474,13 +476,12 @@ impl Evaluation<'_> {
             .iter()
             .filter_map(|key| index.entries.get(key))
             .collect::<Vec<_>>();
-        let candidates = match lists.as_slice() {
-            [] => Vec::new(),
-            [only] => (*only).clone(),
-            [left, right] => merge_ids(left, right),
+        Some(match lists.as_slice() {
+            [] => Cow::Borrowed(&[]),
+            [only] => Cow::Borrowed(only.as_slice()),
+            [left, right] => Cow::Owned(merge_ids(left, right)),
             _ => unreachable!("a test has at most two keys"),
-        };
-        Some(candidates)
+        })
     }
 
     /// The rows one conditional reads, in entity order: the candidates when
