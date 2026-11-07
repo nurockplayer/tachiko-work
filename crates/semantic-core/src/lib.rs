@@ -4,6 +4,7 @@ mod address;
 mod criterion;
 mod diagnostic;
 mod display_name;
+mod input_classification;
 pub mod instrumentation;
 mod keyed_grouped_sum;
 mod model;
@@ -21,6 +22,7 @@ pub use display_name::{
     DisplayNameFailure, MAX_DISPLAY_NAME_BYTES, display_name_failures, is_display_name_whitespace,
     trim_display_name,
 };
+pub use input_classification::{ClassifiedDateDisplay, ClassifiedInput, DateOrder, classify_input};
 pub use keyed_grouped_sum::{
     KeyedGroupedSumBindingRole, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
     KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,

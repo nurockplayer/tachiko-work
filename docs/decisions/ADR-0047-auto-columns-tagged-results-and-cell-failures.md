@@ -78,6 +78,8 @@ the Number 123. Input that matches no row keeps its exact spelling as Text. `¥`
 mean JPY because the function reads no locale. The value is the same either way, and
 the display shows `¥` as typed.
 
+An implied display holds at most 10 decimals, R3's limit; the value stays exact.
+
 So `00123`, a digit run over 15 significant digits and a value outside binary64
 such as `1e309` stay Text, because a Number couldn't give the spelling or the digits
 back, and `1/2/2026` stays Text without a
