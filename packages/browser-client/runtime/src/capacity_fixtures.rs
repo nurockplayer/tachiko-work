@@ -245,11 +245,10 @@ fn w1_definition(shape: &str) -> Option<W1Definition> {
             if let Some(rows) = shape.strip_prefix("c1-") {
                 let rows = rows.parse().ok()?;
                 (rows, 10, vec![(9, w1_column_ratio())], Some(9))
-            } else if let Some(rows) = shape.strip_prefix("c2-") {
+            } else {
+                let rows = shape.strip_prefix("c2-")?;
                 let rows = rows.parse().ok()?;
                 (rows, 10, vec![(9, w1_column_conditional())], Some(9))
-            } else {
-                return None;
             }
         }
     })

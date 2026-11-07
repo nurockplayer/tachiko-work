@@ -2327,7 +2327,7 @@ fn capacity_w1_shape() {
                 }
                 shape if shape.starts_with("c1-") || shape.starts_with("c2-") => {
                     w1_scalar_edits(
-                        &shape,
+                        shape,
                         "edit_unrelated",
                         runtime,
                         rows,
@@ -2338,7 +2338,7 @@ fn capacity_w1_shape() {
                         180_000.0,
                     );
                     w1_scalar_edits(
-                        &shape,
+                        shape,
                         "edit_column",
                         runtime,
                         rows,
