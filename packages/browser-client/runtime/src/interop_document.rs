@@ -787,11 +787,24 @@ pub struct ImportedProjection {
 struct ImportIds<'a> {
     namespace: &'a str,
     serial: usize,
+    width: usize,
 }
+
+/// The pad that keeps every ID of one import in serial order. Tables list their
+/// rows in ID order, and past `9999` a fixed pad would sort `10000` beside `1000`.
+fn import_id_width(total_ids: usize) -> usize {
+    total_ids.to_string().len().max(4)
+}
+
 impl IdGenerator for ImportIds<'_> {
     fn generate(&mut self, _kind: SemanticIdKind) -> String {
         self.serial += 1;
-        format!("import_{}_{:04}", self.namespace, self.serial)
+        format!(
+            "import_{}_{:0width$}",
+            self.namespace,
+            self.serial,
+            width = self.width
+        )
     }
 }
 
@@ -835,9 +848,17 @@ fn import_workbook_candidate(
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, ImportedProjection), DesignerError> {
     validate_selection(workbook, selection)?;
+    // One for the document, then each sheet's schema, fields and rows.
+    let total_ids = 1 + workbook
+        .sheets
+        .iter()
+        .zip(&selection.extra_columns)
+        .map(|(sheet, extra)| 1 + sheet.columns.len() + extra.len() + sheet.rows.len())
+        .sum::<usize>();
     let mut ids = ImportIds {
         namespace: occurrence_id,
         serial: 0,
+        width: import_id_width(total_ids),
     };
     let mut document = Document::empty(ids.generate(SemanticIdKind::Document), "Imported workbook");
     let mut metadata = InteropMetadata {
@@ -1698,6 +1719,38 @@ pub(super) fn excel_extremum(
     )?;
     validate_expression_structure(&expression)?;
     Ok(expression)
+}
+
+#[cfg(test)]
+mod import_id_tests {
+    use super::{IdGenerator, ImportIds, SemanticIdKind, import_id_width};
+
+    #[test]
+    fn ids_sort_in_serial_order_past_four_digits() {
+        let mut ids = ImportIds {
+            namespace: "n",
+            serial: 0,
+            width: import_id_width(10_001),
+        };
+        let generated: Vec<String> = (0..10_001)
+            .map(|_| ids.generate(SemanticIdKind::Entity))
+            .collect();
+        assert!(generated.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(generated[0], "import_n_00001");
+    }
+
+    #[test]
+    fn a_small_import_keeps_its_four_digit_ids() {
+        assert_eq!(import_id_width(1), 4);
+        assert_eq!(import_id_width(9_999), 4);
+        assert_eq!(import_id_width(10_000), 5);
+        let mut ids = ImportIds {
+            namespace: "n",
+            serial: 0,
+            width: import_id_width(9_999),
+        };
+        assert_eq!(ids.generate(SemanticIdKind::Entity), "import_n_0001");
+    }
 }
 
 #[cfg(test)]
