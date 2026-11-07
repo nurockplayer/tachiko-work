@@ -145,15 +145,16 @@ Its members are `decimals`, `kind`, `thousands_separator`, in that order. The
 closed object and `kind` union follow the
 [semantic declaration](semantic-data-model.md#per-column-number-display-format-r3).
 Canonical output uses ordinary two-space JSON indentation. Unknown/missing
-members, malformed kinds, non-Number pairing, decimals outside 0..=10, and
-malformed currency identifiers fail admission. Omitted formats stay omitted;
+members, malformed kinds, pairing with a type other than Number (or Auto, under
+[ADR-0047](../decisions/ADR-0047-auto-columns-tagged-results-and-cell-failures.md)),
+decimals outside 0..=10, and malformed currency identifiers fail admission. Omitted formats stay omitted;
 there is no default format materialized into an older document. Consequently
 all previously canonical format-free trees and package hashes remain exact.
 
 ### FieldType
 
 The complete v3 tag set is `number`, `text`, `boolean`, `date`, and
-`reference`. Scalar shapes have the sole member `type`; a reference has the
+`reference`, plus `auto` under the ADR-0047 section below once implemented. Scalar shapes have the sole member `type`; a reference has the
 incorporated v2 member order `type`, `schema`:
 
 ```json

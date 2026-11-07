@@ -56,18 +56,29 @@ Keyed grouped-sum definitions and field constraints don't accept Auto fields.
 ### 2. Input classification belongs to Work
 
 One Rust function takes what the user typed and returns the `Value` and any
-display it implies. Sheet calls it and doesn't reimplement it. Its grammar lives
-in the spec, and these rules bind it:
+display it implies. Sheet calls it and doesn't reimplement it. The first row that
+matches decides:
 
-- **Lossless first.** `00123`, and any digit run over 15 significant digits, stays
-  Text, because a Number couldn't give the spelling or the digits back.
-- **Dates need an order.** The host passes an explicit date order, from the OS
-  region and visible in settings. Without one, `1/2/2026` stays Text. Year-first
-  canonical dates need no order.
-- **No clock and no locale.** The function depends only on its arguments.
+| Input | Result |
+|---|---|
+| Empty | Blank |
+| Starts with `=` | Formula, through the existing binder |
+| `TRUE` or `FALSE`, any ASCII case | Boolean |
+| The numeric grammar in §5, no leading zero before another digit, at most 15 significant digits | Number |
+| The same with comma groups of three, such as `1,000` | Number, with a thousands display |
+| The same with a leading `$`, such as `$1,234.50` | Number, with a USD display |
+| The same with a trailing `%`, such as `50%` | That Number over 100, with a percent display |
+| A valid `YYYY-MM-DD` | Date |
+| `M/D/YYYY`, or `D/M/YYYY`, by the host's date order | Date, when the host gives an order and the date is valid |
+| Anything else | Text, exactly as typed |
+
+So `00123` and a digit run over 15 significant digits stay Text, because a Number
+couldn't give the spelling or the digits back, and `1/2/2026` stays Text without a
+date order. The host's order comes from the OS region and is visible in settings.
+The function reads no clock and no locale: it depends only on its arguments.
 
 The classifier runs at authoring and its output is an ordinary stored value, so
-changing its grammar later changes no existing document.
+widening this table later changes no existing document.
 
 ### 3. Three layers, kept apart
 
@@ -125,12 +136,14 @@ with an optional `.`, an optional exponent, optional ASCII spaces. At least one
 digit is required. A result outside binary64 is a `number` failure.
 
 **Dates.** A Date isn't a serial number, and only the XLSX boundary converts.
-`Date - Date` is a Number of days. `Date + n`, `n + Date` and `Date - n` are Dates,
-and a result outside the Date range is a `number` failure. Any other arithmetic on
-a Date is a `value` failure.
+`Date - Date` is a Number of days. `Date + n`, `n + Date` and `Date - n` are Dates
+when `n` is a whole number, and a result outside the Date range is a `number`
+failure. A Date holds no time of day, so a fractional `n` is a `value` failure. Any
+other arithmetic on a Date is a `value` failure too.
 
 **Ranges and reference arguments.** SUM and AVERAGE skip Text, Boolean and blank.
-A failure in the range propagates. COUNT counts Numbers and Dates. MIN and MAX skip
+A failure in the range propagates. COUNT counts Numbers and Dates and skips
+everything else, including a failure, as in Excel. MIN and MAX skip
 the same cells; over Dates they return a Date, and over Dates mixed with Numbers
 they're a `value` failure. SUM or AVERAGE over a range with a Date is a `value`
 failure. A reference argument to MIN or MAX follows the range rule, as in Excel.
@@ -160,7 +173,8 @@ actually reach the difference:
 
 - SUM or AVERAGE over a Date, which Excel sums as serials;
 - MIN or MAX over Dates mixed with Numbers;
-- Date arithmetic other than the forms in §5;
+- Date arithmetic other than the forms in §5, including a fractional `n`, which
+  Excel keeps as a time of day;
 - ordering across types, where Excel orders Number, Text, Boolean;
 - Text outside the numeric grammar that Excel would still coerce, such as
   `1,000`, `50%` or a date-like string.
