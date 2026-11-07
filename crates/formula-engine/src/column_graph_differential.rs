@@ -14,7 +14,10 @@ use tachiko_semantic_core::{
     Value,
 };
 
-use super::{CalculationOutcome, RetainedCalculationState, calculate_complete};
+use super::{
+    CalculationFailure, CalculationOutcome, ReferenceFailure, RetainedCalculationState,
+    calculate_complete,
+};
 
 const ALPHA: &str = "alpha";
 const BETA: &str = "beta";
@@ -151,21 +154,26 @@ mod reference {
             .map(|(formula, _)| formula.clone())
             .collect::<BTreeSet<_>>();
 
+        let mut columns = evaluation::ColumnCache::default();
         while let Some(formula) = ready.pop_first() {
             remaining_dependency_counts.remove(&formula);
+            let expression = formulas[&formula];
+            for column in crate::extract_column_totals(expression) {
+                columns.fill(document, values, failures, &column);
+            }
             let evaluation = evaluation::Evaluation {
                 document,
                 owner: &formula,
                 values,
+                columns: &columns,
             };
             let failed_dependencies = evaluation
-                .required_references(formulas[&formula])
+                .required_references(expression)
                 .iter()
                 .filter(|dependency| failures.contains_key(*dependency))
                 .cloned()
                 .collect::<BTreeSet<_>>();
             if failed_dependencies.is_empty() {
-                let expression = formulas[&formula];
                 match evaluation.number(expression) {
                     Ok(value) => {
                         values.insert(formula.clone(), value);
@@ -529,24 +537,21 @@ fn all_fields(document: &Document) -> BTreeSet<FieldRef> {
     fields
 }
 
-fn assert_matches_reference(document: &Document, seed: u64) {
+fn assert_matches_reference(document: &Document, label: impl std::fmt::Display) {
     let expected = reference::calculate(document);
     let actual = super::full_calculation_parts(document);
-    assert_eq!(&actual.values, &expected.values, "values of seed {seed}");
-    assert_eq!(
-        &actual.failures, &expected.failures,
-        "failures of seed {seed}"
-    );
+    assert_eq!(&actual.values, &expected.values, "values of {label}");
+    assert_eq!(&actual.failures, &expected.failures, "failures of {label}");
     assert_eq!(
         actual.graph.expanded_dependencies(),
         expected.dependencies,
-        "expanded dependencies of seed {seed}"
+        "expanded dependencies of {label}"
     );
 
     let outcome = calculate_complete(document);
     match (&outcome, expected.failures.is_empty()) {
         (CalculationOutcome::Complete(_), true) | (CalculationOutcome::Failed(_), false) => {}
-        _ => panic!("outcome class disagrees with the reference for seed {seed}"),
+        _ => panic!("outcome class disagrees with the reference for {label}"),
     }
     match &outcome {
         CalculationOutcome::Complete(calculation) => {
@@ -567,7 +572,7 @@ fn assert_matches_reference(document: &Document, seed: u64) {
         assert_eq!(
             actual.graph.affected_by(&field),
             reference::affected_by(&expected.dependencies, &field),
-            "affected_by({field:?}) of seed {seed}"
+            "affected_by({field:?}) of {label}"
         );
     }
 }
@@ -762,4 +767,704 @@ fn a_column_reading_formula_per_row_keeps_graph_memory_linear() {
         "graph holds {entries} entries for {ROWS} rows"
     );
     assert!(entries > 0);
+}
+
+#[test]
+fn a_column_reading_formula_per_row_walks_each_column_a_bounded_number_of_times() {
+    const ROWS: usize = 2_000;
+    let document = linear_document(ROWS);
+    // The expanded pipeline walks the column once per formula in phase 1c and
+    // again per formula in evaluation: 4,000 walks for these rows.
+    crate::column_walk_counter::take();
+    let outcome = calculate_complete(&document);
+    let walks = crate::column_walk_counter::take();
+    assert!(
+        matches!(outcome, CalculationOutcome::Complete(_)),
+        "the linear document must calculate"
+    );
+    assert!(walks > 0, "the counter must observe the column reads");
+    assert!(
+        walks <= 4,
+        "{ROWS} rows walked column cells {walks} times in one calculation"
+    );
+}
+
+#[test]
+fn a_column_total_adds_in_entity_order_bit_for_bit() {
+    let document = order_dependent_total_document();
+    let values = fixed_values(&document);
+    let total = values[&field_ref("row-sum", "total")].get();
+    let entity_order = [1e16_f64, 1.0, -1e16]
+        .into_iter()
+        .fold(0.0_f64, |sum, value| sum + value);
+    let regrouped = [1e16_f64, -1e16, 1.0]
+        .into_iter()
+        .fold(0.0_f64, |sum, value| sum + value);
+    assert_eq!(
+        entity_order.to_bits(),
+        0.0_f64.to_bits(),
+        "the chosen values lose the 1.0 in entity order"
+    );
+    assert_ne!(
+        entity_order.to_bits(),
+        regrouped.to_bits(),
+        "the chosen values make the sum order-dependent"
+    );
+    assert_eq!(
+        total.to_bits(),
+        entity_order.to_bits(),
+        "the total adds the cells in entity order"
+    );
+}
+
+fn field_ref(entity: &str, name: &str) -> FieldRef {
+    FieldRef::new(EntityId::from(entity), FieldId::from(name))
+}
+
+fn fixed_number(value: f64) -> Value {
+    Value::Number(Number::new(value).expect("fixed literals are finite"))
+}
+
+fn fixed_schema(key: &str, fields: &[(&str, FieldType)]) -> Schema {
+    Schema {
+        field_order: None,
+        id: SchemaId::from(key),
+        key: SchemaKey::from(key),
+        display_name: None,
+        fields: fields
+            .iter()
+            .map(|(id, field_type)| {
+                let definition = number_field(id);
+                (
+                    FieldId::from(*id),
+                    FieldDefinition {
+                        field_type: field_type.clone(),
+                        ..definition
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+fn fixed_row(id: &str, schema: &str, entries: &[(&str, Value)]) -> Entity {
+    Entity {
+        id: EntityId::from(id),
+        key: EntityKey::from(id),
+        schema: SchemaId::from(schema),
+        fields: entries
+            .iter()
+            .map(|(name, value)| (FieldId::from(*name), value.clone()))
+            .collect(),
+    }
+}
+
+fn fixed_document(schemas: Vec<Schema>, entities: Vec<Entity>) -> Document {
+    Document {
+        id: DocumentId::from("fixed-column-cases"),
+        title: "Fixed column cases".to_owned(),
+        schemas: schemas
+            .into_iter()
+            .map(|schema| (schema.id.clone(), schema))
+            .collect(),
+        entities: entities
+            .into_iter()
+            .map(|entity| (entity.id.clone(), entity))
+            .collect(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
+    }
+}
+
+fn fixed_failures(document: &Document) -> BTreeMap<FieldRef, CalculationFailure> {
+    match calculate_complete(document) {
+        CalculationOutcome::Complete(_) => BTreeMap::new(),
+        CalculationOutcome::Failed(failures) => failures.failures().clone(),
+    }
+}
+
+fn fixed_values(document: &Document) -> BTreeMap<FieldRef, Number> {
+    match calculate_complete(document) {
+        CalculationOutcome::Complete(calculation) => calculation.values().clone(),
+        CalculationOutcome::Failed(failures) => {
+            panic!(
+                "expected a complete calculation, got {} failures",
+                failures.failures().len()
+            )
+        }
+    }
+}
+
+fn equal(left: Expression, right: Expression) -> Expression {
+    Expression::Compare {
+        operator: ComparisonOperator::Equal,
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+fn failed_expression() -> Value {
+    Value::Formula(divide(literal(1.0), literal(0.0)))
+}
+
+/// A column holding a failed formula member, read by a total, every aggregate,
+/// and a conditional aggregate as its value column and as a criterion column.
+fn failed_member_document() -> Document {
+    let mut rows = vec![
+        fixed_row(
+            "calc-1",
+            "calc",
+            &[("f", failed_expression()), ("v", fixed_number(2.0))],
+        ),
+        fixed_row(
+            "calc-2",
+            "calc",
+            &[("f", fixed_number(2.0)), ("v", fixed_number(4.0))],
+        ),
+        fixed_row(
+            "calc-3",
+            "calc",
+            &[
+                ("f", Value::Formula(add(literal(1.0), literal(1.0)))),
+                ("v", fixed_number(5.0)),
+            ],
+        ),
+    ];
+    let readers = [
+        ("read-sum", total("calc", "f")),
+        (
+            "read-average",
+            aggregate(ColumnAggregateFunction::Average, "calc", "f"),
+        ),
+        (
+            "read-count",
+            aggregate(ColumnAggregateFunction::Count, "calc", "f"),
+        ),
+        (
+            "read-minimum",
+            aggregate(ColumnAggregateFunction::Minimum, "calc", "f"),
+        ),
+        (
+            "read-maximum",
+            aggregate(ColumnAggregateFunction::Maximum, "calc", "f"),
+        ),
+        (
+            "read-sumif-value",
+            conditional_sum("calc", "f", "v", literal(2.0)),
+        ),
+        (
+            "read-sumif-criterion",
+            conditional_sum("calc", "v", "f", literal(2.0)),
+        ),
+    ];
+    for (id, expression) in readers {
+        rows.push(fixed_row(
+            id,
+            "readers",
+            &[("x0", Value::Formula(expression))],
+        ));
+    }
+    let document = fixed_document(
+        vec![
+            fixed_schema(
+                "calc",
+                &[("f", FieldType::Number), ("v", FieldType::Number)],
+            ),
+            fixed_schema("readers", &[("x0", FieldType::Number)]),
+        ],
+        rows,
+    );
+    let failures = fixed_failures(&document);
+    assert_eq!(
+        failures.get(&field_ref("calc-1", "f")),
+        Some(&CalculationFailure::DivisionByZero),
+        "case: a failed formula member of a read column"
+    );
+    for id in [
+        "read-sum",
+        "read-average",
+        "read-count",
+        "read-minimum",
+        "read-maximum",
+        "read-sumif-value",
+        "read-sumif-criterion",
+    ] {
+        assert_eq!(
+            failures.get(&field_ref(id, "x0")),
+            Some(&CalculationFailure::FailedDependencies {
+                dependencies: BTreeSet::from([field_ref("calc-1", "f")]),
+            }),
+            "case: {id} reads a column with a failed member"
+        );
+    }
+    document
+}
+
+fn resolve_failed_member(document: &mut Document) -> BTreeSet<FieldRef> {
+    document
+        .entities
+        .get_mut(&EntityId::from("calc-1"))
+        .expect("row exists")
+        .fields
+        .insert(FieldId::from("f"), fixed_number(5.0));
+    BTreeSet::from([field_ref("calc-1", "f")])
+}
+
+/// The same failing total behind an IF branch that is not taken, and beside a
+/// reader whose condition selects it.
+fn if_branch_document() -> Document {
+    let skipped = Expression::If {
+        condition: Box::new(equal(literal(1.0), literal(1.0))),
+        then_value: Box::new(literal(0.0)),
+        else_value: Box::new(total("calc", "f")),
+    };
+    let selected = Expression::If {
+        condition: Box::new(equal(literal(1.0), literal(2.0))),
+        then_value: Box::new(literal(0.0)),
+        else_value: Box::new(total("calc", "f")),
+    };
+    let document = fixed_document(
+        vec![
+            fixed_schema("calc", &[("f", FieldType::Number)]),
+            fixed_schema("readers", &[("x0", FieldType::Number)]),
+        ],
+        vec![
+            fixed_row("calc-1", "calc", &[("f", failed_expression())]),
+            fixed_row("calc-2", "calc", &[("f", fixed_number(3.0))]),
+            fixed_row("r-untaken", "readers", &[("x0", Value::Formula(skipped))]),
+            fixed_row("r-taken", "readers", &[("x0", Value::Formula(selected))]),
+        ],
+    );
+    let failures = fixed_failures(&document);
+    let values = fixed_values_ignoring_failures(&document);
+    assert!(
+        failures.contains_key(&field_ref("calc-1", "f")),
+        "case: a failed member of a column read inside an untaken IF branch"
+    );
+    assert!(
+        !failures.contains_key(&field_ref("r-untaken", "x0")),
+        "case: the untaken branch does not read the failing column"
+    );
+    assert_eq!(
+        values
+            .get(&field_ref("r-untaken", "x0"))
+            .map(|number| number.get().to_bits()),
+        Some(0.0_f64.to_bits()),
+        "case: the untaken branch yields its literal"
+    );
+    assert_eq!(
+        failures.get(&field_ref("r-taken", "x0")),
+        Some(&CalculationFailure::FailedDependencies {
+            dependencies: BTreeSet::from([field_ref("calc-1", "f")]),
+        }),
+        "case: flipping the condition reads the failing column"
+    );
+    document
+}
+
+/// A partial view of the value map even when the document has failures.
+fn fixed_values_ignoring_failures(document: &Document) -> BTreeMap<FieldRef, Number> {
+    let parts = super::full_calculation_parts(document);
+    parts.values
+}
+
+fn flip_if_branch(document: &mut Document) -> BTreeSet<FieldRef> {
+    let selected = Expression::If {
+        condition: Box::new(equal(literal(1.0), literal(2.0))),
+        then_value: Box::new(literal(0.0)),
+        else_value: Box::new(total("calc", "f")),
+    };
+    document
+        .entities
+        .get_mut(&EntityId::from("r-untaken"))
+        .expect("row exists")
+        .fields
+        .insert(FieldId::from("x0"), Value::Formula(selected));
+    BTreeSet::from([field_ref("r-untaken", "x0")])
+}
+
+/// Two formulas in a cycle through a column, plus a reader of a cycle member.
+fn cycle_document() -> Document {
+    let document = fixed_document(
+        vec![
+            fixed_schema(
+                "calc",
+                &[("a", FieldType::Number), ("b", FieldType::Number)],
+            ),
+            fixed_schema("readers", &[("x0", FieldType::Number)]),
+        ],
+        vec![
+            fixed_row(
+                "calc-1",
+                "calc",
+                &[
+                    ("a", Value::Formula(total("calc", "b"))),
+                    (
+                        "b",
+                        Value::Formula(Expression::Reference(field_ref("calc-1", "a"))),
+                    ),
+                ],
+            ),
+            fixed_row(
+                "r-cycle-member",
+                "readers",
+                &[("x0", Value::Formula(total("calc", "b")))],
+            ),
+        ],
+    );
+    let failures = fixed_failures(&document);
+    for member in ["a", "b"] {
+        assert!(
+            matches!(
+                failures.get(&field_ref("calc-1", member)),
+                Some(CalculationFailure::Cycle { .. })
+            ),
+            "case: a cycle through a column reaches calc-1.{member}"
+        );
+    }
+    assert_eq!(
+        failures.get(&field_ref("r-cycle-member", "x0")),
+        Some(&CalculationFailure::FailedDependencies {
+            dependencies: BTreeSet::from([field_ref("calc-1", "b")]),
+        }),
+        "case: a reader of a cycle member fails on that member"
+    );
+    document
+}
+
+fn break_cycle(document: &mut Document) -> BTreeSet<FieldRef> {
+    document
+        .entities
+        .get_mut(&EntityId::from("calc-1"))
+        .expect("row exists")
+        .fields
+        .insert(FieldId::from("b"), fixed_number(2.0));
+    BTreeSet::from([field_ref("calc-1", "b")])
+}
+
+/// One reader naming a cell directly and through the column holding it.
+fn direct_and_column_document() -> Document {
+    let document = fixed_document(
+        vec![
+            fixed_schema("calc", &[("a", FieldType::Number)]),
+            fixed_schema("readers", &[("x0", FieldType::Number)]),
+        ],
+        vec![
+            fixed_row(
+                "calc-1",
+                "calc",
+                &[("a", Value::Formula(add(literal(1.0), literal(1.0))))],
+            ),
+            fixed_row("calc-2", "calc", &[("a", fixed_number(3.0))]),
+            fixed_row(
+                "r-both",
+                "readers",
+                &[(
+                    "x0",
+                    Value::Formula(add(
+                        Expression::Reference(field_ref("calc-1", "a")),
+                        total("calc", "a"),
+                    )),
+                )],
+            ),
+        ],
+    );
+    let reader = &document.entities[&EntityId::from("r-both")].fields[&FieldId::from("x0")];
+    assert!(
+        matches!(
+            reader,
+            Value::Formula(Expression::Add { left, right })
+                if matches!(left.as_ref(), Expression::Reference(_))
+                    && matches!(right.as_ref(), Expression::ColumnTotal(_))
+        ),
+        "case: one formula names the same cell directly and through its column"
+    );
+    assert_eq!(
+        fixed_values(&document)[&field_ref("r-both", "x0")]
+            .get()
+            .to_bits(),
+        7.0_f64.to_bits(),
+        "case: the direct path and the column path both count"
+    );
+    document
+}
+
+fn change_direct_cell(document: &mut Document) -> BTreeSet<FieldRef> {
+    document
+        .entities
+        .get_mut(&EntityId::from("calc-1"))
+        .expect("row exists")
+        .fields
+        .insert(FieldId::from("a"), fixed_number(4.0));
+    BTreeSet::from([field_ref("calc-1", "a")])
+}
+
+/// Three chained columns of formulas: each totals the column before it, so a
+/// formula reads its own row through another column, and a reader in another
+/// schema reads the last column.
+fn chained_columns_document() -> Document {
+    let mut rows = Vec::new();
+    for index in 1..=3 {
+        let id = format!("calc-{index}");
+        rows.push(fixed_row(
+            &id,
+            "calc",
+            &[
+                ("c0", fixed_number(f64::from(index))),
+                ("c1", Value::Formula(total("calc", "c0"))),
+                ("c2", Value::Formula(total("calc", "c1"))),
+                ("c3", Value::Formula(total("calc", "c2"))),
+            ],
+        ));
+    }
+    rows.push(fixed_row(
+        "r-chain",
+        "readers",
+        &[("x0", Value::Formula(total("calc", "c3")))],
+    ));
+    let document = fixed_document(
+        vec![
+            fixed_schema(
+                "calc",
+                &[
+                    ("c0", FieldType::Number),
+                    ("c1", FieldType::Number),
+                    ("c2", FieldType::Number),
+                    ("c3", FieldType::Number),
+                ],
+            ),
+            fixed_schema("readers", &[("x0", FieldType::Number)]),
+        ],
+        rows,
+    );
+    let values = fixed_values(&document);
+    for (field, expected) in [
+        ("c1", 6.0_f64),
+        ("c2", 18.0_f64),
+        ("c3", 54.0_f64),
+        ("x0", 162.0_f64),
+    ] {
+        let entity = if field == "x0" { "r-chain" } else { "calc-1" };
+        assert_eq!(
+            values[&field_ref(entity, field)].get().to_bits(),
+            expected.to_bits(),
+            "case: the chained columns carry {expected} into {field}"
+        );
+    }
+    document
+}
+
+fn change_chain_root(document: &mut Document) -> BTreeSet<FieldRef> {
+    document
+        .entities
+        .get_mut(&EntityId::from("calc-2"))
+        .expect("row exists")
+        .fields
+        .insert(FieldId::from("c0"), fixed_number(10.0));
+    BTreeSet::from([field_ref("calc-2", "c0")])
+}
+
+/// A Text cell in a column a total reads: the total fails on the target checks
+/// before evaluation, and an aggregate (not walked in phase 1c) fails on
+/// `first_missing`.
+fn text_cell_document() -> Document {
+    let document = fixed_document(
+        vec![
+            fixed_schema("calc", &[("f", FieldType::Number)]),
+            fixed_schema(
+                "readers",
+                &[("x0", FieldType::Number), ("x1", FieldType::Number)],
+            ),
+        ],
+        vec![
+            fixed_row("calc-1", "calc", &[("f", fixed_number(1.0))]),
+            fixed_row("calc-2", "calc", &[("f", Value::Text("n/a".to_owned()))]),
+            fixed_row("calc-3", "calc", &[("f", Value::Formula(literal(2.0)))]),
+            fixed_row(
+                "r-sum",
+                "readers",
+                &[("x0", Value::Formula(total("calc", "f")))],
+            ),
+            fixed_row(
+                "r-average",
+                "readers",
+                &[(
+                    "x0",
+                    Value::Formula(aggregate(ColumnAggregateFunction::Average, "calc", "f")),
+                )],
+            ),
+        ],
+    );
+    let failures = fixed_failures(&document);
+    assert_eq!(
+        failures.get(&field_ref("r-sum", "x0")),
+        Some(&CalculationFailure::InvalidReferences {
+            targets: BTreeMap::from([(field_ref("calc-2", "f"), ReferenceFailure::NonNumeric,)]),
+        }),
+        "case: a Text cell in a summed column fails the total"
+    );
+    assert_eq!(
+        failures.get(&field_ref("r-average", "x0")),
+        Some(&CalculationFailure::FailedDependencies {
+            dependencies: BTreeSet::from([field_ref("calc-2", "f")]),
+        }),
+        "case: the aggregate reports the first missing cell"
+    );
+    document
+}
+
+fn resolve_text_cell(document: &mut Document) -> BTreeSet<FieldRef> {
+    document
+        .entities
+        .get_mut(&EntityId::from("calc-2"))
+        .expect("row exists")
+        .fields
+        .insert(FieldId::from("f"), fixed_number(4.0));
+    BTreeSet::from([field_ref("calc-2", "f")])
+}
+
+/// Two readers of one column, one of them nested in arithmetic.
+fn two_readers_document() -> Document {
+    let document = fixed_document(
+        vec![
+            fixed_schema("calc", &[("v", FieldType::Number)]),
+            fixed_schema("readers", &[("x0", FieldType::Number)]),
+        ],
+        vec![
+            fixed_row("calc-1", "calc", &[("v", fixed_number(1.0))]),
+            fixed_row("calc-2", "calc", &[("v", fixed_number(2.0))]),
+            fixed_row(
+                "r-direct",
+                "readers",
+                &[("x0", Value::Formula(total("calc", "v")))],
+            ),
+            fixed_row(
+                "r-nested",
+                "readers",
+                &[(
+                    "x0",
+                    Value::Formula(divide(add(total("calc", "v"), literal(1.0)), literal(2.0))),
+                )],
+            ),
+        ],
+    );
+    let values = fixed_values(&document);
+    assert_eq!(
+        values[&field_ref("r-direct", "x0")].get().to_bits(),
+        3.0_f64.to_bits(),
+        "case: the direct reader sums the column"
+    );
+    assert_eq!(
+        values[&field_ref("r-nested", "x0")].get().to_bits(),
+        2.0_f64.to_bits(),
+        "case: the nested reader sums the same column"
+    );
+    document
+}
+
+fn change_two_reader_root(document: &mut Document) -> BTreeSet<FieldRef> {
+    document
+        .entities
+        .get_mut(&EntityId::from("calc-1"))
+        .expect("row exists")
+        .fields
+        .insert(FieldId::from("v"), fixed_number(5.0));
+    BTreeSet::from([field_ref("calc-1", "v")])
+}
+
+fn order_dependent_total_document() -> Document {
+    fixed_document(
+        vec![
+            fixed_schema("calc", &[("v", FieldType::Number)]),
+            fixed_schema("sums", &[("total", FieldType::Number)]),
+        ],
+        vec![
+            fixed_row("row-a", "calc", &[("v", fixed_number(1e16))]),
+            fixed_row("row-b", "calc", &[("v", fixed_number(1.0))]),
+            fixed_row("row-c", "calc", &[("v", fixed_number(-1e16))]),
+            fixed_row(
+                "row-sum",
+                "sums",
+                &[("total", Value::Formula(total("calc", "v")))],
+            ),
+        ],
+    )
+}
+
+/// A named document, and the retained edit applied to it after the full run.
+type FixedCase = (
+    &'static str,
+    Document,
+    fn(&mut Document) -> BTreeSet<FieldRef>,
+);
+
+#[test]
+fn fixed_column_documents_match_the_expanded_reference() {
+    let cases: Vec<FixedCase> = vec![
+        (
+            "failed member read by totals and conditionals",
+            failed_member_document(),
+            resolve_failed_member,
+        ),
+        (
+            "failed member behind an untaken IF branch",
+            if_branch_document(),
+            flip_if_branch,
+        ),
+        (
+            "cycle through a column with a member reader",
+            cycle_document(),
+            break_cycle,
+        ),
+        (
+            "a cell named directly and through its column",
+            direct_and_column_document(),
+            change_direct_cell,
+        ),
+        (
+            "a chain of three formula columns",
+            chained_columns_document(),
+            change_chain_root,
+        ),
+        (
+            "a Text cell in a summed column",
+            text_cell_document(),
+            resolve_text_cell,
+        ),
+        (
+            "two readers of one column, one nested",
+            two_readers_document(),
+            change_two_reader_root,
+        ),
+    ];
+    for (name, mut document, edit) in cases {
+        assert_matches_reference(&document, name);
+
+        let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+        let roots = edit(&mut document);
+        let _ = retained.update(&document, &roots);
+        let expected = reference::calculate(&document);
+        assert_eq!(
+            retained.dependencies(),
+            expected.dependencies,
+            "{name}: dependencies after a retained edit"
+        );
+        match retained.outcome() {
+            CalculationOutcome::Complete(calculation) => {
+                assert_eq!(
+                    calculation.values(),
+                    &expected.values,
+                    "{name}: values after a retained edit"
+                );
+            }
+            CalculationOutcome::Failed(failures) => {
+                assert_eq!(
+                    failures.failures(),
+                    &expected.failures,
+                    "{name}: failures after a retained edit"
+                );
+            }
+        }
+
+        assert_matches_reference(&document, name);
+    }
 }

@@ -2057,6 +2057,10 @@ fn pregraph_failures(
     }
 
     // Phase 1c: capture every directly discovered missing/stale/type target.
+    // A column total re-checks the same cells for every formula that reads the
+    // column, so resolve one column's cell failures once for the whole phase.
+    let mut column_targets: BTreeMap<ColumnRef, Vec<(FieldRef, ReferenceFailure)>> =
+        BTreeMap::new();
     for (field, value) in nodes {
         if failures.contains_key(field) {
             continue;
@@ -2088,10 +2092,19 @@ fn pregraph_failures(
             let mut pending = vec![expression];
             while let Some(node) = pending.pop() {
                 if let Expression::ColumnTotal(column) = node {
-                    for cell in column_cells(document, column) {
-                        let failure = reference_failure(document, &cell, true);
-                        checks.push((cell, failure));
-                    }
+                    let targets = column_targets.entry(column.clone()).or_insert_with(|| {
+                        column_cells(document, column)
+                            .filter_map(|cell| {
+                                let failure = reference_failure(document, &cell, true)?;
+                                Some((cell, failure))
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    checks.extend(
+                        targets
+                            .iter()
+                            .map(|(cell, failure)| (cell.clone(), Some(*failure))),
+                    );
                 }
                 pending.extend(node.children());
             }
@@ -2152,6 +2165,49 @@ fn initial_values(nodes: &ValueNodes<'_>, failures: &FailureMap) -> BTreeMap<Fie
         .collect()
 }
 
+/// How many unresolved subjects each remaining formula and read column awaits.
+///
+/// A column's count is the slots that still have to resolve, computed once per
+/// column; a formula counts its remaining cell references plus, once each, its
+/// columns with a remaining slot.
+fn remaining_counts(
+    graph: &DependencyGraph,
+    remaining: &BTreeSet<FieldRef>,
+) -> (BTreeMap<FieldRef, usize>, BTreeMap<ColumnRef, usize>) {
+    let mut column_counts = BTreeMap::<ColumnRef, usize>::new();
+    for formula in remaining {
+        for column in graph.columns_of(formula) {
+            column_counts.entry(column.clone()).or_insert_with(|| {
+                graph.column_slots.get(column).map_or(0, |slots| {
+                    slots
+                        .iter()
+                        .filter(|slot| remaining.contains(*slot))
+                        .count()
+                })
+            });
+        }
+    }
+    let dependency_counts = remaining
+        .iter()
+        .map(|formula| {
+            let cells = graph.reference_uses.get(formula).map_or(0, |references| {
+                references
+                    .iter()
+                    .filter(|reference| remaining.contains(*reference))
+                    .count()
+            });
+            let columns = graph.column_uses.get(formula).map_or(0, |columns| {
+                columns
+                    .iter()
+                    .filter(|column| column_counts.get(*column).copied().unwrap_or(0) > 0)
+                    .count()
+            });
+            (formula.clone(), cells + columns)
+        })
+        .collect::<BTreeMap<_, _>>();
+    (dependency_counts, column_counts)
+}
+
 fn evaluate_remaining_formulas(
     document: &Document,
     formulas: &FormulaNodes<'_>,
@@ -2161,42 +2217,41 @@ fn evaluate_remaining_formulas(
 ) {
     // Phases 3 and 4: process the remaining acyclic graph dependency-first.
     // Edges to already-failed nodes are ready and become direct dependency
-    // subjects; edges to remaining formulas participate in the Kahn count.
+    // subjects. Each formula awaits the cells it names directly plus, once
+    // each, the columns it reads: a cell named both ways has two paths, each
+    // counted and released on its own.
     let remaining_formulas = formulas
         .keys()
         .filter(|formula| !failures.contains_key(*formula))
         .cloned()
         .collect::<BTreeSet<_>>();
-    let mut remaining_dependency_counts = remaining_formulas
-        .iter()
-        .map(|formula| {
-            let count = graph
-                .formula_dependencies_within(formula, &remaining_formulas)
-                .len();
-            (formula.clone(), count)
-        })
-        .collect::<BTreeMap<_, _>>();
+
+    let (mut remaining_dependency_counts, mut remaining_column_counts) =
+        remaining_counts(graph, &remaining_formulas);
     let mut ready = remaining_dependency_counts
         .iter()
         .filter(|(_, count)| **count == 0)
         .map(|(formula, _)| formula.clone())
         .collect::<BTreeSet<_>>();
 
+    // One read of each column per pass, shared by every formula that names it
+    // and dropped with this call. All of a column's formula members resolved
+    // before its first reader became ready, so no entry can go stale.
+    let mut columns = evaluation::ColumnCache::default();
     while let Some(formula) = ready.pop_first() {
         remaining_dependency_counts.remove(&formula);
+        let expression = formulas[&formula];
+        for column in extract_column_totals(expression) {
+            columns.fill(document, values, failures, &column);
+        }
         let evaluation = evaluation::Evaluation {
             document,
             owner: &formula,
             values,
+            columns: &columns,
         };
-        let failed_dependencies = evaluation
-            .required_references(formulas[&formula])
-            .iter()
-            .filter(|dependency| failures.contains_key(*dependency))
-            .cloned()
-            .collect::<BTreeSet<_>>();
+        let failed_dependencies = evaluation.failed_required_references(expression, failures);
         if failed_dependencies.is_empty() {
-            let expression = formulas[&formula];
             match evaluation.number(expression) {
                 Ok(value) => {
                     values.insert(formula.clone(), value);
@@ -2214,13 +2269,31 @@ fn evaluate_remaining_formulas(
             );
         }
 
-        for dependent in graph.direct_dependents(&formula) {
-            let Some(count) = remaining_dependency_counts.get_mut(&dependent) else {
-                continue;
-            };
-            *count -= 1;
-            if *count == 0 {
-                ready.insert(dependent.clone());
+        // Release this cell's direct readers, then the column it is a slot of.
+        // A column releases its readers only once every slot has resolved.
+        if let Some(readers) = graph.cell_readers.get(&formula) {
+            for reader in readers {
+                if let Some(count) = remaining_dependency_counts.get_mut(reader) {
+                    *count -= 1;
+                    if *count == 0 {
+                        ready.insert(reader.clone());
+                    }
+                }
+            }
+        }
+        if let Some(column) = graph.slot_columns.get(&formula) {
+            if let Some(count) = remaining_column_counts.get_mut(column) {
+                *count -= 1;
+                if *count == 0 {
+                    for reader in graph.column_readers(column) {
+                        if let Some(count) = remaining_dependency_counts.get_mut(reader) {
+                            *count -= 1;
+                            if *count == 0 {
+                                ready.insert(reader.clone());
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2264,6 +2337,8 @@ pub(crate) fn column_cells<'a>(
     document: &'a Document,
     column: &'a ColumnRef,
 ) -> impl Iterator<Item = FieldRef> + 'a {
+    #[cfg(test)]
+    column_walk_counter::record();
     document
         .entities
         .iter()
@@ -2454,4 +2529,22 @@ fn cyclic_components(
 enum GraphNode {
     Cell(FieldRef),
     Column(ColumnRef),
+}
+
+/// Counts [`column_cells`] calls so a test can bound one calculation's walks.
+#[cfg(test)]
+mod column_walk_counter {
+    use std::cell::Cell;
+
+    thread_local! {
+        static WALKS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn record() {
+        WALKS.with(|walks| walks.set(walks.get() + 1));
+    }
+
+    pub(crate) fn take() -> usize {
+        WALKS.with(|walks| walks.replace(0))
+    }
 }
