@@ -31,7 +31,7 @@ use super::{
     SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
     apply_field_value_candidate_with_planning, finalize_edit_with_validation,
     formula_inverse_restore_candidate_in_place, formula_restore_candidate_in_place,
-    formula_update_candidate_in_place, instrumentation, unset_field_candidate_in_place,
+    formula_update_candidate_in_place, unset_field_candidate_in_place,
 };
 
 #[cfg(test)]
@@ -4493,34 +4493,22 @@ impl<'a> DisclosureDerivation<'a> {
                     DisclosureDocumentSide::Before,
                     DisclosureDocumentSide::After,
                 ] {
-                    let owners = {
-                        let document = side.document(self.before, self.after);
-                        document
-                            .entities
-                            .values()
-                            .filter(|entity| entity.schema == *schema)
-                            .filter(|entity| entity.fields.contains_key(field))
-                            .map(|entity| FieldRef::new(entity.id.clone(), field.clone()))
-                            .collect::<Vec<_>>()
-                    };
-                    for owner in owners {
-                        let value = {
-                            let document = side.document(self.before, self.after);
-                            document
-                                .entities
-                                .get(&owner.entity)
-                                .and_then(|entity| entity.fields.get(&owner.field))
-                                .cloned()
-                        };
-                        let Some(value) = value else {
+                    let document = side.document(self.before, self.after);
+                    for entity in document
+                        .entities
+                        .values()
+                        .filter(|entity| entity.schema == *schema)
+                    {
+                        let Some(value) = entity.fields.get(field) else {
                             continue;
                         };
+                        let owner = FieldRef::new(entity.id.clone(), field.clone());
                         self.insert_value_disclosures_for(
                             OperationFamily::SchemaFieldMutation,
                             &owner,
-                            &value,
+                            value,
                         )?;
-                        if let Value::Formula(expression) = &value {
+                        if let Value::Formula(expression) = value {
                             self.insert_calculation_dependency_disclosures(
                                 OperationFamily::SchemaFieldMutation,
                                 side,
@@ -4538,16 +4526,15 @@ impl<'a> DisclosureDerivation<'a> {
             }
             SemanticCommand::UnsetField { field } => {
                 self.insert_field_disclosure_for(OperationFamily::SetFieldValue, field)?;
-                let value = self
-                    .before
+                let before = self.before;
+                let Some(value) = before
                     .entities
                     .get(&field.entity)
                     .and_then(|entity| entity.fields.get(&field.field))
-                    .cloned();
-                let Some(value) = value else {
+                else {
                     return Ok(());
                 };
-                self.insert_value_disclosures_for(OperationFamily::SetFieldValue, field, &value)
+                self.insert_value_disclosures_for(OperationFamily::SetFieldValue, field, value)
             }
             SemanticCommand::FormulaUpdate(command) => {
                 self.insert_field_disclosure_for(OperationFamily::FormulaUpdate, command.target())?;

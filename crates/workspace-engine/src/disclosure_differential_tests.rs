@@ -27,7 +27,9 @@ fn number_field(id: &str) -> FieldDefinition {
         display_name: None,
         number_format: None,
         field_type: FieldType::Number,
-        required: true,
+        // Optional, or a formula into a blank slot is refused before any
+        // disclosure could be compared.
+        required: false,
         constraint: FieldConstraint::None,
     }
 }
@@ -124,7 +126,12 @@ struct Case {
     changes: Vec<SemanticChange>,
 }
 
-fn assert_matches_reference(case: &Case) {
+fn both_derivations(
+    case: &Case,
+) -> (
+    Result<BTreeSet<DisclosureRequirement>, PatchLifecycleError>,
+    Result<BTreeSet<DisclosureRequirement>, PatchLifecycleError>,
+) {
     let lifecycle = lifecycle();
     let derived =
         lifecycle.derive_disclosures(&case.before, &case.after, &case.body, &case.changes);
@@ -135,13 +142,23 @@ fn assert_matches_reference(case: &Case) {
         &case.body,
         &case.changes,
     );
-    match (derived, expected) {
-        (Ok(derived), Ok(expected)) => assert_eq!(derived, expected),
-        (Err(derived), Err(expected)) => {
-            assert_eq!(format!("{derived:?}"), format!("{expected:?}"));
-        }
-        (derived, expected) => panic!("derivation outcomes differ: {derived:?} vs {expected:?}"),
-    }
+    (derived, expected)
+}
+
+/// The case derives successfully and both paths give the same disclosures.
+fn assert_matches_reference(case: &Case) {
+    let (derived, expected) = both_derivations(case);
+    let derived = derived.expect("the case derives");
+    assert!(!derived.is_empty(), "the case discloses something");
+    assert_eq!(derived, expected.expect("the reference derives"));
+}
+
+/// The case is refused and both paths give the same error.
+fn assert_matches_reference_error(case: &Case) {
+    let (derived, expected) = both_derivations(case);
+    let derived = derived.expect_err("the case is refused");
+    let expected = expected.expect_err("the reference refuses");
+    assert_eq!(format!("{derived:?}"), format!("{expected:?}"));
 }
 
 #[test]
@@ -403,14 +420,24 @@ fn set_constraint_matches_the_reference() {
     let schema = number_schema("s", &["amount", "total"]);
     let before = document_with(
         &[schema],
-        vec![entity(
-            "row",
-            "s",
-            &[
-                ("amount", number(1.0)),
-                ("total", formula(reference("row", "amount"))),
-            ],
-        )],
+        vec![
+            entity(
+                "r1",
+                "s",
+                &[
+                    ("amount", number(1.0)),
+                    ("total", formula(reference("r1", "amount"))),
+                ],
+            ),
+            entity(
+                "r2",
+                "s",
+                &[
+                    ("amount", number(2.0)),
+                    ("total", formula(column("s", "amount"))),
+                ],
+            ),
+        ],
     );
     let after = before.clone();
     let case = Case {
@@ -421,12 +448,8 @@ fn set_constraint_matches_the_reference() {
             field: FieldId::from("total"),
             constraint: FieldConstraint::None,
         }),
-        changes: vec![SemanticChange::SchemaFieldChanged {
-            schema: SchemaId::from("s"),
-            field: FieldId::from("total"),
-            before: number_field("total"),
-            after: number_field("total"),
-        }],
+        // A constraint carries v2 evidence, so the command arm derives alone.
+        changes: Vec::new(),
     };
     assert_matches_reference(&case);
 }
@@ -638,7 +661,7 @@ fn missing_entity_derivation_error_matches_the_reference() {
             after: number(2.0),
         }],
     };
-    assert_matches_reference(&case);
+    assert_matches_reference_error(&case);
     assert!(matches!(
         lifecycle().derive_disclosures(&case.before, &case.after, &case.body, &case.changes),
         Err(PatchLifecycleError::ScopeDerivationFailed)
@@ -666,7 +689,7 @@ fn undeclared_field_derivation_error_matches_the_reference() {
             after: number(2.0),
         }],
     };
-    assert_matches_reference(&case);
+    assert_matches_reference_error(&case);
     assert!(matches!(
         lifecycle().derive_disclosures(&case.before, &case.after, &case.body, &case.changes),
         Err(PatchLifecycleError::ScopeDerivationFailed)

@@ -58,6 +58,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0046](ADR-0046-pre-1-0-roproj-v3-revision-window.md) | Pre-1.0 revision window for `.roproj/v3` | Accepted | Lets a closed list of #668 constructs enter v3 and package/v1 in place until the #579 freeze, each only with its own Accepted ADR, spec text and fixtures; a document using none keeps its exact tree and hashes |
 | [ADR-0047](ADR-0047-auto-columns-tagged-results-and-cell-failures.md) | Auto columns, tagged formula results and published cell failures | Accepted | Adds the `auto` field type and Excel-like evaluation over it; a failure publishes on Auto cells as a calculated, never stored, outcome, while declared columns keep refusing and keep their meaning |
 | [ADR-0048](ADR-0048-stored-row-order-and-positional-ranges.md) | Stored row order and positional ranges | Accepted | Adds an optional entity rank, positional range and read references that insert and delete rewrite, a `#REF!` failure on deleting what they read, and a conflict when row order and a new positional reference meet in a merge |
+| [ADR-0049](ADR-0049-stored-presentation.md) | Stored presentation: cell styles, display, rules, footer and title | Accepted | Adds an optional `presentation.jsonl` member separate from `Value`, a column Date format, and conditional-formatting rules as bound conditions outside the dependency graph; none of it is a semantic change or can block a merge |
 
 ## How to use ADRs
 

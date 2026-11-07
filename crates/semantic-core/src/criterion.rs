@@ -53,7 +53,7 @@ pub enum CriterionKey {
     /// A number by bits, with `-0.0` stored as `0.0` because `==` treats the
     /// two signs as equal.
     Number(u64),
-    /// The text under the same case fold [`wildcard_match`] compares with.
+    /// The text under the same case fold the wildcard match compares with.
     Text(String),
     Boolean(bool),
     Date(Date),

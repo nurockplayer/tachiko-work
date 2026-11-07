@@ -24,6 +24,20 @@ Decision issue: [#488](https://github.com/nurockplayer/tachiko-work/issues/488)
 
 ## Scope and version ownership
 
+### Presentation entry — ADR-0049
+
+Implementation state: pending. Until the implementing PR lands, a reader refuses the
+entry. Once it lands, this section overrides each count below for a package that has
+the entry.
+
+[ADR-0049](../decisions/ADR-0049-stored-presentation.md) admits one more optional
+entry, `payload/presentation.jsonl`, last in entry order, present exactly when the v3
+tree has that file. Such a package has 21 entries, and its ZIP end record and central
+directory say so. It has twenty payload files, unpack publishes all twenty, and the
+payload root gains `leaf_20` as its last leaf, with the same path-and-bytes form and the
+same domain. A package without the entry keeps its exact twenty entries, its
+nineteen-leaf root and its hashes. A reader accepts exactly these two forms.
+
 ### Pre-1.0 revision window — ADR-0046
 
 [ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) lets a
