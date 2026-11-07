@@ -1693,11 +1693,18 @@ type FormulaNodes<'document> = BTreeMap<FieldRef, &'document Expression>;
 type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
 
 fn full_calculation_parts(document: &Document) -> FullCalculationParts {
+    let t0 = std::time::Instant::now();
     let (nodes, formulas, graph) = collect_calculation_nodes(document);
+    let t1 = std::time::Instant::now();
     let mut failures = pregraph_failures(document, &nodes, &formulas);
+    let t2 = std::time::Instant::now();
     assign_cycle_failures(&formulas, &graph, &mut failures);
+    let t3 = std::time::Instant::now();
     let mut values = initial_values(&nodes, &failures);
+    let t4 = std::time::Instant::now();
     evaluate_remaining_formulas(document, &formulas, &graph, &mut failures, &mut values);
+    let t5 = std::time::Instant::now();
+    eprintln!("W1T|collect {:?} pregraph {:?} cycles {:?} initial {:?} evaluate {:?}", t1-t0, t2-t1, t3-t2, t4-t3, t5-t4);
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
         values,
