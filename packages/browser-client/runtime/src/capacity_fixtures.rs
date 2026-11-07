@@ -187,27 +187,49 @@ pub const W1_ROWS: usize = 10_000;
 /// Returns `None` for an unknown shape name.
 #[must_use]
 pub fn w1_document(shape: &str) -> Option<(Document, usize, usize)> {
-    let (rows, columns, derived) = match shape {
-        "a" => (W1_ROWS, 10, Vec::new()),
+    if shape == "a100" {
         // The old table's 100-dependent case: 99 same-row formulas plus the
         // balanced total; edits `rate` on row 0.
-        "a100" => {
-            return Some((
-                capacity_document(FixtureSpec {
-                    rows: W1_ROWS,
-                    columns: 10,
-                    formula_cells: DEPENDENT_FORMULAS,
-                    seed: 0x00C0_FFEE_D00D_1234,
-                }),
-                W1_ROWS,
-                10,
-            ));
-        }
-        "b1" => (W1_ROWS, 10, vec![(9, w1_product())]),
+        return Some((
+            capacity_document(FixtureSpec {
+                rows: W1_ROWS,
+                columns: 10,
+                formula_cells: DEPENDENT_FORMULAS,
+                seed: 0x00C0_FFEE_D00D_1234,
+            }),
+            W1_ROWS,
+            10,
+        ));
+    }
+    let (rows, columns, derived, _) = w1_definition(shape)?;
+    Some((w1_grid(rows, columns, &derived, None), rows, columns))
+}
+
+/// Like [`w1_document`], but the column phase 7 copies holds its formula on
+/// row 0 only and a Number on every other row, so one `CopyFormula` request
+/// writes one formula per destination row instead of changing nothing.
+#[must_use]
+pub fn w1_copy_document(shape: &str) -> Option<(Document, usize, usize)> {
+    if shape == "a100" {
+        return w1_document(shape);
+    }
+    let (rows, columns, derived, primary) = w1_definition(shape)?;
+    Some((w1_grid(rows, columns, &derived, primary), rows, columns))
+}
+
+/// Shape geometry, its always-formula columns, and the column the copy phase
+/// seeds on row 0 only.
+type W1Definition = (usize, usize, Vec<(usize, Expression)>, Option<usize>);
+
+fn w1_definition(shape: &str) -> Option<W1Definition> {
+    Some(match shape {
+        "a" => (W1_ROWS, 10, Vec::new(), Some(9)),
+        "b1" => (W1_ROWS, 10, vec![(9, w1_product())], Some(9)),
         "b3" => (
             W1_ROWS,
             10,
             vec![(9, w1_product()), (8, w1_sum()), (7, w1_chain())],
+            Some(9),
         ),
         "d" => (
             W1_ROWS,
@@ -217,25 +239,32 @@ pub fn w1_document(shape: &str) -> Option<(Document, usize, usize)> {
                 (28, w1_sum()),
                 (27, w1_chain_over("c29")),
             ],
+            Some(29),
         ),
         _ => {
             if let Some(rows) = shape.strip_prefix("c1-") {
                 let rows = rows.parse().ok()?;
-                (rows, 10, vec![(9, w1_column_ratio())])
+                (rows, 10, vec![(9, w1_column_ratio())], Some(9))
             } else if let Some(rows) = shape.strip_prefix("c2-") {
                 let rows = rows.parse().ok()?;
-                (rows, 10, vec![(9, w1_column_conditional())])
+                (rows, 10, vec![(9, w1_column_conditional())], Some(9))
             } else {
                 return None;
             }
         }
-    };
-    Some((w1_grid(rows, columns, &derived), rows, columns))
+    })
 }
 
 /// The grid used by every W1 shape: the [`capacity_document`] value stream
-/// with the listed columns replaced by one formula in every row.
-fn w1_grid(rows: usize, columns: usize, derived: &[(usize, Expression)]) -> Document {
+/// with the listed columns replaced by one formula in every row. A column
+/// named by `row_zero_only` instead gets its formula on row 0 and a Number
+/// everywhere else.
+fn w1_grid(
+    rows: usize,
+    columns: usize,
+    derived: &[(usize, Expression)],
+    row_zero_only: Option<usize>,
+) -> Document {
     let mut rng = SplitMix64(0x00C0_FFEE_D00D_1234);
     let mut document = Document::empty("capacity-benchmark", "W1 Shape");
     let mut schema = Schema {
@@ -277,7 +306,17 @@ fn w1_grid(rows: usize, columns: usize, derived: &[(usize, Expression)]) -> Docu
             fields.insert(column_id(column), column_value(column, row, rng.next()));
         }
         for (column, expression) in derived {
-            fields.insert(column_id(*column), Value::Formula(expression.clone()));
+            let id = column_id(*column);
+            let value = if row_zero_only == Some(*column) && row > 0 {
+                // A plain Number on every row but 0, so the copy has work to do
+                // and the column still parses as Number.
+                Value::Number(number(
+                    1.0 + f64::from(u32::try_from(row % 100_000).expect("bounded")) / 10.0,
+                ))
+            } else {
+                Value::Formula(expression.clone())
+            };
+            fields.insert(id, value);
         }
         document.entities.insert(
             entity_id.clone(),

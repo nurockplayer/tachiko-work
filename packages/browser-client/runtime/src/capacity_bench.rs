@@ -33,15 +33,15 @@ use tachiko_workspace_engine::{
 };
 
 use super::{
-    CellEdit, DESIGNER_PRINCIPAL, DesignerClock, DesignerRequest, DesignerResponse,
-    DesignerRuntime, FieldTarget, PrincipalId, ScalarEditInput, TableView, ViewIndexCache,
-    collection_specs, decode_project_bundle, designer_lifecycle, document_scope,
-    encode_project_bundle, ensure_projection_size_with_limit, formula_sources, open_project,
-    select_default_collection,
+    CellEdit, ComparisonOperator, DESIGNER_PRINCIPAL, DesignerClock, DesignerRequest,
+    DesignerResponse, DesignerRuntime, FieldTarget, PrincipalId, ScalarEditInput, SortDirection,
+    TableView, ViewFilter, ViewIndexCache, ViewSortKey, collection_specs, decode_project_bundle,
+    designer_lifecycle, document_scope, encode_project_bundle, ensure_projection_size_with_limit,
+    formula_sources, open_project, select_default_collection,
 };
 use crate::capacity_fixtures::{
     DEPENDENT_FORMULAS, FixtureSpec, RATE_FIELD, SWEEP_DATA_COLUMNS, capacity_document, entity_id,
-    field_id, formula_sweep_document, w1_document,
+    field_id, formula_sweep_document, w1_copy_document, w1_document,
 };
 
 /// Stage A fixtures: 1k, 10k and 100k grid cells at ten columns (about 91%
@@ -1585,7 +1585,7 @@ fn w1_row_maintenance(shape: &str, runtime: &mut DesignerRuntime) {
 
 /// Open a fresh fixture for the copy measurement.
 fn w1_fresh_runtime(shape: &str, serial: u64) -> Option<DesignerRuntime> {
-    let (document, _rows, _columns) = w1_document(shape)?;
+    let (document, _rows, _columns) = w1_copy_document(shape)?;
     let occurrence = format!("00000000-0000-4000-8000-{serial:012x}");
     match DesignerRuntime::from_document_profile_with_opened(document, &occurrence, false) {
         Ok((runtime, _opened)) => Some(runtime),
@@ -1598,43 +1598,32 @@ fn w1_fresh_runtime(shape: &str, serial: u64) -> Option<DesignerRuntime> {
 
 /// Copy one formula from row 0 to every other row of its column, then send
 /// 10,000 Number edits in one `EditCells` request.
+///
+/// Each copy sample starts from a fresh fixture, because after one copy the
+/// column already holds the formula on every row and a second would be a
+/// no-op.
 fn w1_copy_formula(shape: &str) {
     const COPY_TIME_LIMIT_MS: f64 = 300_000.0;
-    let Some(mut runtime) = w1_fresh_runtime(shape, 0x400) else {
+    const MAX_SAMPLES: usize = 3;
+    if shape == "a100" {
+        // Its formula cells are scattered same-row formulas; a column copy is
+        // not the shape's cost. Keep the bulk `EditCells` measurement.
+        let Some(mut runtime) = w1_fresh_runtime(shape, 0x400) else {
+            return;
+        };
+        let rows = w1_rows(shape);
+        w1_line(
+            shape,
+            "copy_formula_skipped",
+            "scattered formula cells; column copy measured on a, b1, b3, c1-*, c2-*, d",
+        );
+        w1_edit_cells(shape, &mut runtime, rows, 3, COPY_TIME_LIMIT_MS);
         return;
-    };
-    let rows = w1_rows(shape);
-    let (source_field, fixed_references) = match shape {
-        "a" => ("c9", Vec::new()),
-        "a100" => (
-            "calc",
-            vec![FieldTarget {
-                entity: entity_id(0).to_string(),
-                field: RATE_FIELD.to_owned(),
-            }],
-        ),
-        "d" => ("c29", Vec::new()),
-        _ => ("c9", Vec::new()),
-    };
-    if shape == "a" {
-        let revision = runtime.observe_occurrence().revision;
-        let response = runtime.handle(DesignerRequest::FormulaUpdate {
-            expected_revision: revision,
-            target: FieldTarget {
-                entity: entity_id(0).to_string(),
-                field: source_field.to_owned(),
-            },
-            source: "[.c0] * [.c3]".to_owned(),
-        });
-        match response {
-            Ok(DesignerResponse::Published(_)) => {}
-            Ok(_) => w1_failure(shape, "copy_seed_formula", "non-published response"),
-            Err(error) => {
-                w1_failure(shape, "copy_seed_formula", error);
-                return;
-            }
-        }
     }
+    let rows = w1_rows(shape);
+    // The copy target starts with row 0's formula and Numbers on every other
+    // row, so the copy writes the shape's full formula count.
+    let source_field = if shape == "d" { "c29" } else { "c9" };
     let destinations = (1..rows)
         .map(|row| FieldTarget {
             entity: entity_id(row).to_string(),
@@ -1643,7 +1632,8 @@ fn w1_copy_formula(shape: &str) {
         .collect::<Vec<_>>();
     let started = Instant::now();
     let mut millis = Vec::new();
-    for sample_index in 0..3 {
+    let mut last_runtime = None;
+    for sample_index in 0..MAX_SAMPLES {
         if sample_index > 0 && started.elapsed().as_secs_f64() * 1_000.0 > COPY_TIME_LIMIT_MS {
             w1_line(
                 shape,
@@ -1651,6 +1641,32 @@ fn w1_copy_formula(shape: &str) {
                 format!("limit {COPY_TIME_LIMIT_MS:.0} ms"),
             );
             break;
+        }
+        let serial = 0x400 + u64::try_from(sample_index).unwrap_or(0);
+        let Some(mut runtime) = w1_fresh_runtime(shape, serial) else {
+            break;
+        };
+        if shape == "a" {
+            let revision = runtime.observe_occurrence().revision;
+            let response = runtime.handle(DesignerRequest::FormulaUpdate {
+                expected_revision: revision,
+                target: FieldTarget {
+                    entity: entity_id(0).to_string(),
+                    field: source_field.to_owned(),
+                },
+                source: "[.c0] * [.c3]".to_owned(),
+            });
+            match response {
+                Ok(DesignerResponse::Published(_)) => {}
+                Ok(_) => {
+                    w1_failure(shape, "copy_seed_formula", "non-published response");
+                    break;
+                }
+                Err(error) => {
+                    w1_failure(shape, "copy_seed_formula", error);
+                    break;
+                }
+            }
         }
         let revision = runtime.observe_occurrence().revision;
         let (response, sample) = observe(|| {
@@ -1661,11 +1677,12 @@ fn w1_copy_formula(shape: &str) {
                     field: source_field.to_owned(),
                 },
                 destinations: destinations.clone(),
-                fixed_references: fixed_references.clone(),
+                fixed_references: Vec::new(),
                 relative_rows: true,
                 relative_columns: false,
             })
         });
+        last_runtime = Some(runtime);
         match response {
             Ok(DesignerResponse::Published(_)) => millis.push(sample.millis),
             Ok(_) => {
@@ -1684,7 +1701,268 @@ fn w1_copy_formula(shape: &str) {
     }
     w1_line(shape, "copy_formula_n", millis.len());
     w1_duration_summary(shape, "copy_formula", &millis);
-    w1_edit_cells(shape, &mut runtime, rows, 3, COPY_TIME_LIMIT_MS);
+    if let Some(mut runtime) = last_runtime {
+        w1_edit_cells(shape, &mut runtime, rows, 3, COPY_TIME_LIMIT_MS);
+    }
+}
+
+/// Query one window at the runtime's current revision.
+fn w1_query_view(
+    runtime: &mut DesignerRuntime,
+    collection: &str,
+    view: &TableView,
+    start: usize,
+    count: usize,
+) -> (Result<DesignerResponse, crate::DesignerError>, Sample) {
+    let revision = runtime.observe_occurrence().revision;
+    observe(|| {
+        runtime.handle(DesignerRequest::QueryTableWindow {
+            expected_revision: revision,
+            collection: collection.to_owned(),
+            view: view.clone(),
+            start,
+            count,
+        })
+    })
+}
+
+/// View kinds measured at size (Sheet S2). `Plain` sorts and filters nothing
+/// and serves as the baseline.
+#[derive(Clone, Copy)]
+enum W1ViewKind {
+    Plain,
+    SortNumber,
+    SortText,
+    SortFormula,
+    FilterNumber,
+    FilterText,
+    SortFilter,
+}
+
+impl W1ViewKind {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Plain => "plain",
+            Self::SortNumber => "sort-number",
+            Self::SortText => "sort-text",
+            Self::SortFormula => "sort-formula",
+            Self::FilterNumber => "filter-number",
+            Self::FilterText => "filter-text",
+            Self::SortFilter => "sort-filter",
+        }
+    }
+
+    fn view(self) -> TableView {
+        let sort_asc = |field: &str| {
+            vec![ViewSortKey {
+                field: field.to_owned(),
+                direction: SortDirection::Asc,
+            }]
+        };
+        let number_over_500 = ViewFilter::NumberCompare {
+            field: "c0".to_owned(),
+            op: ComparisonOperator::Gt,
+            value: 500.0,
+        };
+        match self {
+            Self::Plain => TableView::default(),
+            Self::SortNumber => TableView {
+                sort: sort_asc("c0"),
+                ..TableView::default()
+            },
+            Self::SortText => TableView {
+                sort: sort_asc("c1"),
+                ..TableView::default()
+            },
+            Self::SortFormula => TableView {
+                sort: sort_asc("c9"),
+                ..TableView::default()
+            },
+            Self::FilterNumber => TableView {
+                filters: vec![number_over_500],
+                ..TableView::default()
+            },
+            Self::FilterText => TableView {
+                filters: vec![ViewFilter::TextContains {
+                    field: "c1".to_owned(),
+                    value: "item-1".to_owned(),
+                }],
+                ..TableView::default()
+            },
+            Self::SortFilter => TableView {
+                sort: sort_asc("c1"),
+                filters: vec![number_over_500],
+                ..TableView::default()
+            },
+        }
+    }
+}
+
+/// Sorted and filtered windows at size: per view and round one `c0` edit,
+/// then the query cold (new revision, first read of that view), warm (same
+/// revision again) and deep (start 9000, or the last 100 rows). The edit is
+/// timed separately and never joins a query figure; round 0 is dropped.
+fn w1_views(shape: &str, runtime: &mut DesignerRuntime, rows: usize) {
+    const MIN_ROUNDS: usize = 10;
+    const MAX_ROUNDS: usize = 30;
+    const VIEW_TIME_LIMIT_MS: f64 = 120_000.0;
+    let collection = runtime.default_collection.clone();
+    let mut kinds = vec![
+        W1ViewKind::Plain,
+        W1ViewKind::SortNumber,
+        W1ViewKind::SortText,
+    ];
+    if shape == "b3" {
+        kinds.push(W1ViewKind::SortFormula);
+    }
+    kinds.extend([
+        W1ViewKind::FilterNumber,
+        W1ViewKind::FilterText,
+        W1ViewKind::SortFilter,
+    ]);
+    for kind in kinds {
+        let name = kind.name();
+        let view = kind.view();
+        let started = Instant::now();
+        let mut edits = Vec::new();
+        let mut cold = Vec::new();
+        let mut warm = Vec::new();
+        let mut deep = Vec::new();
+        let mut total_rows = 0;
+        let mut json_bytes = 0;
+        let mut first_cold_peak = None;
+        let mut stopped = false;
+        let mut failure: Option<String> = None;
+        for iteration in 0..MAX_ROUNDS {
+            if iteration >= MIN_ROUNDS
+                && started.elapsed().as_secs_f64() * 1_000.0 > VIEW_TIME_LIMIT_MS
+            {
+                stopped = true;
+                break;
+            }
+            let row = (iteration * 7919) % rows;
+            let revision = runtime.observe_occurrence().revision;
+            #[allow(clippy::cast_precision_loss)]
+            let input = ScalarEditInput::Number {
+                input: format!("{}", 2_000.0 + iteration as f64),
+            };
+            let edit_started = Instant::now();
+            let response = runtime.handle(DesignerRequest::EditScalar {
+                expected_revision: revision,
+                target: FieldTarget {
+                    entity: entity_id(row).to_string(),
+                    field: "c0".to_owned(),
+                },
+                input,
+            });
+            let edit_millis = edit_started.elapsed().as_secs_f64() * 1_000.0;
+            match response {
+                Ok(DesignerResponse::Published(_)) => edits.push(edit_millis),
+                Ok(_) => {
+                    failure = Some("handle returned a non-published response".to_owned());
+                    break;
+                }
+                Err(error) => {
+                    failure = Some(format!("{error}"));
+                    break;
+                }
+            }
+            let (response, sample) = w1_query_view(runtime, &collection, &view, 0, 100);
+            match response {
+                Ok(DesignerResponse::TableWindow(window)) => {
+                    total_rows = window.total_rows;
+                    json_bytes = serde_json::to_vec(&window).map_or(0, |bytes| bytes.len());
+                    if iteration == 0 {
+                        first_cold_peak = sample.peak_delta_bytes;
+                    }
+                    if iteration > 0 {
+                        cold.push(sample.millis);
+                    }
+                }
+                Ok(_) => {
+                    failure = Some("cold query returned a non-window response".to_owned());
+                    break;
+                }
+                Err(error) => {
+                    failure = Some(format!("cold: {error}"));
+                    break;
+                }
+            }
+            let (response, sample) = w1_query_view(runtime, &collection, &view, 0, 100);
+            match response {
+                Ok(DesignerResponse::TableWindow(_)) => {
+                    if iteration > 0 {
+                        warm.push(sample.millis);
+                    }
+                }
+                Ok(_) => {
+                    failure = Some("warm query returned a non-window response".to_owned());
+                    break;
+                }
+                Err(error) => {
+                    failure = Some(format!("warm: {error}"));
+                    break;
+                }
+            }
+            let deep_start = if total_rows > 9_100 {
+                9_000
+            } else {
+                total_rows.saturating_sub(100)
+            };
+            let (response, sample) = w1_query_view(runtime, &collection, &view, deep_start, 100);
+            match response {
+                Ok(DesignerResponse::TableWindow(_)) => {
+                    if iteration > 0 {
+                        deep.push(sample.millis);
+                    }
+                }
+                Ok(_) => {
+                    failure = Some("deep query returned a non-window response".to_owned());
+                    break;
+                }
+                Err(error) => {
+                    failure = Some(format!("deep: {error}"));
+                    break;
+                }
+            }
+        }
+        if let Some(message) = failure {
+            w1_failure(shape, &format!("view-{name}"), message);
+            continue;
+        }
+        if stopped {
+            w1_line(
+                shape,
+                &format!("view-{name}-stopped"),
+                format!("limit {VIEW_TIME_LIMIT_MS:.0} ms"),
+            );
+        }
+        w1_line(
+            shape,
+            &format!("view-{name}-peak_delta_bytes"),
+            w1_optional(first_cold_peak),
+        );
+        if cold.is_empty() {
+            continue;
+        }
+        w1_line(
+            shape,
+            &format!("view-{name}-edit_median_ms"),
+            format!("{:.3}", median(edits)),
+        );
+        w1_line(
+            shape,
+            &format!("view-{name}"),
+            format!(
+                "cold={:.3},cold_p95={:.3},warm={:.3},deep={:.3},n={},total_rows={total_rows},json_bytes={json_bytes}",
+                median(cold.clone()),
+                w1_percentile(&cold, 95.0),
+                median(warm),
+                median(deep),
+                cold.len()
+            ),
+        );
+    }
 }
 
 fn w1_rows(shape: &str) -> usize {
@@ -1834,6 +2112,10 @@ fn w1_long_run(shape: &str, runtime: &mut DesignerRuntime, rows: usize) {
 #[allow(clippy::too_many_lines)] // One linear measurement script reads best in one place.
 fn capacity_w1_shape() {
     let shape = std::env::var("W1_SHAPE").expect("W1_SHAPE must name one shape");
+    // Every timed edit skips the request-time admission preflight; phase 5a
+    // turns it back on for one comparison.
+    instrumentation::set_skip_preflight(true);
+    let views_only = std::env::var("W1_VIEW").is_ok_and(|value| value == "1");
     if let Some(mib) = w1_mem_total_mib() {
         w1_line(&shape, "mem_total_mib", mib);
     }
@@ -1983,103 +2265,110 @@ fn capacity_w1_shape() {
 
     // 5. Scalar edits.
     if let Some(runtime) = &mut runtime {
-        match shape.as_str() {
-            "a" => {
+        if views_only {
+            // 10. Sorted and filtered windows at size; phases 5 to 9 are out.
+            w1_views(&shape, runtime, rows);
+        } else {
+            match shape.as_str() {
+                "a" => {
+                    w1_scalar_edits(
+                        &shape,
+                        "edit",
+                        runtime,
+                        rows,
+                        "c0",
+                        false,
+                        W1Input::Number,
+                        300,
+                        300_000.0,
+                    );
+                }
+                "a100" => {
+                    w1_scalar_edits(
+                        &shape,
+                        "edit",
+                        runtime,
+                        rows,
+                        RATE_FIELD,
+                        true,
+                        W1Input::Number,
+                        300,
+                        300_000.0,
+                    );
+                }
+                "b1" | "b3" | "d" => {
+                    w1_scalar_edits(
+                        &shape,
+                        "edit",
+                        runtime,
+                        rows,
+                        "c0",
+                        false,
+                        W1Input::Number,
+                        300,
+                        300_000.0,
+                    );
+                }
+                shape if shape.starts_with("c1-") || shape.starts_with("c2-") => {
+                    w1_scalar_edits(
+                        &shape,
+                        "edit_unrelated",
+                        runtime,
+                        rows,
+                        "c1",
+                        false,
+                        W1Input::Text,
+                        300,
+                        180_000.0,
+                    );
+                    w1_scalar_edits(
+                        &shape,
+                        "edit_column",
+                        runtime,
+                        rows,
+                        "c0",
+                        false,
+                        W1Input::Number,
+                        300,
+                        180_000.0,
+                    );
+                }
+                _ => {}
+            }
+            // 5a. Preflight ON, for the old table's comparison shapes.
+            if shape == "a" || shape == "a100" {
+                instrumentation::set_skip_preflight(false);
+                let field = if shape == "a100" { RATE_FIELD } else { "c0" };
                 w1_scalar_edits(
                     &shape,
-                    "edit",
+                    "edit_preflight_on",
                     runtime,
                     rows,
-                    "c0",
-                    false,
+                    field,
+                    shape == "a100",
                     W1Input::Number,
-                    300,
+                    20,
                     300_000.0,
                 );
+                instrumentation::set_skip_preflight(true);
             }
-            "a100" => {
-                w1_scalar_edits(
-                    &shape,
-                    "edit",
-                    runtime,
-                    rows,
-                    RATE_FIELD,
-                    true,
-                    W1Input::Number,
-                    300,
-                    300_000.0,
-                );
-            }
-            "b1" | "b3" | "d" => {
-                w1_scalar_edits(
-                    &shape,
-                    "edit",
-                    runtime,
-                    rows,
-                    "c0",
-                    false,
-                    W1Input::Number,
-                    300,
-                    300_000.0,
-                );
-            }
-            shape if shape.starts_with("c1-") || shape.starts_with("c2-") => {
-                w1_scalar_edits(
-                    &shape,
-                    "edit_unrelated",
-                    runtime,
-                    rows,
-                    "c1",
-                    false,
-                    W1Input::Text,
-                    300,
-                    180_000.0,
-                );
-                w1_scalar_edits(
-                    &shape,
-                    "edit_column",
-                    runtime,
-                    rows,
-                    "c0",
-                    false,
-                    W1Input::Number,
-                    300,
-                    180_000.0,
-                );
-            }
-            _ => {}
-        }
-        // 5a. Preflight ON, for the old table's comparison shapes.
-        if shape == "a" || shape == "a100" {
-            instrumentation::set_skip_preflight(false);
-            let field = if shape == "a100" { RATE_FIELD } else { "c0" };
-            w1_scalar_edits(
-                &shape,
-                "edit_preflight_on",
-                runtime,
-                rows,
-                field,
-                shape == "a100",
-                W1Input::Number,
-                20,
-                300_000.0,
-            );
-            instrumentation::set_skip_preflight(true);
-        }
 
-        // 6. Row maintenance.
-        w1_row_maintenance(&shape, runtime);
+            // 6. Row maintenance.
+            w1_row_maintenance(&shape, runtime);
 
-        // 8. Save and reopen.
-        w1_save_and_reopen(&shape, runtime);
+            // 8. Save and reopen.
+            w1_save_and_reopen(&shape, runtime);
 
-        // 9. Long run on a and b3.
-        if shape == "a" || shape == "b3" {
-            w1_long_run(&shape, runtime, rows);
+            // 9. Long run on a and b3.
+            if shape == "a" || shape == "b3" {
+                w1_long_run(&shape, runtime, rows);
+            }
         }
     }
 
     // 7. Copy formula and one bulk EditCells on a fresh runtime.
     drop(runtime);
-    w1_copy_formula(&shape);
+    if !views_only {
+        w1_copy_formula(&shape);
+    }
 }
