@@ -693,6 +693,93 @@ pub(crate) fn validated_calculation_and_report(
     Ok((report, calculation))
 }
 
+/// The verdict [`validate`] would give for a prepared candidate.
+#[derive(Debug)]
+pub enum PreparedVerdict<'evaluation> {
+    /// The candidate is accepted.
+    Valid,
+    /// The candidate's semantic report has diagnostics.
+    InvalidDocument {
+        report: &'evaluation ValidationReport,
+    },
+    /// `validate` refuses before the semantic report: the candidate's saved
+    /// keyed grouped-sum definitions are structurally invalid.
+    InvalidDefinitions,
+}
+
+/// One candidate evaluated once, paired with the base occurrence's retained
+/// calculation so a proposal can reuse both instead of recalculating either.
+///
+/// Only crate-internal callers construct this; its fields are trusted engine
+/// state, not a cache-key, serialization, or transport contract.
+#[derive(Debug)]
+pub struct PreparedEvaluation {
+    base_revision: patch_lifecycle::SemanticRevision,
+    candidate: Document,
+    report: ValidationReport,
+    calculation: Option<Calculation>,
+    base_calculation: Option<Calculation>,
+    definitions_invalid: bool,
+}
+
+impl PreparedEvaluation {
+    pub(crate) fn new(
+        base_revision: patch_lifecycle::SemanticRevision,
+        candidate: Document,
+        report: ValidationReport,
+        calculation: Option<Calculation>,
+        base_calculation: Option<Calculation>,
+    ) -> Self {
+        let definitions_invalid = validate_keyed_grouped_sum_definitions(&candidate).is_err();
+        Self {
+            base_revision,
+            candidate,
+            report,
+            calculation,
+            base_calculation,
+            definitions_invalid,
+        }
+    }
+
+    /// The base revision this evaluation was prepared against.
+    #[must_use]
+    pub fn base_revision(&self) -> &patch_lifecycle::SemanticRevision {
+        &self.base_revision
+    }
+
+    /// The evaluated candidate.
+    #[must_use]
+    pub fn document(&self) -> &Document {
+        &self.candidate
+    }
+
+    /// The verdict [`validate`] would give for this candidate.
+    #[must_use]
+    pub fn verdict(&self) -> PreparedVerdict<'_> {
+        if self.definitions_invalid {
+            PreparedVerdict::InvalidDefinitions
+        } else if self.calculation.is_none() {
+            PreparedVerdict::InvalidDocument {
+                report: &self.report,
+            }
+        } else {
+            PreparedVerdict::Valid
+        }
+    }
+
+    pub(crate) fn report(&self) -> &ValidationReport {
+        &self.report
+    }
+
+    pub(crate) fn calculation(&self) -> Option<&Calculation> {
+        self.calculation.as_ref()
+    }
+
+    pub(crate) fn base_calculation(&self) -> Option<&Calculation> {
+        self.base_calculation.as_ref()
+    }
+}
+
 /// Calculate every numeric field and project it through current human keys.
 ///
 /// # Errors
@@ -2123,33 +2210,102 @@ pub(crate) fn formula_restore_candidate(
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
-    finalize_edit_with_validation(document, edited).map(|(preview, _report)| preview)
+    finalize_edit_with_validation(document, edited, None).map(|(preview, _report)| preview)
 }
 
 /// Finalize one edited candidate, returning its authoritative report too.
 ///
 /// The candidate is validated and calculated once; the base is calculated once
-/// and the semantic diff reuses both calculations.
+/// and the semantic diff reuses both calculations. A caller-prepared
+/// evaluation replaces those two calculations only for the exact candidate and
+/// revision it was prepared for; anything else takes today's path unchanged.
 pub(crate) fn finalize_edit_with_validation(
     document: &Document,
     edited: Document,
+    prepared: Option<&PreparedEvaluation>,
 ) -> Result<(EditPreview, ValidationReport), WorkspaceError> {
-    let (report, calculation) = semantic_validation(&edited);
-    let Some(calculation) = calculation else {
-        return Err(invalid_document(report, ValidationRole::Candidate));
+    let prepared = prepared.filter(|prepared| prepared.document() == &edited);
+    let fallback;
+    let (report, calculation) = if let Some(prepared) = prepared {
+        // The prepared calculation is `None` exactly when the candidate's
+        // report is invalid, as `semantic_validation` decides it.
+        if let Some(calculation) = prepared.calculation() {
+            (prepared.report(), calculation)
+        } else {
+            return Err(invalid_document(
+                prepared.report().clone(),
+                ValidationRole::Candidate,
+            ));
+        }
+    } else {
+        fallback = semantic_validation(&edited);
+        if let Some(calculation) = fallback.1.as_ref() {
+            (&fallback.0, calculation)
+        } else {
+            return Err(invalid_document(
+                fallback.0.clone(),
+                ValidationRole::Candidate,
+            ));
+        }
     };
     preflight_formula_projections(&edited)?;
     tachiko_diff_engine::require_diff_supported(document, &edited)?;
-    let base_calculation = calculate(document)
-        .map_err(|source| WorkspaceError::Diff(DiffError::BeforeCalculation(source)))?;
-    let semantic_diff = diff_with_calculations(document, &edited, &base_calculation, &calculation)?;
+    let calculated_base;
+    let base_calculation =
+        if let Some(calculation) = prepared.and_then(PreparedEvaluation::base_calculation) {
+            // The base revision's retained outcome was complete, so it needs no
+            // recalculation.
+            calculation
+        } else {
+            // A failed or absent base takes today's path and its
+            // `DiffError::BeforeCalculation`.
+            calculated_base = calculate(document)
+                .map_err(|source| WorkspaceError::Diff(DiffError::BeforeCalculation(source)))?;
+            #[cfg(test)]
+            evaluation_counters::record_base_calculation();
+            &calculated_base
+        };
+    let semantic_diff = diff_with_calculations(document, &edited, base_calculation, calculation)?;
     Ok((
         EditPreview {
             document: edited,
             diff: semantic_diff,
         },
-        report,
+        report.clone(),
     ))
+}
+
+/// Test-only counts of the document calculations one edit performs. They are
+/// acceptance instruments for "one edit calculates each document once", not a
+/// runtime measurement surface.
+#[cfg(test)]
+pub(crate) mod evaluation_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static CANDIDATE_CALCULATIONS: Cell<usize> = const { Cell::new(0) };
+        static BASE_CALCULATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        CANDIDATE_CALCULATIONS.with(|count| count.set(0));
+        BASE_CALCULATIONS.with(|count| count.set(0));
+    }
+
+    pub(crate) fn record_candidate_calculation() {
+        CANDIDATE_CALCULATIONS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn record_base_calculation() {
+        BASE_CALCULATIONS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn counts() -> (usize, usize) {
+        (
+            CANDIDATE_CALCULATIONS.with(Cell::get),
+            BASE_CALCULATIONS.with(Cell::get),
+        )
+    }
 }
 
 /// Build the authoritative full semantic validation report.
@@ -2159,6 +2315,8 @@ pub fn validation_report(document: &Document) -> ValidationReport {
 }
 
 fn semantic_validation(document: &Document) -> (ValidationReport, Option<Calculation>) {
+    #[cfg(test)]
+    evaluation_counters::record_candidate_calculation();
     let calculation_outcome = calculate_complete(document);
     let report = validation_report_for_calculation(document, &calculation_outcome);
     let calculation = match calculation_outcome {

@@ -27,8 +27,9 @@ use thiserror::Error;
 
 use super::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
-    apply_field_value_candidate, finalize_edit_with_validation, unset_field_candidate,
+    FieldRef, FieldType, Number, PreparedEvaluation, SchemaId, SemanticChange, ValidationReport,
+    Value, WorkspaceError, apply_field_value_candidate, finalize_edit_with_validation,
+    unset_field_candidate,
 };
 
 #[cfg(test)]
@@ -1448,7 +1449,6 @@ impl PatchLifecycle {
     ///
     /// Returns stale, command, validation, identity, principal, or Propose
     /// authorization failure without semantic publication.
-    #[allow(clippy::too_many_lines)] // Proposal checks stay ordered at one admission boundary.
     pub fn propose(
         &mut self,
         document_scope: &DocumentScopeId,
@@ -1457,6 +1457,56 @@ impl PatchLifecycle {
         request: ProposalRequest,
         now: TrustedInstant,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
+        self.propose_inner(
+            document_scope,
+            document,
+            current_revision,
+            request,
+            now,
+            None,
+        )
+    }
+
+    /// Issue one proposal reusing a caller-prepared candidate evaluation.
+    ///
+    /// The prepared evaluation replaces this proposal's candidate validation,
+    /// calculation and base calculation only when it names the same base
+    /// revision and evaluates the exact planned candidate; every other case
+    /// takes the same path as [`Self::propose`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::propose`].
+    pub fn propose_prepared(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        document: &Document,
+        current_revision: &SemanticRevision,
+        request: ProposalRequest,
+        now: TrustedInstant,
+        prepared: Option<&PreparedEvaluation>,
+    ) -> Result<SemanticPatch, PatchLifecycleError> {
+        self.propose_inner(
+            document_scope,
+            document,
+            current_revision,
+            request,
+            now,
+            prepared,
+        )
+    }
+
+    #[allow(clippy::too_many_lines)] // Proposal checks stay ordered at one admission boundary.
+    fn propose_inner(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        document: &Document,
+        current_revision: &SemanticRevision,
+        request: ProposalRequest,
+        now: TrustedInstant,
+        prepared: Option<&PreparedEvaluation>,
+    ) -> Result<SemanticPatch, PatchLifecycleError> {
+        let prepared = prepared.filter(|prepared| prepared.base_revision() == current_revision);
         self.require_document(document_scope, document)?;
         if self.proposals.contains_key(&request.id) {
             return Err(PatchLifecycleError::ProposalIdAlreadyExists);
@@ -1549,6 +1599,7 @@ impl PatchLifecycle {
             candidate,
             patch.exact_change.body(),
             provisional_footprint.associated_write_requirements.clone(),
+            prepared,
         ) {
             Ok(evaluated) => evaluated,
             Err(error) => {
@@ -3602,6 +3653,7 @@ impl PatchLifecycle {
         candidate: Document,
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
+        prepared: Option<&PreparedEvaluation>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
         #[cfg(test)]
         self.evaluations.set(self.evaluations.get() + 1);
@@ -3611,6 +3663,7 @@ impl PatchLifecycle {
                 candidate,
                 body,
                 associated_write_requirements,
+                prepared,
             );
         }
         reject_legacy_number_formats(base, &candidate, body)?;
@@ -3663,17 +3716,18 @@ impl PatchLifecycle {
                 },
             });
         }
-        let (edit, validation_report) = match finalize_edit_with_validation(base, candidate) {
-            Ok(result) => result,
-            Err(WorkspaceError::InvalidDocument { report, .. }) => {
-                return Err(PatchLifecycleError::ValidationFailed { report });
-            }
-            Err(source) => {
-                return Err(PatchLifecycleError::CommandRejected {
-                    source: Box::new(source),
-                });
-            }
-        };
+        let (edit, validation_report) =
+            match finalize_edit_with_validation(base, candidate, prepared) {
+                Ok(result) => result,
+                Err(WorkspaceError::InvalidDocument { report, .. }) => {
+                    return Err(PatchLifecycleError::ValidationFailed { report });
+                }
+                Err(source) => {
+                    return Err(PatchLifecycleError::CommandRejected {
+                        source: Box::new(source),
+                    });
+                }
+            };
         let semantic_changes = edit.diff.changes().to_vec();
         let formula_impacts = formula_impacts(&semantic_changes);
         let disclosure_requirements =
@@ -3696,6 +3750,9 @@ impl PatchLifecycle {
         candidate: Document,
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
+        // V2 evidence is not the hot one-edit path this evaluation prepares for,
+        // so it deliberately keeps its own validation and calculation.
+        _prepared: Option<&PreparedEvaluation>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
         let (_, base_calculation) = Self::validate_and_preflight(base)?;
         let (validation_report, candidate_calculation) = Self::validate_and_preflight(&candidate)?;
@@ -3746,7 +3803,7 @@ impl PatchLifecycle {
             .map_err(|source| PatchLifecycleError::CommandRejected {
                 source: Box::new(source),
             })?;
-        self.finalize_evaluation(document, candidate, patch.exact_change.body(), writes)
+        self.finalize_evaluation(document, candidate, patch.exact_change.body(), writes, None)
     }
 
     /// Evaluate a patch, reusing the retained result only for the exact same
@@ -5630,7 +5687,7 @@ mod tests {
                 let (candidate, writes) = lifecycle.plan_commands(&document, &body).unwrap();
                 assert_eq!(candidate.entities, document.entities);
                 let error = lifecycle
-                    .finalize_evaluation(&document, candidate, &body, writes)
+                    .finalize_evaluation(&document, candidate, &body, writes, None)
                     .unwrap_err();
                 let PatchLifecycleError::CommandRejected { source } = error else {
                     panic!("expected command rejection, got {error:?}");
