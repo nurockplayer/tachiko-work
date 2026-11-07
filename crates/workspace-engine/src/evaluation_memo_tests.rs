@@ -3,11 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     AssociatedWriteRequirement, AuthorizationAction, Document, DocumentScopeId, Entity,
-    FieldConstraint, FieldDefinition, FieldRef, FieldType, Grant, GrantRequirement, MutationClass,
-    OperationFamily, PatchLifecycle, PatchLifecycleError, PrincipalKind, ProposalId,
-    ScopedSemanticSubject, SemanticCommand, SemanticPatch, SemanticPatchBody,
-    SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
-    TrustedInstant, V2ReceiptEvidence, Value,
+    FieldConstraint, FieldDefinition, FieldRef, FieldType, FormulaUpdateCommand, Grant,
+    GrantRequirement, MutationClass, OperationFamily, PatchLifecycle, PatchLifecycleError,
+    PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticCommand, SemanticPatch,
+    SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
+    SemanticScope, TrustedInstant, V2ReceiptEvidence, Value,
 };
 use crate::{
     Expression, Number, Schema, WorkspaceError, evaluation_counters,
@@ -1237,4 +1237,97 @@ fn unset_keeps_todays_absent_and_required_behaviour() {
         lifecycle.plan_commands(&document, &body).unwrap_err(),
         WorkspaceError::MissingField { .. }
     ));
+}
+
+// --- Formula updates keep the batch state too (#678 stage 4) ---
+
+fn optional_number_field(id: &str) -> FieldDefinition {
+    FieldDefinition {
+        required: false,
+        ..number_field(id)
+    }
+}
+
+/// `formula_document` plus an absent optional Number slot for a restore.
+fn formula_update_document() -> Document {
+    let mut document = formula_document();
+    document
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .insert("spare".into(), optional_number_field("spare"));
+    document
+}
+
+fn formula_update(document: &Document, field: &str, expression: Expression) -> SemanticCommand {
+    SemanticCommand::FormulaUpdate(FormulaUpdateCommand::new(
+        document,
+        FieldRef::new("e1", field),
+        expression,
+    ))
+}
+
+#[test]
+fn a_formula_update_batch_plans_like_one_command_per_proposal() {
+    let document = formula_update_document();
+    let commands = vec![
+        set_value("f", Value::Text("first".into())),
+        // Present Number target.
+        formula_update(
+            &document,
+            "g",
+            Expression::Number(Number::new(2.0).unwrap()),
+        ),
+        // Present formula target.
+        formula_update(
+            &document,
+            "h",
+            Expression::Number(Number::new(7.0).unwrap()),
+        ),
+        // Absent optional Number target.
+        formula_update(
+            &document,
+            "spare",
+            Expression::Number(Number::new(4.0).unwrap()),
+        ),
+        set_value("f", Value::Text("second".into())),
+        unset("spare"),
+        // Absent again after the unset.
+        formula_update(
+            &document,
+            "spare",
+            Expression::Number(Number::new(5.0).unwrap()),
+        ),
+    ];
+
+    assert_batch_plans_like_one_at_a_time(&document, &commands);
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(commands).unwrap();
+    let (candidate, _) = lifecycle.plan_commands(&document, &body).unwrap();
+    assert_eq!(
+        candidate.entities["e1"].fields["f"],
+        Value::Text("second".into())
+    );
+    assert_eq!(
+        candidate.entities["e1"].fields["spare"],
+        Value::Formula(Expression::Number(Number::new(5.0).unwrap()))
+    );
+}
+
+#[test]
+fn a_later_formula_update_failure_keeps_todays_error() {
+    let document = formula_update_document();
+    let first = set_value("f", Value::Text("first".into()));
+    for (field, expression) in [
+        // A formula over a Text field.
+        ("f", Expression::Number(Number::new(2.0).unwrap())),
+        // A formula over the structure limit.
+        ("g", oversized_formula()),
+        // A reference nothing resolves.
+        ("g", Expression::Reference(FieldRef::new("e1", "missing"))),
+    ] {
+        let commands = vec![first.clone(), formula_update(&document, field, expression)];
+        assert_batch_plans_like_one_at_a_time(&document, &commands);
+    }
 }
