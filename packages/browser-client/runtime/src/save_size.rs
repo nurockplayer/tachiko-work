@@ -10,14 +10,11 @@
 use tachiko_storage::encode_presentation;
 use tachiko_workspace_engine::{
     ColumnRef, ComparisonOperator, ConditionalAggregate, Document, Entity, Expression,
-    FieldConstraint, FieldDefinition, FieldType, KeyedGroupedSumDefinition, NumberFormat,
+    FieldConstraint, FieldDefinition, FieldType, KeyedGroupedSumDefinition, Number, NumberFormat,
     NumberFormatKind, PresentationStore, Schema, Value,
 };
 
 use crate::DesignerError;
-
-/// Longest shortest-round-trip form `ryu_js` writes for one finite `f64`.
-const NUMBER_BYTES: usize = 24;
 
 /// Every non-payload byte one save adds around the file bodies. The larger,
 /// portable ZIP framing is used so one bound covers both exports: 21 entries
@@ -110,8 +107,24 @@ fn pretty_literal(indent: usize, name: &str, value_bytes: usize, comma: bool) ->
     pretty_prefix(indent, name) + value_bytes + usize::from(comma) + 1
 }
 
-fn pretty_number(indent: usize, name: &str, comma: bool) -> usize {
-    pretty_prefix(indent, name) + NUMBER_BYTES + usize::from(comma) + 1
+/// Bytes `ryu_js` writes for one number, the formatter `v3.rs` uses. `Number`
+/// already rejects non-finite values and normalizes either zero sign, which is
+/// exactly the writer's normalization.
+fn number_bytes(number: Number) -> usize {
+    number_text_bytes(number.get())
+}
+
+/// The writer's `format_finite` call on a value that is already a number
+/// parameter, such as `round` digits.
+fn number_text_bytes(value: f64) -> usize {
+    let mut buffer = ryu_js::Buffer::new();
+    buffer
+        .format_finite(if value == 0.0 { 0.0 } else { value })
+        .len()
+}
+
+fn pretty_number(indent: usize, name: &str, number: Number, comma: bool) -> usize {
+    pretty_prefix(indent, name) + number_bytes(number) + usize::from(comma) + 1
 }
 
 fn compact_prefix(name: &str) -> usize {
@@ -126,8 +139,8 @@ fn compact_literal(name: &str, value_bytes: usize, comma: bool) -> usize {
     compact_prefix(name) + value_bytes + usize::from(comma)
 }
 
-fn compact_number(name: &str, comma: bool) -> usize {
-    compact_prefix(name) + NUMBER_BYTES + usize::from(comma)
+fn compact_number(name: &str, number: Number, comma: bool) -> usize {
+    compact_prefix(name) + number_bytes(number) + usize::from(comma)
 }
 
 fn manifest_bytes(document: &Document) -> usize {
@@ -269,10 +282,10 @@ fn constraint_bytes(constraint: &FieldConstraint, indent: usize) -> usize {
                             + 2 // "]\n"
                     }
             }
-            FieldConstraint::NumberInclusiveRange { min: _, max: _ } => {
+            FieldConstraint::NumberInclusiveRange { min, max } => {
                 pretty_string(indent + 1, "type", "number_inclusive_range", true)
-                    + pretty_number(indent + 1, "min", true)
-                    + pretty_number(indent + 1, "max", false)
+                    + pretty_number(indent + 1, "min", *min, true)
+                    + pretty_number(indent + 1, "max", *max, false)
             }
         }
         + indent_bytes(indent)
@@ -433,8 +446,10 @@ fn entity_bytes(entity: &Entity) -> usize {
 
 fn value_bytes(value: &Value) -> usize {
     match value {
-        Value::Number(_) => {
-            1 + compact_string("kind", "number", true) + compact_number("value", false) + 1
+        Value::Number(number) => {
+            1 + compact_string("kind", "number", true)
+                + compact_number("value", *number, false)
+                + 1
         }
         Value::Text(text) => {
             1 + compact_string("kind", "text", true) + compact_string("value", text, false) + 1
@@ -498,8 +513,10 @@ fn compare_bytes(operator: ComparisonOperator, left: &Expression, right: &Expres
 #[allow(clippy::too_many_lines)] // One arm per closed-world expression variant keeps the mirror auditable.
 fn expression_bytes(expression: &Expression) -> usize {
     match expression {
-        Expression::Number(_) => {
-            1 + compact_string("op", "number", true) + compact_number("args", false) + 1
+        Expression::Number(number) => {
+            1 + compact_string("op", "number", true)
+                + compact_number("args", *number, false)
+                + 1
         }
         Expression::Reference(reference) => {
             1 + compact_string("op", "reference", true)
@@ -628,7 +645,7 @@ fn expression_bytes(expression: &Expression) -> usize {
                 + expression_bytes(value)
                 + 1
         }
-        Expression::Round { value, digits: _ } => {
+        Expression::Round { value, digits } => {
             1 // "{"
                 + compact_string("op", "round", true)
                 + compact_prefix("args")
@@ -636,7 +653,7 @@ fn expression_bytes(expression: &Expression) -> usize {
                 + compact_prefix("value")
                 + expression_bytes(value)
                 + 1 // ","
-                + compact_number("digits", false)
+                + compact_literal("digits", number_text_bytes(f64::from(*digits)), false)
                 + 2 // "}}"
         }
         Expression::IsBlank(value) => {

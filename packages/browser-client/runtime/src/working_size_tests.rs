@@ -3401,6 +3401,41 @@ fn formats_fixture() -> (Document, PresentationStore) {
     (document, presentation)
 }
 
+/// 2,000 rows pairing cell numbers with formulas whose literals span the
+/// shortest forms `ryu_js` writes, so the bound is checked at save scale too.
+fn scaled_grid() -> Document {
+    let mut document = text_grid(2_000, 2);
+    {
+        let schema = document.schemas.get_mut(&SchemaId::from("grid")).unwrap();
+        for field in ["c0", "c1"] {
+            schema
+                .fields
+                .get_mut(&FieldId::from(field))
+                .unwrap()
+                .field_type = FieldType::Number;
+        }
+    }
+    for row in 0..2_000 {
+        let value = 0.1 + row as f64 * 1.37;
+        let entity = document
+            .entities
+            .get_mut(&EntityId::from(format!("r{row:05}")))
+            .unwrap();
+        entity.fields.insert(
+            FieldId::from("c0"),
+            Value::Number(Number::new(value).unwrap()),
+        );
+        entity.fields.insert(
+            FieldId::from("c1"),
+            Value::Formula(Expression::Add {
+                left: Box::new(Expression::Number(Number::new(value * 1e-7).unwrap())),
+                right: Box::new(Expression::Number(Number::new(1e20 + row as f64).unwrap())),
+            }),
+        );
+    }
+    document
+}
+
 fn bound_fixtures() -> Vec<(&'static str, Document, PresentationStore)> {
     let (formats, presentation) = formats_fixture();
     vec![
@@ -3410,6 +3445,7 @@ fn bound_fixtures() -> Vec<(&'static str, Document, PresentationStore)> {
         ("identities", long_identity_grid(), empty_presentation()),
         ("formats", formats, presentation),
         ("qualification", fixture(), empty_presentation()),
+        ("scaled", scaled_grid(), empty_presentation()),
     ]
 }
 
@@ -3427,7 +3463,7 @@ fn the_saved_bound_is_tight_on_realistic_documents() {
         let (bundle, portable) = real_saves(&document, &presentation);
         let real = bundle.max(portable);
         assert!(
-            bound <= real * 105 / 100 + 64 * 1024,
+            bound <= real * 102 / 100 + 64 * 1024,
             "{name}: bound {bound} is not tight against real save {real}"
         );
     }

@@ -400,6 +400,7 @@ name = "tachiko-designer-runtime"
 version = "0.1.0"
 dependencies = [
  "quick-xml",
+ "ryu-js",
  "serde",
  "serde_json",
  "tachiko-formula-engine",
