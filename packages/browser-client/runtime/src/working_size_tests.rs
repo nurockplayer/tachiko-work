@@ -1,7 +1,7 @@
 //! Acceptance tests for the working-size session profile (#678, stage 2).
 #![allow(clippy::too_many_lines)] // Each test walks one whole acceptance case.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation};
 use tachiko_workspace_engine::{
@@ -1607,7 +1607,7 @@ fn assert_changed_covers(before: &WindowCells, after: &WindowCells, publication:
     for (key, field) in &changed {
         match after.get(key) {
             Some(Some(window_field)) => assert_eq!(
-                field, window_field,
+                *field, window_field,
                 "changed entry {key:?} differs from the window"
             ),
             Some(None) => assert!(
