@@ -8,8 +8,11 @@ use tachiko_formula_engine::{UnboundExpression, parse_expression};
 use tachiko_workspace_engine::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-pub const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
-pub const MAX_EXPANDED_BYTES: usize = 8 * 1024 * 1024;
+// Scratch capacity measurement branch (`scratch/capacity-interop`): these
+// bounds are raised only to observe where a working-size workbook actually
+// binds. The original values were 2 MiB, 8 MiB, 256, 32, 32, 128 and 1,024.
+pub const MAX_SOURCE_BYTES: usize = 512 * 1024 * 1024;
+pub const MAX_EXPANDED_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_ZIP_ENTRIES: usize = 256;
 pub const MAX_SHEETS: usize = crate::capacity::DEFAULT_LIMITS.collections;
 pub const MAX_COLUMNS: usize = crate::capacity::DEFAULT_LIMITS.table_fields;
