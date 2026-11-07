@@ -1447,10 +1447,7 @@ fn redraw_grid() -> Document {
         let mut fields = BTreeMap::from([
             (FieldId::from("value"), Value::Number(value)),
             (FieldId::from("divisor"), Value::Number(divisor)),
-            (
-                FieldId::from("label"),
-                Value::Text(format!("row-{row}")),
-            ),
+            (FieldId::from("label"), Value::Text(format!("row-{row}"))),
             (
                 FieldId::from("first"),
                 Value::Formula(Expression::Multiply {
@@ -1581,7 +1578,11 @@ fn history(runtime: &mut DesignerRuntime, redo: bool) -> PublicationProjection {
 /// Every cell whose projection differs is in `changed`, and every `changed`
 /// entry equals the field the after-window shows (a blank cell appears in the
 /// row's `blank_fields`, so its entry must be `blank`).
-fn assert_changed_covers(before: &WindowCells, after: &WindowCells, publication: &PublicationProjection) {
+fn assert_changed_covers(
+    before: &WindowCells,
+    after: &WindowCells,
+    publication: &PublicationProjection,
+) {
     let changed = publication
         .changed
         .iter()
@@ -1866,7 +1867,9 @@ fn every_field_that_changes_is_in_the_reply() {
     let publication = edited(
         &mut runtime,
         target("r00000", "value"),
-        ScalarEditInput::Number { input: "4.5".into() },
+        ScalarEditInput::Number {
+            input: "4.5".into(),
+        },
     );
     let after = all_cells(&mut runtime);
     assert_changed_covers(&before, &after, &publication);
@@ -1883,11 +1886,7 @@ fn every_field_that_changes_is_in_the_reply() {
 
     // A formula update and its dependents.
     let before = after;
-    let publication = formula_update(
-        &mut runtime,
-        target("r00001", "first"),
-        "[.value] * 3",
-    );
+    let publication = formula_update(&mut runtime, target("r00001", "first"), "[.value] * 3");
     let after = all_cells(&mut runtime);
     assert_changed_covers(&before, &after, &publication);
 
@@ -1910,7 +1909,9 @@ fn changed_cells_carry_the_windows_display_text() {
     let publication = edited(
         &mut runtime,
         target("r00000", "value"),
-        ScalarEditInput::Number { input: "4.5".into() },
+        ScalarEditInput::Number {
+            input: "4.5".into(),
+        },
     );
     let first = publication
         .changed
@@ -2051,7 +2052,7 @@ fn a_removed_rows_cells_are_not_changed_cells() {
         .expect("the new row's cell is a changed cell");
     assert!(matches!(
         inserted_value.stored,
-        Some(StoredValueProjection::Number { value }) if value == 9.0
+        Some(StoredValueProjection::Number { value }) if value.to_bits() == 9.0_f64.to_bits()
     ));
 }
 
@@ -2106,10 +2107,10 @@ fn a_reply_over_the_changed_cell_budget_is_marked_many() {
         other => panic!("expected a publication, got {other:?}"),
     };
     assert!(publication.many, "over-budget changed cells are not listed");
-    assert!(publication.entities.is_empty());
-    assert!(publication.fields.is_empty());
-    assert!(publication.affected_calculations.is_empty());
-    assert!(publication.changed.is_empty());
+    assert_eq!(publication.entities, [] as [String; 0]);
+    assert_eq!(publication.fields, [] as [FieldTarget; 0]);
+    assert_eq!(publication.affected_calculations, [] as [FieldTarget; 0]);
+    assert_eq!(publication.changed, [] as [FieldProjection; 0]);
     let json = serde_json::to_string(&publication).unwrap();
     assert!(!json.contains("\"changed\""), "{json}");
 
@@ -2140,7 +2141,7 @@ fn a_marked_publication_carries_no_changed_cells() {
         ScalarEditInput::Number { input: "7".into() },
     );
     assert!(publication.many);
-    assert!(publication.changed.is_empty());
+    assert_eq!(publication.changed, [] as [FieldProjection; 0]);
     let json = serde_json::to_string(&publication).unwrap();
     assert!(!json.contains("\"changed\""), "{json}");
 }
@@ -2152,23 +2153,26 @@ fn an_ordinary_edit_carries_no_changed_cells() {
     let publication = edited(
         &mut runtime,
         target("r00000", "value"),
-        ScalarEditInput::Number { input: "4.5".into() },
+        ScalarEditInput::Number {
+            input: "4.5".into(),
+        },
     );
-    assert!(publication.changed.is_empty());
+    assert_eq!(publication.changed, [] as [FieldProjection; 0]);
     let json = serde_json::to_string(&DesignerResponse::Published(publication)).unwrap();
     assert!(!json.contains("\"changed\""), "{json}");
 }
 
 #[test]
 fn the_wire_reply_carries_changed_cells() {
-    let mut runtime = Some(
-        DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap(),
-    );
+    let mut runtime =
+        Some(DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap());
     let request = DesignerRequest::EditCells {
         expected_revision: runtime.as_ref().unwrap().current_revision().to_owned(),
         edits: vec![CellEdit {
             target: target("r00000", "value"),
-            input: ScalarEditInput::Number { input: "4.5".into() },
+            input: ScalarEditInput::Number {
+                input: "4.5".into(),
+            },
         }],
     };
     let reply = process_wire_request(&mut runtime, &serde_json::to_vec(&request).unwrap());

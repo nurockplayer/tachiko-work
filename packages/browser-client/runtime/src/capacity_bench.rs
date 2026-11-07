@@ -1109,6 +1109,7 @@ fn qualify_working_size_shape(shape: WqShape) {
     }
 }
 
+#[allow(clippy::too_many_lines)] // One linear per-shape script is easier to audit.
 fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     let name = shape.name();
     // c0 feeds the same-row formula column in the `formulas` shape.
@@ -1198,7 +1199,11 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
         .div_ceil(100)
         .saturating_sub(1);
     wq_print(name, "handle_edit_median_ms", format!("{median:.3}"));
-    wq_print(name, "handle_edit_p95_ms", format!("{:.3}", ordered[p95_index]));
+    wq_print(
+        name,
+        "handle_edit_p95_ms",
+        format!("{:.3}", ordered[p95_index]),
+    );
     wq_print(name, "edit_reply_bytes", largest_reply);
 
     // A full table refuses another row, so removal comes first.

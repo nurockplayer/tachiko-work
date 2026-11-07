@@ -3222,10 +3222,7 @@ impl DesignerRuntime {
     }
 
     #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
-    fn dispatch(
-        &mut self,
-        request: DesignerRequest,
-    ) -> Result<DesignerResponse, DesignerError> {
+    fn dispatch(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
             DesignerRequest::NewTracker { occurrence_id } => {
                 let candidate = Self::tracker(&occurrence_id)?;
@@ -10100,6 +10097,7 @@ fn ensure_formula_reference_profile(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // One linear profile proof is easier to audit.
 fn ensure_static_profile(
     title: &str,
     default_collection: &str,
