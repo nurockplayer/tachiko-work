@@ -9,7 +9,7 @@ use tachiko_semantic_core::{Diagnostic, DiagnosticCode, DiagnosticProvider, Diag
 use super::PortablePackageError;
 use crate::{
     FormatError,
-    roproj::{CanonicalRoProjectV3, ROPROJ_V3_PATHS},
+    roproj::{CanonicalRoProjectV3, ROPROJ_V3_PATHS, ROPROJ_V3_PRESENTATION_PATH},
     strict_json::{FrontendError, inspect, inspect_top_level},
 };
 
@@ -63,6 +63,8 @@ const PACKAGE_PATHS: [&str; 20] = [
     "payload/entities/f.jsonl",
 ];
 const PACKAGE_ENTRY_COUNT: u16 = 20;
+/// Optional payload entry for the ADR-0049 presentation member, last in order.
+const PACKAGE_PRESENTATION_PATH: &str = "payload/presentation.jsonl";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedPortablePackageV1 {
@@ -187,14 +189,18 @@ fn calculate_payload_root<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8]
 pub fn encode(tree: &CanonicalRoProjectV3) -> Result<Vec<u8>, FormatError> {
     let root = payload_root(tree);
     let manifest = render_manifest(&root);
-    let mut entries = Vec::with_capacity(PACKAGE_PATHS.len());
+    let mut entries = Vec::with_capacity(tree.files().len() + 1);
     entries.push(Entry {
         name: PACKAGE_PATHS[0],
         body: manifest.as_bytes(),
     });
     for (index, file) in tree.files().iter().enumerate() {
+        let name = PACKAGE_PATHS
+            .get(index + 1)
+            .copied()
+            .unwrap_or(PACKAGE_PRESENTATION_PATH);
         entries.push(Entry {
-            name: PACKAGE_PATHS[index + 1],
+            name,
             body: file.bytes(),
         });
     }
@@ -218,8 +224,14 @@ pub fn decode(source: &[u8]) -> Result<VerifiedPortablePackageV1, FormatError> {
         .local_records
         .iter()
         .skip(1)
-        .zip(ROPROJ_V3_PATHS)
-        .map(|(record, path)| (path.to_owned(), record.data.to_vec()))
+        .enumerate()
+        .map(|(index, record)| {
+            let path = ROPROJ_V3_PATHS
+                .get(index)
+                .copied()
+                .unwrap_or(ROPROJ_V3_PRESENTATION_PATH);
+            (path.to_owned(), record.data.to_vec())
+        })
         .collect::<Vec<_>>();
     let found_root = payload_root_from_files(&files);
     if found_root != manifest.payload_root {
@@ -880,16 +892,20 @@ fn validate_canonical_profile(container: &Container<'_>) -> Result<(), PortableP
                 .to_owned(),
         });
     }
-    if local_names.as_slice() != PACKAGE_PATHS || central_names.as_slice() != PACKAGE_PATHS {
+    if local_names != central_names {
+        return noncanonical_container("local and central entry order disagree");
+    }
+    if !canonical_entry_order(&local_names) {
         return noncanonical_container("package entry order is not canonical");
     }
-    if container.end.entries_on_disk != PACKAGE_ENTRY_COUNT
-        || container.end.total_entries != PACKAGE_ENTRY_COUNT
-    {
-        return noncanonical_container("end record does not describe 20 canonical entries");
+    let entry_count = u16::try_from(local_names.len()).expect("package entry count fits u16");
+    if container.end.entries_on_disk != entry_count || container.end.total_entries != entry_count {
+        return noncanonical_container(&format!(
+            "end record does not describe {entry_count} canonical entries"
+        ));
     }
 
-    for (index, expected_name) in PACKAGE_PATHS.iter().enumerate() {
+    for (index, expected_name) in local_names.iter().enumerate() {
         let local = &container.local_records[index];
         let central = &container.central_records[index];
         if local.version_needed != ZIP_VERSION_NEEDED
@@ -961,10 +977,34 @@ fn decode_names<'a>(
 }
 
 fn same_name_set(names: &[&str]) -> bool {
-    names.len() == PACKAGE_PATHS.len()
-        && PACKAGE_PATHS
+    let required = usize::from(PACKAGE_ENTRY_COUNT);
+    let required_names_present = || {
+        PACKAGE_PATHS
             .iter()
             .all(|expected| names.iter().filter(|name| *name == expected).count() == 1)
+    };
+    match names.len() {
+        len if len == required => required_names_present(),
+        len if len == required + 1 => {
+            required_names_present()
+                && names
+                    .iter()
+                    .filter(|name| **name == PACKAGE_PRESENTATION_PATH)
+                    .count()
+                    == 1
+        }
+        _ => false,
+    }
+}
+
+fn canonical_entry_order(names: &[&str]) -> bool {
+    let required = usize::from(PACKAGE_ENTRY_COUNT);
+    if names.len() == required {
+        return names == PACKAGE_PATHS.as_slice();
+    }
+    names.len() == required + 1
+        && &names[..required] == PACKAGE_PATHS.as_slice()
+        && names[required] == PACKAGE_PRESENTATION_PATH
 }
 
 fn payload_root_from_files(files: &[(String, Vec<u8>)]) -> [u8; 32] {

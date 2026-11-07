@@ -39,6 +39,7 @@ use super::{
     designer_lifecycle, document_scope, encode_project_bundle, ensure_projection_size_with_limit,
     formula_sources, open_project, select_default_collection,
 };
+use crate::capacity::SessionProfile;
 use crate::capacity_fixtures::{
     DEPENDENT_FORMULAS, FixtureSpec, RATE_FIELD, SWEEP_DATA_COLUMNS, capacity_document, entity_id,
     field_id, formula_sweep_document, w1_copy_document, w1_document,
@@ -237,7 +238,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
     let capacity_usage = crate::CapacityUsage::measure(&document);
     let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
     DesignerRuntime {
-        text_capacity: false,
+        profile: SessionProfile::Ordinary,
         capacity_usage,
         title,
         document_scope,

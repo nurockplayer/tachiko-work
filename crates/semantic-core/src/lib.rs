@@ -4,9 +4,11 @@ mod address;
 mod criterion;
 mod diagnostic;
 mod display_name;
+mod input_classification;
 pub mod instrumentation;
 mod keyed_grouped_sum;
 mod model;
+mod presentation;
 mod validation;
 
 pub use address::{AddressIndex, AddressIndexError};
@@ -22,6 +24,7 @@ pub use display_name::{
     DisplayNameFailure, MAX_DISPLAY_NAME_BYTES, display_name_failures, is_display_name_whitespace,
     trim_display_name,
 };
+pub use input_classification::{ClassifiedDateDisplay, ClassifiedInput, DateOrder, classify_input};
 pub use keyed_grouped_sum::{
     KeyedGroupedSumBindingRole, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
     KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
@@ -33,6 +36,11 @@ pub use model::{
     FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     FormulaExpressionType, InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES,
     Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey, Value,
+};
+pub use presentation::{
+    BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate,
+    MAX_RULES_PER_TABLE, MAX_STYLES, PresentationError, PresentationStore, RuleId, StyleId,
+    TablePresentation, validate_presentation,
 };
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;

@@ -1,4 +1,6 @@
-use super::capacity::{CapacityLimit, CapacityLimits, DEFAULT_LIMITS, check_document};
+use super::capacity::{
+    CapacityLimit, CapacityLimits, DEFAULT_LIMITS, SessionProfile, check_document,
+};
 use super::capacity_fixtures::{FixtureSpec, capacity_document};
 use super::{
     CapacityProjection, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
@@ -394,7 +396,7 @@ fn csv_import_admits_8406_rows_and_refuses_8407_atomically() {
     };
     let (imported, _) =
         import_workbook(&source, &selection, "00000000-0000-4000-8000-000000000535").unwrap();
-    assert!(imported.text_capacity);
+    assert_eq!(imported.profile, SessionProfile::TextCapacity);
     assert_eq!(imported.capacity_usage.total_entities, maximum);
     assert_eq!(imported.capacity_usage.populated_cells, maximum);
 
@@ -680,10 +682,10 @@ fn text_capacity_usage_refreshes_after_clear_undo_and_redo() {
     let mut runtime = DesignerRuntime::from_document_profile(
         document,
         "00000000-0000-4000-8000-000000000534",
-        true,
+        SessionProfile::TextCapacity,
     )
     .unwrap();
-    assert!(runtime.text_capacity);
+    assert_eq!(runtime.profile, SessionProfile::TextCapacity);
     let row = runtime.query_table(&collection).unwrap().rows[0].id.clone();
     let target = super::FieldTarget {
         entity: row,
@@ -759,7 +761,7 @@ fn text_capacity_insertion_honors_the_reported_row_limit() {
     };
     let (mut runtime, imported) =
         import_workbook(&source, &selection, "00000000-0000-4000-8000-000000000538").unwrap();
-    assert!(runtime.text_capacity);
+    assert_eq!(runtime.profile, SessionProfile::TextCapacity);
     let capacity = match runtime
         .handle(DesignerRequest::QueryCapacity {
             expected_revision: None,

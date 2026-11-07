@@ -153,6 +153,7 @@ try {
     const exportOperation = format => ({ type: "export", format, expected_revision: revision, metadata,
       collection: metadata.sheets[0].schema_id });
     // queryTable refuses above 1,000 rows; read the complete table by window.
+    // A window alone reports `position`, so drop it to compare with an opened table.
     function completeTable() {
       const rows = [];
       let columns;
@@ -160,7 +161,7 @@ try {
         const window = okay(ordinary({ type: "query_table_window", expected_revision: revision,
           collection, view: {}, start: rows.length, count: 64 }), "table_window");
         columns ??= window.columns;
-        rows.push(...window.rows);
+        rows.push(...window.rows.map(({ position, ...row }) => row));
         if (window.rows.length === 0 || rows.length >= window.total_rows) return { columns, rows };
       }
     }

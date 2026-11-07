@@ -4,6 +4,7 @@ use std::cell::{Cell, RefCell};
 
 use serde::Deserialize;
 
+use crate::capacity::SessionProfile;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
     OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile, import_csv,
@@ -87,7 +88,7 @@ enum MetadataControlKind {
 }
 
 struct SpreadsheetResult {
-    text_capacity: bool,
+    profile: SessionProfile,
     response: DesignerResponse,
     candidate: Option<DesignerRuntime>,
     export: Option<Vec<u8>>,
@@ -96,7 +97,7 @@ struct SpreadsheetResult {
 impl SpreadsheetResult {
     fn read_only(response: DesignerResponse) -> Self {
         Self {
-            text_capacity: false,
+            profile: SessionProfile::Ordinary,
             response,
             candidate: None,
             export: None,
@@ -321,7 +322,7 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
                 let reply = DesignerWireReply::Ok {
                     response: result.response,
                 };
-                if let Err(error) = ensure_wire_reply_size(&reply, result.text_capacity) {
+                if let Err(error) = ensure_wire_reply_size(&reply, result.profile) {
                     DesignerWireReply::Error {
                         error: error.failure_projection(current_revision(runtime.as_ref())),
                     }
@@ -387,10 +388,14 @@ fn spreadsheet_operation(
             csv_options,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            let capacity = validate_text_capacity_inspection(&workbook).is_ok();
+            let profile = if validate_text_capacity_inspection(&workbook).is_ok() {
+                SessionProfile::TextCapacity
+            } else {
+                SessionProfile::Ordinary
+            };
             let mut result =
                 SpreadsheetResult::read_only(DesignerResponse::ImportPreview(Box::new(workbook)));
-            result.text_capacity = capacity;
+            result.profile = profile;
             Ok(result)
         }
         SpreadsheetOperation::Import {
@@ -403,18 +408,18 @@ fn spreadsheet_operation(
             let workbook = import_source(project, format, &csv_options)?;
             let (candidate, imported) = import_workbook(&workbook, &selection, &occurrence_id)?;
             Ok(SpreadsheetResult {
-                text_capacity: candidate.text_capacity,
+                profile: candidate.profile,
                 response: DesignerResponse::Imported(Box::new(imported)),
                 candidate: install.then_some(candidate),
                 export: None,
             })
         }
         SpreadsheetOperation::InspectProject { metadata } => {
-            let (opened, text_capacity) =
+            let (opened, profile) =
                 crate::interop_document::inspect_imported_project_with_profile(project, &metadata)?;
             let mut result =
                 SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
-            result.text_capacity = text_capacity;
+            result.profile = profile;
             Ok(result)
         }
         SpreadsheetOperation::OpenProject {
@@ -424,7 +429,7 @@ fn spreadsheet_operation(
             let (candidate, opened) =
                 crate::admit_imported_project(project, &occurrence_id, &metadata)?;
             Ok(SpreadsheetResult {
-                text_capacity: candidate.text_capacity,
+                profile: candidate.profile,
                 response: DesignerResponse::Opened(Box::new(opened)),
                 candidate: Some(candidate),
                 export: None,
@@ -491,7 +496,7 @@ fn export_native_tables_spreadsheet(
         matches!(format, SpreadsheetFormat::Csv),
     )?;
     Ok(SpreadsheetResult {
-        text_capacity: runtime.text_capacity,
+        profile: runtime.profile,
         response,
         candidate: None,
         export: Some(bytes),
@@ -544,7 +549,7 @@ fn export_native_tracker_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
-        text_capacity: runtime.text_capacity,
+        profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
             byte_length: bytes.len(),
@@ -609,7 +614,7 @@ fn export_native_budget_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
-        text_capacity: runtime.text_capacity,
+        profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
             byte_length: bytes.len(),
@@ -632,12 +637,17 @@ fn export_spreadsheet(
     // neither the source metadata nor the resident document is changed.
     let mut export_metadata = metadata.clone();
     let mut inserted_headers = Vec::new();
-    if matches!(format, SpreadsheetFormat::Xlsx) && !runtime.text_capacity {
-        for sheet in &mut export_metadata.sheets {
-            if !sheet.has_header {
-                sheet.has_header = true;
-                inserted_headers.push(sheet.name.clone());
+    if matches!(format, SpreadsheetFormat::Xlsx) {
+        match runtime.profile {
+            SessionProfile::Ordinary => {
+                for sheet in &mut export_metadata.sheets {
+                    if !sheet.has_header {
+                        sheet.has_header = true;
+                        inserted_headers.push(sheet.name.clone());
+                    }
+                }
             }
+            SessionProfile::TextCapacity => {}
         }
     }
     let mut workbook = runtime.export_imported_workbook(
@@ -681,7 +691,7 @@ fn export_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
-        text_capacity: runtime.text_capacity,
+        profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
             byte_length: bytes.len(),

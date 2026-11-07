@@ -13,20 +13,22 @@ use tachiko_semantic_core::{
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
     KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, MAX_CONDITIONAL_CRITERIA, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value, validate_document,
-    validate_keyed_grouped_sum_definitions,
+    MAX_EXPRESSION_NODES, Number, PresentationError, PresentationStore, Schema, SchemaId,
+    SchemaKey, Value, validate_document, validate_keyed_grouped_sum_definitions,
+    validate_presentation,
 };
 
 use crate::{
-    FormatError,
+    FormatError, decode_presentation, encode_presentation,
     strict_json::{FrontendError, VersionToken, inspect_roproj},
 };
 
 pub const ROPROJ_V3_FORMAT_VERSION: u32 = 3;
-// A deepest valid entity is: entity -> fields -> value -> 64 expression
-// objects, with one binary `args` object between each expression node and one
-// reference `args` object at the leaf. No valid v3 DTO nests more deeply.
-const ROPROJ_V3_MAX_JSON_NESTING: usize = 132;
+// A deepest valid entity is: entity -> fields -> value -> 63 conditional
+// aggregates, each adding `args`, `criteria`, a criterion and the expression
+// under `value`, then a last conditional whose innermost container is a
+// criterion's `column`. No valid v3 DTO nests more deeply.
+const ROPROJ_V3_MAX_JSON_NESTING: usize = 3 + 4 * (MAX_EXPRESSION_DEPTH - 1) + 5;
 pub const ROPROJ_V3_PATHS: [&str; 19] = [
     "manifest.json",
     "schemas.json",
@@ -48,6 +50,8 @@ pub const ROPROJ_V3_PATHS: [&str; 19] = [
     "entities/e.jsonl",
     "entities/f.jsonl",
 ];
+/// Optional presentation member, present last in the tree only when nonempty.
+pub const ROPROJ_V3_PRESENTATION_PATH: &str = "presentation.jsonl";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalRoProjectFileV3 {
@@ -97,7 +101,8 @@ impl CanonicalRoProjectV3 {
     /// # Errors
     ///
     /// Returns a `.roproj` format, version, JSON, semantic, or representation
-    /// error unless the input is the exact canonical nineteen-file tree.
+    /// error unless the input is the exact canonical nineteen-file tree, or
+    /// twenty files with the optional `presentation.jsonl` member last.
     pub fn try_from_files(files: Vec<(String, Vec<u8>)>) -> Result<Self, FormatError> {
         match Self::try_from_files_with_profile(files, |_| Ok::<(), Infallible>(())) {
             Ok((tree, _)) => Ok(tree),
@@ -147,24 +152,28 @@ impl CanonicalRoProjectV3 {
         profile: impl FnOnce(&Document) -> Result<(), E>,
         definition_error: impl FnOnce(KeyedGroupedSumDefinitionError) -> FormatError,
     ) -> Result<(Self, Document), CanonicalRoProjectV3AdmissionError<E>> {
-        if files.len() != ROPROJ_V3_PATHS.len() {
+        if files.len() != ROPROJ_V3_PATHS.len() && files.len() != ROPROJ_V3_PATHS.len() + 1 {
             return Err(CanonicalRoProjectV3AdmissionError::Format(
                 FormatError::InvalidRoProjectRepresentation {
                     message: format!(
-                        ".roproj/v3 requires exactly {} files",
-                        ROPROJ_V3_PATHS.len()
+                        ".roproj/v3 requires exactly {} files, or {} with '{ROPROJ_V3_PRESENTATION_PATH}' last",
+                        ROPROJ_V3_PATHS.len(),
+                        ROPROJ_V3_PATHS.len() + 1
                     ),
                 },
             ));
         }
         let mut canonical_files = Vec::with_capacity(files.len());
         for (index, (path, bytes)) in files.into_iter().enumerate() {
-            if path != ROPROJ_V3_PATHS[index] {
+            let expected = ROPROJ_V3_PATHS
+                .get(index)
+                .copied()
+                .unwrap_or(ROPROJ_V3_PRESENTATION_PATH);
+            if path != expected {
                 return Err(CanonicalRoProjectV3AdmissionError::Format(
                     FormatError::InvalidRoProjectRepresentation {
                         message: format!(
-                            "expected canonical path '{}' at position {index}, found '{path}'",
-                            ROPROJ_V3_PATHS[index]
+                            "expected canonical path '{expected}' at position {index}, found '{path}'"
                         ),
                     },
                 ));
@@ -182,9 +191,18 @@ impl CanonicalRoProjectV3 {
             .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         validate_keyed_grouped_sum_definitions(&document)
             .map_err(|error| CanonicalRoProjectV3AdmissionError::Format(definition_error(error)))?;
+        if let Some(bytes) = tree.file(ROPROJ_V3_PRESENTATION_PATH) {
+            let store =
+                decode_presentation(bytes).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
+            validate_presentation(&store, &document)
+                .map_err(|error| presentation_error(&error))
+                .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
+        }
         let expected =
             encode_validated(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
-        if expected != tree {
+        // `decode_presentation` already proved the optional member canonical, so
+        // only the required nineteen files participate in this comparison.
+        if expected.files.as_slice() != &tree.files[..ROPROJ_V3_PATHS.len()] {
             return Err(CanonicalRoProjectV3AdmissionError::Format(
                 FormatError::InvalidRoProjectRepresentation {
                     message: "tree bytes are not canonical .roproj/v3".to_owned(),
@@ -339,7 +357,7 @@ struct EntityV3 {
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(transparent)]
-struct NumberV3(f64);
+pub(crate) struct NumberV3(f64);
 
 #[derive(Deserialize)]
 #[serde(
@@ -364,7 +382,7 @@ enum ValueV3 {
     rename_all = "snake_case",
     deny_unknown_fields
 )]
-enum ExpressionV3 {
+pub(crate) enum ExpressionV3 {
     Number(NumberV3),
     Reference(FieldRefV3),
     SameRowReference(String),
@@ -388,21 +406,21 @@ enum ExpressionV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FieldRefV3 {
+pub(crate) struct FieldRefV3 {
     entity: String,
     field: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ColumnAggregateArgsV3 {
+pub(crate) struct ColumnAggregateArgsV3 {
     function: ColumnAggregateFunction,
     column: ColumnRefV3,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ColumnConditionalArgsV3 {
+pub(crate) struct ColumnConditionalArgsV3 {
     aggregate: String,
     #[serde(default)]
     values: Option<ColumnRefV3>,
@@ -411,7 +429,7 @@ struct ColumnConditionalArgsV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ColumnCriterionV3 {
+pub(crate) struct ColumnCriterionV3 {
     column: ColumnRefV3,
     operator: String,
     #[serde(default)]
@@ -420,21 +438,21 @@ struct ColumnCriterionV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ColumnRefV3 {
+pub(crate) struct ColumnRefV3 {
     schema: String,
     field: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BinaryArgumentsV3 {
+pub(crate) struct BinaryArgumentsV3 {
     left: Box<ExpressionV3>,
     right: Box<ExpressionV3>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ComparisonArgumentsV3 {
+pub(crate) struct ComparisonArgumentsV3 {
     operator: String,
     left: Box<ExpressionV3>,
     right: Box<ExpressionV3>,
@@ -442,7 +460,7 @@ struct ComparisonArgumentsV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct IfArgumentsV3 {
+pub(crate) struct IfArgumentsV3 {
     condition: Box<ExpressionV3>,
     then_value: Box<ExpressionV3>,
     else_value: Box<ExpressionV3>,
@@ -450,7 +468,7 @@ struct IfArgumentsV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RoundArgumentsV3 {
+pub(crate) struct RoundArgumentsV3 {
     value: Box<ExpressionV3>,
     #[serde(deserialize_with = "deserialize_round_digits")]
     digits: u8,
@@ -612,6 +630,57 @@ pub fn decode(tree: &CanonicalRoProjectV3) -> Result<Document, FormatError> {
     check_v3_document(&document)?;
     validate_semantic_expression_limits(&document)?;
     Ok(document)
+}
+
+/// Encode a valid semantic document and its presentation store into the exact
+/// canonical `.roproj/v3` tree.
+///
+/// An empty store produces exactly the nineteen-file tree of [`encode`].
+///
+/// # Errors
+///
+/// Returns a presentation or `.roproj` representation error when the store does
+/// not belong to the document, or the document cannot be encoded canonically.
+pub fn encode_with_presentation(
+    document: &Document,
+    store: &PresentationStore,
+) -> Result<CanonicalRoProjectV3, FormatError> {
+    validate_presentation(store, document).map_err(|error| presentation_error(&error))?;
+    let mut tree = encode(document)?;
+    if let Some(bytes) = encode_presentation(store)? {
+        tree.files.push(CanonicalRoProjectFileV3 {
+            path: ROPROJ_V3_PRESENTATION_PATH.to_owned(),
+            bytes,
+        });
+    }
+    Ok(tree)
+}
+
+/// Decode a canonical `.roproj/v3` tree into its semantic document and
+/// presentation store.
+///
+/// A tree without the optional member gives an empty store.
+///
+/// # Errors
+///
+/// Returns the errors of [`decode`] or of the optional member's strict decoder,
+/// or a presentation error when the store does not match the document.
+pub fn decode_with_presentation(
+    tree: &CanonicalRoProjectV3,
+) -> Result<(Document, PresentationStore), FormatError> {
+    let document = decode(tree)?;
+    let store = match tree.file(ROPROJ_V3_PRESENTATION_PATH) {
+        Some(bytes) => decode_presentation(bytes)?,
+        None => PresentationStore::default(),
+    };
+    validate_presentation(&store, &document).map_err(|error| presentation_error(&error))?;
+    Ok((document, store))
+}
+
+fn presentation_error(error: &PresentationError) -> FormatError {
+    FormatError::InvalidRoProjectRepresentation {
+        message: format!("invalid presentation store: {error}"),
+    }
 }
 
 /// Convert a validated v1 semantic document into the independently rendered
@@ -1019,7 +1088,7 @@ impl NumberV3 {
 }
 
 impl ExpressionV3 {
-    fn validate_ids_and_limits(&self) -> Result<(), FormatError> {
+    pub(crate) fn validate_ids_and_limits(&self) -> Result<(), FormatError> {
         let mut nodes = 0_usize;
         let mut stack = vec![(self, 1_usize)];
         while let Some((node, depth)) = stack.pop() {
@@ -1099,7 +1168,7 @@ impl ExpressionV3 {
         Ok(())
     }
 
-    fn into_semantic(self) -> Result<Expression, FormatError> {
+    pub(crate) fn into_semantic(self) -> Result<Expression, FormatError> {
         Ok(match self {
             Self::Number(number) => Expression::Number(number.into_semantic()?),
             Self::Reference(reference) => {
@@ -1385,7 +1454,7 @@ impl ValueV3 {
 }
 
 impl ExpressionV3 {
-    fn from_semantic(expression: &Expression) -> Self {
+    pub(crate) fn from_semantic(expression: &Expression) -> Self {
         match expression {
             Expression::Number(number) => Self::Number(NumberV3(number.get())),
             Expression::Reference(reference) => {
@@ -1866,7 +1935,10 @@ fn write_value(output: &mut String, value: &ValueV3) -> Result<(), FormatError> 
 }
 
 #[allow(clippy::too_many_lines)] // One closed-world operation dispatch keeps the canonical wire shape visible.
-fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<(), FormatError> {
+pub(crate) fn write_expression(
+    output: &mut String,
+    expression: &ExpressionV3,
+) -> Result<(), FormatError> {
     output.push('{');
     match expression {
         ExpressionV3::Number(number) => {
@@ -2073,13 +2145,13 @@ fn pretty_member_literal(
     Ok(())
 }
 
-fn compact_member_prefix(output: &mut String, name: &str) -> Result<(), FormatError> {
+pub(crate) fn compact_member_prefix(output: &mut String, name: &str) -> Result<(), FormatError> {
     write_json_string(output, name)?;
     output.push(':');
     Ok(())
 }
 
-fn compact_member_string(
+pub(crate) fn compact_member_string(
     output: &mut String,
     name: &str,
     value: &str,
@@ -2093,7 +2165,7 @@ fn compact_member_string(
     Ok(())
 }
 
-fn compact_member_number(
+pub(crate) fn compact_member_number(
     output: &mut String,
     name: &str,
     value: NumberV3,
@@ -2112,7 +2184,7 @@ fn compact_member_number(
     Ok(())
 }
 
-fn compact_member_literal(
+pub(crate) fn compact_member_literal(
     output: &mut String,
     name: &str,
     value: &str,
@@ -2126,7 +2198,7 @@ fn compact_member_literal(
     Ok(())
 }
 
-fn write_json_string(output: &mut String, value: &str) -> Result<(), FormatError> {
+pub(crate) fn write_json_string(output: &mut String, value: &str) -> Result<(), FormatError> {
     output.push_str(&serde_json::to_string(value)?);
     Ok(())
 }
@@ -2231,7 +2303,7 @@ fn utf8<'a>(path: &str, bytes: &'a [u8]) -> Result<&'a str, FormatError> {
     })
 }
 
-fn map_frontend_error(path: &str, error: FrontendError) -> FormatError {
+pub(crate) fn map_frontend_error(path: &str, error: FrontendError) -> FormatError {
     match error {
         FrontendError::InvalidJson(source) => FormatError::InvalidRoProjectJson {
             path: path.to_owned(),
@@ -2247,7 +2319,7 @@ fn map_frontend_error(path: &str, error: FrontendError) -> FormatError {
     }
 }
 
-fn deserialize_roproj<T>(path: &str, source: &str) -> Result<T, FormatError>
+pub(crate) fn deserialize_roproj<T>(path: &str, source: &str) -> Result<T, FormatError>
 where
     T: DeserializeOwned,
 {
@@ -2266,7 +2338,7 @@ where
     Ok(value)
 }
 
-fn require_id(kind: &str, id: &str) -> Result<(), FormatError> {
+pub(crate) fn require_id(kind: &str, id: &str) -> Result<(), FormatError> {
     if id.is_empty() {
         invalid_representation(format!("{kind} must not be empty"))
     } else {
@@ -2274,7 +2346,11 @@ fn require_id(kind: &str, id: &str) -> Result<(), FormatError> {
     }
 }
 
-fn ensure_increasing(kind: &str, previous: Option<&str>, current: &str) -> Result<(), FormatError> {
+pub(crate) fn ensure_increasing(
+    kind: &str,
+    previous: Option<&str>,
+    current: &str,
+) -> Result<(), FormatError> {
     let Some(previous) = previous else {
         return Ok(());
     };
@@ -2289,7 +2365,7 @@ fn ensure_increasing(kind: &str, previous: Option<&str>, current: &str) -> Resul
     }
 }
 
-fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
+pub(crate) fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
     Err(FormatError::InvalidRoProjectRepresentation { message })
 }
 

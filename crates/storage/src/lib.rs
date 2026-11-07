@@ -5,6 +5,7 @@ mod legacy_direct_ro;
 mod migration;
 mod number_format;
 mod portable_package;
+mod presentation;
 mod roproj;
 mod strict_json;
 
@@ -19,6 +20,8 @@ use direct_ro::v2::{CodecError as V2CodecError, DocumentV2};
 use strict_json::{FrontendError, VersionToken, inspect};
 use tachiko_semantic_core::{Diagnostic, Document, validate_document};
 use thiserror::Error;
+
+pub use presentation::{decode_presentation, encode_presentation, style_id};
 
 pub use portable_package::{
     PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES, PortablePackageError, VerifiedPortablePackageV1,
@@ -41,7 +44,9 @@ pub use roproj::{
 };
 pub use roproj::{
     CanonicalRoProjectFileV3, CanonicalRoProjectV3, ROPROJ_V3_FORMAT_VERSION, ROPROJ_V3_PATHS,
-    decode_roproj_v3, encode_roproj_v3, migrate_roproj_v1_to_v3, migrate_roproj_v2_to_v3,
+    ROPROJ_V3_PRESENTATION_PATH, decode_roproj_v3, decode_roproj_v3_with_presentation,
+    encode_roproj_v3, encode_roproj_v3_with_presentation, migrate_roproj_v1_to_v3,
+    migrate_roproj_v2_to_v3,
 };
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;

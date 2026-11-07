@@ -21,6 +21,8 @@ pub use v2::{
 };
 pub use v3::{
     CanonicalRoProjectFileV3, CanonicalRoProjectV3, ROPROJ_V3_FORMAT_VERSION, ROPROJ_V3_PATHS,
-    decode as decode_roproj_v3, encode as encode_roproj_v3, migrate_v1 as migrate_roproj_v1_to_v3,
-    migrate_v2 as migrate_roproj_v2_to_v3,
+    ROPROJ_V3_PRESENTATION_PATH, decode as decode_roproj_v3,
+    decode_with_presentation as decode_roproj_v3_with_presentation, encode as encode_roproj_v3,
+    encode_with_presentation as encode_roproj_v3_with_presentation,
+    migrate_v1 as migrate_roproj_v1_to_v3, migrate_v2 as migrate_roproj_v2_to_v3,
 };
