@@ -598,6 +598,15 @@ A working-size session admits 10,000 rows and entities,
 are the counts a session admits, not a performance claim, so a host should not
 advertise them until later stages land.
 
+Every state a working-size session accepts can be saved through both
+`exportProjectV3` and `exportPortableRo`. The runtime accounts for the bytes
+those writers produce and refuses an edit that would push the saved size past
+its bound with `capacity_exceeded` and `limit: "saved_bytes"`, before the edit
+publishes: the last accepted revision stays saveable, and the same bound
+refuses an open or import that could never be saved. The 8 MiB local-document
+export and the spreadsheet export's 128 rows per table are bounded exports,
+not session saves, and ordinary sessions are unchanged.
+
 ### Builds behind an existing HTTP proxy
 
 The exporter isolates package and compiler configuration. On a host whose
