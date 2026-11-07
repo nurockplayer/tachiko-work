@@ -2988,7 +2988,7 @@ impl DesignerRuntime {
     /// # Errors
     ///
     /// Returns a revision or bounded-window failure.
-    pub fn opened_window(&mut self) -> Result<OpenedWindowProjection, DesignerError> {
+    pub(crate) fn opened_window(&mut self) -> Result<OpenedWindowProjection, DesignerError> {
         let bootstrap = self.bootstrap_projection();
         let revision = self.current_revision().to_owned();
         let window = self.query_table_window(
