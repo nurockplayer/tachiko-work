@@ -15,8 +15,8 @@ use tachiko_semantic_core::{
 };
 
 use super::{
-    CalculationFailure, CalculationOutcome, ReferenceFailure, RetainedCalculationState,
-    calculate_complete,
+    CalculationError, CalculationFailure, CalculationOutcome, ReferenceFailure,
+    RetainedCalculationState, calculate_complete,
 };
 
 const ALPHA: &str = "alpha";
@@ -168,7 +168,7 @@ mod reference {
                 columns: &mut columns,
             };
             let failed_dependencies = evaluation
-                .required_references(expression)
+                .required_references(expression, failures)
                 .iter()
                 .filter(|dependency| failures.contains_key(*dependency))
                 .cloned()
@@ -436,6 +436,13 @@ fn add(left: Expression, right: Expression) -> Expression {
 
 fn divide(left: Expression, right: Expression) -> Expression {
     Expression::Divide {
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+fn subtract(left: Expression, right: Expression) -> Expression {
+    Expression::Subtract {
         left: Box::new(left),
         right: Box::new(right),
     }
@@ -1467,4 +1474,290 @@ fn fixed_column_documents_match_the_expanded_reference() {
 
         assert_matches_reference(&document, name);
     }
+}
+
+/// A column whose formula `c0 / (c1 - c1)` fails in every row, read by a total
+/// in every row. Readers sort before the calculated rows, so the first failure
+/// in the map is a reader and `compatibility_error` has to follow its list.
+fn failing_column_document(rows: usize) -> Document {
+    let mut entities = Vec::with_capacity(rows * 2);
+    for index in 0..rows {
+        entities.push(fixed_row(
+            &format!("a-{index:05}"),
+            "readers",
+            &[("total", Value::Formula(total("calc", "f")))],
+        ));
+        entities.push(fixed_row(
+            &format!("z-{index:05}"),
+            "calc",
+            &[
+                ("c0", fixed_number(1.0)),
+                ("c1", fixed_number(2.0)),
+                (
+                    "f",
+                    Value::Formula(divide(
+                        same_row("c0"),
+                        subtract(same_row("c1"), same_row("c1")),
+                    )),
+                ),
+            ],
+        ));
+    }
+    fixed_document(
+        vec![
+            fixed_schema(
+                "calc",
+                &[
+                    ("c0", FieldType::Number),
+                    ("c1", FieldType::Number),
+                    ("f", FieldType::Number),
+                ],
+            ),
+            fixed_schema("readers", &[("total", FieldType::Number)]),
+        ],
+        entities,
+    )
+}
+
+/// A Number column holding Text in every row, read by a total in every row.
+fn text_column_document(rows: usize) -> Document {
+    let mut entities = Vec::with_capacity(rows * 2);
+    for index in 0..rows {
+        entities.push(fixed_row(
+            &format!("a-{index:05}"),
+            "readers",
+            &[("total", Value::Formula(total("calc", "f")))],
+        ));
+        entities.push(fixed_row(
+            &format!("z-{index:05}"),
+            "calc",
+            &[("f", Value::Text("n/a".to_owned()))],
+        ));
+    }
+    fixed_document(
+        vec![
+            fixed_schema("calc", &[("f", FieldType::Number)]),
+            fixed_schema("readers", &[("total", FieldType::Number)]),
+        ],
+        entities,
+    )
+}
+
+#[test]
+fn a_failed_column_names_its_first_failed_cell_in_every_reader() {
+    const ROWS: usize = 2_000;
+    let document = failing_column_document(ROWS);
+    let failures = fixed_failures(&document);
+    let first = field_ref("z-00000", "f");
+    let mut named = 0_usize;
+    for index in 0..ROWS {
+        let reader = field_ref(&format!("a-{index:05}"), "total");
+        let Some(CalculationFailure::FailedDependencies { dependencies }) = failures.get(&reader)
+        else {
+            panic!("reader {reader} must fail on dependencies");
+        };
+        assert_eq!(
+            dependencies,
+            &BTreeSet::from([first.clone()]),
+            "reader {reader} names the column's first failed cell"
+        );
+        named += dependencies.len();
+    }
+    assert_eq!(named, ROWS, "every reader names exactly one failed cell");
+    match super::calculate(&document) {
+        Err(error) => assert_eq!(
+            error,
+            CalculationError::DivisionByZero {
+                formula: first.clone(),
+            },
+            "compatibility_error names the same cell the full list started with"
+        ),
+        Ok(_) => panic!("the document must fail"),
+    }
+}
+
+#[test]
+fn a_text_column_names_its_first_target_in_every_reader() {
+    const ROWS: usize = 2_000;
+    let document = text_column_document(ROWS);
+    let failures = fixed_failures(&document);
+    let first = field_ref("z-00000", "f");
+    let mut named = 0_usize;
+    for index in 0..ROWS {
+        let reader = field_ref(&format!("a-{index:05}"), "total");
+        let Some(CalculationFailure::InvalidReferences { targets }) = failures.get(&reader) else {
+            panic!("reader {reader} must fail on invalid references");
+        };
+        assert_eq!(
+            targets,
+            &BTreeMap::from([(first.clone(), ReferenceFailure::NonNumeric)]),
+            "reader {reader} names the column's first failed target"
+        );
+        named += targets.len();
+    }
+    assert_eq!(named, ROWS, "every reader names exactly one target");
+    match super::calculate(&document) {
+        Err(error) => assert_eq!(
+            error,
+            CalculationError::NonNumericReference {
+                reference: first.clone(),
+            },
+            "compatibility_error names the same cell the full list started with"
+        ),
+        Ok(_) => panic!("the document must fail"),
+    }
+}
+
+#[test]
+fn the_expanded_reference_names_the_same_first_failed_cell() {
+    assert_matches_reference(&failing_column_document(4), "a failed column read by rows");
+    assert_matches_reference(&text_column_document(4), "a Text column read by rows");
+}
+
+/// One row's own failed cell beside a column that fails in every row.
+fn own_and_column_failure_document() -> Document {
+    let mut entities = Vec::new();
+    for index in 0..3 {
+        entities.push(fixed_row(
+            &format!("calc-{index}"),
+            "calc",
+            &[
+                ("c7", failed_expression()),
+                ("c9", failed_expression()),
+                (
+                    "out",
+                    Value::Formula(add(same_row("c7"), total("calc", "c9"))),
+                ),
+                (
+                    "again",
+                    Value::Formula(add(
+                        Expression::Reference(field_ref("calc-0", "c9")),
+                        total("calc", "c9"),
+                    )),
+                ),
+            ],
+        ));
+    }
+    fixed_document(
+        vec![fixed_schema(
+            "calc",
+            &[
+                ("c7", FieldType::Number),
+                ("c9", FieldType::Number),
+                ("out", FieldType::Number),
+                ("again", FieldType::Number),
+            ],
+        )],
+        entities,
+    )
+}
+
+#[test]
+fn a_formula_keeps_its_own_reference_beside_a_columns_first_failure() {
+    let document = own_and_column_failure_document();
+    let failures = fixed_failures(&document);
+    let first_c9 = field_ref("calc-0", "c9");
+    for index in 0..3 {
+        let own = field_ref(&format!("calc-{index}"), "c7");
+        assert_eq!(
+            failures.get(&field_ref(&format!("calc-{index}"), "out")),
+            Some(&CalculationFailure::FailedDependencies {
+                dependencies: BTreeSet::from([own, first_c9.clone()]),
+            }),
+            "row {index} keeps its own failed cell beside the column's first"
+        );
+        assert_eq!(
+            failures.get(&field_ref(&format!("calc-{index}"), "again")),
+            Some(&CalculationFailure::FailedDependencies {
+                dependencies: BTreeSet::from([first_c9.clone()]),
+            }),
+            "row {index} names the first c9 cell once, direct and through the column"
+        );
+    }
+    assert_matches_reference(&document, "own reference beside a failed column");
+}
+
+fn resolve_first_failed_cell(document: &mut Document) -> BTreeSet<FieldRef> {
+    document
+        .entities
+        .get_mut(&EntityId::from("calc-0"))
+        .expect("row exists")
+        .fields
+        .insert(FieldId::from("c9"), fixed_number(4.0));
+    BTreeSet::from([field_ref("calc-0", "c9")])
+}
+
+#[test]
+fn a_retained_edit_unfailing_the_first_cell_names_the_next_one() {
+    let mut document = own_and_column_failure_document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    let roots = resolve_first_failed_cell(&mut document);
+    let _ = retained.update(&document, &roots);
+    let expected = reference::calculate(&document);
+    assert_eq!(retained.dependencies(), expected.dependencies);
+    let next = field_ref("calc-1", "c9");
+    match retained.outcome() {
+        CalculationOutcome::Complete(calculation) => {
+            assert_eq!(calculation.values(), &expected.values);
+        }
+        CalculationOutcome::Failed(failures) => {
+            assert_eq!(failures.failures(), &expected.failures);
+            for index in 0..3 {
+                assert_eq!(
+                    failures
+                        .failures()
+                        .get(&field_ref(&format!("calc-{index}"), "out")),
+                    Some(&CalculationFailure::FailedDependencies {
+                        dependencies: BTreeSet::from([
+                            field_ref(&format!("calc-{index}"), "c7"),
+                            next.clone(),
+                        ]),
+                    }),
+                    "row {index} names the next failed cell after the edit"
+                );
+            }
+        }
+    }
+    assert_matches_reference(&document, "the next failed cell after a retained edit");
+}
+
+#[test]
+fn a_conditional_aggregate_names_the_first_failed_cell_of_each_column() {
+    let document = fixed_document(
+        vec![
+            fixed_schema(
+                "calc",
+                &[("v", FieldType::Number), ("k", FieldType::Number)],
+            ),
+            fixed_schema("readers", &[("x0", FieldType::Number)]),
+        ],
+        vec![
+            fixed_row(
+                "calc-1",
+                "calc",
+                &[("v", failed_expression()), ("k", failed_expression())],
+            ),
+            fixed_row(
+                "calc-2",
+                "calc",
+                &[("v", failed_expression()), ("k", failed_expression())],
+            ),
+            fixed_row(
+                "r-sumif",
+                "readers",
+                &[(
+                    "x0",
+                    Value::Formula(conditional_sum("calc", "v", "k", literal(1.0))),
+                )],
+            ),
+        ],
+    );
+    assert_eq!(
+        fixed_failures(&document).get(&field_ref("r-sumif", "x0")),
+        Some(&CalculationFailure::FailedDependencies {
+            dependencies: BTreeSet::from([field_ref("calc-1", "k"), field_ref("calc-1", "v"),]),
+        }),
+        "a SUMIF names the first failed sum cell and the first failed criterion cell"
+    );
+    assert_matches_reference(&document, "a SUMIF over two failed columns");
 }

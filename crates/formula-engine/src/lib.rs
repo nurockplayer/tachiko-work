@@ -2058,8 +2058,9 @@ fn pregraph_failures(
 
     // Phase 1c: capture every directly discovered missing/stale/type target.
     // A column total re-checks the same cells for every formula that reads the
-    // column, so resolve one column's cell failures once for the whole phase.
-    let mut column_targets: BTreeMap<ColumnRef, Vec<(FieldRef, ReferenceFailure)>> =
+    // column, so resolve one column's first failed cell once for the whole
+    // phase: a reader names that cell in entity order, not every failed one.
+    let mut column_targets: BTreeMap<ColumnRef, Option<(FieldRef, ReferenceFailure)>> =
         BTreeMap::new();
     for (field, value) in nodes {
         if failures.contains_key(field) {
@@ -2092,19 +2093,15 @@ fn pregraph_failures(
             let mut pending = vec![expression];
             while let Some(node) = pending.pop() {
                 if let Expression::ColumnTotal(column) = node {
-                    let targets = column_targets.entry(column.clone()).or_insert_with(|| {
-                        column_cells(document, column)
-                            .filter_map(|cell| {
-                                let failure = reference_failure(document, &cell, true)?;
-                                Some((cell, failure))
-                            })
-                            .collect::<Vec<_>>()
+                    let target = column_targets.entry(column.clone()).or_insert_with(|| {
+                        column_cells(document, column).find_map(|cell| {
+                            let failure = reference_failure(document, &cell, true)?;
+                            Some((cell, failure))
+                        })
                     });
-                    checks.extend(
-                        targets
-                            .iter()
-                            .map(|(cell, failure)| (cell.clone(), Some(*failure))),
-                    );
+                    if let Some((cell, failure)) = target {
+                        checks.push((cell.clone(), Some(*failure)));
+                    }
                 }
                 pending.extend(node.children());
             }
