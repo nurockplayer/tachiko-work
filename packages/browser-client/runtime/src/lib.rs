@@ -350,6 +350,15 @@ pub enum DesignerRequest {
         collection: String,
         entities: Vec<String>,
     },
+    /// Number totals over the rows a stateless view shows, summed in
+    /// collection order. `keep_entities` rows count even when filtered out,
+    /// so the view's sort never changes a total.
+    QueryViewTotals {
+        expected_revision: String,
+        collection: String,
+        #[serde(default)]
+        view: TableView,
+    },
     /// Number totals grouped by one or two Text, Date or Yes/No columns over
     /// the rows in `scope`, at one revision.
     QueryGroupTotals {
@@ -2986,6 +2995,15 @@ impl DesignerRuntime {
                 &collection,
                 &entities,
             )?)),
+            DesignerRequest::QueryViewTotals {
+                expected_revision,
+                collection,
+                view,
+            } => Ok(DesignerResponse::ColumnTotals(self.query_view_totals(
+                &expected_revision,
+                &collection,
+                &view,
+            )?)),
             DesignerRequest::QueryGroupTotals {
                 expected_revision,
                 collection,
@@ -3937,6 +3955,36 @@ impl DesignerRuntime {
             .iter()
             .filter(|id| requested.contains(*id))
             .cloned()
+            .collect::<Vec<_>>();
+        let column_totals = self.totals_for_entities(spec, &members)?;
+        Ok(ColumnTotalsProjection {
+            revision,
+            rows: members.len(),
+            column_totals,
+        })
+    }
+
+    /// Totals over the rows a stateless view shows, which are the window's
+    /// `total_rows`: filtered rows are left out and `keep_entities` rows stay
+    /// in. The order's row positions are sorted back to collection order
+    /// before summing, so the view's sort cannot change a float sum. The
+    /// request stays small however many rows the filter shows.
+    fn query_view_totals(
+        &mut self,
+        expected_revision: &str,
+        collection: &str,
+        view: &TableView,
+    ) -> Result<ColumnTotalsProjection, DesignerError> {
+        validate_view_bounds(view)?;
+        self.check_revision(expected_revision)?;
+        let revision = self.current_revision().to_owned();
+        let order = self.view_order(collection, view)?;
+        let spec = self.collection_spec(collection)?;
+        let mut rows = order.to_vec();
+        rows.sort_unstable();
+        let members = rows
+            .iter()
+            .map(|row| spec.entities[*row].clone())
             .collect::<Vec<_>>();
         let column_totals = self.totals_for_entities(spec, &members)?;
         Ok(ColumnTotalsProjection {

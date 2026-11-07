@@ -449,6 +449,22 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async queryViewTotals(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+  ): Promise<ColumnTotalsProjection> {
+    return expectResponse(
+      "column_totals",
+      await this.#command({
+        type: "query_view_totals",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+      }),
+    );
+  }
+
   async queryGroupTotals(
     expectedRevision: string,
     collection: string,

@@ -111,6 +111,15 @@ export interface DesignerClient {
     collection: string,
     entities: string[],
   ): Promise<ColumnTotalsProjection>;
+  /**
+   * Number totals over the rows a view shows, summed in collection order;
+   * `keep_entities` rows count even when filtered out.
+   */
+  queryViewTotals(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+  ): Promise<ColumnTotalsProjection>;
   /** Number totals grouped by one or two columns over the rows one scope covers. */
   queryGroupTotals(
     expectedRevision: string,
