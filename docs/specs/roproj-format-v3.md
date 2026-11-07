@@ -31,6 +31,9 @@ future edits to v2 do not alter v3. Except for the explicit pre-release
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
 supersession below, an incompatible change requires a new representation
 version and Accepted authority. ADR-0043 selects no v4 or down-conversion.
+[ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) extends
+that exception to a closed list of constructs until #579 freezes v3. None of them
+is part of this contract until its own Accepted ADR amends this text.
 
 V3's only DTO changes are: manifest version `3`; FieldDefinition's five
 required members plus optional `display_name` and `number_format`; optional Schema `display_name`;

@@ -24,6 +24,13 @@ Decision issue: [#488](https://github.com/nurockplayer/tachiko-work/issues/488)
 
 ## Scope and version ownership
 
+### Pre-1.0 revision window — ADR-0046
+
+[ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) lets a
+closed list of constructs enter the v3 payload in place until #579 freezes it.
+None is part of this contract until its own Accepted ADR amends this text. A
+document using none of them keeps its exact entries and hashes.
+
 ### Native display-name payload amendment — ADR-0043
 
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
