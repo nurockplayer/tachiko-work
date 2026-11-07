@@ -11,7 +11,7 @@ use crate::interop_adapter::{
     import_xlsx_with, validate_text_capacity_inspection,
 };
 use crate::{
-    DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
+    DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_SPREADSHEET_METADATA_REQUEST_BYTES, MAX_WIRE_REQUEST_BYTES,
     ProjectExportProjection, encode_reply, ensure_wire_reply_size, inspect_project,
     inspect_project_working_size, open_local_document, open_local_document_working_size,
@@ -21,6 +21,7 @@ use crate::{
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
     NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
+    import_workbook_working_size,
 };
 
 #[derive(Clone, Copy, Deserialize)]
@@ -43,13 +44,19 @@ enum SpreadsheetOperation {
         selection: ImportSelection,
         occurrence_id: String,
         install: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     InspectProject {
         metadata: InteropMetadata,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     OpenProject {
         occurrence_id: String,
         metadata: InteropMetadata,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     Export {
         expected_revision: String,
@@ -392,37 +399,85 @@ fn spreadsheet_operation(
             selection,
             occurrence_id,
             install,
+            profile,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            let (candidate, imported) = import_workbook(&workbook, &selection, &occurrence_id)?;
-            Ok(SpreadsheetResult {
-                profile: candidate.profile,
-                response: DesignerResponse::Imported(Box::new(imported)),
-                candidate: install.then_some(candidate),
-                export: None,
-            })
+            match profile {
+                None => {
+                    let (candidate, imported) =
+                        import_workbook(&workbook, &selection, &occurrence_id)?;
+                    Ok(SpreadsheetResult {
+                        profile: candidate.profile,
+                        response: DesignerResponse::Imported(Box::new(imported)),
+                        candidate: install.then_some(candidate),
+                        export: None,
+                    })
+                }
+                Some(DesignerProfile::WorkingSize) => {
+                    let (candidate, imported) =
+                        import_workbook_working_size(&workbook, &selection, &occurrence_id)?;
+                    Ok(SpreadsheetResult {
+                        profile: candidate.profile,
+                        response: DesignerResponse::ImportedWindow(Box::new(imported)),
+                        candidate: install.then_some(candidate),
+                        export: None,
+                    })
+                }
+            }
         }
-        SpreadsheetOperation::InspectProject { metadata } => {
-            let (opened, profile) =
-                crate::interop_document::inspect_imported_project_with_profile(project, &metadata)?;
-            let mut result =
-                SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
-            result.profile = profile;
-            Ok(result)
+        SpreadsheetOperation::InspectProject { metadata, profile } => {
+            match profile {
+                None => {
+                    let (opened, profile) =
+                        crate::interop_document::inspect_imported_project_with_profile(
+                            project,
+                            &metadata,
+                        )?;
+                    let mut result =
+                        SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
+                    result.profile = profile;
+                    Ok(result)
+                }
+                Some(DesignerProfile::WorkingSize) => {
+                    let (opened, profile) =
+                        crate::interop_document::inspect_imported_project_working_size(
+                            project,
+                            &metadata,
+                        )?;
+                    let mut result = SpreadsheetResult::read_only(
+                        DesignerResponse::OpenedWindow(Box::new(opened)),
+                    );
+                    result.profile = profile;
+                    Ok(result)
+                }
+            }
         }
         SpreadsheetOperation::OpenProject {
             occurrence_id,
             metadata,
-        } => {
-            let (candidate, opened) =
-                crate::admit_imported_project(project, &occurrence_id, &metadata)?;
-            Ok(SpreadsheetResult {
-                profile: candidate.profile,
-                response: DesignerResponse::Opened(Box::new(opened)),
-                candidate: Some(candidate),
-                export: None,
-            })
-        }
+            profile,
+        } => match profile {
+            None => {
+                let (candidate, opened) =
+                    crate::admit_imported_project(project, &occurrence_id, &metadata)?;
+                Ok(SpreadsheetResult {
+                    profile: candidate.profile,
+                    response: DesignerResponse::Opened(Box::new(opened)),
+                    candidate: Some(candidate),
+                    export: None,
+                })
+            }
+            Some(DesignerProfile::WorkingSize) => {
+                let (candidate, opened) =
+                    crate::admit_imported_project_working_size(project, &occurrence_id, &metadata)?;
+                Ok(SpreadsheetResult {
+                    profile: candidate.profile,
+                    response: DesignerResponse::OpenedWindow(Box::new(opened)),
+                    candidate: Some(candidate),
+                    export: None,
+                })
+            }
+        },
         SpreadsheetOperation::Export {
             expected_revision,
             metadata,

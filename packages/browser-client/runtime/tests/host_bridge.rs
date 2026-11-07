@@ -645,3 +645,373 @@ fn a_working_size_table_saves_and_reopens_across_the_bridge() {
         1
     );
 }
+
+/// One CSV import operation with an optional profile, typed Text in every column.
+fn spreadsheet_import(
+    occurrence: &str,
+    install: bool,
+    profile: Option<&str>,
+    columns: usize,
+) -> Vec<u8> {
+    let selection = serde_json::to_value(ImportSelection {
+        column_types: vec![vec![ImportFieldType::Text; columns]],
+        extra_columns: vec![Vec::new()],
+    })
+    .unwrap();
+    let mut operation = json!({
+        "type": "import",
+        "format": "csv",
+        "csv_options": { "delimiter": ",", "header": true },
+        "selection": selection,
+        "occurrence_id": occurrence,
+        "install": install,
+    });
+    if let Some(profile) = profile {
+        operation["profile"] = json!(profile);
+    }
+    request(&operation)
+}
+
+#[test]
+fn working_size_import_installs_only_after_admission() {
+    let mut host = DesignerHost::new();
+    let source = b"Name,Note\nAlpha,first\nBeta,second\n";
+
+    let candidate = json_of(
+        &host
+            .spreadsheet(&spreadsheet_import(THIRD, false, Some("working_size"), 2), source)
+            .reply,
+    );
+    assert_eq!(candidate["status"], "ok", "{candidate}");
+    assert_eq!(candidate["response"]["type"], "imported_window");
+    assert_eq!(
+        candidate["response"]["payload"]["opened"]["profile"],
+        "working_size"
+    );
+    assert_eq!(
+        json_of(&host.observe_occurrence())["error"]["code"],
+        "no_project_open",
+        "an uninstalled working-size candidate does not become resident"
+    );
+
+    let installed = json_of(
+        &host
+            .spreadsheet(&spreadsheet_import(THIRD, true, Some("working_size"), 2), source)
+            .reply,
+    );
+    assert_eq!(installed["status"], "ok", "{installed}");
+    let payload = &installed["response"]["payload"]["opened"];
+    let revision = payload["bootstrap"]["revision"].as_str().unwrap().to_owned();
+    let collection = payload["window"]["collection"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        json_of(&host.observe_occurrence())["status"],
+        "ok",
+        "the installed import is resident"
+    );
+    let window = json_of(&host.request(&request(&json!({
+        "type": "query_table_window",
+        "expected_revision": revision,
+        "collection": collection,
+        "start": 0,
+        "count": 50,
+    }))));
+    assert_eq!(window["status"], "ok", "{window}");
+    assert_eq!(window["response"]["payload"]["total_rows"], 2);
+}
+
+#[test]
+fn working_size_import_matches_the_ordinary_mapping() {
+    let source = b"Name,Note\nAlpha,first\nBeta,second\n";
+    let mut host = DesignerHost::new();
+    let ordinary = json_of(&host.spreadsheet(&spreadsheet_import(THIRD, false, None, 2), source).reply);
+    let working = json_of(
+        &host
+            .spreadsheet(&spreadsheet_import(THIRD, false, Some("working_size"), 2), source)
+            .reply,
+    );
+    assert_eq!(ordinary["status"], "ok", "{ordinary}");
+    assert_eq!(working["status"], "ok", "{working}");
+    let ordinary = &ordinary["response"]["payload"];
+    let working = &working["response"]["payload"];
+    assert_eq!(ordinary["metadata"], working["metadata"]);
+    assert_eq!(ordinary["ledger"], working["ledger"]);
+    assert_eq!(working["opened"]["window"]["total_rows"], 2);
+    assert_eq!(
+        ordinary["opened"]["table"]["rows"].as_array().unwrap().len(),
+        working["opened"]["window"]["total_rows"].as_u64().unwrap() as usize
+    );
+}
+
+#[test]
+fn working_size_import_binds_formulas() {
+    let invoice = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/excel_samples/invoice.xlsx"
+    ));
+    let selection = serde_json::to_value(ImportSelection {
+        column_types: vec![vec![
+            ImportFieldType::Text,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+        ]],
+        extra_columns: vec![Vec::new()],
+    })
+    .unwrap();
+    let mut host = DesignerHost::new();
+    let reply = json_of(
+        &host
+            .spreadsheet(
+                &request(&json!({
+                    "type": "import",
+                    "format": "xlsx",
+                    "csv_options": { "delimiter": ",", "header": true },
+                    "selection": selection,
+                    "occurrence_id": THIRD,
+                    "install": false,
+                    "profile": "working_size",
+                })),
+                invoice,
+            )
+            .reply,
+    );
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let rows = reply["response"]["payload"]["opened"]["window"]["rows"]
+        .as_array()
+        .unwrap();
+    assert_eq!(rows.len(), 5);
+    assert!(
+        rows[0]["fields"][3]["formula"].is_object(),
+        "the Amount column keeps a formula: {}",
+        rows[0]
+    );
+    let qty = rows[0]["fields"][1]["stored"]["value"].as_f64().unwrap();
+    let unit = rows[0]["fields"][2]["stored"]["value"].as_f64().unwrap();
+    let amount = rows[0]["fields"][3]["calculated"]["value"]
+        .as_f64()
+        .unwrap();
+    assert!(
+        (amount - qty * unit).abs() < 1e-9,
+        "the window shows the calculated value: {amount} != {qty} * {unit}"
+    );
+}
+
+#[test]
+fn working_size_import_keeps_todays_geometry_for_a_promoted_csv() {
+    let source = headered_csv(&["a", "b"], &["x", "y"], 200);
+
+    // Today's ordinary import accepts this eligible rectangle through the text
+    // profile: its complete projection exceeds the ordinary reply budget.
+    let mut ordinary = DesignerHost::new();
+    let imported = json_of(
+        &ordinary
+            .spreadsheet(&spreadsheet_import(THIRD, false, None, 2), &source)
+            .reply,
+    );
+    assert_eq!(imported["status"], "ok", "{imported}");
+    assert_eq!(
+        imported["response"]["payload"]["opened"]["table"]["rows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        200
+    );
+
+    let mut host = DesignerHost::new();
+    let resident = json_of(&host.open_local_document(GAME_BALANCE_RO, FIRST.as_bytes()));
+    assert_eq!(resident["status"], "ok", "{resident}");
+    let observed = host.observe_occurrence();
+    let reply = json_of(
+        &host
+            .spreadsheet(&spreadsheet_import(THIRD, true, Some("working_size"), 2), &source)
+            .reply,
+    );
+    if reply["status"] == "error" {
+        assert_eq!(
+            reply["error"]["code"], "invalid_tracker_operation",
+            "the export proof refuses above today's geometry: {reply}"
+        );
+        assert_eq!(
+            host.observe_occurrence(),
+            observed,
+            "a refused working-size import installs nothing"
+        );
+    } else {
+        // Not refused for some reason: it still never moves to another profile.
+        assert_eq!(reply["response"]["type"], "imported_window", "{reply}");
+        assert_eq!(
+            reply["response"]["payload"]["opened"]["profile"],
+            "working_size",
+            "{reply}"
+        );
+        assert_eq!(
+            reply["response"]["payload"]["opened"]["window"]["total_rows"],
+            200
+        );
+    }
+}
+
+#[test]
+fn working_size_imported_project_saves_and_reopens() {
+    let mut host = DesignerHost::new();
+    let source = b"Name,Note\nAlpha,first\nBeta,second\n";
+    let imported = json_of(
+        &host
+            .spreadsheet(&spreadsheet_import(THIRD, true, Some("working_size"), 2), source)
+            .reply,
+    );
+    assert_eq!(imported["status"], "ok", "{imported}");
+    let payload = &imported["response"]["payload"];
+    let metadata = payload["metadata"].clone();
+    let revision = payload["opened"]["bootstrap"]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let total_rows = payload["opened"]["window"]["total_rows"].clone();
+
+    let saved = host.export_project_v3(revision.as_bytes());
+    assert_eq!(json_of(&saved.reply)["status"], "ok");
+    let bytes = saved.bytes.expect("the working-size import saves a v3 bundle");
+
+    let mut reopened = DesignerHost::new();
+    let opened = json_of(
+        &reopened
+            .spreadsheet(
+                &request(&json!({
+                    "type": "open_project",
+                    "occurrence_id": SECOND,
+                    "metadata": metadata.clone(),
+                    "profile": "working_size",
+                })),
+                &bytes,
+            )
+            .reply,
+    );
+    assert_eq!(opened["status"], "ok", "{opened}");
+    assert_eq!(opened["response"]["type"], "opened_window");
+    assert_eq!(opened["response"]["payload"]["profile"], "working_size");
+    assert_eq!(opened["response"]["payload"]["window"]["total_rows"], total_rows);
+
+    let observed = reopened.observe_occurrence();
+    let inspected = json_of(
+        &reopened
+            .spreadsheet(
+                &request(&json!({
+                    "type": "inspect_project",
+                    "metadata": metadata,
+                    "profile": "working_size",
+                })),
+                &bytes,
+            )
+            .reply,
+    );
+    assert_eq!(inspected["status"], "ok", "{inspected}");
+    assert_eq!(inspected["response"]["type"], "opened_window");
+    assert_eq!(
+        inspected["response"]["payload"]["window"]["total_rows"],
+        total_rows
+    );
+    assert_eq!(
+        reopened.observe_occurrence(),
+        observed,
+        "inspection leaves the resident revision unchanged"
+    );
+}
+
+#[test]
+fn working_size_imported_open_refuses_foreign_metadata() {
+    let mut host = DesignerHost::new();
+    let imported = json_of(
+        &host
+            .spreadsheet(
+                &spreadsheet_import(THIRD, true, Some("working_size"), 2),
+                b"Name,Note\nAlpha,first\nBeta,second\n",
+            )
+            .reply,
+    );
+    assert_eq!(imported["status"], "ok", "{imported}");
+    let revision = imported["response"]["payload"]["opened"]["bootstrap"]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let bytes = host
+        .export_project_v3(revision.as_bytes())
+        .bytes
+        .expect("the working-size import saves a v3 bundle");
+
+    let foreign = json_of(
+        &host
+            .spreadsheet(
+                &spreadsheet_import(SECOND, false, Some("working_size"), 2),
+                b"Name,Note\nGamma,third\n",
+            )
+            .reply,
+    );
+    assert_eq!(foreign["status"], "ok", "{foreign}");
+    let foreign_metadata = foreign["response"]["payload"]["metadata"].clone();
+
+    host.close_project();
+    let resident = json_of(&host.open_local_document(GAME_BALANCE_RO, FIRST.as_bytes()));
+    assert_eq!(resident["status"], "ok", "{resident}");
+    let observed = host.observe_occurrence();
+    let refused = json_of(
+        &host
+            .spreadsheet(
+                &request(&json!({
+                    "type": "open_project",
+                    "occurrence_id": SECOND,
+                    "metadata": foreign_metadata,
+                    "profile": "working_size",
+                })),
+                &bytes,
+            )
+            .reply,
+    );
+    assert_eq!(
+        refused["status"], "error",
+        "the closure check refuses metadata from another import: {refused}"
+    );
+    assert_eq!(
+        host.observe_occurrence(),
+        observed,
+        "a refused imported open leaves the resident unchanged"
+    );
+}
+
+#[test]
+fn working_size_profile_typos_are_refused_on_every_operation() {
+    let mut host = DesignerHost::new();
+    let resident = json_of(&host.open_local_document(GAME_BALANCE_RO, FIRST.as_bytes()));
+    assert_eq!(resident["status"], "ok", "{resident}");
+    let observed = host.observe_occurrence();
+    let metadata = json!({ "version": 1, "sheets": [] });
+    let replies = [
+        host.spreadsheet(&spreadsheet_import(SECOND, false, Some("other"), 2), b"a,b\n1,2\n")
+            .reply,
+        host.spreadsheet(
+            &request(&json!({
+                "type": "inspect_project",
+                "metadata": metadata,
+                "profile": "other",
+            })),
+            b"not a project",
+        )
+        .reply,
+        host.spreadsheet(
+            &request(&json!({
+                "type": "open_project",
+                "occurrence_id": SECOND,
+                "metadata": metadata,
+                "profile": "other",
+            })),
+            b"not a project",
+        )
+        .reply,
+    ];
+    for reply in replies {
+        let reply = json_of(&reply);
+        assert_eq!(reply["status"], "error", "{reply}");
+        assert_eq!(reply["error"]["code"], "invalid_project", "{reply}");
+        assert_eq!(host.observe_occurrence(), observed);
+    }
+}

@@ -408,6 +408,63 @@ describe("working-size Worker transport", () => {
     await expect(client.newTableWorkingSize("Working", [])).rejects.toThrow("Expected 'opened_window' response, received 'opened'.");
   });
 
+  it("sends the profile on the imported working-size spreadsheet routes", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    vi.stubGlobal("crypto", { randomUUID: () => "123e4567-e89b-42d3-a456-426614174000" });
+    const importedWindow = { opened: openedWindow, metadata: { version: 1, sheets: [] }, ledger: [] };
+    const imported = { opened, metadata: { version: 1, sheets: [] }, ledger: [] };
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const sent: Sent[] = [];
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: Sent) => {
+        sent.push(request);
+        const profile = (request.operation as {profile?: string}).profile;
+        const base = (request.operation as {type: string}).type;
+        const response = profile === "working_size"
+          ? base === "import"
+            ? { type: "imported_window", payload: importedWindow }
+            : { type: "opened_window", payload: openedWindow }
+          : base === "import"
+            ? { type: "imported", payload: imported }
+            : { type: "opened", payload: opened };
+        receive?.({ data: { id: request.id, status: "ok", response } } as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    const validate = vi.fn();
+    const options = { delimiter: "," as const, header: true };
+    const selection = { column_types: [], extra_columns: [] };
+    const metadata = { version: 1, sheets: [] };
+
+    await expect(client.importSpreadsheetWorkingSize(new Uint8Array([1]).buffer, "csv", options, selection, validate))
+      .resolves.toEqual(importedWindow);
+    expect(validate).toHaveBeenCalledWith(importedWindow);
+    expect(sent[0]).toMatchObject({ kind: "spreadsheet", operation: { type: "import", install: false, profile: "working_size" } });
+    expect(sent[1]).toMatchObject({ kind: "spreadsheet", operation: { type: "import", install: true, profile: "working_size" } });
+
+    await expect(client.inspectImportedProjectWorkingSize(new Uint8Array([1]).buffer, metadata)).resolves.toEqual(openedWindow);
+    await expect(client.openImportedProjectWorkingSize(new Uint8Array([1]).buffer, metadata)).resolves.toEqual(openedWindow);
+    expect(sent[2]).toMatchObject({ kind: "spreadsheet", operation: { type: "inspect_project", metadata, profile: "working_size" } });
+    expect(sent[3]).toMatchObject({ kind: "spreadsheet", operation: { type: "open_project", metadata, profile: "working_size" } });
+
+    // An existing method still sends no profile key.
+    await client.importSpreadsheet(new Uint8Array([1]).buffer, "csv", options, selection);
+    expect(sent[4]!.operation).not.toHaveProperty("profile");
+  });
+
+  it("refuses an imported working-size reply of another type", async () => {
+    const { client } = await transport(openedReply);
+    const options = { delimiter: "," as const, header: true };
+    await expect(client.importSpreadsheetWorkingSize(
+      new Uint8Array([1]).buffer, "csv", options, { column_types: [], extra_columns: [] },
+    )).rejects.toThrow("Expected 'imported_window' response, received 'opened'.");
+    await expect(client.inspectImportedProjectWorkingSize(new Uint8Array([1]).buffer, { version: 1, sheets: [] }))
+      .rejects.toThrow("Expected 'opened_window' response, received 'opened'.");
+  });
+
   it("refuses a window with broken row presence", async () => {
     const column = { id: "c1", key: "c1", display_name: "c1", field_type: "text", required: false };
     const { client } = await transport({ status: "ok", response: {

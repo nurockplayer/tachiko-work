@@ -1,5 +1,5 @@
 import type { A1Translation, TranslateA1FormulaInput } from "./protocol.ts";
-import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportedWindowProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
 import { projectTransferFromEntries } from "../host/project-transfer.ts";
 import { isCapacityFailure } from "./protocol.ts";
 import {
@@ -112,6 +112,18 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("imported", reply.response);
   }
 
+  async importSpreadsheetWorkingSize(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedWindowProjection) => void): Promise<ImportedWindowProjection> {
+    const occurrence_id = freshOccurrenceId();
+    const operation = {type: "import" as const, format, csv_options: csvOptions, selection, occurrence_id, install: false, profile: "working_size" as const};
+    const preview = await this.#spreadsheet(operation, bytes);
+    if (preview.status !== "ok") throw new Error("Expected spreadsheet import preview.");
+    const candidate = expectResponse("imported_window", preview.response);
+    validate?.(candidate);
+    const reply = await this.#spreadsheet({...operation, install: true}, bytes);
+    if (reply.status !== "ok") throw new Error("Expected spreadsheet import.");
+    return expectResponse("imported_window", reply.response);
+  }
+
   async inspectImportedProject(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection> {
     const reply = await this.#spreadsheet({type: "inspect_project", metadata}, bytes);
     if (reply.status !== "ok") throw new Error("Expected imported project inspection.");
@@ -125,6 +137,21 @@ export class WorkerDesignerClient implements DesignerClient {
     );
     if (reply.status !== "ok") throw new Error("Expected imported project open.");
     return expectResponse("opened", reply.response);
+  }
+
+  async inspectImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection> {
+    const reply = await this.#spreadsheet({type: "inspect_project", metadata, profile: "working_size"}, bytes);
+    if (reply.status !== "ok") throw new Error("Expected imported project inspection.");
+    return expectResponse("opened_window", reply.response);
+  }
+
+  async openImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection> {
+    const reply = await this.#spreadsheet(
+      {type: "open_project", occurrence_id: freshOccurrenceId(), metadata, profile: "working_size"},
+      bytes,
+    );
+    if (reply.status !== "ok") throw new Error("Expected imported project open.");
+    return expectResponse("opened_window", reply.response);
   }
 
   async exportSpreadsheet(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport> {
@@ -748,6 +775,7 @@ export function freshOccurrenceId(): string {
 function expectResponse(type: "a1_translation", response: DesignerResponse): A1Translation;
 function expectResponse(type: "import_preview", response: DesignerResponse): SourceWorkbook;
 function expectResponse(type: "imported", response: DesignerResponse): ImportedProjection;
+function expectResponse(type: "imported_window", response: DesignerResponse): ImportedWindowProjection;
 function expectResponse(type: "cleanup_preview", response: DesignerResponse): CleanupPreview;
 function expectResponse(type: "capacity", response: DesignerResponse): CapacityProjection;
 function expectResponse(
@@ -830,6 +858,7 @@ function expectResponse(
     case "opened": validateTablePresence(response.payload.table); break;
     case "opened_window": validateTablePresence(response.payload.window); break;
     case "imported": validateTablePresence(response.payload.opened.table); break;
+    case "imported_window": validateTablePresence(response.payload.opened.window); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
     case "field_explanation":
       validateFieldPresence(response.payload.value);

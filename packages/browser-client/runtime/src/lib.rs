@@ -92,10 +92,12 @@ mod native_tables_export;
 use interop_document::PendingCleanup;
 pub use interop_document::{
     CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
-    ImportSelection, ImportedProjection, InteropMetadata, NativeBudgetExportCollection,
+    ImportSelection, ImportedProjection, ImportedWindowProjection, InteropMetadata,
+    NativeBudgetExportCollection,
     NativeBudgetExportPresentation, NativeBudgetExportRow, NativeBudgetExportView,
     NativeTrackerExportPresentation, NativeTrackerExportRow, SpreadsheetExportProjection,
-    import_workbook, inspect_imported_project, validate_import_metadata,
+    import_workbook, import_workbook_working_size, inspect_imported_project,
+    validate_import_metadata,
 };
 
 // Exercise the browser bridge logic in native unit tests without dereferencing
@@ -131,6 +133,8 @@ const OPENED_WINDOW_ROWS: usize = 100;
 /// Largest number of groups one grouped-totals reply may carry.
 const MAX_GROUPS: usize = 200;
 pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 16 * 1024 * 1024;
+/// Room left in a working-size reply for the wire envelope around a projection.
+pub(crate) const REPLY_ENVELOPE_RESERVE: usize = 1024;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) const MAX_SPREADSHEET_METADATA_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TEXT_CAPACITY_PROFILE_BYTES: usize = 4 * 1024 * 1024;
@@ -466,6 +470,7 @@ pub enum DesignerResponse {
     A1Translation(A1Translation),
     ImportPreview(Box<interop_adapter::SourceWorkbook>),
     Imported(Box<ImportedProjection>),
+    ImportedWindow(Box<ImportedWindowProjection>),
     SpreadsheetExported(SpreadsheetExportProjection),
     ProjectExported(ProjectExportProjection),
     CanonicalTreeExported(ProjectExportProjection),
@@ -3000,9 +3005,22 @@ impl DesignerRuntime {
     ///
     /// Returns a revision or bounded-window failure.
     pub(crate) fn opened_window(&mut self) -> Result<OpenedWindowProjection, DesignerError> {
+        self.opened_window_within(MAX_TEXT_CAPACITY_PROJECTION_BYTES - REPLY_ENVELOPE_RESERVE)
+    }
+
+    /// Project the opening window within a caller's byte budget, halving the
+    /// row count until the reply fits or a single row is still too large.
+    ///
+    /// # Errors
+    ///
+    /// Returns a revision or bounded-window failure.
+    pub(crate) fn opened_window_within(
+        &mut self,
+        maximum: usize,
+    ) -> Result<OpenedWindowProjection, DesignerError> {
         let mut count = OPENED_WINDOW_ROWS;
         loop {
-            match self.opened_window_of(count) {
+            match self.opened_window_of(count, maximum) {
                 // A document this profile admits can hold more text than one
                 // reply, so the first window comes back shorter rather than
                 // leaving the document unable to open.
@@ -3012,7 +3030,11 @@ impl DesignerRuntime {
         }
     }
 
-    fn opened_window_of(&mut self, count: usize) -> Result<OpenedWindowProjection, DesignerError> {
+    fn opened_window_of(
+        &mut self,
+        count: usize,
+        maximum: usize,
+    ) -> Result<OpenedWindowProjection, DesignerError> {
         let bootstrap = self.bootstrap_projection();
         let revision = self.current_revision().to_owned();
         let window = self.query_table_window(
@@ -3028,11 +3050,7 @@ impl DesignerRuntime {
             bootstrap,
             window,
         };
-        ensure_complete_projection_size(
-            "opened window",
-            &opened,
-            MAX_TEXT_CAPACITY_PROJECTION_BYTES,
-        )?;
+        ensure_complete_projection_size("opened window", &opened, maximum)?;
         Ok(opened)
     }
 
@@ -8088,6 +8106,30 @@ pub(crate) fn admit_imported_project(
     }
 }
 
+/// Admit a saved import as a working-size occurrence without a whole-table
+/// proof. The representation closure gate still runs before the window.
+///
+/// # Errors
+/// Returns canonical, mapping, closure, or window failures while preserving the
+/// current occurrence.
+pub(crate) fn admit_imported_project_working_size(
+    input: &[u8],
+    occurrence_id: &str,
+    metadata: &InteropMetadata,
+) -> Result<(DesignerRuntime, OpenedWindowProjection), DesignerError> {
+    let DecodedProject {
+        document,
+        opened_from_v3,
+        presentation,
+    } = decode_project_bundle_working_size(input)?;
+    let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
+    candidate.opened_from_v3 = opened_from_v3;
+    candidate.presentation = presentation;
+    interop_document::validate_saved_open_closure(&candidate, metadata)?;
+    let opened = candidate.opened_window()?;
+    Ok((candidate, opened))
+}
+
 fn admit_document(
     document: Document,
     occurrence_id: &str,
@@ -8122,17 +8164,24 @@ fn ensure_projection_size(projection: &impl Serialize) -> Result<(), DesignerErr
     ensure_projection_size_with_limit(projection, MAX_PROJECTION_BYTES)
 }
 
-fn ensure_projection_size_with_limit(
+/// Count the JSON bytes a projection serializes to without materializing them.
+pub(crate) fn serialized_projection_bytes(
     projection: &impl Serialize,
-    maximum: usize,
-) -> Result<(), DesignerError> {
+) -> Result<usize, DesignerError> {
     let mut counter = ProjectionByteCounter(0);
     serde_json::to_writer(&mut counter, projection).map_err(|error| {
         DesignerError::UnsupportedProject {
             message: format!("a Designer projection could not be encoded: {error}"),
         }
     })?;
-    let actual = counter.0;
+    Ok(counter.0)
+}
+
+fn ensure_projection_size_with_limit(
+    projection: &impl Serialize,
+    maximum: usize,
+) -> Result<(), DesignerError> {
+    let actual = serialized_projection_bytes(projection)?;
     tachiko_workspace_engine::instrumentation::record_json_bytes(
         u64::try_from(actual).unwrap_or(u64::MAX),
     );
