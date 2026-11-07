@@ -216,7 +216,7 @@ fn dependency_impact_is_direct_and_transitive() {
     );
     assert_eq!(
         calculation.dependencies_of(&FieldRef::new("sword", "burst")),
-        Some(&BTreeSet::from([FieldRef::new("sword", "dps")]))
+        Some(BTreeSet::from([FieldRef::new("sword", "dps")]))
     );
 }
 
@@ -561,7 +561,7 @@ fn generated_dags_match_an_independent_oracle_and_survive_key_renames() {
                 "graph {graph}, field {index}"
             );
         }
-        assert_eq!(calculation.dependencies(), &expected_dependencies);
+        assert_eq!(&calculation.dependencies(), &expected_dependencies);
         for _ in 0..2 {
             assert_eq!(calculate(&document).unwrap(), calculation, "graph {graph}");
         }
@@ -644,7 +644,44 @@ fn evaluation_obeys_the_bound_tree_without_reassociation() {
 }
 
 #[test]
-fn affected_by_each_matches_affected_by_per_field() {
+fn reaching_fields_keeps_only_the_targets() {
+    let document = fan_out_document();
+    let calculation = calculate(&document).unwrap();
+    let mut fields = document
+        .entities
+        .iter()
+        .flat_map(|(entity_id, entity)| {
+            entity
+                .fields
+                .keys()
+                .map(|field_id| FieldRef::new(entity_id.clone(), field_id.clone()))
+        })
+        .collect::<Vec<_>>();
+    fields.sort();
+    let target = fields
+        .iter()
+        .find(|field| {
+            fields
+                .iter()
+                .any(|changed| calculation.affected_by(changed).contains(field))
+        })
+        .expect("the fan-out document has a formula")
+        .clone();
+    let targets = BTreeSet::from([target.clone()]);
+
+    let reaching = calculation.reaching_fields(&fields, &targets);
+
+    assert_eq!(reaching.keys().collect::<Vec<_>>(), vec![&target]);
+    let expected = fields
+        .iter()
+        .filter(|changed| calculation.affected_by(changed).contains(&target))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(reaching[&target], expected);
+}
+
+#[test]
+fn reaching_fields_matches_affected_by_per_field() {
     for document in [
         balance_document(),
         fan_out_document(),
@@ -652,11 +689,11 @@ fn affected_by_each_matches_affected_by_per_field() {
         same_row_document(),
     ] {
         let calculation = calculate(&document).unwrap();
-        assert_affected_by_each_matches(&calculation, &document);
+        assert_reaching_fields_matches(&calculation, &document);
     }
 }
 
-fn assert_affected_by_each_matches(calculation: &Calculation, document: &Document) {
+fn assert_reaching_fields_matches(calculation: &Calculation, document: &Document) {
     let mut fields = document
         .entities
         .iter()
@@ -672,7 +709,8 @@ fn assert_affected_by_each_matches(calculation: &Calculation, document: &Documen
         fields.extend(dependencies.iter().cloned());
     }
 
-    let affected_by_each = calculation.affected_by_each(&fields);
+    let all_fields = fields.iter().cloned().collect::<BTreeSet<_>>();
+    let reaching_fields = calculation.reaching_fields(&fields, &all_fields);
     let mut expected_keys = BTreeSet::new();
     for field in &fields {
         let expected = calculation
@@ -682,7 +720,7 @@ fn assert_affected_by_each_matches(calculation: &Calculation, document: &Documen
         expected_keys.extend(expected.iter().cloned());
         // The map is keyed by the formula reached; a field's reach is every
         // formula whose value names it.
-        let reached = affected_by_each
+        let reached = reaching_fields
             .iter()
             .filter(|(_, changed)| changed.contains(field))
             .map(|(formula, _)| formula.clone())
@@ -690,7 +728,7 @@ fn assert_affected_by_each_matches(calculation: &Calculation, document: &Documen
         assert_eq!(reached, expected, "{field:?}");
     }
     assert_eq!(
-        affected_by_each.keys().cloned().collect::<BTreeSet<_>>(),
+        reaching_fields.keys().cloned().collect::<BTreeSet<_>>(),
         expected_keys
     );
 }

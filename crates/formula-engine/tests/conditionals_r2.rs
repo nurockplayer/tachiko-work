@@ -267,7 +267,7 @@ fn chosen_if_branch_controls_failure_while_dependencies_include_both_branches() 
             }
             CalculationOutcome::Failed(_) => panic!("the chosen branch succeeds"),
         },
-        &dependencies
+        dependencies
     );
 
     document
@@ -331,12 +331,12 @@ fn and_or_not_and_isblank_work_with_optional_blank_number_and_text_references() 
     let blank_number_dependency = BTreeSet::from([owner("blank_number")]);
     assert_eq!(
         calculation.dependencies_of(&owner("blank_arithmetic")),
-        Some(&blank_number_dependency)
+        Some(blank_number_dependency)
     );
     let note_dependency = BTreeSet::from([owner("note")]);
     assert_eq!(
         calculation.dependencies_of(&owner("blank_probe")),
-        Some(&note_dependency)
+        Some(note_dependency)
     );
 
     document

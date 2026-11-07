@@ -17,7 +17,7 @@ use super::{
     AddressIndex, AddressIndexError, CalculatedField, Diagnostic, Document, EntityId,
     EntityInspection, Expression, FieldAddress, FieldId, FieldRef, PreparedEvaluation, SchemaId,
     SemanticSubject, ValidationReport, ValidationRole, Value, WorkspaceError,
-    formula_operations::{FormulaCalculationOutcome, calculation_dependencies, calculation_for},
+    formula_operations::{FormulaCalculationOutcome, calculation_for, calculation_formula_keys},
     instrumentation, invalid_document,
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
@@ -63,8 +63,14 @@ impl ResidentWorkspaceSession {
     /// resolve query targets and enforce disclosure before projecting these
     /// trusted facts, just as for the other resident queries.
     #[must_use]
-    pub fn direct_field_dependencies(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
-        self.retained.calculation_state.dependencies()
+    pub fn direct_field_dependencies(&self, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
+        self.retained.calculation_state.dependencies_of(field)
+    }
+
+    /// Return the formulas whose expanded dependencies contain `field`.
+    #[must_use]
+    pub fn direct_field_dependents(&self, field: &FieldRef) -> BTreeSet<FieldRef> {
+        self.retained.calculation_state.direct_dependents(field)
     }
 
     /// Run the existing authoritative validation query against this revision.
@@ -977,9 +983,9 @@ fn changed_calculation_outcomes(
     before: &CalculationOutcome,
     after: &CalculationOutcome,
 ) -> Vec<FieldRef> {
-    calculation_dependencies(before)
-        .keys()
-        .chain(calculation_dependencies(after).keys())
+    calculation_formula_keys(before)
+        .into_iter()
+        .chain(calculation_formula_keys(after))
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
