@@ -2397,10 +2397,25 @@ fn import_binds_the_same_document_as_per_formula_updates() {
     };
     let (runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
     let imported_bytes = runtime.export_project_v3("resident/0").unwrap().bytes;
-    let exported = runtime
-        .export_workbook("resident/0", &imported.metadata)
-        .unwrap();
     let row = &imported.metadata.sheets[0].rows[0];
+    let mut sources = Vec::new();
+    for column in 0..8 {
+        let DesignerResponse::FieldExplanation(explanation) = runtime
+            .handle(DesignerRequest::ExplainField {
+                expected_revision: "resident/0".into(),
+                target: FieldTarget {
+                    entity: row.entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[column].field_id.clone(),
+                },
+            })
+            .unwrap()
+        else {
+            panic!("explaining a field returns its explanation");
+        };
+        if let Some(source) = explanation.formula_source {
+            sources.push((column, source));
+        }
+    }
     // The same Number-slot document with every formula stripped is what the
     // former per-formula path started from.
     let mut reference_workbook = workbook;
@@ -2410,10 +2425,7 @@ fn import_binds_the_same_document_as_per_formula_updates() {
     let (mut reference, reference_imported) =
         import_workbook(&reference_workbook, &selection, OCCURRENCE).unwrap();
     let mut revision = "resident/0".to_owned();
-    for (column, cell) in exported.sheets[0].rows[0].iter().enumerate() {
-        let Some(source) = &cell.formula else {
-            continue;
-        };
+    for (column, source) in sources {
         let DesignerResponse::Published(published) = reference
             .handle(DesignerRequest::FormulaUpdate {
                 expected_revision: revision,
@@ -2423,7 +2435,7 @@ fn import_binds_the_same_document_as_per_formula_updates() {
                         .field_id
                         .clone(),
                 },
-                source: source.clone(),
+                source,
             })
             .unwrap()
         else {
