@@ -9,6 +9,43 @@ remain outside this implementation slice.
 
 ## Canonical tree
 
+### Presentation member — ADR-0049
+
+Implementation state: pending. Until the implementing PR lands, the writer can't
+emit it and a reader refuses the path, as for any unknown file. Once it lands, this
+section overrides "exactly these 19 regular files" and each other nineteen-file
+statement here for a document that has the member.
+
+[ADR-0049](../decisions/ADR-0049-stored-presentation.md) adds the optional root file
+`presentation.jsonl`, last in tree order, present only when it has at least one record.
+An empty member is never written, so a document without presentation keeps the exact
+nineteen-file tree. It uses the compact one-record JSONL profile with one LF per record,
+in this order: `style` by `id`, `table` by `schema`, `rule` by `id`, `cell` by `entity`
+then `field`, all in unsigned UTF-8 order. Member order is as written below, an absent
+optional member is omitted, and unknown members fail admission.
+
+```json
+{"kind":"style","id":"<32 hex>","style":{"bold":true,"fill":"#FFEE00"}}
+{"kind":"table","schema":"<id>","title":"Q3 budget","footer":{"<field id>":"sum"},"column_styles":{"<field id>":"<style id>"}}
+{"kind":"rule","id":"<id>","schema":"<id>","rank":"a0","fields":["<field id>"],"condition":{"op":"..."},"style":"<style id>"}
+{"kind":"cell","entity":"<id>","field":"<id>","style":"<style id>"}
+```
+
+- **`style` members,** all optional, in this order: `bold`, `italic`, `fill`, `text_color`,
+  `alignment`, `wrap`, `borders`, `number_format`, `date_format`. Booleans may be `true`
+  or `false`, because a cell can turn off what its column turned on. `fill` and
+  `text_color` are `#` and six uppercase hexadecimal digits. `alignment` is `left`,
+  `center` or `right`. `borders` is a subset of `top`, `right`, `bottom`, `left`, in that
+  order, and `[]` means none. `number_format` is the R3 object. `date_format` is the
+  ADR-0049 value in the v3 DTO spec.
+- **`id`** on a style is the first 32 lowercase hexadecimal digits of the SHA-256 of the
+  `style` object's canonical compact JSON bytes.
+- **`table`** has `schema` and at least one of `title`, `footer` and `column_styles`. Both
+  maps are in stable-ID key order and nonempty when present. `footer` values are `sum`,
+  `count`, `average`, `min` or `max`.
+- **`rule`:** `rank` is in the ADR-0048 rank grammar, `fields` is nonempty and in stable-ID
+  order, and `condition` is a Bound Expression under the limits in ADR-0049 §5.
+
 ### Pre-1.0 revision window — ADR-0046
 
 [ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) lets a

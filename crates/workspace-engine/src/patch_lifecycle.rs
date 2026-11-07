@@ -26,12 +26,12 @@ use tachiko_semantic_core::{
 use thiserror::Error;
 
 use super::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldEditPlanning,
-    FieldId, FieldKey, FieldRef, FieldType, Number, PreparedEvaluation, SchemaId, SemanticChange,
-    ValidationReport, Value, WorkspaceError, apply_field_value_candidate_with_planning,
-    finalize_edit_with_validation, formula_inverse_restore_candidate_in_place,
-    formula_restore_candidate_in_place, formula_update_candidate_in_place,
-    unset_field_candidate_in_place,
+    ColumnRef, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition,
+    FieldEditPlanning, FieldId, FieldKey, FieldRef, FieldType, Number, PreparedEvaluation,
+    SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
+    apply_field_value_candidate_with_planning, finalize_edit_with_validation,
+    formula_inverse_restore_candidate_in_place, formula_restore_candidate_in_place,
+    formula_update_candidate_in_place, unset_field_candidate_in_place,
 };
 
 #[cfg(test)]
@@ -45,6 +45,10 @@ mod name_admission_tests;
 #[cfg(test)]
 #[path = "evaluation_memo_tests.rs"]
 mod evaluation_memo_tests;
+
+#[cfg(test)]
+#[path = "disclosure_differential_tests.rs"]
+mod disclosure_differential_tests;
 
 macro_rules! opaque_text_id {
     ($name:ident) => {
@@ -3906,476 +3910,14 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
         changes: &[SemanticChange],
     ) -> Result<BTreeSet<DisclosureRequirement>, PatchLifecycleError> {
-        let mut disclosures = BTreeSet::new();
+        let mut derivation = DisclosureDerivation::new(self, before, after, body);
         for command in body.commands() {
-            self.insert_command_disclosures(before, after, command, &mut disclosures)?;
+            derivation.insert_command_disclosures(command)?;
         }
         for change in changes {
-            self.insert_change_disclosures(before, after, body, change, &mut disclosures)?;
+            derivation.insert_change_disclosures(change)?;
         }
-        Ok(disclosures)
-    }
-
-    #[allow(clippy::too_many_lines)] // Closed command catalogue derives disclosures atomically.
-    fn insert_command_disclosures(
-        &self,
-        before: &Document,
-        after: &Document,
-        command: &SemanticCommand,
-        disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) -> Result<(), PatchLifecycleError> {
-        match command {
-            SemanticCommand::AppendCollection { .. } | SemanticCommand::AppendEntity { .. } => {
-                self.insert_document_disclosure(OperationFamily::AppendEntity, disclosures);
-                Ok(())
-            }
-            SemanticCommand::RemoveCollection { .. } | SemanticCommand::RemoveEntity { .. } => {
-                self.insert_document_disclosure(OperationFamily::RemoveEntity, disclosures);
-                Ok(())
-            }
-            SemanticCommand::AppendSchemaField { .. }
-            | SemanticCommand::RemoveSchemaField { .. }
-            | SemanticCommand::RenameSchemaField { .. }
-            | SemanticCommand::SetSchemaFieldDisplayName { .. }
-            | SemanticCommand::SetFieldNumberFormat { .. }
-            | SemanticCommand::SetSchemaFieldOrder { .. }
-            | SemanticCommand::SetSchemaFieldRequiredness { .. } => {
-                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
-                Ok(())
-            }
-            SemanticCommand::SetFieldConstraint { schema, field, .. } => {
-                disclosures.insert(DisclosureRequirement {
-                    family: OperationFamily::SchemaFieldMutation,
-                    scope: self.schema_field_scope(schema, field),
-                });
-                for document in [before, after] {
-                    for entity in document
-                        .entities
-                        .values()
-                        .filter(|entity| entity.schema == *schema)
-                    {
-                        if let Some(value) = entity.fields.get(field) {
-                            let owner = FieldRef::new(entity.id.clone(), field.clone());
-                            self.insert_value_disclosures_for(
-                                OperationFamily::SchemaFieldMutation,
-                                before,
-                                after,
-                                &owner,
-                                value,
-                                disclosures,
-                            )?;
-                            if let Value::Formula(expression) = value {
-                                self.insert_calculation_dependency_disclosures(
-                                    OperationFamily::SchemaFieldMutation,
-                                    document,
-                                    expression_references(document, &owner, expression),
-                                    disclosures,
-                                )?;
-                            }
-                        }
-                    }
-                }
-                Ok(())
-            }
-            SemanticCommand::SetFieldValue { field, value } => {
-                self.insert_field_disclosure(before, after, field, disclosures)?;
-                self.insert_value_disclosures(before, after, field, value, disclosures)
-            }
-            SemanticCommand::UnsetField { field } => {
-                self.insert_field_disclosure_for(
-                    OperationFamily::SetFieldValue,
-                    before,
-                    after,
-                    field,
-                    disclosures,
-                )?;
-                if let Some(value) = before
-                    .entities
-                    .get(&field.entity)
-                    .and_then(|entity| entity.fields.get(&field.field))
-                {
-                    self.insert_value_disclosures_for(
-                        OperationFamily::SetFieldValue,
-                        before,
-                        after,
-                        field,
-                        value,
-                        disclosures,
-                    )?;
-                }
-                Ok(())
-            }
-            SemanticCommand::FormulaUpdate(command) => {
-                self.insert_field_disclosure_for(
-                    OperationFamily::FormulaUpdate,
-                    before,
-                    after,
-                    command.target(),
-                    disclosures,
-                )?;
-                for reference in command.references() {
-                    self.insert_field_disclosure_for(
-                        OperationFamily::FormulaUpdate,
-                        before,
-                        after,
-                        reference,
-                        disclosures,
-                    )?;
-                }
-                Ok(())
-            }
-            SemanticCommand::FormulaRestore(command) => {
-                self.insert_field_disclosure_for(
-                    OperationFamily::FormulaUpdate,
-                    before,
-                    after,
-                    command.target(),
-                    disclosures,
-                )?;
-                // A column total reads every entity of its schema, so the
-                // reference set expands against the admitted document. The
-                // command is built from host history where no document is at
-                // hand (the capacity edit path keeps none), so the expansion
-                // happens here, once both documents exist.
-                for reference in
-                    expression_references(after, command.target(), command.expression())
-                {
-                    self.insert_field_disclosure_for(
-                        OperationFamily::FormulaUpdate,
-                        before,
-                        after,
-                        &reference,
-                        disclosures,
-                    )?;
-                }
-                Ok(())
-            }
-            SemanticCommand::FormulaInverseRestore(command) => {
-                self.insert_field_disclosure_for(
-                    OperationFamily::FormulaInverseRestore,
-                    before,
-                    after,
-                    command.target(),
-                    disclosures,
-                )?;
-                self.insert_value_disclosures_for(
-                    OperationFamily::FormulaInverseRestore,
-                    before,
-                    after,
-                    command.target(),
-                    &Value::Number(command.value()),
-                    disclosures,
-                )
-            }
-            SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
-            | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {
-                disclosures.insert(DisclosureRequirement {
-                    family: OperationFamily::KeyedGroupedSumDefinition,
-                    scope: ScopedSemanticSubject::new(
-                        self.document_scope.clone(),
-                        self.document.clone(),
-                        SemanticScope::Document,
-                    ),
-                });
-                Ok(())
-            }
-        }
-    }
-
-    fn insert_document_disclosure(
-        &self,
-        family: OperationFamily,
-        disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) {
-        disclosures.insert(DisclosureRequirement {
-            family,
-            scope: ScopedSemanticSubject::new(
-                self.document_scope.clone(),
-                self.document.clone(),
-                SemanticScope::Document,
-            ),
-        });
-    }
-
-    #[allow(clippy::too_many_lines)] // Closed semantic-change catalogue derives disclosures atomically.
-    fn insert_change_disclosures(
-        &self,
-        before: &Document,
-        after: &Document,
-        body: &SemanticPatchBody,
-        change: &SemanticChange,
-        disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) -> Result<(), PatchLifecycleError> {
-        match change {
-            SemanticChange::SchemaAdded { .. }
-            | SemanticChange::SchemaRemoved { .. }
-            | SemanticChange::SchemaFieldAdded { .. }
-            | SemanticChange::SchemaFieldRemoved { .. }
-            | SemanticChange::EntityAdded { .. }
-            | SemanticChange::EntityRemoved { .. } => Ok(()),
-            SemanticChange::SchemaFieldChanged { schema, field, .. }
-                if body.commands().iter().any(|command| matches!(command,
-                    SemanticCommand::SetSchemaFieldRequiredness { schema: command_schema, field: command_field, .. }
-                    if command_schema == schema && command_field == field
-                )) => {
-                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
-                Ok(())
-            }
-            // Removing a field and appending it under the same id in one batch
-            // replaces its definition, which nets out to one changed field.
-            SemanticChange::SchemaFieldChanged { schema, field, .. }
-                if body.commands().iter().any(|command| matches!(command,
-                    SemanticCommand::RemoveSchemaField { schema: command_schema, field: definition, .. }
-                    if command_schema == schema && definition.id == *field
-                )) && body.commands().iter().any(|command| matches!(command,
-                    SemanticCommand::AppendSchemaField { schema: command_schema, field: definition, .. }
-                    if command_schema == schema && definition.id == *field
-                )) => {
-                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
-                Ok(())
-            }
-            SemanticChange::FieldKeyChanged { schema, field, .. }
-                if body.commands().iter().any(|command| matches!(command,
-                    SemanticCommand::RenameSchemaField { schema: command_schema, field: command_field, .. }
-                    if command_schema == schema && command_field == field
-                )) => {
-                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
-                Ok(())
-            }
-            SemanticChange::FieldAdded { field, value } => {
-                let families = command_families_for_field(body, field);
-                if families == BTreeSet::from([OperationFamily::SchemaFieldMutation]) {
-                    self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
-                    return Ok(());
-                }
-                // A value-slot initialization is not a schema/identity mutation.
-                // Admit only the existing optional declaration and its exact
-                // SetFieldValue command; arbitrary added fields remain closed.
-                // The formula exceptions are an authored formula update and
-                // the app-private restore of a formula the host cleared; both
-                // can only target an optional Number slot through their own
-                // commands.
-                let definition = crate::field_definition(before, field)
-                    .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
-                let existing = before.entities[&field.entity].fields.get(&field.field);
-                let formula_restore = definition.field_type == FieldType::Number
-                    && !definition.required
-                    && matches!(value, Value::Formula(_))
-                    && body.commands().iter().any(|command| match command {
-                        SemanticCommand::FormulaRestore(restore) => restore.target() == field,
-                        SemanticCommand::FormulaUpdate(update) => update.target() == field,
-                        _ => false,
-                    });
-                if existing.is_some()
-                    || definition.required
-                    || (matches!(value, Value::Formula(_)) && !formula_restore)
-                    || (!formula_restore
-                        && families != BTreeSet::from([OperationFamily::SetFieldValue]))
-                {
-                    return Err(PatchLifecycleError::ScopeDerivationFailed);
-                }
-                // A formula into a blank slot discloses under its own family,
-                // as it does over a present value.
-                let family = if formula_restore {
-                    OperationFamily::FormulaUpdate
-                } else {
-                    OperationFamily::SetFieldValue
-                };
-                self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
-                self.insert_value_disclosures_for(family, before, after, field, value, disclosures)
-            }
-            SemanticChange::FieldRemoved { field, value } => {
-                let mut families = command_families_for_field(body, field);
-                if families == BTreeSet::from([OperationFamily::SchemaFieldMutation]) {
-                    self.insert_document_disclosure(OperationFamily::SchemaFieldMutation, disclosures);
-                    return Ok(());
-                }
-                if families.is_empty() {
-                    families.insert(OperationFamily::SetFieldValue);
-                }
-                for family in families {
-                    self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
-                    self.insert_value_disclosures_for(
-                        family, before, after, field, value, disclosures,
-                    )?;
-                }
-                Ok(())
-            }
-            SemanticChange::FieldChanged {
-                field,
-                before: old_value,
-                after: new_value,
-            } => {
-                let mut families = command_families_for_field(body, field);
-                if families.is_empty() {
-                    families.insert(OperationFamily::SetFieldValue);
-                }
-                for family in families {
-                    self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
-                    self.insert_value_disclosures_for(
-                        family, before, after, field, old_value, disclosures,
-                    )?;
-                    self.insert_value_disclosures_for(
-                        family, before, after, field, new_value, disclosures,
-                    )?;
-                }
-                Ok(())
-            }
-            SemanticChange::FormulaImpact { field, causes, .. } => {
-                let mut family_causes = BTreeMap::<OperationFamily, Vec<&FieldRef>>::new();
-                for cause in causes {
-                    let mut families = command_families_for_field(body, cause);
-                    if families.is_empty() {
-                        families.insert(OperationFamily::SetFieldValue);
-                    }
-                    for family in families {
-                        family_causes.entry(family).or_default().push(cause);
-                    }
-                }
-                for (family, causes) in family_causes {
-                    self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
-                    for cause in causes {
-                        self.insert_field_disclosure_for(
-                            family,
-                            before,
-                            after,
-                            cause,
-                            disclosures,
-                        )?;
-                    }
-                    for document in [before, after] {
-                        if let Some(Value::Formula(expression)) = document
-                            .entities
-                            .get(&field.entity)
-                            .and_then(|entity| entity.fields.get(&field.field))
-                        {
-                            self.insert_calculation_dependency_disclosures(
-                                family,
-                                document,
-                                expression_references(document, field, expression),
-                                disclosures,
-                            )?;
-                        }
-                    }
-                }
-                Ok(())
-            }
-            _ => Err(PatchLifecycleError::ScopeDerivationFailed),
-        }
-    }
-
-    fn insert_field_disclosure(
-        &self,
-        before: &Document,
-        after: &Document,
-        field: &FieldRef,
-        disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) -> Result<(), PatchLifecycleError> {
-        self.insert_field_disclosure_for(
-            OperationFamily::SetFieldValue,
-            before,
-            after,
-            field,
-            disclosures,
-        )
-    }
-
-    fn insert_field_disclosure_for(
-        &self,
-        family: OperationFamily,
-        before: &Document,
-        after: &Document,
-        field: &FieldRef,
-        disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) -> Result<(), PatchLifecycleError> {
-        let scope = self
-            .field_scope(after, field)
-            .or_else(|_| self.field_scope(before, field))
-            .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
-        disclosures.insert(DisclosureRequirement { family, scope });
-        Ok(())
-    }
-
-    fn insert_value_disclosures(
-        &self,
-        before: &Document,
-        after: &Document,
-        owner: &FieldRef,
-        value: &Value,
-        disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) -> Result<(), PatchLifecycleError> {
-        self.insert_value_disclosures_for(
-            OperationFamily::SetFieldValue,
-            before,
-            after,
-            owner,
-            value,
-            disclosures,
-        )
-    }
-
-    fn insert_value_disclosures_for(
-        &self,
-        family: OperationFamily,
-        before: &Document,
-        after: &Document,
-        owner: &FieldRef,
-        value: &Value,
-        disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) -> Result<(), PatchLifecycleError> {
-        match value {
-            Value::Reference(entity) => {
-                let scope = self
-                    .entity_scope(after, entity)
-                    .or_else(|_| self.entity_scope(before, entity))?;
-                disclosures.insert(DisclosureRequirement { family, scope });
-            }
-            Value::Formula(expression) => {
-                for field in expression_references(after, owner, expression) {
-                    self.insert_field_disclosure_for(family, before, after, &field, disclosures)?;
-                }
-            }
-            Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => {}
-        }
-        Ok(())
-    }
-
-    fn insert_calculation_dependency_disclosures(
-        &self,
-        family: OperationFamily,
-        document: &Document,
-        roots: impl IntoIterator<Item = FieldRef>,
-        disclosures: &mut BTreeSet<DisclosureRequirement>,
-    ) -> Result<(), PatchLifecycleError> {
-        let mut pending = roots.into_iter().collect::<Vec<_>>();
-        let mut visited = BTreeSet::new();
-        while let Some(field) = pending.pop() {
-            if !visited.insert(field.clone()) {
-                continue;
-            }
-            self.insert_field_disclosure_for(family, document, document, &field, disclosures)?;
-            let entity = document
-                .entities
-                .get(&field.entity)
-                .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
-            let Some(value) = entity.fields.get(&field.field) else {
-                // A blank slot of a declared field (a column total reads every
-                // row, blanks included) is disclosed but has nothing further
-                // to traverse.
-                let declared = document
-                    .schemas
-                    .get(&entity.schema)
-                    .is_some_and(|schema| schema.fields.contains_key(&field.field));
-                if declared {
-                    continue;
-                }
-                return Err(PatchLifecycleError::ScopeDerivationFailed);
-            };
-            if let Value::Formula(expression) = value {
-                pending.extend(expression_references(document, &field, expression));
-            }
-        }
-        Ok(())
+        Ok(derivation.disclosures)
     }
 
     fn keyed_grouped_sum_query_disclosures(
@@ -4673,6 +4215,703 @@ impl PatchLifecycle {
     }
 }
 
+/// Which admitted document one derivation step runs against.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum DisclosureDocumentSide {
+    Before,
+    After,
+}
+
+impl DisclosureDocumentSide {
+    fn document<'document>(
+        self,
+        before: &'document Document,
+        after: &'document Document,
+    ) -> &'document Document {
+        match self {
+            Self::Before => before,
+            Self::After => after,
+        }
+    }
+}
+
+/// How one field's scope resolves against the two admitted documents.
+#[derive(Clone, Copy)]
+enum FieldScopeSource {
+    /// Command-derived fields resolve against the candidate, then the base.
+    AfterThenBefore,
+    /// A calculation walk resolves against the document it walks.
+    Side(DisclosureDocumentSide),
+}
+
+/// The patch body's commands indexed by the field or entity they touch.
+///
+/// Every arm of `command_families_for_field` is indexed here, including the
+/// entity-wide commands, so one semantic change never re-walks the batch.
+#[derive(Default)]
+struct PatchBodyIndex {
+    field_families: BTreeMap<FieldRef, BTreeSet<OperationFamily>>,
+    appended_entities: BTreeSet<EntityId>,
+    removed_entities: BTreeSet<EntityId>,
+    schema_field_values: BTreeSet<FieldRef>,
+    requiredness_fields: BTreeSet<(SchemaId, FieldId)>,
+    removed_schema_fields: BTreeSet<(SchemaId, FieldId)>,
+    appended_schema_fields: BTreeSet<(SchemaId, FieldId)>,
+    renamed_schema_fields: BTreeSet<(SchemaId, FieldId)>,
+}
+
+impl PatchBodyIndex {
+    fn new(body: &SemanticPatchBody) -> Self {
+        let mut index = Self::default();
+        for command in body.commands() {
+            match command {
+                SemanticCommand::AppendCollection { entities, .. } => index
+                    .appended_entities
+                    .extend(entities.iter().map(|entity| entity.id.clone())),
+                SemanticCommand::RemoveCollection { entities, .. } => {
+                    index.removed_entities.extend(entities.iter().cloned());
+                }
+                SemanticCommand::AppendEntity { entity } => {
+                    index.appended_entities.insert(entity.id.clone());
+                }
+                SemanticCommand::RemoveEntity { entity } => {
+                    index.removed_entities.insert(entity.clone());
+                }
+                SemanticCommand::AppendSchemaField {
+                    schema,
+                    field,
+                    values,
+                } => {
+                    index
+                        .appended_schema_fields
+                        .insert((schema.clone(), field.id.clone()));
+                    index.schema_field_values.extend(
+                        values
+                            .keys()
+                            .map(|entity| FieldRef::new(entity.clone(), field.id.clone())),
+                    );
+                }
+                SemanticCommand::RemoveSchemaField {
+                    schema,
+                    field,
+                    values,
+                } => {
+                    index
+                        .removed_schema_fields
+                        .insert((schema.clone(), field.id.clone()));
+                    index.schema_field_values.extend(
+                        values
+                            .keys()
+                            .map(|entity| FieldRef::new(entity.clone(), field.id.clone())),
+                    );
+                }
+                SemanticCommand::RenameSchemaField { schema, field, .. } => {
+                    index
+                        .renamed_schema_fields
+                        .insert((schema.clone(), field.clone()));
+                }
+                SemanticCommand::SetSchemaFieldRequiredness { schema, field, .. } => {
+                    index
+                        .requiredness_fields
+                        .insert((schema.clone(), field.clone()));
+                }
+                SemanticCommand::SetFieldValue { field, .. }
+                | SemanticCommand::UnsetField { field } => {
+                    index
+                        .field_families
+                        .entry(field.clone())
+                        .or_default()
+                        .insert(OperationFamily::SetFieldValue);
+                }
+                SemanticCommand::FormulaUpdate(command) => {
+                    index
+                        .field_families
+                        .entry(command.target().clone())
+                        .or_default()
+                        .insert(OperationFamily::FormulaUpdate);
+                }
+                SemanticCommand::FormulaRestore(command) => {
+                    index
+                        .field_families
+                        .entry(command.target().clone())
+                        .or_default()
+                        .insert(OperationFamily::FormulaUpdate);
+                }
+                SemanticCommand::FormulaInverseRestore(command) => {
+                    index
+                        .field_families
+                        .entry(command.target().clone())
+                        .or_default()
+                        .insert(OperationFamily::FormulaInverseRestore);
+                }
+                SemanticCommand::SetFieldConstraint { .. }
+                | SemanticCommand::SetSchemaFieldDisplayName { .. }
+                | SemanticCommand::SetFieldNumberFormat { .. }
+                | SemanticCommand::SetSchemaFieldOrder { .. }
+                | SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+                | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {}
+            }
+        }
+        index
+    }
+
+    fn families(&self, field: &FieldRef) -> BTreeSet<OperationFamily> {
+        let mut families = self.field_families.get(field).cloned().unwrap_or_default();
+        if self.appended_entities.contains(&field.entity) {
+            families.insert(OperationFamily::AppendEntity);
+        }
+        if self.removed_entities.contains(&field.entity) {
+            families.insert(OperationFamily::RemoveEntity);
+        }
+        if self.schema_field_values.contains(field) {
+            families.insert(OperationFamily::SchemaFieldMutation);
+        }
+        families
+    }
+}
+
+/// One derivation's shared work: the patch-body index, each column's member
+/// slots, each walked closure, and the accumulated disclosures.
+///
+/// `DisclosureRequirement` insertion is idempotent, so every set below only
+/// removes repeated work; it never changes the resulting requirement set.
+struct DisclosureDerivation<'a> {
+    lifecycle: &'a PatchLifecycle,
+    before: &'a Document,
+    after: &'a Document,
+    index: PatchBodyIndex,
+    /// Each column's member slots per admitted document, built on first use.
+    column_slots: BTreeMap<(DisclosureDocumentSide, ColumnRef), Vec<FieldRef>>,
+    /// Columns whose slots were already disclosed for one family and document.
+    inserted_columns: BTreeSet<(OperationFamily, DisclosureDocumentSide, ColumnRef)>,
+    /// Columns whose whole closure was already walked for one family and document.
+    walked_columns: BTreeSet<(OperationFamily, DisclosureDocumentSide, ColumnRef)>,
+    /// Fields whose closure was already inserted for one family and document.
+    visited: BTreeSet<(OperationFamily, DisclosureDocumentSide, FieldRef)>,
+    disclosures: BTreeSet<DisclosureRequirement>,
+}
+
+/// Test-only count of column-slot walks, so a work bound can be asserted
+/// without timing. One walk enumerates one column's member slots once.
+#[cfg(test)]
+mod disclosure_slot_walk_count {
+    use std::cell::Cell;
+
+    thread_local! {
+        static WALKS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn reset() {
+        WALKS.with(|walks| walks.set(0));
+    }
+
+    pub(super) fn record() {
+        WALKS.with(|walks| walks.set(walks.get() + 1));
+    }
+
+    pub(super) fn count() -> usize {
+        WALKS.with(Cell::get)
+    }
+}
+
+impl<'a> DisclosureDerivation<'a> {
+    fn new(
+        lifecycle: &'a PatchLifecycle,
+        before: &'a Document,
+        after: &'a Document,
+        body: &SemanticPatchBody,
+    ) -> Self {
+        Self {
+            lifecycle,
+            before,
+            after,
+            index: PatchBodyIndex::new(body),
+            column_slots: BTreeMap::new(),
+            inserted_columns: BTreeSet::new(),
+            walked_columns: BTreeSet::new(),
+            visited: BTreeSet::new(),
+            disclosures: BTreeSet::new(),
+        }
+    }
+
+    #[allow(clippy::too_many_lines)] // Closed command catalogue derives disclosures atomically.
+    fn insert_command_disclosures(
+        &mut self,
+        command: &SemanticCommand,
+    ) -> Result<(), PatchLifecycleError> {
+        match command {
+            SemanticCommand::AppendCollection { .. } | SemanticCommand::AppendEntity { .. } => {
+                self.insert_document_disclosure(OperationFamily::AppendEntity);
+                Ok(())
+            }
+            SemanticCommand::RemoveCollection { .. } | SemanticCommand::RemoveEntity { .. } => {
+                self.insert_document_disclosure(OperationFamily::RemoveEntity);
+                Ok(())
+            }
+            SemanticCommand::AppendSchemaField { .. }
+            | SemanticCommand::RemoveSchemaField { .. }
+            | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetSchemaFieldDisplayName { .. }
+            | SemanticCommand::SetFieldNumberFormat { .. }
+            | SemanticCommand::SetSchemaFieldOrder { .. }
+            | SemanticCommand::SetSchemaFieldRequiredness { .. } => {
+                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation);
+                Ok(())
+            }
+            SemanticCommand::SetFieldConstraint { schema, field, .. } => {
+                self.disclosures.insert(DisclosureRequirement {
+                    family: OperationFamily::SchemaFieldMutation,
+                    scope: self.lifecycle.schema_field_scope(schema, field),
+                });
+                for side in [
+                    DisclosureDocumentSide::Before,
+                    DisclosureDocumentSide::After,
+                ] {
+                    let document = side.document(self.before, self.after);
+                    for entity in document
+                        .entities
+                        .values()
+                        .filter(|entity| entity.schema == *schema)
+                    {
+                        let Some(value) = entity.fields.get(field) else {
+                            continue;
+                        };
+                        let owner = FieldRef::new(entity.id.clone(), field.clone());
+                        self.insert_value_disclosures_for(
+                            OperationFamily::SchemaFieldMutation,
+                            &owner,
+                            value,
+                        )?;
+                        if let Value::Formula(expression) = value {
+                            self.insert_calculation_dependency_disclosures(
+                                OperationFamily::SchemaFieldMutation,
+                                side,
+                                &owner,
+                                expression,
+                            )?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            SemanticCommand::SetFieldValue { field, value } => {
+                self.insert_field_disclosure(field)?;
+                self.insert_value_disclosures(field, value)
+            }
+            SemanticCommand::UnsetField { field } => {
+                self.insert_field_disclosure_for(OperationFamily::SetFieldValue, field)?;
+                let before = self.before;
+                let Some(value) = before
+                    .entities
+                    .get(&field.entity)
+                    .and_then(|entity| entity.fields.get(&field.field))
+                else {
+                    return Ok(());
+                };
+                self.insert_value_disclosures_for(OperationFamily::SetFieldValue, field, value)
+            }
+            SemanticCommand::FormulaUpdate(command) => {
+                self.insert_field_disclosure_for(OperationFamily::FormulaUpdate, command.target())?;
+                for reference in command.references() {
+                    self.insert_field_disclosure_for(OperationFamily::FormulaUpdate, reference)?;
+                }
+                Ok(())
+            }
+            SemanticCommand::FormulaRestore(command) => {
+                self.insert_field_disclosure_for(OperationFamily::FormulaUpdate, command.target())?;
+                // A column total reads every entity of its schema, so the
+                // reference set expands against the admitted document. The
+                // command is built from host history where no document is at
+                // hand (the capacity edit path keeps none), so the expansion
+                // happens here, once both documents exist.
+                for (reference, _) in command.expression().reference_uses(command.target()) {
+                    self.insert_field_disclosure_for(OperationFamily::FormulaUpdate, &reference)?;
+                }
+                for column in command.expression().column_totals() {
+                    self.insert_column_disclosures(
+                        OperationFamily::FormulaUpdate,
+                        DisclosureDocumentSide::After,
+                        column,
+                    )?;
+                }
+                Ok(())
+            }
+            SemanticCommand::FormulaInverseRestore(command) => {
+                self.insert_field_disclosure_for(
+                    OperationFamily::FormulaInverseRestore,
+                    command.target(),
+                )?;
+                self.insert_value_disclosures_for(
+                    OperationFamily::FormulaInverseRestore,
+                    command.target(),
+                    &Value::Number(command.value()),
+                )
+            }
+            SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+            | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {
+                self.insert_document_disclosure(OperationFamily::KeyedGroupedSumDefinition);
+                Ok(())
+            }
+        }
+    }
+
+    fn insert_document_disclosure(&mut self, family: OperationFamily) {
+        self.disclosures.insert(DisclosureRequirement {
+            family,
+            scope: ScopedSemanticSubject::new(
+                self.lifecycle.document_scope.clone(),
+                self.lifecycle.document.clone(),
+                SemanticScope::Document,
+            ),
+        });
+    }
+
+    #[allow(clippy::too_many_lines)] // Closed semantic-change catalogue derives disclosures atomically.
+    fn insert_change_disclosures(
+        &mut self,
+        change: &SemanticChange,
+    ) -> Result<(), PatchLifecycleError> {
+        match change {
+            SemanticChange::SchemaAdded { .. }
+            | SemanticChange::SchemaRemoved { .. }
+            | SemanticChange::SchemaFieldAdded { .. }
+            | SemanticChange::SchemaFieldRemoved { .. }
+            | SemanticChange::EntityAdded { .. }
+            | SemanticChange::EntityRemoved { .. } => Ok(()),
+            SemanticChange::SchemaFieldChanged { schema, field, .. }
+                if self
+                    .index
+                    .requiredness_fields
+                    .contains(&(schema.clone(), field.clone())) =>
+            {
+                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation);
+                Ok(())
+            }
+            // Removing a field and appending it under the same id in one batch
+            // replaces its definition, which nets out to one changed field.
+            SemanticChange::SchemaFieldChanged { schema, field, .. }
+                if self
+                    .index
+                    .removed_schema_fields
+                    .contains(&(schema.clone(), field.clone()))
+                    && self
+                        .index
+                        .appended_schema_fields
+                        .contains(&(schema.clone(), field.clone())) =>
+            {
+                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation);
+                Ok(())
+            }
+            SemanticChange::FieldKeyChanged { schema, field, .. }
+                if self
+                    .index
+                    .renamed_schema_fields
+                    .contains(&(schema.clone(), field.clone())) =>
+            {
+                self.insert_document_disclosure(OperationFamily::SchemaFieldMutation);
+                Ok(())
+            }
+            SemanticChange::FieldAdded { field, value } => {
+                let families = self.index.families(field);
+                if families == BTreeSet::from([OperationFamily::SchemaFieldMutation]) {
+                    self.insert_document_disclosure(OperationFamily::SchemaFieldMutation);
+                    return Ok(());
+                }
+                // A value-slot initialization is not a schema/identity mutation.
+                // Admit only the existing optional declaration and its exact
+                // SetFieldValue command; arbitrary added fields remain closed.
+                // The formula exceptions are an authored formula update and
+                // the app-private restore of a formula the host cleared; both
+                // can only target an optional Number slot through their own
+                // commands.
+                let definition = crate::field_definition(self.before, field)
+                    .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
+                let existing = self.before.entities[&field.entity].fields.get(&field.field);
+                let formula_restore = definition.field_type == FieldType::Number
+                    && !definition.required
+                    && matches!(value, Value::Formula(_))
+                    && families.contains(&OperationFamily::FormulaUpdate);
+                if existing.is_some()
+                    || definition.required
+                    || (matches!(value, Value::Formula(_)) && !formula_restore)
+                    || (!formula_restore
+                        && families != BTreeSet::from([OperationFamily::SetFieldValue]))
+                {
+                    return Err(PatchLifecycleError::ScopeDerivationFailed);
+                }
+                // A formula into a blank slot discloses under its own family,
+                // as it does over a present value.
+                let family = if formula_restore {
+                    OperationFamily::FormulaUpdate
+                } else {
+                    OperationFamily::SetFieldValue
+                };
+                self.insert_field_disclosure_for(family, field)?;
+                self.insert_value_disclosures_for(family, field, value)
+            }
+            SemanticChange::FieldRemoved { field, value } => {
+                let mut families = self.index.families(field);
+                if families == BTreeSet::from([OperationFamily::SchemaFieldMutation]) {
+                    self.insert_document_disclosure(OperationFamily::SchemaFieldMutation);
+                    return Ok(());
+                }
+                if families.is_empty() {
+                    families.insert(OperationFamily::SetFieldValue);
+                }
+                for family in families {
+                    self.insert_field_disclosure_for(family, field)?;
+                    self.insert_value_disclosures_for(family, field, value)?;
+                }
+                Ok(())
+            }
+            SemanticChange::FieldChanged {
+                field,
+                before: old_value,
+                after: new_value,
+            } => {
+                let mut families = self.index.families(field);
+                if families.is_empty() {
+                    families.insert(OperationFamily::SetFieldValue);
+                }
+                for family in families {
+                    self.insert_field_disclosure_for(family, field)?;
+                    self.insert_value_disclosures_for(family, field, old_value)?;
+                    self.insert_value_disclosures_for(family, field, new_value)?;
+                }
+                Ok(())
+            }
+            SemanticChange::FormulaImpact { field, causes, .. } => {
+                let mut family_causes = BTreeMap::<OperationFamily, Vec<&FieldRef>>::new();
+                for cause in causes {
+                    let mut families = self.index.families(cause);
+                    if families.is_empty() {
+                        families.insert(OperationFamily::SetFieldValue);
+                    }
+                    for family in families {
+                        family_causes.entry(family).or_default().push(cause);
+                    }
+                }
+                for (family, causes) in family_causes {
+                    self.insert_field_disclosure_for(family, field)?;
+                    for cause in causes {
+                        self.insert_field_disclosure_for(family, cause)?;
+                    }
+                    for side in [
+                        DisclosureDocumentSide::Before,
+                        DisclosureDocumentSide::After,
+                    ] {
+                        let expression = side
+                            .document(self.before, self.after)
+                            .entities
+                            .get(&field.entity)
+                            .and_then(|entity| entity.fields.get(&field.field))
+                            .and_then(|value| match value {
+                                Value::Formula(expression) => Some(expression.clone()),
+                                _ => None,
+                            });
+                        let Some(expression) = expression else {
+                            continue;
+                        };
+                        self.insert_calculation_dependency_disclosures(
+                            family,
+                            side,
+                            field,
+                            &expression,
+                        )?;
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(PatchLifecycleError::ScopeDerivationFailed),
+        }
+    }
+
+    /// Insert one field's disclosure, resolving its scope against the candidate
+    /// first and the base second.
+    fn insert_field_disclosure_for(
+        &mut self,
+        family: OperationFamily,
+        field: &FieldRef,
+    ) -> Result<(), PatchLifecycleError> {
+        self.insert_field_disclosure_in(family, FieldScopeSource::AfterThenBefore, field)
+    }
+
+    fn insert_field_disclosure(&mut self, field: &FieldRef) -> Result<(), PatchLifecycleError> {
+        self.insert_field_disclosure_for(OperationFamily::SetFieldValue, field)
+    }
+
+    fn insert_field_disclosure_in(
+        &mut self,
+        family: OperationFamily,
+        source: FieldScopeSource,
+        field: &FieldRef,
+    ) -> Result<(), PatchLifecycleError> {
+        let scope = match source {
+            FieldScopeSource::AfterThenBefore => self
+                .lifecycle
+                .field_scope(self.after, field)
+                .or_else(|_| self.lifecycle.field_scope(self.before, field)),
+            FieldScopeSource::Side(side) => self
+                .lifecycle
+                .field_scope(side.document(self.before, self.after), field),
+        }
+        .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
+        self.disclosures
+            .insert(DisclosureRequirement { family, scope });
+        Ok(())
+    }
+
+    fn insert_value_disclosures(
+        &mut self,
+        owner: &FieldRef,
+        value: &Value,
+    ) -> Result<(), PatchLifecycleError> {
+        self.insert_value_disclosures_for(OperationFamily::SetFieldValue, owner, value)
+    }
+
+    fn insert_value_disclosures_for(
+        &mut self,
+        family: OperationFamily,
+        owner: &FieldRef,
+        value: &Value,
+    ) -> Result<(), PatchLifecycleError> {
+        match value {
+            Value::Reference(entity) => {
+                let scope = self
+                    .lifecycle
+                    .entity_scope(self.after, entity)
+                    .or_else(|_| self.lifecycle.entity_scope(self.before, entity))?;
+                self.disclosures
+                    .insert(DisclosureRequirement { family, scope });
+            }
+            Value::Formula(expression) => {
+                for (reference, _) in expression.reference_uses(owner) {
+                    self.insert_field_disclosure_in(
+                        family,
+                        FieldScopeSource::AfterThenBefore,
+                        &reference,
+                    )?;
+                }
+                for column in expression.column_totals() {
+                    self.insert_column_disclosures(family, DisclosureDocumentSide::After, column)?;
+                }
+            }
+            Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => {}
+        }
+        Ok(())
+    }
+
+    /// Insert one column's member slots once per family and document.
+    fn insert_column_disclosures(
+        &mut self,
+        family: OperationFamily,
+        side: DisclosureDocumentSide,
+        column: &ColumnRef,
+    ) -> Result<(), PatchLifecycleError> {
+        if !self.inserted_columns.insert((family, side, column.clone())) {
+            return Ok(());
+        }
+        let slots = self.column_slots(side, column).to_vec();
+        #[cfg(test)]
+        {
+            disclosure_slot_walk_count::record();
+        }
+        for field in &slots {
+            self.insert_field_disclosure_in(family, FieldScopeSource::AfterThenBefore, field)?;
+        }
+        Ok(())
+    }
+
+    fn column_slots(&mut self, side: DisclosureDocumentSide, column: &ColumnRef) -> &[FieldRef] {
+        let document = side.document(self.before, self.after);
+        self.column_slots
+            .entry((side, column.clone()))
+            .or_insert_with(|| {
+                document
+                    .entities
+                    .iter()
+                    .filter(|(_, entity)| entity.schema == column.schema)
+                    .map(|(entity_id, _)| FieldRef::new(entity_id.clone(), column.field.clone()))
+                    .collect()
+            })
+    }
+
+    /// Add one column's member slots to a calculation walk once per family and
+    /// document. A later walk of the same column has already inserted the whole
+    /// closure of every slot.
+    fn push_column_closure(
+        &mut self,
+        family: OperationFamily,
+        side: DisclosureDocumentSide,
+        column: &ColumnRef,
+        pending: &mut Vec<FieldRef>,
+    ) {
+        if !self.walked_columns.insert((family, side, column.clone())) {
+            return;
+        }
+        let slots = self.column_slots(side, column).to_vec();
+        #[cfg(test)]
+        {
+            disclosure_slot_walk_count::record();
+        }
+        pending.extend(slots);
+    }
+
+    fn insert_calculation_dependency_disclosures(
+        &mut self,
+        family: OperationFamily,
+        side: DisclosureDocumentSide,
+        owner: &FieldRef,
+        expression: &Expression,
+    ) -> Result<(), PatchLifecycleError> {
+        let mut pending = expression
+            .reference_uses(owner)
+            .into_iter()
+            .map(|(reference, _)| reference)
+            .collect::<Vec<_>>();
+        for column in expression.column_totals() {
+            self.push_column_closure(family, side, column, &mut pending);
+        }
+        while let Some(field) = pending.pop() {
+            if !self.visited.insert((family, side, field.clone())) {
+                continue;
+            }
+            self.insert_field_disclosure_in(family, FieldScopeSource::Side(side), &field)?;
+            let document = side.document(self.before, self.after);
+            let entity = document
+                .entities
+                .get(&field.entity)
+                .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
+            let Some(value) = entity.fields.get(&field.field) else {
+                // A blank slot of a declared field (a column total reads every
+                // row, blanks included) is disclosed but has nothing further
+                // to traverse.
+                let declared = document
+                    .schemas
+                    .get(&entity.schema)
+                    .is_some_and(|schema| schema.fields.contains_key(&field.field));
+                if declared {
+                    continue;
+                }
+                return Err(PatchLifecycleError::ScopeDerivationFailed);
+            };
+            if let Value::Formula(expression) = value {
+                pending.extend(
+                    expression
+                        .reference_uses(&field)
+                        .into_iter()
+                        .map(|(reference, _)| reference),
+                );
+                for column in expression.column_totals() {
+                    self.push_column_closure(family, side, column, &mut pending);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 fn command_families_for_field(
     body: &SemanticPatchBody,
     field: &FieldRef,
