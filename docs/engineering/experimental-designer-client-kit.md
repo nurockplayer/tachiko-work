@@ -178,6 +178,18 @@ blank, then natural order (case-insensitive, digit runs compared as numbers).
 `limit` is 1..=1,000, the reply stays inside the window byte cap, and
 `truncated` reports whether more values exist.
 
+`findInView` finds matching cells the way Sheet's Find does: a cell matches when
+its display text, lowercased, contains the query lowercased, with neither side
+trimmed, and a blank or all-whitespace query matches nothing. Matches run row by
+row, then through `fields` — the shown columns in shown order, 1..=32 column IDs
+of the collection with no repeats. `from` is a `{row, field}` cell position (a
+zero-based view row index and a column ID) that need not itself match, so a
+stale position is admissible; `next` and `previous` take the following or
+preceding match and wrap at either end. The reply carries the revision, `total`
+(every matching cell in the view) and `found`, with its entity, column, view row
+and zero-based `ordinal` — Sheet's "n of m". Blank, failed, unavailable and
+Reference cells match no text.
+
 A window above the reply cap (1 MiB, or 16 MiB for a text-capacity
 document) refuses with
 `query_too_large` rather than serialising an oversized response; ask for

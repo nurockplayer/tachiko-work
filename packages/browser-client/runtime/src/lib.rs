@@ -343,6 +343,20 @@ pub enum DesignerRequest {
         field: String,
         limit: usize,
     },
+    /// Find one matching cell in a view: the next or previous cell whose
+    /// display text contains `query` (case-insensitive), its ordinal and the
+    /// total match count. `fields` are the shown columns in shown order.
+    FindInView {
+        expected_revision: String,
+        collection: String,
+        #[serde(default)]
+        view: TableView,
+        query: String,
+        fields: Vec<String>,
+        #[serde(default)]
+        from: Option<FindPosition>,
+        direction: FindDirection,
+    },
     /// Number totals over exactly the named entities, summed in collection
     /// order. Naming every entity of the collection gives the window footer.
     QueryColumnTotals {
@@ -426,6 +440,7 @@ pub enum DesignerResponse {
     TableWindow(TableWindowProjection),
     LocatedInView(LocatedInViewProjection),
     DistinctValues(DistinctValuesProjection),
+    FoundInView(FindInViewProjection),
     ColumnTotals(ColumnTotalsProjection),
     GroupTotals(GroupTotalsProjection),
     Fields(FieldBatchProjection),
@@ -546,6 +561,42 @@ pub struct DistinctValuesProjection {
 pub enum LocateInViewResult {
     Found,
     FilteredOut,
+}
+
+/// One cell position inside a view: a zero-based view row index and a column
+/// ID. The cell need not match anything, so a stale position is admissible.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FindPosition {
+    pub row: usize,
+    pub field: String,
+}
+
+/// Which way Find walks from [`FindPosition`], wrapping at either end.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindDirection {
+    Next,
+    Previous,
+}
+
+/// One matching cell: its entity, column, zero-based view row index and
+/// zero-based ordinal among every match in the view.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FoundCell {
+    pub entity: String,
+    pub field: String,
+    pub row: usize,
+    pub ordinal: usize,
+}
+
+/// The result of one Find step: the view revision, the total number of
+/// matching cells in the view, and the chosen cell when any exists.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FindInViewProjection {
+    pub revision: String,
+    pub total: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub found: Option<FoundCell>,
 }
 
 /// Number totals over one named set of entities, at one revision.
@@ -2601,6 +2652,128 @@ fn validate_view_bounds(view: &TableView) -> Result<(), DesignerError> {
     Ok(())
 }
 
+/// The borrowed inputs of one Find step, grouped so the scan keeps a small
+/// signature.
+#[derive(Clone, Copy)]
+struct FindInViewInput<'a> {
+    expected_revision: &'a str,
+    collection: &'a str,
+    view: &'a TableView,
+    query: &'a str,
+    fields: &'a [String],
+    from: Option<&'a FindPosition>,
+    direction: FindDirection,
+}
+
+/// The searched columns of one collection, in the given order.
+fn find_view_columns<'a>(
+    spec: &'a CollectionSpec,
+    collection: &str,
+    fields: &[String],
+) -> Result<Vec<&'a ColumnSpec>, DesignerError> {
+    let mut columns = Vec::with_capacity(fields.len());
+    for field in fields {
+        let column = spec
+            .columns
+            .iter()
+            .find(|column| column.id.as_str() == field)
+            .ok_or_else(|| DesignerError::InvalidView {
+                message: format!("find-in-view field {field} is not a column of {collection}"),
+            })?;
+        columns.push(column);
+    }
+    Ok(columns)
+}
+
+/// The validated `from` position as a view row and a `fields` ordinal.
+fn find_view_start(
+    fields: &[String],
+    from: Option<&FindPosition>,
+    row_count: usize,
+) -> Result<Option<(usize, usize)>, DesignerError> {
+    let Some(position) = from else {
+        return Ok(None);
+    };
+    if position.row >= row_count {
+        return Err(DesignerError::InvalidView {
+            message: format!(
+                "find-in-view from.row {} is past the view's {row_count} rows",
+                position.row
+            ),
+        });
+    }
+    let ordinal = fields
+        .iter()
+        .position(|field| field == &position.field)
+        .ok_or_else(|| DesignerError::InvalidView {
+            message: format!(
+                "find-in-view from.field {} is not one of the searched fields",
+                position.field
+            ),
+        })?;
+    Ok(Some((position.row, ordinal)))
+}
+
+/// Every matching cell in scan order, with its linear position. `ordinal` is
+/// the zero-based index among the matches.
+fn find_view_matches(
+    order: &[usize],
+    fields: &[String],
+    texts: &[Vec<String>],
+    needle: &str,
+    entities: &[EntityId],
+) -> Vec<(usize, FoundCell)> {
+    let mut matches = Vec::new();
+    for (row, entity_row) in order.iter().enumerate() {
+        for (ordinal, field) in fields.iter().enumerate() {
+            if !texts[ordinal][*entity_row].to_lowercase().contains(needle) {
+                continue;
+            }
+            matches.push((
+                row * fields.len() + ordinal,
+                FoundCell {
+                    entity: entities[*entity_row].as_str().to_owned(),
+                    field: field.clone(),
+                    row,
+                    ordinal: matches.len(),
+                },
+            ));
+        }
+    }
+    matches
+}
+
+/// The match one Find step lands on, wrapping at either end.
+fn find_view_match(
+    matches: &[(usize, FoundCell)],
+    start: Option<(usize, usize)>,
+    field_count: usize,
+    direction: FindDirection,
+) -> Option<FoundCell> {
+    let last = matches.len().checked_sub(1)?;
+    let picked = match start {
+        None => match direction {
+            FindDirection::Next => &matches[0],
+            FindDirection::Previous => &matches[last],
+        },
+        Some((row, ordinal)) => {
+            let target = row * field_count + ordinal;
+            match direction {
+                FindDirection::Next => matches
+                    .iter()
+                    .find(|(index, _)| *index > target)
+                    .unwrap_or(&matches[0]),
+                FindDirection::Previous => matches
+                    .iter()
+                    .rev()
+                    .find(|(index, _)| *index < target)
+                    .unwrap_or(&matches[last]),
+            }
+        }
+    };
+    Some(picked.1.clone())
+}
+
 fn view_cache_key(view: &TableView) -> Result<String, DesignerError> {
     serde_json::to_string(view).map_err(|error| view_encoding_failure("view", &error))
 }
@@ -2986,6 +3159,25 @@ impl DesignerRuntime {
             } => Ok(DesignerResponse::DistinctValues(
                 self.query_distinct_values(&expected_revision, &collection, &view, &field, limit)?,
             )),
+            DesignerRequest::FindInView {
+                expected_revision,
+                collection,
+                view,
+                query,
+                fields,
+                from,
+                direction,
+            } => Ok(DesignerResponse::FoundInView(self.find_in_view(
+                FindInViewInput {
+                    expected_revision: &expected_revision,
+                    collection: &collection,
+                    view: &view,
+                    query: &query,
+                    fields: &fields,
+                    from: from.as_ref(),
+                    direction,
+                },
+            )?)),
             DesignerRequest::QueryColumnTotals {
                 expected_revision,
                 collection,
@@ -3764,6 +3956,100 @@ impl DesignerRuntime {
             values: out,
             truncated,
         })
+    }
+
+    /// Find the next or previous cell of a view whose display text contains
+    /// `query`, case-insensitively and with neither side trimmed, walking view
+    /// rows and then the shown columns in order and wrapping at either end.
+    /// Only the searched columns' fields are read; no row is projected.
+    fn find_in_view(
+        &mut self,
+        input: FindInViewInput<'_>,
+    ) -> Result<FindInViewProjection, DesignerError> {
+        if input.fields.is_empty() || input.fields.len() > MAX_TABLE_FIELDS {
+            return Err(DesignerError::InvalidView {
+                message: format!(
+                    "find-in-view fields carries {} ids; it must be 1..={MAX_TABLE_FIELDS}",
+                    input.fields.len()
+                ),
+            });
+        }
+        let mut seen = BTreeSet::new();
+        for field in input.fields {
+            if !seen.insert(field.as_str()) {
+                return Err(DesignerError::InvalidView {
+                    message: format!("find-in-view fields repeats {field}"),
+                });
+            }
+        }
+        validate_view_bounds(input.view)?;
+        self.check_revision(input.expected_revision)?;
+        let revision = self.current_revision().to_owned();
+        let order = self.view_order(input.collection, input.view)?;
+        let spec = self.collection_spec(input.collection)?;
+        let columns = find_view_columns(spec, input.collection, input.fields)?;
+        let start = find_view_start(input.fields, input.from, order.len())?;
+        if input.query.trim().is_empty() {
+            return Ok(FindInViewProjection {
+                revision,
+                total: 0,
+                found: None,
+            });
+        }
+        let needle = input.query.to_lowercase();
+        let texts = self.find_view_texts(spec, &columns, input.fields)?;
+        let matches = find_view_matches(&order, input.fields, &texts, &needle, &spec.entities);
+        Ok(FindInViewProjection {
+            revision,
+            total: matches.len(),
+            found: find_view_match(&matches, start, input.fields.len(), input.direction),
+        })
+    }
+
+    /// The display text of every searched column by row, read once.
+    fn find_view_texts(
+        &self,
+        spec: &CollectionSpec,
+        columns: &[&ColumnSpec],
+        fields: &[String],
+    ) -> Result<Vec<Vec<String>>, DesignerError> {
+        let row_count = spec.entities.len();
+        let entities = self.session.query_entities(&spec.entities)?;
+        let mut targets = Vec::new();
+        for entity in entities.value() {
+            for column in columns {
+                if entity.fields.contains(&column.id) {
+                    targets.push(FieldRef::new(entity.id.clone(), column.id.clone()));
+                }
+            }
+        }
+        let values = self.session.query_fields(&targets)?;
+        let row_of = entities
+            .value()
+            .iter()
+            .enumerate()
+            .map(|(row, entity)| (entity.id.as_str(), row))
+            .collect::<BTreeMap<_, _>>();
+        let ordinal_of = fields
+            .iter()
+            .enumerate()
+            .map(|(ordinal, field)| (field.as_str(), ordinal))
+            .collect::<BTreeMap<_, _>>();
+        let mut texts = vec![vec![String::new(); row_count]; columns.len()];
+        for value in values.value() {
+            let (Some(row), Some(ordinal)) = (
+                row_of.get(value.field.entity.as_str()).copied(),
+                ordinal_of.get(value.field.field.as_str()).copied(),
+            ) else {
+                continue;
+            };
+            texts[ordinal][row] = display_text::cell_text(
+                view_value(value).as_ref(),
+                columns[ordinal].number_format.as_ref(),
+                columns[ordinal].required,
+            );
+        }
+        Ok(texts)
     }
 
     /// The cached ordered row positions for one stateless view. The cache is
@@ -7579,6 +7865,7 @@ pub(crate) fn ensure_wire_reply_size(
                 DesignerResponse::TableWindow(_)
                 | DesignerResponse::LocatedInView(_)
                 | DesignerResponse::DistinctValues(_)
+                | DesignerResponse::FoundInView(_)
                 | DesignerResponse::ColumnTotals(_)
                 | DesignerResponse::GroupTotals(_),
         } => table_window_byte_limit(text_capacity),
