@@ -1,4 +1,4 @@
-import type { FieldProjection, FieldTarget, OpenedProjection, StoredValueProjection } from "./protocol.ts";
+import type { FieldProjection, FieldTarget, OpenedProjection, OpenedWindowProjection, StoredValueProjection } from "./protocol.ts";
 
 export type SpreadsheetFormat = "csv" | "xlsx";
 export type ImportFieldType = "text" | "number" | "boolean" | "date";
@@ -26,12 +26,14 @@ export type NativeBudgetExportPresentation = {
   collections: Array<{collection_id: string; rows: Array<{entity_id: string; styles: SourceStyle[]}>}>;
 };
 export type ImportedProjection = { opened: OpenedProjection; metadata: InteropMetadata; ledger: FidelityFinding[] };
+/** A working-size import reply: the first bounded window instead of the whole table. */
+export type ImportedWindowProjection = { opened: OpenedWindowProjection; metadata: InteropMetadata; ledger: FidelityFinding[] };
 export type SpreadsheetExport = { revision: string; bytes: ArrayBuffer; ledger: FidelityFinding[] };
 export type SpreadsheetOperation =
   | {type: "inspect"; format: SpreadsheetFormat; csv_options: ImportOptions}
-  | {type: "import"; format: SpreadsheetFormat; csv_options: ImportOptions; selection: ImportSelection; occurrence_id: string; install: boolean}
-  | {type: "inspect_project"; metadata: InteropMetadata}
-  | {type: "open_project"; occurrence_id: string; metadata: InteropMetadata}
+  | {type: "import"; format: SpreadsheetFormat; csv_options: ImportOptions; selection: ImportSelection; occurrence_id: string; install: boolean; profile?: "working_size"}
+  | {type: "inspect_project"; metadata: InteropMetadata; profile?: "working_size"}
+  | {type: "open_project"; occurrence_id: string; metadata: InteropMetadata; profile?: "working_size"}
   | {type: "export"; expected_revision: string; metadata: InteropMetadata; format: SpreadsheetFormat; collection: string}
   | {type: "export_native_tables"; expected_revision: string; collection: string; format: SpreadsheetFormat}
   | {type: "export_native_tracker"; expected_revision: string; presentation: NativeTrackerExportPresentation; format: SpreadsheetFormat}
