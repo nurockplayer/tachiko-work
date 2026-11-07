@@ -10,7 +10,7 @@
 
 use tachiko_workspace_engine::{NumberFormat, NumberFormatKind};
 
-use crate::ViewValue;
+use crate::{CalculationProjection, StoredValueProjection, ViewValue};
 
 /// The en-US CLDR symbol of every currency code that has one. A code with no
 /// symbol renders as the code itself plus U+00A0, as `Intl.NumberFormat` does.
@@ -52,6 +52,18 @@ pub(crate) fn display_text(value: &ViewValue, format: Option<&NumberFormat>) -> 
         ViewValue::Boolean(flag) => Some(if *flag { "true" } else { "false" }.to_owned()),
         ViewValue::Date(date) => Some(date.to_string()),
         ViewValue::Reference => None,
+    }
+}
+
+/// The Number a cell shows. A calculation decides when one is present, so a
+/// failed or unavailable result shows no number even beside a stored one.
+pub(crate) fn displayed_number(
+    stored: Option<&StoredValueProjection>,
+    calculated: Option<&CalculationProjection>,
+) -> Option<f64> {
+    match calculated {
+        Some(calculated) => calculated.number(),
+        None => stored.and_then(StoredValueProjection::number),
     }
 }
 
@@ -381,8 +393,8 @@ fn js_number_to_string(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_text, format_number};
-    use crate::ViewValue;
+    use super::{display_text, displayed_number, format_number};
+    use crate::{CalculationProjection, StoredValueProjection, ViewValue};
     use serde::Deserialize;
     use tachiko_workspace_engine::{Date, NumberFormat, NumberFormatKind};
 
@@ -397,6 +409,27 @@ mod tests {
     #[derive(Deserialize)]
     struct Corpus {
         cases: Vec<Case>,
+    }
+
+    #[test]
+    fn a_calculation_decides_over_a_stored_number() {
+        let stored = StoredValueProjection::Number { value: 1.0 };
+        let value = CalculationProjection::Value { value: 2.0 };
+        let failure = CalculationProjection::Failure {
+            code: "division_by_zero".to_owned(),
+            message: "division by zero".to_owned(),
+        };
+        let shown = |stored, calculated| {
+            displayed_number(stored, calculated).map(|number| format_number(number, None))
+        };
+        assert_eq!(shown(Some(&stored), None), Some("1".to_owned()));
+        assert_eq!(shown(Some(&stored), Some(&value)), Some("2".to_owned()));
+        assert_eq!(shown(Some(&stored), Some(&failure)), None);
+        assert_eq!(
+            shown(Some(&stored), Some(&CalculationProjection::Unavailable)),
+            None
+        );
+        assert_eq!(shown(None, None), None);
     }
 
     #[test]

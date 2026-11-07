@@ -6808,15 +6808,9 @@ fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
         else {
             continue;
         };
-        let value = match &field.stored {
-            Some(StoredValueProjection::Number { value }) => Some(*value),
-            Some(_) | None => field
-                .calculated
-                .as_ref()
-                .and_then(CalculationProjection::number),
-        };
         field.display =
-            value.map(|value| display_text::format_number(value, column.number_format.as_ref()));
+            display_text::displayed_number(field.stored.as_ref(), field.calculated.as_ref())
+                .map(|value| display_text::format_number(value, column.number_format.as_ref()));
     }
 }
 
