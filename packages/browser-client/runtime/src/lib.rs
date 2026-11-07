@@ -3068,12 +3068,6 @@ impl DesignerRuntime {
         Ok(())
     }
 
-    /// Refuse a working-size occurrence whose v3 save could pass the transfer
-    /// limit. Ordinary and text-capacity sessions keep their own limits.
-    fn ensure_working_saved_bytes(&self) -> Result<(), DesignerError> {
-        self.ensure_working_saved_bytes_for(self.session.document())
-    }
-
     /// Check one candidate document against the same bound, adding the bytes
     /// the stored presentation contributes to a save.
     fn ensure_working_saved_bytes_for(&self, document: &Document) -> Result<(), DesignerError> {
@@ -8198,11 +8192,15 @@ fn admit_portable_ro_working_size(
     let verified = decode_portable_package_v1(input)?;
     let tree = verified.tree();
     let document = decode_roproj_v3(tree)?;
+    let presentation = presentation_from_tree(tree)?;
+    capacity::check_working_saved_bytes(
+        &document,
+        save_size::presentation_saved_bytes(&presentation)?,
+    )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
     let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = true;
-    candidate.set_presentation(presentation_from_tree(tree)?)?;
-    candidate.ensure_working_saved_bytes()?;
+    candidate.set_presentation(presentation)?;
     Ok((candidate, opened))
 }
 
@@ -8286,11 +8284,14 @@ fn admit_project_working_size(
         opened_from_v3,
         presentation,
     } = decode_project_bundle_working_size(input)?;
+    capacity::check_working_saved_bytes(
+        &document,
+        save_size::presentation_saved_bytes(&presentation)?,
+    )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
     let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
-    candidate.ensure_working_saved_bytes()?;
     Ok((candidate, opened))
 }
 
@@ -8383,7 +8384,7 @@ pub(crate) fn admit_imported_project(
             interop_document::validate_saved_open_closure(&candidate, metadata)?;
             ensure_opened_wire_projection_size(&opened, SessionProfile::TextCapacity)?;
             candidate.opened_from_v3 = false;
-            candidate.presentation = presentation;
+            candidate.set_presentation(presentation)?;
             Ok((candidate, opened))
         }
         Err(error) => Err(error),
@@ -8406,9 +8407,13 @@ pub(crate) fn admit_imported_project_working_size(
         opened_from_v3,
         presentation,
     } = decode_project_bundle_working_size(input)?;
+    capacity::check_working_saved_bytes(
+        &document,
+        save_size::presentation_saved_bytes(&presentation)?,
+    )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
     candidate.opened_from_v3 = opened_from_v3;
-    candidate.presentation = presentation;
+    candidate.set_presentation(presentation)?;
     interop_document::validate_saved_open_closure(&candidate, metadata)?;
     let opened = candidate.opened_window()?;
     Ok((candidate, opened))

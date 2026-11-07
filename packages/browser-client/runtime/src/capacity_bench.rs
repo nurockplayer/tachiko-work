@@ -262,6 +262,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
         duplicate_serial: 0,
         opened_from_v3: false,
         presentation: crate::PresentationStore::default(),
+        presentation_saved_bytes: 0,
     }
 }
 
