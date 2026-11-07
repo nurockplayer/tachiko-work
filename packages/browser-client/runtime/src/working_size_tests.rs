@@ -1353,6 +1353,7 @@ fn publication_with_targets(total: usize) -> PublicationProjection {
             .collect(),
         affected_calculations: Vec::new(),
         many: false,
+        changed: Vec::new(),
     }
 }
 
