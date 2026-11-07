@@ -3788,33 +3788,40 @@ impl PatchLifecycle {
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
         prepared: Option<&PreparedEvaluation>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
-        // Only a successful evaluation of this exact candidate against a
-        // completely calculated base can replace today's validation,
+        // Only a successful evaluation of this exact candidate against a base
+        // that today's path would accept can replace today's validation,
         // calculation and evidence work; every other case keeps it unchanged.
-        let prepared = prepared.filter(|prepared| {
-            prepared.document() == &candidate
-                && matches!(prepared.verdict(), PreparedVerdict::Valid)
-                && prepared.base_calculation().is_some()
-        });
+        let reusable = prepared
+            .filter(|prepared| {
+                prepared.document() == &candidate
+                    && matches!(prepared.verdict(), PreparedVerdict::Valid)
+                    && prepared.base_report_valid()
+                    && super::validate_keyed_grouped_sum_definitions(base).is_ok()
+            })
+            .and_then(|prepared| {
+                Some((
+                    prepared.report(),
+                    prepared.base_calculation()?,
+                    prepared.calculation()?,
+                ))
+            });
         let fallback_base_calculation;
         let fallback_candidate_calculation;
         let (validation_report, base_calculation, candidate_calculation, delta) =
-            if let Some(prepared) = prepared {
+            if let Some((report, base_calculation, candidate_calculation)) = reusable {
                 // The prepared candidate is already completely validated and
-                // calculated; only its formula projection preflight remains.
-                // The base keeps no preflight, which is why the delta still
-                // admits it.
+                // calculated. Both snapshots still need the formula projection
+                // preflight today's path runs, base first.
+                super::preflight_formula_projections(base).map_err(|source| {
+                    PatchLifecycleError::CommandRejected {
+                        source: Box::new(source),
+                    }
+                })?;
                 super::preflight_formula_projections(&candidate).map_err(|source| {
                     PatchLifecycleError::CommandRejected {
                         source: Box::new(source),
                     }
                 })?;
-                let base_calculation = prepared
-                    .base_calculation()
-                    .expect("a reusable prepared evaluation carries its base calculation");
-                let candidate_calculation = prepared
-                    .calculation()
-                    .expect("a valid prepared evaluation carries its candidate calculation");
                 let delta = canonical_delta_with_calculations(
                     CANONICAL_SEMANTIC_DELTA_V2,
                     base,
@@ -3826,7 +3833,7 @@ impl PatchLifecycle {
                     source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
                 })?;
                 (
-                    prepared.report().clone(),
+                    report.clone(),
                     base_calculation,
                     candidate_calculation,
                     delta,

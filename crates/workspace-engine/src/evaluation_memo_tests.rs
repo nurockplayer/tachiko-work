@@ -1643,11 +1643,47 @@ fn cross_schema_document() -> Document {
     document
 }
 
+/// A valid document whose `h` projects past the canonical formula length: the
+/// referenced entity key alone is 4,090 bytes. Renaming `input` shortens it
+/// enough to pass the projection preflight.
+fn unprojectable_document() -> Document {
+    let mut document = formula_document();
+    document.schemas.insert(
+        "t".into(),
+        Schema {
+            field_order: None,
+            id: "t".into(),
+            key: "targets".into(),
+            display_name: None,
+            fields: BTreeMap::from([("input".into(), optional_number_field("input"))]),
+        },
+    );
+    document.entities.insert(
+        "target".into(),
+        Entity {
+            id: "target".into(),
+            key: "e".repeat(4_090).into(),
+            schema: "t".into(),
+            fields: BTreeMap::from([("input".into(), Value::Number(Number::new(2.0).unwrap()))]),
+        },
+    );
+    document.entities.get_mut("e1").unwrap().fields.insert(
+        "h".into(),
+        Value::Formula(Expression::Reference(FieldRef::new("target", "input"))),
+    );
+    document
+}
+
 /// Compare `propose_prepared` with `propose` for one document and body.
 ///
-/// The proposal payload and every evaluated result must be identical, and a
-/// refusal must keep its exact error.
-fn assert_prepared_matches_unprepared(document: &Document, body: SemanticPatchBody, label: &str) {
+/// The prepared proposal runs first, so the returned evaluation counters are
+/// the prepared path's; the proposal payload and every evaluated result must
+/// be identical, and a refusal must keep its exact error.
+fn assert_prepared_matches_unprepared(
+    document: &Document,
+    body: SemanticPatchBody,
+    label: &str,
+) -> ((usize, usize), Result<SemanticPatch, PatchLifecycleError>) {
     let planner = v2_lifecycle();
     let candidate = planner
         .plan_commands(document, &body)
@@ -1655,25 +1691,23 @@ fn assert_prepared_matches_unprepared(document: &Document, body: SemanticPatchBo
         .0;
     let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
     let revision = session.revision().clone();
-    let prepared = session.prepare_evaluation(candidate);
 
-    let mut plain_lifecycle = v2_lifecycle();
-    let plain_result = propose_plain(
-        &mut plain_lifecycle,
-        document,
-        revision.as_str(),
-        body.clone(),
-    );
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate);
     let mut prepared_lifecycle = v2_lifecycle();
     let prepared_result = propose_with(
         &mut prepared_lifecycle,
         document,
         revision.as_str(),
-        body,
+        body.clone(),
         &prepared,
     );
+    let counts = evaluation_counters::counts();
 
-    match (plain_result, prepared_result) {
+    let mut plain_lifecycle = v2_lifecycle();
+    let plain_result = propose_plain(&mut plain_lifecycle, document, revision.as_str(), body);
+
+    match (&plain_result, &prepared_result) {
         (Ok(plain), Ok(reused)) => {
             assert_eq!(plain, reused, "{label}: proposal payloads differ");
             assert_same_evaluation(&plain_lifecycle, &prepared_lifecycle);
@@ -1687,6 +1721,7 @@ fn assert_prepared_matches_unprepared(document: &Document, body: SemanticPatchBo
         }
         (plain, reused) => panic!("{label}: outcomes differ: {plain:?} vs {reused:?}"),
     }
+    (counts, prepared_result)
 }
 
 fn acceptance_cases() -> Vec<(&'static str, Document, SemanticPatchBody)> {
@@ -1796,7 +1831,13 @@ fn acceptance_cases() -> Vec<(&'static str, Document, SemanticPatchBody)> {
 #[test]
 fn prepared_v2_proposals_match_unprepared_proposals() {
     for (label, document, body) in acceptance_cases() {
-        assert_prepared_matches_unprepared(&document, body, label);
+        let (counts, result) = assert_prepared_matches_unprepared(&document, body, label);
+        assert!(result.is_ok(), "{label}: {result:?}");
+        assert_eq!(
+            counts,
+            (1, 0),
+            "{label}: the proposal must only calculate in `prepare_evaluation`"
+        );
     }
 }
 
@@ -1866,6 +1907,101 @@ fn prepared_v2_refusals_match_unprepared_refusals() {
         &failing_formula_document(),
         set_g_number(2.0),
         "a base whose retained calculation failed",
+    );
+
+    // The base still fails validation that `ResidentWorkspaceSession::new`
+    // accepts, while the edit repairs it and the candidate is valid. Each
+    // refusal must keep today's exact variant, not merely look alike.
+    let mut violating_base = formula_document();
+    violating_base
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("f")
+        .unwrap()
+        .constraint = FieldConstraint::TextLiteralSet {
+        values: vec!["old".into()],
+    };
+    violating_base
+        .entities
+        .get_mut("e1")
+        .unwrap()
+        .fields
+        .insert("f".into(), Value::Text("not allowed".into()));
+    let (_, refused_base_constraint) = assert_prepared_matches_unprepared(
+        &violating_base,
+        set_f_text("old"),
+        "a base whose stored value violates its constraint",
+    );
+    assert!(
+        matches!(
+            refused_base_constraint,
+            Err(PatchLifecycleError::ValidationFailed { .. })
+        ),
+        "{refused_base_constraint:?}"
+    );
+
+    let mut broken_definitions = keyed_document();
+    broken_definitions.keyed_grouped_sum_definitions.insert(
+        "broken".into(),
+        KeyedGroupedSumDefinition {
+            id: "broken".into(),
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: "missing".into(),
+                lookup_key_field: "lookup".into(),
+                quantity_field: "quantity".into(),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: "missing".into(),
+                key_field: "key".into(),
+                category_field: "category".into(),
+                price_field: "price".into(),
+            },
+        },
+    );
+    let (_, refused_base_definitions) = assert_prepared_matches_unprepared(
+        &broken_definitions,
+        SemanticPatchBody::command(SemanticCommand::RemoveKeyedGroupedSumDefinition {
+            definition: "broken".into(),
+        }),
+        "a base with an invalid saved definition",
+    );
+    let PatchLifecycleError::CommandRejected {
+        source: refused_base_definitions,
+    } = refused_base_definitions.expect_err("an invalid base definition keeps today's refusal")
+    else {
+        panic!("expected command rejection");
+    };
+    assert!(
+        matches!(
+            refused_base_definitions.as_ref(),
+            WorkspaceError::InvalidKeyedGroupedSumDefinition(_)
+        ),
+        "{refused_base_definitions:?}"
+    );
+
+    let (_, refused_base_projection) = assert_prepared_matches_unprepared(
+        &unprojectable_document(),
+        SemanticPatchBody::command(SemanticCommand::RenameSchemaField {
+            schema: "s".into(),
+            field: "input".into(),
+            key: "i".into(),
+        }),
+        "a base that fails the formula projection preflight",
+    );
+    let PatchLifecycleError::CommandRejected {
+        source: refused_base_projection,
+    } = refused_base_projection.expect_err("an unprojectable base keeps today's refusal")
+    else {
+        panic!("expected command rejection");
+    };
+    assert!(
+        matches!(
+            refused_base_projection.as_ref(),
+            WorkspaceError::FormulaProjection { .. }
+        ),
+        "{refused_base_projection:?}"
     );
 }
 

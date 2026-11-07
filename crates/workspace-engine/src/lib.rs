@@ -720,6 +720,7 @@ pub struct PreparedEvaluation {
     report: ValidationReport,
     calculation: Option<Calculation>,
     base_calculation: Option<Calculation>,
+    base_report_valid: bool,
     definitions_invalid: bool,
 }
 
@@ -730,6 +731,7 @@ impl PreparedEvaluation {
         report: ValidationReport,
         calculation: Option<Calculation>,
         base_calculation: Option<Calculation>,
+        base_report_valid: bool,
     ) -> Self {
         let definitions_invalid = validate_keyed_grouped_sum_definitions(&candidate).is_err();
         Self {
@@ -738,6 +740,7 @@ impl PreparedEvaluation {
             report,
             calculation,
             base_calculation,
+            base_report_valid,
             definitions_invalid,
         }
     }
@@ -778,6 +781,14 @@ impl PreparedEvaluation {
 
     pub(crate) fn base_calculation(&self) -> Option<&Calculation> {
         self.base_calculation.as_ref()
+    }
+
+    /// Whether the base revision's retained semantic report was valid.
+    ///
+    /// A complete base calculation can still carry an invalid report, for
+    /// instance when a stored value violates its declared constraint.
+    pub(crate) fn base_report_valid(&self) -> bool {
+        self.base_report_valid
     }
 }
 
