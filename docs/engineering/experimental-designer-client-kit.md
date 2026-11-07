@@ -146,7 +146,23 @@ and a stable entity-ID tie-break; filters are AND-ed. Text filters compare
 case-insensitively and are text-only, number and date filters use
 `= <> < <= > >=`, `is_blank`/`not_blank` find missing or present values, and
 `in_set` takes literals of the column's declared kind. Formula columns filter and
-sort by their calculated Number. A window above the reply cap (1 MiB, or 16 MiB for a text-capacity
+sort by their calculated Number.
+
+`display_contains` and `display_in` compare the text the grid shows instead, on
+every column kind including Reference. `display_contains` trims and
+case-folds; `display_in` is exact text with no folding, so `""` means blank and
+`"$1,234.50"` finds every value that rounds to it. A blank, failed, unavailable
+or Reference cell has the text `""`, and a failed cell counts as blank until
+#668 gives it a defined state. Present empty Text in an optional column shows as
+two quotation marks, as in Sheet, so it stays apart from a blank cell.
+
+`queryDistinctValues` returns one column's distinct display texts over the rows
+a window would return, in Sheet's list order: `""` first when any shown row is
+blank, then natural order (case-insensitive, digit runs compared as numbers).
+`limit` is 1..=1,000, the reply stays inside the window byte cap, and
+`truncated` reports whether more values exist.
+
+A window above the reply cap (1 MiB, or 16 MiB for a text-capacity
 document) refuses with
 `query_too_large` rather than serialising an oversized response; ask for
 fewer rows or fewer columns.
