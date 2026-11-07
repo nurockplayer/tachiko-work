@@ -11,6 +11,7 @@ type DesignerWasmExports = {
   memory: WebAssembly.Memory;
   tachiko_designer_request_reserve(length: number): number;
   tachiko_designer_request_run(): void;
+  tachiko_designer_request_limit(): number;
   tachiko_designer_response_ptr(): number;
   tachiko_designer_response_len(): number;
   tachiko_designer_project_reserve(length: number): number;
@@ -153,11 +154,12 @@ export async function createDesignerWasmBridge(
       } finally { exports.tachiko_designer_project_release(); }
     },
     request: (request) => {
+      const limit = exports.tachiko_designer_request_limit();
       const input = encoder.encode(JSON.stringify(request));
-      if (input.length > MAX_WIRE_REQUEST_BYTES) {
+      if (input.length > limit) {
         return tooLargeReply("The Designer request exceeds the private bridge byte limit.");
       }
-      writeRequest(input);
+      writeRequest(input, limit);
       exports.tachiko_designer_request_run();
       return readReply();
     },

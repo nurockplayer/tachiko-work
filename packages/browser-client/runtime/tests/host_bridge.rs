@@ -646,6 +646,68 @@ fn a_working_size_table_saves_and_reopens_across_the_bridge() {
     );
 }
 
+#[test]
+fn a_large_paste_reaches_a_working_size_table_across_the_bridge() {
+    let mut host = DesignerHost::new();
+    let created = json_of(&host.request(&request(&json!({
+        "type": "new_table",
+        "occurrence_id": FIRST,
+        "name": "Paste",
+        "columns": [
+            {"name": "name", "field_type": "text", "required": false},
+            {"name": "note", "field_type": "text", "required": false},
+        ],
+        "profile": "working_size",
+    }))));
+    assert_eq!(created["status"], "ok", "{created}");
+    let payload = &created["response"]["payload"];
+    let collection = payload["bootstrap"]["default_collection"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let revision = payload["bootstrap"]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let start_field = payload["window"]["columns"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let rows = (0..3_000)
+        .map(|row| json!([format!("pasted-{row:04}"), format!("note-{row:04}")]))
+        .collect::<Vec<_>>();
+    let paste = request(&json!({
+        "type": "paste_cells",
+        "expected_revision": revision,
+        "collection": collection,
+        "start_field": start_field,
+        "rows": rows,
+    }));
+    assert!(
+        paste.len() > 65_536,
+        "paste request is only {} bytes",
+        paste.len()
+    );
+    let pasted = json_of(&host.request(&paste));
+    assert_eq!(pasted["status"], "ok", "{pasted}");
+    assert_eq!(pasted["response"]["payload"]["many"], true);
+
+    let window = json_of(&host.request(&request(&json!({
+        "type": "query_table_window",
+        "expected_revision": revision_of(&pasted),
+        "collection": collection,
+        "start": 0,
+        "count": 5,
+    }))));
+    assert_eq!(window["status"], "ok", "{window}");
+    assert_eq!(window["response"]["payload"]["total_rows"], 3_000);
+    assert_eq!(
+        window["response"]["payload"]["rows"][0]["fields"][0]["stored"]["value"],
+        "pasted-0000"
+    );
+}
+
 /// One CSV import operation with an optional profile, typed Text in every column.
 fn spreadsheet_import(
     occurrence: &str,

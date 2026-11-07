@@ -38,7 +38,7 @@ use super::{
     ViewIndexCache, collection_specs, decode_project_bundle, designer_lifecycle,
     document_requires_v2_evidence, document_scope, encode_project_bundle,
     ensure_projection_size_with_limit, formula_sources, open_portable_ro_working_size,
-    open_project_working_size, select_default_collection,
+    open_project_working_size, process_wire_request, select_default_collection,
 };
 use crate::capacity::SessionProfile;
 use crate::capacity_fixtures::{
@@ -1265,4 +1265,283 @@ fn qualify_working_size_saves(shape: WqShape, runtime: &DesignerRuntime) {
         }
         Err(error) => wq_refused(name, "save_portable", &error),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Working-size fill and paste through the wire (#678, stage 4).
+//
+// Each step builds a fresh working-size runtime, sends its request as JSON
+// through `process_wire_request`, and reports one `WB|<step>|<fact>|<value>`
+// line per fact. A refusal prints `WB|<step>|refused|<code>` and the run
+// continues.
+// ---------------------------------------------------------------------------
+
+const WB_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
+const WB_ROWS: usize = 10_000;
+const WB_COLUMNS: usize = 10;
+
+fn wb_print(step: &str, fact: &str, value: impl std::fmt::Display) {
+    println!("WB|{step}|{fact}|{value}");
+    let _ = std::io::stdout().flush();
+}
+
+fn wb_refused(step: &str, error: &super::DesignerError) {
+    let code = error.failure_projection("").code;
+    wb_print(step, "refused", code);
+}
+
+/// A working-size table with ten Number columns and no rows.
+fn wb_blank_document() -> Document {
+    let mut document = Document::empty("working-size-bulk", "Working Size Bulk");
+    let schema_id = SchemaId::from("grid");
+    let mut schema = Schema {
+        field_order: None,
+        id: schema_id.clone(),
+        key: SchemaKey::from("grid"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    for column in 0..WB_COLUMNS {
+        let id = FieldId::from(format!("c{column}"));
+        schema.fields.insert(
+            id.clone(),
+            FieldDefinition {
+                id,
+                key: FieldKey::from(format!("c{column}")),
+                display_name: None,
+                field_type: FieldType::Number,
+                required: false,
+                constraint: FieldConstraint::None,
+                number_format: None,
+            },
+        );
+    }
+    document.schemas.insert(schema_id, schema);
+    document
+}
+
+/// A working-size table with `rows` existing rows, every cell populated.
+fn wb_seeded_document(rows: usize) -> Document {
+    let mut document = wb_blank_document();
+    let schema_id = SchemaId::from("grid");
+    for row in 0..rows {
+        let value = f64::from(u32::try_from(row).expect("bounded row")) + 1.0;
+        let fields = (0..WB_COLUMNS)
+            .map(|column| (FieldId::from(format!("c{column}")), number(value)))
+            .collect();
+        let id = EntityId::from(format!("r{row:05}"));
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id,
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: schema_id.clone(),
+                fields,
+            },
+        );
+    }
+    document
+}
+
+fn wb_open(step: &str, document: Document) -> Option<DesignerRuntime> {
+    match DesignerRuntime::from_document_working_size(document, WB_OCCURRENCE) {
+        Ok(runtime) => Some(runtime),
+        Err(error) => {
+            wb_refused(step, &error);
+            None
+        }
+    }
+}
+
+fn wb_field(entity: &str, field: &str) -> FieldTarget {
+    FieldTarget {
+        entity: entity.to_owned(),
+        field: field.to_owned(),
+    }
+}
+
+/// Send one request through the wire, print its facts, then undo it the same
+/// way and print how long that took.
+fn wb_measure(step: &str, mut resident: Option<DesignerRuntime>, request: &DesignerRequest) {
+    let bytes = match serde_json::to_vec(&request) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            wb_print(step, "refused", format!("encode:{error}"));
+            return;
+        }
+    };
+    wb_print(step, "request_bytes", bytes.len());
+    let (reply, sample) = observe(|| process_wire_request(&mut resident, &bytes));
+    wb_print(step, "ms", wq_millis(&sample));
+    let reply_length = reply.len();
+    let reply = match serde_json::from_slice::<super::DesignerWireReply>(&reply) {
+        Ok(reply) => reply,
+        Err(error) => {
+            wb_print(step, "refused", format!("decode:{error}"));
+            return;
+        }
+    };
+    match reply {
+        super::DesignerWireReply::Ok {
+            response: DesignerResponse::Published(publication),
+        } => {
+            wb_print(step, "reply_bytes", reply_length);
+            wb_print(step, "many", publication.many);
+        }
+        super::DesignerWireReply::Error { error } => {
+            wb_print(step, "refused", error.code);
+            return;
+        }
+        other @ super::DesignerWireReply::Ok { .. } => {
+            wb_print(step, "refused", format!("unexpected:{other:?}"));
+            return;
+        }
+    }
+
+    let Some(runtime) = resident.as_ref() else {
+        return;
+    };
+    let undo = DesignerRequest::Undo {
+        expected_revision: runtime.current_revision().to_owned(),
+    };
+    let Ok(undo) = serde_json::to_vec(&undo) else {
+        wb_print(step, "refused", "undo_encode");
+        return;
+    };
+    let (undo_reply, undo_sample) = observe(|| process_wire_request(&mut resident, &undo));
+    wb_print(step, "undo_ms", wq_millis(&undo_sample));
+    if !matches!(
+        serde_json::from_slice::<super::DesignerWireReply>(&undo_reply),
+        Ok(super::DesignerWireReply::Ok { .. })
+    ) {
+        wb_print(step, "undo_refused", "undo");
+    }
+}
+
+fn wb_paste(step: &str, existing_rows: usize, pasted_rows: usize) {
+    let Some(runtime) = wb_open(step, wb_seeded_document(existing_rows)) else {
+        return;
+    };
+    let rows = (0..pasted_rows)
+        .map(|row| {
+            (0..WB_COLUMNS)
+                .map(|column| {
+                    super::PasteCellInput::Text((row * WB_COLUMNS + column + 1).to_string())
+                })
+                .collect()
+        })
+        .collect();
+    let request = DesignerRequest::PasteCells {
+        expected_revision: runtime.current_revision().to_owned(),
+        collection: "grid".to_owned(),
+        start_entity: None,
+        start_field: "c0".to_owned(),
+        rows,
+    };
+    wb_measure(step, Some(runtime), &request);
+}
+
+/// `count` edits over the first `count` cells of the ten-column values shape,
+/// row-major: `100_000` addresses every populated cell.
+fn wb_value_edits(count: usize) -> Vec<CellEdit> {
+    (0..count)
+        .map(|index| CellEdit {
+            target: wb_field(
+                &format!("r{:05}", index / WB_COLUMNS),
+                &format!("c{}", index % WB_COLUMNS),
+            ),
+            input: ScalarEditInput::Number {
+                input: (index + 1).to_string(),
+            },
+        })
+        .collect()
+}
+
+fn wb_edit_values(step: &str, count: usize) {
+    let Some(runtime) = wb_open(step, wq_document(WqShape::Values)) else {
+        return;
+    };
+    let request = DesignerRequest::EditCells {
+        expected_revision: runtime.current_revision().to_owned(),
+        edits: wb_value_edits(count),
+    };
+    wb_measure(step, Some(runtime), &request);
+}
+
+fn wb_edit_formulas() {
+    const STEP: &str = "edit_formulas_10000";
+    let Some(runtime) = wb_open(STEP, wq_document(WqShape::Formulas)) else {
+        return;
+    };
+    let edits = (0..WB_ROWS)
+        .map(|row| CellEdit {
+            target: wb_field(&format!("r{row:05}"), "c0"),
+            input: ScalarEditInput::Number {
+                input: (row + 1).to_string(),
+            },
+        })
+        .collect();
+    let request = DesignerRequest::EditCells {
+        expected_revision: runtime.current_revision().to_owned(),
+        edits,
+    };
+    wb_measure(STEP, Some(runtime), &request);
+}
+
+fn wb_fill_9999() {
+    const STEP: &str = "fill_9999";
+    let Some(runtime) = wb_open(STEP, wq_document(WqShape::Values)) else {
+        return;
+    };
+    let mut resident = Some(runtime);
+    let update = DesignerRequest::FormulaUpdate {
+        expected_revision: resident
+            .as_ref()
+            .expect("the runtime is resident")
+            .current_revision()
+            .to_owned(),
+        target: wb_field("r00000", "c0"),
+        source: "[.c1]".to_owned(),
+    };
+    let Ok(bytes) = serde_json::to_vec(&update) else {
+        wb_print(STEP, "refused", "formula_encode");
+        return;
+    };
+    wb_print(STEP, "formula_request_bytes", bytes.len());
+    let (reply, sample) = observe(|| process_wire_request(&mut resident, &bytes));
+    wb_print(STEP, "formula_ms", wq_millis(&sample));
+    if !matches!(
+        serde_json::from_slice::<super::DesignerWireReply>(&reply),
+        Ok(super::DesignerWireReply::Ok { .. })
+    ) {
+        wb_print(STEP, "refused", "formula_update");
+        return;
+    }
+    let request = DesignerRequest::CopyFormula {
+        expected_revision: resident
+            .as_ref()
+            .expect("the runtime is resident")
+            .current_revision()
+            .to_owned(),
+        source: wb_field("r00000", "c0"),
+        destinations: (1..WB_ROWS)
+            .map(|row| wb_field(&format!("r{row:05}"), "c0"))
+            .collect(),
+        fixed_references: Vec::new(),
+        relative_rows: true,
+        relative_columns: false,
+    };
+    wb_measure(STEP, resident, &request);
+}
+
+/// Whole-column fill and large pastes through the wire (#678, stage 4).
+#[test]
+#[ignore = "working-size bulk benchmark; run explicitly in release with --features capacity-bench"]
+fn working_size_bulk() {
+    wb_paste("paste_blank", 0, WB_ROWS);
+    wb_paste("paste_append_5000", 5_000, 5_000);
+    wb_edit_values("edit_values_10000", 10_000);
+    wb_edit_values("edit_values_100000", 100_000);
+    wb_edit_formulas();
+    wb_fill_9999();
 }

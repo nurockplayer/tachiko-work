@@ -29,13 +29,20 @@ use tachiko_semantic_core::{
 use thiserror::Error;
 
 use super::{
-    ColumnRef, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition,
+    ColumnRef, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition,
     FieldEditPlanning, FieldId, FieldKey, FieldRef, FieldType, Number, PreparedEvaluation,
     PreparedVerdict, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
     apply_field_value_candidate_with_planning, finalize_edit_with_validation,
     formula_inverse_restore_candidate_in_place, formula_restore_candidate_in_place,
     formula_update_candidate_in_place, unset_field_candidate_in_place,
 };
+
+/// What a run of `AppendEntity` commands has already proved about the candidate:
+/// its entity keys, once its whole structure has been checked.
+#[derive(Default)]
+struct EntityAppendPlanning {
+    keys: Option<BTreeSet<EntityKey>>,
+}
 
 #[cfg(test)]
 #[path = "candidate_allocation_tests.rs"]
@@ -2711,9 +2718,13 @@ impl PatchLifecycle {
         base: &Document,
         candidate: &mut Document,
         entity: &Entity,
+        planning: &mut EntityAppendPlanning,
         writes: &mut BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<(), WorkspaceError> {
-        super::validate_new_entity_key(candidate, &entity.key)?;
+        match &planning.keys {
+            Some(keys) => super::validate_appended_entity_key(keys, &entity.key)?,
+            None => super::validate_new_entity_key(candidate, &entity.key)?,
+        }
         if entity.id.as_str().is_empty() {
             return Err(WorkspaceError::EmptyGeneratedId {
                 kind: super::SemanticIdKind::Entity,
@@ -2734,10 +2745,13 @@ impl PatchLifecycle {
             });
         }
         // Bound formula structure is an admission invariant even when a
-        // later batch step removes the newly appended entity.
-        let mut appended = candidate.clone();
-        appended.entities.insert(entity.id.clone(), entity.clone());
-        super::preflight_formula_structures(&appended)?;
+        // later batch step removes the newly appended entity. The run's first
+        // append checks the whole document; every append then checks only the
+        // entity it adds.
+        if planning.keys.is_none() {
+            super::preflight_formula_structures(candidate)?;
+        }
+        super::preflight_entity_formulas(&entity.id, entity)?;
         let scope = ScopedSemanticSubject::new(
             self.document_scope.clone(),
             self.document.clone(),
@@ -2759,7 +2773,21 @@ impl PatchLifecycle {
                 scope,
             });
         }
-        *candidate = appended;
+        candidate.entities.insert(entity.id.clone(), entity.clone());
+        match &mut planning.keys {
+            Some(keys) => {
+                keys.insert(entity.key.clone());
+            }
+            None => {
+                planning.keys = Some(
+                    candidate
+                        .entities
+                        .values()
+                        .map(|entity| entity.key.clone())
+                        .collect(),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -3263,6 +3291,7 @@ impl PatchLifecycle {
         let mut candidate = document.clone();
         let mut writes = BTreeSet::new();
         let mut field_edits = FieldEditPlanning::new();
+        let mut append_entities = EntityAppendPlanning::default();
         for command in body.commands() {
             // Only the cell edits keep the batch state; every other command
             // may change the structures and keys it rests on.
@@ -3275,6 +3304,11 @@ impl PatchLifecycle {
                     | SemanticCommand::FormulaInverseRestore(_)
             ) {
                 field_edits = FieldEditPlanning::new();
+            }
+            // Only a contiguous run of appends keeps this proof, so any other
+            // command starts the next run from a fresh document check.
+            if !matches!(command, SemanticCommand::AppendEntity { .. }) {
+                append_entities = EntityAppendPlanning::default();
             }
             match command {
                 SemanticCommand::AppendCollection { schema, entities } => {
@@ -3296,7 +3330,13 @@ impl PatchLifecycle {
                     )?;
                 }
                 SemanticCommand::AppendEntity { entity } => {
-                    self.plan_append_entity(document, &mut candidate, entity, &mut writes)?;
+                    self.plan_append_entity(
+                        document,
+                        &mut candidate,
+                        entity,
+                        &mut append_entities,
+                        &mut writes,
+                    )?;
                 }
                 SemanticCommand::RemoveEntity { entity } => {
                     let record = candidate.entities.get(entity).ok_or_else(|| {

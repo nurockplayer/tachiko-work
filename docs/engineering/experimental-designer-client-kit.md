@@ -584,6 +584,14 @@ totals are still a separate totals query, and a reply that says `many` must be
 re-queried as a window instead of read for `changed`. On ordinary and
 text-capacity replies the `changed` key is absent too.
 
+A working-size session takes a whole column in one request: `edit_cells` and
+`copy_formula` accept up to 100,000 targets, the session's populated-cell
+limit, and a request may be up to 64 MiB. `paste_cells` is the range form for
+pastes and can create rows when `start_entity` is omitted; a paste is still
+admitted by the same row and cell limits. A batch over the listed target count
+replies `many: true`, as above. Ordinary and text-capacity sessions keep
+today's 1,024-target and 64 KiB limits.
+
 A working-size session admits 10,000 rows and entities,
 100,000 populated cells, 100,000 formulas, 1,000,000 formula AST nodes and
 1,000,000 dependency edges, with one column read counting as one edge. These

@@ -43,6 +43,9 @@ function reopen(operation, bytes, occurrence) {
   return openedWindow(reply());
 }
 
+// Nothing is open yet, so the bridge advertises the ordinary request limit.
+assert.equal(wasm.tachiko_designer_request_limit(), 65_536);
+
 // A host asks for the working-size profile when the occurrence is created.
 const first = "00000000-0000-4000-8000-000000000901";
 const opened = ok({
@@ -51,6 +54,7 @@ const opened = ok({
   profile: "working_size",
 });
 assert.equal(opened.window.total_rows, 0);
+assert.equal(wasm.tachiko_designer_request_limit(), 67_108_864);
 const collection = opened.bootstrap.default_collection;
 const inserted = ok({
   type: "insert_row", expected_revision: opened.bootstrap.revision, collection,
@@ -130,10 +134,44 @@ assert.equal(reopenedImport.response.type, "opened_window");
 assert.equal(reopenedImport.response.payload.profile, "working_size");
 assert.equal(reopenedImport.response.payload.window.total_rows, 2);
 
+// A paste over 64 KiB travels through the working-size request arena.
+const pasteCollection = reopenedImport.response.payload.bootstrap.default_collection;
+const pasteColumns = reopenedImport.response.payload.window.columns;
+const pasteRows = Array.from({length: 3_000}, (_, row) => [
+  `pasted-${String(row).padStart(4, "0")}`,
+  `note-${String(row).padStart(4, "0")}`,
+]);
+const paste = {
+  type: "paste_cells",
+  expected_revision: reopenedImport.response.payload.bootstrap.revision,
+  collection: pasteCollection,
+  start_field: pasteColumns[0].id,
+  rows: pasteRows,
+};
+const pasteBytes = encoder.encode(JSON.stringify(paste));
+assert.ok(pasteBytes.length > 65_536, `paste request is only ${pasteBytes.length} bytes`);
+put("request", pasteBytes);
+wasm.tachiko_designer_request_run();
+const pasted = reply();
+assert.equal(pasted.status, "ok", JSON.stringify(pasted));
+assert.equal(pasted.response.payload.many, true, JSON.stringify(pasted));
+const pastedWindow = ok({
+  type: "query_table_window",
+  expected_revision: pasted.response.payload.resulting_revision,
+  collection: pasteCollection,
+  start: 0,
+  count: 5,
+});
+assert.equal(pastedWindow.total_rows, 3_002);
+assert.equal(pastedWindow.rows.length, 5);
+assert.equal(pastedWindow.rows[0].fields[0].stored.value, "Alpha");
+assert.equal(pastedWindow.rows[2].fields[0].stored.value, "pasted-0000");
+
 // A host that never asks keeps the ordinary reply and profile.
 const ordinary = ok({
   type: "new_table", occurrence_id: "00000000-0000-4000-8000-000000000905", name: "Ordinary",
   columns: [{name: "qty", field_type: "number"}],
 });
 assert.equal(ordinary.table.collection.id.length > 0, true);
-console.log("working_size actual WASM ABI: profile create, save, inspect, open, both portable routes and the spreadsheet import route passed");
+assert.equal(wasm.tachiko_designer_request_limit(), 65_536);
+console.log("working_size actual WASM ABI: profile create, save, inspect, open, both portable routes, the spreadsheet import route and a large paste passed");

@@ -7,6 +7,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 const APPROVED_EXPORTS = new Set([
   "tachiko_designer_request_reserve",
   "tachiko_designer_request_run",
+  "tachiko_designer_request_limit",
   "tachiko_designer_response_ptr",
   "tachiko_designer_response_len",
   "tachiko_designer_project_reserve",
