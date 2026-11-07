@@ -440,15 +440,14 @@ impl Evaluation<'_> {
                 return result.clone();
             }
         }
-        if !bypass {
+        let keys = if bypass { None } else { tests[0].keys() };
+        if keys.is_some() {
             self.columns
                 .criterion_index(self.document, self.values, &criteria[0].column);
         }
-        let candidates = if bypass {
-            None
-        } else {
-            self.candidates(criteria, &tests)
-        };
+        let candidates = keys
+            .as_deref()
+            .and_then(|keys| self.candidates(&criteria[0].column, keys));
         let result = self.conditional_over(aggregate, criteria, &tests, candidates.as_deref());
         if let Some(key) = memo_key {
             self.columns.conditionals.insert(key, result.clone());
@@ -457,18 +456,13 @@ impl Evaluation<'_> {
     }
 
     /// The entities the first criterion cannot reject, in entity order: `None`
-    /// when its test has no keys or its column holds a cell that may fail.
+    /// when its column holds a cell that may fail.
     ///
     /// A row the first criterion rejects without an error is dropped before
     /// any later criterion reads it, so a superset of the rows it matches, in
     /// entity order, gives the same matched rows, errors and sum order.
-    fn candidates(
-        &self,
-        criteria: &[ColumnCriterion],
-        tests: &[CriterionTest],
-    ) -> Option<Cow<'_, [EntityId]>> {
-        let keys = tests[0].keys()?;
-        let index = &self.columns.indexes[&criteria[0].column];
+    fn candidates(&self, column: &ColumnRef, keys: &[CriterionKey]) -> Option<Cow<'_, [EntityId]>> {
+        let index = &self.columns.indexes[column];
         if index.scan {
             return None;
         }
