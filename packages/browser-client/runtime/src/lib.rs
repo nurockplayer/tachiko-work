@@ -55,9 +55,9 @@ use tachiko_workspace_engine::{
     CalculationFailure, ColumnRef, ConditionalAggregate, Date, DiagnosticCode, Document, Entity,
     EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     FormulaBindError, IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
-    SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
-    WorkspaceError, create_document, diagnostic_codes,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat,
+    PreparedVerdict, Schema, SchemaId, SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate,
+    ValidationReport, Value, WorkspaceError, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -128,6 +128,8 @@ const MAX_TEXT_CAPACITY_PROFILE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_QUERY_TABLE_ROWS: usize = 1_000;
 /// Largest bounded window one request may ask for; `0` returns totals only.
 const MAX_TABLE_WINDOW_ROWS: usize = 256;
+/// Largest number of distinct display texts one query may ask for.
+const MAX_DISTINCT_VALUES: usize = 1_000;
 /// Largest `view.keep_entities` set admitted by one request.
 const MAX_VIEW_KEEP_ENTITIES: usize = 256;
 /// Ordered-view vectors retained by the resident runtime, most recently used
@@ -331,6 +333,16 @@ pub enum DesignerRequest {
         view: TableView,
         entity: String,
     },
+    /// The distinct display texts of one column over the same rows a window
+    /// query would return, in Sheet's list order. `limit` is `1..=1000`.
+    QueryDistinctValues {
+        expected_revision: String,
+        collection: String,
+        #[serde(default)]
+        view: TableView,
+        field: String,
+        limit: usize,
+    },
     /// Number totals over exactly the named entities, summed in collection
     /// order. Naming every entity of the collection gives the window footer.
     QueryColumnTotals {
@@ -404,6 +416,7 @@ pub enum DesignerResponse {
     Table(TableProjection),
     TableWindow(TableWindowProjection),
     LocatedInView(LocatedInViewProjection),
+    DistinctValues(DistinctValuesProjection),
     ColumnTotals(ColumnTotalsProjection),
     GroupTotals(GroupTotalsProjection),
     Fields(FieldBatchProjection),
@@ -507,6 +520,18 @@ pub struct LocatedInViewProjection {
     pub index: Option<usize>,
 }
 
+/// The distinct display texts of one column inside a view, in Sheet's list
+/// order: `""` first when any row has no display text, then natural order.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DistinctValuesProjection {
+    pub revision: String,
+    /// Column ID the values were read from.
+    pub field: String,
+    pub values: Vec<String>,
+    /// True when more distinct values exist than the reply carries.
+    pub truncated: bool,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocateInViewResult {
@@ -591,6 +616,10 @@ pub struct ViewSortKey {
     /// Column ID from [`ColumnProjection::id`].
     pub field: String,
     pub direction: SortDirection,
+    /// How Text values are ordered. Omitted when `bytes`, so a view with the
+    /// default keeps its spelling and cache key.
+    #[serde(default, skip_serializing_if = "is_default_text_order")]
+    pub text_order: ViewTextOrder,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -600,10 +629,29 @@ pub enum SortDirection {
     Desc,
 }
 
+/// Text order for one sort key. `bytes` is the default and compares UTF-8
+/// bytes; `natural` follows Sheet's list order — case-insensitive, with digit
+/// runs compared as numbers, and every other character by code point. It has
+/// no effect on a non-Text column.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewTextOrder {
+    #[default]
+    Bytes,
+    Natural,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference.
+fn is_default_text_order(order: &ViewTextOrder) -> bool {
+    matches!(order, ViewTextOrder::Bytes)
+}
+
 /// One AND-ed view filter. Text matching is case-insensitive and text-only;
 /// number and date columns use comparisons. Comparisons and set membership
 /// match only rows that hold a value of the filter's kind; `is_blank` finds the
-/// rest. Formula columns filter and sort by their calculated Number.
+/// rest. Formula columns filter and sort by their calculated Number. The
+/// `display_*` filters compare the text the grid shows and work on every column
+/// kind, including Reference.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ViewFilter {
@@ -637,6 +685,18 @@ pub enum ViewFilter {
         field: String,
         values: Vec<ScalarLiteral>,
     },
+    /// Trimmed, case-insensitive containment over the display text. A cell
+    /// with no display text has the text `""`, so an empty query matches it.
+    DisplayContains {
+        field: String,
+        value: String,
+    },
+    /// Exact display-text equality with no folding. A blank, failed,
+    /// unavailable or Reference cell has the text `""`.
+    DisplayIn {
+        field: String,
+        values: Vec<String>,
+    },
 }
 
 impl ViewFilter {
@@ -650,7 +710,9 @@ impl ViewFilter {
             | Self::DateCompare { field, .. }
             | Self::IsBlank { field }
             | Self::NotBlank { field }
-            | Self::InSet { field, .. } => field,
+            | Self::InSet { field, .. }
+            | Self::DisplayContains { field, .. }
+            | Self::DisplayIn { field, .. } => field,
         }
     }
 }
@@ -2082,6 +2144,7 @@ const fn view_kind_name(kind: ViewKind) -> &'static str {
 struct ViewSortPlan {
     ordinal: usize,
     direction: SortDirection,
+    text_order: ViewTextOrder,
 }
 
 /// One fully resolved AND-ed filter. Every literal is parsed and normalized
@@ -2114,6 +2177,20 @@ enum ViewPredicate {
     InSet {
         ordinal: usize,
         values: Vec<ViewLiteral>,
+    },
+    DisplayContains {
+        ordinal: usize,
+        /// The column's format, cloned once at plan time.
+        format: Option<NumberFormat>,
+        required: bool,
+        /// Trimmed and lowercased once at plan time.
+        value: String,
+    },
+    DisplayIn {
+        ordinal: usize,
+        format: Option<NumberFormat>,
+        required: bool,
+        values: Vec<String>,
     },
 }
 
@@ -2225,6 +2302,7 @@ fn plan_view(
         sort.push(ViewSortPlan {
             ordinal: builder.ordinal(column),
             direction: key.direction,
+            text_order: key.text_order,
         });
     }
     let mut filters = Vec::with_capacity(view.filters.len());
@@ -2323,6 +2401,19 @@ fn plan_filter(
                     .collect::<Result<_, _>>()?,
             }
         }
+        // Display filters run over every column kind, Reference included.
+        ViewFilter::DisplayContains { value, .. } => ViewPredicate::DisplayContains {
+            ordinal,
+            format: column.number_format.clone(),
+            required: column.required,
+            value: value.trim().to_lowercase(),
+        },
+        ViewFilter::DisplayIn { values, .. } => ViewPredicate::DisplayIn {
+            ordinal,
+            format: column.number_format.clone(),
+            required: column.required,
+            values: values.clone(),
+        },
     })
 }
 
@@ -2384,6 +2475,32 @@ fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> 
             Some(Some(cell)) => values.iter().any(|literal| literal_matches(literal, cell)),
             _ => false,
         },
+        ViewPredicate::DisplayContains {
+            ordinal,
+            format,
+            required,
+            value,
+        } => {
+            let text = display_text::cell_text(
+                cells.get(*ordinal).and_then(Option::as_ref),
+                format.as_ref(),
+                *required,
+            );
+            text.trim().to_lowercase().contains(value.as_str())
+        }
+        ViewPredicate::DisplayIn {
+            ordinal,
+            format,
+            required,
+            values,
+        } => {
+            let text = display_text::cell_text(
+                cells.get(*ordinal).and_then(Option::as_ref),
+                format.as_ref(),
+                *required,
+            );
+            values.contains(&text)
+        }
     }
 }
 
@@ -2426,8 +2543,8 @@ fn compare_view_rows(
             (None, Some(_)) => Ordering::Greater,
             (Some(_), None) => Ordering::Less,
             (Some(left), Some(right)) => match key.direction {
-                SortDirection::Asc => compare_view_values(left, right),
-                SortDirection::Desc => compare_view_values(right, left),
+                SortDirection::Asc => compare_view_values(left, right, key.text_order),
+                SortDirection::Desc => compare_view_values(right, left, key.text_order),
             },
         };
         if ordering != Ordering::Equal {
@@ -2437,10 +2554,13 @@ fn compare_view_rows(
     entities[left].cmp(&entities[right])
 }
 
-fn compare_view_values(left: &ViewValue, right: &ViewValue) -> Ordering {
+fn compare_view_values(left: &ViewValue, right: &ViewValue, text_order: ViewTextOrder) -> Ordering {
     match (left, right) {
         (ViewValue::Number(left), ViewValue::Number(right)) => left.total_cmp(right),
-        (ViewValue::Text(left), ViewValue::Text(right)) => left.cmp(right),
+        (ViewValue::Text(left), ViewValue::Text(right)) => match text_order {
+            ViewTextOrder::Bytes => left.cmp(right),
+            ViewTextOrder::Natural => display_text::natural_cmp(left, right),
+        },
         (ViewValue::Boolean(left), ViewValue::Boolean(right)) => left.cmp(right),
         (ViewValue::Date(left), ViewValue::Date(right)) => left.cmp(right),
         // A column has one declared kind; this only orders mixed leftovers
@@ -2848,6 +2968,15 @@ impl DesignerRuntime {
                 &view,
                 &entity,
             )?)),
+            DesignerRequest::QueryDistinctValues {
+                expected_revision,
+                collection,
+                view,
+                field,
+                limit,
+            } => Ok(DesignerResponse::DistinctValues(
+                self.query_distinct_values(&expected_revision, &collection, &view, &field, limit)?,
+            )),
             DesignerRequest::QueryColumnTotals {
                 expected_revision,
                 collection,
@@ -3519,6 +3648,103 @@ impl DesignerRuntime {
                 LocateInViewResult::FilteredOut
             },
             index,
+        })
+    }
+
+    /// The distinct display texts of one column over the rows of a view, in
+    /// Sheet's list order: `""` first when any row has no display text, then
+    /// natural order. Only that column's fields are read; no row is projected.
+    fn query_distinct_values(
+        &mut self,
+        expected_revision: &str,
+        collection: &str,
+        view: &TableView,
+        field: &str,
+        limit: usize,
+    ) -> Result<DistinctValuesProjection, DesignerError> {
+        if limit == 0 || limit > MAX_DISTINCT_VALUES {
+            return Err(DesignerError::InvalidView {
+                message: format!(
+                    "distinct-values limit {limit} is outside 1..={MAX_DISTINCT_VALUES}"
+                ),
+            });
+        }
+        validate_view_bounds(view)?;
+        self.check_revision(expected_revision)?;
+        let revision = self.current_revision().to_owned();
+        let order = self.view_order(collection, view)?;
+        let spec = self.collection_spec(collection)?;
+        let column = spec
+            .columns
+            .iter()
+            .find(|column| column.id.as_str() == field)
+            .ok_or_else(|| DesignerError::UnknownViewField {
+                collection: collection.to_owned(),
+                field: field.to_owned(),
+            })?;
+        let entities = self.session.query_entities(&spec.entities)?;
+        let targets = entities
+            .value()
+            .iter()
+            .filter(|entity| entity.fields.contains(&column.id))
+            .map(|entity| FieldRef::new(entity.id.clone(), column.id.clone()))
+            .collect::<Vec<_>>();
+        let values = self.session.query_fields(&targets)?;
+        let row_of = entities
+            .value()
+            .iter()
+            .enumerate()
+            .map(|(row, entity)| (entity.id.as_str(), row))
+            .collect::<BTreeMap<_, _>>();
+        let mut texts = vec![None; spec.entities.len()];
+        for value in values.value() {
+            let Some(row) = row_of.get(value.field.entity.as_str()).copied() else {
+                continue;
+            };
+            texts[row] = Some(display_text::cell_text(
+                view_value(value).as_ref(),
+                column.number_format.as_ref(),
+                column.required,
+            ));
+        }
+        let mut distinct = order
+            .iter()
+            .map(|row| texts[*row].clone().unwrap_or_default())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        distinct.sort_by(|left, right| match (left.is_empty(), right.is_empty()) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => display_text::natural_cmp(left, right),
+        });
+        let maximum = table_window_byte_limit(self.text_capacity);
+        let mut used = TABLE_WINDOW_ENVELOPE_BYTES;
+        let mut out = Vec::new();
+        let mut truncated = false;
+        for text in distinct {
+            if out.len() >= limit {
+                truncated = true;
+                break;
+            }
+            let bytes = serde_json::to_vec(&text)
+                .map_err(|error| view_encoding_failure("distinct value", &error))?
+                .len()
+                + 1;
+            let next = used.saturating_add(bytes);
+            if next > maximum {
+                truncated = true;
+                break;
+            }
+            used = next;
+            out.push(text);
+        }
+        Ok(DistinctValuesProjection {
+            revision,
+            field: column.id.to_string(),
+            values: out,
+            truncated,
         })
     }
 
@@ -5432,14 +5658,15 @@ impl DesignerRuntime {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
-        match validate(&candidate) {
-            Ok(()) => {
+        let prepared = self.session.prepare_evaluation(candidate);
+        match prepared.verdict() {
+            PreparedVerdict::Valid => {
                 // A v3-origin text-capacity occurrence edits like any other
                 // capacity occurrence; only strict v3 origins keep the strict
                 // preflight.
                 if self.opened_from_v3 && !self.text_capacity {
                     Self::from_document_profile_with_opened(
-                        candidate,
+                        prepared.document().clone(),
                         PREFLIGHT_OCCURRENCE,
                         false,
                     )?;
@@ -5459,26 +5686,36 @@ impl DesignerRuntime {
                             Some(Value::Text(_))
                         ) =>
                         {
-                            self.preflight_capacity_scalar(&candidate, field, value)?;
+                            self.preflight_capacity_scalar(prepared.document(), field, value)?;
                         }
                         _ => {
-                            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, true)?;
+                            Self::from_document_profile(
+                                prepared.document().clone(),
+                                PREFLIGHT_OCCURRENCE,
+                                true,
+                            )?;
                         }
                     }
                 } else {
-                    Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
+                    Self::from_document_profile(
+                        prepared.document().clone(),
+                        PREFLIGHT_OCCURRENCE,
+                        false,
+                    )?;
                 }
             }
             // Preflight only upgrades a constraint mismatch into its typed
             // refusal. Every other invalid candidate is still refused
             // atomically by the lifecycle's own validation at execute time, so
             // the proposal below cannot publish it.
-            Err(WorkspaceError::InvalidDocument { report, .. }) => {
-                if let Some(error) = constraint_failure(&candidate, &constraint_targets, &report) {
+            PreparedVerdict::InvalidDocument { report } => {
+                if let Some(error) =
+                    constraint_failure(prepared.document(), &constraint_targets, report)
+                {
                     return Err(error);
                 }
             }
-            Err(_) => {}
+            PreparedVerdict::InvalidDefinitions => {}
         }
         let capacity_text_edit = self.text_capacity
             && !commands.is_empty()
@@ -5549,7 +5786,7 @@ impl DesignerRuntime {
         let proposal_id = self.next_proposal_id()?;
         let body = SemanticPatchBody::atomic_batch(commands)?;
         let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
-        lifecycle.propose(
+        lifecycle.propose_prepared(
             snapshot.document_scope(),
             snapshot.document(),
             snapshot.revision(),
@@ -5560,6 +5797,7 @@ impl DesignerRuntime {
                 self.principal.clone(),
             ),
             self.clock.tick(),
+            Some(&prepared),
         )?;
         designer_preview(
             lifecycle,
@@ -7292,6 +7530,7 @@ pub(crate) fn ensure_wire_reply_size(
             response:
                 DesignerResponse::TableWindow(_)
                 | DesignerResponse::LocatedInView(_)
+                | DesignerResponse::DistinctValues(_)
                 | DesignerResponse::ColumnTotals(_)
                 | DesignerResponse::GroupTotals(_),
         } => table_window_byte_limit(text_capacity),

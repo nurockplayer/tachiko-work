@@ -15,15 +15,15 @@ use tachiko_formula_engine::{
 
 use super::{
     AddressIndex, AddressIndexError, CalculatedField, Diagnostic, Document, EntityId,
-    EntityInspection, Expression, FieldAddress, FieldId, FieldRef, SchemaId, SemanticSubject,
-    ValidationReport, ValidationRole, Value, WorkspaceError,
+    EntityInspection, Expression, FieldAddress, FieldId, FieldRef, PreparedEvaluation, SchemaId,
+    SemanticSubject, ValidationReport, ValidationRole, Value, WorkspaceError,
     formula_operations::{FormulaCalculationOutcome, calculation_for, calculation_formula_keys},
     instrumentation, invalid_document,
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
     },
-    validation_report_for_retained_calculation,
+    semantic_validation, validation_report_for_retained_calculation,
 };
 
 /// One Rust-authoritative semantic document occurrence retained across calls.
@@ -225,6 +225,29 @@ impl ResidentWorkspaceSession {
             revision: self.revision.clone(),
             document: self.document.clone(),
         }
+    }
+
+    /// Evaluate one candidate against this revision for later proposal reuse.
+    ///
+    /// The candidate is validated and calculated once here, and this
+    /// revision's complete calculation is cloned out of retained state once, so
+    /// a lifecycle proposal can reuse both instead of recalculating either
+    /// document. A failed retained outcome contributes no base calculation and
+    /// leaves the proposal on its existing recalculation path.
+    #[must_use]
+    pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation {
+        let base_calculation = match self.retained.calculation_state.outcome() {
+            CalculationOutcome::Complete(calculation) => Some(calculation),
+            CalculationOutcome::Failed(_) => None,
+        };
+        let (report, calculation) = semantic_validation(&candidate);
+        PreparedEvaluation::new(
+            self.revision.clone(),
+            candidate,
+            report,
+            calculation,
+            base_calculation,
+        )
     }
 
     /// Borrow the resident state as the existing trusted publication seam.

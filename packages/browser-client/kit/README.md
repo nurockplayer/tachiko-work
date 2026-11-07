@@ -84,6 +84,30 @@ Date, Yes/No and Reference cells carry none, and the text counts against the
 window's reply cap. The option defaults to off, so every other window and
 `queryTable` reply is unchanged.
 
+Two view filters compare that same display text, on every column kind including
+Reference. `display_contains` trims and folds case; `display_in` is exact text
+with no folding, and `""` means blank, so picking `"$1,234.50"` finds every row
+that shows it, including 1234.501. A blank, failed, unavailable or Reference
+cell counts as blank for now.
+
+```ts
+const view = {
+  filters: [{ kind: "display_in", field: "amount", values: ["$1,234.50"] }],
+};
+```
+
+`queryDistinctValues` lists one column's distinct display texts over the rows a
+window would return, in Sheet's list order: `""` first when any shown row is
+blank, then natural order (case-insensitive, digit runs compared as numbers).
+`limit` is 1..=1,000; `truncated` says whether more values exist than the reply
+carries.
+
+```ts
+const { values, truncated } = await client.queryDistinctValues(
+  revision, "tasks", view, "amount", 200,
+);
+```
+
 Columns can be reordered with `moveColumn`. `toIndex` is a zero-based position
 after the column is removed from its current place, clamped to the last column.
 The order is durable document state: it is saved, undone, diffed and exported,

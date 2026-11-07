@@ -5,10 +5,13 @@ use super::{
     AuthorizationAction, Document, DocumentScopeId, Entity, FieldConstraint, FieldDefinition,
     FieldRef, FieldType, Grant, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
     PatchLifecycleError, PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticCommand,
-    SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
-    SemanticScope, TrustedInstant, V2ReceiptEvidence, Value,
+    SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
+    SemanticRevision, SemanticScope, TrustedInstant, V2ReceiptEvidence, Value,
 };
-use crate::Schema;
+use crate::{
+    Expression, Number, Schema, WorkspaceError, evaluation_counters,
+    resident_session::ResidentWorkspaceSession,
+};
 
 fn text_field(id: &str) -> FieldDefinition {
     FieldDefinition {
@@ -541,4 +544,406 @@ fn v2_propose_preview_execute_evaluates_once() {
     );
     assert_eq!(receipt.delta().unwrap(), &preview.delta);
     assert!(receipt.verified);
+}
+
+fn number_field(id: &str) -> FieldDefinition {
+    FieldDefinition {
+        id: id.into(),
+        key: id.into(),
+        display_name: None,
+        number_format: None,
+        field_type: FieldType::Number,
+        required: true,
+        constraint: FieldConstraint::None,
+    }
+}
+
+/// `f` is Text, `g` is a Number and `h` is a formula reading `g`.
+fn formula_document() -> Document {
+    let mut document = Document::empty("doc", "Sheet");
+    document.schemas.insert(
+        "s".into(),
+        Schema {
+            field_order: None,
+            id: "s".into(),
+            key: "table".into(),
+            display_name: None,
+            fields: BTreeMap::from([
+                ("f".into(), text_field("f")),
+                ("g".into(), number_field("g")),
+                ("h".into(), number_field("h")),
+            ]),
+        },
+    );
+    document.entities.insert(
+        "e1".into(),
+        Entity {
+            id: "e1".into(),
+            key: "row".into(),
+            schema: "s".into(),
+            fields: BTreeMap::from([
+                ("f".into(), Value::Text("old".into())),
+                ("g".into(), Value::Number(Number::new(1.0).unwrap())),
+                (
+                    "h".into(),
+                    Value::Formula(Expression::Reference(FieldRef::new("e1", "g"))),
+                ),
+            ]),
+        },
+    );
+    document
+}
+
+/// The same document with `h` dividing by zero, so its base calculation fails.
+fn failing_formula_document() -> Document {
+    let mut document = formula_document();
+    document.entities.get_mut("e1").unwrap().fields.insert(
+        "h".into(),
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+        }),
+    );
+    document
+}
+
+fn formula_lifecycle() -> PatchLifecycle {
+    let mut lifecycle = lifecycle(false);
+    let mut requirements = Vec::new();
+    for field in ["f", "g", "h"] {
+        let scope = ScopedSemanticSubject::new(
+            "scope".into(),
+            "doc".into(),
+            SemanticScope::EntityField {
+                entity: "e1".into(),
+                schema: "s".into(),
+                field: field.into(),
+            },
+        );
+        requirements.push(GrantRequirement::query(
+            OperationFamily::SetFieldValue,
+            scope.clone(),
+        ));
+        for action in [AuthorizationAction::Propose, AuthorizationAction::Execute] {
+            for mutation_class in [
+                MutationClass::Value,
+                MutationClass::Formula,
+                MutationClass::Destructive,
+            ] {
+                requirements.push(
+                    GrantRequirement::mutation(
+                        action,
+                        OperationFamily::SetFieldValue,
+                        mutation_class,
+                        scope.clone(),
+                    )
+                    .unwrap(),
+                );
+            }
+        }
+    }
+    lifecycle
+        .provision_grant(Grant::new(
+            "grant.fields".into(),
+            "human".into(),
+            "human".into(),
+            requirements,
+            None,
+        ))
+        .unwrap();
+    lifecycle
+}
+
+fn set_f_text(value: &str) -> SemanticPatchBody {
+    SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+        field: FieldRef::new("e1", "f"),
+        value: Value::Text(value.to_owned()),
+    })
+}
+
+fn set_h_formula() -> SemanticPatchBody {
+    SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+        field: FieldRef::new("e1", "h"),
+        value: Value::Formula(Expression::Number(Number::new(3.0).unwrap())),
+    })
+}
+
+fn set_g_number(value: f64) -> SemanticPatchBody {
+    SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+        field: FieldRef::new("e1", "g"),
+        value: Value::Number(Number::new(value).unwrap()),
+    })
+}
+
+fn request(revision: &str, body: SemanticPatchBody) -> super::ProposalRequest {
+    super::ProposalRequest::new("proposal".into(), revision.into(), body, "human".into())
+}
+
+fn propose_plain(
+    lifecycle: &mut PatchLifecycle,
+    document: &Document,
+    revision: &str,
+    body: SemanticPatchBody,
+) -> Result<SemanticPatch, PatchLifecycleError> {
+    lifecycle.propose(
+        &"scope".into(),
+        document,
+        &revision.into(),
+        request(revision, body),
+        TrustedInstant::new(1),
+    )
+}
+
+fn propose_with(
+    lifecycle: &mut PatchLifecycle,
+    document: &Document,
+    revision: &str,
+    body: SemanticPatchBody,
+    prepared: &crate::PreparedEvaluation,
+) -> Result<SemanticPatch, PatchLifecycleError> {
+    lifecycle.propose_prepared(
+        &"scope".into(),
+        document,
+        &revision.into(),
+        request(revision, body),
+        TrustedInstant::new(1),
+        Some(prepared),
+    )
+}
+
+fn assert_same_evaluation(left: &PatchLifecycle, right: &PatchLifecycle) {
+    let left = &left.evaluation_memo.as_ref().unwrap().evaluated;
+    let right = &right.evaluation_memo.as_ref().unwrap().evaluated;
+    assert_eq!(left.document, right.document);
+    assert_eq!(left.evidence, right.evidence);
+    assert_eq!(left.formula_impacts, right.formula_impacts);
+    assert_eq!(left.validation_report, right.validation_report);
+    assert_eq!(left.footprint, right.footprint);
+}
+
+/// Acceptance 1 and 5: one value, formula or dependent-changing edit through
+/// the prepared path evaluates the candidate once, never recalculates a
+/// complete base, and yields the same evidence as `propose`.
+#[test]
+fn prepared_proposal_reuses_both_calculations_and_matches_propose() {
+    for (body, label) in [
+        (set_f_text("new"), "value"),
+        (set_h_formula(), "formula"),
+        (set_g_number(2.0), "dependent"),
+    ] {
+        let document = formula_document();
+        let planner = formula_lifecycle();
+        let candidate = planner.plan_commands(&document, &body).unwrap().0;
+        let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+        let revision = session.revision().clone();
+
+        let mut plain_lifecycle = formula_lifecycle();
+        let plain_result = propose_plain(
+            &mut plain_lifecycle,
+            &document,
+            revision.as_str(),
+            body.clone(),
+        );
+
+        evaluation_counters::reset();
+        let prepared = session.prepare_evaluation(candidate);
+        let mut prepared_lifecycle = formula_lifecycle();
+        let prepared_result = propose_with(
+            &mut prepared_lifecycle,
+            &document,
+            revision.as_str(),
+            body,
+            &prepared,
+        );
+
+        assert!(plain_result.is_ok(), "{label}: {plain_result:?}");
+        assert!(prepared_result.is_ok(), "{label}: {prepared_result:?}");
+        assert_eq!(
+            evaluation_counters::counts(),
+            (1, 0),
+            "{label}: the candidate is calculated once and the complete base never"
+        );
+        assert_eq!(prepared_lifecycle.evaluations.get(), 1);
+        assert_same_evaluation(&plain_lifecycle, &prepared_lifecycle);
+    }
+}
+
+/// Acceptance 2: a prepared evaluation of another candidate is ignored and the
+/// proposal recalculates exactly like `propose`.
+#[test]
+fn a_prepared_evaluation_for_another_candidate_is_ignored() {
+    let document = formula_document();
+    let planner = formula_lifecycle();
+    let prepared_candidate = planner
+        .plan_commands(&document, &set_f_text("new"))
+        .unwrap()
+        .0;
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let revision = session.revision().clone();
+
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(prepared_candidate);
+    let mut lifecycle = formula_lifecycle();
+    let result = propose_with(
+        &mut lifecycle,
+        &document,
+        revision.as_str(),
+        set_h_formula(),
+        &prepared,
+    );
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(
+        evaluation_counters::counts(),
+        (2, 1),
+        "the proposal recalculates its own candidate and base"
+    );
+    let mut plain_lifecycle = formula_lifecycle();
+    propose_plain(
+        &mut plain_lifecycle,
+        &document,
+        revision.as_str(),
+        set_h_formula(),
+    )
+    .unwrap();
+    assert_same_evaluation(&plain_lifecycle, &lifecycle);
+}
+
+/// Acceptance 2: a prepared evaluation from another revision is ignored.
+#[test]
+fn a_prepared_evaluation_for_another_revision_is_ignored() {
+    let document = formula_document();
+    let planner = formula_lifecycle();
+    let candidate = planner
+        .plan_commands(&document, &set_f_text("new"))
+        .unwrap()
+        .0;
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+
+    let mut lifecycle = formula_lifecycle();
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate);
+    let result = lifecycle.propose_prepared(
+        &"scope".into(),
+        &document,
+        &"r2".into(),
+        super::ProposalRequest::new(
+            "proposal".into(),
+            "r2".into(),
+            set_f_text("new"),
+            "human".into(),
+        ),
+        TrustedInstant::new(1),
+        Some(&prepared),
+    );
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(evaluation_counters::counts(), (2, 1));
+    let mut plain_lifecycle = formula_lifecycle();
+    plain_lifecycle
+        .propose(
+            &"scope".into(),
+            &document,
+            &"r2".into(),
+            super::ProposalRequest::new(
+                "proposal".into(),
+                "r2".into(),
+                set_f_text("new"),
+                "human".into(),
+            ),
+            TrustedInstant::new(1),
+        )
+        .unwrap();
+    assert_same_evaluation(&plain_lifecycle, &lifecycle);
+}
+
+/// Acceptance 3: a failed base outcome keeps `DiffError::BeforeCalculation`.
+#[test]
+fn a_failed_base_keeps_the_before_calculation_refusal() {
+    let document = failing_formula_document();
+    let planner = formula_lifecycle();
+    let candidate = planner
+        .plan_commands(&document, &set_h_formula())
+        .unwrap()
+        .0;
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let revision = session.revision().clone();
+
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate);
+    let mut lifecycle = formula_lifecycle();
+    let prepared_result = propose_with(
+        &mut lifecycle,
+        &document,
+        revision.as_str(),
+        set_h_formula(),
+        &prepared,
+    );
+    let mut plain_lifecycle = formula_lifecycle();
+    let plain_result = propose_plain(
+        &mut plain_lifecycle,
+        &document,
+        revision.as_str(),
+        set_h_formula(),
+    );
+
+    // Both proposals attempt the base recalculation; it fails, so nothing is
+    // counted as a completed base calculation.
+    assert_eq!(evaluation_counters::counts(), (2, 0));
+    let prepared_error = prepared_result.unwrap_err();
+    let plain_error = plain_result.unwrap_err();
+    for error in [&prepared_error, &plain_error] {
+        let PatchLifecycleError::CommandRejected { source } = error else {
+            panic!("expected command rejection, got {error:?}");
+        };
+        assert!(matches!(
+            source.as_ref(),
+            WorkspaceError::Diff(crate::DiffError::BeforeCalculation(_))
+        ));
+    }
+    assert_eq!(format!("{prepared_error:?}"), format!("{plain_error:?}"));
+}
+
+/// Acceptance 4: an invalid candidate evaluated by the session is refused with
+/// the same `ValidationFailed` report as `propose`, without a base
+/// recalculation.
+#[test]
+fn an_invalid_prepared_candidate_is_refused_like_propose() {
+    let document = formula_document();
+    let cyclic = SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+        field: FieldRef::new("e1", "h"),
+        value: Value::Formula(Expression::Reference(FieldRef::new("e1", "h"))),
+    });
+    let planner = formula_lifecycle();
+    let candidate = planner.plan_commands(&document, &cyclic).unwrap().0;
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let revision = session.revision().clone();
+
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate);
+    let mut lifecycle = formula_lifecycle();
+    let prepared_result = propose_with(
+        &mut lifecycle,
+        &document,
+        revision.as_str(),
+        cyclic.clone(),
+        &prepared,
+    );
+    let mut plain_lifecycle = formula_lifecycle();
+    let plain_result = propose_plain(&mut plain_lifecycle, &document, revision.as_str(), cyclic);
+
+    assert_eq!(evaluation_counters::counts(), (2, 0));
+    let prepared_error = prepared_result.unwrap_err();
+    let plain_error = plain_result.unwrap_err();
+    let PatchLifecycleError::ValidationFailed { report } = &prepared_error else {
+        panic!("expected validation failure, got {prepared_error:?}");
+    };
+    let PatchLifecycleError::ValidationFailed {
+        report: plain_report,
+    } = &plain_error
+    else {
+        panic!("expected validation failure, got {plain_error:?}");
+    };
+    assert_eq!(report, plain_report);
+    assert!(!report.is_valid());
 }
