@@ -1012,7 +1012,7 @@ fn measure_phase_fixture(
     );
     let started = Instant::now();
     let opened = if text_capacity {
-        DesignerRuntime::from_document_profile(document, &occurrence, true)
+        DesignerRuntime::from_document_profile(document, &occurrence, SessionProfile::TextCapacity)
     } else {
         DesignerRuntime::from_document(document, &occurrence)
     };
@@ -1602,7 +1602,7 @@ fn w1_row_maintenance(shape: &str, runtime: &mut DesignerRuntime) {
 fn w1_fresh_runtime(shape: &str, serial: u64) -> Option<DesignerRuntime> {
     let (document, _rows, _columns) = w1_copy_document(shape)?;
     let occurrence = format!("00000000-0000-4000-8000-{serial:012x}");
-    match DesignerRuntime::from_document_profile_with_opened(document, &occurrence, false) {
+    match DesignerRuntime::from_document_profile_with_opened(document, &occurrence, SessionProfile::Ordinary) {
         Ok((runtime, _opened)) => Some(runtime),
         Err(error) => {
             w1_failure(shape, "copy_open", error);
@@ -2216,7 +2216,7 @@ fn capacity_w1_shape() {
     let occurrence = format!("00000000-0000-4000-8000-{:012x}", 0x300_u64);
     let open_document = document.clone();
     let (opened, open_sample) = observe(|| {
-        DesignerRuntime::from_document_profile_with_opened(open_document, &occurrence, false)
+        DesignerRuntime::from_document_profile_with_opened(open_document, &occurrence, SessionProfile::Ordinary)
     });
     let mut runtime = match opened {
         Ok((runtime, opened_projection)) => {
