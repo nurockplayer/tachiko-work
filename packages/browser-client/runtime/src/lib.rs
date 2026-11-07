@@ -1531,7 +1531,11 @@ pub struct KeyedGroupedSumPublishedProjection {
 /// carries `many: true` and the host re-queries instead.
 const MAX_LISTED_PUBLICATION_TARGETS: usize = 1_024;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// Largest serialized `changed` list one publication reply carries. Past it the
+/// reply carries `many: true` and the host re-queries instead.
+const MAX_CHANGED_CELL_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PublicationProjection {
     pub base_revision: String,
     pub resulting_revision: String,
@@ -1545,6 +1549,18 @@ pub struct PublicationProjection {
     /// re-query the visible window and totals.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub many: bool,
+    /// Every changed cell, shaped as a window's field with its display text. Only a
+    /// working-size session sets it, and not when `many` is set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed: Vec<FieldProjection>,
+}
+
+/// The reply's "re-query instead" marker: no target list, no changed cells.
+fn mark_publication_many(publication: &mut PublicationProjection) {
+    publication.entities = Vec::new();
+    publication.fields = Vec::new();
+    publication.affected_calculations = Vec::new();
+    publication.many = true;
 }
 
 fn bound_publication_targets(mut publication: PublicationProjection) -> PublicationProjection {
@@ -1552,10 +1568,7 @@ fn bound_publication_targets(mut publication: PublicationProjection) -> Publicat
         + publication.fields.len()
         + publication.affected_calculations.len();
     if targets > MAX_LISTED_PUBLICATION_TARGETS {
-        publication.entities = Vec::new();
-        publication.fields = Vec::new();
-        publication.affected_calculations = Vec::new();
-        publication.many = true;
+        mark_publication_many(&mut publication);
     }
     publication
 }
@@ -1596,6 +1609,7 @@ impl From<&ResidentProjectionInvalidation> for PublicationProjection {
                 .map(field_target)
                 .collect(),
             many: false,
+            changed: Vec::new(),
         }
     }
 }
@@ -3085,8 +3099,130 @@ impl DesignerRuntime {
     /// # Errors
     ///
     /// Returns a typed adapter or workspace failure.
-    #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
     pub fn handle(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
+        let response = self.dispatch(request)?;
+        Ok(match self.profile {
+            SessionProfile::WorkingSize => self.with_changed_cells(response),
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => response,
+        })
+    }
+
+    /// A working-size publication carries each changed cell as a window field.
+    ///
+    /// Built here, at the reply boundary, and not in [`Self::published_projection`]:
+    /// some commands update `collection_specs` after `publish_commands` returns,
+    /// so a spec read earlier could show a stale number format or miss a new
+    /// column. A reply that cannot be built falls back to the `many` marker,
+    /// which makes the host re-query: the edit has already published, so this
+    /// step never fails it.
+    fn with_changed_cells(&self, response: DesignerResponse) -> DesignerResponse {
+        match response {
+            DesignerResponse::Published(mut publication) => {
+                self.attach_changed_cells(&mut publication);
+                DesignerResponse::Published(publication)
+            }
+            DesignerResponse::KeyedGroupedSumPublished(mut keyed) => {
+                self.attach_changed_cells(&mut keyed.publication);
+                DesignerResponse::KeyedGroupedSumPublished(keyed)
+            }
+            other => other,
+        }
+    }
+
+    fn attach_changed_cells(&self, publication: &mut PublicationProjection) {
+        if publication.many {
+            return;
+        }
+        match self.changed_cells(publication) {
+            Some(changed) => publication.changed = changed,
+            None => mark_publication_many(publication),
+        }
+    }
+
+    /// Every changed cell as a window field, in stable target order.
+    ///
+    /// `None` means the list cannot be built exactly: an unknown schema or
+    /// column, a query failure, or over [`MAX_CHANGED_CELL_BYTES`]. The caller
+    /// then marks the publication `many`, so the host re-queries.
+    fn changed_cells(&self, publication: &PublicationProjection) -> Option<Vec<FieldProjection>> {
+        let targets = publication
+            .fields
+            .iter()
+            .chain(&publication.affected_calculations)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut present = Vec::new();
+        let mut columns = BTreeMap::new();
+        let mut blanks = BTreeMap::new();
+        let mut removed = BTreeSet::new();
+        for target in &targets {
+            let field_ref = target.as_field_ref();
+            let entities = match self
+                .session
+                .query_entities(std::slice::from_ref(&field_ref.entity))
+            {
+                Ok(entities) => entities,
+                // The row was removed; `entities` lists it instead.
+                Err(WorkspaceError::MissingEntityId { .. }) => {
+                    removed.insert(field_ref);
+                    continue;
+                }
+                Err(_) => return None,
+            };
+            let entity = &entities.value()[0];
+            let (spec, column) = self
+                .collection_specs
+                .values()
+                .find(|spec| spec.summary.id == entity.schema.to_string())
+                .and_then(|spec| {
+                    spec.columns
+                        .iter()
+                        .find(|column| column.id == field_ref.field)
+                        .map(|column| (spec, column))
+                })?;
+            if entity.fields.contains(&field_ref.field) {
+                present.push(field_ref.clone());
+                columns.insert(field_ref, column);
+            } else {
+                blanks.insert(
+                    field_ref,
+                    blank_field_projection(entity, column, spec.native_table_rows),
+                );
+            }
+        }
+        let query = self.session.query_fields(&present).ok()?;
+        let mut fields = query
+            .value()
+            .iter()
+            .map(|field| (field.field.clone(), self.project_field(field)))
+            .collect::<BTreeMap<_, _>>();
+        let mut changed = Vec::with_capacity(targets.len());
+        let mut bytes = 0;
+        for target in &targets {
+            let field = target.as_field_ref();
+            if removed.contains(&field) {
+                continue;
+            }
+            let projection = match fields.remove(&field) {
+                Some(mut projection) => {
+                    projection.display = columns
+                        .get(&field)
+                        .and_then(|column| field_display_text(&projection, column));
+                    projection
+                }
+                None => blanks.remove(&field)?,
+            };
+            bytes += serde_json::to_vec(&projection).ok()?.len();
+            if bytes > MAX_CHANGED_CELL_BYTES {
+                return None;
+            }
+            changed.push(projection);
+        }
+        Some(changed)
+    }
+
+    #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
+    fn dispatch(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
             DesignerRequest::NewTracker { occurrence_id } => {
                 let candidate = Self::tracker(&occurrence_id)?;
@@ -7698,10 +7834,14 @@ fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
         else {
             continue;
         };
-        field.display =
-            display_text::displayed_number(field.stored.as_ref(), field.calculated.as_ref())
-                .map(|value| display_text::format_number(value, column.number_format.as_ref()));
+        field.display = field_display_text(field, column);
     }
+}
+
+/// The Number a field shows as display text, in its column's format.
+fn field_display_text(field: &FieldProjection, column: &ColumnSpec) -> Option<String> {
+    display_text::displayed_number(field.stored.as_ref(), field.calculated.as_ref())
+        .map(|value| display_text::format_number(value, column.number_format.as_ref()))
 }
 
 fn blank_field_ids(
@@ -9957,6 +10097,7 @@ fn ensure_formula_reference_profile(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // One linear profile proof is easier to audit.
 fn ensure_static_profile(
     title: &str,
     default_collection: &str,
@@ -10058,6 +10199,7 @@ fn ensure_static_profile(
         fields: fields.clone(),
         affected_calculations,
         many: false,
+        changed: Vec::new(),
     };
     ensure_projection_size_with_limit(
         &publication,

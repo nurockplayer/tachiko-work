@@ -218,6 +218,17 @@ than treating a short page as the end. A publication that reaches more targets
 than a reply lists comes back with `many: true` and empty `entities`, `fields`
 and `affected_calculations`: re-query the visible window and totals instead of
 reading the lists. Both keys are absent on ordinary and text-capacity replies.
+
+A working-size publication also carries `changed`, one field per changed cell
+in the same shape a window's `rows[].fields` uses, with `display` text for
+Number cells. Redraw those cells from `changed` with no second call. `fields`
+(and `affected_calculations`) still names the changed cells, so a host can
+decide which sort and filter keys a redraw affects. A removed row's cells are
+never in `changed`: read `entities` for the rows that disappeared. Footer
+totals are still a separate totals query, and a reply that says `many` must be
+re-queried as a window instead of read for `changed`. On ordinary and
+text-capacity replies the `changed` key is absent too.
+
 A working-size session admits 10,000 rows and entities,
 100,000 populated cells, 100,000 formulas, 1,000,000 formula AST nodes and
 1,000,000 dependency edges, with one column read counting as one edge. These

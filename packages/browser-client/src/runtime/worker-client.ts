@@ -860,6 +860,7 @@ function expectResponse(
     case "imported": validateTablePresence(response.payload.opened.table); break;
     case "imported_window": validateTablePresence(response.payload.opened.window); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
+    case "published": response.payload.changed?.forEach(validateFieldPresence); break;
     case "field_explanation":
       validateFieldPresence(response.payload.value);
       response.payload.direct_dependencies.forEach(dependency => validateFieldPresence(dependency.value));

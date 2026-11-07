@@ -1,11 +1,12 @@
 //! Acceptance tests for the working-size session profile (#678, stage 2).
 #![allow(clippy::too_many_lines)] // Each test walks one whole acceptance case.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation};
 use tachiko_workspace_engine::{
-    ColumnRef, Expression, FieldConstraint, Number, PresentationStore, TablePresentation, Value,
+    ColumnRef, Expression, FieldConstraint, Number, NumberFormat, NumberFormatKind,
+    PresentationStore, TablePresentation, Value,
 };
 
 use super::capacity::{
@@ -1238,7 +1239,7 @@ fn edited(
             expected_revision,
             edits: vec![CellEdit { target, input }],
         })
-        .unwrap()
+        .unwrap_or_else(|error| panic!("edit failed: {error:?}"))
     {
         DesignerResponse::Published(publication) => publication,
         other => panic!("expected a publication, got {other:?}"),
@@ -1353,6 +1354,287 @@ fn publication_with_targets(total: usize) -> PublicationProjection {
             .collect(),
         affected_calculations: Vec::new(),
         many: false,
+        changed: Vec::new(),
+    }
+}
+
+fn number_field(id: &str, number_format: Option<NumberFormat>) -> FieldDefinition {
+    FieldDefinition {
+        id: FieldId::from(id),
+        key: FieldKey::from(id),
+        display_name: None,
+        field_type: FieldType::Number,
+        required: false,
+        constraint: FieldConstraint::None,
+        number_format,
+    }
+}
+
+fn text_field(id: &str) -> FieldDefinition {
+    FieldDefinition {
+        id: FieldId::from(id),
+        key: FieldKey::from(id),
+        display_name: None,
+        field_type: FieldType::Text,
+        required: false,
+        constraint: FieldConstraint::None,
+        number_format: None,
+    }
+}
+
+fn num(value: f64) -> Number {
+    Number::new(value).expect("fixture numbers are finite")
+}
+
+fn plain_format() -> NumberFormat {
+    NumberFormat {
+        decimals: 2,
+        kind: NumberFormatKind::Plain,
+        thousands_separator: true,
+    }
+}
+
+/// The redraw differential's fixture. `ledger` holds a value, a same-row
+/// formula over it, a second formula reading the first, a column total over the
+/// values and a formatted formula column; `mirror` reads one ledger value by
+/// absolute reference from another schema.
+fn redraw_grid() -> Document {
+    let mut document = Document::empty("redraw", "Redraw");
+    let mut ledger = Schema {
+        field_order: None,
+        id: SchemaId::from("ledger"),
+        key: SchemaKey::from("ledger"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    ledger
+        .fields
+        .insert(FieldId::from("value"), number_field("value", None));
+    ledger
+        .fields
+        .insert(FieldId::from("divisor"), number_field("divisor", None));
+    ledger
+        .fields
+        .insert(FieldId::from("label"), text_field("label"));
+    ledger.fields.insert(
+        FieldId::from("first"),
+        number_field("first", Some(plain_format())),
+    );
+    ledger
+        .fields
+        .insert(FieldId::from("second"), number_field("second", None));
+    ledger
+        .fields
+        .insert(FieldId::from("agg"), number_field("agg", None));
+    document.schemas.insert(ledger.id.clone(), ledger);
+    let mut mirror = Schema {
+        field_order: None,
+        id: SchemaId::from("mirror"),
+        key: SchemaKey::from("mirror"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    mirror
+        .fields
+        .insert(FieldId::from("mirror_of"), number_field("mirror_of", None));
+    document.schemas.insert(mirror.id.clone(), mirror);
+
+    for row in 0..3 {
+        let id = EntityId::from(format!("r{row:05}"));
+        let row_number = f64::from(u32::try_from(row).expect("bounded"));
+        let value = num(1.5 + row_number);
+        let divisor = num(2.0 * (row_number + 1.0));
+        let mut fields = BTreeMap::from([
+            (FieldId::from("value"), Value::Number(value)),
+            (FieldId::from("divisor"), Value::Number(divisor)),
+            (FieldId::from("label"), Value::Text(format!("row-{row}"))),
+            (
+                FieldId::from("first"),
+                Value::Formula(Expression::Multiply {
+                    left: Box::new(Expression::SameRowReference(FieldId::from("value"))),
+                    right: Box::new(Expression::Number(num(2.0))),
+                }),
+            ),
+            (
+                FieldId::from("second"),
+                Value::Formula(Expression::Divide {
+                    left: Box::new(Expression::SameRowReference(FieldId::from("first"))),
+                    right: Box::new(Expression::SameRowReference(FieldId::from("divisor"))),
+                }),
+            ),
+        ]);
+        if row == 0 {
+            fields.insert(
+                FieldId::from("agg"),
+                Value::Formula(Expression::ColumnTotal(ColumnRef::new("ledger", "value"))),
+            );
+        }
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id,
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("ledger"),
+                fields,
+            },
+        );
+    }
+    let shared = Expression::Reference(FieldRef::new(
+        EntityId::from("r00000"),
+        FieldId::from("value"),
+    ));
+    for row in 0..2 {
+        let id = EntityId::from(format!("m{row:05}"));
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id,
+                key: EntityKey::from(format!("mk{row:05}")),
+                schema: SchemaId::from("mirror"),
+                fields: BTreeMap::from([(
+                    FieldId::from("mirror_of"),
+                    Value::Formula(shared.clone()),
+                )]),
+            },
+        );
+    }
+    document
+}
+
+/// One table cell value as the window shows it: a present field, or `None` for
+/// a cell the row names in `blank_fields`.
+type WindowCells = BTreeMap<(String, String), Option<FieldProjection>>;
+
+fn window_cells(runtime: &mut DesignerRuntime, collection: &str) -> WindowCells {
+    let expected_revision = runtime.current_revision().to_owned();
+    let window = match runtime
+        .handle(DesignerRequest::QueryTableWindow {
+            expected_revision,
+            collection: collection.to_owned(),
+            view: TableView::default(),
+            start: 0,
+            count: 256,
+            display: true,
+        })
+        .unwrap()
+    {
+        DesignerResponse::TableWindow(window) => window,
+        other => panic!("expected a table window, got {other:?}"),
+    };
+    let mut cells = WindowCells::new();
+    for row in &window.rows {
+        for field in &row.fields {
+            cells.insert(
+                (row.id.clone(), field.target.field.clone()),
+                Some(field.clone()),
+            );
+        }
+        for field in &row.blank_fields {
+            cells.insert((row.id.clone(), field.clone()), None);
+        }
+    }
+    cells
+}
+
+fn all_cells(runtime: &mut DesignerRuntime) -> WindowCells {
+    let mut cells = window_cells(runtime, "ledger");
+    cells.extend(window_cells(runtime, "mirror"));
+    cells
+}
+
+fn formula_update(
+    runtime: &mut DesignerRuntime,
+    field: FieldTarget,
+    source: &str,
+) -> PublicationProjection {
+    match runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: runtime.current_revision().to_owned(),
+            target: field,
+            source: source.to_owned(),
+        })
+        .unwrap()
+    {
+        DesignerResponse::Published(publication) => publication,
+        other => panic!("expected a publication, got {other:?}"),
+    }
+}
+
+fn history(runtime: &mut DesignerRuntime, redo: bool) -> PublicationProjection {
+    let expected_revision = runtime.current_revision().to_owned();
+    match runtime
+        .handle(if redo {
+            DesignerRequest::Redo { expected_revision }
+        } else {
+            DesignerRequest::Undo { expected_revision }
+        })
+        .unwrap()
+    {
+        DesignerResponse::Published(publication) => publication,
+        other => panic!("expected a publication, got {other:?}"),
+    }
+}
+
+/// Every cell whose projection differs is in `changed`, and every `changed`
+/// entry equals the field the after-window shows (a blank cell appears in the
+/// row's `blank_fields`, so its entry must be `blank`).
+fn assert_changed_covers(
+    before: &WindowCells,
+    after: &WindowCells,
+    publication: &PublicationProjection,
+) {
+    let changed = publication
+        .changed
+        .iter()
+        .map(|field| {
+            (
+                (field.target.entity.clone(), field.target.field.clone()),
+                field,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let keys = before.keys().chain(after.keys()).collect::<BTreeSet<_>>();
+    for key in keys {
+        let before_cell = before.get(key);
+        let after_cell = after.get(key);
+        if before_cell == after_cell {
+            continue;
+        }
+        assert!(
+            changed.contains_key(key),
+            "changed cell {key:?} is missing from the reply: {publication:?}"
+        );
+    }
+    for (key, field) in &changed {
+        match after.get(key) {
+            Some(Some(window_field)) => assert_eq!(
+                *field, window_field,
+                "changed entry {key:?} differs from the window"
+            ),
+            Some(None) => assert!(
+                field.blank,
+                "changed entry {key:?} must be a blank projection"
+            ),
+            None => panic!("changed entry {key:?} is not a cell of the after-window"),
+        }
+    }
+}
+
+fn all_rows_window(runtime: &mut DesignerRuntime, collection: &str) -> TableWindowProjection {
+    let expected_revision = runtime.current_revision().to_owned();
+    match runtime
+        .handle(DesignerRequest::QueryTableWindow {
+            expected_revision,
+            collection: collection.to_owned(),
+            view: TableView::default(),
+            start: 0,
+            count: 256,
+            display: true,
+        })
+        .unwrap()
+    {
+        DesignerResponse::TableWindow(window) => window,
+        other => panic!("expected a table window, got {other:?}"),
     }
 }
 
@@ -1573,4 +1855,340 @@ fn the_wire_reply_carries_the_publication_marker() {
     let reply = process_wire_request(&mut runtime, &serde_json::to_vec(&request).unwrap());
     let text = String::from_utf8(reply).unwrap();
     assert!(text.contains("\"many\":true"), "{text}");
+}
+
+#[test]
+fn every_field_that_changes_is_in_the_reply() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap();
+
+    // A number edit, read back through whole windows with display text.
+    let before = all_cells(&mut runtime);
+    let publication = edited(
+        &mut runtime,
+        target("r00000", "value"),
+        ScalarEditInput::Number {
+            input: "4.5".into(),
+        },
+    );
+    let after = all_cells(&mut runtime);
+    assert_changed_covers(&before, &after, &publication);
+
+    // A clear to blank.
+    let before = after;
+    let publication = edited(
+        &mut runtime,
+        target("r00001", "value"),
+        ScalarEditInput::Clear,
+    );
+    let after = all_cells(&mut runtime);
+    assert_changed_covers(&before, &after, &publication);
+
+    // A formula update and its dependents.
+    let before = after;
+    let publication = formula_update(&mut runtime, target("r00001", "first"), "[.value] * 3");
+    let after = all_cells(&mut runtime);
+    assert_changed_covers(&before, &after, &publication);
+
+    // Undo and redo of the formula update.
+    let before = after;
+    let publication = history(&mut runtime, false);
+    let after = all_cells(&mut runtime);
+    assert_changed_covers(&before, &after, &publication);
+
+    let before = after;
+    let publication = history(&mut runtime, true);
+    let after = all_cells(&mut runtime);
+    assert_changed_covers(&before, &after, &publication);
+}
+
+#[test]
+fn changed_cells_carry_the_windows_display_text() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap();
+    let publication = edited(
+        &mut runtime,
+        target("r00000", "value"),
+        ScalarEditInput::Number {
+            input: "4.5".into(),
+        },
+    );
+    let first = publication
+        .changed
+        .iter()
+        .find(|field| field.target == target("r00000", "first"))
+        .expect("the formatted formula is a changed cell");
+    assert_eq!(first.display.as_deref(), Some("9.00"));
+
+    // A Number without a format still carries its plain display text.
+    let value = publication
+        .changed
+        .iter()
+        .find(|field| field.target == target("r00000", "value"))
+        .expect("the edited cell is a changed cell");
+    assert_eq!(value.display.as_deref(), Some("4.5"));
+
+    // A Text cell has no Number display text.
+    let publication = edited(
+        &mut runtime,
+        target("r00001", "label"),
+        ScalarEditInput::Text {
+            value: "changed".into(),
+        },
+    );
+    let label = publication
+        .changed
+        .iter()
+        .find(|field| field.target == target("r00001", "label"))
+        .expect("the edited text cell is a changed cell");
+    assert_eq!(label.display, None);
+}
+
+/// A failed formula never reaches a reply: the lifecycle refuses to publish a
+/// document whose calculation failed, so `changed` never has to carry one.
+#[test]
+fn a_failing_edit_is_refused_before_it_reaches_a_reply() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let error = runtime
+        .handle(DesignerRequest::EditCells {
+            expected_revision: revision.clone(),
+            edits: vec![CellEdit {
+                target: target("r00000", "divisor"),
+                input: ScalarEditInput::Number { input: "0".into() },
+            }],
+        })
+        .expect_err("a document with a failed formula is not published");
+    assert!(
+        matches!(&error, DesignerError::Lifecycle(_)),
+        "the refusal is a lifecycle validation failure: {error:?}"
+    );
+    assert!(
+        format!("{error:?}").contains("formula.division_by_zero"),
+        "the refusal names the failure: {error:?}"
+    );
+    assert_eq!(runtime.current_revision(), revision);
+}
+
+#[test]
+fn a_cleared_cell_appears_blank() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap();
+    let publication = edited(
+        &mut runtime,
+        target("r00001", "value"),
+        ScalarEditInput::Clear,
+    );
+    let cleared = publication
+        .changed
+        .iter()
+        .find(|field| field.target == target("r00001", "value"))
+        .expect("the cleared cell is a changed cell");
+    assert!(cleared.blank);
+    assert_eq!(cleared.stored, None);
+    assert_eq!(cleared.calculated, None);
+
+    let window = all_rows_window(&mut runtime, "ledger");
+    let row = window
+        .rows
+        .iter()
+        .find(|row| row.id == "r00001")
+        .expect("the row remains");
+    assert!(row.blank_fields.iter().any(|field| field == "value"));
+    assert!(!row.fields.iter().any(|field| field.target.field == "value"));
+}
+
+#[test]
+fn a_removed_rows_cells_are_not_changed_cells() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap();
+    let publication = match runtime
+        .handle(DesignerRequest::RemoveTableRows {
+            expected_revision: runtime.current_revision().to_owned(),
+            collection: "ledger".to_owned(),
+            entities: vec!["r00002".to_owned()],
+        })
+        .unwrap()
+    {
+        DesignerResponse::Published(publication) => publication,
+        other => panic!("expected a publication, got {other:?}"),
+    };
+    assert!(
+        publication.entities.contains(&"r00002".to_owned()),
+        "the removed row is named: {publication:?}"
+    );
+    assert!(
+        publication
+            .changed
+            .iter()
+            .all(|field| field.target.entity != "r00002"),
+        "a removed row's cells are never changed cells: {publication:?}"
+    );
+
+    // An inserted row's cells are changed cells.
+    let publication = match runtime
+        .handle(DesignerRequest::InsertRow {
+            expected_revision: runtime.current_revision().to_owned(),
+            collection: "ledger".to_owned(),
+            initializers: vec![RowInitializer {
+                field: "value".to_owned(),
+                input: ScalarEditInput::Number { input: "9".into() },
+            }],
+        })
+        .unwrap()
+    {
+        DesignerResponse::Published(publication) => publication,
+        other => panic!("expected a publication, got {other:?}"),
+    };
+    let inserted = publication
+        .entities
+        .first()
+        .expect("the publication lists the new row");
+    let inserted_value = publication
+        .changed
+        .iter()
+        .find(|field| &field.target.entity == inserted && field.target.field == "value")
+        .expect("the new row's cell is a changed cell");
+    assert!(matches!(
+        inserted_value.stored,
+        Some(StoredValueProjection::Number { value }) if value.to_bits() == 9.0_f64.to_bits()
+    ));
+}
+
+#[test]
+fn a_number_format_change_shows_the_new_display_text() {
+    // The format lives in `collection_specs`, which the command updates after
+    // publication, so only a list built at the reply boundary sees it.
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap();
+    let publication = match runtime
+        .handle(DesignerRequest::SetColumnNumberFormat {
+            expected_revision: runtime.current_revision().to_owned(),
+            collection: "ledger".to_owned(),
+            field: "value".to_owned(),
+            number_format: Some(plain_format()),
+        })
+        .unwrap()
+    {
+        DesignerResponse::Published(publication) => publication,
+        other => panic!("expected a publication, got {other:?}"),
+    };
+    let value = publication
+        .changed
+        .iter()
+        .find(|field| field.target == target("r00000", "value"))
+        .expect("the formatted column's cells are changed cells");
+    assert_eq!(value.display.as_deref(), Some("1.50"));
+}
+
+#[test]
+fn a_reply_over_the_changed_cell_budget_is_marked_many() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(text_grid(20, 1), OCCURRENCE).unwrap();
+    let text = "x".repeat(STORED_TEXT_ITEM_MAX);
+    let edits = (0..20)
+        .map(|row| CellEdit {
+            target: target(&format!("r{row:05}"), "c0"),
+            input: ScalarEditInput::Text {
+                value: text.clone(),
+            },
+        })
+        .collect::<Vec<_>>();
+    let expected_revision = runtime.current_revision().to_owned();
+    let publication = match runtime
+        .handle(DesignerRequest::EditCells {
+            expected_revision,
+            edits,
+        })
+        .unwrap()
+    {
+        DesignerResponse::Published(publication) => publication,
+        other => panic!("expected a publication, got {other:?}"),
+    };
+    assert!(publication.many, "over-budget changed cells are not listed");
+    assert_eq!(publication.entities, [] as [String; 0]);
+    assert_eq!(publication.fields, [] as [FieldTarget; 0]);
+    assert_eq!(publication.affected_calculations, [] as [FieldTarget; 0]);
+    assert_eq!(publication.changed, [] as [FieldProjection; 0]);
+    let json = serde_json::to_string(&publication).unwrap();
+    assert!(!json.contains("\"changed\""), "{json}");
+
+    // The edit itself published.
+    assert_ne!(publication.base_revision, publication.resulting_revision);
+    let window = all_rows_window(&mut runtime, "grid");
+    let row = window
+        .rows
+        .iter()
+        .find(|row| row.id == "r00000")
+        .expect("the first row remains");
+    match &projected(row, "c0").stored {
+        Some(StoredValueProjection::Text { value }) => {
+            assert_eq!(value.len(), STORED_TEXT_ITEM_MAX);
+        }
+        other => panic!("expected the stored text, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_marked_publication_carries_no_changed_cells() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(shared_reference_grid(1_100), OCCURRENCE)
+            .unwrap();
+    let publication = edited(
+        &mut runtime,
+        target("r00000", "value"),
+        ScalarEditInput::Number { input: "7".into() },
+    );
+    assert!(publication.many);
+    assert_eq!(publication.changed, [] as [FieldProjection; 0]);
+    let json = serde_json::to_string(&publication).unwrap();
+    assert!(!json.contains("\"changed\""), "{json}");
+}
+
+#[test]
+fn an_ordinary_edit_carries_no_changed_cells() {
+    let mut runtime = DesignerRuntime::from_document(redraw_grid(), OCCURRENCE).unwrap();
+    assert_eq!(runtime.profile, SessionProfile::Ordinary);
+    let publication = edited(
+        &mut runtime,
+        target("r00000", "value"),
+        ScalarEditInput::Number {
+            input: "4.5".into(),
+        },
+    );
+    assert_eq!(publication.changed, [] as [FieldProjection; 0]);
+    let json = serde_json::to_string(&DesignerResponse::Published(publication)).unwrap();
+    assert!(!json.contains("\"changed\""), "{json}");
+}
+
+#[test]
+fn the_wire_reply_carries_changed_cells() {
+    let mut runtime =
+        Some(DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap());
+    let request = DesignerRequest::EditCells {
+        expected_revision: runtime.as_ref().unwrap().current_revision().to_owned(),
+        edits: vec![CellEdit {
+            target: target("r00000", "value"),
+            input: ScalarEditInput::Number {
+                input: "4.5".into(),
+            },
+        }],
+    };
+    let reply = process_wire_request(&mut runtime, &serde_json::to_vec(&request).unwrap());
+    let text = String::from_utf8(reply).unwrap();
+    assert!(text.contains("\"changed\""), "{text}");
+    let DesignerWireReply::Ok {
+        response: DesignerResponse::Published(publication),
+    } = decode_wire(text.as_bytes())
+    else {
+        panic!("expected a publication reply, got {text}");
+    };
+    assert!(
+        publication
+            .changed
+            .iter()
+            .any(|field| field.target == target("r00000", "value")),
+        "{text}"
+    );
 }

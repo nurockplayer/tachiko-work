@@ -373,6 +373,11 @@ export type PublicationProjection = {
    * the visible window and totals.
    */
   many?: true;
+  /**
+   * Every changed cell, shaped as a window's field with its display text. Only
+   * a working-size session sets it, and not when `many` is set.
+   */
+  changed?: FieldProjection[];
 };
 
 export type ProjectExportProjection = {
