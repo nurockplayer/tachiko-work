@@ -20,8 +20,9 @@ use crate::interop_adapter::{
 };
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
-    FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection,
-    encode_reply, ensure_wire_reply_size, inspect_project, inspect_project_working_size,
+    FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES,
+    MAX_WORKING_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply, ensure_wire_reply_size,
+    inspect_project, inspect_project_working_size,
     open_local_document, open_local_document_working_size, open_portable_ro,
     open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
     request_too_large_reply, verify_portable_ro,
@@ -40,6 +41,8 @@ const MAX_SPREADSHEET_METADATA_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_HOST_SPREADSHEET_REQUEST_BYTES: usize = MAX_SPREADSHEET_METADATA_REQUEST_BYTES;
 /// Largest ordinary request, occurrence identity or expected revision.
 pub const MAX_HOST_WIRE_REQUEST_BYTES: usize = MAX_WIRE_REQUEST_BYTES;
+/// Largest request a working-size session reads.
+pub const MAX_HOST_WORKING_WIRE_REQUEST_BYTES: usize = MAX_WORKING_WIRE_REQUEST_BYTES;
 /// Largest project, spreadsheet source or export transfer.
 pub const MAX_HOST_PROJECT_TRANSFER_BYTES: usize = MAX_PROJECT_TRANSFER_BYTES;
 

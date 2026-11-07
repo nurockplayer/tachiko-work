@@ -16,7 +16,7 @@ use crate::{
     ProjectExportProjection, encode_reply, ensure_wire_reply_size, inspect_project,
     inspect_project_working_size, open_local_document, open_local_document_working_size,
     open_portable_ro, open_portable_ro_working_size, open_project, open_project_working_size,
-    process_wire_request, request_too_large_reply, verify_portable_ro,
+    process_wire_request, request_too_large_reply, verify_portable_ro, wire_request_limit,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
@@ -125,7 +125,10 @@ thread_local! {
 /// Resize the private request arena and return its linear-memory offset.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_request_reserve(length: u32) -> u32 {
-    if length as usize > MAX_SPREADSHEET_METADATA_REQUEST_BYTES {
+    let limit = RUNTIME.with(|runtime| {
+        wire_request_limit(runtime.borrow().as_ref()).max(MAX_SPREADSHEET_METADATA_REQUEST_BYTES)
+    });
+    if length as usize > limit {
         REQUEST_TOO_LARGE.set(true);
         REQUEST.with(|request| request.borrow_mut().clear());
         return 0;
@@ -151,7 +154,17 @@ pub extern "C" fn tachiko_designer_request_run() {
             };
             RESPONSE.with(|slot| *slot.borrow_mut() = response);
         });
+        let mut request = request.borrow_mut();
+        if request.capacity() > MAX_SPREADSHEET_METADATA_REQUEST_BYTES {
+            *request = Vec::new();
+        }
     });
+}
+
+/// The largest request the current session reads.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_request_limit() -> u32 {
+    RUNTIME.with(|runtime| wire_request_limit(runtime.borrow().as_ref()) as u32)
 }
 
 /// Return the linear-memory offset of the current response arena.

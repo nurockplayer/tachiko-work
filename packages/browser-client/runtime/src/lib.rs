@@ -164,6 +164,16 @@ const MAX_NATIVE_TRACKER_PROJECTION_BYTES: usize = 4 * MAX_PROJECTION_BYTES;
 const MAX_WIDTH_FINITE_JSON_NUMBER: f64 = -f64::MIN_POSITIVE;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
+/// Largest request a working-size session reads. A paste can't hold more than the
+/// document it would save, so it shares the project transfer limit.
+pub(crate) const MAX_WORKING_WIRE_REQUEST_BYTES: usize = MAX_PROJECT_TRANSFER_BYTES;
+
+pub(crate) fn wire_request_limit(runtime: Option<&DesignerRuntime>) -> usize {
+    match runtime.map(|runtime| runtime.profile) {
+        Some(SessionProfile::WorkingSize) => MAX_WORKING_WIRE_REQUEST_BYTES,
+        Some(SessionProfile::Ordinary | SessionProfile::TextCapacity) | None => MAX_WIRE_REQUEST_BYTES,
+    }
+}
 const DESIGNER_PRINCIPAL: &str = "designer-human";
 const PREFLIGHT_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 /// Private record discriminator for frozen canonical `.roproj/v1` bundles.
@@ -6088,7 +6098,7 @@ impl DesignerRuntime {
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
         if destinations.is_empty()
-            || destinations.len() > MAX_FIELD_QUERY_TARGETS
+            || destinations.len() > self.max_batch_targets()
             || fixed_references.len() > MAX_FIELD_QUERY_TARGETS
         {
             return Err(tracker_error("formula copy range is empty or too large"));
@@ -6108,7 +6118,11 @@ impl DesignerRuntime {
             .values()
             .find(|spec| spec.entities.contains(&source.entity))
             .ok_or_else(|| tracker_error("formula source collection is unavailable"))?;
-        let (source_row, source_column) = copy_position(spec, &source)?;
+        let mut rows: BTreeMap<&EntityId, usize> = BTreeMap::new();
+        for (index, entity) in spec.entities.iter().enumerate() {
+            rows.entry(entity).or_insert(index);
+        }
+        let (source_row, source_column) = copy_position(spec, &rows, &source)?;
         let fixed = fixed_references
             .iter()
             .map(FieldTarget::as_field_ref)
@@ -6134,15 +6148,15 @@ impl DesignerRuntime {
                     "duplicate formula copy targets are unsupported",
                 ));
             }
-            let (row, column) = copy_position(spec, &target)?;
+            let (row, column) = copy_position(spec, &rows, &target)?;
             require_copy_target_number(document, &target)?;
             let old = document.entities[&target.entity].fields.get(&target.field);
             let mut copied = expression.clone();
             map_copy_references(&mut copied, &mut |reference, numeric| {
-                if fixed.contains(reference) || !spec.entities.contains(&reference.entity) {
+                if fixed.contains(reference) || !rows.contains_key(&reference.entity) {
                     return require_copy_reference(document, reference, numeric);
                 }
-                let (reference_row, reference_column) = copy_position(spec, reference)?;
+                let (reference_row, reference_column) = copy_position(spec, &rows, reference)?;
                 let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
                 let shifted_column =
                     copy_index(reference_column, source_column, column, relative_columns)?;
@@ -6629,6 +6643,14 @@ impl DesignerRuntime {
         capacity::limits_for_profile(self.profile).table_rows
     }
 
+    /// Most targets one fill or cell edit carries: a working-size session's whole table.
+    fn max_batch_targets(&self) -> usize {
+        match self.profile {
+            SessionProfile::WorkingSize => capacity::WORKING_LIMITS.populated_cells,
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => MAX_FIELD_QUERY_TARGETS,
+        }
+    }
+
     /// Supply the identity space a row allocation may consume beyond the
     /// current serial.
     fn row_identity_reserve(&self) -> usize {
@@ -6946,7 +6968,7 @@ impl DesignerRuntime {
         edits: &[CellEdit],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
-        if edits.is_empty() || edits.len() > MAX_FIELD_QUERY_TARGETS {
+        if edits.is_empty() || edits.len() > self.max_batch_targets() {
             return Err(tracker_error("the edit range is empty or too large"));
         }
         let snapshot = match self.profile {
@@ -6958,67 +6980,74 @@ impl DesignerRuntime {
         let mut seen = BTreeSet::new();
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
-        for edit in edits {
-            let field = edit.target.as_field_ref();
-            if !seen.insert(field.clone()) {
-                return Err(tracker_error("duplicate cell targets are unsupported"));
-            }
-            let spec = self
-                .collection_specs
-                .values()
-                .find(|spec| spec.entities.contains(&field.entity))
-                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
-                    field: field.clone(),
-                })?;
-            let column = spec
-                .columns
-                .iter()
-                .find(|column| column.id == field.field)
-                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
-                    field: field.clone(),
-                })?;
-            let present = if let Some(snapshot) = &snapshot {
-                snapshot.document().entities[&field.entity]
-                    .fields
-                    .contains_key(&field.field)
-            } else {
-                self.session
-                    .query_entities(std::slice::from_ref(&field.entity))?
-                    .value()[0]
-                    .fields
-                    .contains(&field.field)
-            };
-            if (!present || matches!(edit.input, ScalarEditInput::Clear)) && !spec.native_table_rows
-            {
-                return Err(DesignerError::UnsupportedScalarEdit { field });
-            }
-            let projection = match self.profile {
-                SessionProfile::TextCapacity if present => {
-                    Some(self.session.query_fields(std::slice::from_ref(&field))?)
+        {
+            let mut specs: BTreeMap<&EntityId, &CollectionSpec> = BTreeMap::new();
+            for spec in self.collection_specs.values() {
+                for entity in &spec.entities {
+                    specs.entry(entity).or_insert(spec);
                 }
-                SessionProfile::TextCapacity
-                | SessionProfile::Ordinary
-                | SessionProfile::WorkingSize => None,
-            };
-            let old = match self.profile {
-                SessionProfile::TextCapacity => projection
-                    .as_ref()
-                    .and_then(|query| query.value().first())
-                    .and_then(|value| value.stored_value.as_ref()),
-                SessionProfile::Ordinary | SessionProfile::WorkingSize => snapshot
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
-                    .and_then(|entity| entity.fields.get(&field.field)),
-            };
-            // A formula is not a blank scalar slot.
-            if present && old.is_none() {
-                return Err(DesignerError::UnsupportedScalarEdit { field });
             }
-            let value = cell_edit_value(column, old, &edit.input, &field)?;
-            if value.as_ref() != old {
-                let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
-                forward.push(command);
-                inverse.extend(undo);
+            for edit in edits {
+                let field = edit.target.as_field_ref();
+                if !seen.insert(field.clone()) {
+                    return Err(tracker_error("duplicate cell targets are unsupported"));
+                }
+                let spec = *specs
+                    .get(&field.entity)
+                    .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                        field: field.clone(),
+                    })?;
+                let column = spec
+                    .columns
+                    .iter()
+                    .find(|column| column.id == field.field)
+                    .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                        field: field.clone(),
+                    })?;
+                let present = if let Some(snapshot) = &snapshot {
+                    snapshot.document().entities[&field.entity]
+                        .fields
+                        .contains_key(&field.field)
+                } else {
+                    self.session
+                        .query_entities(std::slice::from_ref(&field.entity))?
+                        .value()[0]
+                        .fields
+                        .contains(&field.field)
+                };
+                if (!present || matches!(edit.input, ScalarEditInput::Clear))
+                    && !spec.native_table_rows
+                {
+                    return Err(DesignerError::UnsupportedScalarEdit { field });
+                }
+                let projection = match self.profile {
+                    SessionProfile::TextCapacity if present => {
+                        Some(self.session.query_fields(std::slice::from_ref(&field))?)
+                    }
+                    SessionProfile::TextCapacity
+                    | SessionProfile::Ordinary
+                    | SessionProfile::WorkingSize => None,
+                };
+                let old = match self.profile {
+                    SessionProfile::TextCapacity => projection
+                        .as_ref()
+                        .and_then(|query| query.value().first())
+                        .and_then(|value| value.stored_value.as_ref()),
+                    SessionProfile::Ordinary | SessionProfile::WorkingSize => snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
+                        .and_then(|entity| entity.fields.get(&field.field)),
+                };
+                // A formula is not a blank scalar slot.
+                if present && old.is_none() {
+                    return Err(DesignerError::UnsupportedScalarEdit { field });
+                }
+                let value = cell_edit_value(column, old, &edit.input, &field)?;
+                if value.as_ref() != old {
+                    let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
+                    forward.push(command);
+                    inverse.extend(undo);
+                }
             }
         }
         self.record_edit(expected, forward, inverse)
@@ -9001,7 +9030,7 @@ impl<'input> ProjectBundleCursor<'input> {
 /// Process one complete private adapter message without exposing Rust layouts.
 #[must_use]
 pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8]) -> Vec<u8> {
-    if input.len() > MAX_WIRE_REQUEST_BYTES {
+    if input.len() > wire_request_limit(runtime.as_ref()) {
         return request_too_large_reply(runtime.as_ref());
     }
     let reply = match serde_json::from_slice::<DesignerRequest>(input) {
@@ -9098,11 +9127,10 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
 }
 
 fn request_too_large_reply(runtime: Option<&DesignerRuntime>) -> Vec<u8> {
+    let maximum = wire_request_limit(runtime);
     encode_reply(&failure_reply(
         "request_too_large",
-        format!(
-            "The Designer request exceeds the private {MAX_WIRE_REQUEST_BYTES}-byte bridge limit."
-        ),
+        format!("The Designer request exceeds the private {maximum}-byte bridge limit."),
         runtime.map_or("unavailable", DesignerRuntime::current_revision),
     ))
 }
@@ -9173,11 +9201,12 @@ fn is_native_table_spec(spec: &CollectionSpec) -> bool {
     spec.native_table_rows && !is_tracker_spec(spec)
 }
 
-fn copy_position(spec: &CollectionSpec, field: &FieldRef) -> Result<(usize, usize), DesignerError> {
-    let row = spec
-        .entities
-        .iter()
-        .position(|entity| entity == &field.entity);
+fn copy_position(
+    spec: &CollectionSpec,
+    rows: &BTreeMap<&EntityId, usize>,
+    field: &FieldRef,
+) -> Result<(usize, usize), DesignerError> {
+    let row = rows.get(&field.entity).copied();
     let column = spec
         .columns
         .iter()

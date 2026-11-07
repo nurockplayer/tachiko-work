@@ -26,6 +26,7 @@ async function fixture(receiptLength: number, arenaLength: number, responseType 
     memory,
     tachiko_designer_request_reserve: reserve,
     tachiko_designer_request_run: () => undefined,
+    tachiko_designer_request_limit: () => 65_536,
     tachiko_designer_project_reserve: () => 4096,
     tachiko_designer_spreadsheet_run: () => undefined,
     tachiko_designer_project_export_v3: selectedExport,
@@ -147,7 +148,8 @@ describe("A1 translation WASM wire transport", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response()));
     vi.spyOn(WebAssembly, "instantiateStreaming").mockResolvedValue({instance: {exports: {
       memory, tachiko_designer_request_reserve: (size: number) => {length = size; return 0;},
-      tachiko_designer_request_run: run, tachiko_designer_response_ptr: () => 8192,
+      tachiko_designer_request_run: run, tachiko_designer_request_limit: () => 65_536,
+      tachiko_designer_response_ptr: () => 8192,
       tachiko_designer_response_len: () => encoded.length,
     }}, module: {}});
     const bridge = await createDesignerWasmBridge("/runtime.wasm");
@@ -169,6 +171,7 @@ describe("working-size WASM project transport", () => {
     const exports = {
       memory,
       tachiko_designer_request_reserve: vi.fn(() => 0),
+      tachiko_designer_request_limit: () => 65_536,
       tachiko_designer_project_reserve: projectReserve,
       tachiko_designer_response_ptr: () => responseOffset,
       tachiko_designer_response_len: () => response.length,
