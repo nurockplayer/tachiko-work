@@ -1155,6 +1155,52 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     wq_print(name, "edit_median_ms", format!("{median:.3}"));
     wq_print(name, "edit_p95_ms", format!("{:.3}", ordered[p95_index]));
 
+    // The same edit through the reply boundary, where a working-size session
+    // builds the changed-cell list. The JSON reply's size is the list's cost.
+    let mut handle_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut largest_reply = 0;
+    for index in 0..WQ_EDIT_COUNT {
+        let revision = runtime.observe_occurrence().revision;
+        let request = DesignerRequest::EditCells {
+            expected_revision: revision,
+            edits: vec![CellEdit {
+                target: FieldTarget {
+                    entity: format!("r{:05}", WQ_EDIT_COUNT + index),
+                    field: field.to_owned(),
+                },
+                input: ScalarEditInput::Number {
+                    input: format!("{}", 200 + index),
+                },
+            }],
+        };
+        let (result, sample) = observe(|| runtime.handle(request));
+        match result {
+            Ok(response) => {
+                handle_samples.push(sample);
+                let encoded = serde_json::to_vec(&response).expect("the reply encodes");
+                largest_reply = largest_reply.max(encoded.len());
+            }
+            Err(error) => {
+                wq_refused(name, "handle_edit", &error);
+                return;
+            }
+        }
+    }
+    let mut ordered = handle_samples
+        .iter()
+        .map(|sample| sample.millis)
+        .collect::<Vec<_>>();
+    ordered.sort_by(f64::total_cmp);
+    let median = ordered[ordered.len() / 2];
+    let p95_index = ordered
+        .len()
+        .saturating_mul(95)
+        .div_ceil(100)
+        .saturating_sub(1);
+    wq_print(name, "handle_edit_median_ms", format!("{median:.3}"));
+    wq_print(name, "handle_edit_p95_ms", format!("{:.3}", ordered[p95_index]));
+    wq_print(name, "edit_reply_bytes", largest_reply);
+
     // A full table refuses another row, so removal comes first.
     let revision = runtime.observe_occurrence().revision;
     let rows = (0..100).map(|row| format!("r{row:05}")).collect::<Vec<_>>();

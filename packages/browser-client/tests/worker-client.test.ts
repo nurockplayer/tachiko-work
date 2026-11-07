@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createExperimentalDesignerClient } from "../src/experimental-client.ts";
 import { freshOccurrenceId } from "../src/runtime/worker-client.ts";
 
 afterEach(() => {
