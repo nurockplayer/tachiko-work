@@ -11,11 +11,17 @@ const tables = await Promise.all(versions.map(async version => {
   if (paths.length !== Number(declaration[1]) || new Set(paths).size !== paths.length) {
     throw new Error(`Invalid Rust v${version} path declaration`);
   }
-  return `  ${version}: ${JSON.stringify(paths)},`;
+  // The optional member is written last and only when nonempty. Versions
+  // without an optional member keep an empty list.
+  const optional = source.match(new RegExp(`pub const ROPROJ_V${version}_PRESENTATION_PATH: &str = "([^"]+)";`));
+  return {
+    paths: `  ${version}: ${JSON.stringify(paths)},`,
+    optional: `  ${version}: ${JSON.stringify(optional ? [optional[1]] : [])},`,
+  };
 }));
 const start = "// BEGIN generated Rust storage paths";
 const end = "// END generated Rust storage paths";
-const generated = `${start}\n// Run: node packages/browser-client/scripts/generate-project-paths.mjs\nconst CANONICAL_PROJECT_PATHS: Readonly<Record<number, readonly string[]>> = {\n${tables.join("\n")}\n};\n${end}`;
+const generated = `${start}\n// Run: node packages/browser-client/scripts/generate-project-paths.mjs\nconst CANONICAL_PROJECT_PATHS: Readonly<Record<number, readonly string[]>> = {\n${tables.map(table => table.paths).join("\n")}\n};\nconst CANONICAL_PROJECT_OPTIONAL_PATHS: Readonly<Record<number, readonly string[]>> = {\n${tables.map(table => table.optional).join("\n")}\n};\n${end}`;
 const target = new URL("../src/host/project-transfer.ts", import.meta.url);
 const source = await readFile(target, "utf8");
 const region = new RegExp(`${start}[\\s\\S]*?${end}`);

@@ -40,7 +40,7 @@ pub use model::{
 pub use presentation::{
     BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate,
     MAX_RULES_PER_TABLE, MAX_STYLES, PresentationError, PresentationStore, RuleId, StyleId,
-    TablePresentation, validate_presentation,
+    TablePresentation, prune_presentation, validate_presentation,
 };
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;
