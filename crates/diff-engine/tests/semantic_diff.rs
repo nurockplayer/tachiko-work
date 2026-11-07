@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff, diff, diff_with_calculations};
 use tachiko_formula_engine::calculate;
 use tachiko_semantic_core::{
-    Date, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    ColumnRef, Date, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId,
+    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 fn balance_document(damage: f64) -> Document {
@@ -425,4 +425,244 @@ fn unchanged_documents_have_an_explicit_empty_summary() {
 
     assert_eq!(semantic_diff.changes(), []);
     assert_eq!(semantic_diff.render_text(), "No semantic changes.\n");
+}
+
+/// Two edited inputs feed one shared formula.
+fn shared_input_document(left: f64, right: f64) -> Document {
+    Document {
+        id: DocumentId::from("shared"),
+        title: "Shared".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("pair"),
+            Schema {
+                field_order: None,
+                id: SchemaId::from("pair"),
+                key: SchemaKey::from("pair"),
+                display_name: None,
+                fields: BTreeMap::from([
+                    (FieldId::from("left"), number_field("left", true)),
+                    (FieldId::from("right"), number_field("right", true)),
+                    (FieldId::from("total"), number_field("total", true)),
+                ]),
+            },
+        )]),
+        entities: BTreeMap::from([(
+            EntityId::from("pair"),
+            Entity {
+                id: EntityId::from("pair"),
+                key: "pair".into(),
+                schema: SchemaId::from("pair"),
+                fields: BTreeMap::from([
+                    (FieldId::from("left"), number(left)),
+                    (FieldId::from("right"), number(right)),
+                    (
+                        FieldId::from("total"),
+                        Value::Formula(Expression::Add {
+                            left: Box::new(reference("pair", "left")),
+                            right: Box::new(reference("pair", "right")),
+                        }),
+                    ),
+                ]),
+            },
+        )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
+    }
+}
+
+/// A summary formula reads a whole plan column, so every edited row reaches it.
+fn column_total_document(rent: f64, ads: f64) -> Document {
+    let plan_row = |id: &str, reserve: f64| Entity {
+        id: EntityId::from(id),
+        key: id.into(),
+        schema: SchemaId::from("plan"),
+        fields: BTreeMap::from([(FieldId::from("reserve"), number(reserve))]),
+    };
+    Document {
+        id: DocumentId::from("monthly-plan"),
+        title: "Monthly plan".to_owned(),
+        schemas: BTreeMap::from([
+            (
+                SchemaId::from("plan"),
+                Schema {
+                    field_order: None,
+                    id: SchemaId::from("plan"),
+                    key: SchemaKey::from("plan"),
+                    display_name: None,
+                    fields: BTreeMap::from([(
+                        FieldId::from("reserve"),
+                        number_field("reserve", true),
+                    )]),
+                },
+            ),
+            (
+                SchemaId::from("summary"),
+                Schema {
+                    field_order: None,
+                    id: SchemaId::from("summary"),
+                    key: SchemaKey::from("summary"),
+                    display_name: None,
+                    fields: BTreeMap::from([(FieldId::from("total"), number_field("total", true))]),
+                },
+            ),
+        ]),
+        entities: BTreeMap::from([
+            (EntityId::from("rent"), plan_row("rent", rent)),
+            (EntityId::from("ads"), plan_row("ads", ads)),
+            (
+                EntityId::from("summary"),
+                Entity {
+                    id: EntityId::from("summary"),
+                    key: "summary".into(),
+                    schema: SchemaId::from("summary"),
+                    fields: BTreeMap::from([(
+                        FieldId::from("total"),
+                        Value::Formula(Expression::ColumnTotal(ColumnRef::new("plan", "reserve"))),
+                    )]),
+                },
+            ),
+        ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
+    }
+}
+
+/// The pre-#678 cause calculation: rescan both dependency maps per changed
+/// field with `affected_by`.
+fn causes_by_affected_by(
+    before: &Document,
+    after: &Document,
+    changed_fields: &BTreeSet<FieldRef>,
+    formula: &FieldRef,
+) -> Vec<FieldRef> {
+    let before_calculation = calculate(before).unwrap();
+    let after_calculation = calculate(after).unwrap();
+    changed_fields
+        .iter()
+        .filter(|changed| {
+            *changed == formula
+                || before_calculation.affected_by(changed).contains(formula)
+                || after_calculation.affected_by(changed).contains(formula)
+        })
+        .cloned()
+        .collect()
+}
+
+fn assert_formula_impact_causes(
+    before: &Document,
+    after: &Document,
+    changed_fields: &BTreeSet<FieldRef>,
+) {
+    let before_calculation = calculate(before).unwrap();
+    let after_calculation = calculate(after).unwrap();
+    for semantic_diff in [
+        diff(before, after).unwrap(),
+        diff_with_calculations(before, after, &before_calculation, &after_calculation).unwrap(),
+    ] {
+        for change in semantic_diff.changes() {
+            let SemanticChange::FormulaImpact { field, causes, .. } = change else {
+                continue;
+            };
+            assert_eq!(
+                causes,
+                &causes_by_affected_by(before, after, changed_fields, field),
+                "{field:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn formula_impact_causes_match_affected_by_for_shared_inputs() {
+    let before = shared_input_document(1.0, 2.0);
+    let after = shared_input_document(3.0, 5.0);
+    let changed_fields = BTreeSet::from([
+        FieldRef::new("pair", "left"),
+        FieldRef::new("pair", "right"),
+    ]);
+
+    assert_formula_impact_causes(&before, &after, &changed_fields);
+    assert!(
+        diff(&before, &after)
+            .unwrap()
+            .changes()
+            .iter()
+            .any(|change| {
+                matches!(
+                    change,
+                    SemanticChange::FormulaImpact { field, causes, .. }
+                        if field == &FieldRef::new("pair", "total")
+                            && causes == &vec![
+                                FieldRef::new("pair", "left"),
+                                FieldRef::new("pair", "right"),
+                            ]
+                )
+            })
+    );
+}
+
+#[test]
+fn formula_impact_causes_match_affected_by_for_a_chain() {
+    let before = balance_document(100.0);
+    let after = balance_document(120.0);
+    let changed_fields = BTreeSet::from([FieldRef::new("sword", "damage")]);
+
+    assert_formula_impact_causes(&before, &after, &changed_fields);
+}
+
+#[test]
+fn formula_impact_causes_match_affected_by_for_a_changed_formula() {
+    let before = balance_document(100.0);
+    let mut after = balance_document(100.0);
+    after.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("dps"),
+        Value::Formula(Expression::Multiply {
+            left: Box::new(reference("sword", "damage")),
+            right: Box::new(numeric(2.0)),
+        }),
+    );
+    let changed_fields = BTreeSet::from([FieldRef::new("sword", "dps")]);
+
+    assert_formula_impact_causes(&before, &after, &changed_fields);
+}
+
+#[test]
+fn formula_impact_causes_match_affected_by_for_a_column_total() {
+    let before = column_total_document(12_000.0, 500.0);
+    let after = column_total_document(15_000.0, 700.0);
+    let changed_fields = BTreeSet::from([
+        FieldRef::new("rent", "reserve"),
+        FieldRef::new("ads", "reserve"),
+    ]);
+
+    assert_formula_impact_causes(&before, &after, &changed_fields);
+}
+
+#[test]
+fn an_edit_reaching_no_formula_reports_no_formula_impact() {
+    let before = balance_document(100.0);
+    let mut after = balance_document(100.0);
+    after
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("name"), Value::Text("Axe".to_owned()));
+    let before_calculation = calculate(&before).unwrap();
+    let after_calculation = calculate(&after).unwrap();
+
+    for semantic_diff in [
+        diff(&before, &after).unwrap(),
+        diff_with_calculations(&before, &after, &before_calculation, &after_calculation).unwrap(),
+    ] {
+        assert!(
+            semantic_diff
+                .changes()
+                .iter()
+                .all(|change| !matches!(change, SemanticChange::FormulaImpact { .. }))
+        );
+        assert!(semantic_diff.changes().iter().any(|change| matches!(
+            change,
+            SemanticChange::FieldChanged { field, .. }
+                if field == &FieldRef::new("sword", "name")
+        )));
+    }
 }
