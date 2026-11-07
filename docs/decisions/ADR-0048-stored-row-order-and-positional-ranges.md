@@ -124,9 +124,11 @@ a view's sort keys, and optionally a view's filter.
   8 of #678. Over 2 s goes back to sheet-lead.
 
 Every row in a window, `locateInView` and Find reply carries `position`, its stored
-1-based position, under any view. It's what `=B7` means, so a host must show it as the
-row number and use it for A1 geometry, never the displayed index. Numbers can have gaps
-or run out of order under a filter or a view sort, and a row is never left unnumbered.
+1-based position, under any view. A host's row number is that position mapped through
+the table's header state, as in §2: position 1 is row 2 under a header row and row 1 in
+a headerless table. That's what `=B7` means, so a host shows it and uses it for A1
+geometry, never the displayed index. Numbers can have gaps or run out of order under a
+filter or a view sort, and a row is never left unnumbered.
 
 ### 6. Dependencies and calculation
 
@@ -181,7 +183,7 @@ under a range; deleting each endpoint; deleting a whole range; inserting inside,
 before and after a range; inserting before references at the sheet limit; a rebalance, including an insert between equal ranks after
 a merge; a range in the column of its owner; a sort that would make that a cycle; a
 stored sort with a filter, with hidden rows unmoved; descending with blanks and with
-ties; `position` under a filter and a view sort. Merge fixtures: equal ranks on two entities; unequal
+ties; `position` under a filter and a view sort, in tables with and without a header. Merge fixtures: equal ranks on two entities; unequal
 ranks on one; each side of `positional_order_change`. A round trip through XLSX for a
 partial range, and for `#REF!`. Conformance runs on native and WASM.
 

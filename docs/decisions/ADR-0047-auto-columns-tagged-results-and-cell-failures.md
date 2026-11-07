@@ -204,7 +204,9 @@ actually reach the difference:
 ### 8. Fixtures this requires
 
 Canonical-byte fixtures for an Auto field and each literal, with a strict-reader
-refusal for each malformed pairing. A conformance corpus, run on native and WASM,
+refusal for each malformed pairing. A classifier corpus covering every row of §2, including
+full-width input such as `￥１，２００` and `２０２６年１１月７日`, with each implied display
+surviving a save and reopen. A conformance corpus, run on native and WASM,
 covering every row of §5, including `"00123"+1` = 124, `=A1` over a blank, and
 each failure code propagating through a dependent. An atomicity test where a
 declared formula reading a failed Auto cell refuses with nothing published. A
