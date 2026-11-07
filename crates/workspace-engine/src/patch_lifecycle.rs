@@ -26,10 +26,12 @@ use tachiko_semantic_core::{
 use thiserror::Error;
 
 use super::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, PreparedEvaluation, SchemaId, SemanticChange, ValidationReport,
-    Value, WorkspaceError, apply_field_value_candidate, finalize_edit_with_validation,
-    unset_field_candidate,
+    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldEditPlanning,
+    FieldId, FieldKey, FieldRef, FieldType, Number, PreparedEvaluation, SchemaId, SemanticChange,
+    ValidationReport, Value, WorkspaceError, apply_field_value_candidate_with_planning,
+    finalize_edit_with_validation, formula_inverse_restore_candidate_in_place,
+    formula_restore_candidate_in_place, formula_update_candidate_in_place,
+    unset_field_candidate_in_place,
 };
 
 #[cfg(test)]
@@ -3251,7 +3253,20 @@ impl PatchLifecycle {
         admit_command_names(body)?;
         let mut candidate = document.clone();
         let mut writes = BTreeSet::new();
+        let mut field_edits = FieldEditPlanning::new();
         for command in body.commands() {
+            // Only the cell edits keep the batch state; every other command
+            // may change the structures and keys it rests on.
+            if !matches!(
+                command,
+                SemanticCommand::SetFieldValue { .. }
+                    | SemanticCommand::UnsetField { .. }
+                    | SemanticCommand::FormulaUpdate(_)
+                    | SemanticCommand::FormulaRestore(_)
+                    | SemanticCommand::FormulaInverseRestore(_)
+            ) {
+                field_edits = FieldEditPlanning::new();
+            }
             match command {
                 SemanticCommand::AppendCollection { schema, entities } => {
                     self.plan_append_collection(
@@ -3510,7 +3525,12 @@ impl PatchLifecycle {
                             scope: scope.clone(),
                         });
                     }
-                    apply_field_value_candidate(&mut candidate, field, value)?;
+                    apply_field_value_candidate_with_planning(
+                        &mut candidate,
+                        field,
+                        value,
+                        &mut field_edits,
+                    )?;
                 }
                 SemanticCommand::UnsetField { field } => {
                     let entity = candidate.entities.get(&field.entity).ok_or_else(|| {
@@ -3534,7 +3554,7 @@ impl PatchLifecycle {
                             scope,
                         });
                     }
-                    candidate = unset_field_candidate(&candidate, field)?;
+                    unset_field_candidate_in_place(&mut candidate, field, &mut field_edits)?;
                 }
                 SemanticCommand::FormulaUpdate(command) => {
                     let field = command.target();
@@ -3544,8 +3564,12 @@ impl PatchLifecycle {
                         mutation_class: MutationClass::Formula,
                         scope,
                     });
-                    candidate =
-                        super::formula_update_candidate(&candidate, field, command.expression())?;
+                    formula_update_candidate_in_place(
+                        &mut candidate,
+                        field,
+                        command.expression(),
+                        &mut field_edits,
+                    )?;
                 }
                 SemanticCommand::FormulaInverseRestore(command) => {
                     let field = command.target();
@@ -3561,10 +3585,11 @@ impl PatchLifecycle {
                             scope: scope.clone(),
                         });
                     }
-                    candidate = super::formula_inverse_restore_candidate(
-                        &candidate,
+                    formula_inverse_restore_candidate_in_place(
+                        &mut candidate,
                         field,
                         command.value(),
+                        &mut field_edits,
                     )?;
                 }
                 SemanticCommand::FormulaRestore(command) => {
@@ -3575,8 +3600,12 @@ impl PatchLifecycle {
                         mutation_class: MutationClass::Formula,
                         scope,
                     });
-                    candidate =
-                        super::formula_restore_candidate(&candidate, field, command.expression())?;
+                    formula_restore_candidate_in_place(
+                        &mut candidate,
+                        field,
+                        command.expression(),
+                        &mut field_edits,
+                    )?;
                 }
                 SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
                     // ADR-0036: create and update both require only
