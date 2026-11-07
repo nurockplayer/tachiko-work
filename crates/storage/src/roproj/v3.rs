@@ -23,10 +23,11 @@ use crate::{
 };
 
 pub const ROPROJ_V3_FORMAT_VERSION: u32 = 3;
-// A deepest valid entity is: entity -> fields -> value -> 64 expression
-// objects, with one binary `args` object between each expression node and one
-// reference `args` object at the leaf. No valid v3 DTO nests more deeply.
-const ROPROJ_V3_MAX_JSON_NESTING: usize = 132;
+// A deepest valid entity is: entity -> fields -> value -> 63 conditional
+// aggregates, each adding `args`, `criteria`, a criterion and the expression
+// under `value`, then a last conditional whose innermost container is a
+// criterion's `column`. No valid v3 DTO nests more deeply.
+const ROPROJ_V3_MAX_JSON_NESTING: usize = 3 + 4 * (MAX_EXPRESSION_DEPTH - 1) + 5;
 pub const ROPROJ_V3_PATHS: [&str; 19] = [
     "manifest.json",
     "schemas.json",
