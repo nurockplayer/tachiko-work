@@ -867,7 +867,7 @@ fn new_table_with_the_working_size_profile_replies_a_zero_row_window() {
     };
     assert_eq!(opened.profile, DesignerProfile::WorkingSize);
     assert_eq!(opened.window.total_rows, 0);
-    assert!(opened.window.rows.is_empty());
+    assert_eq!(opened.window.rows, Vec::<RowProjection>::new());
     let collection = opened.bootstrap.default_collection.clone();
     assert_window_reply_shape(&opened);
 
