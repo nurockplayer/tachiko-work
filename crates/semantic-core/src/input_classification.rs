@@ -4,6 +4,8 @@
 //! normalized copy of the input (full-width digits and marks read as ASCII);
 //! input that matches no row keeps its exact original spelling.
 
+use std::num::FpCategory;
+
 use crate::{Date, Number, NumberFormat, NumberFormatKind};
 
 /// The host's date order for `M/D/YYYY` and `D/M/YYYY` input.
@@ -259,6 +261,10 @@ fn parse_currency(text: &str) -> Option<(ParsedNumber, &'static str)> {
         }
         body = rest;
     }
+    // One sign at most: the number after the mark can't bring its own.
+    if body.starts_with(['-', '+']) {
+        return None;
+    }
     let mut parsed = parse_number(body)?;
     if negative {
         parsed.value = Number::new(-parsed.value.get()).ok()?;
@@ -270,7 +276,12 @@ fn parse_currency(text: &str) -> Option<(ParsedNumber, &'static str)> {
 fn parse_percent(text: &str) -> Option<ParsedNumber> {
     let body = text.strip_suffix('%')?;
     let mut parsed = parse_number(trim_ascii_spaces(body))?;
-    parsed.value = Number::new(parsed.value.get() / 100.0).ok()?;
+    let whole = parsed.value.get();
+    let share = whole / 100.0;
+    if share.classify() == FpCategory::Zero && whole.classify() != FpCategory::Zero {
+        return None;
+    }
+    parsed.value = Number::new(share).ok()?;
     Some(parsed)
 }
 
@@ -352,6 +363,14 @@ fn build_number(
         canonical.push_str(exponent);
     }
     let parsed = canonical.parse::<f64>().ok()?;
+    // Nonzero digits that round to zero are outside binary64, like `1e309`.
+    let nonzero_digits = int_part
+        .bytes()
+        .chain(frac_part.bytes())
+        .any(|digit| digit != b'0');
+    if parsed.classify() == FpCategory::Zero && nonzero_digits {
+        return None;
+    }
     Some(ParsedNumber {
         value: Number::new(parsed).ok()?,
         decimals_typed: frac_part.len(),

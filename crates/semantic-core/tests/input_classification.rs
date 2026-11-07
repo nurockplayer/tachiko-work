@@ -229,3 +229,19 @@ fn classifies_dates_and_date_orders() {
         },
     );
 }
+
+#[test]
+fn input_that_would_lose_its_meaning_stays_text() {
+    for input in [
+        "$--5", "$-+5", "$+-5", "1e-400", "1e-400%", "$1e-400", "1e-323%",
+    ] {
+        assert!(
+            matches!(classify_input(input, None), ClassifiedInput::Text(text) if text == input),
+            "{input} stays exact Text"
+        );
+    }
+    assert!(matches!(
+        classify_input("0e-400", None),
+        ClassifiedInput::Number { .. }
+    ));
+}
