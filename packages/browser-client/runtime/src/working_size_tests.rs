@@ -911,10 +911,10 @@ fn an_unknown_profile_is_an_invalid_request() {
         profile: None,
     };
     let mut request = serde_json::to_value(&request).unwrap();
-    request.as_object_mut().unwrap().insert(
-        "profile".into(),
-        serde_json::Value::String("other".into()),
-    );
+    request
+        .as_object_mut()
+        .unwrap()
+        .insert("profile".into(), serde_json::Value::String("other".into()));
     let input = serde_json::to_vec(&request).unwrap();
     let runtime = DesignerRuntime::tracker(OCCURRENCE).unwrap();
     let before = runtime.session.export_snapshot();
