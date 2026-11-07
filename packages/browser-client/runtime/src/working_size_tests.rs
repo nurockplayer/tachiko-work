@@ -1421,12 +1421,12 @@ fn a_window_starting_inside_the_view_keeps_one_row() {
     for start in [2, 5] {
         let past = window_at(&mut runtime, &current, start, 2);
         assert_eq!(past.start, 2);
-        assert!(past.rows.is_empty());
+        assert_eq!(past.rows, [] as [RowProjection; 0]);
         assert!(!past.byte_limited);
     }
 
     let none = window_at(&mut runtime, &current, 0, 0);
-    assert!(none.rows.is_empty());
+    assert_eq!(none.rows, [] as [RowProjection; 0]);
     assert!(!none.byte_limited);
 }
 
@@ -1478,9 +1478,9 @@ fn a_publication_lists_targets_up_to_the_bound_then_turns_into_a_marker() {
 
     let bounded = super::bound_publication_targets(publication_with_targets(1_025));
     assert!(bounded.many);
-    assert!(bounded.entities.is_empty());
-    assert!(bounded.fields.is_empty());
-    assert!(bounded.affected_calculations.is_empty());
+    assert_eq!(bounded.entities, [] as [String; 0]);
+    assert_eq!(bounded.fields, [] as [FieldTarget; 0]);
+    assert_eq!(bounded.affected_calculations, [] as [FieldTarget; 0]);
     assert_eq!(bounded.schemas, vec!["grid".to_owned()]);
     assert_eq!(bounded.schema_fields.len(), 1);
     assert_eq!(bounded.base_revision, "resident/1");
@@ -1498,9 +1498,9 @@ fn a_publication_over_the_target_list_comes_back_as_a_marker() {
         ScalarEditInput::Number { input: "7".into() },
     );
     assert!(publication.many);
-    assert!(publication.entities.is_empty());
-    assert!(publication.fields.is_empty());
-    assert!(publication.affected_calculations.is_empty());
+    assert_eq!(publication.entities, [] as [String; 0]);
+    assert_eq!(publication.fields, [] as [FieldTarget; 0]);
+    assert_eq!(publication.affected_calculations, [] as [FieldTarget; 0]);
     assert_ne!(publication.base_revision, publication.resulting_revision);
     let json = serde_json::to_string(&publication).unwrap();
     assert!(json.contains("\"many\":true"), "{json}");
@@ -1522,7 +1522,7 @@ fn a_publication_over_the_target_list_comes_back_as_a_marker() {
     );
     assert!(!listed.many);
     assert_eq!(listed.fields, vec![target("r00001", "value")]);
-    assert!(listed.affected_calculations.is_empty());
+    assert_eq!(listed.affected_calculations, [] as [FieldTarget; 0]);
     let json = serde_json::to_string(&listed).unwrap();
     assert!(!json.contains("\"many\""), "{json}");
 }
@@ -1537,9 +1537,9 @@ fn row_removal_and_undo_over_the_target_list_come_back_as_markers() {
         .collect::<Vec<_>>();
     let removed = runtime.remove_table_rows(&current, "grid", &rows).unwrap();
     assert!(removed.many);
-    assert!(removed.entities.is_empty());
-    assert!(removed.fields.is_empty());
-    assert!(removed.affected_calculations.is_empty());
+    assert_eq!(removed.entities, [] as [String; 0]);
+    assert_eq!(removed.fields, [] as [FieldTarget; 0]);
+    assert_eq!(removed.affected_calculations, [] as [FieldTarget; 0]);
     let json = serde_json::to_string(&removed).unwrap();
     assert!(json.contains("\"many\":true"), "{json}");
 
