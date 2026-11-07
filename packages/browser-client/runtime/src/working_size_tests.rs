@@ -967,7 +967,11 @@ fn opened_window_within_halves_to_the_budget() {
         shrunk.window.rows.len(),
         full.window.rows.len()
     );
-    assert!(!shrunk.window.rows.is_empty());
+    assert_ne!(
+        shrunk.window.rows,
+        [] as [RowProjection; 0],
+        "the shrunk window keeps at least one row"
+    );
 
     let mut tiny_runtime =
         DesignerRuntime::from_document_working_size(text_grid(4, 1), OCCURRENCE).unwrap();

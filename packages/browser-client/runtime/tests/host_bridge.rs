@@ -760,7 +760,7 @@ fn working_size_import_matches_the_ordinary_mapping() {
             .as_array()
             .unwrap()
             .len(),
-        working["opened"]["window"]["total_rows"].as_u64().unwrap() as usize
+        usize::try_from(working["opened"]["window"]["total_rows"].as_u64().unwrap()).unwrap()
     );
 }
 

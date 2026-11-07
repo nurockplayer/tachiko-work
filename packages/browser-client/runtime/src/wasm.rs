@@ -402,77 +402,16 @@ fn spreadsheet_operation(
             profile,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            match profile {
-                None => {
-                    let (candidate, imported) =
-                        import_workbook(&workbook, &selection, &occurrence_id)?;
-                    Ok(SpreadsheetResult {
-                        profile: candidate.profile,
-                        response: DesignerResponse::Imported(Box::new(imported)),
-                        candidate: install.then_some(candidate),
-                        export: None,
-                    })
-                }
-                Some(DesignerProfile::WorkingSize) => {
-                    let (candidate, imported) =
-                        import_workbook_working_size(&workbook, &selection, &occurrence_id)?;
-                    Ok(SpreadsheetResult {
-                        profile: candidate.profile,
-                        response: DesignerResponse::ImportedWindow(Box::new(imported)),
-                        candidate: install.then_some(candidate),
-                        export: None,
-                    })
-                }
-            }
+            import_spreadsheet(&workbook, &selection, &occurrence_id, install, profile)
         }
-        SpreadsheetOperation::InspectProject { metadata, profile } => match profile {
-            None => {
-                let (opened, profile) =
-                    crate::interop_document::inspect_imported_project_with_profile(
-                        project, &metadata,
-                    )?;
-                let mut result =
-                    SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
-                result.profile = profile;
-                Ok(result)
-            }
-            Some(DesignerProfile::WorkingSize) => {
-                let (opened, profile) =
-                    crate::interop_document::inspect_imported_project_working_size(
-                        project, &metadata,
-                    )?;
-                let mut result =
-                    SpreadsheetResult::read_only(DesignerResponse::OpenedWindow(Box::new(opened)));
-                result.profile = profile;
-                Ok(result)
-            }
-        },
+        SpreadsheetOperation::InspectProject { metadata, profile } => {
+            inspect_imported_project_spreadsheet(project, &metadata, profile)
+        }
         SpreadsheetOperation::OpenProject {
             occurrence_id,
             metadata,
             profile,
-        } => match profile {
-            None => {
-                let (candidate, opened) =
-                    crate::admit_imported_project(project, &occurrence_id, &metadata)?;
-                Ok(SpreadsheetResult {
-                    profile: candidate.profile,
-                    response: DesignerResponse::Opened(Box::new(opened)),
-                    candidate: Some(candidate),
-                    export: None,
-                })
-            }
-            Some(DesignerProfile::WorkingSize) => {
-                let (candidate, opened) =
-                    crate::admit_imported_project_working_size(project, &occurrence_id, &metadata)?;
-                Ok(SpreadsheetResult {
-                    profile: candidate.profile,
-                    response: DesignerResponse::OpenedWindow(Box::new(opened)),
-                    candidate: Some(candidate),
-                    export: None,
-                })
-            }
-        },
+        } => open_imported_project_spreadsheet(project, &occurrence_id, &metadata, profile),
         SpreadsheetOperation::Export {
             expected_revision,
             metadata,
@@ -515,6 +454,91 @@ fn spreadsheet_operation(
             &presentation,
             format,
         ),
+    }
+}
+
+fn import_spreadsheet(
+    workbook: &SourceWorkbook,
+    selection: &ImportSelection,
+    occurrence_id: &str,
+    install: bool,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (candidate, imported) = import_workbook(workbook, selection, occurrence_id)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::Imported(Box::new(imported)),
+                candidate: install.then_some(candidate),
+                export: None,
+            })
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (candidate, imported) =
+                import_workbook_working_size(workbook, selection, occurrence_id)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::ImportedWindow(Box::new(imported)),
+                candidate: install.then_some(candidate),
+                export: None,
+            })
+        }
+    }
+}
+
+fn inspect_imported_project_spreadsheet(
+    project: &[u8],
+    metadata: &InteropMetadata,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (opened, profile) =
+                crate::interop_document::inspect_imported_project_with_profile(project, metadata)?;
+            let mut result =
+                SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
+            result.profile = profile;
+            Ok(result)
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (opened, profile) =
+                crate::interop_document::inspect_imported_project_working_size(project, metadata)?;
+            let mut result =
+                SpreadsheetResult::read_only(DesignerResponse::OpenedWindow(Box::new(opened)));
+            result.profile = profile;
+            Ok(result)
+        }
+    }
+}
+
+fn open_imported_project_spreadsheet(
+    project: &[u8],
+    occurrence_id: &str,
+    metadata: &InteropMetadata,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (candidate, opened) =
+                crate::admit_imported_project(project, occurrence_id, metadata)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::Opened(Box::new(opened)),
+                candidate: Some(candidate),
+                export: None,
+            })
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (candidate, opened) =
+                crate::admit_imported_project_working_size(project, occurrence_id, metadata)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::OpenedWindow(Box::new(opened)),
+                candidate: Some(candidate),
+                export: None,
+            })
+        }
     }
 }
 
