@@ -413,3 +413,22 @@ fn the_existing_text_filters_keep_their_behaviour() {
         ids(&["e01"])
     );
 }
+
+#[test]
+fn present_empty_text_stays_apart_from_a_blank_cell() {
+    let mut document = mixed_document();
+    let (id, row) = entity("z_empty", vec![("f01_name", text(""))]);
+    document.entities.insert(id, row);
+    let mut runtime = DesignerRuntime::from_document(document, MIXED).expect("fixture admits");
+    let quotes = "\"\"".to_owned();
+    let marked = filtered(ViewFilter::DisplayIn {
+        field: "f01_name".to_owned(),
+        values: vec![quotes.clone()],
+    });
+    assert_eq!(order(&mut runtime, marked), ids(&["z_empty"]));
+    let blank = filtered(ViewFilter::DisplayIn {
+        field: "f01_name".to_owned(),
+        values: vec![String::new()],
+    });
+    assert!(!order(&mut runtime, blank).contains(&"z_empty".to_owned()));
+}

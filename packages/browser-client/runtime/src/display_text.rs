@@ -112,6 +112,21 @@ fn compare_digit_runs(left: &str, right: &str) -> Ordering {
     left.len().cmp(&right.len()).then_with(|| left.cmp(right))
 }
 
+/// The text a view compares for one cell. Blank, failed, unavailable and
+/// Reference cells have the text `""`. Present empty Text in an optional column
+/// shows as two quotation marks, as in Sheet, so it never reads as blank.
+pub(crate) fn cell_text(
+    cell: Option<&ViewValue>,
+    format: Option<&NumberFormat>,
+    required: bool,
+) -> String {
+    match cell {
+        Some(ViewValue::Text(text)) if text.is_empty() && !required => "\"\"".to_owned(),
+        Some(value) => display_text(value, format).unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
 /// The Number a cell shows. A calculation decides when one is present, so a
 /// failed or unavailable result shows no number even beside a stored one.
 pub(crate) fn displayed_number(
@@ -482,7 +497,7 @@ fn js_number_to_string(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_text, displayed_number, format_number, natural_cmp};
+    use super::{cell_text, display_text, displayed_number, format_number, natural_cmp};
     use crate::{CalculationProjection, StoredValueProjection, ViewValue};
     use serde::Deserialize;
     use std::cmp::Ordering;
@@ -520,6 +535,15 @@ mod tests {
             None
         );
         assert_eq!(shown(None, None), None);
+    }
+
+    #[test]
+    fn present_empty_text_is_not_blank_in_an_optional_column() {
+        let empty = ViewValue::Text(String::new());
+        assert_eq!(cell_text(Some(&empty), None, false), "\"\"");
+        assert_eq!(cell_text(Some(&empty), None, true), "");
+        assert_eq!(cell_text(None, None, false), "");
+        assert_eq!(cell_text(Some(&ViewValue::Reference), None, false), "");
     }
 
     #[test]

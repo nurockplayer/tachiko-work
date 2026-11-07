@@ -153,7 +153,8 @@ every column kind including Reference. `display_contains` trims and
 case-folds; `display_in` is exact text with no folding, so `""` means blank and
 `"$1,234.50"` finds every value that rounds to it. A blank, failed, unavailable
 or Reference cell has the text `""`, and a failed cell counts as blank until
-#668 gives it a defined state.
+#668 gives it a defined state. Present empty Text in an optional column shows as
+two quotation marks, as in Sheet, so it stays apart from a blank cell.
 
 `queryDistinctValues` returns one column's distinct display texts over the rows
 a window would return, in Sheet's list order: `""` first when any shown row is

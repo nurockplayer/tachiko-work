@@ -2160,12 +2160,14 @@ enum ViewPredicate {
         ordinal: usize,
         /// The column's format, cloned once at plan time.
         format: Option<NumberFormat>,
+        required: bool,
         /// Trimmed and lowercased once at plan time.
         value: String,
     },
     DisplayIn {
         ordinal: usize,
         format: Option<NumberFormat>,
+        required: bool,
         values: Vec<String>,
     },
 }
@@ -2380,11 +2382,13 @@ fn plan_filter(
         ViewFilter::DisplayContains { value, .. } => ViewPredicate::DisplayContains {
             ordinal,
             format: column.number_format.clone(),
+            required: column.required,
             value: value.trim().to_lowercase(),
         },
         ViewFilter::DisplayIn { values, .. } => ViewPredicate::DisplayIn {
             ordinal,
             format: column.number_format.clone(),
+            required: column.required,
             values: values.clone(),
         },
     })
@@ -2451,33 +2455,30 @@ fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> 
         ViewPredicate::DisplayContains {
             ordinal,
             format,
+            required,
             value,
         } => {
-            let text = display_cell_text(
+            let text = display_text::cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
                 format.as_ref(),
+                *required,
             );
             text.trim().to_lowercase().contains(value.as_str())
         }
         ViewPredicate::DisplayIn {
             ordinal,
             format,
+            required,
             values,
         } => {
-            let text = display_cell_text(
+            let text = display_text::cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
                 format.as_ref(),
+                *required,
             );
             values.contains(&text)
         }
     }
-}
-
-/// The text the grid shows for one view cell. Blank, failed, unavailable and
-/// Reference cells have none, which filters treat as `""`.
-fn display_cell_text(cell: Option<&ViewValue>, format: Option<&NumberFormat>) -> String {
-    cell.and_then(|value| display_text::display_text(value, format))
-        .unwrap_or_default()
 }
 
 fn literal_matches(literal: &ViewLiteral, cell: &ViewValue) -> bool {
@@ -3674,9 +3675,11 @@ impl DesignerRuntime {
             let Some(row) = row_of.get(value.field.entity.as_str()).copied() else {
                 continue;
             };
-            texts[row] = view_value(value)
-                .as_ref()
-                .and_then(|cell| display_text::display_text(cell, column.number_format.as_ref()));
+            texts[row] = Some(display_text::cell_text(
+                view_value(value).as_ref(),
+                column.number_format.as_ref(),
+                column.required,
+            ));
         }
         let mut distinct = order
             .iter()
