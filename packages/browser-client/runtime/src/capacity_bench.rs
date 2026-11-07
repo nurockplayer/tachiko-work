@@ -2334,7 +2334,7 @@ fn capacity_w1_shape() {
                         300_000.0,
                     );
                 }
-                "b1" | "b3" | "d" => {
+                "b1" | "b3" | "d" | "f6" | "f10" => {
                     w1_scalar_edits(
                         &shape,
                         "edit",

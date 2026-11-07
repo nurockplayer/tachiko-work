@@ -231,6 +231,8 @@ fn w1_definition(shape: &str) -> Option<W1Definition> {
             vec![(9, w1_product()), (8, w1_sum()), (7, w1_chain())],
             Some(9),
         ),
+        "f6" => (W1_ROWS, 12, w1_mixed_columns(6, 6), Some(11)),
+        "f10" => (W1_ROWS, 20, w1_mixed_columns(10, 10), Some(19)),
         "d" => (
             W1_ROWS,
             30,
@@ -350,6 +352,23 @@ fn w1_sum() -> Expression {
 
 fn w1_chain() -> Expression {
     w1_chain_over("c9")
+}
+
+/// Calculated columns from `first`, cycling arithmetic, a chain, a share of a
+/// column total and a conditional sum.
+fn w1_mixed_columns(first: usize, count: usize) -> Vec<(usize, Expression)> {
+    (first..first + count)
+        .map(|column| {
+            let expression = match (column - first) % 5 {
+                0 => w1_product(),
+                1 => w1_sum(),
+                2 => w1_chain_over(&format!("c{}", column - 2)),
+                3 => w1_column_ratio(),
+                _ => w1_column_conditional(),
+            };
+            (column, expression)
+        })
+        .collect()
 }
 
 fn w1_chain_over(source: &str) -> Expression {
