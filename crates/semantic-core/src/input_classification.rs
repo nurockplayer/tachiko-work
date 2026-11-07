@@ -272,17 +272,22 @@ fn parse_currency(text: &str) -> Option<(ParsedNumber, &'static str)> {
     Some((parsed, code))
 }
 
-/// Parse a trailing percent sign; the value is the number over 100.
+/// Parse a trailing percent sign. As in a formula literal, the spelling's decimal
+/// exponent moves by -2 before conversion, so `0.07%` is exactly the Number `0.0007`.
 fn parse_percent(text: &str) -> Option<ParsedNumber> {
-    let body = text.strip_suffix('%')?;
-    let mut parsed = parse_number(trim_ascii_spaces(body))?;
-    let whole = parsed.value.get();
-    let share = whole / 100.0;
-    if share.classify() == FpCategory::Zero && whole.classify() != FpCategory::Zero {
-        return None;
-    }
-    parsed.value = Number::new(share).ok()?;
-    Some(parsed)
+    let body = trim_ascii_spaces(text.strip_suffix('%')?);
+    let (mantissa, exponent) = split_exponent(body)?;
+    // Extremely large exponents have the same outcome after subtracting two.
+    let exponent = exponent.map_or(0, |exponent| {
+        exponent.parse::<i64>().unwrap_or_else(|_| {
+            if exponent.starts_with('-') {
+                i64::MIN
+            } else {
+                i64::MAX
+            }
+        })
+    });
+    parse_number(&format!("{mantissa}e{}", exponent.saturating_sub(2)))
 }
 
 fn split_sign(text: &str) -> (bool, &str) {
