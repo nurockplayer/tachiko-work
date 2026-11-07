@@ -904,18 +904,17 @@ fn new_table_with_the_working_size_profile_replies_a_zero_row_window() {
 
 #[test]
 fn an_unknown_profile_is_an_invalid_request() {
-    let columns = wire_columns();
-    let request = serde_json::json!({
-        "type": "new_table",
-        "occurrence_id": OCCURRENCE,
-        "name": "Other",
-        "columns": columns.iter().map(|column| serde_json::json!({
-            "name": column.name,
-            "field_type": column.field_type,
-            "required": column.required,
-        })).collect::<Vec<_>>(),
-        "profile": "other",
-    });
+    let request = DesignerRequest::NewTable {
+        occurrence_id: OCCURRENCE.to_owned(),
+        name: "Other".to_owned(),
+        columns: wire_columns().to_vec(),
+        profile: None,
+    };
+    let mut request = serde_json::to_value(&request).unwrap();
+    request.as_object_mut().unwrap().insert(
+        "profile".into(),
+        serde_json::Value::String("other".into()),
+    );
     let input = serde_json::to_vec(&request).unwrap();
     let runtime = DesignerRuntime::tracker(OCCURRENCE).unwrap();
     let before = runtime.session.export_snapshot();
