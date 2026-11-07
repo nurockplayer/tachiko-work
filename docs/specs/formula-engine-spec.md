@@ -89,8 +89,10 @@ Number-column validation, dependencies, cycle detection, and blank skipping as
 column totals. Suffixes are case-insensitive on input and lowercase in canonical
 text. Count returns the number of present Number values, including zero for an
 empty column. Average divides the sum by that count; min and max select the
-smallest and largest present values. A failed or non-Number contributor causes `failed_dependencies`. Average, min, and max over no present values fail with
-`aggregate_empty`.
+smallest and largest present values. A failed or non-Number contributor causes
+`failed_dependencies`. The failure names the first failed contributor of each
+column, in entity order, not every one. Average, min, and max over no present
+values fail with `aggregate_empty`.
 
 ### Conditional aggregates
 
