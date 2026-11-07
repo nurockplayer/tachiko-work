@@ -34,6 +34,8 @@ mod formula_new_row_tests;
 mod number_format_tests;
 #[cfg(test)]
 mod optional_date_boolean_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod working_size_tests;
 
 mod name_admission;
 use name_admission::{NameFailure, allocate_key, author_column_name, author_table_names};
@@ -120,6 +122,12 @@ const MAX_FIELD_QUERY_TARGETS: usize = 1024;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
+/// Working-size whole-document stored-text bound. It replaces the ordinary
+/// per-collection 64 KiB aggregate; the per-item 64 KiB text bound stays.
+const MAX_WORKING_STORED_TEXT_BYTES: usize = 32 * 1024 * 1024;
+/// Rows the working-size open reply carries before a host asks for another
+/// window.
+const OPENED_WINDOW_ROWS: usize = 100;
 /// Largest number of groups one grouped-totals reply may carry.
 const MAX_GROUPS: usize = 200;
 pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 16 * 1024 * 1024;
@@ -469,6 +477,22 @@ pub enum DesignerResponse {
 pub struct OpenedProjection {
     pub bootstrap: BootstrapProjection,
     pub table: TableProjection,
+}
+
+/// A profile a host can ask for. Serialized `"working_size"`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesignerProfile {
+    WorkingSize,
+}
+
+/// The reply a working-size open produces: the bootstrap plus only the first
+/// bounded window of the default collection, never the whole table.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct OpenedWindowProjection {
+    pub profile: DesignerProfile,
+    pub bootstrap: BootstrapProjection,
+    pub window: TableWindowProjection,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -2876,15 +2900,46 @@ impl DesignerRuntime {
         Ok(runtime)
     }
 
+    /// Open a working-size occurrence when no step needs the whole table.
+    ///
+    /// It runs the same document and static gates as an ordinary open and then
+    /// stops: no supported-project proof and no complete table projection. The
+    /// caller builds whatever bounded window it needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an app-profile or shared workspace failure.
+    pub fn from_document_working_size(
+        document: Document,
+        occurrence_id: &str,
+    ) -> Result<Self, DesignerError> {
+        Self::from_document_profile_baseline(document, occurrence_id, SessionProfile::WorkingSize)
+    }
+
     fn from_document_profile_with_opened(
         document: Document,
         occurrence_id: &str,
         profile: SessionProfile,
     ) -> Result<(Self, OpenedProjection), DesignerError> {
+        let runtime = Self::from_document_profile_baseline(document, occurrence_id, profile)?;
+        runtime.ensure_supported_project()?;
+        let opened = OpenedProjection {
+            bootstrap: runtime.bootstrap_projection(),
+            table: runtime.query_table(&runtime.default_collection)?,
+        };
+        Ok((runtime, opened))
+    }
+
+    /// Everything an occurrence admits before any whole-table projection.
+    fn from_document_profile_baseline(
+        document: Document,
+        occurrence_id: &str,
+        profile: SessionProfile,
+    ) -> Result<Self, DesignerError> {
         ensure_document_profile(&document, profile)?;
         match profile {
             SessionProfile::TextCapacity => ensure_capacity_document_encoding(&document)?,
-            SessionProfile::Ordinary => {}
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
         }
         validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
         let collection_specs = collection_specs(&document);
@@ -2932,12 +2987,50 @@ impl DesignerRuntime {
             opened_from_v3: false,
             presentation: PresentationStore::default(),
         };
-        runtime.ensure_supported_project()?;
-        let opened = OpenedProjection {
-            bootstrap: runtime.bootstrap_projection(),
-            table: runtime.query_table(&runtime.default_collection)?,
+        Ok(runtime)
+    }
+
+    /// Project the profile's opening reply: the bootstrap plus the first
+    /// bounded window of the default collection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a revision or bounded-window failure.
+    pub(crate) fn opened_window(&mut self) -> Result<OpenedWindowProjection, DesignerError> {
+        let mut count = OPENED_WINDOW_ROWS;
+        loop {
+            match self.opened_window_of(count) {
+                // A document this profile admits can hold more text than one
+                // reply, so the first window comes back shorter rather than
+                // leaving the document unable to open.
+                Err(DesignerError::ProjectionTooLarge { .. }) if count > 1 => count /= 2,
+                result => return result,
+            }
+        }
+    }
+
+    fn opened_window_of(&mut self, count: usize) -> Result<OpenedWindowProjection, DesignerError> {
+        let bootstrap = self.bootstrap_projection();
+        let revision = self.current_revision().to_owned();
+        let window = self.query_table_window(
+            &revision,
+            &bootstrap.default_collection,
+            &TableView::default(),
+            0,
+            count,
+            true,
+        )?;
+        let opened = OpenedWindowProjection {
+            profile: DesignerProfile::WorkingSize,
+            bootstrap,
+            window,
         };
-        Ok((runtime, opened))
+        ensure_complete_projection_size(
+            "opened window",
+            &opened,
+            MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+        )?;
+        Ok(opened)
     }
 
     /// Execute one private adapter request without exposing the canonical document.
@@ -3332,7 +3425,7 @@ impl DesignerRuntime {
             collections: self.collections.clone(),
             keyed_grouped_sum_definition_ids: match self.profile {
                 SessionProfile::TextCapacity => Vec::new(),
-                SessionProfile::Ordinary => self
+                SessionProfile::Ordinary | SessionProfile::WorkingSize => self
                     .session
                     .export_snapshot()
                     .document()
@@ -3463,7 +3556,7 @@ impl DesignerRuntime {
                 continue;
             }
             match self.profile {
-                SessionProfile::TextCapacity => continue,
+                SessionProfile::TextCapacity | SessionProfile::WorkingSize => continue,
                 SessionProfile::Ordinary => {}
             }
             post_edit_fields.extend(
@@ -3569,11 +3662,18 @@ impl DesignerRuntime {
         let snapshot = self.exact_snapshot(expected_revision)?;
         // The same profile decision as v3 open, so the preflight below admits
         // exactly what this writes.
-        ensure_v3_document_profile(snapshot.document())?;
+        ensure_export_document_profile(snapshot.document(), self.profile)?;
         let tree = self.encode_v3_export_tree(snapshot.document())?;
         let bytes =
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?;
-        admit_project(&bytes, PREFLIGHT_OCCURRENCE)?;
+        match self.profile {
+            SessionProfile::WorkingSize => {
+                admit_project_working_size(&bytes, PREFLIGHT_OCCURRENCE)?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                admit_project(&bytes, PREFLIGHT_OCCURRENCE)?;
+            }
+        }
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
@@ -3600,12 +3700,18 @@ impl DesignerRuntime {
             || !self.presentation.is_empty()
             || document_requires_v2_evidence(snapshot.document())
         {
-            ensure_v3_document_profile(snapshot.document())?;
+            ensure_export_document_profile(snapshot.document(), self.profile)?;
             let tree = self.encode_v3_export_tree(snapshot.document())?;
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?
         } else {
             encode_project_bundle_v1(&encode_v1_tree(snapshot.document())?)?
         };
+        match self.profile {
+            SessionProfile::WorkingSize => {
+                admit_project_working_size(&bytes, PREFLIGHT_OCCURRENCE)?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {}
+        }
         Ok(CanonicalTreeExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
@@ -3624,10 +3730,17 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        ensure_v3_document_profile(snapshot.document())?;
+        ensure_export_document_profile(snapshot.document(), self.profile)?;
         let tree = self.encode_v3_export_tree(snapshot.document())?;
         let bytes = encode_portable_package_v1(&tree)?;
-        admit_portable_ro(&bytes, PREFLIGHT_OCCURRENCE)?;
+        match self.profile {
+            SessionProfile::WorkingSize => {
+                admit_portable_ro_working_size(&bytes, PREFLIGHT_OCCURRENCE)?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                admit_portable_ro(&bytes, PREFLIGHT_OCCURRENCE)?;
+            }
+        }
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
@@ -3686,11 +3799,13 @@ impl DesignerRuntime {
     fn query_table(&self, collection: &str) -> Result<TableProjection, DesignerError> {
         let projection = self.build_table_projection(collection)?;
         match self.profile {
-            SessionProfile::TextCapacity => ensure_complete_projection_size(
-                "table",
-                &projection,
-                MAX_TEXT_CAPACITY_PROJECTION_BYTES,
-            )?,
+            SessionProfile::TextCapacity | SessionProfile::WorkingSize => {
+                ensure_complete_projection_size(
+                    "table",
+                    &projection,
+                    MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+                )?;
+            }
             SessionProfile::Ordinary => ensure_table_projection_size(&projection)?,
         }
         Ok(projection)
@@ -3720,7 +3835,7 @@ impl DesignerRuntime {
             SessionProfile::TextCapacity => {
                 self.build_capacity_table_rows(spec, entities.value())?
             }
-            SessionProfile::Ordinary => {
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {
                 let targets = entities
                     .value()
                     .iter()
@@ -5637,10 +5752,22 @@ impl DesignerRuntime {
             .get(command.target())
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
-        if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
-        } else {
-            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
+        match self.profile {
+            // Working size never rebuilds the occurrence; it re-proves only its
+            // own document bounds against the exact candidate.
+            SessionProfile::WorkingSize => {
+                ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
+                Self::from_document_profile_with_opened(
+                    candidate,
+                    PREFLIGHT_OCCURRENCE,
+                    self.profile,
+                )?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
+            }
         }
         let execute_now = self.clock.tick();
         let invalidation = {
@@ -5708,10 +5835,22 @@ impl DesignerRuntime {
             .get_mut(&field.entity)
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity.fields.insert(field.field, Value::Number(value));
-        if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
-        } else {
-            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
+        match self.profile {
+            // Working size never rebuilds the occurrence; it re-proves only its
+            // own document bounds against the exact candidate.
+            SessionProfile::WorkingSize => {
+                ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
+                Self::from_document_profile_with_opened(
+                    candidate,
+                    PREFLIGHT_OCCURRENCE,
+                    self.profile,
+                )?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
+            }
         }
         let execute_now = self.clock.tick();
         let invalidation = {
@@ -6049,6 +6188,11 @@ impl DesignerRuntime {
                 // capacity occurrence; only strict v3 origins keep the strict
                 // preflight.
                 match (self.opened_from_v3, self.profile) {
+                    // Working size re-proves only its own item bounds; it never
+                    // reconstructs the occurrence or its complete projection.
+                    (_, SessionProfile::WorkingSize) => {
+                        ensure_document_profile(prepared.document(), SessionProfile::WorkingSize)?;
+                    }
                     (true, SessionProfile::Ordinary) => {
                         Self::from_document_profile_with_opened(
                             prepared.document().clone(),
@@ -6116,7 +6260,7 @@ impl DesignerRuntime {
                         )
                     })
             }
-            SessionProfile::Ordinary => false,
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => false,
         };
         // Replacing an existing stored Number, Text, Boolean or Date with another
         // of the same kind keeps collection shape, references and formula text
@@ -6273,10 +6417,7 @@ impl DesignerRuntime {
     }
 
     fn max_table_rows(&self) -> usize {
-        match self.profile {
-            SessionProfile::TextCapacity => interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-            SessionProfile::Ordinary => MAX_TABLE_ROWS,
-        }
+        capacity::limits_for_profile(self.profile).table_rows
     }
 
     /// Create a bounded operational tracker using existing scalar schema authority.
@@ -6331,6 +6472,36 @@ impl DesignerRuntime {
         name: &str,
         columns: &[NewTableColumnInput],
     ) -> Result<Self, DesignerError> {
+        let document = Self::new_table_document(occurrence_id, name, columns)?;
+        let mut runtime = Self::from_document(document, occurrence_id)?;
+        runtime.opened_from_v3 = true;
+        Ok(runtime)
+    }
+
+    /// Create one bounded working-size native table from user-facing labels.
+    ///
+    /// The document is identical to [`Self::new_table`]; only the admission
+    /// profile differs, so no whole-table projection is built at creation.
+    ///
+    /// # Errors
+    /// Returns a candidate validation failure without constructing a partial
+    /// runtime.
+    pub fn new_working_size_table(
+        occurrence_id: &str,
+        name: &str,
+        columns: &[NewTableColumnInput],
+    ) -> Result<Self, DesignerError> {
+        let document = Self::new_table_document(occurrence_id, name, columns)?;
+        let mut runtime = Self::from_document_working_size(document, occurrence_id)?;
+        runtime.opened_from_v3 = true;
+        Ok(runtime)
+    }
+
+    fn new_table_document(
+        occurrence_id: &str,
+        name: &str,
+        columns: &[NewTableColumnInput],
+    ) -> Result<Document, DesignerError> {
         if columns.is_empty() {
             return Err(table_error("table must declare at least one column"));
         }
@@ -6382,9 +6553,7 @@ impl DesignerRuntime {
             entities: BTreeMap::new(),
             keyed_grouped_sum_definitions: BTreeMap::new(),
         };
-        let mut runtime = Self::from_document(document, occurrence_id)?;
-        runtime.opened_from_v3 = true;
-        Ok(runtime)
+        Ok(document)
     }
 
     /// Create a small two-collection monthly budget for the bounded Driver slice.
@@ -6559,7 +6728,9 @@ impl DesignerRuntime {
             return Err(tracker_error("the edit range is empty or too large"));
         }
         let snapshot = match self.profile {
-            SessionProfile::Ordinary => Some(self.session.export_snapshot()),
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {
+                Some(self.session.export_snapshot())
+            }
             SessionProfile::TextCapacity => None,
         };
         let mut seen = BTreeSet::new();
@@ -6603,14 +6774,16 @@ impl DesignerRuntime {
                 SessionProfile::TextCapacity if present => {
                     Some(self.session.query_fields(std::slice::from_ref(&field))?)
                 }
-                SessionProfile::TextCapacity | SessionProfile::Ordinary => None,
+                SessionProfile::TextCapacity
+                | SessionProfile::Ordinary
+                | SessionProfile::WorkingSize => None,
             };
             let old = match self.profile {
                 SessionProfile::TextCapacity => projection
                     .as_ref()
                     .and_then(|query| query.value().first())
                     .and_then(|value| value.stored_value.as_ref()),
-                SessionProfile::Ordinary => snapshot
+                SessionProfile::Ordinary | SessionProfile::WorkingSize => snapshot
                     .as_ref()
                     .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
                     .and_then(|entity| entity.fields.get(&field.field)),
@@ -7542,6 +7715,25 @@ pub fn open_project(
     Ok(opened)
 }
 
+/// Admit a canonical project as a working-size occurrence.
+///
+/// The candidate and its first bounded window are both built before the
+/// resident occurrence is replaced. The reply never carries the whole table.
+///
+/// # Errors
+///
+/// Returns transfer, storage, profile, or window failures while leaving the
+/// existing occurrence unchanged.
+pub fn open_project_working_size(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<OpenedWindowProjection, DesignerError> {
+    let (candidate, opened) = admit_project_working_size(input, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
 /// Admit a saved project together with the exact source mapping used to
 /// reconstruct its spreadsheet representation before replacing the resident.
 ///
@@ -7584,6 +7776,30 @@ pub fn open_local_document(
     Ok(opened)
 }
 
+/// Admit exactly one raw local `.ro` document as a working-size occurrence.
+///
+/// Portable `.ro` bytes dispatch exactly as [`open_local_document`] does.
+///
+/// # Errors
+///
+/// Returns storage, profile, or window failures while preserving the current
+/// resident occurrence.
+pub fn open_local_document_working_size(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<OpenedWindowProjection, DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    if input.starts_with(b"PK\x03\x04") {
+        return open_portable_ro_working_size(runtime, input, occurrence_id);
+    }
+    let document = from_bytes(input).map_err(DesignerError::from)?;
+    let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
+    let opened = candidate.opened_window()?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
 /// Verify and admit a portable-package/v1 `.ro` candidate before replacing
 /// the resident occurrence.
 ///
@@ -7613,6 +7829,42 @@ fn admit_portable_ro(
     let tree = verified.tree();
     let document = decode_roproj_v3(tree)?;
     let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
+    candidate.opened_from_v3 = true;
+    candidate.presentation = presentation_from_tree(tree)?;
+    Ok((candidate, opened))
+}
+
+/// Admit a portable-package/v1 `.ro` candidate as a working-size occurrence.
+///
+/// The compiled storage decoder applies no Designer profile gate, so the
+/// working-size document profile runs inside
+/// [`DesignerRuntime::from_document_working_size`]. The window is built before
+/// the caller replaces the resident occurrence.
+///
+/// # Errors
+///
+/// Returns storage, profile, or window failures while preserving the current
+/// resident occurrence.
+pub fn open_portable_ro_working_size(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<OpenedWindowProjection, DesignerError> {
+    let (candidate, opened) = admit_portable_ro_working_size(input, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+fn admit_portable_ro_working_size(
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedWindowProjection), DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    let verified = decode_portable_package_v1(input)?;
+    let tree = verified.tree();
+    let document = decode_roproj_v3(tree)?;
+    let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
+    let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = true;
     candidate.presentation = presentation_from_tree(tree)?;
     Ok((candidate, opened))
@@ -7668,6 +7920,32 @@ fn presentation_from_tree(tree: &CanonicalRoProjectV3) -> Result<PresentationSto
     }
 }
 
+/// Admit a canonical project as a working-size occurrence.
+///
+/// The v3 document gate runs with the working-size profile, the candidate is
+/// built without a whole-table proof, and its first bounded window must also
+/// succeed before the caller replaces the resident occurrence.
+///
+/// # Errors
+///
+/// Returns transfer, storage, profile, or window failures while leaving the
+/// existing occurrence unchanged.
+fn admit_project_working_size(
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedWindowProjection), DesignerError> {
+    let DecodedProject {
+        document,
+        opened_from_v3,
+        presentation,
+    } = decode_project_bundle_working_size(input)?;
+    let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
+    let opened = candidate.opened_window()?;
+    candidate.opened_from_v3 = opened_from_v3;
+    candidate.presentation = presentation;
+    Ok((candidate, opened))
+}
+
 /// Admit a v3/.ro document in the same profile order as
 /// [`DesignerRuntime::from_document`]: the strict original profile whenever it
 /// completely admits the document, otherwise the text-capacity profile for an
@@ -7715,7 +7993,7 @@ pub(crate) fn admit_imported_project(
             SessionProfile::TextCapacity => {
                 interop_document::validate_saved_open_capacity_metadata(&gate, metadata)?;
             }
-            SessionProfile::Ordinary => {}
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
         }
         let mut candidate = candidate;
         candidate.opened_from_v3 = true;
@@ -7889,7 +8167,7 @@ fn ensure_opened_projection_size(
 ) -> Result<(), DesignerError> {
     match profile {
         SessionProfile::TextCapacity => return ensure_capacity_opened_reply(opened),
-        SessionProfile::Ordinary => {}
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
     }
     ensure_projection_size_with_limit(
         opened,
@@ -7907,7 +8185,7 @@ fn ensure_opened_wire_projection_size(
 ) -> Result<(), DesignerError> {
     match profile {
         SessionProfile::TextCapacity => return ensure_capacity_opened_reply(opened),
-        SessionProfile::Ordinary => {}
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
     }
     ensure_complete_projection_size(
         "opened",
@@ -7925,7 +8203,9 @@ fn ensure_opened_wire_projection_size(
 /// cap would refuse windows the complete text-capacity table already admits.
 const fn table_window_byte_limit(profile: SessionProfile) -> usize {
     match profile {
-        SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+        SessionProfile::TextCapacity | SessionProfile::WorkingSize => {
+            MAX_TEXT_CAPACITY_PROJECTION_BYTES
+        }
         SessionProfile::Ordinary => MAX_TABLE_WINDOW_BYTES,
     }
 }
@@ -7955,7 +8235,9 @@ pub(crate) fn ensure_wire_reply_size(
                 | DesignerResponse::GroupTotals(_),
         } => table_window_byte_limit(profile),
         DesignerWireReply::Ok { .. } => match profile {
-            SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+            SessionProfile::TextCapacity | SessionProfile::WorkingSize => {
+                MAX_TEXT_CAPACITY_PROJECTION_BYTES
+            }
             SessionProfile::Ordinary => MAX_PROJECTION_BYTES,
         },
     };
@@ -8156,7 +8438,27 @@ fn check_v3_transfer_order(ordered_paths: &[String]) -> Result<(), DesignerError
     })
 }
 
+/// Which static document profile a decode applies before complete admission.
+#[derive(Clone, Copy)]
+enum DecodeProfile {
+    /// Today's cheap gate: ordinary, else text capacity for an eligible
+    /// rectangle.
+    Admitted,
+    WorkingSize,
+}
+
 fn decode_project_bundle(input: &[u8]) -> Result<DecodedProject, DesignerError> {
+    decode_project_bundle_for(input, DecodeProfile::Admitted)
+}
+
+fn decode_project_bundle_working_size(input: &[u8]) -> Result<DecodedProject, DesignerError> {
+    decode_project_bundle_for(input, DecodeProfile::WorkingSize)
+}
+
+fn decode_project_bundle_for(
+    input: &[u8],
+    profile: DecodeProfile,
+) -> Result<DecodedProject, DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     if input.starts_with(PROJECT_RECORD_V2_MAGIC) {
         return decode_project_record_v2(&input[PROJECT_RECORD_V2_MAGIC.len()..]);
@@ -8239,30 +8541,41 @@ fn decode_project_bundle(input: &[u8]) -> Result<DecodedProject, DesignerError> 
             message: format!("project transfer contains unexpected path '{extra}'"),
         });
     }
-    decode_project_files(files, version)
+    decode_project_files(files, version, profile)
 }
 
 fn decode_project_files(
     files: Vec<(String, Vec<u8>)>,
     version: Option<u64>,
+    profile: DecodeProfile,
 ) -> Result<DecodedProject, DesignerError> {
     match version {
-        Some(1) => match CanonicalRoProjectV1::try_from_files_with_profile(
-            files,
-            ensure_cheap_document_profile,
-        ) {
-            Ok((_, document)) => Ok(DecodedProject {
-                document,
-                opened_from_v3: false,
-                presentation: PresentationStore::default(),
-            }),
-            Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
-            Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
-        },
+        Some(1) => {
+            let gate = move |document: &Document| match profile {
+                DecodeProfile::Admitted => ensure_cheap_document_profile(document),
+                DecodeProfile::WorkingSize => {
+                    ensure_document_profile(document, SessionProfile::WorkingSize)
+                }
+            };
+            match CanonicalRoProjectV1::try_from_files_with_profile(files, gate) {
+                Ok((_, document)) => Ok(DecodedProject {
+                    document,
+                    opened_from_v3: false,
+                    presentation: PresentationStore::default(),
+                }),
+                Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
+                Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
+            }
+        }
         Some(2) => {
             let tree = CanonicalRoProjectV2::try_from_files(files)?;
             let document = decode_roproj_v2(&tree)?;
-            ensure_cheap_document_profile(&document)?;
+            match profile {
+                DecodeProfile::Admitted => ensure_cheap_document_profile(&document)?,
+                DecodeProfile::WorkingSize => {
+                    ensure_document_profile(&document, SessionProfile::WorkingSize)?;
+                }
+            }
             Ok(DecodedProject {
                 document,
                 opened_from_v3: false,
@@ -8275,7 +8588,13 @@ fn decode_project_files(
             // separately and project storage failures through invalid_project.
             let mut profile_error = None;
             let admitted = CanonicalRoProjectV3::try_from_files_with_profile(files, |document| {
-                ensure_v3_document_profile(document).map_err(|error| {
+                let gate = match profile {
+                    DecodeProfile::Admitted => ensure_v3_document_profile(document),
+                    DecodeProfile::WorkingSize => {
+                        ensure_document_profile(document, SessionProfile::WorkingSize)
+                    }
+                };
+                gate.map_err(|error| {
                     profile_error = Some(error);
                 })
             });
@@ -9152,6 +9471,22 @@ fn ensure_v3_document_profile(document: &Document) -> Result<(), DesignerError> 
         .map_err(|capacity| beyond_both_profiles(strict, Some(capacity)))
 }
 
+/// The static gate an export applies before it writes bytes, matching the
+/// profile decision that will admit them again.
+fn ensure_export_document_profile(
+    document: &Document,
+    profile: SessionProfile,
+) -> Result<(), DesignerError> {
+    match profile {
+        SessionProfile::WorkingSize => {
+            ensure_document_profile(document, SessionProfile::WorkingSize)
+        }
+        SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+            ensure_v3_document_profile(document)
+        }
+    }
+}
+
 /// A standard-profile refusal extended with why the text-capacity profile
 /// does not apply either. Non-profile failures keep their own type.
 fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) -> DesignerError {
@@ -9174,67 +9509,109 @@ fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) 
     }
 }
 
+/// The running aggregate limits of the document profile walk. Every per-item
+/// bound is shared; only these aggregates differ by profile.
+struct ProfileBudget {
+    profile_strings: usize,
+    /// `None` disables the aggregate identity-string bound.
+    profile_strings_limit: Option<usize>,
+    /// Per-collection stored text bound; `None` disables it.
+    collection_text_limit: Option<usize>,
+    /// Whole-document stored text, checked only when a limit is set.
+    stored_text: usize,
+    stored_text_limit: Option<usize>,
+}
+
+impl ProfileBudget {
+    const fn ordinary() -> Self {
+        Self {
+            profile_strings: 0,
+            profile_strings_limit: Some(MAX_PROJECTION_BYTES),
+            collection_text_limit: Some(MAX_PROJECTION_BYTES),
+            stored_text: 0,
+            stored_text_limit: None,
+        }
+    }
+
+    const fn working_size() -> Self {
+        Self {
+            profile_strings: 0,
+            profile_strings_limit: None,
+            collection_text_limit: None,
+            stored_text: 0,
+            stored_text_limit: Some(MAX_WORKING_STORED_TEXT_BYTES),
+        }
+    }
+}
+
 fn ensure_document_profile(
     document: &Document,
     profile: SessionProfile,
 ) -> Result<(), DesignerError> {
+    // The capacity check is shared with the working-size profile, which runs
+    // its own walk below and never rebuilds a projection.
     capacity::check_document(document, capacity::limits_for_profile(profile))?;
     match profile {
         SessionProfile::TextCapacity => return ensure_capacity_document_profile(document),
+        SessionProfile::WorkingSize => return ensure_working_document_profile(document),
         SessionProfile::Ordinary => {}
     }
-    let mut profile_string_bytes = 0usize;
+    ensure_document_strings(document, &mut ProfileBudget::ordinary())
+}
+
+/// Working size keeps every per-item bound, drops the aggregate projection
+/// bounds, and adds one document-wide stored-text bound.
+fn ensure_working_document_profile(document: &Document) -> Result<(), DesignerError> {
+    ensure_document_strings(document, &mut ProfileBudget::working_size())
+}
+
+fn ensure_document_strings(
+    document: &Document,
+    profile_string_bytes: &mut ProfileBudget,
+) -> Result<(), DesignerError> {
     ensure_profile_string(
-        &mut profile_string_bytes,
+        profile_string_bytes,
         "document identity",
         document.id.as_str(),
     )?;
-    ensure_profile_string(&mut profile_string_bytes, "document title", &document.title)?;
+    ensure_profile_string(profile_string_bytes, "document title", &document.title)?;
     for (schema_id, schema) in &document.schemas {
         ensure_profile_string(
-            &mut profile_string_bytes,
+            profile_string_bytes,
             "schema map identity",
             schema_id.as_str(),
         )?;
-        ensure_profile_string(
-            &mut profile_string_bytes,
-            "schema identity",
-            schema.id.as_str(),
-        )?;
-        ensure_profile_string(&mut profile_string_bytes, "schema key", schema.key.as_str())?;
+        ensure_profile_string(profile_string_bytes, "schema identity", schema.id.as_str())?;
+        ensure_profile_string(profile_string_bytes, "schema key", schema.key.as_str())?;
         if let Some(name) = &schema.display_name {
-            ensure_profile_string(&mut profile_string_bytes, "schema display name", name)?;
+            ensure_profile_string(profile_string_bytes, "schema display name", name)?;
         }
         for (field_id, field) in &schema.fields {
             ensure_profile_string(
-                &mut profile_string_bytes,
+                profile_string_bytes,
                 "field map identity",
                 field_id.as_str(),
             )?;
-            ensure_profile_string(
-                &mut profile_string_bytes,
-                "field identity",
-                field.id.as_str(),
-            )?;
-            ensure_profile_string(&mut profile_string_bytes, "field key", field.key.as_str())?;
+            ensure_profile_string(profile_string_bytes, "field identity", field.id.as_str())?;
+            ensure_profile_string(profile_string_bytes, "field key", field.key.as_str())?;
             if let Some(name) = &field.display_name {
-                ensure_profile_string(&mut profile_string_bytes, "field display name", name)?;
+                ensure_profile_string(profile_string_bytes, "field display name", name)?;
             }
             if let FieldType::Reference { schema } = &field.field_type {
                 ensure_profile_string(
-                    &mut profile_string_bytes,
+                    profile_string_bytes,
                     "reference schema identity",
                     schema.as_str(),
                 )?;
             }
         }
     }
-    ensure_cheap_entity_profile(document, &mut profile_string_bytes)
+    ensure_cheap_entity_profile(document, profile_string_bytes)
 }
 
 fn ensure_cheap_entity_profile(
     document: &Document,
-    profile_string_bytes: &mut usize,
+    profile_string_bytes: &mut ProfileBudget,
 ) -> Result<(), DesignerError> {
     let mut collection_profiles = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
@@ -9273,12 +9650,27 @@ fn ensure_cheap_entity_profile(
                 Value::Text(text) => {
                     ensure_stored_text_profile(text)?;
                     *profile = profile.saturating_add(text.len());
-                    if *profile > MAX_PROJECTION_BYTES {
-                        return Err(DesignerError::UnsupportedProject {
-                            message: format!(
-                                "a collection contains more than the bounded {MAX_PROJECTION_BYTES}-byte stored-text projection maximum"
-                            ),
-                        });
+                    match profile_string_bytes.collection_text_limit {
+                        Some(limit) if *profile > limit => {
+                            return Err(DesignerError::UnsupportedProject {
+                                message: format!(
+                                    "a collection contains more than the bounded {limit}-byte stored-text projection maximum"
+                                ),
+                            });
+                        }
+                        Some(_) | None => {}
+                    }
+                    profile_string_bytes.stored_text =
+                        profile_string_bytes.stored_text.saturating_add(text.len());
+                    match profile_string_bytes.stored_text_limit {
+                        Some(limit) if profile_string_bytes.stored_text > limit => {
+                            return Err(DesignerError::UnsupportedProject {
+                                message: format!(
+                                    "stored text exceeds the bounded {limit}-byte working-size maximum"
+                                ),
+                            });
+                        }
+                        Some(_) | None => {}
                     }
                 }
                 Value::Number(_) | Value::Boolean(_) | Value::Date(_) => {}
@@ -9289,7 +9681,7 @@ fn ensure_cheap_entity_profile(
 }
 
 fn ensure_profile_string(
-    profile_string_bytes: &mut usize,
+    budget: &mut ProfileBudget,
     label: &str,
     value: &str,
 ) -> Result<(), DesignerError> {
@@ -9300,15 +9692,15 @@ fn ensure_profile_string(
             ),
         });
     }
-    *profile_string_bytes = profile_string_bytes.saturating_add(value.len());
-    if *profile_string_bytes > MAX_PROJECTION_BYTES {
-        return Err(DesignerError::UnsupportedProject {
+    budget.profile_strings = budget.profile_strings.saturating_add(value.len());
+    match budget.profile_strings_limit {
+        Some(limit) if budget.profile_strings > limit => Err(DesignerError::UnsupportedProject {
             message: format!(
-                "aggregate project profile strings exceed the bounded {MAX_PROJECTION_BYTES}-byte projection maximum"
+                "aggregate project profile strings exceed the bounded {limit}-byte projection maximum"
             ),
-        });
+        }),
+        Some(_) | None => Ok(()),
     }
-    Ok(())
 }
 
 fn ensure_stored_text_profile(value: &str) -> Result<(), DesignerError> {
@@ -9324,7 +9716,7 @@ fn ensure_stored_text_profile(value: &str) -> Result<(), DesignerError> {
 
 fn ensure_formula_reference_profile(
     expression: &Expression,
-    profile_string_bytes: &mut usize,
+    profile_string_bytes: &mut ProfileBudget,
 ) -> Result<(), DesignerError> {
     let mut pending = vec![expression];
     let mut visited = 0usize;
@@ -9424,11 +9816,7 @@ fn ensure_static_profile(
     }
     for collection in collection_specs.values() {
         if collection.columns.len() > MAX_TABLE_FIELDS
-            || collection.entities.len()
-                > match profile {
-                    SessionProfile::TextCapacity => interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-                    SessionProfile::Ordinary => MAX_TABLE_ROWS,
-                }
+            || collection.entities.len() > capacity::limits_for_profile(profile).table_rows
         {
             return Err(DesignerError::UnsupportedProject {
                 message: DesignerError::CollectionTooLarge {
@@ -9437,6 +9825,11 @@ fn ensure_static_profile(
                 .to_string(),
             });
         }
+    }
+    // A working-size session never proves a whole-table bootstrap or
+    // publication projection; only its bounded windows are built.
+    if profile == SessionProfile::WorkingSize {
+        return Ok(());
     }
     let bootstrap = BootstrapProjection {
         title: title.to_owned(),
@@ -9478,7 +9871,7 @@ fn ensure_static_profile(
         Vec::new()
     } else {
         match profile {
-            SessionProfile::TextCapacity => Vec::new(),
+            SessionProfile::TextCapacity | SessionProfile::WorkingSize => Vec::new(),
             SessionProfile::Ordinary => fields.clone(),
         }
     };
@@ -9505,7 +9898,9 @@ fn ensure_static_profile(
     ensure_projection_size_with_limit(
         &publication,
         match (profile, native_tracker) {
-            (SessionProfile::TextCapacity, _) => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+            (SessionProfile::TextCapacity | SessionProfile::WorkingSize, _) => {
+                MAX_TEXT_CAPACITY_PROJECTION_BYTES
+            }
             (SessionProfile::Ordinary, true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
             (SessionProfile::Ordinary, false) => MAX_PROJECTION_BYTES,
         },

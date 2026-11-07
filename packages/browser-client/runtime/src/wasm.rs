@@ -639,7 +639,7 @@ fn export_spreadsheet(
     let mut inserted_headers = Vec::new();
     if matches!(format, SpreadsheetFormat::Xlsx) {
         match runtime.profile {
-            SessionProfile::Ordinary => {
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {
                 for sheet in &mut export_metadata.sheets {
                     if !sheet.has_header {
                         sheet.has_header = true;
