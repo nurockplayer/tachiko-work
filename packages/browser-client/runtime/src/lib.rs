@@ -34,7 +34,7 @@ mod formula_new_row_tests;
 mod number_format_tests;
 #[cfg(test)]
 mod optional_date_boolean_tests;
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod working_size_tests;
 
 mod name_admission;
