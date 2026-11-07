@@ -8,6 +8,8 @@
 //! Number without a format shown at most 15 significant digits as JavaScript
 //! `String()` writes it.
 
+use std::cmp::Ordering;
+
 use tachiko_workspace_engine::{NumberFormat, NumberFormatKind};
 
 use crate::{CalculationProjection, StoredValueProjection, ViewValue};
@@ -43,8 +45,7 @@ const CURRENCY_SYMBOLS: [(&str, &str); 23] = [
 /// The text Sheet renders for one value, or `None` when the value has none.
 ///
 /// Blank, unavailable, failed and Reference values have no display text; the
-/// filters in the next Change use this.
-#[cfg_attr(not(test), allow(dead_code))]
+/// display filters treat that as the empty string.
 pub(crate) fn display_text(value: &ViewValue, format: Option<&NumberFormat>) -> Option<String> {
     match value {
         ViewValue::Number(number) => Some(format_number(*number, format)),
@@ -53,6 +54,62 @@ pub(crate) fn display_text(value: &ViewValue, format: Option<&NumberFormat>) -> 
         ViewValue::Date(date) => Some(date.to_string()),
         ViewValue::Reference => None,
     }
+}
+
+/// Sheet's natural list order: case-insensitive, with runs of ASCII digits
+/// compared as numbers — stripped of leading zeros, then by length, then by
+/// digit, so arbitrarily long runs never parse to an integer — and everything
+/// else by code point. A tie falls back to the byte order of the originals,
+/// which keeps the order total and deterministic.
+pub(crate) fn natural_cmp(left: &str, right: &str) -> Ordering {
+    let ordering = natural_folded_cmp(&left.to_lowercase(), &right.to_lowercase());
+    if ordering == Ordering::Equal {
+        left.as_bytes().cmp(right.as_bytes())
+    } else {
+        ordering
+    }
+}
+
+fn natural_folded_cmp(left: &str, right: &str) -> Ordering {
+    let mut left = left.chars().peekable();
+    let mut right = right.chars().peekable();
+    loop {
+        match (left.peek().copied(), right.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(left_char), Some(right_char)) => {
+                let ordering = if left_char.is_ascii_digit() && right_char.is_ascii_digit() {
+                    compare_digit_runs(&take_digit_run(&mut left), &take_digit_run(&mut right))
+                } else {
+                    left.next();
+                    right.next();
+                    left_char.cmp(&right_char)
+                };
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
+    }
+}
+
+fn take_digit_run(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    let mut run = String::new();
+    while let Some(character) = chars.peek().copied() {
+        if !character.is_ascii_digit() {
+            break;
+        }
+        run.push(character);
+        chars.next();
+    }
+    run
+}
+
+fn compare_digit_runs(left: &str, right: &str) -> Ordering {
+    let left = left.trim_start_matches('0');
+    let right = right.trim_start_matches('0');
+    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
 }
 
 /// The Number a cell shows. A calculation decides when one is present, so a
@@ -425,9 +482,10 @@ fn js_number_to_string(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_text, displayed_number, format_number};
+    use super::{display_text, displayed_number, format_number, natural_cmp};
     use crate::{CalculationProjection, StoredValueProjection, ViewValue};
     use serde::Deserialize;
+    use std::cmp::Ordering;
     use tachiko_workspace_engine::{Date, NumberFormat, NumberFormatKind};
 
     #[derive(Deserialize)]
@@ -497,6 +555,27 @@ mod tests {
             Some(date.to_string())
         );
         assert_eq!(display_text(&ViewValue::Reference, Some(&plain)), None);
+    }
+
+    #[test]
+    fn natural_order_folds_case_and_compares_digit_runs_as_numbers() {
+        assert_eq!(natural_cmp("Item 2", "Item 10"), Ordering::Less);
+        assert_eq!(natural_cmp("Item 10", "Item 2"), Ordering::Greater);
+        assert_eq!(natural_cmp("a", "B"), Ordering::Less);
+        assert_eq!(natural_cmp("v10", "v9"), Ordering::Greater);
+        // A folded tie falls back to the byte order of the originals.
+        assert_eq!(natural_cmp("Apple", "apple"), Ordering::Less);
+        assert_eq!(natural_cmp("007", "7"), Ordering::Less);
+        assert_eq!(natural_cmp("7", "007"), Ordering::Greater);
+        assert_eq!(natural_cmp("0005", "5"), Ordering::Less);
+        // Long runs never parse to an integer: length decides before digits.
+        let forty_nines = "9".repeat(40);
+        let forty_ones = "1".repeat(40);
+        assert_eq!(natural_cmp(&forty_nines, &forty_ones), Ordering::Greater);
+        assert_eq!(
+            natural_cmp(&forty_ones, &format!("1{}", "0".repeat(39))),
+            Ordering::Greater
+        );
     }
 
     /// The committed corpus is generated with Node's `Intl` by the adjacent

@@ -36,6 +36,7 @@ import type {
   TableView,
   TableWindowProjection,
   LocatedInViewProjection,
+  DistinctValuesProjection,
   ColumnTotalsProjection,
   GroupDimension,
   GroupKey,
@@ -412,6 +413,26 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async queryDistinctValues(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    field: string,
+    limit: number,
+  ): Promise<DistinctValuesProjection> {
+    return expectResponse(
+      "distinct_values",
+      await this.#command({
+        type: "query_distinct_values",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+        field,
+        limit,
+      }),
+    );
+  }
+
   async queryColumnTotals(
     expectedRevision: string,
     collection: string,
@@ -632,6 +653,10 @@ function expectResponse(
   type: "located_in_view",
   response: DesignerResponse,
 ): LocatedInViewProjection;
+function expectResponse(
+  type: "distinct_values",
+  response: DesignerResponse,
+): DistinctValuesProjection;
 function expectResponse(
   type: "column_totals",
   response: DesignerResponse,
