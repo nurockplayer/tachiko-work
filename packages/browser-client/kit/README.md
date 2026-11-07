@@ -211,7 +211,14 @@ be refused until a later change.
 A working-size reply carries the bootstrap and one bounded window, never the
 whole table. That window may hold fewer than 100 rows when the text is large,
 so read `window.total_rows` and page with the window query instead of assuming
-a full first page. A working-size session admits 10,000 rows and entities,
+a full first page. A window over its byte budget says so with
+`byte_limited: true` and carries fewer rows: continue at
+`start + rows.length`, and use `total_rows` to know where the view ends rather
+than treating a short page as the end. A publication that reaches more targets
+than a reply lists comes back with `many: true` and empty `entities`, `fields`
+and `affected_calculations`: re-query the visible window and totals instead of
+reading the lists. Both keys are absent on ordinary and text-capacity replies.
+A working-size session admits 10,000 rows and entities,
 100,000 populated cells, 100,000 formulas, 1,000,000 formula AST nodes and
 1,000,000 dependency edges, with one column read counting as one edge. These
 are the counts a session admits, not a performance claim, so a host should not

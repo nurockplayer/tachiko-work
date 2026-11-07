@@ -225,6 +225,11 @@ export type TableWindowProjection = {
   start: number;
   rows: TableRowProjection[];
   /**
+   * Set when the reply's bytes ended this window before its count. Continue at
+   * `start + rows.length`; `total_rows` says where the view ends.
+   */
+  byte_limited?: true;
+  /**
    * One total per Number column, keyed by column id and observed at the same
    * revision as rows. Null means a contributing value is unavailable; blank
    * cells are skipped.
@@ -362,6 +367,12 @@ export type PublicationProjection = {
   entities: string[];
   fields: FieldTarget[];
   affected_calculations: FieldTarget[];
+  /**
+   * Set when this publication reached more targets than a reply lists.
+   * `entities`, `fields` and `affected_calculations` are then empty: re-query
+   * the visible window and totals.
+   */
+  many?: true;
 };
 
 export type ProjectExportProjection = {
