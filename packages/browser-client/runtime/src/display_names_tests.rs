@@ -584,6 +584,7 @@ fn accumulated_name_failure_reply_is_bounded_and_retains_every_input() {
         occurrence_id: OCCURRENCE.to_owned(),
         name: "Names".to_owned(),
         columns: inputs,
+        profile: None,
     };
     let input = serde_json::to_vec(&request).unwrap();
     assert!(input.len() < super::MAX_PROJECTION_BYTES);

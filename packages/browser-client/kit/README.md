@@ -190,6 +190,21 @@ Ordinary `exportProject` refuses an occurrence successfully opened from v3;
 continue saving it with the explicit method. Retain a compatible v3 reader
 after emitting these artifacts, including during producer rollback.
 
+## Working-size sessions
+
+A host can ask for the working-size session profile when the occurrence is
+created or opened, through `newTableWorkingSize`, `inspectProjectWorkingSize`,
+`openProjectWorkingSize`, `openCanonicalTreeWorkingSize`,
+`openLocalDocumentWorkingSize` and `openPortableRoWorkingSize`. The profile is fixed when the occurrence is
+created and cannot be switched afterwards. Not asking changes nothing: every
+ordinary method keeps today's request bytes and reply shape.
+
+A working-size reply carries the bootstrap and one bounded window, never the
+whole table. That window may hold fewer than 100 rows when the text is large,
+so read `window.total_rows` and page with the window query instead of assuming
+a full first page. Size limits are still today's counts; higher limits arrive
+in a later change, so a host must not advertise 10,000 rows from this alone.
+
 ## Authoring formulas
 
 `updateFormula(revision, target, source)` submits source text against the

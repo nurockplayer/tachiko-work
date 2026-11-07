@@ -13,6 +13,8 @@ import type {
   CanonicalTreeExport,
   OccurrenceProjection,
   OpenedProjection,
+  OpenedWindowProjection,
+  NewTableColumnInput,
   ProjectExport,
   FieldConstraintInput,
   NumberFormat,
@@ -51,11 +53,18 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;
   exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
+  /** Create a table whose session profile is the working-size one. */
+  newTableWorkingSize(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
+  inspectProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
+  openProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
+  openCanonicalTreeWorkingSize(files: readonly CanonicalProjectFile[]): Promise<OpenedWindowProjection>;
+  openLocalDocumentWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   exportCanonicalTree(expectedRevision: string): Promise<CanonicalTreeExport>;
   exportPortableRo(expectedRevision: string): Promise<ProjectExport>;
   verifyPortableRo(bytes: ArrayBuffer): Promise<void>;
   openPortableRo(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  openPortableRoWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   observeOccurrence(): Promise<OccurrenceProjection>;
 }
 
@@ -112,6 +121,13 @@ class PublicExperimentalDesignerClient extends WorkerDesignerClient {
   ): Promise<OpenedProjection> {
     return openCanonicalTreeFromEntries(this, files);
   }
+
+  override async openCanonicalTreeWorkingSize(
+    files: readonly CanonicalProjectFile[],
+  ): Promise<OpenedWindowProjection> {
+    preflightCanonicalProjectEntries(files);
+    return this.openProjectWorkingSize(projectTransferFromEntries(files));
+  }
 }
 
 export function createExperimentalDesignerClient(): ExperimentalDesignerClient {
@@ -165,6 +181,7 @@ export type {
   ScalarEditInput,
   TrackerCommand,
   OpenedProjection,
+  OpenedWindowProjection,
   OccurrenceProjection,
   ProjectExport,
   PublicationProjection,

@@ -23,6 +23,7 @@ import type {
   FieldTarget,
   FieldProjection,
   OpenedProjection,
+  OpenedWindowProjection,
   OccurrenceProjection,
   PublicationProjection,
   DuplicateCollectionProjection,
@@ -177,6 +178,11 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns}));
   }
 
+  /** Create a table whose session profile is the working-size one. */
+  async newTableWorkingSize(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection> {
+    return expectResponse("opened_window", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns, profile: "working_size"}));
+  }
+
   async duplicateCollection(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection> {
     const columns = columnNames === undefined ? {} : {column_names: columnNames};
     return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name, ...columns}));
@@ -243,6 +249,19 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", reply.response);
   }
 
+  async inspectProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection> {
+    // Inspection preserves the caller's bytes for the subsequent accepted open.
+    const candidateBytes = bytes.slice(0);
+    const reply = await this.#send(
+      { id: this.#claimId(), kind: "inspect_project", profile: "working_size", bytes: candidateBytes },
+      [candidateBytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected project inspection response, received '${reply.status}'.`);
+    }
+    return expectResponse("opened_window", reply.response);
+  }
+
   async openProject(bytes: ArrayBuffer): Promise<OpenedProjection> {
     const reply = await this.#send(
       {
@@ -259,8 +278,29 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", reply.response);
   }
 
+  async openProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection> {
+    const reply = await this.#send(
+      {
+        id: this.#claimId(),
+        kind: "open_project",
+        occurrence_id: freshOccurrenceId(),
+        profile: "working_size",
+        bytes,
+      },
+      [bytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected project open response, received '${reply.status}'.`);
+    }
+    return expectResponse("opened_window", reply.response);
+  }
+
   async openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection> {
     return this.openProject(projectTransferFromEntries(files));
+  }
+
+  async openCanonicalTreeWorkingSize(files: readonly CanonicalProjectFile[]): Promise<OpenedWindowProjection> {
+    return this.openProjectWorkingSize(projectTransferFromEntries(files));
   }
 
   async openLocalDocument(bytes: ArrayBuffer): Promise<OpenedProjection> {
@@ -277,6 +317,23 @@ export class WorkerDesignerClient implements DesignerClient {
       throw new Error(`Expected local document open response, received '${reply.status}'.`);
     }
     return expectResponse("opened", reply.response);
+  }
+
+  async openLocalDocumentWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection> {
+    const reply = await this.#send(
+      {
+        id: this.#claimId(),
+        kind: "open_local_document",
+        occurrence_id: freshOccurrenceId(),
+        profile: "working_size",
+        bytes,
+      },
+      [bytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected local document open response, received '${reply.status}'.`);
+    }
+    return expectResponse("opened_window", reply.response);
   }
 
   async exportProject(expectedRevision: string): Promise<ProjectExport> {
@@ -352,6 +409,23 @@ export class WorkerDesignerClient implements DesignerClient {
       throw new Error(`Expected portable .ro open response, received '${reply.status}'.`);
     }
     return expectResponse("opened", reply.response);
+  }
+
+  async openPortableRoWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection> {
+    const reply = await this.#send(
+      {
+        id: this.#claimId(),
+        kind: "open_portable_ro",
+        occurrence_id: freshOccurrenceId(),
+        profile: "working_size",
+        bytes,
+      },
+      [bytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected portable .ro open response, received '${reply.status}'.`);
+    }
+    return expectResponse("opened_window", reply.response);
   }
 
   async observeOccurrence(): Promise<OccurrenceProjection> {
@@ -685,6 +759,10 @@ function expectResponse(
   response: DesignerResponse,
 ): OpenedProjection;
 function expectResponse(
+  type: "opened_window",
+  response: DesignerResponse,
+): OpenedWindowProjection;
+function expectResponse(
   type: "table",
   response: DesignerResponse,
 ): TableProjection;
@@ -750,6 +828,7 @@ function expectResponse(
     case "column_totals": validateColumnTotals(response.payload); break;
     case "group_totals": validateGroupTotals(response.payload); break;
     case "opened": validateTablePresence(response.payload.table); break;
+    case "opened_window": validateTablePresence(response.payload.window); break;
     case "imported": validateTablePresence(response.payload.opened.table); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
     case "field_explanation":

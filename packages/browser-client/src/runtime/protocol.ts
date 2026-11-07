@@ -40,6 +40,17 @@ export type OpenedProjection = {
   table: TableProjection;
 };
 
+/**
+ * The reply a working-size open produces: the bootstrap plus one bounded
+ * window, never the whole table. `window.total_rows` may exceed the rows the
+ * window carries, so page with the window query.
+ */
+export type OpenedWindowProjection = {
+  profile: "working_size";
+  bootstrap: BootstrapProjection;
+  window: TableWindowProjection;
+};
+
 export type StoredValueProjection =
   | { kind: "number"; value: number }
   | { kind: "text"; value: string }
@@ -571,7 +582,7 @@ export type DesignerRequest =
   | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
   | { type: "new_tracker"; occurrence_id: string }
   | { type: "new_budget"; occurrence_id: string }
-  | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[] }
+  | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_capacity"; expected_revision?: string }
@@ -665,6 +676,7 @@ export type DesignerResponse =
   | { type: "bootstrap"; payload: BootstrapProjection }
   | { type: "capacity"; payload: CapacityProjection }
   | { type: "opened"; payload: OpenedProjection }
+  | { type: "opened_window"; payload: OpenedWindowProjection }
   | { type: "table"; payload: TableProjection }
   | { type: "table_window"; payload: TableWindowProjection }
   | { type: "located_in_view"; payload: LocatedInViewProjection }
@@ -696,20 +708,22 @@ export type WorkerRequest =
       kind: "open_project";
       occurrence_id: string;
       bytes: ArrayBuffer;
+      profile?: "working_size";
     }
   | {
       id: number;
       kind: "open_local_document";
       occurrence_id: string;
       bytes: ArrayBuffer;
+      profile?: "working_size";
     }
-  | { id: number; kind: "inspect_project"; bytes: ArrayBuffer }
+  | { id: number; kind: "inspect_project"; bytes: ArrayBuffer; profile?: "working_size" }
   | { id: number; kind: "export_project"; expected_revision: string }
   | { id: number; kind: "export_project_v3"; expected_revision: string }
   | { id: number; kind: "export_canonical_tree"; expected_revision: string }
   | { id: number; kind: "export_portable_ro"; expected_revision: string }
   | { id: number; kind: "verify_portable_ro"; bytes: ArrayBuffer }
-  | { id: number; kind: "open_portable_ro"; occurrence_id: string; bytes: ArrayBuffer }
+  | { id: number; kind: "open_portable_ro"; occurrence_id: string; bytes: ArrayBuffer; profile?: "working_size" }
   | { id: number; kind: "observe_occurrence" }
   | { id: number; kind: "close_project" };
 

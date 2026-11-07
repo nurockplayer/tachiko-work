@@ -21,8 +21,10 @@ use crate::interop_adapter::{
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply, FailureProjection,
     MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply,
-    ensure_wire_reply_size, inspect_project, open_local_document, open_portable_ro, open_project,
-    process_wire_request, request_too_large_reply, verify_portable_ro,
+    ensure_wire_reply_size, inspect_project, inspect_project_working_size, open_local_document,
+    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
+    open_project, open_project_working_size, process_wire_request, request_too_large_reply,
+    verify_portable_ro,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
@@ -41,7 +43,7 @@ pub const MAX_HOST_WIRE_REQUEST_BYTES: usize = MAX_WIRE_REQUEST_BYTES;
 pub const MAX_HOST_PROJECT_TRANSFER_BYTES: usize = MAX_PROJECT_TRANSFER_BYTES;
 
 type OpenCandidate =
-    fn(&mut Option<DesignerRuntime>, &[u8], &str) -> Result<crate::OpenedProjection, DesignerError>;
+    fn(&mut Option<DesignerRuntime>, &[u8], &str) -> Result<DesignerResponse, DesignerError>;
 
 /// One encoded wire reply plus the opaque bytes a successful export produced.
 ///
@@ -170,22 +172,88 @@ impl DesignerHost {
         encode_reply(&reply)
     }
 
+    /// Inspect a fully admitted candidate as a working-size occurrence without
+    /// replacing resident state.
+    #[must_use]
+    pub fn inspect_project_working_size(&self, project: &[u8]) -> Vec<u8> {
+        let reply = if project.len() > MAX_PROJECT_TRANSFER_BYTES {
+            too_large_project(self.runtime.as_ref())
+        } else {
+            match inspect_project_working_size(project) {
+                Ok(opened) => DesignerWireReply::Ok {
+                    response: DesignerResponse::OpenedWindow(Box::new(opened)),
+                },
+                Err(error) => DesignerWireReply::Error {
+                    error: error.failure_projection(current_revision(self.runtime.as_ref())),
+                },
+            }
+        };
+        encode_reply(&reply)
+    }
+
     /// Fully admit and install one project candidate.
     #[must_use]
     pub fn open_project(&mut self, project: &[u8], occurrence_id: &[u8]) -> Vec<u8> {
-        self.open_candidate(project, occurrence_id, open_project)
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_project(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::Opened(Box::new(opened)))
+        })
+    }
+
+    /// Fully admit and install one project candidate as a working-size
+    /// occurrence.
+    #[must_use]
+    pub fn open_project_working_size(&mut self, project: &[u8], occurrence_id: &[u8]) -> Vec<u8> {
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_project_working_size(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
+        })
     }
 
     /// Fully admit and install one raw local `.ro` document.
     #[must_use]
     pub fn open_local_document(&mut self, project: &[u8], occurrence_id: &[u8]) -> Vec<u8> {
-        self.open_candidate(project, occurrence_id, open_local_document)
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_local_document(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::Opened(Box::new(opened)))
+        })
+    }
+
+    /// Fully admit and install one raw local `.ro` document as a working-size
+    /// occurrence.
+    #[must_use]
+    pub fn open_local_document_working_size(
+        &mut self,
+        project: &[u8],
+        occurrence_id: &[u8],
+    ) -> Vec<u8> {
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_local_document_working_size(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
+        })
     }
 
     /// Fully verify and admit a genuine portable-package/v1 `.ro` candidate.
     #[must_use]
     pub fn open_portable_ro(&mut self, project: &[u8], occurrence_id: &[u8]) -> Vec<u8> {
-        self.open_candidate(project, occurrence_id, open_portable_ro)
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_portable_ro(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::Opened(Box::new(opened)))
+        })
+    }
+
+    /// Fully verify and admit a genuine portable-package/v1 `.ro` candidate as
+    /// a working-size occurrence.
+    #[must_use]
+    pub fn open_portable_ro_working_size(
+        &mut self,
+        project: &[u8],
+        occurrence_id: &[u8],
+    ) -> Vec<u8> {
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_portable_ro_working_size(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
+        })
     }
 
     /// Verify a genuine portable-package/v1 `.ro` artifact without replacing
@@ -285,9 +353,7 @@ impl DesignerHost {
             return request_too_large_reply(runtime.as_ref());
         } else if let Ok(occurrence_id) = std::str::from_utf8(occurrence_id) {
             match open(runtime, project, occurrence_id) {
-                Ok(opened) => DesignerWireReply::Ok {
-                    response: DesignerResponse::Opened(Box::new(opened)),
-                },
+                Ok(response) => DesignerWireReply::Ok { response },
                 Err(error) => DesignerWireReply::Error {
                     error: error.failure_projection(current_revision(runtime.as_ref())),
                 },

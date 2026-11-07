@@ -3,6 +3,8 @@
 //! The bridge is native-only, so this test is too.
 #![cfg(not(target_arch = "wasm32"))]
 
+use std::collections::BTreeMap;
+
 use serde_json::{Value, json};
 use tachiko_designer_runtime::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply, ImportFieldType,
@@ -10,6 +12,11 @@ use tachiko_designer_runtime::{
     host_bridge::{DesignerHost, MAX_HOST_PROJECT_TRANSFER_BYTES},
     interop_adapter::{ImportOptions, SourceValue, import_csv},
     open_local_document, process_wire_request,
+};
+use tachiko_storage::{encode_portable_package_v1, encode_roproj_v3, to_canonical_string};
+use tachiko_workspace_engine::{
+    Document, Entity, EntityId, EntityKey, FieldConstraint, FieldDefinition, FieldId, FieldKey,
+    FieldType, Schema, SchemaId, SchemaKey, Value as CellValue,
 };
 
 const GAME_BALANCE_RO: &[u8] = include_bytes!(concat!(
@@ -32,6 +39,7 @@ fn revision_of(reply: &Value) -> String {
     reply["response"]["payload"]["bootstrap"]["revision"]
         .as_str()
         .or_else(|| reply["response"]["payload"]["revision"].as_str())
+        .or_else(|| reply["response"]["payload"]["resulting_revision"].as_str())
         .expect("reply carries a revision")
         .to_owned()
 }
@@ -412,5 +420,228 @@ fn portable_bridge_preserves_v3_bytes_and_admits_constrained_packages() {
     assert_eq!(
         fresh.export_project_v3(b"resident/0").bytes.unwrap(),
         project_before
+    );
+}
+
+/// 64 rows x 2 Text columns of 1,200 characters: a valid document whose
+/// complete ordinary reply exceeds today's 64 KiB budget, and which is not
+/// text-capacity eligible (that needs 65 rows or exactly three Text columns).
+fn long_text_document() -> Document {
+    let mut document = Document::empty("working-size-bridge", "Working Size Bridge");
+    let mut schema = Schema {
+        field_order: None,
+        id: SchemaId::from("grid"),
+        key: SchemaKey::from("grid"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    for column in 0..2 {
+        let id = FieldId::from(format!("c{column}"));
+        schema.fields.insert(
+            id.clone(),
+            FieldDefinition {
+                id,
+                key: FieldKey::from(format!("c{column}")),
+                display_name: None,
+                field_type: FieldType::Text,
+                required: false,
+                constraint: FieldConstraint::None,
+                number_format: None,
+            },
+        );
+    }
+    document.schemas.insert(schema.id.clone(), schema);
+    for row in 0..64 {
+        let id = EntityId::from(format!("r{row:05}"));
+        let fields = (0..2)
+            .map(|column| {
+                (
+                    FieldId::from(format!("c{column}")),
+                    CellValue::Text("x".repeat(1_200)),
+                )
+            })
+            .collect();
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields,
+            },
+        );
+    }
+    document
+}
+
+/// The three transfer shapes of one working-size-only document: the raw
+/// canonical document, its v3 project bundle, and its portable package.
+fn long_text_transfers() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let document = long_text_document();
+    let raw = to_canonical_string(&document).unwrap().into_bytes();
+    let portable = encode_portable_package_v1(&encode_roproj_v3(&document).unwrap()).unwrap();
+    let mut probe = DesignerHost::new();
+    let opened = json_of(&probe.open_local_document_working_size(&raw, FIRST.as_bytes()));
+    assert_eq!(opened["status"], "ok", "{opened}");
+    let bundle = probe
+        .export_project_v3(revision_of(&opened).as_bytes())
+        .bytes
+        .expect("a working-size runtime exports its v3 bundle");
+    (raw, bundle, portable)
+}
+
+#[test]
+fn working_size_bridge_opens_what_the_ordinary_open_refuses() {
+    let (raw, bundle, portable) = long_text_transfers();
+
+    // Today's opens refuse every one of these valid bytes.
+    let mut ordinary = DesignerHost::new();
+    assert_eq!(
+        json_of(&ordinary.open_local_document(&raw, FIRST.as_bytes()))["status"],
+        "error"
+    );
+    assert_eq!(
+        json_of(&ordinary.open_project(&bundle, FIRST.as_bytes()))["status"],
+        "error"
+    );
+    assert_eq!(
+        json_of(&ordinary.open_portable_ro(&portable, FIRST.as_bytes()))["status"],
+        "error"
+    );
+    assert_eq!(
+        json_of(&ordinary.observe_occurrence())["error"]["code"],
+        "no_project_open",
+        "a refused candidate never becomes resident"
+    );
+
+    // The working-size opens admit each of them and reply one window.
+    let mut host = DesignerHost::new();
+    for reply in [
+        host.open_local_document_working_size(&raw, FIRST.as_bytes()),
+        host.open_project_working_size(&bundle, SECOND.as_bytes()),
+        host.open_portable_ro_working_size(&portable, THIRD.as_bytes()),
+    ] {
+        let reply = json_of(&reply);
+        assert_eq!(reply["status"], "ok", "{reply}");
+        assert_eq!(reply["response"]["type"], "opened_window");
+        assert_eq!(reply["response"]["payload"]["profile"], "working_size");
+        assert_eq!(reply["response"]["payload"]["window"]["total_rows"], 64);
+        assert_eq!(
+            reply["response"]["payload"]["window"]["rows"]
+                .as_array()
+                .unwrap()
+                .len(),
+            64
+        );
+        assert!(
+            reply["response"]["payload"].get("table").is_none(),
+            "a working-size reply never carries the whole table"
+        );
+    }
+}
+
+#[test]
+fn working_size_refusals_preserve_the_resident_occurrence() {
+    let (raw, bundle, _) = long_text_transfers();
+    let mut host = DesignerHost::new();
+    let opened = json_of(&host.open_local_document_working_size(&raw, FIRST.as_bytes()));
+    assert_eq!(opened["status"], "ok");
+    let revision = revision_of(&opened);
+    let before = host.export_project(revision.as_bytes()).bytes.unwrap();
+    let observed = host.observe_occurrence();
+
+    let invalid =
+        json_of(&host.open_project_working_size(b"not a Tachiko project", SECOND.as_bytes()));
+    assert_eq!(invalid["status"], "error");
+    let invalid_utf8 = json_of(&host.open_project_working_size(&bundle, &[0xff, 0xfe]));
+    assert_eq!(invalid_utf8["error"]["code"], "invalid_occurrence");
+    let oversized = vec![0_u8; MAX_HOST_PROJECT_TRANSFER_BYTES + 1];
+    let too_large = json_of(&host.open_project_working_size(&oversized, SECOND.as_bytes()));
+    assert_eq!(too_large["error"]["code"], "project_too_large");
+
+    assert_eq!(host.observe_occurrence(), observed);
+    assert_eq!(
+        host.export_project(revision.as_bytes()).bytes.unwrap(),
+        before
+    );
+}
+
+#[test]
+fn working_size_inspection_replies_one_window_and_keeps_the_resident() {
+    let (_, bundle, _) = long_text_transfers();
+
+    let empty = DesignerHost::new();
+    let inspected = json_of(&empty.inspect_project_working_size(&bundle));
+    assert_eq!(inspected["status"], "ok", "{inspected}");
+    assert_eq!(inspected["response"]["type"], "opened_window");
+    assert_eq!(inspected["response"]["payload"]["profile"], "working_size");
+    assert_eq!(inspected["response"]["payload"]["window"]["total_rows"], 64);
+    assert_eq!(
+        json_of(&empty.observe_occurrence())["error"]["code"],
+        "no_project_open",
+        "inspection installs nothing"
+    );
+    let mut host = DesignerHost::new();
+    let resident = json_of(&host.open_local_document(GAME_BALANCE_RO, FIRST.as_bytes()));
+    assert_eq!(resident["status"], "ok");
+    let revision = revision_of(&resident);
+    let before = host.export_project(revision.as_bytes()).bytes.unwrap();
+    let observed = host.observe_occurrence();
+    let inspected = json_of(&host.inspect_project_working_size(&bundle));
+    assert_eq!(inspected["response"]["type"], "opened_window");
+    assert_eq!(host.observe_occurrence(), observed);
+    assert_eq!(
+        host.export_project(revision.as_bytes()).bytes.unwrap(),
+        before,
+        "the resident occurrence and its profile are untouched"
+    );
+}
+
+#[test]
+fn a_working_size_table_saves_and_reopens_across_the_bridge() {
+    let mut host = DesignerHost::new();
+    let created = json_of(&host.request(&request(&json!({
+        "type": "new_table",
+        "occurrence_id": FIRST,
+        "name": "Wire",
+        "columns": [{"name": "amount", "field_type": "number", "required": false}],
+        "profile": "working_size",
+    }))));
+    assert_eq!(created["status"], "ok", "{created}");
+    assert_eq!(created["response"]["type"], "opened_window");
+    let payload = &created["response"]["payload"];
+    assert_eq!(payload["profile"], "working_size");
+    assert_eq!(payload["window"]["total_rows"], 0);
+    let collection = payload["bootstrap"]["default_collection"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let revision = payload["bootstrap"]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let inserted = json_of(&host.request(&request(&json!({
+        "type": "insert_row",
+        "expected_revision": revision,
+        "collection": collection,
+        "initializers": [],
+    }))));
+    assert_eq!(inserted["status"], "ok", "{inserted}");
+    let saved = host.export_project_v3(revision_of(&inserted).as_bytes());
+    assert_eq!(json_of(&saved.reply)["status"], "ok");
+    let bytes = saved.bytes.expect("one saved row exports");
+
+    host.close_project();
+    let reopened = json_of(&host.open_project_working_size(&bytes, SECOND.as_bytes()));
+    assert_eq!(reopened["status"], "ok", "{reopened}");
+    assert_eq!(reopened["response"]["type"], "opened_window");
+    assert_eq!(reopened["response"]["payload"]["window"]["total_rows"], 1);
+    assert_eq!(
+        reopened["response"]["payload"]["window"]["rows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
 }

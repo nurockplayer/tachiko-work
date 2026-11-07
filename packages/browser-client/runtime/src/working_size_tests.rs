@@ -12,13 +12,14 @@ use super::capacity::{CapacityExceeded, CapacityLimit, SessionProfile};
 use super::capacity_fixtures::{CALC_FIELD, FixtureSpec, capacity_document, entity_id};
 use super::interop_document::CleanupOperation;
 use super::{
-    CalculationProjection, CellEdit, DesignerError, DesignerProfile, DesignerRuntime, Document,
-    Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey, FieldProjection, FieldTarget,
-    FieldType, NewTableColumnInput, OpenedWindowProjection, RowInitializer, RowProjection,
-    ScalarEditInput, Schema, SchemaId, SchemaKey, StoredValueProjection,
-    encode_portable_package_v1, encode_project_bundle, open_local_document,
-    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
-    open_project, open_project_working_size, to_canonical_string,
+    CalculationProjection, CellEdit, DesignerError, DesignerProfile, DesignerRequest,
+    DesignerResponse, DesignerRuntime, DesignerWireReply, Document, Entity, EntityId, EntityKey,
+    FieldDefinition, FieldId, FieldKey, FieldProjection, FieldTarget, FieldType,
+    NewTableColumnInput, OpenedWindowProjection, RowInitializer, RowProjection, ScalarEditInput,
+    Schema, SchemaId, SchemaKey, StoredValueProjection, encode_portable_package_v1,
+    encode_project_bundle, open_local_document, open_local_document_working_size, open_portable_ro,
+    open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
+    to_canonical_string,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
@@ -807,4 +808,141 @@ fn working_size_open_and_save_carry_the_presentation_store() {
     let mut reopened: Option<DesignerRuntime> = None;
     open_portable_ro_working_size(&mut reopened, &saved, OCCURRENCE).unwrap();
     assert_eq!(reopened.unwrap().presentation, store);
+}
+
+fn wire_columns() -> [NewTableColumnInput; 1] {
+    [NewTableColumnInput {
+        name: "amount".into(),
+        field_type: "number".into(),
+        required: false,
+    }]
+}
+
+fn decode_wire(bytes: &[u8]) -> DesignerWireReply {
+    serde_json::from_slice(bytes).unwrap()
+}
+
+#[test]
+fn new_table_without_a_profile_keeps_todays_wire_shape() {
+    let request = DesignerRequest::NewTable {
+        occurrence_id: OCCURRENCE.to_owned(),
+        name: "Ordinary".to_owned(),
+        columns: wire_columns().to_vec(),
+        profile: None,
+    };
+    let input = serde_json::to_vec(&request).unwrap();
+    assert!(
+        !String::from_utf8_lossy(&input).contains("profile"),
+        "a host that does not ask sends no profile field"
+    );
+    let mut resident: Option<DesignerRuntime> = None;
+    let reply = decode_wire(&process_wire_request(&mut resident, &input));
+    let DesignerWireReply::Ok {
+        response: DesignerResponse::Opened(opened),
+    } = reply
+    else {
+        panic!("today's new_table keeps the opened reply");
+    };
+    assert_eq!(opened.table.columns.len(), 1);
+    let runtime = resident.unwrap();
+    assert_eq!(runtime.profile, SessionProfile::Ordinary);
+}
+
+#[test]
+fn new_table_with_the_working_size_profile_replies_a_zero_row_window() {
+    let request = DesignerRequest::NewTable {
+        occurrence_id: OCCURRENCE.to_owned(),
+        name: "Working".to_owned(),
+        columns: wire_columns().to_vec(),
+        profile: Some(DesignerProfile::WorkingSize),
+    };
+    let input = serde_json::to_vec(&request).unwrap();
+    let mut resident: Option<DesignerRuntime> = None;
+    let reply = decode_wire(&process_wire_request(&mut resident, &input));
+    let DesignerWireReply::Ok {
+        response: DesignerResponse::OpenedWindow(opened),
+    } = reply
+    else {
+        panic!("a working-size new_table replies one window");
+    };
+    assert_eq!(opened.profile, DesignerProfile::WorkingSize);
+    assert_eq!(opened.window.total_rows, 0);
+    assert_eq!(opened.window.rows, Vec::<RowProjection>::new());
+    let collection = opened.bootstrap.default_collection.clone();
+    assert_window_reply_shape(&opened);
+
+    let mut runtime = resident.unwrap();
+    assert_eq!(runtime.profile, SessionProfile::WorkingSize);
+    let current = revision(&runtime);
+    let inserted = runtime.insert_row(&current, &collection, &[]).unwrap();
+    assert_ne!(inserted.resulting_revision, current);
+    assert_eq!(runtime.profile, SessionProfile::WorkingSize);
+
+    // A refused candidate leaves the resident exactly as it was.
+    let current = revision(&runtime);
+    let before = runtime.session.export_snapshot();
+    let refused = DesignerRequest::NewTable {
+        occurrence_id: OCCURRENCE.to_owned(),
+        name: "Empty".to_owned(),
+        columns: Vec::new(),
+        profile: Some(DesignerProfile::WorkingSize),
+    };
+    let mut resident = Some(runtime);
+    let reply = decode_wire(&process_wire_request(
+        &mut resident,
+        &serde_json::to_vec(&refused).unwrap(),
+    ));
+    let DesignerWireReply::Error { error } = reply else {
+        panic!("a column-less candidate refuses");
+    };
+    assert_eq!(error.code, "invalid_table_operation");
+    let runtime = resident.unwrap();
+    assert_eq!(runtime.current_revision(), current);
+    assert_eq!(runtime.session.export_snapshot(), before);
+    assert_eq!(runtime.profile, SessionProfile::WorkingSize);
+}
+
+#[test]
+fn an_unknown_profile_is_an_invalid_request() {
+    let request = DesignerRequest::NewTable {
+        occurrence_id: OCCURRENCE.to_owned(),
+        name: "Other".to_owned(),
+        columns: wire_columns().to_vec(),
+        profile: None,
+    };
+    let mut request = serde_json::to_value(&request).unwrap();
+    request
+        .as_object_mut()
+        .unwrap()
+        .insert("profile".into(), serde_json::Value::String("other".into()));
+    let input = serde_json::to_vec(&request).unwrap();
+    let runtime = DesignerRuntime::tracker(OCCURRENCE).unwrap();
+    let before = runtime.session.export_snapshot();
+    let mut resident = Some(runtime);
+    let reply = decode_wire(&process_wire_request(&mut resident, &input));
+    let DesignerWireReply::Error { error } = reply else {
+        panic!("an unknown profile is not a request");
+    };
+    assert_eq!(error.code, "invalid_request");
+    let runtime = resident.unwrap();
+    assert_eq!(runtime.session.export_snapshot(), before);
+    assert_eq!(runtime.profile, SessionProfile::Ordinary);
+}
+
+#[test]
+fn handle_and_the_wire_agree_on_a_working_size_new_table() {
+    let request = DesignerRequest::NewTable {
+        occurrence_id: OCCURRENCE.to_owned(),
+        name: "Agreed".to_owned(),
+        columns: wire_columns().to_vec(),
+        profile: Some(DesignerProfile::WorkingSize),
+    };
+    let mut handled = DesignerRuntime::tracker(OCCURRENCE).unwrap();
+    let expected = handled.handle(request.clone()).unwrap();
+    let mut wire = Some(DesignerRuntime::tracker(OCCURRENCE).unwrap());
+    let reply = decode_wire(&process_wire_request(
+        &mut wire,
+        &serde_json::to_vec(&request).unwrap(),
+    ));
+    assert_eq!(reply, DesignerWireReply::Ok { response: expected });
 }

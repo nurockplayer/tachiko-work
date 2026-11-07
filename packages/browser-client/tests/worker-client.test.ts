@@ -334,3 +334,86 @@ describe("A1 translation transport", () => {
     await expect(client.translateA1Formula({...input, text: "SUM(B2:B3)"})).rejects.toMatchObject({failure: {code: "unsupported_range", span: {start: 0, end: 10}}});
   });
 });
+
+describe("working-size Worker transport", () => {
+  const openedWindow = {
+    profile: "working_size",
+    bootstrap: { title: "Working", revision: "resident/0", default_collection: "items", collections: [] },
+    window: {
+      revision: "resident/0",
+      collection: { id: "items", key: "items", entity_count: 0 },
+      columns: [], rows: [], total_rows: 0, unfiltered_rows: 0, start: 0,
+    },
+  };
+  const opened = {
+    bootstrap: openedWindow.bootstrap,
+    table: { revision: "resident/0", collection: { id: "items", key: "items", entity_count: 0 }, columns: [], rows: [] },
+  };
+  type Sent = { id: number; kind: string; [key: string]: unknown };
+
+  async function transport(response: Record<string, unknown>) {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    vi.stubGlobal("crypto", { randomUUID: () => "123e4567-e89b-42d3-a456-426614174000" });
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const sent: Sent[] = [];
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: Sent) => {
+        sent.push(request);
+        receive?.({ data: { id: request.id, ...response } } as MessageEvent);
+      },
+    } as unknown as Worker;
+    return { client: new WorkerDesignerClient(() => worker), sent };
+  }
+
+  const windowReply = { status: "ok", response: { type: "opened_window", payload: openedWindow } };
+  const openedReply = { status: "ok", response: { type: "opened", payload: opened } };
+
+  it("sends the profile on every working-size route and returns the window", async () => {
+    const { client, sent } = await transport(windowReply);
+    await expect(client.newTableWorkingSize("Working", [])).resolves.toEqual(openedWindow);
+    await expect(client.inspectProjectWorkingSize(new Uint8Array([1]).buffer)).resolves.toEqual(openedWindow);
+    await expect(client.openProjectWorkingSize(new Uint8Array([1]).buffer)).resolves.toEqual(openedWindow);
+    await expect(client.openCanonicalTreeWorkingSize([
+      { path: "manifest.json", bytes: new Uint8Array([1]).buffer },
+    ])).resolves.toEqual(openedWindow);
+    await expect(client.openLocalDocumentWorkingSize(new Uint8Array([1]).buffer)).resolves.toEqual(openedWindow);
+    await expect(client.openPortableRoWorkingSize(new Uint8Array([1]).buffer)).resolves.toEqual(openedWindow);
+    expect(sent).toHaveLength(6);
+    expect(sent[0]).toMatchObject({ kind: "command", request: { type: "new_table", profile: "working_size" } });
+    expect(sent[1]).toMatchObject({ kind: "inspect_project", profile: "working_size" });
+    expect(sent[2]).toMatchObject({ kind: "open_project", profile: "working_size" });
+    expect(sent[3]).toMatchObject({ kind: "open_project", profile: "working_size" });
+    expect(sent[4]).toMatchObject({ kind: "open_local_document", profile: "working_size" });
+    expect(sent[5]).toMatchObject({ kind: "open_portable_ro", profile: "working_size" });
+  });
+
+  it("leaves every ordinary route without a profile field", async () => {
+    const { client, sent } = await transport(openedReply);
+    await client.newTable("Ordinary", []);
+    await client.inspectProject(new Uint8Array([1]).buffer);
+    await client.openProject(new Uint8Array([1]).buffer);
+    await client.openCanonicalTree([{ path: "manifest.json", bytes: new Uint8Array([1]).buffer }]);
+    await client.openLocalDocument(new Uint8Array([1]).buffer);
+    await client.openPortableRo(new Uint8Array([1]).buffer);
+    expect(sent).toHaveLength(6);
+    expect(sent[0]!.request).not.toHaveProperty("profile");
+    for (const request of sent.slice(1)) expect(request).not.toHaveProperty("profile");
+  });
+
+  it("refuses a reply of another type", async () => {
+    const { client } = await transport(openedReply);
+    await expect(client.newTableWorkingSize("Working", [])).rejects.toThrow("Expected 'opened_window' response, received 'opened'.");
+  });
+
+  it("refuses a window with broken row presence", async () => {
+    const column = { id: "c1", key: "c1", display_name: "c1", field_type: "text", required: false };
+    const { client } = await transport({ status: "ok", response: {
+      type: "opened_window",
+      payload: { ...openedWindow, window: { ...openedWindow.window, columns: [column], rows: [{ id: "r1", fields: [] }] } },
+    } });
+    await expect(client.openProjectWorkingSize(new Uint8Array([1]).buffer)).rejects.toThrow("Invalid Worker sparse row presence.");
+  });
+});

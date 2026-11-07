@@ -218,6 +218,8 @@ pub enum DesignerRequest {
         occurrence_id: String,
         name: String,
         columns: Vec<NewTableColumnInput>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     AddColumn {
         expected_revision: String,
@@ -448,6 +450,7 @@ pub enum DesignerResponse {
     Bootstrap(BootstrapProjection),
     Capacity(CapacityProjection),
     Opened(Box<OpenedProjection>),
+    OpenedWindow(Box<OpenedWindowProjection>),
     Table(TableProjection),
     TableWindow(TableWindowProjection),
     LocatedInView(LocatedInViewProjection),
@@ -3065,15 +3068,12 @@ impl DesignerRuntime {
                 occurrence_id,
                 name,
                 columns,
+                profile,
             } => {
-                let candidate = Self::new_table(&occurrence_id, &name, &columns)?;
-                let opened = OpenedProjection {
-                    bootstrap: candidate.bootstrap_projection(),
-                    table: candidate.query_table(&candidate.default_collection)?,
-                };
-                ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+                let (candidate, response) =
+                    new_table_candidate(&occurrence_id, &name, &columns, profile)?;
                 *self = candidate;
-                Ok(DesignerResponse::Opened(Box::new(opened)))
+                Ok(response)
             }
             DesignerRequest::AddColumn {
                 expected_revision,
@@ -7694,6 +7694,41 @@ fn pasted_scalar_input(value: &Value, text: &str) -> Result<ScalarEditInput, Des
     }
 }
 
+/// The complete ordinary reply for one new project candidate. New project
+/// publication is still an ordinary wire operation, so its complete reply is
+/// proved before the caller replaces the resident occurrence.
+fn ordinary_new_project(
+    candidate: DesignerRuntime,
+) -> Result<(DesignerRuntime, DesignerResponse), DesignerError> {
+    let opened = OpenedProjection {
+        bootstrap: candidate.bootstrap_projection(),
+        table: candidate.query_table(&candidate.default_collection)?,
+    };
+    ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+    Ok((candidate, DesignerResponse::Opened(Box::new(opened))))
+}
+
+/// Build one new-table candidate and its opening reply for the requested
+/// profile. `handle` and the private wire path both use this so they cannot
+/// diverge. Only the caller replaces the resident occurrence, and only after
+/// `Ok`.
+fn new_table_candidate(
+    occurrence_id: &str,
+    name: &str,
+    columns: &[NewTableColumnInput],
+    profile: Option<DesignerProfile>,
+) -> Result<(DesignerRuntime, DesignerResponse), DesignerError> {
+    match profile {
+        None => ordinary_new_project(DesignerRuntime::new_table(occurrence_id, name, columns)?),
+        Some(DesignerProfile::WorkingSize) => {
+            let mut candidate =
+                DesignerRuntime::new_working_size_table(occurrence_id, name, columns)?;
+            let opened = candidate.opened_window()?;
+            Ok((candidate, DesignerResponse::OpenedWindow(Box::new(opened))))
+        }
+    }
+}
+
 /// Fully admit a canonical project candidate before replacing the occurrence.
 ///
 /// `occurrence_id` is a trusted host identity, not an identifier read from the
@@ -7890,6 +7925,17 @@ pub fn verify_portable_ro(input: &[u8]) -> Result<(), DesignerError> {
 /// The temporary admission occurrence is discarded together with its history.
 pub fn inspect_project(input: &[u8]) -> Result<OpenedProjection, DesignerError> {
     let (_, opened) = admit_project(input, PREFLIGHT_OCCURRENCE)?;
+    Ok(opened)
+}
+
+/// Inspect a fully admitted project as a working-size occurrence without
+/// replacing any resident occurrence.
+///
+/// # Errors
+/// Returns the same storage, profile, and window failures as working-size open.
+/// The temporary admission occurrence is discarded together with its history.
+pub fn inspect_project_working_size(input: &[u8]) -> Result<OpenedWindowProjection, DesignerError> {
+    let (_, opened) = admit_project_working_size(input, PREFLIGHT_OCCURRENCE)?;
     Ok(opened)
 }
 
@@ -8706,23 +8752,23 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                 _ => None,
             } {
                 let result = (match &request {
-                    DesignerRequest::NewTracker { .. } => DesignerRuntime::tracker(occurrence_id),
-                    DesignerRequest::NewBudget { .. } => DesignerRuntime::budget(occurrence_id),
-                    DesignerRequest::NewTable { name, columns, .. } => {
-                        DesignerRuntime::new_table(occurrence_id, name, columns)
+                    DesignerRequest::NewTracker { .. } => {
+                        DesignerRuntime::tracker(occurrence_id).and_then(ordinary_new_project)
                     }
+                    DesignerRequest::NewBudget { .. } => {
+                        DesignerRuntime::budget(occurrence_id).and_then(ordinary_new_project)
+                    }
+                    DesignerRequest::NewTable {
+                        name,
+                        columns,
+                        profile,
+                        ..
+                    } => new_table_candidate(occurrence_id, name, columns, *profile),
                     _ => unreachable!("only new project requests enter this branch"),
                 })
-                .and_then(|candidate| {
-                    let opened = OpenedProjection {
-                        bootstrap: candidate.bootstrap_projection(),
-                        table: candidate.query_table(&candidate.default_collection)?,
-                    };
-                    // New project publication is still an ordinary wire
-                    // operation; prove its complete reply before replacement.
-                    ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+                .map(|(candidate, response)| {
                     *runtime = Some(candidate);
-                    Ok(DesignerResponse::Opened(Box::new(opened)))
+                    response
                 });
                 return encode_reply(&match result {
                     Ok(response) => DesignerWireReply::Ok { response },

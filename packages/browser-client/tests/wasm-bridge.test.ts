@@ -155,3 +155,70 @@ describe("A1 translation WASM wire transport", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 });
+
+describe("working-size WASM project transport", () => {
+  async function arenaFixture() {
+    const memory = new WebAssembly.Memory({ initial: 66 });
+    const responseOffset = 4 * 1024 * 1024 + 8192;
+    const response = new TextEncoder().encode(JSON.stringify({
+      status: "ok",
+      response: { type: "opened_window", payload: { profile: "working_size", bootstrap: {}, window: {} } },
+    }));
+    new Uint8Array(memory.buffer, responseOffset, response.length).set(response);
+    const projectReserve = vi.fn(() => 4096);
+    const exports = {
+      memory,
+      tachiko_designer_request_reserve: vi.fn(() => 0),
+      tachiko_designer_project_reserve: projectReserve,
+      tachiko_designer_response_ptr: () => responseOffset,
+      tachiko_designer_response_len: () => response.length,
+      tachiko_designer_project_inspect: vi.fn(),
+      tachiko_designer_project_inspect_working_size: vi.fn(),
+      tachiko_designer_project_open: vi.fn(),
+      tachiko_designer_project_open_working_size: vi.fn(),
+      tachiko_designer_project_open_local_document: vi.fn(),
+      tachiko_designer_project_open_local_document_working_size: vi.fn(),
+      tachiko_designer_portable_ro_open: vi.fn(),
+      tachiko_designer_portable_ro_open_working_size: vi.fn(),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response()));
+    vi.spyOn(WebAssembly, "instantiateStreaming").mockResolvedValue({ instance: { exports }, module: {} });
+    return { bridge: await createDesignerWasmBridge("/runtime.wasm"), exports, projectReserve };
+  }
+
+  it.each([
+    ["inspectProjectWorkingSize", "tachiko_designer_project_inspect_working_size", "tachiko_designer_project_inspect", false],
+    ["openProjectWorkingSize", "tachiko_designer_project_open_working_size", "tachiko_designer_project_open", true],
+    ["openLocalDocumentWorkingSize", "tachiko_designer_project_open_local_document_working_size", "tachiko_designer_project_open_local_document", true],
+    ["openPortableRoWorkingSize", "tachiko_designer_portable_ro_open_working_size", "tachiko_designer_portable_ro_open", true],
+  ] as const)("%s calls only its own export", async (method, expected, raw, withIdentity) => {
+    const { bridge, exports } = await arenaFixture();
+    const reply = withIdentity
+      ? bridge[method](new Uint8Array([1, 2, 3]), "00000000-0000-4000-8000-000000000678")
+      : bridge[method](new Uint8Array([1, 2, 3]));
+    expect(reply.status).toBe("ok");
+    expect(exports[expected]).toHaveBeenCalledOnce();
+    expect(exports[raw]).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["inspectProjectWorkingSize", false],
+    ["openProjectWorkingSize", true],
+    ["openLocalDocumentWorkingSize", true],
+    ["openPortableRoWorkingSize", true],
+  ] as const)("%s refuses a too-large input before any export", async (method, withIdentity) => {
+    const { bridge, exports, projectReserve } = await arenaFixture();
+    const oversized = { byteLength: 64 * 1024 * 1024 + 1 } as unknown as Uint8Array;
+    const reply = withIdentity ? bridge[method](oversized, "occ") : bridge[method](oversized);
+    expect(reply).toMatchObject({ status: "error", error: { code: "request_too_large" } });
+    expect(projectReserve).not.toHaveBeenCalled();
+    for (const name of [
+      "tachiko_designer_project_inspect_working_size",
+      "tachiko_designer_project_open_working_size",
+      "tachiko_designer_project_open_local_document_working_size",
+      "tachiko_designer_portable_ro_open_working_size",
+    ] as const) {
+      expect(exports[name]).not.toHaveBeenCalled();
+    }
+  });
+});
