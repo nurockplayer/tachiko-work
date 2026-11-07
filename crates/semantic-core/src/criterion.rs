@@ -573,8 +573,7 @@ mod tests {
     /// Every text a test may be parsed from, plus the constructors that do not
     /// go through [`CriterionTest::parse`].
     fn tests() -> Vec<CriterionTest> {
-        let texts = texts();
-        let mut tests = texts
+        let mut tests = texts()
             .iter()
             .map(|text| CriterionTest::parse(text).expect("valid criterion"))
             .collect::<Vec<_>>();
@@ -686,7 +685,7 @@ mod tests {
                 if !test.matches(*cell) {
                     continue;
                 }
-                let cell_keys = cell.map_or_else(Vec::new, |cell| cell.keys());
+                let cell_keys = cell.map_or_else(Vec::new, CriterionCell::keys);
                 let Some(key) = keys.iter().find(|key| cell_keys.contains(key)) else {
                     panic!("{test:?} matches {cell:?} but none of {keys:?} is in {cell_keys:?}");
                 };

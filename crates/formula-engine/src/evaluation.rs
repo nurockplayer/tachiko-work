@@ -496,24 +496,21 @@ impl Evaluation<'_> {
         let document = self.document;
         let mut values = Vec::new();
         let mut matched = 0_usize;
-        match candidates {
-            Some(candidates) => {
-                for entity in candidates.iter().map(|id| &document.entities[id]) {
-                    if self.conditional_row(aggregate, criteria, tests, entity, &mut values)? {
-                        matched += 1;
-                    }
+        if let Some(candidates) = candidates {
+            for entity in candidates.iter().map(|id| &document.entities[id]) {
+                if self.conditional_row(aggregate, criteria, tests, entity, &mut values)? {
+                    matched += 1;
                 }
             }
-            None => {
-                let schema = &criteria[0].column.schema;
-                for entity in document
-                    .entities
-                    .values()
-                    .filter(|entity| entity.schema == *schema)
-                {
-                    if self.conditional_row(aggregate, criteria, tests, entity, &mut values)? {
-                        matched += 1;
-                    }
+        } else {
+            let schema = &criteria[0].column.schema;
+            for entity in document
+                .entities
+                .values()
+                .filter(|entity| entity.schema == *schema)
+            {
+                if self.conditional_row(aggregate, criteria, tests, entity, &mut values)? {
+                    matched += 1;
                 }
             }
         }
