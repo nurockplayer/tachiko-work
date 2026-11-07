@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 use tachiko_designer_runtime::{
     ColumnTotalsProjection, ComparisonOperator, DesignerError, DesignerRequest, DesignerResponse,
     DesignerRuntime, LocateInViewResult, LocatedInViewProjection, ScalarEditInput, ScalarLiteral,
-    SortDirection, TableView, TableWindowProjection, ViewFilter, ViewSortKey, process_wire_request,
+    SortDirection, TableView, TableWindowProjection, ViewFilter, ViewSortKey, ViewTextOrder,
+    process_wire_request,
 };
 use tachiko_workspace_engine::{
     Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
@@ -393,6 +394,7 @@ fn sorted(field: &str, direction: SortDirection) -> TableView {
         sort: vec![ViewSortKey {
             field: field.to_owned(),
             direction,
+            text_order: ViewTextOrder::Bytes,
         }],
         ..TableView::default()
     }
@@ -521,10 +523,12 @@ fn sorts_pin_blanks_last_ties_and_calculated_values() {
             ViewSortKey {
                 field: "f02_group".to_owned(),
                 direction: SortDirection::Asc,
+                text_order: ViewTextOrder::Bytes,
             },
             ViewSortKey {
                 field: "f03_amount".to_owned(),
                 direction: SortDirection::Desc,
+                text_order: ViewTextOrder::Bytes,
             },
         ],
         ..TableView::default()
