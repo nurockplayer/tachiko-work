@@ -4567,10 +4567,9 @@ impl DesignerRuntime {
         let mut query = self.query_fields(expected_revision, std::slice::from_ref(target))?;
         let value = query.fields.remove(0);
         let field = target.as_field_ref();
-        let edges = self.session.direct_field_dependencies();
+        let edges = self.session.direct_field_dependencies(&field);
         let mut dependencies = edges
-            .get(&field)
-            .map(|dependencies| dependencies.iter().cloned().collect::<Vec<_>>())
+            .map(|dependencies| dependencies.into_iter().collect::<Vec<_>>())
             .unwrap_or_default();
         // A column total's edges include every row of its column, blank slots
         // too (they keep invalidation exact); evaluation skips blanks, so the
@@ -4602,10 +4601,11 @@ impl DesignerRuntime {
                 value: self.project_field(dependency),
             })
             .collect();
-        let downstream_impacts = edges
-            .iter()
-            .filter(|(_, dependencies)| dependencies.contains(&field))
-            .map(|(dependent, _)| field_target(dependent))
+        let downstream_impacts = self
+            .session
+            .direct_field_dependents(&field)
+            .into_iter()
+            .map(|dependent| field_target(&dependent))
             .collect();
         let projection = FieldExplanationProjection {
             revision: query.revision,

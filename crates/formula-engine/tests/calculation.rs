@@ -216,7 +216,7 @@ fn dependency_impact_is_direct_and_transitive() {
     );
     assert_eq!(
         calculation.dependencies_of(&FieldRef::new("sword", "burst")),
-        Some(&BTreeSet::from([FieldRef::new("sword", "dps")]))
+        Some(BTreeSet::from([FieldRef::new("sword", "dps")]))
     );
 }
 
@@ -561,7 +561,7 @@ fn generated_dags_match_an_independent_oracle_and_survive_key_renames() {
                 "graph {graph}, field {index}"
             );
         }
-        assert_eq!(calculation.dependencies(), &expected_dependencies);
+        assert_eq!(&calculation.dependencies(), &expected_dependencies);
         for _ in 0..2 {
             assert_eq!(calculate(&document).unwrap(), calculation, "graph {graph}");
         }

@@ -724,9 +724,9 @@ fn complete_oracle_record() -> Record {
         mix_calculation_failure(&mut fingerprint, failure);
     }
     for (subject, targets) in failures.dependencies() {
-        mix_field_ref(&mut fingerprint, subject);
+        mix_field_ref(&mut fingerprint, &subject);
         for target in targets {
-            mix_field_ref(&mut fingerprint, target);
+            mix_field_ref(&mut fingerprint, &target);
         }
     }
     Record {

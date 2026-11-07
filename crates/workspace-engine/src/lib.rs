@@ -841,9 +841,7 @@ pub fn analyze_formula(
         })?;
     let dependencies = calculation
         .dependencies_of(field)
-        .map_or_else(Vec::new, |dependencies| {
-            dependencies.iter().cloned().collect()
-        });
+        .map_or_else(Vec::new, |dependencies| dependencies.into_iter().collect());
 
     Ok(FormulaAnalysis {
         field: field.clone(),
@@ -955,9 +953,7 @@ pub fn analyze_field(
     };
     let direct_dependencies = calculation
         .dependencies_of(field)
-        .map_or_else(Vec::new, |dependencies| {
-            dependencies.iter().cloned().collect()
-        });
+        .map_or_else(Vec::new, |dependencies| dependencies.into_iter().collect());
     let upstream_dependencies = transitive_dependencies(&calculation, field);
     let downstream_impacts = calculation
         .affected_by(field)
@@ -1028,10 +1024,7 @@ pub fn analyze_validation(
 }
 
 fn transitive_dependencies(calculation: &Calculation, field: &FieldRef) -> Vec<FieldRef> {
-    let mut pending = calculation
-        .dependencies_of(field)
-        .cloned()
-        .unwrap_or_default();
+    let mut pending = calculation.dependencies_of(field).unwrap_or_default();
     let mut dependencies = BTreeSet::new();
     while let Some(dependency) = pending.pop_first() {
         if !dependencies.insert(dependency.clone()) {
@@ -1040,9 +1033,8 @@ fn transitive_dependencies(calculation: &Calculation, field: &FieldRef) -> Vec<F
         if let Some(nested) = calculation.dependencies_of(&dependency) {
             pending.extend(
                 nested
-                    .iter()
-                    .filter(|candidate| !dependencies.contains(*candidate))
-                    .cloned(),
+                    .into_iter()
+                    .filter(|candidate| !dependencies.contains(candidate)),
             );
         }
     }
@@ -1452,9 +1444,7 @@ pub fn explain_field(
     };
     let dependencies = calculation
         .dependencies_of(&field)
-        .map_or_else(Vec::new, |dependencies| {
-            dependencies.iter().cloned().collect()
-        });
+        .map_or_else(Vec::new, |dependencies| dependencies.into_iter().collect());
     let index = AddressIndex::build(document)?;
     let dependency_addresses = dependencies
         .iter()
