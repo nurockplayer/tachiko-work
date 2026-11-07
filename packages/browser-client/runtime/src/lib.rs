@@ -7694,12 +7694,24 @@ fn pasted_scalar_input(value: &Value, text: &str) -> Result<ScalarEditInput, Des
     }
 }
 
+/// The complete ordinary reply for one new project candidate. New project
+/// publication is still an ordinary wire operation, so its complete reply is
+/// proved before the caller replaces the resident occurrence.
+fn ordinary_new_project(
+    candidate: DesignerRuntime,
+) -> Result<(DesignerRuntime, DesignerResponse), DesignerError> {
+    let opened = OpenedProjection {
+        bootstrap: candidate.bootstrap_projection(),
+        table: candidate.query_table(&candidate.default_collection)?,
+    };
+    ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+    Ok((candidate, DesignerResponse::Opened(Box::new(opened))))
+}
+
 /// Build one new-table candidate and its opening reply for the requested
 /// profile. `handle` and the private wire path both use this so they cannot
-/// diverge.
-///
-/// A candidate is returned even when its reply fails its own byte budget: only
-/// the caller replaces the resident occurrence, and only after `Ok`.
+/// diverge. Only the caller replaces the resident occurrence, and only after
+/// `Ok`.
 fn new_table_candidate(
     occurrence_id: &str,
     name: &str,
@@ -7707,15 +7719,7 @@ fn new_table_candidate(
     profile: Option<DesignerProfile>,
 ) -> Result<(DesignerRuntime, DesignerResponse), DesignerError> {
     match profile {
-        None => {
-            let candidate = DesignerRuntime::new_table(occurrence_id, name, columns)?;
-            let opened = OpenedProjection {
-                bootstrap: candidate.bootstrap_projection(),
-                table: candidate.query_table(&candidate.default_collection)?,
-            };
-            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
-            Ok((candidate, DesignerResponse::Opened(Box::new(opened))))
-        }
+        None => ordinary_new_project(DesignerRuntime::new_table(occurrence_id, name, columns)?),
         Some(DesignerProfile::WorkingSize) => {
             let mut candidate =
                 DesignerRuntime::new_working_size_table(occurrence_id, name, columns)?;
@@ -8749,26 +8753,11 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
             } {
                 let result = (match &request {
                     DesignerRequest::NewTracker { .. } => {
-                        DesignerRuntime::tracker(occurrence_id).and_then(|candidate| {
-                            let opened = OpenedProjection {
-                                bootstrap: candidate.bootstrap_projection(),
-                                table: candidate.query_table("tracker")?,
-                            };
-                            // New project publication is still an ordinary wire
-                            // operation; prove its complete reply before replacement.
-                            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
-                            Ok((candidate, DesignerResponse::Opened(Box::new(opened))))
-                        })
+                        DesignerRuntime::tracker(occurrence_id).and_then(ordinary_new_project)
                     }
-                    DesignerRequest::NewBudget { .. } => DesignerRuntime::budget(occurrence_id)
-                        .and_then(|candidate| {
-                            let opened = OpenedProjection {
-                                bootstrap: candidate.bootstrap_projection(),
-                                table: candidate.query_table(&candidate.default_collection)?,
-                            };
-                            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
-                            Ok((candidate, DesignerResponse::Opened(Box::new(opened))))
-                        }),
+                    DesignerRequest::NewBudget { .. } => {
+                        DesignerRuntime::budget(occurrence_id).and_then(ordinary_new_project)
+                    }
                     DesignerRequest::NewTable {
                         name,
                         columns,
