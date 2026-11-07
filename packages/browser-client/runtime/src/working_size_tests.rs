@@ -3456,7 +3456,10 @@ fn an_over_limit_document_is_refused_at_working_size_only() {
     let after_bound = bound_of(&after, &empty_presentation());
     assert!(after_bound > super::capacity::MAX_WORKING_SAVED_BYTES);
 
-    let error = DesignerRuntime::from_document_working_size(after.clone(), OCCURRENCE).unwrap_err();
+    let error = match DesignerRuntime::from_document_working_size(after.clone(), OCCURRENCE) {
+        Ok(_) => panic!("an over-limit document must not open at working size"),
+        Err(error) => error,
+    };
     assert_capacity_refusal(
         &error,
         CapacityLimit::SavedBytes,
@@ -3464,15 +3467,26 @@ fn an_over_limit_document_is_refused_at_working_size_only() {
         after_bound,
     );
 
-    // The ordinary profile is unchanged: it still admits what its own limits admit.
-    let mut ordinary = DesignerRuntime::from_document(after, OCCURRENCE).unwrap();
-    edited(
-        &mut ordinary,
-        target("r00000", "c0"),
-        ScalarEditInput::Text {
-            value: "still editable".to_owned(),
-        },
-    );
+    // The ordinary profile is unchanged. Its own stored-text projection bound is
+    // stricter than the save bound, so it refuses this document for that reason,
+    // never through `saved_bytes`; a document its limits admit still opens and
+    // edits (the next test).
+    match DesignerRuntime::from_document(after, OCCURRENCE) {
+        Ok(mut ordinary) => {
+            edited(
+                &mut ordinary,
+                target("r00000", "c0"),
+                ScalarEditInput::Text {
+                    value: "still editable".to_owned(),
+                },
+            );
+        }
+        Err(DesignerError::CapacityExceeded(CapacityExceeded {
+            limit: CapacityLimit::SavedBytes,
+            ..
+        })) => panic!("an ordinary session must not use the saved-bytes bound"),
+        Err(_) => {}
+    }
 }
 
 #[test]
