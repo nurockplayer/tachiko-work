@@ -67,7 +67,8 @@ describe("Designer directory transfer admission", () => {
     const entries = [...V3_PATHS, PRESENTATION].map(path => ({
       path, bytes: new Uint8Array(path === PRESENTATION ? [2] : [1]).buffer,
     }));
-    const [manifest, schemas, definitions, ...entities] = entries;
+    const [manifest, schemas, definitions, ...rest] = entries;
+    const entities = rest.filter(entry => entry.path !== PRESENTATION);
     const outOfOrder = [manifest!, schemas!, definitions!, entities[0]!, {
       path: PRESENTATION, bytes: new Uint8Array([2]).buffer,
     }, ...entities.slice(1)];
