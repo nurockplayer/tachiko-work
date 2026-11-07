@@ -59,7 +59,11 @@ const NO_SYMBOL_CODE = "CHF";
 const VALUES = [
   0, -0, 1, -1, 0.5, 1.005, 0.125, 2.5, 1234.5, 1234.505, -1234.5, -0.001,
   1455.7999999999997, 999.995, 1e15, 1e21, 1e-7, Number.MAX_VALUE,
-  Number.MIN_VALUE,
+  Number.MIN_VALUE, 1e23,
+  // Two equally short spellings: JavaScript takes the even one.
+  100000000000000.125, 100000000000000.375, 100000000000000.625,
+  100000000000000.875, 1125899906842624.25, 1125899906842624.75,
+  1125899906842625.25, 1125899906842625.75,
 ];
 
 const plain = (decimals, thousands_separator) => ({

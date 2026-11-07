@@ -1616,6 +1616,771 @@
    "expected": "CHF 0.00"
   },
   {
+   "value": "1e+23",
+   "format": null,
+   "expected": "1e+23"
+  },
+  {
+   "value": "1e+23",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "100,000,000,000,000,000,000,000.00"
+  },
+  {
+   "value": "1e+23",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "100000000000000000000000.00"
+  },
+  {
+   "value": "1e+23",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "10,000,000,000,000,000,000,000,000.00%"
+  },
+  {
+   "value": "1e+23",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "10000000000000000000000000.00%"
+  },
+  {
+   "value": "1e+23",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$100,000,000,000,000,000,000,000.00"
+  },
+  {
+   "value": "1e+23",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$100000000000000000000000.00"
+  },
+  {
+   "value": "1e+23",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 100,000,000,000,000,000,000,000.00"
+  },
+  {
+   "value": "100000000000000.12",
+   "format": null,
+   "expected": "100000000000000"
+  },
+  {
+   "value": "100000000000000.12",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "100,000,000,000,000.12"
+  },
+  {
+   "value": "100000000000000.12",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "100000000000000.12"
+  },
+  {
+   "value": "100000000000000.12",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "10,000,000,000,000,012.00%"
+  },
+  {
+   "value": "100000000000000.12",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "10000000000000012.00%"
+  },
+  {
+   "value": "100000000000000.12",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$100,000,000,000,000.12"
+  },
+  {
+   "value": "100000000000000.12",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$100000000000000.12"
+  },
+  {
+   "value": "100000000000000.12",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 100,000,000,000,000.12"
+  },
+  {
+   "value": "100000000000000.38",
+   "format": null,
+   "expected": "100000000000000"
+  },
+  {
+   "value": "100000000000000.38",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "100,000,000,000,000.38"
+  },
+  {
+   "value": "100000000000000.38",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "100000000000000.38"
+  },
+  {
+   "value": "100000000000000.38",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "10,000,000,000,000,038.00%"
+  },
+  {
+   "value": "100000000000000.38",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "10000000000000038.00%"
+  },
+  {
+   "value": "100000000000000.38",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$100,000,000,000,000.38"
+  },
+  {
+   "value": "100000000000000.38",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$100000000000000.38"
+  },
+  {
+   "value": "100000000000000.38",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 100,000,000,000,000.38"
+  },
+  {
+   "value": "100000000000000.62",
+   "format": null,
+   "expected": "100000000000001"
+  },
+  {
+   "value": "100000000000000.62",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "100,000,000,000,000.62"
+  },
+  {
+   "value": "100000000000000.62",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "100000000000000.62"
+  },
+  {
+   "value": "100000000000000.62",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "10,000,000,000,000,062.00%"
+  },
+  {
+   "value": "100000000000000.62",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "10000000000000062.00%"
+  },
+  {
+   "value": "100000000000000.62",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$100,000,000,000,000.62"
+  },
+  {
+   "value": "100000000000000.62",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$100000000000000.62"
+  },
+  {
+   "value": "100000000000000.62",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 100,000,000,000,000.62"
+  },
+  {
+   "value": "100000000000000.88",
+   "format": null,
+   "expected": "100000000000001"
+  },
+  {
+   "value": "100000000000000.88",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "100,000,000,000,000.88"
+  },
+  {
+   "value": "100000000000000.88",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "100000000000000.88"
+  },
+  {
+   "value": "100000000000000.88",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "10,000,000,000,000,088.00%"
+  },
+  {
+   "value": "100000000000000.88",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "10000000000000088.00%"
+  },
+  {
+   "value": "100000000000000.88",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$100,000,000,000,000.88"
+  },
+  {
+   "value": "100000000000000.88",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$100000000000000.88"
+  },
+  {
+   "value": "100000000000000.88",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 100,000,000,000,000.88"
+  },
+  {
+   "value": "1125899906842624.2",
+   "format": null,
+   "expected": "1125899906842620"
+  },
+  {
+   "value": "1125899906842624.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "1,125,899,906,842,624.20"
+  },
+  {
+   "value": "1125899906842624.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "1125899906842624.20"
+  },
+  {
+   "value": "1125899906842624.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "112,589,990,684,262,420.00%"
+  },
+  {
+   "value": "1125899906842624.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "112589990684262420.00%"
+  },
+  {
+   "value": "1125899906842624.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$1,125,899,906,842,624.20"
+  },
+  {
+   "value": "1125899906842624.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$1125899906842624.20"
+  },
+  {
+   "value": "1125899906842624.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 1,125,899,906,842,624.20"
+  },
+  {
+   "value": "1125899906842624.8",
+   "format": null,
+   "expected": "1125899906842620"
+  },
+  {
+   "value": "1125899906842624.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "1,125,899,906,842,624.80"
+  },
+  {
+   "value": "1125899906842624.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "1125899906842624.80"
+  },
+  {
+   "value": "1125899906842624.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "112,589,990,684,262,480.00%"
+  },
+  {
+   "value": "1125899906842624.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "112589990684262480.00%"
+  },
+  {
+   "value": "1125899906842624.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$1,125,899,906,842,624.80"
+  },
+  {
+   "value": "1125899906842624.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$1125899906842624.80"
+  },
+  {
+   "value": "1125899906842624.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 1,125,899,906,842,624.80"
+  },
+  {
+   "value": "1125899906842625.2",
+   "format": null,
+   "expected": "1125899906842630"
+  },
+  {
+   "value": "1125899906842625.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "1,125,899,906,842,625.20"
+  },
+  {
+   "value": "1125899906842625.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "1125899906842625.20"
+  },
+  {
+   "value": "1125899906842625.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "112,589,990,684,262,520.00%"
+  },
+  {
+   "value": "1125899906842625.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "112589990684262520.00%"
+  },
+  {
+   "value": "1125899906842625.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$1,125,899,906,842,625.20"
+  },
+  {
+   "value": "1125899906842625.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$1125899906842625.20"
+  },
+  {
+   "value": "1125899906842625.2",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 1,125,899,906,842,625.20"
+  },
+  {
+   "value": "1125899906842625.8",
+   "format": null,
+   "expected": "1125899906842630"
+  },
+  {
+   "value": "1125899906842625.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": true
+   },
+   "expected": "1,125,899,906,842,625.80"
+  },
+  {
+   "value": "1125899906842625.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "plain"
+    },
+    "thousands_separator": false
+   },
+   "expected": "1125899906842625.80"
+  },
+  {
+   "value": "1125899906842625.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": true
+   },
+   "expected": "112,589,990,684,262,580.00%"
+  },
+  {
+   "value": "1125899906842625.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "percent"
+    },
+    "thousands_separator": false
+   },
+   "expected": "112589990684262580.00%"
+  },
+  {
+   "value": "1125899906842625.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": true
+   },
+   "expected": "$1,125,899,906,842,625.80"
+  },
+  {
+   "value": "1125899906842625.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "USD"
+    },
+    "thousands_separator": false
+   },
+   "expected": "$1125899906842625.80"
+  },
+  {
+   "value": "1125899906842625.8",
+   "format": {
+    "decimals": 2,
+    "kind": {
+     "type": "currency",
+     "code": "CHF"
+    },
+    "thousands_separator": true
+   },
+   "expected": "CHF 1,125,899,906,842,625.80"
+  },
+  {
    "value": "0.125",
    "format": {
     "decimals": 0,

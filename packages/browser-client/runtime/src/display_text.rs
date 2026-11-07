@@ -195,9 +195,41 @@ fn shortest_decimal(magnitude: f64) -> Decimal {
         .chars()
         .filter(|character| *character != '.')
         .collect::<String>();
-    Decimal {
+    let shortest = Decimal {
         digits,
         point: exponent + 1,
+    };
+    // Only a 16- or 17-digit spelling can have an equally short neighbour.
+    if shortest.digits.len() >= 16 {
+        closest_spelling(magnitude, shortest)
+    } else {
+        shortest
+    }
+}
+
+/// Among spellings of the same length, JavaScript takes the one closest to the
+/// exact value and the even one on a tie; `LowerExp` can round a tie up.
+fn closest_spelling(magnitude: f64, shortest: Decimal) -> Decimal {
+    let exact = exact_decimal(magnitude);
+    let length = shortest.digits.len();
+    if exact.digits.len() <= length {
+        return shortest;
+    }
+    let mut digits = exact.digits[..length].to_owned();
+    let rest = &exact.digits[length..];
+    let round_up = match rest.as_bytes()[0] {
+        b'5' if rest.len() == 1 => digits.as_bytes()[length - 1] % 2 == 1,
+        next => next >= b'5',
+    };
+    if round_up {
+        increment(&mut digits);
+    }
+    if digits.len() != length {
+        return shortest;
+    }
+    Decimal {
+        digits: digits.trim_end_matches('0').to_owned(),
+        point: shortest.point,
     }
 }
 
