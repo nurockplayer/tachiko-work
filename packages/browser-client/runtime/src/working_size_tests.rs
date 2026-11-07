@@ -2905,14 +2905,6 @@ fn real_saves(document: &Document, presentation: &PresentationStore) -> (usize, 
 fn assert_bound_covers(name: &str, document: &Document, presentation: &PresentationStore) -> usize {
     let bound = bound_of(document, presentation);
     let (bundle, portable) = real_saves(document, presentation);
-    let parts = super::save_size::saved_bytes_parts(document);
-    let tree = encode_roproj_v3_with_presentation(document, presentation).unwrap();
-    let files = tree
-        .files()
-        .iter()
-        .map(|file| (file.path(), file.bytes().len()))
-        .collect::<Vec<_>>();
-    eprintln!("PARTS|{name}|{parts:?}|files={files:?}");
     assert!(
         bound >= bundle,
         "{name}: bound {bound} < project save {bundle}"
@@ -2921,7 +2913,6 @@ fn assert_bound_covers(name: &str, document: &Document, presentation: &Presentat
         bound >= portable,
         "{name}: bound {bound} < portable save {portable}"
     );
-    eprintln!("SAVED|{name}|bound={bound}|project={bundle}|portable={portable}");
     bound
 }
 

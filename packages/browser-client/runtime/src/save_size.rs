@@ -45,16 +45,6 @@ pub(crate) fn presentation_saved_bytes(store: &PresentationStore) -> Result<usiz
 }
 
 #[cfg(test)]
-pub(crate) fn saved_bytes_parts(document: &Document) -> (usize, usize, usize, usize) {
-    (
-        manifest_bytes(document),
-        schemas_bytes(document),
-        definitions_bytes(document),
-        entities_bytes(document),
-    )
-}
-
-#[cfg(test)]
 thread_local! {
     static SAVED_BOUND_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
