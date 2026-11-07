@@ -155,6 +155,10 @@ Other merged cells stay a disclosed import boundary with a ledger finding.
   palette holds up to 4,096 styles. Editing past a bound refuses with a typed capacity
   failure. An import past a bound keeps its values and drops the style with a ledger
   finding, as #678 decided.
+- **A merge past a bound:** two valid sides can add up to more than a bound, and that
+  must not block the merge. The prune above also drops, in canonical order, rules past
+  64 by rank and styles past 4,096 by ID with the records that use them. The merge
+  report lists what went, and the values stay.
 - **Older representations:** direct-ro/v2 and roproj/v1 and v2 writers refuse, under
   ADR-0046. CSV carries no styles and keeps its existing disclosure.
 - **Interop metadata:** once import and export use this store, metadata stops carrying
