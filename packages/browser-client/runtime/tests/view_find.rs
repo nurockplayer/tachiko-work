@@ -197,6 +197,10 @@ fn found(entity: &str, field: &str, row: usize, ordinal: usize) -> FoundCell {
         entity: entity.to_owned(),
         field: field.to_owned(),
         row,
+        // This fixture numbers its entity ids by stored position: e01 is 1.
+        position: entity[1..]
+            .parse()
+            .expect("fixture entity ids are numbered"),
         ordinal,
     }
 }

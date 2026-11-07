@@ -542,6 +542,10 @@ pub struct LocatedInViewProjection {
     /// `result` is [`LocateInViewResult::Found`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
+    /// One-based stored position in the collection, present exactly when
+    /// `index` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<usize>,
 }
 
 /// The distinct display texts of one column inside a view, in Sheet's list
@@ -579,13 +583,15 @@ pub enum FindDirection {
     Previous,
 }
 
-/// One matching cell: its entity, column, zero-based view row index and
-/// zero-based ordinal among every match in the view.
+/// One matching cell: its entity, column, zero-based view row index,
+/// one-based stored row position and zero-based ordinal among every match in
+/// the view.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FoundCell {
     pub entity: String,
     pub field: String,
     pub row: usize,
+    pub position: usize,
     pub ordinal: usize,
 }
 
@@ -1119,6 +1125,11 @@ pub struct ColumnProjection {
 pub struct RowProjection {
     pub id: String,
     pub key: String,
+    /// One-based stored position in the collection. A window sets it so a host
+    /// keeps the row number a filter or view sort would otherwise change;
+    /// every other reply omits the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<usize>,
     /// Declared fields without a value, in column presentation order.
     /// `fields` retains its sparse present-value payload; absence is never a placeholder.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -2735,6 +2746,7 @@ fn find_view_matches(
                     entity: entities[*entity_row].as_str().to_owned(),
                     field: field.clone(),
                     row,
+                    position: *entity_row + 1,
                     ordinal: matches.len(),
                 },
             ));
@@ -3686,6 +3698,7 @@ impl DesignerRuntime {
                 .map(|entity| RowProjection {
                     id: entity.id.to_string(),
                     key: entity.key.to_string(),
+                    position: None,
                     blank_fields: blank_field_ids(entity, spec),
                     fields: spec
                         .columns
@@ -3759,6 +3772,7 @@ impl DesignerRuntime {
         Ok(RowProjection {
             id: entity.id.to_string(),
             key: entity.key.to_string(),
+            position: None,
             blank_fields: blank_field_ids(entity, spec),
             fields,
         })
@@ -3810,7 +3824,8 @@ impl DesignerRuntime {
                 .map_err(|error| view_encoding_failure("column_totals", &error))?
                 .len(),
         );
-        let rows = self.build_window_rows(spec, &entities, &mut used, display)?;
+        let rows =
+            self.build_window_rows(spec, &order[start..end], &entities, &mut used, display)?;
         Ok(TableWindowProjection {
             revision,
             tracker_profile: is_tracker_spec(spec).then_some(true),
@@ -3858,6 +3873,7 @@ impl DesignerRuntime {
                 LocateInViewResult::FilteredOut
             },
             index,
+            position: index.map(|_| row + 1),
         })
     }
 
@@ -4412,6 +4428,7 @@ impl DesignerRuntime {
     fn build_window_rows(
         &self,
         spec: &CollectionSpec,
+        stored_positions: &[usize],
         entities_in_order: &[EntityId],
         used: &mut usize,
         display: bool,
@@ -4424,7 +4441,7 @@ impl DesignerRuntime {
             .collect::<BTreeMap<_, _>>();
         let mut rows = Vec::with_capacity(entities_in_order.len());
         let mut targets = Vec::with_capacity(spec.columns.len());
-        for id in entities_in_order {
+        for (stored_position, id) in stored_positions.iter().zip(entities_in_order) {
             let entity = row_of
                 .remove(id)
                 .ok_or_else(|| DesignerError::UnknownEntity {
@@ -4432,6 +4449,9 @@ impl DesignerRuntime {
                     entity: id.to_string(),
                 })?;
             let mut row = self.build_row(spec, entity, &mut targets)?;
+            // The view reorders and hides rows; the stored position is what a
+            // positional reference names. Set it before the bytes are counted.
+            row.position = Some(*stored_position + 1);
             if display {
                 // Set the text before the row's bytes are counted, so an
                 // oversized reply still refuses.
@@ -13057,6 +13077,7 @@ mod tests {
         super::RowProjection {
             id: id.to_owned(),
             key: id.to_owned(),
+            position: None,
             blank_fields: Vec::new(),
             fields: vec![super::FieldProjection {
                 blank: false,
@@ -13081,6 +13102,7 @@ mod tests {
         let blank = super::RowProjection {
             id: "blank".to_owned(),
             key: "blank".to_owned(),
+            position: None,
             blank_fields: vec!["amount".to_owned()],
             fields: Vec::new(),
         };

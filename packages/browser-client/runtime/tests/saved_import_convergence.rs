@@ -463,6 +463,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 blank_fields: Vec::new(),
                 id: entity.id.to_string(),
                 key: entity.key.to_string(),
+                position: None,
                 fields: schema
                     .fields
                     .values()
