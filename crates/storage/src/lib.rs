@@ -5,6 +5,7 @@ mod legacy_direct_ro;
 mod migration;
 mod number_format;
 mod portable_package;
+mod presentation;
 mod roproj;
 mod strict_json;
 
@@ -19,6 +20,8 @@ use direct_ro::v2::{CodecError as V2CodecError, DocumentV2};
 use strict_json::{FrontendError, VersionToken, inspect};
 use tachiko_semantic_core::{Diagnostic, Document, validate_document};
 use thiserror::Error;
+
+pub use presentation::{decode_presentation, encode_presentation, style_id};
 
 pub use portable_package::{
     PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES, PortablePackageError, VerifiedPortablePackageV1,

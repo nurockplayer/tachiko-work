@@ -124,6 +124,11 @@ export type ColumnProjection = {
 export type TableRowProjection = {
   id: string;
   key: string;
+  /**
+   * One-based stored row position, set only by a window. A host shows this
+   * number and uses it for A1 geometry, never the displayed row index.
+   */
+  position?: number;
   /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
   blank_fields?: string[];
   fields: FieldProjection[];
@@ -216,11 +221,16 @@ export type TableWindowProjection = {
   column_totals?: Record<string, number | null>;
 };
 
-/** Zero-based position in the filtered, sorted view; `index` appears only when found. */
+/**
+ * Zero-based position in the filtered, sorted view; `index` appears only when
+ * found. `position` is the one-based stored row position and appears exactly
+ * with `index`.
+ */
 export type LocatedInViewProjection = {
   revision: string;
   result: "found" | "filtered_out";
   index?: number;
+  position?: number;
 };
 
 /**
@@ -242,11 +252,12 @@ export type FindPosition = { row: number; field: string };
 /** Which way Find walks from `FindPosition`, wrapping at either end. */
 export type FindDirection = "next" | "previous";
 
-/** One matching cell: its entity, column, zero-based view row and match ordinal. */
+/** One matching cell: its entity, column, zero-based view row, one-based stored row position and match ordinal. */
 export type FoundCell = {
   entity: string;
   field: string;
   row: number;
+  position: number;
   ordinal: number;
 };
 

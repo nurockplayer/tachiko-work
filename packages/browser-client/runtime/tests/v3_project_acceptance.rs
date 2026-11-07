@@ -1226,6 +1226,7 @@ fn independent_opened_projection(
             blank_fields: Vec::new(),
             id: row_id.to_owned(),
             key: row_key.to_owned(),
+            position: None,
             fields: values
                 .into_iter()
                 .enumerate()
