@@ -1121,7 +1121,7 @@ impl RetainedCalculationState {
         // dirties are recomputed, which is safe.
         let root_schemas = dirty_roots
             .iter()
-            .filter_map(|root| graph.schema_of(document, &root.entity))
+            .flat_map(|root| graph.schemas_of(document, &root.entity))
             .collect::<BTreeSet<_>>();
         for column in graph.tracked_columns() {
             if root_schemas.contains(&column.schema) {
@@ -1141,7 +1141,7 @@ impl RetainedCalculationState {
         let (old_dependents, old_edges) = self.graph.reverse_closure(dirty_roots, false);
         let mut touched_schemas = BTreeSet::new();
         for root in dirty_roots {
-            touched_schemas.extend(self.graph.schema_of(document, &root.entity));
+            touched_schemas.extend(self.graph.schemas_of(document, &root.entity));
             self.graph.remember_entity(document, &root.entity);
             self.graph.replace_formula(document, root);
         }
@@ -1625,7 +1625,6 @@ impl Calculation {
     ) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
         self.graph.reaching_fields(changed, targets)
     }
-
 }
 
 #[derive(Clone, Debug, Error, PartialEq)]
@@ -1874,16 +1873,19 @@ impl DependencyGraph {
     /// Recompute the member slots of every column the document's row set may
     /// have changed.
     fn refresh_column_slots(&mut self, document: &Document, columns: &BTreeSet<ColumnRef>) {
+        // Clear every column before refilling any: a row moved between two of
+        // them must not lose its new slot when its old column is cleared.
         for column in columns {
-            if !self.column_readers.contains_key(column) {
-                continue;
-            }
             if let Some(previous) = self.column_slots.remove(column) {
                 for slot in previous {
                     self.slot_columns.remove(&slot);
                 }
             }
-            self.ensure_column_slots(document, column);
+        }
+        for column in columns {
+            if self.column_readers.contains_key(column) {
+                self.ensure_column_slots(document, column);
+            }
         }
     }
 
@@ -1900,16 +1902,20 @@ impl DependencyGraph {
         self.entity_schemas.remove(entity);
     }
 
-    fn schema_of(
+    /// The schemas a root's row belongs to on either side of this update: the
+    /// retained one and the current one differ when the row moved, and it may
+    /// exist on only one side when it was inserted or removed.
+    fn schemas_of(
         &self,
         document: &Document,
         entity: &tachiko_semantic_core::EntityId,
-    ) -> Option<tachiko_semantic_core::SchemaId> {
-        document
+    ) -> impl Iterator<Item = tachiko_semantic_core::SchemaId> {
+        let retained = self.entity_schemas.get(entity).cloned();
+        let current = document
             .entities
             .get(entity)
-            .map(|entity| entity.schema.clone())
-            .or_else(|| self.entity_schemas.get(entity).cloned())
+            .map(|entity| entity.schema.clone());
+        retained.into_iter().chain(current)
     }
 
     fn formulas(&self) -> impl Iterator<Item = &FieldRef> {

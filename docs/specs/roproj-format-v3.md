@@ -31,6 +31,9 @@ future edits to v2 do not alter v3. Except for the explicit pre-release
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
 supersession below, an incompatible change requires a new representation
 version and Accepted authority. ADR-0043 selects no v4 or down-conversion.
+[ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) extends
+that exception to a closed list of constructs until #579 freezes v3. None of them
+is part of this contract until its own Accepted ADR amends this text.
 
 V3's only DTO changes are: manifest version `3`; FieldDefinition's five
 required members plus optional `display_name` and `number_format`; optional Schema `display_name`;
@@ -142,15 +145,16 @@ Its members are `decimals`, `kind`, `thousands_separator`, in that order. The
 closed object and `kind` union follow the
 [semantic declaration](semantic-data-model.md#per-column-number-display-format-r3).
 Canonical output uses ordinary two-space JSON indentation. Unknown/missing
-members, malformed kinds, non-Number pairing, decimals outside 0..=10, and
-malformed currency identifiers fail admission. Omitted formats stay omitted;
+members, malformed kinds, pairing with a type other than Number (or Auto, under
+[ADR-0047](../decisions/ADR-0047-auto-columns-tagged-results-and-cell-failures.md)),
+decimals outside 0..=10, and malformed currency identifiers fail admission. Omitted formats stay omitted;
 there is no default format materialized into an older document. Consequently
 all previously canonical format-free trees and package hashes remain exact.
 
 ### FieldType
 
 The complete v3 tag set is `number`, `text`, `boolean`, `date`, and
-`reference`. Scalar shapes have the sole member `type`; a reference has the
+`reference`, plus `auto` under the ADR-0047 section below once implemented. Scalar shapes have the sole member `type`; a reference has the
 incorporated v2 member order `type`, `schema`:
 
 ```json
@@ -192,6 +196,22 @@ Unknown constraint tags or members, missing members, nulls, duplicate object
 members, or a mismatched constraint/type pair fail closed. An authoring writer
 may sort an admitted literal set into canonical unsigned UTF-8 order, while a
 decoder rejects duplicate or noncanonical input without repairing it.
+
+### Auto field type and tagged literals — ADR-0047
+
+Implementation state: pending. Until the implementing PR lands, the writer can't
+emit these and a reader refuses them, as for any unknown tag.
+
+[ADR-0047](../decisions/ADR-0047-auto-columns-tagged-results-and-cell-failures.md)
+adds the FieldType tag `auto`, whose sole member is `type`. An Auto field has
+`required: false` and constraint `none`; anything else fails admission. Its entity
+values are Number, Text, Boolean, Date or Formula, never Reference. Optional
+`number_format` is admitted, as on a Number field.
+
+Bound Expression gains three literals, in the existing `op` and `args` form:
+`{"op":"text","args":"..."}`, `{"op":"boolean","args":true}` and
+`{"op":"date","args":"YYYY-MM-DD"}`. A document using neither keeps its exact
+canonical bytes.
 
 ## Entity values and formulas
 

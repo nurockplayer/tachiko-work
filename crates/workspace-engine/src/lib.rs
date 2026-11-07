@@ -1525,14 +1525,38 @@ pub(crate) fn formula_update_candidate(
     field: &FieldRef,
     expression: &Expression,
 ) -> Result<Document, WorkspaceError> {
-    let absent = document
-        .entities
-        .get(&field.entity)
-        .is_some_and(|entity| !entity.fields.contains_key(&field.field));
-    if absent {
+    if formula_target_is_absent(document, field) {
         formula_restore_candidate(document, field, expression)
     } else {
         field_value_candidate(document, field, &Value::Formula(expression.clone()))
+    }
+}
+
+fn formula_target_is_absent(document: &Document, field: &FieldRef) -> bool {
+    document
+        .entities
+        .get(&field.entity)
+        .is_some_and(|entity| !entity.fields.contains_key(&field.field))
+}
+
+/// Apply one authored formula to the planner's private candidate, reusing the
+/// batch state. A present target takes the value checks; an absent optional
+/// Number target takes the narrow restore checks in the same order.
+pub(crate) fn formula_update_candidate_in_place(
+    candidate: &mut Document,
+    field: &FieldRef,
+    expression: &Expression,
+    planning: &mut FieldEditPlanning,
+) -> Result<(), WorkspaceError> {
+    if formula_target_is_absent(candidate, field) {
+        formula_restore_candidate_in_place(candidate, field, expression, planning)
+    } else {
+        apply_field_value_candidate_with_planning(
+            candidate,
+            field,
+            &Value::Formula(expression.clone()),
+            planning,
+        )
     }
 }
 
@@ -2245,6 +2269,28 @@ pub(crate) fn formula_restore_candidate(
     field: &FieldRef,
     expression: &Expression,
 ) -> Result<Document, WorkspaceError> {
+    let mut planning = FieldEditPlanning::new();
+    check_formula_restore_candidate(document, field, &mut planning)?;
+    let mut candidate = document.clone();
+    insert_formula_value(&mut candidate, field, expression)?;
+    Ok(candidate)
+}
+
+fn formula_restore_candidate_in_place(
+    candidate: &mut Document,
+    field: &FieldRef,
+    expression: &Expression,
+    planning: &mut FieldEditPlanning,
+) -> Result<(), WorkspaceError> {
+    check_formula_restore_candidate(candidate, field, planning)?;
+    insert_formula_value(candidate, field, expression)
+}
+
+fn check_formula_restore_candidate(
+    document: &Document,
+    field: &FieldRef,
+    planning: &mut FieldEditPlanning,
+) -> Result<(), WorkspaceError> {
     let entity =
         document
             .entities
@@ -2268,17 +2314,24 @@ pub(crate) fn formula_restore_candidate(
             field: field.clone(),
         });
     }
-    preflight_formula_structures(document)?;
-    let mut candidate = document.clone();
-    let entity = candidate.entities.get_mut(&field.entity).ok_or_else(|| {
-        WorkspaceError::MissingEntityId {
+    planning.preflight(document)?;
+    Ok(())
+}
+
+fn insert_formula_value(
+    candidate: &mut Document,
+    field: &FieldRef,
+    expression: &Expression,
+) -> Result<(), WorkspaceError> {
+    candidate
+        .entities
+        .get_mut(&field.entity)
+        .ok_or_else(|| WorkspaceError::MissingEntityId {
             entity: field.entity.clone(),
-        }
-    })?;
-    entity
+        })?
         .fields
         .insert(field.field.clone(), Value::Formula(expression.clone()));
-    Ok(candidate)
+    Ok(())
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {

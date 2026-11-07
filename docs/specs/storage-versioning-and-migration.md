@@ -346,6 +346,13 @@ promotes only an exactly representable uniform column format. Unsupported or
 mixed formats keep existing source presentation behavior and produce a ledger
 finding rather than an invented semantic format.
 
+### Pre-1.0 revision window — ADR-0046
+
+[ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) extends the
+exception below to a closed list of constructs until #579 freezes v3 and
+package/v1. After the freeze, a new stored construct needs a new representation
+version and migration. No v4 or migration edge is selected before then.
+
 ### Native display-name pre-release exception — ADR-0043
 
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)

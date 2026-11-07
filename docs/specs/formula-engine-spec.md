@@ -295,6 +295,11 @@ limits as parser-produced candidates.
 
 ## Type surface and conversion
 
+[ADR-0047](../decisions/ADR-0047-auto-columns-tagged-results-and-cell-failures.md)
+defines tagged results, coercion and published failures for formulas that read or
+live in an Auto column. Implementation is pending, and the rules below keep
+governing formulas over declared columns alone.
+
 The Accepted Milestone 02 formula result type is `Number` only. Literals,
 references, arithmetic, `min`, and `max` must all bind as Number.
 
