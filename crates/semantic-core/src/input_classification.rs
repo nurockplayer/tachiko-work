@@ -180,10 +180,7 @@ fn display_decimals(decimals_typed: usize) -> u8 {
 fn parse_plain(text: &str) -> Option<ParsedNumber> {
     let (negative, rest) = split_sign(text);
     let (mantissa, exponent) = split_exponent(rest)?;
-    let (int_part, frac_part) = match mantissa.split_once('.') {
-        Some((int_part, frac_part)) => (int_part, frac_part),
-        None => (mantissa, ""),
-    };
+    let (int_part, frac_part) = mantissa.split_once('.').unwrap_or((mantissa, ""));
     if !is_ascii_digits(int_part) || !is_ascii_digits(frac_part) {
         return None;
     }
@@ -200,10 +197,7 @@ fn parse_plain(text: &str) -> Option<ParsedNumber> {
 fn parse_grouped(text: &str) -> Option<ParsedNumber> {
     let (negative, rest) = split_sign(text);
     let (mantissa, exponent) = split_exponent(rest)?;
-    let (integer, frac_part) = match mantissa.split_once('.') {
-        Some((integer, frac_part)) => (integer, frac_part),
-        None => (mantissa, ""),
-    };
+    let (integer, frac_part) = mantissa.split_once('.').unwrap_or((mantissa, ""));
     if !is_ascii_digits(frac_part) {
         return None;
     }
@@ -292,7 +286,7 @@ fn split_sign(text: &str) -> (bool, &str) {
 
 /// Split an optional exponent off the mantissa, keeping its own sign.
 fn split_exponent(text: &str) -> Option<(&str, Option<&str>)> {
-    match text.find(|character| character == 'e' || character == 'E') {
+    match text.find(['e', 'E']) {
         Some(index) => {
             let mantissa = &text[..index];
             let exponent = &text[index + 1..];
