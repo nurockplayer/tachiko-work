@@ -5494,15 +5494,7 @@ impl DesignerRuntime {
     // The trusted host supplies a fresh UUID per occurrence. Callers compare
     // the complete opaque token; its spelling is not a semantic or security API.
     fn next_proposal_id(&mut self) -> Result<ProposalId, DesignerError> {
-        let serial = self
-            .proposal_serial
-            .checked_add(1)
-            .ok_or_else(|| tracker_error("proposal identity counter exhausted"))?;
-        self.proposal_serial = serial;
-        Ok(ProposalId::from(format!(
-            "designer-proposal/{}/{serial}",
-            self.row_namespace
-        )))
+        next_proposal_id(&mut self.proposal_serial, &self.row_namespace)
     }
 
     fn update_formula(
@@ -6181,7 +6173,8 @@ impl DesignerRuntime {
         } else {
             None
         };
-        let proposal_id = self.next_proposal_id()?;
+        // `prepared` borrows the resident session until the proposal below.
+        let proposal_id = next_proposal_id(&mut self.proposal_serial, &self.row_namespace)?;
         let body = SemanticPatchBody::atomic_batch(commands)?;
         let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
         lifecycle.propose_prepared(
@@ -7967,6 +7960,16 @@ pub(crate) fn ensure_wire_reply_size(
         },
     };
     ensure_projection_size_with_limit(reply, maximum)
+}
+
+fn next_proposal_id(serial: &mut u64, namespace: &str) -> Result<ProposalId, DesignerError> {
+    let next = serial
+        .checked_add(1)
+        .ok_or_else(|| tracker_error("proposal identity counter exhausted"))?;
+    *serial = next;
+    Ok(ProposalId::from(format!(
+        "designer-proposal/{namespace}/{next}"
+    )))
 }
 
 fn budget_schema<const COUNT: usize>(

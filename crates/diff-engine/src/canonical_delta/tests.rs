@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use tachiko_formula_engine::CalculationError;
+use tachiko_formula_engine::{CalculationError, calculate};
 use tachiko_semantic_core::{
     Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldId, FieldType,
     KeyedGroupedSumBindingRole, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
@@ -9,8 +9,8 @@ use tachiko_semantic_core::{
 };
 
 use super::{
-    CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact as Fact, DeltaInputSide,
-    canonical_delta,
+    CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact as Fact,
+    CanonicalSemanticDelta, DeltaInputSide, canonical_delta, canonical_delta_with_calculations,
 };
 
 fn number(value: f64) -> Number {
@@ -420,4 +420,133 @@ fn a_reorder_alone_is_one_field_order_fact_with_both_orders() {
             after: None,
         }]
     );
+}
+
+// --- Caller-calculated input (#678) ---
+
+fn value_document(value: &str) -> Document {
+    let mut document = doc_with_schemas(&["s"]);
+    document.entities.insert(
+        "e".into(),
+        Entity {
+            id: "e".into(),
+            key: "e".into(),
+            schema: "s".into(),
+            fields: BTreeMap::from([("f".into(), Value::Text(value.into()))]),
+        },
+    );
+    document
+}
+
+/// Both saved-definition roles resolve, and only the after side is bound.
+fn keyed_definition_documents() -> (Document, Document) {
+    let mut before = Document::empty("doc", "title");
+    before.schemas.insert(
+        "orders".into(),
+        numeric_or_text_schema(
+            "orders",
+            &[("lookup", FieldType::Text), ("quantity", FieldType::Number)],
+        ),
+    );
+    before.schemas.insert(
+        "products".into(),
+        numeric_or_text_schema(
+            "products",
+            &[
+                ("key", FieldType::Text),
+                ("category", FieldType::Text),
+                ("price", FieldType::Number),
+            ],
+        ),
+    );
+    let mut after = before.clone();
+    after
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), keyed_definition());
+    (before, after)
+}
+
+fn compare_with_calculations(
+    contract: &str,
+    before: &Document,
+    after: &Document,
+) -> Result<CanonicalSemanticDelta, CanonicalDeltaError> {
+    let before_calculation = calculate(before).unwrap();
+    let after_calculation = calculate(after).unwrap();
+    canonical_delta_with_calculations(
+        contract,
+        before,
+        after,
+        &before_calculation,
+        &after_calculation,
+    )
+}
+
+fn assert_same_delta_outcome(contract: &str, before: &Document, after: &Document) {
+    let expected = canonical_delta(contract, before, after);
+    let observed = compare_with_calculations(contract, before, after);
+    match (expected, observed) {
+        (Ok(expected), Ok(observed)) => assert_eq!(expected, observed),
+        (Err(expected), Err(observed)) => {
+            assert_eq!(format!("{expected:?}"), format!("{observed:?}"));
+        }
+        (expected, observed) => {
+            panic!("outcomes differ: {expected:?} vs {observed:?}");
+        }
+    }
+}
+
+/// Precomputed calculations keep every existing document pair's facts identical.
+#[test]
+fn canonical_delta_with_calculations_equals_canonical_delta() {
+    let empty = doc_with_schemas(&[]);
+    let ordered = doc_with_schemas(&["aa", "a"]);
+    let (keyed_before, keyed_after) = keyed_definition_documents();
+    for (before, after) in [
+        (empty.clone(), ordered.clone()),
+        (ordered, empty),
+        (value_document("old"), value_document("new")),
+        (keyed_before, keyed_after),
+    ] {
+        assert_same_delta_outcome(CANONICAL_SEMANTIC_DELTA_V2, &before, &after);
+        assert_same_delta_outcome(CANONICAL_SEMANTIC_DELTA_V2, &after, &before);
+    }
+}
+
+/// The first-half refusals are unchanged when calculations are supplied.
+#[test]
+fn canonical_delta_with_calculations_keeps_first_half_refusals() {
+    let before = Document::empty("doc", "title");
+    let after = Document::empty("doc", "title");
+    let other_id = Document::empty("other", "title");
+    for (contract, left, right) in [
+        ("tachiko.semantic-delta/v1", &before, &after),
+        (CANONICAL_SEMANTIC_DELTA_V2, &before, &other_id),
+    ] {
+        assert_same_delta_outcome(contract, left, right);
+    }
+}
+
+/// The second-half refusals are unchanged when calculations are supplied.
+#[test]
+fn canonical_delta_with_calculations_keeps_second_half_refusals() {
+    let mut duplicate_constraint = Document::empty("doc", "title");
+    let mut schema = text_schema("s");
+    schema.fields.get_mut("f").unwrap().constraint = FieldConstraint::TextLiteralSet {
+        values: vec!["same".into(), "same".into()],
+    };
+    duplicate_constraint.schemas.insert("s".into(), schema);
+
+    let valid = Document::empty("doc", "title");
+    let mut invalid_definition = Document::empty("doc", "title");
+    invalid_definition
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), keyed_definition());
+
+    for (before, after) in [
+        (&duplicate_constraint, &valid),
+        (&valid, &invalid_definition),
+    ] {
+        assert_same_delta_outcome(CANONICAL_SEMANTIC_DELTA_V2, before, after);
+    }
 }
