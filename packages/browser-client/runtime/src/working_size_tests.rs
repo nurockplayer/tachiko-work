@@ -21,8 +21,8 @@ use super::{
     NewTableColumnInput, OpenedWindowProjection, PublicationProjection, RowInitializer,
     RowProjection, ScalarEditInput, Schema, SchemaId, SchemaKey, StoredValueProjection, TableView,
     TableWindowProjection, encode_portable_package_v1, encode_project_bundle, open_local_document,
-    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size, open_project,
-    open_project_working_size, process_wire_request, to_canonical_string,
+    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
+    open_project, open_project_working_size, process_wire_request, to_canonical_string,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
@@ -1391,14 +1391,15 @@ fn a_window_over_its_bytes_pages_the_whole_view() {
             );
             break;
         }
-        assert!(window.byte_limited, "a short page must say it was byte limited");
+        assert!(
+            window.byte_limited,
+            "a short page must say it was byte limited"
+        );
         window = window_at(&mut runtime, &current, start, 256);
     }
     assert_eq!(
         seen,
-        (0..300)
-            .map(|row| format!("r{row:05}"))
-            .collect::<Vec<_>>()
+        (0..300).map(|row| format!("r{row:05}")).collect::<Vec<_>>()
     );
 }
 
@@ -1531,7 +1532,9 @@ fn row_removal_and_undo_over_the_target_list_come_back_as_markers() {
     let mut runtime =
         DesignerRuntime::from_document_working_size(text_grid(1_100, 1), OCCURRENCE).unwrap();
     let current = revision(&runtime);
-    let rows = (0..1_100).map(|row| format!("r{row:05}")).collect::<Vec<_>>();
+    let rows = (0..1_100)
+        .map(|row| format!("r{row:05}"))
+        .collect::<Vec<_>>();
     let removed = runtime.remove_table_rows(&current, "grid", &rows).unwrap();
     assert!(removed.many);
     assert!(removed.entities.is_empty());
@@ -1560,9 +1563,8 @@ fn row_removal_and_undo_over_the_target_list_come_back_as_markers() {
 
 #[test]
 fn the_wire_reply_carries_the_publication_marker() {
-    let mut runtime = Some(
-        DesignerRuntime::from_document_working_size(text_grid(1_100, 1), OCCURRENCE).unwrap(),
-    );
+    let mut runtime =
+        Some(DesignerRuntime::from_document_working_size(text_grid(1_100, 1), OCCURRENCE).unwrap());
     let request = DesignerRequest::RemoveTableRows {
         expected_revision: runtime.as_ref().unwrap().current_revision().to_owned(),
         collection: "grid".to_owned(),
