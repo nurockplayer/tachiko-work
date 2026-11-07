@@ -111,7 +111,10 @@ const MAX_COLLECTIONS: usize = capacity::DEFAULT_LIMITS.collections;
 const MAX_TABLE_FIELDS: usize = capacity::DEFAULT_LIMITS.table_fields;
 const MAX_TABLE_ROWS: usize = capacity::DEFAULT_LIMITS.table_rows;
 const MAX_TOTAL_ENTITIES: usize = capacity::DEFAULT_LIMITS.total_entities;
-const MAX_FIELD_QUERY_TARGETS: usize = 1024;
+// Scratch capacity measurement branch: original 1,024. The post-edit refresh
+// preflight queries every populated cell, so a working-size sheet exceeded it
+// before `import_workbook` could finish; raised here and recorded in the report.
+const MAX_FIELD_QUERY_TARGETS: usize = 10_000_000;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 // Scratch capacity measurement branch: original 65,536 bytes.

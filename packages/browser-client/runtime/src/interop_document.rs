@@ -934,11 +934,20 @@ fn finish_import(
         Err(error)
             if !runtime.text_capacity && super::interop_adapter::text_capacity_shape(workbook) =>
         {
-            let candidate = DesignerRuntime::from_document_profile(
+            // Scratch capacity measurement: reporting only the promotion error
+            // hid the ordinary-profile export refusal that caused it.
+            let candidate = match DesignerRuntime::from_document_profile(
                 runtime.session.export_snapshot().into_document(),
                 occurrence_id,
                 true,
-            )?;
+            ) {
+                Ok(candidate) => candidate,
+                Err(promotion) => {
+                    return Err(tracker_error(&format!(
+                        "ordinary export refused ({error}); text-capacity promotion refused ({promotion})"
+                    )));
+                }
+            };
             normalize_import_date_styles(workbook, &mut metadata, candidate.text_capacity);
             let exported = candidate
                 .export_workbook(candidate.current_revision(), &metadata)
