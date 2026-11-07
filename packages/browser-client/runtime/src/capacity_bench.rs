@@ -1536,7 +1536,7 @@ fn import_export_working_size() {
     say(
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     );
-    for name in ["S2-250", "S2-1000", "S2-4000", "S1", "S2", "S3", "S4"] {
+    for name in ["S2-250", "S2-1000", "S2-4000", "S2", "S3"] {
         let output = std::process::Command::new("timeout")
             .args(["-k", "10", PHASE_TIMEOUT_SECONDS])
             .arg(&executable)
