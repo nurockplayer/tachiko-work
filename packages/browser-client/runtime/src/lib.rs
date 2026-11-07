@@ -114,7 +114,8 @@ const MAX_TOTAL_ENTITIES: usize = capacity::DEFAULT_LIMITS.total_entities;
 const MAX_FIELD_QUERY_TARGETS: usize = 1024;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
-const MAX_PROJECTION_BYTES: usize = 65_536;
+// Scratch capacity measurement branch: original 65,536 bytes.
+const MAX_PROJECTION_BYTES: usize = 1024 * 1024 * 1024;
 /// Largest number of groups one grouped-totals reply may carry.
 const MAX_GROUPS: usize = 200;
 pub(crate) const MAX_TEXT_CAPACITY_PROJECTION_BYTES: usize = 16 * 1024 * 1024;

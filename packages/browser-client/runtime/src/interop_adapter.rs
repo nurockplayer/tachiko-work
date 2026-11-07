@@ -27,10 +27,18 @@ pub const MAX_NATIVE_TRACKER_DATA_ROWS: usize = 128;
 // Native output keeps its own geometry and larger byte bounds.
 pub const MAX_NATIVE_TABLES_SHEETS: usize = 32;
 pub const MAX_NATIVE_TABLES_COLUMNS: usize = 32;
-pub const MAX_NATIVE_TABLES_DATA_ROWS: usize = 128;
-pub const MAX_NATIVE_TABLES_TOTAL_ROWS: usize = 1_024;
-pub const MAX_NATIVE_TABLES_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
-pub const MAX_NATIVE_TABLES_EXPANDED_BYTES: usize = 24 * 1024 * 1024;
+pub const MAX_NATIVE_TABLES_DATA_ROWS: usize = 1_000_000;
+pub const MAX_NATIVE_TABLES_TOTAL_ROWS: usize = 10_000_000;
+pub const MAX_NATIVE_TABLES_OUTPUT_BYTES: usize = 512 * 1024 * 1024;
+pub const MAX_NATIVE_TABLES_EXPANDED_BYTES: usize = 1024 * 1024 * 1024;
+// Scratch measurement only: the original native-tables row and byte bounds
+// were 128 rows per sheet, 1,024 total rows, 8 MiB output and 24 MiB expanded.
+/// Scratch measurement only: original 100,000 XML nodes per part.
+const MAX_XML_NODES: usize = 100_000_000;
+/// Scratch measurement only: the worksheet row-index pre-check used the
+/// Text-capacity 8,406-row bound for every profile. Kept separate so the
+/// Text-capacity profile itself is unchanged.
+const MAX_WORKSHEET_ROW_INDEX_PREFLIGHT: usize = 1_048_576;
 pub const MAX_NATIVE_TABLES_XLSX_TEXT_UNITS: usize = 32_767;
 const MAX_NATIVE_TABLES_PRECISION_LOCATIONS: usize = 20;
 pub const MAX_FORMULAS: usize = crate::capacity::DEFAULT_LIMITS.formulas;
@@ -1990,7 +1998,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
         match event {
             Event::Start(e) | Event::Empty(e) => {
                 nodes += 1;
-                if nodes > 100_000 || stack.len() >= 64 {
+                if nodes > MAX_XML_NODES || stack.len() >= 64 {
                     return fail("XML structure exceeds bounded profile");
                 }
                 let mut bindings = stack
@@ -3422,7 +3430,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
             }
             check_import_limit(
                 crate::CapacityLimit::TableRows,
-                MAX_TEXT_CAPACITY_ROWS,
+                MAX_WORKSHEET_ROW_INDEX_PREFLIGHT,
                 row_index - 1,
                 Some(&name),
                 true,

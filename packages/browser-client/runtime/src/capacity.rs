@@ -23,15 +23,17 @@ pub struct CapacityLimits {
     pub dependency_edges: usize,
 }
 
+// Scratch capacity measurement branch (`scratch/capacity-interop`). Original
+// values were 32 / 32 / 128 / 1,024 / 100,000 / 256 / 100,000 / 200,000.
 pub(crate) const DEFAULT_LIMITS: CapacityLimits = CapacityLimits {
     collections: 32,
     table_fields: 32,
-    table_rows: 128,
-    total_entities: 1_024,
-    populated_cells: 100_000,
-    formulas: 256,
-    formula_ast_nodes: 100_000,
-    dependency_edges: 200_000,
+    table_rows: 1_048_576,
+    total_entities: 10_485_760,
+    populated_cells: 100_000_000,
+    formulas: 1_000_000,
+    formula_ast_nodes: 100_000_000,
+    dependency_edges: 1_000_000_000,
 };
 
 /// Preserve the independently admitted Text/Number rectangle. Its content and

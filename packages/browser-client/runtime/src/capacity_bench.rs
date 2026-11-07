@@ -908,3 +908,666 @@ fn capacity_formula_count_sweep() {
     }
     print_report(&rows);
 }
+
+// ---------------------------------------------------------------------------
+// Working-size XLSX import/export measurement (scratch/capacity-interop).
+//
+// Each fixture runs in its own child process under `timeout -k 10 1200`, so a
+// phase the synchronous importer cannot finish is cut at 20 minutes instead of
+// losing the whole run. `exit 124` from the child means "this phase is over 20
+// minutes" and is reported without a retry.
+// ---------------------------------------------------------------------------
+
+use crate::interop_adapter::{
+    ImportOptions, OutputProfile, column_name, export_xlsx_for_profile, import_xlsx_with,
+};
+use crate::{ImportFieldType, ImportSelection, import_workbook};
+use std::io::{Cursor, Write as _};
+use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+/// Original `main` values, before this scratch branch raised them.
+const ORIGINAL_MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
+const ORIGINAL_MAX_EXPANDED_BYTES: usize = 8 * 1024 * 1024;
+const ORIGINAL_MAX_XML_NODES: usize = 100_000;
+const ORIGINAL_MAX_WORKSHEET_ROW_INDEX_PREFLIGHT: usize = 8_406;
+const ORIGINAL_MAX_COLUMNS: usize = 32;
+const ORIGINAL_MAX_DATA_ROWS: usize = 128;
+const ORIGINAL_MAX_TOTAL_DATA_ROWS: usize = 1_024;
+const ORIGINAL_MAX_FORMULAS: usize = 256;
+const ORIGINAL_MAX_POPULATED_CELLS: usize = 100_000;
+const ORIGINAL_MAX_FORMULA_AST_NODES: usize = 100_000;
+const ORIGINAL_MAX_DEPENDENCY_EDGES: usize = 200_000;
+const ORIGINAL_MAX_PROJECTION_BYTES: usize = 65_536;
+const ORIGINAL_MAX_NATIVE_DATA_ROWS: usize = 128;
+const ORIGINAL_MAX_NATIVE_TOTAL_ROWS: usize = 1_024;
+const ORIGINAL_MAX_NATIVE_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+const ORIGINAL_MAX_NATIVE_EXPANDED_BYTES: usize = 24 * 1024 * 1024;
+
+const PHASE_TIMEOUT_SECONDS: &str = "1200";
+
+#[derive(Clone, Copy, Debug)]
+enum FixtureColumn {
+    Number,
+    Text,
+    Date,
+    Boolean,
+    Product(usize, usize),
+    Sum(usize, usize),
+    Difference(usize, usize),
+    ColumnQuotient(usize),
+}
+
+impl FixtureColumn {
+    fn import_type(self) -> ImportFieldType {
+        match self {
+            Self::Number
+            | Self::Product(..)
+            | Self::Sum(..)
+            | Self::Difference(..)
+            | Self::ColumnQuotient(..) => ImportFieldType::Number,
+            Self::Text => ImportFieldType::Text,
+            Self::Date => ImportFieldType::Date,
+            Self::Boolean => ImportFieldType::Boolean,
+        }
+    }
+}
+
+struct XlsxFixture {
+    bytes: Vec<u8>,
+    worksheet_bytes: usize,
+    worksheet_nodes: usize,
+    shared_string_nodes: usize,
+    expanded_bytes: usize,
+    rows: usize,
+    columns: usize,
+    formulas: usize,
+    types: Vec<ImportFieldType>,
+}
+
+fn say(line: impl std::fmt::Display) {
+    println!("{line}");
+    let _ = std::io::stdout().flush();
+}
+
+fn mib(value: Option<u64>) -> String {
+    value.map_or_else(
+        || "unavailable".to_owned(),
+        |bytes| format!("{:.1}", bytes as f64 / (1024.0 * 1024.0)),
+    )
+}
+
+fn plain_number(row: usize, column: usize) -> f64 {
+    row as f64 + 1.0 + column as f64 * 0.5
+}
+
+fn column_total(rows: usize, column: usize) -> f64 {
+    (0..rows).map(|row| plain_number(row, column)).sum()
+}
+
+fn cached_value(kind: FixtureColumn, rows: usize, row: usize) -> f64 {
+    match kind {
+        FixtureColumn::Product(left, right) => plain_number(row, left) * plain_number(row, right),
+        FixtureColumn::Sum(left, right) => plain_number(row, left) + plain_number(row, right),
+        FixtureColumn::Difference(left, right) => plain_number(row, left) - plain_number(row, right),
+        FixtureColumn::ColumnQuotient(dividend) => {
+            plain_number(row, dividend) / column_total(rows, dividend)
+        }
+        FixtureColumn::Number | FixtureColumn::Text | FixtureColumn::Date | FixtureColumn::Boolean => {
+            unreachable!("only formula columns carry cached values")
+        }
+    }
+}
+
+fn formula_text(kind: FixtureColumn, rows: usize, row: usize) -> String {
+    let a1_row = row + 2;
+    let last_row = rows + 1;
+    let letter = |column: usize| column_name(column);
+    match kind {
+        FixtureColumn::Product(left, right) => format!(
+            "{a}{r}*{b}{r}",
+            a = letter(left),
+            b = letter(right),
+            r = a1_row
+        ),
+        FixtureColumn::Sum(left, right) => format!(
+            "{a}{r}+{b}{r}",
+            a = letter(left),
+            b = letter(right),
+            r = a1_row
+        ),
+        FixtureColumn::Difference(left, right) => format!(
+            "{a}{r}-{b}{r}",
+            a = letter(left),
+            b = letter(right),
+            r = a1_row
+        ),
+        FixtureColumn::ColumnQuotient(dividend) => format!(
+            "{l}{r}/SUM({l}$2:{l}${last_row})",
+            l = letter(dividend),
+            r = a1_row
+        ),
+        FixtureColumn::Number | FixtureColumn::Text | FixtureColumn::Date | FixtureColumn::Boolean => {
+            unreachable!("only formula columns carry formulas")
+        }
+    }
+}
+
+fn intern(
+    lookup: &mut std::collections::BTreeMap<String, usize>,
+    values: &mut Vec<String>,
+    value: &str,
+) -> usize {
+    if let Some(index) = lookup.get(value) {
+        return *index;
+    }
+    let index = values.len();
+    values.push(value.to_owned());
+    lookup.insert(value.to_owned(), index);
+    index
+}
+
+fn date_value(row: usize) -> String {
+    format!("2024-{:02}-{:02}", 1 + row % 12, 1 + row % 28)
+}
+
+fn text_value(column: usize, row: usize) -> String {
+    format!("t{column:02}-{row:05}")
+}
+
+fn build_xlsx(rows: usize, columns: &[FixtureColumn]) -> XlsxFixture {
+    const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+    const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+    let mut lookup = std::collections::BTreeMap::new();
+    let mut values = Vec::new();
+    let mut string_cells = 0usize;
+    let mut formulas = 0usize;
+
+    let headers = (0..columns.len())
+        .map(|column| format!("h{column}"))
+        .collect::<Vec<_>>();
+    let header_indices = headers
+        .iter()
+        .map(|header| {
+            string_cells += 1;
+            intern(&mut lookup, &mut values, header)
+        })
+        .collect::<Vec<_>>();
+
+    // Grows past the worksheet part alone for S4, so reserve generously.
+    let mut worksheet = String::with_capacity(rows * columns.len() * 48 + 4096);
+    worksheet.push_str("<worksheet xmlns=\"");
+    worksheet.push_str(MAIN);
+    worksheet.push_str("\"><sheetData><row r=\"1\">");
+    for (column, index) in header_indices.iter().enumerate() {
+        worksheet.push_str(&format!(
+            "<c r=\"{}{}\" t=\"s\"><v>{index}</v></c>",
+            column_name(column),
+            1
+        ));
+    }
+    worksheet.push_str("</row>");
+    for row in 0..rows {
+        let source_row = row + 2;
+        worksheet.push_str(&format!("<row r=\"{source_row}\">"));
+        for (column, kind) in columns.iter().enumerate() {
+            let address = format!("{}{}", column_name(column), source_row);
+            match kind {
+                FixtureColumn::Number => {
+                    worksheet.push_str(&format!(
+                        "<c r=\"{address}\"><v>{}</v></c>",
+                        plain_number(row, column)
+                    ));
+                }
+                FixtureColumn::Text => {
+                    string_cells += 1;
+                    let index = intern(&mut lookup, &mut values, &text_value(column, row));
+                    worksheet.push_str(&format!(
+                        "<c r=\"{address}\" t=\"s\"><v>{index}</v></c>"
+                    ));
+                }
+                FixtureColumn::Date => {
+                    worksheet.push_str(&format!(
+                        "<c r=\"{address}\" t=\"d\"><v>{}</v></c>",
+                        date_value(row)
+                    ));
+                }
+                FixtureColumn::Boolean => {
+                    worksheet.push_str(&format!(
+                        "<c r=\"{address}\" t=\"b\"><v>{}</v></c>",
+                        u8::from(row % 2 == 0)
+                    ));
+                }
+                formula => {
+                    formulas += 1;
+                    worksheet.push_str(&format!(
+                        "<c r=\"{address}\"><f>{}</f><v>{}</v></c>",
+                        formula_text(*formula, rows, row),
+                        cached_value(*formula, rows, row)
+                    ));
+                }
+            }
+        }
+        worksheet.push_str("</row>");
+    }
+    worksheet.push_str("</sheetData></worksheet>");
+
+    let worksheet_nodes = 2 + (rows + 1) + 2 * (rows + 1) * columns.len() + formulas;
+    let shared_string_nodes = 1 + 2 * values.len();
+
+    let mut shared = String::with_capacity(values.len() * 32 + 128);
+    shared.push_str(&format!(
+        "<sst xmlns=\"{MAIN}\" count=\"{string_cells}\" uniqueCount=\"{}\">",
+        values.len()
+    ));
+    for value in &values {
+        shared.push_str("<si><t xml:space=\"preserve\">");
+        shared.push_str(value);
+        shared.push_str("</t></si>");
+    }
+    shared.push_str("</sst>");
+
+    let styles = format!(
+        "<styleSheet xmlns=\"{MAIN}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"
+    );
+    let workbook = format!(
+        "<workbook xmlns=\"{MAIN}\" xmlns:r=\"{REL_NS}\"><workbookPr date1904=\"0\"/><sheets><sheet name=\"Data\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"
+    );
+    let workbook_rels = format!(
+        "<Relationships xmlns=\"{REL}\"><Relationship Id=\"rId1\" Type=\"{REL_NS}/worksheet\" Target=\"worksheets/sheet1.xml\"/><Relationship Id=\"rId2\" Type=\"{REL_NS}/sharedStrings\" Target=\"sharedStrings.xml\"/><Relationship Id=\"rId3\" Type=\"{REL_NS}/styles\" Target=\"styles.xml\"/></Relationships>"
+    );
+    let root_rels = format!(
+        "<Relationships xmlns=\"{REL}\"><Relationship Id=\"rId1\" Type=\"{REL_NS}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
+    );
+    let content_types = "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/><Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/></Types>";
+
+    let worksheet_bytes = worksheet.len();
+    let parts = [
+        ("[Content_Types].xml", content_types.to_owned()),
+        ("_rels/.rels", root_rels),
+        ("xl/_rels/workbook.xml.rels", workbook_rels),
+        ("xl/sharedStrings.xml", shared),
+        ("xl/styles.xml", styles),
+        ("xl/workbook.xml", workbook),
+        ("xl/worksheets/sheet1.xml", worksheet),
+    ];
+    let expanded_bytes = parts.iter().map(|(_, part)| part.len()).sum();
+    let mut output = Cursor::new(Vec::new());
+    {
+        let mut writer = ZipWriter::new(&mut output);
+        let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, part) in &parts {
+            writer.start_file(*name, options).expect("fixture ZIP entry");
+            writer.write_all(part.as_bytes()).expect("fixture ZIP write");
+        }
+        writer.finish().expect("fixture ZIP finish");
+    }
+    XlsxFixture {
+        bytes: output.into_inner(),
+        worksheet_bytes,
+        worksheet_nodes,
+        shared_string_nodes,
+        expanded_bytes,
+        rows,
+        columns: columns.len(),
+        formulas,
+        types: columns.iter().map(|column| column.import_type()).collect(),
+    }
+}
+
+fn fixture_columns(name: &str) -> (usize, Vec<FixtureColumn>) {
+    use FixtureColumn::{Boolean, ColumnQuotient, Date, Difference, Number, Product, Sum, Text};
+    let s1 = vec![
+        Number, Number, Number, Number, Number, Text, Text, Text, Date, Boolean,
+    ];
+    let s2 = vec![
+        Number, Number, Product(0, 1), Sum(0, 1), Difference(0, 1), Text, Text, Text, Date,
+        Boolean,
+    ];
+    let s3 = vec![
+        Number, Number, Number, Number, ColumnQuotient(1), Text, Text, Text, Date, Boolean,
+    ];
+    let mut s4 = vec![Number; 15];
+    s4.extend([Text; 8]);
+    s4.extend([Date; 2]);
+    s4.extend([Boolean; 2]);
+    s4.extend([Product(0, 1), Sum(0, 1), Difference(0, 1)]);
+    match name {
+        "S1" | "S1b" => (10_000, s1),
+        "S2-250" => (250, s2),
+        "S2-1000" => (1_000, s2),
+        "S2-4000" => (4_000, s2),
+        "S2" => (10_000, s2),
+        "S3" => (10_000, s3),
+        "S4" => (10_000, s4),
+        other => panic!("unknown fixture {other}"),
+    }
+}
+
+fn check(label: &str, attempted: usize, original_maximum: usize) {
+    if attempted > original_maximum {
+        say(format!(
+            "  exceeded {label}: attempted {attempted} > original maximum {original_maximum}"
+        ));
+    }
+}
+
+fn observe_phase<R>(action: impl FnOnce() -> R) -> (R, f64, Option<u64>) {
+    let (result, sample) = observe(action);
+    (result, sample.millis, sample.peak_delta_bytes)
+}
+
+fn zip_expanded_bytes(bytes: &[u8]) -> usize {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("output ZIP is readable");
+    let mut total = 0usize;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).expect("output ZIP entry");
+        total += usize::try_from(entry.size()).expect("output entry size");
+    }
+    total
+}
+
+fn measure_fixture(name: &str) {
+    let (rows, columns) = fixture_columns(name);
+    let fixture = build_xlsx(rows, &columns);
+    let display = name;
+    say(format!(
+        "{display}: source XLSX {} bytes, largest worksheet XML {} bytes, expanded {} bytes, worksheet nodes {}, sharedStrings nodes {}, {} formulas",
+        fixture.bytes.len(),
+        fixture.worksheet_bytes,
+        fixture.expanded_bytes,
+        fixture.worksheet_nodes,
+        fixture.shared_string_nodes,
+        fixture.formulas,
+    ));
+    say(format!("{display}: original limits exceeded while parsing the source (code order):"));
+    check(
+        "MAX_SOURCE_BYTES",
+        fixture.bytes.len(),
+        ORIGINAL_MAX_SOURCE_BYTES,
+    );
+    check(
+        "MAX_EXPANDED_BYTES",
+        fixture.expanded_bytes,
+        ORIGINAL_MAX_EXPANDED_BYTES,
+    );
+    check(
+        "MAX_XML_NODES (sharedStrings)",
+        fixture.shared_string_nodes,
+        ORIGINAL_MAX_XML_NODES,
+    );
+    check(
+        "MAX_XML_NODES (worksheet)",
+        fixture.worksheet_nodes,
+        ORIGINAL_MAX_XML_NODES,
+    );
+    check(
+        "MAX_WORKSHEET_ROW_INDEX_PREFLIGHT",
+        fixture.rows,
+        ORIGINAL_MAX_WORKSHEET_ROW_INDEX_PREFLIGHT,
+    );
+    check(
+        "MAX_COLUMNS",
+        fixture.columns,
+        ORIGINAL_MAX_COLUMNS,
+    );
+    check("MAX_FORMULAS (source)", fixture.formulas, ORIGINAL_MAX_FORMULAS);
+    check("MAX_DATA_ROWS", fixture.rows, ORIGINAL_MAX_DATA_ROWS);
+    check(
+        "MAX_TOTAL_DATA_ROWS",
+        fixture.rows,
+        ORIGINAL_MAX_TOTAL_DATA_ROWS,
+    );
+
+    say(format!("{display}: starting import_xlsx"));
+    let (parsed, parse_ms, parse_peak) =
+        observe_phase(|| import_xlsx_with(&fixture.bytes, &ImportOptions::default()));
+    let parsed = match parsed {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            say(format!("{display}: import_xlsx refused: {error}"));
+            return;
+        }
+    };
+    say(format!(
+        "{display}: import_xlsx done in {parse_ms:.1} ms, peak RSS {} MiB",
+        mib(parse_peak)
+    ));
+
+    let selection = ImportSelection {
+        column_types: vec![fixture.types.clone()],
+        extra_columns: vec![Vec::new()],
+    };
+    say(format!("{display}: starting import_workbook"));
+    let (imported, import_ms, import_peak) = observe_phase(|| {
+        import_workbook(
+            &parsed,
+            &selection,
+            "00000000-0000-4000-8000-00000000c0de",
+        )
+    });
+    let (runtime, projection) = match imported {
+        Ok(imported) => imported,
+        Err(error) => {
+            say(format!("{display}: import_workbook refused: {error}"));
+            return;
+        }
+    };
+    say(format!(
+        "{display}: import_workbook done in {import_ms:.1} ms, peak RSS {} MiB",
+        mib(import_peak)
+    ));
+    say(format!("{display}: original limits exceeded inside import_workbook (code order):"));
+    let usage = &runtime.capacity_usage;
+    check(
+        "CapacityLimit::Collections",
+        usage.collections,
+        32,
+    );
+    let widest_rows = usage
+        .tables
+        .values()
+        .map(|table| table.rows)
+        .max()
+        .unwrap_or(0);
+    let widest_fields = usage
+        .tables
+        .values()
+        .map(|table| table.fields)
+        .max()
+        .unwrap_or(0);
+    check("CapacityLimit::TableFields", widest_fields, ORIGINAL_MAX_COLUMNS);
+    check("CapacityLimit::TableRows", widest_rows, ORIGINAL_MAX_DATA_ROWS);
+    check(
+        "CapacityLimit::TotalEntities",
+        usage.total_entities,
+        ORIGINAL_MAX_TOTAL_DATA_ROWS,
+    );
+    check(
+        "CapacityLimit::PopulatedCells",
+        usage.populated_cells,
+        ORIGINAL_MAX_POPULATED_CELLS,
+    );
+    check("CapacityLimit::Formulas", usage.formulas, ORIGINAL_MAX_FORMULAS);
+    check(
+        "CapacityLimit::FormulaAstNodes",
+        usage.formula_ast_nodes,
+        ORIGINAL_MAX_FORMULA_AST_NODES,
+    );
+    check(
+        "CapacityLimit::DependencyEdges",
+        usage.dependency_edges,
+        ORIGINAL_MAX_DEPENDENCY_EDGES,
+    );
+
+    let reply_bytes = serde_json::to_vec(&crate::CompleteReply {
+        status: "ok",
+        response: crate::CompleteResponse {
+            kind: "imported",
+            payload: &projection,
+        },
+    })
+    .expect("Imported reply serializes")
+    .len();
+    let metadata_bytes =
+        serde_json::to_vec(&projection.metadata).expect("metadata serializes").len();
+    say(format!("{display}: original limits exceeded while finishing the import (code order):"));
+    check(
+        "MAX_PROJECTION_BYTES (InteropMetadata)",
+        metadata_bytes,
+        ORIGINAL_MAX_PROJECTION_BYTES,
+    );
+    check(
+        "MAX_PROJECTION_BYTES (Imported reply)",
+        reply_bytes,
+        ORIGINAL_MAX_PROJECTION_BYTES,
+    );
+
+    let survived = {
+        let snapshot = runtime.session.export_snapshot();
+        snapshot
+            .document()
+            .entities
+            .values()
+            .flat_map(|entity| entity.fields.values())
+            .filter(|value| matches!(value, Value::Formula(_)))
+            .count()
+    };
+
+    let revision = runtime.observe_occurrence().revision;
+    let collection = {
+        let snapshot = runtime.session.export_snapshot();
+        select_default_collection(&collection_specs(snapshot.document()))
+            .expect("the imported workbook has one collection")
+    };
+    say(format!("{display}: starting native tables XLSX export"));
+    let (exported, export_ms, export_peak) = observe_phase(|| {
+        let workbook = runtime
+            .export_native_tables_workbook(&revision, &collection)
+            .map_err(|error| error.to_string())?;
+        let output = export_xlsx_for_profile(&workbook, OutputProfile::NativeTables)
+            .map_err(|error| error.to_string())?;
+        Ok::<_, String>((workbook, output))
+    });
+    let (workbook, output) = match exported {
+        Ok((workbook, output)) => (workbook, output),
+        Err(error) => {
+            say(format!(
+                "{display}: native tables XLSX export refused after {export_ms:.1} ms: {error}"
+            ));
+            say(format!(
+                "| {display} | {rows} | {} | {} | {} | {} | {} | {parse_ms:.1} | {} | {import_ms:.1} | {} | {reply_bytes} | {metadata_bytes} | refused | | | | {survived} |",
+                fixture.columns,
+                fixture.formulas,
+                fixture.bytes.len(),
+                fixture.worksheet_bytes,
+                fixture.expanded_bytes,
+                mib(parse_peak),
+                mib(import_peak),
+            ));
+            return;
+        }
+    };
+    say(format!(
+        "{display}: export done in {export_ms:.1} ms, peak RSS {} MiB",
+        mib(export_peak)
+    ));
+    let exported_formulas = workbook
+        .sheets
+        .iter()
+        .flat_map(|sheet| &sheet.rows)
+        .flatten()
+        .filter(|cell| cell.formula.is_some())
+        .count();
+    let chunks = survived.div_ceil(crate::MAX_FIELD_QUERY_TARGETS);
+    let export_expanded = zip_expanded_bytes(&output);
+    say(format!("{display}: original limits exceeded during export (code order):"));
+    check(
+        "MAX_NATIVE_TABLES_DATA_ROWS",
+        rows,
+        ORIGINAL_MAX_NATIVE_DATA_ROWS,
+    );
+    check(
+        "MAX_NATIVE_TABLES_TOTAL_ROWS",
+        rows,
+        ORIGINAL_MAX_NATIVE_TOTAL_ROWS,
+    );
+    check(
+        "MAX_NATIVE_TABLES_EXPANDED_BYTES",
+        export_expanded,
+        ORIGINAL_MAX_NATIVE_EXPANDED_BYTES,
+    );
+    check(
+        "MAX_NATIVE_TABLES_OUTPUT_BYTES",
+        output.len(),
+        ORIGINAL_MAX_NATIVE_OUTPUT_BYTES,
+    );
+    if fixture.formulas > ORIGINAL_MAX_FORMULAS {
+        say(format!(
+            "  note: with the original MAX_FORMULAS={ORIGINAL_MAX_FORMULAS}, export would have written {} formula cells as computed values only.",
+            exported_formulas
+        ));
+    }
+    say(format!(
+        "| {display} | {rows} | {} | {} | {} | {} | {} | {parse_ms:.1} | {} | {import_ms:.1} | {} | {reply_bytes} | {metadata_bytes} | {export_ms:.1} | {} | {export_expanded} | {chunks} | {survived}/{exported_formulas} |",
+        fixture.columns,
+        fixture.formulas,
+        fixture.bytes.len(),
+        fixture.worksheet_bytes,
+        fixture.expanded_bytes,
+        mib(parse_peak),
+        mib(import_peak),
+        output.len(),
+    ));
+}
+
+#[test]
+#[ignore = "working-size capacity measurement; run explicitly in release with --features capacity-bench"]
+fn import_export_working_size() {
+    if let Ok(name) = std::env::var("CAPACITY_MEASURE_FIXTURE") {
+        measure_fixture(&name);
+        return;
+    }
+    let executable = std::env::current_exe().expect("the test binary path is available");
+    say(
+        "| fixture | rows | columns | source formulas | source XLSX bytes | largest worksheet XML bytes | expanded bytes | import_xlsx ms | import_xlsx peak RSS MiB | import_workbook ms | import_workbook peak RSS MiB | Imported reply bytes | InteropMetadata bytes | export ms | output bytes | export expanded bytes | query_fields chunks | formulas survived |",
+    );
+    say(
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    );
+    for name in ["S2-250", "S2-1000", "S2-4000", "S1", "S2", "S3", "S4"] {
+        let output = std::process::Command::new("timeout")
+            .args(["-k", "10", PHASE_TIMEOUT_SECONDS])
+            .arg(&executable)
+            .args([
+                "--ignored",
+                "--exact",
+                "capacity_bench::import_export_working_size",
+                "--nocapture",
+            ])
+            .env("CAPACITY_MEASURE_FIXTURE", name)
+            .output();
+        match output {
+            Ok(output) => {
+                print!("{}", String::from_utf8_lossy(&output.stdout));
+                if !output.stderr.is_empty() {
+                    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+                match output.status.code() {
+                    Some(124) => say(format!(
+                        "| {name} | over 20 minutes | | | | | | | | | | | | | | | | import_workbook exceeded 20 minutes (timeout {PHASE_TIMEOUT_SECONDS} s) |"
+                    )),
+                    Some(0) => {}
+                    code => say(format!(
+                        "| {name} | child exited with {code:?} | | | | | | | | | | | | | | | | not measured |"
+                    )),
+                }
+                let _ = std::io::stdout().flush();
+            }
+            Err(error) => say(format!(
+                "{name}: could not spawn the isolated measurement child: {error}"
+            )),
+        }
+    }
+}
