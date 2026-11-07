@@ -44,7 +44,9 @@ pub use roproj::{
 };
 pub use roproj::{
     CanonicalRoProjectFileV3, CanonicalRoProjectV3, ROPROJ_V3_FORMAT_VERSION, ROPROJ_V3_PATHS,
-    decode_roproj_v3, encode_roproj_v3, migrate_roproj_v1_to_v3, migrate_roproj_v2_to_v3,
+    ROPROJ_V3_PRESENTATION_PATH, decode_roproj_v3, decode_roproj_v3_with_presentation,
+    encode_roproj_v3, encode_roproj_v3_with_presentation, migrate_roproj_v1_to_v3,
+    migrate_roproj_v2_to_v3,
 };
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;

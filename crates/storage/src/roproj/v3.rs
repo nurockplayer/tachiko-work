@@ -13,12 +13,13 @@ use tachiko_semantic_core::{
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
     KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, MAX_CONDITIONAL_CRITERIA, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value, validate_document,
-    validate_keyed_grouped_sum_definitions,
+    MAX_EXPRESSION_NODES, Number, PresentationError, PresentationStore, Schema, SchemaId,
+    SchemaKey, Value, validate_document, validate_keyed_grouped_sum_definitions,
+    validate_presentation,
 };
 
 use crate::{
-    FormatError,
+    FormatError, decode_presentation, encode_presentation,
     strict_json::{FrontendError, VersionToken, inspect_roproj},
 };
 
@@ -48,6 +49,8 @@ pub const ROPROJ_V3_PATHS: [&str; 19] = [
     "entities/e.jsonl",
     "entities/f.jsonl",
 ];
+/// Optional presentation member, present last in the tree only when nonempty.
+pub const ROPROJ_V3_PRESENTATION_PATH: &str = "presentation.jsonl";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalRoProjectFileV3 {
@@ -97,7 +100,8 @@ impl CanonicalRoProjectV3 {
     /// # Errors
     ///
     /// Returns a `.roproj` format, version, JSON, semantic, or representation
-    /// error unless the input is the exact canonical nineteen-file tree.
+    /// error unless the input is the exact canonical nineteen-file tree, or
+    /// twenty files with the optional `presentation.jsonl` member last.
     pub fn try_from_files(files: Vec<(String, Vec<u8>)>) -> Result<Self, FormatError> {
         match Self::try_from_files_with_profile(files, |_| Ok::<(), Infallible>(())) {
             Ok((tree, _)) => Ok(tree),
@@ -147,24 +151,28 @@ impl CanonicalRoProjectV3 {
         profile: impl FnOnce(&Document) -> Result<(), E>,
         definition_error: impl FnOnce(KeyedGroupedSumDefinitionError) -> FormatError,
     ) -> Result<(Self, Document), CanonicalRoProjectV3AdmissionError<E>> {
-        if files.len() != ROPROJ_V3_PATHS.len() {
+        if files.len() != ROPROJ_V3_PATHS.len() && files.len() != ROPROJ_V3_PATHS.len() + 1 {
             return Err(CanonicalRoProjectV3AdmissionError::Format(
                 FormatError::InvalidRoProjectRepresentation {
                     message: format!(
-                        ".roproj/v3 requires exactly {} files",
-                        ROPROJ_V3_PATHS.len()
+                        ".roproj/v3 requires exactly {} files, or {} with '{ROPROJ_V3_PRESENTATION_PATH}' last",
+                        ROPROJ_V3_PATHS.len(),
+                        ROPROJ_V3_PATHS.len() + 1
                     ),
                 },
             ));
         }
         let mut canonical_files = Vec::with_capacity(files.len());
         for (index, (path, bytes)) in files.into_iter().enumerate() {
-            if path != ROPROJ_V3_PATHS[index] {
+            let expected = ROPROJ_V3_PATHS
+                .get(index)
+                .copied()
+                .unwrap_or(ROPROJ_V3_PRESENTATION_PATH);
+            if path != expected {
                 return Err(CanonicalRoProjectV3AdmissionError::Format(
                     FormatError::InvalidRoProjectRepresentation {
                         message: format!(
-                            "expected canonical path '{}' at position {index}, found '{path}'",
-                            ROPROJ_V3_PATHS[index]
+                            "expected canonical path '{expected}' at position {index}, found '{path}'"
                         ),
                     },
                 ));
@@ -182,9 +190,18 @@ impl CanonicalRoProjectV3 {
             .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         validate_keyed_grouped_sum_definitions(&document)
             .map_err(|error| CanonicalRoProjectV3AdmissionError::Format(definition_error(error)))?;
+        if let Some(bytes) = tree.file(ROPROJ_V3_PRESENTATION_PATH) {
+            let store =
+                decode_presentation(bytes).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
+            validate_presentation(&store, &document)
+                .map_err(|error| presentation_error(&error))
+                .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
+        }
         let expected =
             encode_validated(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
-        if expected != tree {
+        // `decode_presentation` already proved the optional member canonical, so
+        // only the required nineteen files participate in this comparison.
+        if expected.files.as_slice() != &tree.files[..ROPROJ_V3_PATHS.len()] {
             return Err(CanonicalRoProjectV3AdmissionError::Format(
                 FormatError::InvalidRoProjectRepresentation {
                     message: "tree bytes are not canonical .roproj/v3".to_owned(),
@@ -612,6 +629,57 @@ pub fn decode(tree: &CanonicalRoProjectV3) -> Result<Document, FormatError> {
     check_v3_document(&document)?;
     validate_semantic_expression_limits(&document)?;
     Ok(document)
+}
+
+/// Encode a valid semantic document and its presentation store into the exact
+/// canonical `.roproj/v3` tree.
+///
+/// An empty store produces exactly the nineteen-file tree of [`encode`].
+///
+/// # Errors
+///
+/// Returns a presentation or `.roproj` representation error when the store does
+/// not belong to the document, or the document cannot be encoded canonically.
+pub fn encode_with_presentation(
+    document: &Document,
+    store: &PresentationStore,
+) -> Result<CanonicalRoProjectV3, FormatError> {
+    validate_presentation(store, document).map_err(|error| presentation_error(&error))?;
+    let mut tree = encode(document)?;
+    if let Some(bytes) = encode_presentation(store)? {
+        tree.files.push(CanonicalRoProjectFileV3 {
+            path: ROPROJ_V3_PRESENTATION_PATH.to_owned(),
+            bytes,
+        });
+    }
+    Ok(tree)
+}
+
+/// Decode a canonical `.roproj/v3` tree into its semantic document and
+/// presentation store.
+///
+/// A tree without the optional member gives an empty store.
+///
+/// # Errors
+///
+/// Returns the errors of [`decode`] or of the optional member's strict decoder,
+/// or a presentation error when the store does not match the document.
+pub fn decode_with_presentation(
+    tree: &CanonicalRoProjectV3,
+) -> Result<(Document, PresentationStore), FormatError> {
+    let document = decode(tree)?;
+    let store = match tree.file(ROPROJ_V3_PRESENTATION_PATH) {
+        Some(bytes) => decode_presentation(bytes)?,
+        None => PresentationStore::default(),
+    };
+    validate_presentation(&store, &document).map_err(|error| presentation_error(&error))?;
+    Ok((document, store))
+}
+
+fn presentation_error(error: &PresentationError) -> FormatError {
+    FormatError::InvalidRoProjectRepresentation {
+        message: format!("invalid presentation store: {error}"),
+    }
 }
 
 /// Convert a validated v1 semantic document into the independently rendered
