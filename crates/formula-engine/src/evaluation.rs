@@ -1,11 +1,26 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
     ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
-    CriterionCell, CriterionTest, Document, Expression, FieldRef, FieldType, Number, Value,
+    CriterionCell, CriterionKey, CriterionTest, CriterionTestKey, Document, Entity, EntityId,
+    Expression, FieldRef, FieldType, Number, Value,
 };
 
 use crate::{CalculationFailure, FailureMap, column_cells};
+
+#[cfg(test)]
+use conditional_walks::{bypass_caches, record_row, record_walk};
+
+/// In a normal build the walk counters and the forced-walk switch do not exist.
+#[cfg(not(test))]
+const fn bypass_caches() -> bool {
+    false
+}
+#[cfg(not(test))]
+const fn record_row() {}
+#[cfg(not(test))]
+const fn record_walk(_candidates: bool) {}
 
 /// One pass's read of one column, in entity order.
 struct ColumnValues {
@@ -19,6 +34,40 @@ struct ColumnValues {
     total: f64,
 }
 
+/// One conditional criterion column's index for this pass.
+struct CriterionIndex {
+    /// The entities filed under each cell key, in entity order.
+    entries: BTreeMap<CriterionKey, Vec<EntityId>>,
+    /// A cell whose match cannot be decided from its key: the full walk.
+    scan: bool,
+}
+
+/// The memo identity of one conditional aggregate. The rows a conditional
+/// matches depend on the aggregate and on each criterion's column and resolved
+/// test, never on the formula that computes it.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ConditionalKey {
+    aggregate: AggregateKey,
+    criteria: Vec<(ColumnRef, CriterionTestKey)>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum AggregateKey {
+    Count,
+    Sum(ColumnRef),
+    Average(ColumnRef),
+}
+
+impl AggregateKey {
+    fn new(aggregate: &ConditionalAggregate) -> Self {
+        match aggregate {
+            ConditionalAggregate::Count => Self::Count,
+            ConditionalAggregate::Sum(column) => Self::Sum(column.clone()),
+            ConditionalAggregate::Average(column) => Self::Average(column.clone()),
+        }
+    }
+}
+
 /// One calculation pass's read of each column, filled on first use.
 ///
 /// A column's formula members are its static dependencies, so all of them have
@@ -29,9 +78,62 @@ struct ColumnValues {
 #[derive(Default)]
 pub(crate) struct ColumnCache {
     entries: BTreeMap<ColumnRef, ColumnValues>,
+    indexes: BTreeMap<ColumnRef, CriterionIndex>,
+    conditionals: BTreeMap<ConditionalKey, Result<Number, CalculationFailure>>,
 }
 
 impl ColumnCache {
+    /// One criterion column's key index, built at most once per pass, in entity
+    /// order and under the same schema filter the row walk applies.
+    fn criterion_index(
+        &mut self,
+        document: &Document,
+        values: &BTreeMap<FieldRef, Number>,
+        column: &ColumnRef,
+    ) {
+        if self.indexes.contains_key(column) {
+            return;
+        }
+        let mut index = CriterionIndex {
+            entries: BTreeMap::new(),
+            scan: false,
+        };
+        for (entity_id, entity) in &document.entities {
+            if entity.schema != column.schema {
+                continue;
+            }
+            let Some(value) = entity.fields.get(&column.field) else {
+                continue;
+            };
+            let cell = match value {
+                Value::Number(_) | Value::Formula(_) => {
+                    let reference = FieldRef::new(entity_id.clone(), column.field.clone());
+                    let Some(value) = values.get(&reference) else {
+                        // The walk fails at this row whatever its key says.
+                        index.scan = true;
+                        continue;
+                    };
+                    CriterionCell::Number(value.get())
+                }
+                Value::Text(text) => CriterionCell::Text(text),
+                Value::Boolean(boolean) => CriterionCell::Boolean(*boolean),
+                Value::Date(date) => CriterionCell::Date(*date),
+                Value::Reference(_) => {
+                    index.scan = true;
+                    continue;
+                }
+            };
+            for key in cell.keys() {
+                index
+                    .entries
+                    .entry(key)
+                    .or_default()
+                    .push(entity_id.clone());
+            }
+        }
+        self.indexes.insert(column.clone(), index);
+    }
+
     pub(crate) fn fill(
         &mut self,
         document: &Document,
@@ -81,7 +183,9 @@ pub(crate) struct Evaluation<'a> {
     pub(crate) document: &'a Document,
     pub(crate) owner: &'a FieldRef,
     pub(crate) values: &'a BTreeMap<FieldRef, Number>,
-    pub(crate) columns: &'a ColumnCache,
+    // Conditional aggregates memoise their result and index their criteria
+    // columns as the pass goes, so the cache is this evaluation's alone.
+    pub(crate) columns: &'a mut ColumnCache,
 }
 
 impl Evaluation<'_> {
@@ -89,7 +193,7 @@ impl Evaluation<'_> {
     // Failure propagation follows only the branches that are actually read.
     // The differential oracle keeps this expanded per-cell form.
     #[cfg(test)]
-    pub(crate) fn required_references(&self, expression: &Expression) -> BTreeSet<FieldRef> {
+    pub(crate) fn required_references(&mut self, expression: &Expression) -> BTreeSet<FieldRef> {
         let mut references = BTreeSet::new();
         let mut pending = vec![expression];
         while let Some(node) = pending.pop() {
@@ -155,7 +259,7 @@ impl Evaluation<'_> {
     /// rules as the expanded reference walk, but its columns answered from the
     /// pass cache instead of expanded per cell.
     pub(crate) fn failed_required_references(
-        &self,
+        &mut self,
         expression: &Expression,
         failures: &FailureMap,
     ) -> BTreeSet<FieldRef> {
@@ -229,7 +333,7 @@ impl Evaluation<'_> {
         references
     }
 
-    pub(crate) fn number(&self, expression: &Expression) -> Result<Number, CalculationFailure> {
+    pub(crate) fn number(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match expression {
             Expression::Number(number) => Ok(*number),
             Expression::Reference(reference) => self.reference(reference),
@@ -240,11 +344,10 @@ impl Evaluation<'_> {
                 condition,
                 then_value,
                 else_value,
-            } => self.number(if self.condition(condition)? {
-                then_value
-            } else {
-                else_value
-            }),
+            } => {
+                let condition = self.condition(condition)?;
+                self.number(if condition { then_value } else { else_value })
+            }
             Expression::ColumnTotal(column) => {
                 // Blank cells are skipped, and the pass cache added the values
                 // in entity order, so the total is bit-identical to a walk.
@@ -312,47 +415,103 @@ impl Evaluation<'_> {
     }
 
     fn conditional(
-        &self,
+        &mut self,
         aggregate: &ConditionalAggregate,
         criteria: &[ColumnCriterion],
     ) -> Result<Number, CalculationFailure> {
-        let Some(first) = criteria.first() else {
+        if criteria.is_empty() {
             return Err(CalculationFailure::TypeMismatch);
-        };
-        let schema = first.column.schema.clone();
+        }
         let mut tests = Vec::with_capacity(criteria.len());
         for criterion in criteria {
             tests.push(self.criterion_test(criterion)?);
         }
+        let bypass = bypass_caches();
+        let memo_key = (!bypass).then(|| ConditionalKey {
+            aggregate: AggregateKey::new(aggregate),
+            criteria: criteria
+                .iter()
+                .zip(&tests)
+                .map(|(criterion, test)| (criterion.column.clone(), test.key()))
+                .collect(),
+        });
+        if let Some(key) = &memo_key {
+            if let Some(result) = self.columns.conditionals.get(key) {
+                return result.clone();
+            }
+        }
+        if !bypass {
+            self.columns
+                .criterion_index(self.document, self.values, &criteria[0].column);
+        }
+        let candidates = if bypass {
+            None
+        } else {
+            self.candidates(criteria, &tests)
+        };
+        let result = self.conditional_over(aggregate, criteria, &tests, candidates.as_deref());
+        if let Some(key) = memo_key {
+            self.columns.conditionals.insert(key, result.clone());
+        }
+        result
+    }
+
+    /// The entities the first criterion cannot reject, in entity order: `None`
+    /// when its test has no keys or its column holds a cell that may fail.
+    ///
+    /// A row the first criterion rejects without an error is dropped before
+    /// any later criterion reads it, so a superset of the rows it matches, in
+    /// entity order, gives the same matched rows, errors and sum order.
+    fn candidates(
+        &self,
+        criteria: &[ColumnCriterion],
+        tests: &[CriterionTest],
+    ) -> Option<Cow<'_, [EntityId]>> {
+        let keys = tests[0].keys()?;
+        let index = &self.columns.indexes[&criteria[0].column];
+        if index.scan {
+            return None;
+        }
+        let lists = keys
+            .iter()
+            .filter_map(|key| index.entries.get(key))
+            .collect::<Vec<_>>();
+        Some(match lists.as_slice() {
+            [] => Cow::Borrowed(&[]),
+            [only] => Cow::Borrowed(only.as_slice()),
+            [left, right] => Cow::Owned(merge_ids(left, right)),
+            _ => unreachable!("a test has at most two keys"),
+        })
+    }
+
+    /// The rows one conditional reads, in entity order: the candidates when
+    /// the first criterion names them, every row of the schema otherwise.
+    fn conditional_over(
+        &self,
+        aggregate: &ConditionalAggregate,
+        criteria: &[ColumnCriterion],
+        tests: &[CriterionTest],
+        candidates: Option<&[EntityId]>,
+    ) -> Result<Number, CalculationFailure> {
+        record_walk(candidates.is_some());
+        let document = self.document;
         let mut values = Vec::new();
         let mut matched = 0_usize;
-        for entity in self.document.entities.values() {
-            if entity.schema != schema {
-                continue;
-            }
-            let mut included = true;
-            for (criterion, test) in criteria.iter().zip(&tests) {
-                let cell = self.criterion_cell(entity, &criterion.column.field)?;
-                if !test.matches(cell) {
-                    included = false;
-                    break;
+        if let Some(candidates) = candidates {
+            for entity in candidates.iter().map(|id| &document.entities[id]) {
+                if self.conditional_row(aggregate, criteria, tests, entity, &mut values)? {
+                    matched += 1;
                 }
             }
-            if !included {
-                continue;
-            }
-            matched += 1;
-            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
-                aggregate
+        } else {
+            let schema = &criteria[0].column.schema;
+            for entity in document
+                .entities
+                .values()
+                .filter(|entity| entity.schema == *schema)
             {
-                if entity.fields.contains_key(&column.field) {
-                    let reference = FieldRef::new(entity.id.clone(), column.field.clone());
-                    let Some(value) = self.values.get(&reference) else {
-                        return Err(CalculationFailure::FailedDependencies {
-                            dependencies: BTreeSet::from([reference]),
-                        });
-                    };
-                    values.push(value.get());
+                if self.conditional_row(aggregate, criteria, tests, entity, &mut values)? {
+                    matched += 1;
                 }
             }
         }
@@ -368,8 +527,40 @@ impl Evaluation<'_> {
         })
     }
 
-    fn criterion_test(
+    /// One row of a conditional: whether every criterion reads it as a match,
+    /// adding its aggregate value when they all do.
+    fn conditional_row(
         &self,
+        aggregate: &ConditionalAggregate,
+        criteria: &[ColumnCriterion],
+        tests: &[CriterionTest],
+        entity: &Entity,
+        values: &mut Vec<f64>,
+    ) -> Result<bool, CalculationFailure> {
+        record_row();
+        for (criterion, test) in criteria.iter().zip(tests) {
+            let cell = self.criterion_cell(entity, &criterion.column.field)?;
+            if !test.matches(cell) {
+                return Ok(false);
+            }
+        }
+        if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) = aggregate
+        {
+            if entity.fields.contains_key(&column.field) {
+                let reference = FieldRef::new(entity.id.clone(), column.field.clone());
+                let Some(value) = self.values.get(&reference) else {
+                    return Err(CalculationFailure::FailedDependencies {
+                        dependencies: BTreeSet::from([reference]),
+                    });
+                };
+                values.push(value.get());
+            }
+        }
+        Ok(true)
+    }
+
+    fn criterion_test(
+        &mut self,
         criterion: &ColumnCriterion,
     ) -> Result<CriterionTest, CalculationFailure> {
         match (criterion.operator, criterion.value.as_deref()) {
@@ -447,7 +638,7 @@ impl Evaluation<'_> {
     }
 
     fn binary(
-        &self,
+        &mut self,
         left: &Expression,
         right: &Expression,
         operation: impl FnOnce(f64, f64) -> Result<Number, CalculationFailure>,
@@ -484,7 +675,7 @@ impl Evaluation<'_> {
         })
     }
 
-    fn condition(&self, expression: &Expression) -> Result<bool, CalculationFailure> {
+    fn condition(&mut self, expression: &Expression) -> Result<bool, CalculationFailure> {
         match expression {
             Expression::Compare {
                 operator,
@@ -529,6 +720,31 @@ impl Evaluation<'_> {
             _ => Err(CalculationFailure::TypeMismatch),
         }
     }
+}
+
+/// Merge two entity-id lists, each already in entity order, keeping that order.
+/// A cell carries at most one key per kind, so the lists never share an id.
+fn merge_ids(left: &[EntityId], right: &[EntityId]) -> Vec<EntityId> {
+    use std::cmp::Ordering;
+
+    let mut merged = Vec::with_capacity(left.len() + right.len());
+    let (mut left_index, mut right_index) = (0_usize, 0_usize);
+    while left_index < left.len() || right_index < right.len() {
+        let ordering = match (left.get(left_index), right.get(right_index)) {
+            (Some(left_id), Some(right_id)) => left_id.cmp(right_id),
+            (Some(_), None) => Ordering::Less,
+            (None, _) => Ordering::Greater,
+        };
+        if ordering != Ordering::Greater {
+            merged.push(left[left_index].clone());
+            left_index += 1;
+        }
+        if ordering != Ordering::Less {
+            merged.push(right[right_index].clone());
+            right_index += 1;
+        }
+    }
+    merged
 }
 
 fn round(value: Number, digits: u8) -> Result<Number, CalculationFailure> {
@@ -676,4 +892,51 @@ fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
 
 fn number_result(value: f64) -> Result<Number, CalculationFailure> {
     Number::new(value).map_err(|_| CalculationFailure::NonFiniteResult)
+}
+
+#[cfg(test)]
+mod conditional_tests;
+
+/// Counts the rows a conditional walk reads and which walk ran, so a test can
+/// bound one calculation's work and prove the path it took.
+#[cfg(test)]
+mod conditional_walks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static ROWS: Cell<usize> = const { Cell::new(0) };
+        static CANDIDATE_WALKS: Cell<usize> = const { Cell::new(0) };
+        static FULL_WALKS: Cell<usize> = const { Cell::new(0) };
+        static BYPASS: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(crate) fn record_row() {
+        ROWS.with(|rows| rows.set(rows.get() + 1));
+    }
+
+    pub(crate) fn record_walk(candidates: bool) {
+        let walks = if candidates {
+            &CANDIDATE_WALKS
+        } else {
+            &FULL_WALKS
+        };
+        walks.with(|walks| walks.set(walks.get() + 1));
+    }
+
+    /// The rows read since the last call, with the candidate and full walks.
+    pub(crate) fn take() -> (usize, usize, usize) {
+        (
+            ROWS.with(|rows| rows.replace(0)),
+            CANDIDATE_WALKS.with(|walks| walks.replace(0)),
+            FULL_WALKS.with(|walks| walks.replace(0)),
+        )
+    }
+
+    pub(crate) fn bypass_caches() -> bool {
+        BYPASS.with(Cell::get)
+    }
+
+    pub(crate) fn set_bypass(bypass: bool) {
+        BYPASS.with(|flag| flag.set(bypass));
+    }
 }
