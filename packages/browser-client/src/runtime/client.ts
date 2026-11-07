@@ -24,6 +24,9 @@ import type {
   TableWindowProjection,
   LocatedInViewProjection,
   DistinctValuesProjection,
+  FindDirection,
+  FindInViewProjection,
+  FindPosition,
   ColumnTotalsProjection,
   GroupDimension,
   GroupScope,
@@ -105,11 +108,34 @@ export interface DesignerClient {
     field: string,
     limit: number,
   ): Promise<DistinctValuesProjection>;
+  /**
+   * The next or previous cell of the view whose display text contains `query`
+   * (case-insensitive), with its ordinal and the view's total match count.
+   * `fields` are the shown columns in shown order; a blank query finds nothing.
+   */
+  findInView(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    query: string,
+    fields: string[],
+    from: FindPosition | undefined,
+    direction: FindDirection,
+  ): Promise<FindInViewProjection>;
   /** Number totals over exactly these entities; unknown, duplicate or foreign ids refuse. */
   queryColumnTotals(
     expectedRevision: string,
     collection: string,
     entities: string[],
+  ): Promise<ColumnTotalsProjection>;
+  /**
+   * Number totals over the rows a view shows, summed in collection order;
+   * `keep_entities` rows count even when filtered out.
+   */
+  queryViewTotals(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
   ): Promise<ColumnTotalsProjection>;
   /** Number totals grouped by one or two columns over the rows one scope covers. */
   queryGroupTotals(

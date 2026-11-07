@@ -236,6 +236,30 @@ export type DistinctValuesProjection = {
   truncated: boolean;
 };
 
+/** One cell position inside a view: a zero-based view row and a column id. */
+export type FindPosition = { row: number; field: string };
+
+/** Which way Find walks from `FindPosition`, wrapping at either end. */
+export type FindDirection = "next" | "previous";
+
+/** One matching cell: its entity, column, zero-based view row and match ordinal. */
+export type FoundCell = {
+  entity: string;
+  field: string;
+  row: number;
+  ordinal: number;
+};
+
+/**
+ * One Find step over a view: `total` counts every matching cell, and `found`
+ * is absent when nothing matches. A blank query always gives `total` 0.
+ */
+export type FindInViewProjection = {
+  revision: string;
+  total: number;
+  found?: FoundCell;
+};
+
 /** Number totals over the named entities at one revision; blank cells are skipped, as in `column_totals`. */
 export type ColumnTotalsProjection = {
   revision: string;
@@ -567,10 +591,26 @@ export type DesignerRequest =
       limit: number;
     }
   | {
+      type: "find_in_view";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
+      query: string;
+      fields: string[];
+      from?: FindPosition;
+      direction: FindDirection;
+    }
+  | {
       type: "query_column_totals";
       expected_revision: string;
       collection: string;
       entities: string[];
+    }
+  | {
+      type: "query_view_totals";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
     }
   | {
       type: "query_group_totals";
@@ -618,6 +658,7 @@ export type DesignerResponse =
   | { type: "table_window"; payload: TableWindowProjection }
   | { type: "located_in_view"; payload: LocatedInViewProjection }
   | { type: "distinct_values"; payload: DistinctValuesProjection }
+  | { type: "found_in_view"; payload: FindInViewProjection }
   | { type: "column_totals"; payload: ColumnTotalsProjection }
   | { type: "group_totals"; payload: GroupTotalsProjection }
   | { type: "fields"; payload: FieldBatchProjection }
