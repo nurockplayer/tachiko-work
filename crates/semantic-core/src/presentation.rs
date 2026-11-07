@@ -388,6 +388,7 @@ fn validate_rule_condition(
 /// Returns a typed [`PresentationError`] for a dangling or unused reference, a
 /// form a rule condition may not use, an out-of-bounds store, or a title, rank
 /// or number format outside its declared grammar.
+#[allow(clippy::too_many_lines)] // One ordered refusal pass keeps the error precedence visible.
 pub fn validate_presentation(
     store: &PresentationStore,
     document: &Document,
