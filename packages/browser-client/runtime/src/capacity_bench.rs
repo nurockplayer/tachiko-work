@@ -2170,7 +2170,8 @@ fn capacity_w1_shape() {
     );
 
     // 2. Retained calculation state.
-    let (retained, retained_sample) = observe(|| RetainedCalculationState::rebuild(&document));
+    let ((retained, incremental_work), retained_sample) =
+        observe(|| RetainedCalculationState::rebuild(&document));
     w1_line(
         &shape,
         "retained_rebuild_ms",
@@ -2180,6 +2181,21 @@ fn capacity_w1_shape() {
         &shape,
         "retained_peak_delta_bytes",
         w1_optional(retained_sample.peak_delta_bytes),
+    );
+    w1_line(
+        &shape,
+        "retained_rebuild_full_rebuilds",
+        incremental_work.full_rebuilds,
+    );
+    w1_line(
+        &shape,
+        "retained_rebuild_nodes_recomputed",
+        incremental_work.nodes_recomputed,
+    );
+    w1_line(
+        &shape,
+        "retained_rebuild_nodes_reused",
+        incremental_work.nodes_reused,
     );
     let sizes = retained.sizes();
     w1_line(&shape, "retained_nodes", sizes.nodes);
