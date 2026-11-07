@@ -6089,6 +6089,7 @@ impl DesignerRuntime {
 
     /// Resolve private copy gestures once against the exact canonical snapshot.
     /// View order and display names never participate in formula meaning.
+    #[allow(clippy::too_many_lines)] // Keep the whole copy batch atomic in one audit trail.
     fn copy_formula(
         &mut self,
         expected: &str,
