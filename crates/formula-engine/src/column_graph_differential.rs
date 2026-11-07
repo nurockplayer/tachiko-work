@@ -161,11 +161,11 @@ mod reference {
             for column in crate::extract_column_totals(expression) {
                 columns.fill(document, values, failures, &column);
             }
-            let evaluation = evaluation::Evaluation {
+            let mut evaluation = evaluation::Evaluation {
                 document,
                 owner: &formula,
                 values,
-                columns: &columns,
+                columns: &mut columns,
             };
             let failed_dependencies = evaluation
                 .required_references(expression)

@@ -2244,11 +2244,11 @@ fn evaluate_remaining_formulas(
         for column in extract_column_totals(expression) {
             columns.fill(document, values, failures, &column);
         }
-        let evaluation = evaluation::Evaluation {
+        let mut evaluation = evaluation::Evaluation {
             document,
             owner: &formula,
             values,
-            columns: &columns,
+            columns: &mut columns,
         };
         let failed_dependencies = evaluation.failed_required_references(expression, failures);
         if failed_dependencies.is_empty() {

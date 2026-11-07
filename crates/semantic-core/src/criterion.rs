@@ -43,6 +43,67 @@ pub enum CriterionCell<'a> {
     Date(Date),
 }
 
+/// The column-index key of one cell or one resolved test.
+///
+/// A test's keys are a superset filter: a cell the test matches always carries
+/// one of them, so an index built from these keys may hold extra cells but
+/// never misses a match.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum CriterionKey {
+    /// A number by bits, with `-0.0` stored as `0.0` because `==` treats the
+    /// two signs as equal.
+    Number(u64),
+    /// The text under the same case fold the wildcard match compares with.
+    Text(String),
+    Boolean(bool),
+    Date(Date),
+}
+
+impl CriterionKey {
+    fn number(value: f64) -> Self {
+        let value = if value == 0.0 { 0.0 } else { value };
+        Self::Number(value.to_bits())
+    }
+}
+
+impl CriterionCell<'_> {
+    /// The keys a column index files this cell under: its own type's key, plus
+    /// a number key for text a number operand reads as a number.
+    #[must_use]
+    pub fn keys(self) -> Vec<CriterionKey> {
+        match self {
+            Self::Number(number) => vec![CriterionKey::number(number)],
+            Self::Text(text) => {
+                let mut keys = vec![CriterionKey::Text(lowercase_text(text))];
+                if let Some(number) = parse_number_cell(text) {
+                    keys.push(CriterionKey::number(number));
+                }
+                keys
+            }
+            Self::Boolean(boolean) => vec![CriterionKey::Boolean(boolean)],
+            Self::Date(date) => vec![CriterionKey::Date(date)],
+        }
+    }
+}
+
+/// One resolved test's identity: equal keys match exactly the same cells.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct CriterionTestKey {
+    operator: u8,
+    operand: CriterionOperandKey,
+    text: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum CriterionOperandKey {
+    /// The operand by bits, with no zero-sign normalising: only `==` compares
+    /// operands, so both signs are safe either way.
+    Number(u64),
+    Text,
+    Boolean(bool),
+    Date(Date),
+}
+
 /// A parsed criterion text: an operator and the operand that follows it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CriterionTest {
@@ -197,6 +258,60 @@ impl CriterionTest {
         equal
     }
 
+    /// The column-index keys a cell this test matches may be filed under, or
+    /// `None` when the test has to read every cell.
+    ///
+    /// Every key is derived from a comparison this test actually makes: `=`
+    /// only, a number operand, a literal text operand (blanks and wildcards
+    /// have no key), and the text spelling a boolean or date operand also
+    /// compares with.
+    #[must_use]
+    pub fn keys(&self) -> Option<Vec<CriterionKey>> {
+        if self.operator != ComparisonOperator::Equal {
+            return None;
+        }
+        match self.operand {
+            Operand::Number(number) => Some(vec![CriterionKey::number(number)]),
+            // The empty text matches blank cells, which carry no key.
+            Operand::Text if self.text.is_empty() => None,
+            Operand::Text => self.text_keys(),
+            Operand::Boolean(boolean) => {
+                let mut keys = self.text_keys()?;
+                keys.insert(0, CriterionKey::Boolean(boolean));
+                Some(keys)
+            }
+            Operand::Date(date) => {
+                let mut keys = self.text_keys()?;
+                keys.insert(0, CriterionKey::Date(date));
+                Some(keys)
+            }
+        }
+    }
+
+    /// The identity of this resolved test: two equal keys agree on every cell.
+    #[must_use]
+    pub fn key(&self) -> CriterionTestKey {
+        CriterionTestKey {
+            operator: operator_order(self.operator),
+            operand: match self.operand {
+                Operand::Number(number) => CriterionOperandKey::Number(number.to_bits()),
+                Operand::Text => CriterionOperandKey::Text,
+                Operand::Boolean(boolean) => CriterionOperandKey::Boolean(boolean),
+                Operand::Date(date) => CriterionOperandKey::Date(date),
+            },
+            text: self.text.clone(),
+        }
+    }
+
+    /// The text-cell key of the operand text, `None` when the text holds a
+    /// wildcard or an escape and so has to be matched cell by cell.
+    fn text_keys(&self) -> Option<Vec<CriterionKey>> {
+        if has_wildcard(&self.text) {
+            return None;
+        }
+        Some(vec![CriterionKey::Text(lowercase_text(&self.text))])
+    }
+
     #[allow(clippy::float_cmp)] // equality of finite values is the comparison
     fn matches_equal(&self, cell: Option<CriterionCell<'_>>) -> bool {
         match cell {
@@ -231,6 +346,23 @@ impl CriterionTest {
             _ => false,
         }
     }
+}
+
+/// A stable order over operators for a memo key; the values mean nothing else.
+const fn operator_order(operator: ComparisonOperator) -> u8 {
+    match operator {
+        ComparisonOperator::Equal => 0,
+        ComparisonOperator::NotEqual => 1,
+        ComparisonOperator::Less => 2,
+        ComparisonOperator::LessOrEqual => 3,
+        ComparisonOperator::Greater => 4,
+        ComparisonOperator::GreaterOrEqual => 5,
+    }
+}
+
+fn has_wildcard(text: &str) -> bool {
+    text.chars()
+        .any(|character| matches!(character, '*' | '?' | '~'))
 }
 
 fn is_relational(operator: ComparisonOperator) -> bool {
@@ -366,10 +498,15 @@ fn lowercase(text: &str) -> Vec<char> {
     text.chars().flat_map(char::to_lowercase).collect()
 }
 
+/// The same fold as [`lowercase`], kept as text for a key.
+fn lowercase_text(text: &str) -> String {
+    text.chars().flat_map(char::to_lowercase).collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CriterionCell, CriterionTest};
-    use crate::Date;
+    use super::{CriterionCell, CriterionKey, CriterionTest};
+    use crate::{ComparisonOperator, Date};
 
     #[test]
     fn relational_criteria_refuse_text_and_booleans() {
@@ -431,5 +568,188 @@ mod tests {
         let test = CriterionTest::parse("TRUE").expect("valid criterion");
         assert!(test.matches(Some(CriterionCell::Boolean(true))));
         assert!(test.matches(Some(CriterionCell::Text("true"))));
+    }
+
+    /// Every text a test may be parsed from, plus the constructors that do not
+    /// go through [`CriterionTest::parse`].
+    fn tests() -> Vec<CriterionTest> {
+        let mut tests = texts()
+            .iter()
+            .map(|text| CriterionTest::parse(text).expect("valid criterion"))
+            .collect::<Vec<_>>();
+        for operator in [
+            ComparisonOperator::Equal,
+            ComparisonOperator::NotEqual,
+            ComparisonOperator::Less,
+            ComparisonOperator::LessOrEqual,
+            ComparisonOperator::Greater,
+            ComparisonOperator::GreaterOrEqual,
+        ] {
+            tests.push(CriterionTest::number(operator, 1.0));
+            tests.push(CriterionTest::number(operator, 0.0));
+            tests.push(CriterionTest::blank(operator));
+        }
+        tests.push(CriterionTest::equal_number(1.0));
+        tests.push(CriterionTest::equal_number(-0.0));
+        tests.push(CriterionTest::equal_boolean(true));
+        tests.push(CriterionTest::equal_boolean(false));
+        tests.push(CriterionTest::equal_date(
+            Date::parse("2026-01-05").expect("valid date"),
+        ));
+        tests
+    }
+
+    fn texts() -> Vec<String> {
+        [
+            "0",
+            "-0",
+            "1",
+            "1.0",
+            "1e0",
+            "+1",
+            "1.5",
+            "abc",
+            "ABC",
+            "ÀB",
+            "àb",
+            "İ",
+            "i\u{307}",
+            "*",
+            "~",
+            "",
+            "true",
+            "TRUE",
+            "2026-01-05",
+            "2026-1-5",
+            "=abc",
+            "a*",
+            "a?",
+            "~*",
+            "<>abc",
+            ">1",
+            "<=1",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    }
+
+    /// Every cell a criterion column may hold, including a blank.
+    fn cells() -> Vec<Option<CriterionCell<'static>>> {
+        let mut cells = [
+            "0",
+            "-0",
+            "1",
+            "1.0",
+            "1e0",
+            "+1",
+            "1.5",
+            "abc",
+            "ABC",
+            "ÀB",
+            "àb",
+            "İ",
+            "i\u{307}",
+            "*",
+            "~",
+            "",
+            "true",
+            "TRUE",
+            "2026-01-05",
+            "2026-1-5",
+        ]
+        .into_iter()
+        .map(|text| Some(CriterionCell::Text(text)))
+        .collect::<Vec<_>>();
+        for number in [0.0, -0.0, 1.0, 1.5] {
+            cells.push(Some(CriterionCell::Number(number)));
+        }
+        cells.push(Some(CriterionCell::Boolean(true)));
+        cells.push(Some(CriterionCell::Boolean(false)));
+        cells.push(Some(CriterionCell::Date(
+            Date::parse("2026-01-05").expect("valid date"),
+        )));
+        cells.push(None);
+        cells
+    }
+
+    #[test]
+    fn a_test_that_has_keys_is_never_missed_by_them() {
+        let mut explained = 0_usize;
+        let mut cross_type = 0_usize;
+        for test in &tests() {
+            let Some(keys) = test.keys() else {
+                continue;
+            };
+            for cell in &cells() {
+                if !test.matches(*cell) {
+                    continue;
+                }
+                let cell_keys = cell.map_or_else(Vec::new, CriterionCell::keys);
+                let Some(key) = keys.iter().find(|key| cell_keys.contains(key)) else {
+                    panic!("{test:?} matches {cell:?} but none of {keys:?} is in {cell_keys:?}");
+                };
+                explained += 1;
+                // A match the cell's own type alone would not explain: numeric
+                // text under a number operand, or a text spelling of a
+                // boolean or a date.
+                let own_type_only = matches!(
+                    (cell, key),
+                    (Some(CriterionCell::Number(_)), CriterionKey::Number(_))
+                        | (Some(CriterionCell::Text(_)), CriterionKey::Text(_))
+                        | (Some(CriterionCell::Boolean(_)), CriterionKey::Boolean(_))
+                        | (Some(CriterionCell::Date(_)), CriterionKey::Date(_))
+                );
+                if !own_type_only {
+                    cross_type += 1;
+                }
+            }
+        }
+        assert!(
+            explained > 20,
+            "only {explained} matched pairs were explained by a key"
+        );
+        assert!(
+            cross_type > 0,
+            "the text spellings of numbers, booleans and dates must match"
+        );
+    }
+
+    #[test]
+    fn a_keyed_test_and_a_scanning_test_say_so() {
+        // Equality with a literal has keys; relational, wildcard, blank and
+        // `<>` criteria have to read every cell.
+        for text in ["abc", "1", "2026-01-05", "TRUE"] {
+            assert!(
+                CriterionTest::parse(text)
+                    .expect("valid criterion")
+                    .keys()
+                    .is_some(),
+                "{text}"
+            );
+        }
+        for text in ["", "*", "abc*", "a?", "~*"] {
+            assert!(
+                CriterionTest::parse(text)
+                    .expect("valid criterion")
+                    .keys()
+                    .is_none(),
+                "{text:?}"
+            );
+        }
+        for text in [">1", "<=1", "<>abc"] {
+            assert!(
+                CriterionTest::parse(text)
+                    .expect("valid criterion")
+                    .keys()
+                    .is_none(),
+                "{text}"
+            );
+        }
+        assert!(
+            CriterionTest::blank(ComparisonOperator::Equal)
+                .keys()
+                .is_none()
+        );
     }
 }

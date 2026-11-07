@@ -11,7 +11,8 @@ mod validation;
 
 pub use address::{AddressIndex, AddressIndexError};
 pub use criterion::{
-    CriterionCell, CriterionOperandKind, CriterionTest, InvalidCriterion, MAX_CONDITIONAL_CRITERIA,
+    CriterionCell, CriterionKey, CriterionOperandKind, CriterionTest, CriterionTestKey,
+    InvalidCriterion, MAX_CONDITIONAL_CRITERIA,
 };
 pub use diagnostic::{
     Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
