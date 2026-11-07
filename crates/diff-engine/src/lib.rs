@@ -340,32 +340,41 @@ pub fn diff_with_calculations(
         .cloned()
         .collect::<BTreeSet<_>>();
 
-    for formula in formula_fields {
-        let (Some(before_value), Some(after_value)) = (
-            before_calculation.value(&formula),
-            after_calculation.value(&formula),
-        ) else {
-            continue;
-        };
-        if before_value == after_value {
-            continue;
-        }
+    let impacted = formula_fields
+        .into_iter()
+        .filter_map(|formula| {
+            let before_value = before_calculation.value(&formula)?;
+            let after_value = after_calculation.value(&formula)?;
+            (before_value != after_value).then_some((formula, before_value, after_value))
+        })
+        .collect::<Vec<_>>();
 
-        let causes = changed_fields
+    // Only the formulas with a changed value need causes, and an edit reaching
+    // none of them never pays for the walks.
+    if !impacted.is_empty() {
+        let targets = impacted
             .iter()
-            .filter(|changed| {
-                *changed == &formula
-                    || before_calculation.affected_by(changed).contains(&formula)
-                    || after_calculation.affected_by(changed).contains(&formula)
-            })
-            .cloned()
-            .collect();
-        changes.push(SemanticChange::FormulaImpact {
-            field: formula,
-            before: before_value,
-            after: after_value,
-            causes,
-        });
+            .map(|(formula, _, _)| formula.clone())
+            .collect::<BTreeSet<_>>();
+        let before_reaching = before_calculation.reaching_fields(&changed_fields, &targets);
+        let after_reaching = after_calculation.reaching_fields(&changed_fields, &targets);
+        for (formula, before_value, after_value) in impacted {
+            let mut causes = BTreeSet::new();
+            if changed_fields.contains(&formula) {
+                causes.insert(formula.clone());
+            }
+            for reaching in [&before_reaching, &after_reaching] {
+                if let Some(fields) = reaching.get(&formula) {
+                    causes.extend(fields.iter().cloned());
+                }
+            }
+            changes.push(SemanticChange::FormulaImpact {
+                field: formula,
+                before: before_value,
+                after: after_value,
+                causes: causes.into_iter().collect(),
+            });
+        }
     }
 
     Ok(SemanticDiff {

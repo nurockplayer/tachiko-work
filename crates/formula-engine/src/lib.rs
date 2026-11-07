@@ -72,11 +72,29 @@ pub fn bind_expression(
     owner: &FieldRef,
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
-    validate_unbound_expression_structure(expression)?;
     let index = AddressIndex::build(document).map_err(|source| FormulaBindError::Index {
         source: Box::new(source),
     })?;
-    let bound = bind_node(document, &index, owner, expression)?;
+    bind_expression_with_index(document, &index, owner, expression)
+}
+
+/// Bind a formula through an [`AddressIndex`] the caller built once.
+///
+/// Returns the same value as [`bind_expression`]; callers that bind every
+/// formula of one document reuse a single index instead of rebuilding it.
+///
+/// # Errors
+///
+/// Returns an error when a reference does not resolve to a valid target or
+/// the bound expression is not a Number.
+pub fn bind_expression_with_index(
+    document: &Document,
+    index: &AddressIndex,
+    owner: &FieldRef,
+    expression: &UnboundExpression,
+) -> Result<Expression, FormulaBindError> {
+    validate_unbound_expression_structure(expression)?;
+    let bound = bind_node(document, index, owner, expression)?;
     if bound.expression_type() != Some(FormulaExpressionType::Number) {
         return Err(FormulaBindError::TypeMismatch {
             message:
@@ -1558,6 +1576,41 @@ impl Calculation {
         }
 
         affected.into_iter().collect()
+    }
+
+    /// For each of `targets`, the fields of `changed` that reach it. One reverse
+    /// index, one walk per changed field, and only target pairs are kept.
+    ///
+    /// A changed field reaches exactly the formulas in [`Self::affected_by`]'s
+    /// result for that field, including itself when the graph loops back to it.
+    #[must_use]
+    pub fn reaching_fields<'a>(
+        &self,
+        changed: impl IntoIterator<Item = &'a FieldRef>,
+        targets: &BTreeSet<FieldRef>,
+    ) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        let reverse_dependents = reverse_dependency_index(&self.dependencies);
+        let mut reaching = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
+        for changed in changed {
+            let mut queue = VecDeque::from([changed]);
+            let mut reached = BTreeSet::new();
+            while let Some(field) = queue.pop_front() {
+                for dependent in reverse_dependents.get(field).into_iter().flatten() {
+                    if reached.insert(dependent) {
+                        queue.push_back(dependent);
+                    }
+                }
+            }
+            for formula in reached {
+                if targets.contains(formula) {
+                    reaching
+                        .entry(formula.clone())
+                        .or_default()
+                        .insert(changed.clone());
+                }
+            }
+        }
+        reaching
     }
 }
 

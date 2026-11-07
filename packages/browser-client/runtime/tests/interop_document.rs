@@ -2355,3 +2355,94 @@ fn export_refuses_a_number_criterion_over_a_date_column() {
         );
     }
 }
+
+#[test]
+fn import_binds_the_same_document_as_per_formula_updates() {
+    let guard = format!("=MIN(F2,5){}", "+1".repeat(62));
+    let columns = [
+        "Value", "Double", "Fixed", "Sum", "Guard", "Optional", "Chain", "Kept",
+    ]
+    .into_iter()
+    .map(|name| SourceColumn {
+        name: name.into(),
+        width: None,
+        number_format: None,
+    })
+    .collect();
+    let workbook = SourceWorkbook {
+        ledger: Vec::new(),
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns,
+            rows: vec![
+                vec![
+                    source_cell(SourceValue::Number { value: 10.0 }, None),
+                    source_cell(SourceValue::Number { value: 20.0 }, Some("=A2*2")),
+                    source_cell(SourceValue::Number { value: 5.0 }, Some("=$A$3+1")),
+                    source_cell(SourceValue::Number { value: 14.0 }, Some("=SUM(A2:A3)")),
+                    source_cell(SourceValue::Number { value: 0.0 }, Some("=MIN(F2,5)")),
+                    source_cell(SourceValue::Empty, None),
+                    source_cell(SourceValue::Number { value: 25.0 }, Some("=B2+D2+1")),
+                    source_cell(SourceValue::Number { value: 67.0 }, Some(&guard)),
+                ],
+                vec![source_cell(SourceValue::Number { value: 4.0 }, None)],
+            ],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 8]],
+        extra_columns: vec![vec![]],
+    };
+    let (mut runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
+    let imported_bytes = runtime.export_project_v3("resident/0").unwrap().bytes;
+    let row = &imported.metadata.sheets[0].rows[0];
+    let mut sources = Vec::new();
+    for column in 0..8 {
+        let DesignerResponse::FieldExplanation(explanation) = runtime
+            .handle(DesignerRequest::ExplainField {
+                expected_revision: "resident/0".into(),
+                target: FieldTarget {
+                    entity: row.entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[column].field_id.clone(),
+                },
+            })
+            .unwrap()
+        else {
+            panic!("explaining a field returns its explanation");
+        };
+        if let Some(source) = explanation.formula_source {
+            sources.push((column, source));
+        }
+    }
+    // The same Number-slot document with every formula stripped is what the
+    // former per-formula path started from.
+    let mut reference_workbook = workbook;
+    for cell in &mut reference_workbook.sheets[0].rows[0] {
+        cell.formula = None;
+    }
+    let (mut reference, reference_imported) =
+        import_workbook(&reference_workbook, &selection, OCCURRENCE).unwrap();
+    let mut revision = "resident/0".to_owned();
+    for (column, source) in sources {
+        let DesignerResponse::Published(published) = reference
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: revision,
+                target: FieldTarget {
+                    entity: row.entity_id.clone(),
+                    field: reference_imported.metadata.sheets[0].columns[column]
+                        .field_id
+                        .clone(),
+                },
+                source,
+            })
+            .unwrap()
+        else {
+            panic!("each imported formula publishes");
+        };
+        revision = published.resulting_revision;
+    }
+    let reference_bytes = reference.export_project_v3(&revision).unwrap().bytes;
+    assert_eq!(reference_bytes, imported_bytes);
+}

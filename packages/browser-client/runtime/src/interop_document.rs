@@ -7,8 +7,8 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use tachiko_formula_engine::{
-    CanonicalAuthoringProjectionError, ExpressionComplexityError, bind_expression,
-    parse_expression, project_expression, validate_expression_structure,
+    CanonicalAuthoringProjectionError, ExpressionComplexityError, bind_expression_with_index,
+    parse_expression, project_expression_with_index, validate_expression_structure,
 };
 
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
@@ -113,8 +113,8 @@ use tachiko_workspace_engine::patch_lifecycle::{
     ProposalRequest, SemanticPatchBody, SemanticRevision,
 };
 use tachiko_workspace_engine::{
-    ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
-    Date, Document, EntityId, FieldId, FieldRef, FieldType, Number, Value,
+    AddressIndex, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
+    ConditionalAggregate, Date, Document, EntityId, FieldId, FieldRef, FieldType, Number, Value,
 };
 
 impl DesignerRuntime {
@@ -854,7 +854,11 @@ fn import_workbook_candidate(
     }
     // Formula slots are private temporary Numbers only. No candidate is
     // exposed until all source formulas bind and calculate through Rust.
-    let mut runtime = DesignerRuntime::from_document(document, PREFLIGHT_OCCURRENCE)?;
+    // The first occurrence admits the Number-slot document; its detached
+    // snapshot then owns the only copy every formula binds into.
+    let runtime = DesignerRuntime::from_document(document, PREFLIGHT_OCCURRENCE)?;
+    let mut document = runtime.session.export_snapshot().into_document();
+    drop(runtime);
     let mut pending = BTreeMap::new();
     for (sheet_index, row, column, source) in formulas {
         let target = metadata_target(&metadata, sheet_index, row, column)?;
@@ -864,46 +868,36 @@ fn import_workbook_candidate(
             &workbook.sheets,
             sheet_index,
             &target,
-            runtime.session.export_snapshot().document(),
+            &document,
         )?;
         pending.insert(target, (source, references, (sheet_index, row, column)));
     }
-    let export_maps = export_a1_maps(runtime.session.export_snapshot().document(), &metadata);
-    while !pending.is_empty() {
-        let next = pending
-            .iter()
-            .find(|(_, (_, references, _))| {
-                references
-                    .iter()
-                    .all(|reference| !pending.contains_key(reference))
-            })
-            .map(|(target, _)| target.clone())
-            .ok_or_else(|| tracker_error("source formulas contain a dependency cycle"))?;
+    let export_maps = export_a1_maps(&document, &metadata);
+    // Binding only replaces field values, so one index serves every formula.
+    let index = AddressIndex::build(&document)
+        .map_err(|error| tracker_error(&format!("workbook addresses do not resolve: {error}")))?;
+    for next in import_formula_order(&pending)? {
         let (source, _, (sheet_index, row, column)) = pending
-            .remove(&next)
+            .get(&next)
             .ok_or_else(|| tracker_error("pending import formula is unavailable"))?;
-        let sheet = &workbook.sheets[sheet_index];
+        let sheet = &workbook.sheets[*sheet_index];
         let location = format!(
             "{}!{}{}",
             sheet.name,
-            super::interop_adapter::column_name(column),
+            super::interop_adapter::column_name(*column),
             sheet.layout.rows_above_header as usize + usize::from(sheet.has_header) + row + 1
         );
         bind_import_formula(
-            &mut runtime,
+            &mut document,
+            &index,
             &next,
-            &source,
-            &sheet.rows[row][column],
+            source,
+            &sheet.rows[*row][*column],
             &location,
             &export_maps,
             &mut ledger,
         )?;
     }
-    let document = runtime.session.export_snapshot().into_document();
-    // The temporary occurrence has finished binding formulas. Its detached
-    // snapshot owns the complete document; release the old runtime before
-    // validating and projecting the final occurrence.
-    drop(runtime);
     let runtime = DesignerRuntime::from_document(document, occurrence_id)?;
     if runtime.text_capacity && !super::interop_adapter::text_capacity_shape(workbook) {
         return Err(tracker_error(
@@ -1425,9 +1419,61 @@ fn export_a1_maps(
     (addresses, columns)
 }
 
+/// Order pending formulas so each one is bound after every pending formula it
+/// references, breaking ties by the lowest `FieldRef` so the order stays
+/// deterministic and identical to the former repeated scan.
+type PendingImportFormula = (String, BTreeSet<FieldRef>, (usize, usize, usize));
+
+fn import_formula_order(
+    pending: &BTreeMap<FieldRef, PendingImportFormula>,
+) -> Result<Vec<FieldRef>, DesignerError> {
+    let mut dependents: BTreeMap<FieldRef, Vec<FieldRef>> = BTreeMap::new();
+    let mut remaining: BTreeMap<FieldRef, usize> = BTreeMap::new();
+    for (target, (_, references, _)) in pending {
+        let mut pending_references = 0;
+        for reference in references {
+            if pending.contains_key(reference) {
+                dependents
+                    .entry(reference.clone())
+                    .or_default()
+                    .push(target.clone());
+                pending_references += 1;
+            }
+        }
+        remaining.insert(target.clone(), pending_references);
+    }
+    let mut ready = remaining
+        .iter()
+        .filter(|(_, count)| **count == 0)
+        .map(|(target, _)| target.clone())
+        .collect::<BTreeSet<_>>();
+    let mut order = Vec::with_capacity(pending.len());
+    while let Some(next) = ready.pop_first() {
+        order.push(next.clone());
+        let Some(targets) = dependents.get(&next) else {
+            continue;
+        };
+        for target in targets {
+            let count = remaining
+                .get_mut(target)
+                .ok_or_else(|| tracker_error("pending import formula is unavailable"))?;
+            *count -= 1;
+            if *count == 0 {
+                ready.insert(target.clone());
+            }
+        }
+    }
+    if order.len() != pending.len() {
+        return Err(tracker_error("source formulas contain a dependency cycle"));
+    }
+    Ok(order)
+}
+
 // Bind and guard without publishing an unguarded intermediate calculation.
+#[allow(clippy::too_many_arguments)]
 fn bind_import_formula(
-    runtime: &mut DesignerRuntime,
+    document: &mut Document,
+    index: &AddressIndex,
     target: &FieldRef,
     source: &str,
     cell: &SourceCell,
@@ -1438,7 +1484,6 @@ fn bind_import_formula(
     ),
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<(), DesignerError> {
-    let snapshot = runtime.session.export_snapshot();
     let unbound = parse_expression(source).map_err(|error| {
         tachiko_workspace_engine::WorkspaceError::InvalidFormula {
             field: target.clone(),
@@ -1446,20 +1491,22 @@ fn bind_import_formula(
             source: error,
         }
     })?;
-    let expression = bind_expression(snapshot.document(), target, &unbound).map_err(|error| {
-        tachiko_workspace_engine::WorkspaceError::FormulaBinding {
-            field: target.clone(),
-            source: Box::new(error),
-        }
-    })?;
+    let expression =
+        bind_expression_with_index(document, index, target, &unbound).map_err(|error| {
+            tachiko_workspace_engine::WorkspaceError::FormulaBinding {
+                field: target.clone(),
+                source: Box::new(error),
+            }
+        })?;
     // Guarding can outgrow any engine bound (nodes, depth or canonical text);
     // each keeps Excel's cached value rather than failing the whole import.
     // The export round trip in `finish_import` writes the same formula as A1
-    // text, which has its own length bound. `update_formula` re-parses the
-    // projected text, whose parse tree counts nodes (such as ROUND digits)
-    // the bound tree does not, so the parser itself decides.
-    let projected = match excel_extremum(expression, target, snapshot.document()) {
-        Ok(expression) => match project_expression(snapshot.document(), target, &expression) {
+    // text, which has its own length bound. Re-parsing the projected text
+    // counts nodes (such as ROUND digits) the bound tree does not, so the
+    // parser itself decides.
+    let projected = match excel_extremum(expression, target, document) {
+        Ok(expression) => match project_expression_with_index(document, index, target, &expression)
+        {
             Ok(source)
                 if parse_expression(&source).is_err()
                     || export_expression(&expression, target, &export_maps.0, &export_maps.1)
@@ -1473,19 +1520,40 @@ fn bind_import_formula(
         },
         Err(_) => None,
     };
-    drop(snapshot);
     let Some(source) = projected else {
-        return keep_import_cache(runtime, target, cell, location, ledger);
+        return keep_import_cache(document, target, cell, location, ledger);
     };
-    let revision = runtime.current_revision().to_owned();
-    runtime.update_formula(&revision, &field_target(target), &source)?;
+    // `FormulaUpdate` parsed and bound the projected text again before
+    // publishing it; do the same here, then write the bound expression into
+    // its slot. The final `from_document` validates and calculates the
+    // complete document once, including the required Number target rule.
+    let unbound = parse_expression(&source).map_err(|error| {
+        tachiko_workspace_engine::WorkspaceError::InvalidFormula {
+            field: target.clone(),
+            input: source.clone(),
+            source: error,
+        }
+    })?;
+    let bound = bind_expression_with_index(document, index, target, &unbound).map_err(|error| {
+        tachiko_workspace_engine::WorkspaceError::FormulaBinding {
+            field: target.clone(),
+            source: Box::new(error),
+        }
+    })?;
+    let entity = document
+        .entities
+        .get_mut(&target.entity)
+        .ok_or_else(|| tracker_error("formula target is unavailable"))?;
+    entity
+        .fields
+        .insert(target.field.clone(), Value::Formula(bound));
     Ok(())
 }
 
 /// An imported formula Tachiko cannot hold after guarding keeps Excel's cached
 /// Number in its temporary formula slot.
 fn keep_import_cache(
-    runtime: &mut DesignerRuntime,
+    document: &mut Document,
     target: &FieldRef,
     cell: &SourceCell,
     location: &str,
@@ -1511,31 +1579,16 @@ fn keep_import_cache(
     let SourceValue::Number { value } = value else {
         return Err(tracker_error("MIN/MAX requires a numeric cached value"));
     };
-    // The formula slot already holds a temporary Number; a cached value
-    // equal to it needs no edit (which would refuse as no change).
-    let unchanged = runtime
-        .session
-        .export_snapshot()
-        .document()
+    let number = Number::new(value).map_err(|_| DesignerError::InvalidNumberInput {
+        input: value.to_string(),
+    })?;
+    let entity = document
         .entities
-        .get(&target.entity)
-        .and_then(|entity| entity.fields.get(&target.field))
-        .is_some_and(|stored| {
-            Number::new(value).is_ok_and(|value| stored == &Value::Number(value))
-        });
-    if unchanged {
-        return Ok(());
-    }
-    let revision = runtime.current_revision().to_owned();
-    runtime.edit_cells(
-        &revision,
-        &[super::CellEdit {
-            target: field_target(target),
-            input: ScalarEditInput::Number {
-                input: value.to_string(),
-            },
-        }],
-    )?;
+        .get_mut(&target.entity)
+        .ok_or_else(|| tracker_error("MIN/MAX requires a numeric cached value"))?;
+    entity
+        .fields
+        .insert(target.field.clone(), Value::Number(number));
     Ok(())
 }
 
