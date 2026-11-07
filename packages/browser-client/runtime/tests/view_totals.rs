@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
     ColumnTotalsProjection, ComparisonOperator, DesignerError, DesignerRequest, DesignerResponse,
-    DesignerRuntime, SortDirection, TableView, ViewFilter, ViewSortKey,
+    DesignerRuntime, SortDirection, TableView, ViewFilter, ViewSortKey, ViewTextOrder,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, FieldConstraint, FieldDefinition, FieldId, FieldKey,
@@ -189,6 +189,7 @@ fn a_sort_does_not_change_the_totals() {
         sort: vec![ViewSortKey {
             field: "f02_amount".to_owned(),
             direction: SortDirection::Asc,
+            text_order: ViewTextOrder::Bytes,
         }],
         filters: vec![ViewFilter::NumberCompare {
             field: "f02_amount".to_owned(),
