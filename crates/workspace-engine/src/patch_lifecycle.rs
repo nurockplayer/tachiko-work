@@ -1493,7 +1493,7 @@ impl PatchLifecycle {
         current_revision: &SemanticRevision,
         request: ProposalRequest,
         now: TrustedInstant,
-        prepared: Option<&PreparedEvaluation>,
+        prepared: Option<&PreparedEvaluation<'_>>,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
         self.propose_inner(
             document_scope,
@@ -1513,9 +1513,11 @@ impl PatchLifecycle {
         current_revision: &SemanticRevision,
         request: ProposalRequest,
         now: TrustedInstant,
-        prepared: Option<&PreparedEvaluation>,
+        prepared: Option<&PreparedEvaluation<'_>>,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
-        let prepared = prepared.filter(|prepared| prepared.base_revision() == current_revision);
+        let prepared = prepared.filter(|prepared| {
+            prepared.base_revision() == current_revision && prepared.base_document() == document
+        });
         self.require_document(document_scope, document)?;
         if self.proposals.contains_key(&request.id) {
             return Err(PatchLifecycleError::ProposalIdAlreadyExists);
@@ -3689,7 +3691,7 @@ impl PatchLifecycle {
         candidate: Document,
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
-        prepared: Option<&PreparedEvaluation>,
+        prepared: Option<&PreparedEvaluation<'_>>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
         #[cfg(test)]
         self.evaluations.set(self.evaluations.get() + 1);
@@ -3786,7 +3788,7 @@ impl PatchLifecycle {
         candidate: Document,
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
-        prepared: Option<&PreparedEvaluation>,
+        prepared: Option<&PreparedEvaluation<'_>>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
         // Only a successful evaluation of this exact candidate against a base
         // that today's path would accept can replace today's validation,
