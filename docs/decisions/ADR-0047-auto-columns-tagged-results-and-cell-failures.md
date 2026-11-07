@@ -66,11 +66,17 @@ matches decides:
 | `TRUE` or `FALSE`, any ASCII case | Boolean |
 | The numeric grammar in §5, no leading zero before another digit, at most 15 significant digits | Number |
 | The same with comma groups of three, such as `1,000` | Number, with a thousands display |
-| The same with a leading `$`, such as `$1,234.50` | Number, with a USD display |
+| The same with a leading currency mark, such as `$1,234.50` or `NT$1,200` | Number, with that currency's display: `$` USD, `NT$` TWD, `¥` and `￥` JPY, `€` EUR, `£` GBP |
 | The same with a trailing `%`, such as `50%` | That Number over 100, with a percent display |
-| A valid `YYYY-MM-DD` | Date |
+| A valid `YYYY-MM-DD`, `YYYY/M/D` or `YYYY年M月D日` | Date, with the display it was typed in |
 | `M/D/YYYY`, or `D/M/YYYY`, by the host's date order | Date, when the host gives an order and the date is valid |
 | Anything else | Text, exactly as typed |
+
+Before matching, full-width digits and the marks `．`, `，`, `％`, `＋` and `－` read as
+their ASCII forms, because a Japanese or Chinese IME often produces them, so `１２３` is
+the Number 123. Input that matches no row keeps its exact spelling as Text. `¥` and `￥`
+mean JPY because the function reads no locale. The value is the same either way, and
+the display shows `¥` as typed.
 
 So `00123`, a digit run over 15 significant digits and a value outside binary64
 such as `1e309` stay Text, because a Number couldn't give the spelling or the digits
@@ -198,7 +204,9 @@ actually reach the difference:
 ### 8. Fixtures this requires
 
 Canonical-byte fixtures for an Auto field and each literal, with a strict-reader
-refusal for each malformed pairing. A conformance corpus, run on native and WASM,
+refusal for each malformed pairing. A classifier corpus covering every row of §2, including
+full-width input such as `￥１，２００` and `２０２６年１１月７日`, with each implied display
+surviving a save and reopen. A conformance corpus, run on native and WASM,
 covering every row of §5, including `"00123"+1` = 124, `=A1` over a blank, and
 each failure code propagating through a dependent. An atomicity test where a
 declared formula reading a failed Auto cell refuses with nothing published. A
