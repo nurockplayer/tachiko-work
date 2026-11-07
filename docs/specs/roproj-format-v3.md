@@ -151,6 +151,13 @@ decimals outside 0..=10, and malformed currency identifiers fail admission. Omit
 there is no default format materialized into an older document. Consequently
 all previously canonical format-free trees and package hashes remain exact.
 
+### Optional Date display format — ADR-0049
+
+Implementation state: pending. FieldDefinition admits optional `date_format`, after
+`number_format`, on Date and Auto fields, with the value `iso`, `mdy`, `dmy`,
+`ymd_slash`, `ymd_cjk`, `month_day_year` or `day_month_year`. Anything else fails admission. Omitted formats
+stay omitted, so existing bytes and hashes remain exact.
+
 ### FieldType
 
 The complete v3 tag set is `number`, `text`, `boolean`, `date`, and
@@ -210,8 +217,9 @@ values are Number, Text, Boolean, Date or Formula, never Reference. Optional
 
 Bound Expression gains three literals, in the existing `op` and `args` form:
 `{"op":"text","args":"..."}`, `{"op":"boolean","args":true}` and
-`{"op":"date","args":"YYYY-MM-DD"}`. A document using neither keeps its exact
-canonical bytes.
+`{"op":"date","args":"YYYY-MM-DD"}`. It also gains the host input
+`{"op":"today","args":{}}`. A document using none of these keeps its exact canonical
+bytes.
 
 ### Row rank and positional references — ADR-0048
 
@@ -247,9 +255,36 @@ Date values must be valid proleptic Gregorian dates from `0001-01-01` through
 `9999-12-31`, in exact zero-padded `YYYY-MM-DD` form. This preserves the
 existing direct-ro/v2 Date meaning and introduces no new formula operator or
 Date constraint. Existing number, text, boolean, reference, and formula values
-retain their v2 shapes and semantics. Formula expressions and keyed-grouped-sum
-definitions are unchanged and remain version-owned by the incorporated v2
-sections.
+retain their v2 shapes and semantics. Keyed-grouped-sum definitions are unchanged and
+remain version-owned by the incorporated v2 sections.
+
+The Bound Expression vocabulary is the incorporated v2 set plus the operators the
+pre-1.0 window has added. The v3 codec (`ExpressionV3`) implements exactly these, in
+the `op` and `args` form:
+
+| `op` | `args` |
+|---|---|
+| `number` | A Number |
+| `reference` | `entity`, `field` |
+| `same_row_reference` | A field ID, read on the row of the formula's owner |
+| `column_total` | `schema`, `field` |
+| `column_aggregate` | `function`, `column` |
+| `column_conditional` | `aggregate`, optional `values`, `criteria` |
+| `add`, `subtract`, `multiply`, `divide`, `minimum`, `maximum` | `left`, `right` |
+| `compare` | `operator`, `left`, `right` |
+| `if` | `condition`, `then_value`, `else_value` |
+| `and`, `or` | An array of Expressions |
+| `not`, `is_blank` | One Expression |
+| `round` | `value`, `digits` |
+
+A `column` is an object with `schema` and `field`. `column_aggregate`'s `function` is
+`average`, `count`, `minimum` or `maximum`. `compare`'s and a criterion's `operator` is
+`=`, `<>`, `<`, `<=`, `>` or `>=`. `column_conditional`'s `aggregate` is `sum`, `average`
+or `count`; `values` is a column; and each `criteria` element has members `column`,
+`operator` and optional `value`, an Expression, in that order. Members appear in the
+order shown here.
+
+The ADR-0047 and ADR-0048 sections add to this table once implemented. #579 freezes it.
 
 An optional stored value remains absent from the entity `fields` object; no
 constraint creates a null placeholder. A present value must match its field

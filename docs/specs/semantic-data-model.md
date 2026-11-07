@@ -89,7 +89,9 @@ civil date in the bounded `0001..=9999` range, canonically represented as
 
 ### Per-column Number display format (R3)
 
-A FieldDefinition MAY carry `number_format` only when its FieldType is Number.
+A FieldDefinition MAY carry `number_format` only when its FieldType is Number, or
+Auto once [ADR-0047](../decisions/ADR-0047-auto-columns-tagged-results-and-cell-failures.md)
+is implemented.
 Omission means the existing default presentation and leaves existing serialized
 Document bytes and hashes unchanged. The closed declaration is:
 
