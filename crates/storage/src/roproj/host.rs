@@ -16,8 +16,8 @@ use super::v1::{
 };
 use super::v2::{CanonicalRoProjectV2, ROPROJ_V2_PATHS, decode as decode_v2};
 use super::v3::{
-    CanonicalRoProjectV3, ROPROJ_V3_PATHS, manifest_version, migrate_v1 as migrate_v1_to_v3,
-    migrate_v2 as migrate_v2_to_v3,
+    CanonicalRoProjectV3, ROPROJ_V3_PATHS, ROPROJ_V3_PRESENTATION_PATH, manifest_version,
+    migrate_v1 as migrate_v1_to_v3, migrate_v2 as migrate_v2_to_v3,
 };
 use crate::FormatError;
 
@@ -63,16 +63,30 @@ fn read_canonical_roproj_v3_inner(
             supported: super::v3::ROPROJ_V3_FORMAT_VERSION,
         });
     }
-    require_exact_root_entries_with_definitions(root)?;
+    require_exact_root_entries_v3(root)?;
     let entities = root.join("entities");
     require_exact_entity_entries(&entities)?;
-    let mut files = Vec::with_capacity(ROPROJ_V3_PATHS.len());
+    let mut files = Vec::with_capacity(ROPROJ_V3_PATHS.len() + 1);
     files.push((ROPROJ_V3_PATHS[0].to_owned(), manifest));
     for relative in ROPROJ_V3_PATHS.iter().skip(1) {
         files.push((
             (*relative).to_owned(),
             read_file_with_budget(&root.join(relative), &mut budget)?,
         ));
+    }
+    let presentation = root.join(ROPROJ_V3_PRESENTATION_PATH);
+    match fs::symlink_metadata(&presentation) {
+        Ok(_) => files.push((
+            ROPROJ_V3_PRESENTATION_PATH.to_owned(),
+            read_file_with_budget(&presentation, &mut budget)?,
+        )),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(FormatError::Read {
+                path: presentation,
+                source,
+            });
+        }
     }
     CanonicalRoProjectV3::try_from_files(files)
 }
@@ -533,18 +547,27 @@ fn remove_staging_directory(staging: &Path) -> Result<(), FormatError> {
 }
 
 pub(super) fn require_exact_root_entries(root: &Path) -> Result<(), FormatError> {
-    require_exact_root_entries_inner(root, false)
+    require_exact_root_entries_inner(root, false, false)
 }
 
 fn require_exact_root_entries_with_definitions(root: &Path) -> Result<(), FormatError> {
-    require_exact_root_entries_inner(root, true)
+    require_exact_root_entries_inner(root, true, false)
 }
 
-fn require_exact_root_entries_inner(root: &Path, definitions: bool) -> Result<(), FormatError> {
+fn require_exact_root_entries_v3(root: &Path) -> Result<(), FormatError> {
+    require_exact_root_entries_inner(root, true, true)
+}
+
+fn require_exact_root_entries_inner(
+    root: &Path,
+    definitions: bool,
+    presentation: bool,
+) -> Result<(), FormatError> {
     let mut found_manifest = false;
     let mut found_schemas = false;
     let mut found_entities = false;
     let mut found_definitions = false;
+    let mut found_presentation = false;
     for entry in read_directory(root)? {
         let name = entry.file_name();
         if name == "manifest.json" {
@@ -555,6 +578,8 @@ fn require_exact_root_entries_inner(root: &Path, definitions: bool) -> Result<()
             found_entities = true;
         } else if definitions && name == "definitions.json" {
             found_definitions = true;
+        } else if presentation && name == ROPROJ_V3_PRESENTATION_PATH {
+            found_presentation = true;
         } else {
             return invalid_layout(
                 &entry.path(),
@@ -590,6 +615,12 @@ fn require_exact_root_entries_inner(root: &Path, definitions: bool) -> Result<()
     require_regular_file(&root.join("schemas.json"), "schemas.json")?;
     if definitions {
         require_regular_file(&root.join("definitions.json"), "definitions.json")?;
+    }
+    if presentation && found_presentation {
+        require_regular_file(
+            &root.join(ROPROJ_V3_PRESENTATION_PATH),
+            ROPROJ_V3_PRESENTATION_PATH,
+        )?;
     }
     require_directory(&root.join("entities"), "entities directory")
 }
