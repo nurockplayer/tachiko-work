@@ -3155,9 +3155,10 @@ impl DesignerRuntime {
         let mut columns = BTreeMap::new();
         let mut blanks = BTreeMap::new();
         for target in &targets {
+            let field_ref = target.as_field_ref();
             let entities = match self
                 .session
-                .query_entities(std::slice::from_ref(&target.entity))
+                .query_entities(std::slice::from_ref(&field_ref.entity))
             {
                 Ok(entities) => entities,
                 // The row was removed; `entities` lists it instead.
@@ -3172,15 +3173,15 @@ impl DesignerRuntime {
                 .and_then(|spec| {
                     spec.columns
                         .iter()
-                        .find(|column| column.id == target.field)
+                        .find(|column| column.id == field_ref.field)
                         .map(|column| (spec, column))
                 })?;
-            if entity.fields.contains(&target.field) {
-                present.push(target.as_field_ref());
-                columns.insert(target.as_field_ref(), column.clone());
+            if entity.fields.contains(&field_ref.field) {
+                present.push(field_ref.clone());
+                columns.insert(field_ref, column.clone());
             } else {
                 blanks.insert(
-                    target.as_field_ref(),
+                    field_ref,
                     blank_field_projection(entity, column, spec.native_table_rows),
                 );
             }
