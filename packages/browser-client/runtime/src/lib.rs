@@ -3178,7 +3178,7 @@ impl DesignerRuntime {
                 })?;
             if entity.fields.contains(&field_ref.field) {
                 present.push(field_ref.clone());
-                columns.insert(field_ref, column.clone());
+                columns.insert(field_ref, column);
             } else {
                 blanks.insert(
                     field_ref,

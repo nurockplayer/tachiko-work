@@ -1594,13 +1594,13 @@ fn assert_changed_covers(before: &WindowCells, after: &WindowCells, publication:
         .collect::<BTreeMap<_, _>>();
     let keys = before.keys().chain(after.keys()).collect::<BTreeSet<_>>();
     for key in keys {
-        let before_cell = before.get(*key);
-        let after_cell = after.get(*key);
+        let before_cell = before.get(key);
+        let after_cell = after.get(key);
         if before_cell == after_cell {
             continue;
         }
         assert!(
-            changed.contains_key(*key),
+            changed.contains_key(key),
             "changed cell {key:?} is missing from the reply: {publication:?}"
         );
     }
