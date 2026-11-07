@@ -86,6 +86,33 @@ pub(crate) fn optional_v2<'de, D: Deserializer<'de>>(
         .map_err(serde::de::Error::custom)
 }
 
+/// Write the compact object used inside a canonical JSONL record.
+pub(crate) fn write_compact(
+    output: &mut String,
+    format: &NumberFormatDto,
+) -> Result<(), serde_json::Error> {
+    output.push_str("{\"decimals\":");
+    output.push_str(&format.decimals.to_string());
+    output.push_str(",\"kind\":");
+    match &format.kind {
+        Kind::Plain(_) => output.push_str("{\"type\":\"plain\"}"),
+        Kind::Currency(CurrencyKind { code }) => {
+            output.push_str("{\"type\":\"currency\",\"code\":");
+            output.push_str(&serde_json::to_string(code)?);
+            output.push('}');
+        }
+        Kind::Percent(_) => output.push_str("{\"type\":\"percent\"}"),
+    }
+    output.push_str(",\"thousands_separator\":");
+    output.push_str(if format.thousands_separator {
+        "true"
+    } else {
+        "false"
+    });
+    output.push('}');
+    Ok(())
+}
+
 pub(crate) fn write(
     output: &mut String,
     format: &NumberFormatDto,

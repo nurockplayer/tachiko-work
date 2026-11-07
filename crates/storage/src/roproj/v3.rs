@@ -339,7 +339,7 @@ struct EntityV3 {
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(transparent)]
-struct NumberV3(f64);
+pub(crate) struct NumberV3(f64);
 
 #[derive(Deserialize)]
 #[serde(
@@ -364,7 +364,7 @@ enum ValueV3 {
     rename_all = "snake_case",
     deny_unknown_fields
 )]
-enum ExpressionV3 {
+pub(crate) enum ExpressionV3 {
     Number(NumberV3),
     Reference(FieldRefV3),
     SameRowReference(String),
@@ -388,21 +388,21 @@ enum ExpressionV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FieldRefV3 {
+pub(crate) struct FieldRefV3 {
     entity: String,
     field: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ColumnAggregateArgsV3 {
+pub(crate) struct ColumnAggregateArgsV3 {
     function: ColumnAggregateFunction,
     column: ColumnRefV3,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ColumnConditionalArgsV3 {
+pub(crate) struct ColumnConditionalArgsV3 {
     aggregate: String,
     #[serde(default)]
     values: Option<ColumnRefV3>,
@@ -411,7 +411,7 @@ struct ColumnConditionalArgsV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ColumnCriterionV3 {
+pub(crate) struct ColumnCriterionV3 {
     column: ColumnRefV3,
     operator: String,
     #[serde(default)]
@@ -420,21 +420,21 @@ struct ColumnCriterionV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ColumnRefV3 {
+pub(crate) struct ColumnRefV3 {
     schema: String,
     field: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BinaryArgumentsV3 {
+pub(crate) struct BinaryArgumentsV3 {
     left: Box<ExpressionV3>,
     right: Box<ExpressionV3>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ComparisonArgumentsV3 {
+pub(crate) struct ComparisonArgumentsV3 {
     operator: String,
     left: Box<ExpressionV3>,
     right: Box<ExpressionV3>,
@@ -442,7 +442,7 @@ struct ComparisonArgumentsV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct IfArgumentsV3 {
+pub(crate) struct IfArgumentsV3 {
     condition: Box<ExpressionV3>,
     then_value: Box<ExpressionV3>,
     else_value: Box<ExpressionV3>,
@@ -450,7 +450,7 @@ struct IfArgumentsV3 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RoundArgumentsV3 {
+pub(crate) struct RoundArgumentsV3 {
     value: Box<ExpressionV3>,
     #[serde(deserialize_with = "deserialize_round_digits")]
     digits: u8,
@@ -1019,7 +1019,7 @@ impl NumberV3 {
 }
 
 impl ExpressionV3 {
-    fn validate_ids_and_limits(&self) -> Result<(), FormatError> {
+    pub(crate) fn validate_ids_and_limits(&self) -> Result<(), FormatError> {
         let mut nodes = 0_usize;
         let mut stack = vec![(self, 1_usize)];
         while let Some((node, depth)) = stack.pop() {
@@ -1099,7 +1099,7 @@ impl ExpressionV3 {
         Ok(())
     }
 
-    fn into_semantic(self) -> Result<Expression, FormatError> {
+    pub(crate) fn into_semantic(self) -> Result<Expression, FormatError> {
         Ok(match self {
             Self::Number(number) => Expression::Number(number.into_semantic()?),
             Self::Reference(reference) => {
@@ -1385,7 +1385,7 @@ impl ValueV3 {
 }
 
 impl ExpressionV3 {
-    fn from_semantic(expression: &Expression) -> Self {
+    pub(crate) fn from_semantic(expression: &Expression) -> Self {
         match expression {
             Expression::Number(number) => Self::Number(NumberV3(number.get())),
             Expression::Reference(reference) => {
@@ -1866,7 +1866,10 @@ fn write_value(output: &mut String, value: &ValueV3) -> Result<(), FormatError> 
 }
 
 #[allow(clippy::too_many_lines)] // One closed-world operation dispatch keeps the canonical wire shape visible.
-fn write_expression(output: &mut String, expression: &ExpressionV3) -> Result<(), FormatError> {
+pub(crate) fn write_expression(
+    output: &mut String,
+    expression: &ExpressionV3,
+) -> Result<(), FormatError> {
     output.push('{');
     match expression {
         ExpressionV3::Number(number) => {
@@ -2073,13 +2076,13 @@ fn pretty_member_literal(
     Ok(())
 }
 
-fn compact_member_prefix(output: &mut String, name: &str) -> Result<(), FormatError> {
+pub(crate) fn compact_member_prefix(output: &mut String, name: &str) -> Result<(), FormatError> {
     write_json_string(output, name)?;
     output.push(':');
     Ok(())
 }
 
-fn compact_member_string(
+pub(crate) fn compact_member_string(
     output: &mut String,
     name: &str,
     value: &str,
@@ -2093,7 +2096,7 @@ fn compact_member_string(
     Ok(())
 }
 
-fn compact_member_number(
+pub(crate) fn compact_member_number(
     output: &mut String,
     name: &str,
     value: NumberV3,
@@ -2112,7 +2115,7 @@ fn compact_member_number(
     Ok(())
 }
 
-fn compact_member_literal(
+pub(crate) fn compact_member_literal(
     output: &mut String,
     name: &str,
     value: &str,
@@ -2126,7 +2129,7 @@ fn compact_member_literal(
     Ok(())
 }
 
-fn write_json_string(output: &mut String, value: &str) -> Result<(), FormatError> {
+pub(crate) fn write_json_string(output: &mut String, value: &str) -> Result<(), FormatError> {
     output.push_str(&serde_json::to_string(value)?);
     Ok(())
 }
@@ -2231,7 +2234,7 @@ fn utf8<'a>(path: &str, bytes: &'a [u8]) -> Result<&'a str, FormatError> {
     })
 }
 
-fn map_frontend_error(path: &str, error: FrontendError) -> FormatError {
+pub(crate) fn map_frontend_error(path: &str, error: FrontendError) -> FormatError {
     match error {
         FrontendError::InvalidJson(source) => FormatError::InvalidRoProjectJson {
             path: path.to_owned(),
@@ -2247,7 +2250,7 @@ fn map_frontend_error(path: &str, error: FrontendError) -> FormatError {
     }
 }
 
-fn deserialize_roproj<T>(path: &str, source: &str) -> Result<T, FormatError>
+pub(crate) fn deserialize_roproj<T>(path: &str, source: &str) -> Result<T, FormatError>
 where
     T: DeserializeOwned,
 {
@@ -2266,7 +2269,7 @@ where
     Ok(value)
 }
 
-fn require_id(kind: &str, id: &str) -> Result<(), FormatError> {
+pub(crate) fn require_id(kind: &str, id: &str) -> Result<(), FormatError> {
     if id.is_empty() {
         invalid_representation(format!("{kind} must not be empty"))
     } else {
@@ -2274,7 +2277,11 @@ fn require_id(kind: &str, id: &str) -> Result<(), FormatError> {
     }
 }
 
-fn ensure_increasing(kind: &str, previous: Option<&str>, current: &str) -> Result<(), FormatError> {
+pub(crate) fn ensure_increasing(
+    kind: &str,
+    previous: Option<&str>,
+    current: &str,
+) -> Result<(), FormatError> {
     let Some(previous) = previous else {
         return Ok(());
     };
@@ -2289,7 +2296,7 @@ fn ensure_increasing(kind: &str, previous: Option<&str>, current: &str) -> Resul
     }
 }
 
-fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
+pub(crate) fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
     Err(FormatError::InvalidRoProjectRepresentation { message })
 }
 
