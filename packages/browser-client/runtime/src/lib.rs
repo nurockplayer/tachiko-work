@@ -561,6 +561,10 @@ pub struct TableWindowProjection {
     pub unfiltered_rows: usize,
     pub start: usize,
     pub rows: Vec<RowProjection>,
+    /// Set when the reply's bytes ended this window before its count. Continue
+    /// at `start + rows.len()`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub byte_limited: bool,
     /// Whole-collection totals, one per Number column, identical to
     /// `TableProjection::column_totals` at the same revision. View filters do
     /// not apply, and blank cells are skipped.
@@ -1523,6 +1527,10 @@ pub struct KeyedGroupedSumPublishedProjection {
     pub result: KeyedGroupedSumProjection,
 }
 
+/// Largest number of targets one publication reply lists. Past it the reply
+/// carries `many: true` and the host re-queries instead.
+const MAX_LISTED_PUBLICATION_TARGETS: usize = 1_024;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PublicationProjection {
     pub base_revision: String,
@@ -1532,6 +1540,24 @@ pub struct PublicationProjection {
     pub entities: Vec<String>,
     pub fields: Vec<FieldTarget>,
     pub affected_calculations: Vec<FieldTarget>,
+    /// Set when this publication reached more targets than a reply lists.
+    /// `entities`, `fields` and `affected_calculations` are then empty:
+    /// re-query the visible window and totals.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub many: bool,
+}
+
+fn bound_publication_targets(mut publication: PublicationProjection) -> PublicationProjection {
+    let targets = publication.entities.len()
+        + publication.fields.len()
+        + publication.affected_calculations.len();
+    if targets > MAX_LISTED_PUBLICATION_TARGETS {
+        publication.entities = Vec::new();
+        publication.fields = Vec::new();
+        publication.affected_calculations = Vec::new();
+        publication.many = true;
+    }
+    publication
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1569,6 +1595,7 @@ impl From<&ResidentProjectionInvalidation> for PublicationProjection {
                 .iter()
                 .map(field_target)
                 .collect(),
+            many: false,
         }
     }
 }
@@ -4002,7 +4029,7 @@ impl DesignerRuntime {
                 .map_err(|error| view_encoding_failure("column_totals", &error))?
                 .len(),
         );
-        let rows =
+        let (rows, byte_limited) =
             self.build_window_rows(spec, &order[start..end], &entities, &mut used, display)?;
         Ok(TableWindowProjection {
             revision,
@@ -4015,6 +4042,7 @@ impl DesignerRuntime {
             unfiltered_rows: spec.entities.len(),
             start,
             rows,
+            byte_limited,
             column_totals,
         })
     }
@@ -4602,7 +4630,8 @@ impl DesignerRuntime {
 
     /// Project the window's entities in view order, enforcing the reply byte
     /// cap while rows are built. `query_entities` returns stable-identity
-    /// order, so the row map restores the requested order.
+    /// order, so the row map restores the requested order. The flag is set when
+    /// the budget ended the window before its rows did.
     fn build_window_rows(
         &self,
         spec: &CollectionSpec,
@@ -4610,7 +4639,7 @@ impl DesignerRuntime {
         entities_in_order: &[EntityId],
         used: &mut usize,
         display: bool,
-    ) -> Result<Vec<RowProjection>, DesignerError> {
+    ) -> Result<(Vec<RowProjection>, bool), DesignerError> {
         let entities = self.session.query_entities(entities_in_order)?;
         let mut row_of = entities
             .value()
@@ -4639,17 +4668,28 @@ impl DesignerRuntime {
                 .map_err(|error| view_encoding_failure("row", &error))?
                 .len()
                 + 1;
-            *used = used.saturating_add(row_bytes);
             let maximum = table_window_byte_limit(self.profile);
-            if *used > maximum {
-                return Err(DesignerError::ProjectionTooLarge {
-                    actual: *used,
-                    maximum,
-                });
+            if used.saturating_add(row_bytes) > maximum {
+                match self.profile {
+                    // A row of the largest cells fits in one reply, so a window
+                    // starting inside the view always carries at least one row.
+                    SessionProfile::WorkingSize if !rows.is_empty() => {
+                        return Ok((rows, true));
+                    }
+                    SessionProfile::WorkingSize
+                    | SessionProfile::Ordinary
+                    | SessionProfile::TextCapacity => {
+                        return Err(DesignerError::ProjectionTooLarge {
+                            actual: used.saturating_add(row_bytes),
+                            maximum,
+                        });
+                    }
+                }
             }
+            *used = used.saturating_add(row_bytes);
             rows.push(row);
         }
-        Ok(rows)
+        Ok((rows, false))
     }
 
     fn project_field(
@@ -5809,7 +5849,7 @@ impl DesignerRuntime {
         if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
             self.formula_sources = sources;
         }
-        Ok((PublicationProjection::from(&invalidation), forward))
+        Ok((self.published_projection(&invalidation), forward))
     }
 
     fn restore_formula_inverse(
@@ -5892,7 +5932,7 @@ impl DesignerRuntime {
         if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
             self.formula_sources = sources;
         }
-        Ok(PublicationProjection::from(&invalidation))
+        Ok(self.published_projection(&invalidation))
     }
 
     /// Resolve private copy gestures once against the exact canonical snapshot.
@@ -6011,6 +6051,19 @@ impl DesignerRuntime {
             inverse: HistoryAction::Commands(inverse),
         });
         Ok(publication)
+    }
+
+    /// The reply's publication for one invalidation. Only a working-size
+    /// session bounds its target lists; every other profile lists them whole.
+    fn published_projection(
+        &self,
+        invalidation: &ResidentProjectionInvalidation,
+    ) -> PublicationProjection {
+        let publication = PublicationProjection::from(invalidation);
+        match self.profile {
+            SessionProfile::WorkingSize => bound_publication_targets(publication),
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => publication,
+        }
     }
 
     #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
@@ -6383,7 +6436,7 @@ impl DesignerRuntime {
                 self.formula_sources = sources;
             }
         }
-        Ok(PublicationProjection::from(&invalidation))
+        Ok(self.published_projection(&invalidation))
     }
 
     fn preflight_capacity_scalar(
@@ -10004,6 +10057,7 @@ fn ensure_static_profile(
         entities,
         fields: fields.clone(),
         affected_calculations,
+        many: false,
     };
     ensure_projection_size_with_limit(
         &publication,

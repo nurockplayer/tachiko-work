@@ -17,12 +17,12 @@ use super::interop_document::CleanupOperation;
 use super::{
     CalculationProjection, CellEdit, DesignerError, DesignerProfile, DesignerRequest,
     DesignerResponse, DesignerRuntime, DesignerWireReply, Document, Entity, EntityId, EntityKey,
-    FieldDefinition, FieldId, FieldKey, FieldProjection, FieldTarget, FieldType,
-    NewTableColumnInput, OpenedWindowProjection, RowInitializer, RowProjection, ScalarEditInput,
-    Schema, SchemaId, SchemaKey, StoredValueProjection, encode_portable_package_v1,
-    encode_project_bundle, open_local_document, open_local_document_working_size, open_portable_ro,
-    open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
-    to_canonical_string,
+    FieldDefinition, FieldId, FieldKey, FieldProjection, FieldRef, FieldTarget, FieldType,
+    NewTableColumnInput, OpenedWindowProjection, PublicationProjection, RowInitializer,
+    RowProjection, ScalarEditInput, Schema, SchemaId, SchemaKey, StoredValueProjection, TableView,
+    TableWindowProjection, encode_portable_package_v1, encode_project_bundle, open_local_document,
+    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
+    open_project, open_project_working_size, process_wire_request, to_canonical_string,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
@@ -1203,4 +1203,374 @@ fn opened_window_within_halves_to_the_budget() {
         matches!(error, DesignerError::ProjectionTooLarge { maximum: 0, .. }),
         "{error:?}"
     );
+}
+
+fn window_at(
+    runtime: &mut DesignerRuntime,
+    revision: &str,
+    start: usize,
+    count: usize,
+) -> TableWindowProjection {
+    match runtime
+        .handle(DesignerRequest::QueryTableWindow {
+            expected_revision: revision.to_owned(),
+            collection: "grid".to_owned(),
+            view: TableView::default(),
+            start,
+            count,
+            display: false,
+        })
+        .unwrap()
+    {
+        DesignerResponse::TableWindow(window) => window,
+        other => panic!("expected a table window, got {other:?}"),
+    }
+}
+
+fn edited(
+    runtime: &mut DesignerRuntime,
+    target: FieldTarget,
+    input: ScalarEditInput,
+) -> PublicationProjection {
+    let expected_revision = runtime.current_revision().to_owned();
+    match runtime
+        .handle(DesignerRequest::EditCells {
+            expected_revision,
+            edits: vec![CellEdit { target, input }],
+        })
+        .unwrap()
+    {
+        DesignerResponse::Published(publication) => publication,
+        other => panic!("expected a publication, got {other:?}"),
+    }
+}
+
+fn target(entity: &str, field: &str) -> FieldTarget {
+    FieldTarget {
+        entity: entity.to_owned(),
+        field: field.to_owned(),
+    }
+}
+
+/// Every row of one Text column carries the largest stored text, so the whole
+/// 300-row view is over the 16 MiB reply.
+fn large_text_grid(rows: usize) -> Document {
+    let mut document = text_grid(rows, 1);
+    for row in 0..rows {
+        fill_text(&mut document, row, 0, STORED_TEXT_ITEM_MAX);
+    }
+    document
+}
+
+/// The largest row this profile admits, repeated, so two rows cannot share one
+/// reply but one always can.
+fn largest_row_grid(rows: usize) -> Document {
+    let mut document = text_grid(rows, 32);
+    let text = "\u{1}".repeat(STORED_TEXT_ITEM_MAX);
+    for row in 0..rows {
+        for column in 0..32 {
+            document
+                .entities
+                .get_mut(&EntityId::from(format!("r{row:05}")))
+                .unwrap()
+                .fields
+                .insert(
+                    FieldId::from(format!("c{column}")),
+                    Value::Text(text.clone()),
+                );
+        }
+    }
+    document
+}
+
+/// A Number column whose calculated column reads one shared stored cell by
+/// absolute `Reference`, so one edit has as many dependents as rows.
+fn shared_reference_grid(rows: usize) -> Document {
+    let mut document = Document::empty("shared-reference", "Shared Reference");
+    let mut schema = Schema {
+        field_order: None,
+        id: SchemaId::from("grid"),
+        key: SchemaKey::from("grid"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    for id in ["value", "calc"] {
+        schema.fields.insert(
+            FieldId::from(id),
+            FieldDefinition {
+                id: FieldId::from(id),
+                key: FieldKey::from(id),
+                display_name: None,
+                field_type: FieldType::Number,
+                required: false,
+                constraint: FieldConstraint::None,
+                number_format: None,
+            },
+        );
+    }
+    document.schemas.insert(schema.id.clone(), schema);
+    let shared = Expression::Reference(FieldRef::new(
+        EntityId::from("r00000"),
+        FieldId::from("value"),
+    ));
+    for row in 0..rows {
+        let id = EntityId::from(format!("r{row:05}"));
+        let mut fields = BTreeMap::from([(FieldId::from("calc"), Value::Formula(shared.clone()))]);
+        if row == 0 {
+            fields.insert(
+                FieldId::from("value"),
+                Value::Number(Number::new(1.0).unwrap()),
+            );
+        }
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields,
+            },
+        );
+    }
+    document
+}
+
+fn publication_with_targets(total: usize) -> PublicationProjection {
+    PublicationProjection {
+        base_revision: "resident/1".to_owned(),
+        resulting_revision: "resident/2".to_owned(),
+        schemas: vec!["grid".to_owned()],
+        schema_fields: vec![super::SchemaFieldTarget {
+            schema: "grid".to_owned(),
+            field: "c0".to_owned(),
+        }],
+        entities: Vec::new(),
+        fields: (0..total)
+            .map(|index| FieldTarget {
+                entity: "r00000".to_owned(),
+                field: format!("c{index}"),
+            })
+            .collect(),
+        affected_calculations: Vec::new(),
+        many: false,
+    }
+}
+
+#[test]
+fn a_window_over_its_bytes_pages_the_whole_view() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(large_text_grid(300), OCCURRENCE).unwrap();
+    let current = revision(&runtime);
+
+    // A request may ask for at most 256 rows, and 256 of these rows already
+    // exceed the 16 MiB reply, so the first window comes back short.
+    let mut window = window_at(&mut runtime, &current, 0, 256);
+    assert!(window.byte_limited);
+    assert!(window.rows.len() < 256);
+    assert_eq!(window.total_rows, 300);
+
+    let mut start = 0;
+    let mut seen = Vec::new();
+    loop {
+        assert_eq!(window.start, start);
+        for (offset, row) in window.rows.iter().enumerate() {
+            assert_eq!(row.id, format!("r{:05}", start + offset));
+            assert_eq!(
+                projected(row, "c0").stored,
+                Some(StoredValueProjection::Text {
+                    value: "x".repeat(STORED_TEXT_ITEM_MAX),
+                })
+            );
+            seen.push(row.id.clone());
+        }
+        start += window.rows.len();
+        if start >= window.total_rows {
+            assert!(
+                !window.byte_limited,
+                "the last page had room for every row left"
+            );
+            break;
+        }
+        assert!(
+            window.byte_limited,
+            "a short page must say it was byte limited"
+        );
+        window = window_at(&mut runtime, &current, start, 256);
+    }
+    assert_eq!(
+        seen,
+        (0..300).map(|row| format!("r{row:05}")).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_window_starting_inside_the_view_keeps_one_row() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(largest_row_grid(2), OCCURRENCE).unwrap();
+    let current = revision(&runtime);
+
+    let first = window_at(&mut runtime, &current, 0, 2);
+    assert_eq!(first.total_rows, 2);
+    assert_eq!(first.rows.len(), 1);
+    assert!(first.byte_limited);
+
+    let last = window_at(&mut runtime, &current, 1, 2);
+    assert_eq!(last.rows.len(), 1);
+    assert!(!last.byte_limited);
+
+    for start in [2, 5] {
+        let past = window_at(&mut runtime, &current, start, 2);
+        assert_eq!(past.start, 2);
+        assert_eq!(past.rows, [] as [RowProjection; 0]);
+        assert!(!past.byte_limited);
+    }
+
+    let none = window_at(&mut runtime, &current, 0, 0);
+    assert_eq!(none.rows, [] as [RowProjection; 0]);
+    assert!(!none.byte_limited);
+}
+
+#[test]
+fn a_window_under_its_bytes_has_no_byte_limited_key() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(text_grid(4, 1), OCCURRENCE).unwrap();
+    let current = revision(&runtime);
+    let window = window_at(&mut runtime, &current, 0, 2);
+    assert_eq!(window.rows.len(), 2);
+    assert!(!window.byte_limited);
+    let json = serde_json::to_string(&window).unwrap();
+    assert!(!json.contains("byte_limited"), "{json}");
+}
+
+/// Ordinary documents cannot grow a window past the 1 MiB reply they may open
+/// with, so the unchanged ordinary branch is checked at its budget check.
+#[test]
+fn an_ordinary_window_over_its_bytes_still_refuses() {
+    let runtime = DesignerRuntime::from_document(text_grid(2, 1), OCCURRENCE).unwrap();
+    assert_eq!(runtime.profile, SessionProfile::Ordinary);
+    let spec = runtime.collection_spec("grid").unwrap();
+    let entities = spec.entities.clone();
+    let positions = (0..entities.len()).collect::<Vec<_>>();
+    let mut used = super::MAX_TABLE_WINDOW_BYTES;
+    let error = runtime
+        .build_window_rows(spec, &positions, &entities, &mut used, false)
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            DesignerError::ProjectionTooLarge { maximum, .. }
+                if maximum == super::MAX_TABLE_WINDOW_BYTES
+        ),
+        "{error:?}"
+    );
+    assert_eq!(used, super::MAX_TABLE_WINDOW_BYTES);
+}
+
+#[test]
+fn a_publication_lists_targets_up_to_the_bound_then_turns_into_a_marker() {
+    let listed = super::bound_publication_targets(publication_with_targets(1_024));
+    assert!(!listed.many);
+    assert_eq!(listed.fields.len(), 1_024);
+    assert_eq!(listed.schemas, vec!["grid".to_owned()]);
+    assert_eq!(listed.schema_fields.len(), 1);
+    assert_eq!(listed.base_revision, "resident/1");
+    assert_eq!(listed.resulting_revision, "resident/2");
+
+    let bounded = super::bound_publication_targets(publication_with_targets(1_025));
+    assert!(bounded.many);
+    assert_eq!(bounded.entities, [] as [String; 0]);
+    assert_eq!(bounded.fields, [] as [FieldTarget; 0]);
+    assert_eq!(bounded.affected_calculations, [] as [FieldTarget; 0]);
+    assert_eq!(bounded.schemas, vec!["grid".to_owned()]);
+    assert_eq!(bounded.schema_fields.len(), 1);
+    assert_eq!(bounded.base_revision, "resident/1");
+    assert_eq!(bounded.resulting_revision, "resident/2");
+}
+
+#[test]
+fn a_publication_over_the_target_list_comes_back_as_a_marker() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(shared_reference_grid(1_100), OCCURRENCE)
+            .unwrap();
+    let publication = edited(
+        &mut runtime,
+        target("r00000", "value"),
+        ScalarEditInput::Number { input: "7".into() },
+    );
+    assert!(publication.many);
+    assert_eq!(publication.entities, [] as [String; 0]);
+    assert_eq!(publication.fields, [] as [FieldTarget; 0]);
+    assert_eq!(publication.affected_calculations, [] as [FieldTarget; 0]);
+    assert_ne!(publication.base_revision, publication.resulting_revision);
+    let json = serde_json::to_string(&publication).unwrap();
+    assert!(json.contains("\"many\":true"), "{json}");
+
+    let window = window_at(&mut runtime, &publication.resulting_revision, 0, 3);
+    assert_eq!(window.rows.len(), 3);
+    for row in &window.rows {
+        assert_eq!(
+            projected(row, "calc").calculated,
+            Some(CalculationProjection::Value { value: 7.0 })
+        );
+    }
+
+    // A cell with no dependents still lists its target.
+    let listed = edited(
+        &mut runtime,
+        target("r00001", "value"),
+        ScalarEditInput::Number { input: "4".into() },
+    );
+    assert!(!listed.many);
+    assert_eq!(listed.fields, vec![target("r00001", "value")]);
+    assert_eq!(listed.affected_calculations, [] as [FieldTarget; 0]);
+    let json = serde_json::to_string(&listed).unwrap();
+    assert!(!json.contains("\"many\""), "{json}");
+}
+
+#[test]
+fn row_removal_and_undo_over_the_target_list_come_back_as_markers() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(text_grid(1_100, 1), OCCURRENCE).unwrap();
+    let current = revision(&runtime);
+    let rows = (0..1_100)
+        .map(|row| format!("r{row:05}"))
+        .collect::<Vec<_>>();
+    let removed = runtime.remove_table_rows(&current, "grid", &rows).unwrap();
+    assert!(removed.many);
+    assert_eq!(removed.entities, [] as [String; 0]);
+    assert_eq!(removed.fields, [] as [FieldTarget; 0]);
+    assert_eq!(removed.affected_calculations, [] as [FieldTarget; 0]);
+    let json = serde_json::to_string(&removed).unwrap();
+    assert!(json.contains("\"many\":true"), "{json}");
+
+    let current = revision(&runtime);
+    let undone = runtime.history_edit(&current, false).unwrap();
+    assert!(undone.many);
+    let json = serde_json::to_string(&undone).unwrap();
+    assert!(json.contains("\"many\":true"), "{json}");
+
+    // Today's ordinary replies never carry the marker.
+    let mut ordinary = DesignerRuntime::from_document(text_grid(2, 1), OCCURRENCE).unwrap();
+    let listed = edited(
+        &mut ordinary,
+        target("r00000", "c0"),
+        ScalarEditInput::Text { value: "t".into() },
+    );
+    assert!(!listed.many);
+    let json = serde_json::to_string(&listed).unwrap();
+    assert!(!json.contains("\"many\""), "{json}");
+}
+
+#[test]
+fn the_wire_reply_carries_the_publication_marker() {
+    let mut runtime =
+        Some(DesignerRuntime::from_document_working_size(text_grid(1_100, 1), OCCURRENCE).unwrap());
+    let request = DesignerRequest::RemoveTableRows {
+        expected_revision: runtime.as_ref().unwrap().current_revision().to_owned(),
+        collection: "grid".to_owned(),
+        entities: (0..1_100).map(|row| format!("r{row:05}")).collect(),
+    };
+    let reply = process_wire_request(&mut runtime, &serde_json::to_vec(&request).unwrap());
+    let text = String::from_utf8(reply).unwrap();
+    assert!(text.contains("\"many\":true"), "{text}");
 }
