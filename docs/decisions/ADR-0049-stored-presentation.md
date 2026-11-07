@@ -44,25 +44,31 @@ The tree gains `presentation.jsonl`, present only when it has content. Its absen
 canonical, so a document without presentation keeps the exact nineteen-file tree and
 its hashes. One file is enough. Records sort by identity and one record is one line,
 so a single style edit is a one-line diff, and sharding would add paths without
-helping. 100,000 cell records come to about 6 MB (arithmetic, at 60 bytes a record).
+helping. 100,000 cell records come to about 12 MB (arithmetic, at 120 bytes a record),
+which a column style (§2) avoids for a uniformly styled column.
 
-Records appear in this order, each kind in stable-ID order: `style`, `table`, `rule`,
-`cell`. A reader refuses any other order, a dangling reference or an unused style,
-and repairs nothing.
+The [layout spec](../specs/roproj-layout-v3.md#presentation-member--adr-0049) defines
+each record's exact JSON. Records appear in this order: `style`, `table`, `rule`,
+`cell`. A reader refuses any other order, a dangling reference, an unused style or a
+style whose ID doesn't match its content, and repairs nothing.
 
 ### 2. Cell styles
 
 A `style` record is one palette entry: `bold`, `italic`, `fill`, `text_color`,
-`alignment`, `wrap`, `borders`, and optionally `number_format` and `date_format`.
+`alignment`, `wrap`, `borders`, `number_format` and `date_format`, each optional.
 Absent means no opinion. Colours are `#RRGGBB`. Alignment is `left`, `center` or
 `right`. `borders` names any of the four sides, each a thin line in the default
-colour. Excel's other line styles map to this and get a ledger finding. A style's
-ID is its index in canonical order, and identical styles can't both exist.
+colour. Excel's other line styles map to this and get a ledger finding.
 
-A `cell` record is `(entity, field) -> style`, anchored to identity, so it survives
-sort, filter and insert with no extra work. Removing a row or column removes its
-records in the same command. There are no tombstones, and merge drops a record whose
-row or column is gone.
+A style's ID is the first 32 hexadecimal digits of the SHA-256 of its canonical JSON.
+So the same style has the same ID on every branch, two people's new styles can't
+collide, and a merge takes the union and drops what nothing uses.
+
+A column can hold a style, in its `table` record, which applies to every cell in the
+column including rows added later. A `cell` record is `(entity, field) -> style`,
+anchored to identity, so it survives sort, filter and insert with no extra work. It
+layers over the column's style attribute by attribute. Removing a row or column removes
+its records in the same command, and there are no tombstones.
 
 ### 3. Display
 
@@ -88,9 +94,16 @@ P0-12 needs a stored construct, and this is it, so it lands before #579 even if 
 rule UI is cut.
 
 A `rule` record has a stable ID, a table, the fields it paints, a condition, a style
-and its place in the table's rule order. The condition is a bound Expression, the
-same language as a formula, so overdue is `[due] < TODAY()`, negative is
+and a rank that places it in the table's rule order, in the grammar and tie-break of
+ADR-0048 §1, so two sides' orderings converge. The condition is a bound Expression,
+the same language as a formula, so overdue is `[due] < TODAY()`, negative is
 `[amount] < 0` and low stock is `[stock] < [reorder_at]`, with no second language.
+
+The row being painted takes the place of a formula's owner. So `[due]` is the existing
+`same_row_reference`, reading that row's field, and one rule covers every row. A
+condition reads only same-row references, whole-column aggregates, literals, functions
+and `TODAY()`. It can't name a record or a position, so deleting or sorting rows never
+leaves a rule pointing at nothing.
 
 - **It isn't a formula.** A rule has no owner cell and adds no edge to the dependency
   graph, so it can't form a cycle or slow an edit. It's evaluated when a window is
@@ -125,10 +138,18 @@ Other merged cells stay a disclosed import boundary with a ledger finding.
 - **Semantic delta and conflict:** these records aren't facts in either, apart from
   `date_format`, and a presentation edit is never a semantic change. A semantic
   document comparison ignores them, and the package root covers their bytes.
-- **Merge:** per identity, three-way. Concurrent unequal edits to one record take the
-  byte-larger record, so both sides converge, and the merge report lists it. A colour
-  must not block a merge. A style carrying a number or date override follows the same
-  rule, and because the value is unchanged, what's listed is enough to correct it.
+- **Merge:** three-way, per identity. A cell record's identity is its `(entity, field)`;
+  a rule's is its ID; and a `table` record's title, each footer choice and each column
+  style are separate identities, so one person's title doesn't overwrite another's
+  footer. Concurrent unequal edits to one identity take the byte-larger value, so both
+  sides converge, and the merge report lists it. A colour must not block a merge. A
+  style carrying a number or date override follows the same rule, and because the value
+  is unchanged, what's listed is enough to correct it.
+- **After a merge:** the candidate's presentation is pruned before it's written. A record
+  whose row, column or table is gone, a rule that paints or reads a missing field, and a
+  style nothing uses are all dropped, and the merge report lists them. So a rule added
+  on one side and a column deleted on the other merge cleanly and never reach the strict
+  reader as a dangling reference.
 - **History:** a presentation command is an ordinary revision with one Undo.
 - **Capacity:** cell records count up to the profile's `populated_cells`, and the
   palette holds up to 4,096 styles. Editing past a bound refuses with a typed capacity
@@ -142,11 +163,14 @@ Other merged cells stay a disclosed import boundary with a ledger finding.
 ### 8. Fixtures this requires
 
 Canonical-byte fixtures for the member, including its absence, and for `date_format`.
-Strict-reader refusals for record order, a dangling reference, an unused style and
-duplicate styles. Package fixtures with and without the entry. Behaviour fixtures,
+Strict-reader refusals for record order, a dangling reference, an unused style and a
+style ID that doesn't match its content. Package fixtures with and without the entry,
+including the twenty-leaf payload root. Behaviour fixtures,
 each including Undo: a styled cell through sort, insert and delete; a rule on a
 failing condition; rule layering; `TODAY()` across two host inputs; a column removal
-with rules attached; a merge of unequal styles from each side. An XLSX round trip for
+with rules attached; a rule painting many rows from one `same_row_reference`; a merge
+of unequal styles from each side; two sides creating different new styles; a new rule
+against a concurrent column deletion. An XLSX round trip for
 every mapping and finding.
 
 ## Consequences
