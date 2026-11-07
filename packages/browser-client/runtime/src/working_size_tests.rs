@@ -946,3 +946,38 @@ fn handle_and_the_wire_agree_on_a_working_size_new_table() {
     ));
     assert_eq!(reply, DesignerWireReply::Ok { response: expected });
 }
+
+/// A caller's byte budget shrinks the opening window by halving, and a budget
+/// below one row is the same typed refusal the profile uses everywhere.
+#[test]
+fn opened_window_within_halves_to_the_budget() {
+    let document = text_grid(4, 1);
+    let mut full_runtime =
+        DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    let full = full_runtime.opened_window().unwrap();
+    assert_eq!(full.window.rows.len(), 4);
+    let full_bytes = serde_json::to_vec(&full).unwrap().len();
+
+    let mut shrunk_runtime =
+        DesignerRuntime::from_document_working_size(text_grid(4, 1), OCCURRENCE).unwrap();
+    let shrunk = shrunk_runtime.opened_window_within(full_bytes - 1).unwrap();
+    assert!(
+        shrunk.window.rows.len() < full.window.rows.len(),
+        "{} rows did not shrink below {}",
+        shrunk.window.rows.len(),
+        full.window.rows.len()
+    );
+    assert_ne!(
+        shrunk.window.rows,
+        [] as [RowProjection; 0],
+        "the shrunk window keeps at least one row"
+    );
+
+    let mut tiny_runtime =
+        DesignerRuntime::from_document_working_size(text_grid(4, 1), OCCURRENCE).unwrap();
+    let error = expect_error(tiny_runtime.opened_window_within(0));
+    assert!(
+        matches!(error, DesignerError::ProjectionTooLarge { maximum: 0, .. }),
+        "{error:?}"
+    );
+}

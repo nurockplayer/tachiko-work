@@ -4,7 +4,7 @@ import {
   projectTransferFromFiles,
   type CanonicalProjectTransferEntry,
 } from "./host/project-transfer.ts";
-import type { SpreadsheetExport, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
+import type { ImportOptions, ImportSelection, ImportedWindowProjection, InteropMetadata, SpreadsheetExport, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
 import { DesignerRuntimeError, type DesignerClient } from "./runtime/client.ts";
 import { WorkerDesignerClient } from "./runtime/worker-client.ts";
 import { isCapacityFailure, isFormulaFailure } from "./runtime/protocol.ts";
@@ -55,6 +55,9 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
   /** Create a table whose session profile is the working-size one. */
   newTableWorkingSize(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
+  importSpreadsheetWorkingSize(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedWindowProjection) => void): Promise<ImportedWindowProjection>;
+  inspectImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
+  openImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   inspectProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   openProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
@@ -149,6 +152,7 @@ export {
 };
 export type { DesignerClient };
 export type { CanonicalProjectTransferEntry } from "./host/project-transfer.ts";
+export type { ImportedWindowProjection } from "./runtime/interop-protocol.ts";
 export type {
   BootstrapProjection,
   CapacityFailureProjection,

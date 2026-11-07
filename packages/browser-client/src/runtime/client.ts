@@ -1,5 +1,5 @@
 import type { A1Translation, TranslateA1FormulaInput } from "./protocol.ts";
-import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportedWindowProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat } from "./interop-protocol.ts";
 import type {
   FormulaCopy,
   TrackerCommand,
@@ -40,8 +40,12 @@ import type {
 export interface DesignerClient {
   inspectSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions): Promise<SourceWorkbook>;
   importSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedProjection) => void): Promise<ImportedProjection>;
+  /** Import with the working-size profile: the reply carries one bounded window, not the whole table. */
+  importSpreadsheetWorkingSize?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedWindowProjection) => void): Promise<ImportedWindowProjection>;
   inspectImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
+  inspectImportedProjectWorkingSize?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   openImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
+  openImportedProjectWorkingSize?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   exportSpreadsheet?(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport>;
   /** Rust-derived native tables; CSV selects collection, XLSX exports all scalar tables. */
   exportNativeTablesSpreadsheet?(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;

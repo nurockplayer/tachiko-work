@@ -1,4 +1,4 @@
-import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportedWindowProjection, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
 
 export type FieldTarget = {
   entity: string;
@@ -672,6 +672,7 @@ export type DesignerResponse =
   | {type: "cleanup_preview"; payload: CleanupPreview}
   | {type: "import_preview"; payload: SourceWorkbook}
   | {type: "imported"; payload: ImportedProjection}
+  | {type: "imported_window"; payload: ImportedWindowProjection}
   | {type: "spreadsheet_exported"; payload: {revision: string; byte_length: number; ledger: FidelityFinding[]}}
   | { type: "bootstrap"; payload: BootstrapProjection }
   | { type: "capacity"; payload: CapacityProjection }

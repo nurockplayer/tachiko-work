@@ -85,10 +85,55 @@ assert.equal(fromPortable.window.total_rows, 1);
 const fromLocal = reopen("project_open_local_document_working_size", portable, "00000000-0000-4000-8000-000000000904");
 assert.equal(fromLocal.window.total_rows, 1);
 
+// The spreadsheet bridge imports with the profile, replies one window, and the
+// saved import reopens at working size through inspect and open.
+function spreadsheet(input, bytes) {
+  put("request", encoder.encode(JSON.stringify(input)));
+  put("project", bytes);
+  wasm.tachiko_designer_spreadsheet_run();
+  return reply();
+}
+const csvBytes = encoder.encode("Name,Note\nAlpha,first\nBeta,second\n");
+const importedReply = spreadsheet({
+  type: "import", format: "csv", csv_options: {delimiter: ",", header: true},
+  selection: {column_types: [["text", "text"]], extra_columns: [[]]},
+  occurrence_id: "00000000-0000-4000-8000-000000000906",
+  install: true, profile: "working_size",
+}, csvBytes);
+assert.equal(importedReply.status, "ok", JSON.stringify(importedReply));
+assert.equal(importedReply.response.type, "imported_window", JSON.stringify(importedReply));
+const imported = importedReply.response.payload;
+assert.equal(imported.opened.profile, "working_size");
+assert.equal(imported.opened.window.total_rows, 2);
+assert.equal(imported.opened.table, undefined, "an imported working-size reply carries no whole table");
+
+put("request", encoder.encode(imported.opened.bootstrap.revision));
+wasm.tachiko_designer_project_export_v3();
+const importedExport = reply();
+assert.equal(importedExport.status, "ok", JSON.stringify(importedExport));
+const importedBundle = take("project");
+
+const inspectedImport = spreadsheet({
+  type: "inspect_project", metadata: imported.metadata, profile: "working_size",
+}, importedBundle);
+assert.equal(inspectedImport.status, "ok", JSON.stringify(inspectedImport));
+assert.equal(inspectedImport.response.type, "opened_window");
+assert.equal(inspectedImport.response.payload.window.total_rows, 2);
+
+const reopenedImport = spreadsheet({
+  type: "open_project",
+  occurrence_id: "00000000-0000-4000-8000-000000000907",
+  metadata: imported.metadata, profile: "working_size",
+}, importedBundle);
+assert.equal(reopenedImport.status, "ok", JSON.stringify(reopenedImport));
+assert.equal(reopenedImport.response.type, "opened_window");
+assert.equal(reopenedImport.response.payload.profile, "working_size");
+assert.equal(reopenedImport.response.payload.window.total_rows, 2);
+
 // A host that never asks keeps the ordinary reply and profile.
 const ordinary = ok({
   type: "new_table", occurrence_id: "00000000-0000-4000-8000-000000000905", name: "Ordinary",
   columns: [{name: "qty", field_type: "number"}],
 });
 assert.equal(ordinary.table.collection.id.length > 0, true);
-console.log("working_size actual WASM ABI: profile create, save, inspect, open and both portable routes passed");
+console.log("working_size actual WASM ABI: profile create, save, inspect, open, both portable routes and the spreadsheet import route passed");

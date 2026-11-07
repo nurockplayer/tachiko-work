@@ -550,9 +550,18 @@ the [Semantic API specification](../specs/semantic-api.md), and the
 A host can ask for the working-size session profile when the occurrence is
 created or opened, through `newTableWorkingSize`, `inspectProjectWorkingSize`,
 `openProjectWorkingSize`, `openCanonicalTreeWorkingSize`,
-`openLocalDocumentWorkingSize` and `openPortableRoWorkingSize`. The profile is fixed when the occurrence is
+`openLocalDocumentWorkingSize` and `openPortableRoWorkingSize`, and when it
+imports a workbook or inspects and opens a saved import, through
+`importSpreadsheetWorkingSize`, `inspectImportedProjectWorkingSize` and
+`openImportedProjectWorkingSize`. The profile is fixed when the occurrence is
 created and cannot be switched afterwards. Not asking changes nothing: every
 ordinary method keeps today's request bytes and reply shape.
+
+A working-size import reply (`imported_window`) carries the same metadata and
+fidelity ledger as an ordinary import plus one bounded window instead of the
+whole table. Imports still have today's geometry and do not move to the text
+profile, so a workbook an ordinary import accepts only through that profile may
+be refused until a later change.
 
 A working-size reply carries the bootstrap and one bounded window, never the
 whole table. That window may hold fewer than 100 rows when the text is large,
