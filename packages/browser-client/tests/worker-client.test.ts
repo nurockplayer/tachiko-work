@@ -527,7 +527,7 @@ describe("Published changed-cell wire validation", () => {
     });
     const client = createExperimentalDesignerClient();
     const target = {entity: "row", field: "note"};
-    const pending = client.duplicateCollection("resident/0", "items", "Copy");
+    const pending = client.duplicateCollection!("resident/0", "items", "Copy");
     const publication = {
       base_revision: "resident/0",
       resulting_revision: "resident/1",
