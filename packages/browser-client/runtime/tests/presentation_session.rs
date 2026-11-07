@@ -11,7 +11,7 @@ use tachiko_designer_runtime::{
 };
 use tachiko_storage::{
     CanonicalRoProjectV3, ROPROJ_V3_PRESENTATION_PATH, decode_portable_package_v1,
-    encode_portable_package_v1, encode_presentation, encode_roproj_v3,
+    decode_presentation, encode_portable_package_v1, encode_presentation, encode_roproj_v3,
     encode_roproj_v3_with_presentation, style_id,
 };
 use tachiko_workspace_engine::{
@@ -370,10 +370,8 @@ fn a_deleted_row_loses_its_record_and_undo_restores_the_member() {
     let removed = runtime.export_project_v3("resident/1").unwrap();
     let removed_member = member(&removed.bytes).unwrap();
     assert_eq!(removed_member, pruned_member);
-    assert!(
-        !String::from_utf8(removed_member).unwrap().contains("e1"),
-        "the deleted row keeps no record"
-    );
+    let decoded = decode_presentation(&removed_member).unwrap();
+    assert!(decoded.cells.is_empty(), "the deleted row keeps no record");
 
     let (reopened, _) = open(&removed.bytes, SECOND);
     assert!(reopened.is_some());
