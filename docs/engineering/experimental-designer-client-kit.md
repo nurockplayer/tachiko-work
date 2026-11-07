@@ -151,9 +151,12 @@ error. The reply repeats `revision`, `collection`, `columns`, a
 `total_rows` (after filters and kept entities), `unfiltered_rows`, the clamped
 `start`, and the window's `rows` with the same row/field projections as
 `queryTable`. Each row carries `position`, its one-based stored position in the
-collection: that is the row number a host shows and uses for A1 geometry, never
-the displayed index, so under a filter or a view sort the numbers can have gaps
-or run out of order.
+collection; under a filter or a view sort the numbers can have gaps or run out
+of order. A host's row number is `position` mapped through the table's header
+state (ADR-0048 §5): position 1 is row 2 under a header row and row 1 in a
+headerless table, and a host uses that number for A1 geometry instead of the
+displayed index. `locateInView` and `findInView` replies carry the same
+`position`.
 
 The view is request state owned by the host: it never enters the document,
 publication history or revision token. Sort keys apply in order with blanks last
