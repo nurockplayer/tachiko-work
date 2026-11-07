@@ -196,6 +196,22 @@ members, or a mismatched constraint/type pair fail closed. An authoring writer
 may sort an admitted literal set into canonical unsigned UTF-8 order, while a
 decoder rejects duplicate or noncanonical input without repairing it.
 
+### Auto field type and tagged literals — ADR-0047
+
+Implementation state: pending. Until the implementing PR lands, the writer can't
+emit these and a reader refuses them, as for any unknown tag.
+
+[ADR-0047](../decisions/ADR-0047-auto-columns-tagged-results-and-cell-failures.md)
+adds the FieldType tag `auto`, whose sole member is `type`. An Auto field has
+`required: false` and constraint `none`; anything else fails admission. Its entity
+values are Number, Text, Boolean, Date or Formula, never Reference. Optional
+`number_format` is admitted, as on a Number field.
+
+Bound Expression gains three literals, in the existing `op` and `args` form:
+`{"op":"text","args":"..."}`, `{"op":"boolean","args":true}` and
+`{"op":"date","args":"YYYY-MM-DD"}`. A document using neither keeps its exact
+canonical bytes.
+
 ## Entity values and formulas
 
 The Entity JSONL record retains the incorporated v2 fixed member order
