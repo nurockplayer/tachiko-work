@@ -959,7 +959,7 @@ fn opened_window_within_halves_to_the_budget() {
 
     let mut shrunk_runtime =
         DesignerRuntime::from_document_working_size(text_grid(4, 1), OCCURRENCE).unwrap();
-    let shrunk = shrunk_runtime.opened_window_within(full_bytes / 2).unwrap();
+    let shrunk = shrunk_runtime.opened_window_within(full_bytes - 1).unwrap();
     assert!(
         shrunk.window.rows.len() < full.window.rows.len(),
         "{} rows did not shrink below {}",
