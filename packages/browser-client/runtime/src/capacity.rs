@@ -34,17 +34,24 @@ pub(crate) const DEFAULT_LIMITS: CapacityLimits = CapacityLimits {
     dependency_edges: 200_000,
 };
 
+/// What a session was admitted under. Chosen when the occurrence is created and
+/// kept through every edit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionProfile {
+    Ordinary,
+    TextCapacity,
+}
+
 /// Preserve the independently admitted Text/Number rectangle. Its content and
 /// encoding restrictions remain owned by the existing profile gates.
-pub(crate) const fn limits_for_profile(text_capacity: bool) -> CapacityLimits {
-    if text_capacity {
-        CapacityLimits {
+pub(crate) const fn limits_for_profile(profile: SessionProfile) -> CapacityLimits {
+    match profile {
+        SessionProfile::Ordinary => DEFAULT_LIMITS,
+        SessionProfile::TextCapacity => CapacityLimits {
             table_rows: crate::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
             total_entities: crate::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
             ..DEFAULT_LIMITS
-        }
-    } else {
-        DEFAULT_LIMITS
+        },
     }
 }
 
