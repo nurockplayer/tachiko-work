@@ -102,7 +102,9 @@ impl DesignerRuntime {
                     "capacity Text projects cannot deduplicate rows",
                 ));
             }
-            SessionProfile::TextCapacity | SessionProfile::Ordinary => {}
+            SessionProfile::TextCapacity
+            | SessionProfile::Ordinary
+            | SessionProfile::WorkingSize => {}
         }
         self.prepare_cleanup(expected_revision, operation)
     }
@@ -152,7 +154,16 @@ impl DesignerRuntime {
             }
         }
         // Preview must prove that the exact final candidate remains reopenable.
-        Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+        // Working size re-proves only its own document bounds; it never rebuilds
+        // the occurrence.
+        match self.profile {
+            SessionProfile::WorkingSize => {
+                super::ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+            }
+        }
         let mut lifecycle = designer_lifecycle(
             snapshot.document_scope(),
             snapshot.document(),
@@ -911,7 +922,9 @@ fn import_workbook_candidate(
                 "Text capacity requires the complete original source profile",
             ));
         }
-        SessionProfile::TextCapacity | SessionProfile::Ordinary => {}
+        SessionProfile::TextCapacity
+        | SessionProfile::Ordinary
+        | SessionProfile::WorkingSize => {}
     }
     normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
     validate_import_metadata_for_profile(

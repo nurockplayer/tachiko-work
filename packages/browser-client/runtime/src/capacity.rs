@@ -40,6 +40,7 @@ pub(crate) const DEFAULT_LIMITS: CapacityLimits = CapacityLimits {
 pub(crate) enum SessionProfile {
     Ordinary,
     TextCapacity,
+    WorkingSize,
 }
 
 /// Preserve the independently admitted Text/Number rectangle. Its content and
@@ -52,6 +53,9 @@ pub(crate) const fn limits_for_profile(profile: SessionProfile) -> CapacityLimit
             total_entities: crate::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
             ..DEFAULT_LIMITS
         },
+        // Working size deliberately keeps today's ordinary limits. A later
+        // profile raises these numbers; nothing here does yet.
+        SessionProfile::WorkingSize => DEFAULT_LIMITS,
     }
 }
 
