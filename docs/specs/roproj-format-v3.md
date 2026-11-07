@@ -213,6 +213,26 @@ Bound Expression gains three literals, in the existing `op` and `args` form:
 `{"op":"date","args":"YYYY-MM-DD"}`. A document using neither keeps its exact
 canonical bytes.
 
+### Row rank and positional references — ADR-0048
+
+Implementation state: pending. Until the implementing PR lands, the writer can't
+emit these and a reader refuses them, as for any unknown member or tag.
+
+[ADR-0048](../decisions/ADR-0048-stored-row-order-and-positional-ranges.md) adds an
+optional Entity member `rank`, after `schema` and before `fields`, omitted when
+absent. It matches `[0-9A-Za-z]{1,64}` and doesn't end in `0`; anything else fails
+admission. Bound Expression gains three forms:
+
+```json
+{"op":"range_aggregate","args":{"function":"sum","schema":"...","field":"...","first_row":1,"last_row":8}}
+{"op":"position_read","args":{"schema":"...","field":"...","row":5}}
+{"op":"deleted_reference"}
+```
+
+`function` is `sum`, `average`, `count`, `min` or `max`. Rows are integers from 1 to
+1,048,576 and `first_row <= last_row`. A document using none of these keeps its exact
+canonical bytes.
+
 ## Entity values and formulas
 
 The Entity JSONL record retains the incorporated v2 fixed member order
