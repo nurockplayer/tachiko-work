@@ -24,8 +24,8 @@ const fn record_walk(_candidates: bool) {}
 
 /// One pass's read of one column, in entity order.
 struct ColumnValues {
-    /// The column's cells that already carry a failure.
-    failed: Vec<FieldRef>,
+    /// The column's first cell that already carries a failure, in entity order.
+    first_failed: Option<FieldRef>,
     /// The first cell with no entry in the pass's value map.
     first_missing: Option<FieldRef>,
     /// The present values, in entity order.
@@ -144,13 +144,13 @@ impl ColumnCache {
         if self.entries.contains_key(column) {
             return;
         }
-        let mut failed = Vec::new();
+        let mut first_failed = None;
         let mut first_missing = None;
         let mut present = Vec::new();
         let mut total = 0.0;
         for reference in column_cells(document, column) {
-            if failures.contains_key(&reference) {
-                failed.push(reference.clone());
+            if first_failed.is_none() && failures.contains_key(&reference) {
+                first_failed = Some(reference.clone());
             }
             match values.get(&reference) {
                 Some(value) => {
@@ -164,7 +164,7 @@ impl ColumnCache {
         self.entries.insert(
             column.clone(),
             ColumnValues {
-                failed,
+                first_failed,
                 first_missing,
                 present,
                 total,
@@ -190,10 +190,15 @@ pub(crate) struct Evaluation<'a> {
 
 impl Evaluation<'_> {
     // Static dependencies still govern scheduling, cycles, and invalidation.
-    // Failure propagation follows only the branches that are actually read.
-    // The differential oracle keeps this expanded per-cell form.
+    // Failure propagation follows only the branches that are actually read;
+    // a column read names its first failed cell in entity order. The
+    // differential oracle keeps this expanded per-formula form.
     #[cfg(test)]
-    pub(crate) fn required_references(&mut self, expression: &Expression) -> BTreeSet<FieldRef> {
+    pub(crate) fn required_references(
+        &mut self,
+        expression: &Expression,
+        failures: &FailureMap,
+    ) -> BTreeSet<FieldRef> {
         let mut references = BTreeSet::new();
         let mut pending = vec![expression];
         while let Some(node) = pending.pop() {
@@ -205,7 +210,7 @@ impl Evaluation<'_> {
                     references.insert(FieldRef::new(self.owner.entity.clone(), field.clone()));
                 }
                 Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
-                    references.extend(column_cells(self.document, column));
+                    references.extend(first_failed_cell(self.document, column, failures));
                 }
                 // A conditional aggregate reads every cell of every column it
                 // names, matched row or not, so any failed contributor fails
@@ -217,10 +222,14 @@ impl Evaluation<'_> {
                     if let ConditionalAggregate::Sum(column)
                     | ConditionalAggregate::Average(column) = aggregate.as_ref()
                     {
-                        references.extend(column_cells(self.document, column));
+                        references.extend(first_failed_cell(self.document, column, failures));
                     }
                     for criterion in criteria {
-                        references.extend(column_cells(self.document, &criterion.column));
+                        references.extend(first_failed_cell(
+                            self.document,
+                            &criterion.column,
+                            failures,
+                        ));
                         if let Some(expression) = &criterion.value {
                             match expression.as_ref() {
                                 Expression::Reference(reference) => {
@@ -279,7 +288,7 @@ impl Evaluation<'_> {
                     }
                 }
                 Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
-                    references.extend(self.columns.entry(column).failed.iter().cloned());
+                    references.extend(self.columns.entry(column).first_failed.iter().cloned());
                 }
                 // A conditional aggregate reads every cell of every column it
                 // names, matched row or not, so any failed contributor fails
@@ -291,11 +300,16 @@ impl Evaluation<'_> {
                     if let ConditionalAggregate::Sum(column)
                     | ConditionalAggregate::Average(column) = aggregate.as_ref()
                     {
-                        references.extend(self.columns.entry(column).failed.iter().cloned());
+                        references.extend(self.columns.entry(column).first_failed.iter().cloned());
                     }
                     for criterion in criteria {
-                        references
-                            .extend(self.columns.entry(&criterion.column).failed.iter().cloned());
+                        references.extend(
+                            self.columns
+                                .entry(&criterion.column)
+                                .first_failed
+                                .iter()
+                                .cloned(),
+                        );
                         if let Some(expression) = &criterion.value {
                             match expression.as_ref() {
                                 Expression::Reference(reference) => {
@@ -714,6 +728,16 @@ impl Evaluation<'_> {
             _ => Err(CalculationFailure::TypeMismatch),
         }
     }
+}
+
+/// The first cell of `column`, in entity order, that already carries a failure.
+#[cfg(test)]
+fn first_failed_cell(
+    document: &Document,
+    column: &ColumnRef,
+    failures: &FailureMap,
+) -> Option<FieldRef> {
+    column_cells(document, column).find(|cell| failures.contains_key(cell))
 }
 
 /// Merge two entity-id lists, each already in entity order, keeping that order.
