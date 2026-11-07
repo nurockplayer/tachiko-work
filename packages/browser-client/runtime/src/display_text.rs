@@ -88,7 +88,11 @@ fn format_formatted(value: f64, format: &NumberFormat) -> String {
         let decimal = shortest_decimal(value.abs());
         let scaled = round_scaled(&decimal, decimals, percent);
         let (integer, fraction) = split_scaled(scaled, decimals);
-        let mut body = group_digits(&integer);
+        let mut body = if format.thousands_separator {
+            group_digits(&integer)
+        } else {
+            integer.clone()
+        };
         if !fraction.is_empty() {
             body.push('.');
             body.push_str(&fraction);
@@ -438,18 +442,28 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/display_text_corpus.json"))
                 .expect("the committed corpus is valid JSON");
         assert!(!corpus.cases.is_empty(), "the corpus has cases");
+        let mut mismatches = Vec::new();
         for case in &corpus.cases {
             let value = case
                 .value
                 .parse::<f64>()
                 .expect("corpus values are f64 spellings");
-            assert_eq!(
-                format_number(value, case.format.as_ref()),
-                case.expected,
-                "value {} with format {:?}",
-                case.value,
-                case.format
-            );
+            let actual = format_number(value, case.format.as_ref());
+            if actual != case.expected {
+                mismatches.push(format!(
+                    "value {} with format {:?}: expected {:?}, got {:?}",
+                    case.value, case.format, case.expected, actual
+                ));
+                if mismatches.len() == 20 {
+                    break;
+                }
+            }
         }
+        assert!(
+            mismatches.is_empty(),
+            "{} corpus mismatches:\n{}",
+            mismatches.len(),
+            mismatches.join("\n")
+        );
     }
 }
