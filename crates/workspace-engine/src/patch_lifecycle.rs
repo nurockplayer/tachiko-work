@@ -28,7 +28,8 @@ use thiserror::Error;
 use super::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
-    apply_field_value_candidate, finalize_edit_with_validation, unset_field_candidate,
+    apply_field_value_candidate, finalize_edit_with_validation, instrumentation,
+    unset_field_candidate,
 };
 
 #[cfg(test)]
@@ -1945,21 +1946,27 @@ impl PatchLifecycle {
             &footprint,
             now,
         )?;
-        let candidate = evaluated.document.clone();
+        let candidate = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/candidate_clone");
+            evaluated.document.clone()
+        };
         let evaluated_report = evaluated.validation_report.clone();
-        let published = self.publish_candidate(
-            publication,
-            PublicationAttempt {
-                proposal_id,
-                proposal: &proposal,
-                approval,
-                executor,
-                footprint: &footprint,
-                current_document_scope: &current_document_scope,
-                current_revision: &current_revision,
-                candidate: evaluated.document,
-            },
-        )?;
+        let published = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/publish_candidate");
+            self.publish_candidate(
+                publication,
+                PublicationAttempt {
+                    proposal_id,
+                    proposal: &proposal,
+                    approval,
+                    executor,
+                    footprint: &footprint,
+                    current_document_scope: &current_document_scope,
+                    current_revision: &current_revision,
+                    candidate: evaluated.document,
+                },
+            )?
+        };
         let can_disclose = published.authorization.can_disclose;
         let mut receipt = match evaluated.evidence {
             PatchEvidence::V1(semantic_changes) => {
@@ -2005,14 +2012,18 @@ impl PatchLifecycle {
                 ProfiledReceipt::V2(receipt)
             }
         };
-        let verification_report = match self.verify_publication(
-            proposal_id,
-            &current_revision,
-            &published.revision,
-            (&candidate, &evaluated_report),
-            &published.document_scope,
-            &published.document,
-        ) {
+        let verification = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/verify_publication");
+            self.verify_publication(
+                proposal_id,
+                &current_revision,
+                &published.revision,
+                (&candidate, &evaluated_report),
+                &published.document_scope,
+                &published.document,
+            )
+        };
+        let verification_report = match verification {
             Ok(report) => report,
             Err(error) if can_disclose => return Err(error),
             Err(_) => return Err(PatchLifecycleError::AuthorizationDenied),
@@ -3585,7 +3596,8 @@ impl PatchLifecycle {
     fn validate_and_preflight(
         document: &Document,
     ) -> Result<(ValidationReport, Calculation), PatchLifecycleError> {
-        let (report, calculation) =
+        let (report, calculation) = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/validate");
             super::validated_calculation_and_report(document).map_err(|error| match error {
                 WorkspaceError::InvalidDocument { report, .. } => {
                     PatchLifecycleError::ValidationFailed { report }
@@ -3593,12 +3605,18 @@ impl PatchLifecycle {
                 source => PatchLifecycleError::CommandRejected {
                     source: Box::new(source),
                 },
+            })?
+        };
+        if !instrumentation::skip_preflight() {
+            let _phase = instrumentation::PhaseTimer::new(
+                "finalize_evaluation/preflight_formula_projections",
+            );
+            super::preflight_formula_projections(document).map_err(|source| {
+                PatchLifecycleError::CommandRejected {
+                    source: Box::new(source),
+                }
             })?;
-        super::preflight_formula_projections(document).map_err(|source| {
-            PatchLifecycleError::CommandRejected {
-                source: Box::new(source),
-            }
-        })?;
+        }
         Ok((report, calculation))
     }
 

@@ -2134,15 +2134,28 @@ pub(crate) fn finalize_edit_with_validation(
     document: &Document,
     edited: Document,
 ) -> Result<(EditPreview, ValidationReport), WorkspaceError> {
-    let (report, calculation) = semantic_validation(&edited);
+    let (report, calculation) = {
+        let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/validate");
+        semantic_validation(&edited)
+    };
     let Some(calculation) = calculation else {
         return Err(invalid_document(report, ValidationRole::Candidate));
     };
-    preflight_formula_projections(&edited)?;
+    if !instrumentation::skip_preflight() {
+        let _phase =
+            instrumentation::PhaseTimer::new("finalize_evaluation/preflight_formula_projections");
+        preflight_formula_projections(&edited)?;
+    }
     tachiko_diff_engine::require_diff_supported(document, &edited)?;
-    let base_calculation = calculate(document)
-        .map_err(|source| WorkspaceError::Diff(DiffError::BeforeCalculation(source)))?;
-    let semantic_diff = diff_with_calculations(document, &edited, &base_calculation, &calculation)?;
+    let base_calculation = {
+        let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/base_calculate");
+        calculate(document)
+            .map_err(|source| WorkspaceError::Diff(DiffError::BeforeCalculation(source)))?
+    };
+    let semantic_diff = {
+        let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/diff");
+        diff_with_calculations(document, &edited, &base_calculation, &calculation)?
+    };
     Ok((
         EditPreview {
             document: edited,

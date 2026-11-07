@@ -13,6 +13,7 @@
 //! surface; remove them before any merge.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 thread_local! {
@@ -67,6 +68,22 @@ impl Drop for PhaseTimer {
     fn drop(&mut self) {
         phase_end();
     }
+}
+
+/// Scratch measurement switch (Plan W1): when set, request-time preflights are
+/// skipped so one edit can be timed without the full admission pass. Never
+/// part of the product surface; remove before any merge.
+static SKIP_PREFLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// Whether request-time preflights are currently skipped.
+#[must_use]
+pub fn skip_preflight() -> bool {
+    SKIP_PREFLIGHT.load(Ordering::Relaxed)
+}
+
+/// Set whether request-time preflights are skipped.
+pub fn set_skip_preflight(skip: bool) {
+    SKIP_PREFLIGHT.store(skip, Ordering::Relaxed);
 }
 
 /// Cumulative counters recorded by one instrumented process.

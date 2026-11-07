@@ -147,7 +147,9 @@ const TABLE_WINDOW_ENVELOPE_BYTES: usize = 4_096;
 const MAX_NATIVE_TRACKER_PROJECTION_BYTES: usize = 4 * MAX_PROJECTION_BYTES;
 const MAX_WIDTH_FINITE_JSON_NUMBER: f64 = -f64::MIN_POSITIVE;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
-pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
+// Plan W1 scratch measurement: lifted from 64 MiB so the 10,000-row shapes
+// fit one transfer. Never merge.
+pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 1024 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
 const PREFLIGHT_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 /// Private record discriminator for frozen canonical `.roproj/v1` bundles.
@@ -5012,14 +5014,16 @@ impl DesignerRuntime {
             .get(command.target())
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
-        if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(
-                candidate,
-                PREFLIGHT_OCCURRENCE,
-                self.text_capacity,
-            )?;
-        } else {
-            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+        if !instrumentation::skip_preflight() {
+            if self.opened_from_v3 {
+                Self::from_document_profile_with_opened(
+                    candidate,
+                    PREFLIGHT_OCCURRENCE,
+                    self.text_capacity,
+                )?;
+            } else {
+                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+            }
         }
         let execute_now = self.clock.tick();
         let invalidation = {
@@ -5087,14 +5091,16 @@ impl DesignerRuntime {
             .get_mut(&field.entity)
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity.fields.insert(field.field, Value::Number(value));
-        if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(
-                candidate,
-                PREFLIGHT_OCCURRENCE,
-                self.text_capacity,
-            )?;
-        } else {
-            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+        if !instrumentation::skip_preflight() {
+            if self.opened_from_v3 {
+                Self::from_document_profile_with_opened(
+                    candidate,
+                    PREFLIGHT_OCCURRENCE,
+                    self.text_capacity,
+                )?;
+            } else {
+                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+            }
         }
         let execute_now = self.clock.tick();
         let invalidation = {
@@ -5440,40 +5446,42 @@ impl DesignerRuntime {
         };
         match validation {
             Ok(()) => {
-                let _phase = instrumentation::PhaseTimer::new("publish_commands/preflight");
-                // A v3-origin text-capacity occurrence edits like any other
-                // capacity occurrence; only strict v3 origins keep the strict
-                // preflight.
-                if self.opened_from_v3 && !self.text_capacity {
-                    Self::from_document_profile_with_opened(
-                        candidate,
-                        PREFLIGHT_OCCURRENCE,
-                        false,
-                    )?;
-                } else if self.text_capacity {
-                    match commands.as_slice() {
-                        [
-                            SemanticCommand::SetFieldValue {
-                                field,
-                                value: Value::Text(value),
-                            },
-                        ] if matches!(
-                            snapshot
-                                .document()
-                                .entities
-                                .get(&field.entity)
-                                .and_then(|entity| entity.fields.get(&field.field)),
-                            Some(Value::Text(_))
-                        ) =>
-                        {
-                            self.preflight_capacity_scalar(&candidate, field, value)?;
+                if !instrumentation::skip_preflight() {
+                    let _phase = instrumentation::PhaseTimer::new("publish_commands/preflight");
+                    // A v3-origin text-capacity occurrence edits like any other
+                    // capacity occurrence; only strict v3 origins keep the strict
+                    // preflight.
+                    if self.opened_from_v3 && !self.text_capacity {
+                        Self::from_document_profile_with_opened(
+                            candidate,
+                            PREFLIGHT_OCCURRENCE,
+                            false,
+                        )?;
+                    } else if self.text_capacity {
+                        match commands.as_slice() {
+                            [
+                                SemanticCommand::SetFieldValue {
+                                    field,
+                                    value: Value::Text(value),
+                                },
+                            ] if matches!(
+                                snapshot
+                                    .document()
+                                    .entities
+                                    .get(&field.entity)
+                                    .and_then(|entity| entity.fields.get(&field.field)),
+                                Some(Value::Text(_))
+                            ) =>
+                            {
+                                self.preflight_capacity_scalar(&candidate, field, value)?;
+                            }
+                            _ => {
+                                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, true)?;
+                            }
                         }
-                        _ => {
-                            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, true)?;
-                        }
+                    } else {
+                        Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
                     }
-                } else {
-                    Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
                 }
             }
             // Preflight only upgrades a constraint mismatch into its typed

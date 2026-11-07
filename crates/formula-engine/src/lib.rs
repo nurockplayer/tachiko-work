@@ -912,6 +912,18 @@ pub struct RetainedCalculationState {
     reverse_dependents: DependencyMap,
 }
 
+/// Scratch measurement (Plan W1): the retained map sizes behind one
+/// [`RetainedCalculationState`]. Not semantic identity or a stable contract.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RetainedCalculationSizes {
+    pub nodes: usize,
+    pub values: usize,
+    pub dependency_keys: usize,
+    pub dependency_edges: usize,
+    pub reverse_keys: usize,
+    pub reverse_edges: usize,
+}
+
 /// Deterministic work evidence for one retained calculation transition.
 ///
 /// These counters describe the current provisional algorithm. They are
@@ -984,6 +996,22 @@ impl RetainedCalculationState {
             },
             work,
         )
+    }
+
+    /// Sizes of the retained maps (scratch Plan W1 measurement).
+    #[must_use]
+    pub fn sizes(&self) -> RetainedCalculationSizes {
+        fn edges(map: &DependencyMap) -> usize {
+            map.values().map(BTreeSet::len).sum()
+        }
+        RetainedCalculationSizes {
+            nodes: self.nodes.len(),
+            values: self.values.len(),
+            dependency_keys: self.dependencies.len(),
+            dependency_edges: edges(&self.dependencies),
+            reverse_keys: self.reverse_dependents.len(),
+            reverse_edges: edges(&self.reverse_dependents),
+        }
     }
 
     /// Recompute dirty roots and their old/new-graph reverse dependent closure.

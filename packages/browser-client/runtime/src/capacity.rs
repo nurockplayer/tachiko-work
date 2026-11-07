@@ -33,7 +33,10 @@ pub(crate) const DEFAULT_LIMITS: CapacityLimits = CapacityLimits {
     populated_cells: 10_000_000,
     formulas: 1_000_000,
     formula_ast_nodes: 10_000_000,
-    dependency_edges: 20_000_000,
+    // Plan W1 scratch measurement: lifted from 20,000,000. A 10,000-row
+    // column-total or column-conditional shape counts each formula's whole
+    // column dependency (up to 200M edges at 10,000 rows). Never merge.
+    dependency_edges: 1_000_000_000,
 };
 
 /// Preserve the independently admitted Text/Number rectangle. Its content and

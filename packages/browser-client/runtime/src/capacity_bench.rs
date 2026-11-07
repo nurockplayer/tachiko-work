@@ -19,8 +19,10 @@
 //! instead of failing the run.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::time::Instant;
 
+use tachiko_formula_engine::{RetainedCalculationState, calculate};
 use tachiko_storage::{decode_roproj_v3, encode_roproj_v3};
 use tachiko_workspace_engine::{
     Document, FieldId, Number, Value,
@@ -31,14 +33,15 @@ use tachiko_workspace_engine::{
 };
 
 use super::{
-    DESIGNER_PRINCIPAL, DesignerClock, DesignerRequest, DesignerRuntime, FieldTarget, PrincipalId,
-    ScalarEditInput, ViewIndexCache, collection_specs, decode_project_bundle, designer_lifecycle,
-    document_scope, encode_project_bundle, ensure_projection_size_with_limit, formula_sources,
+    CellEdit, DESIGNER_PRINCIPAL, DesignerClock, DesignerRequest, DesignerResponse,
+    DesignerRuntime, FieldTarget, PrincipalId, ScalarEditInput, TableView, ViewIndexCache,
+    collection_specs, decode_project_bundle, designer_lifecycle, document_scope,
+    encode_project_bundle, ensure_projection_size_with_limit, formula_sources, open_project,
     select_default_collection,
 };
 use crate::capacity_fixtures::{
     DEPENDENT_FORMULAS, FixtureSpec, RATE_FIELD, SWEEP_DATA_COLUMNS, capacity_document, entity_id,
-    field_id, formula_sweep_document,
+    field_id, formula_sweep_document, w1_document,
 };
 
 /// Stage A fixtures: 1k, 10k and 100k grid cells at ten columns (about 91%
@@ -1197,4 +1200,886 @@ fn capacity_edit_phase_breakdown() {
         measure_phase_fixture(label, spec, target, false, EDITS, FIXTURE_TIME_LIMIT_MILLIS);
         measure_phase_fixture(label, spec, target, true, EDITS, FIXTURE_TIME_LIMIT_MILLIS);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Plan W1 working-size measurement (scratch, never merge).
+//
+// One shape per process (`W1_SHAPE`), so VmHWM covers that shape alone. Every
+// result is one flushed `W1|<shape>|<metric>|<value>` line: a killed process
+// keeps what it printed. Any `handle` error ends that phase only.
+// ---------------------------------------------------------------------------
+
+/// What one scalar edit writes.
+#[derive(Clone, Copy)]
+enum W1Input {
+    Number,
+    Text,
+}
+
+/// One measured scalar edit.
+struct W1EditSample {
+    millis: f64,
+    clones: u64,
+    json_bytes: usize,
+    phases: BTreeMap<&'static str, f64>,
+}
+
+fn w1_line(shape: &str, metric: &str, value: impl std::fmt::Display) {
+    println!("W1|{shape}|{metric}|{value}");
+    let _ = std::io::stdout().flush();
+}
+
+fn w1_failure(shape: &str, phase: &str, error: impl std::fmt::Display) {
+    w1_line(
+        shape,
+        &format!("{phase}_error"),
+        format!("{error}").replace('\n', " "),
+    );
+}
+
+fn w1_optional(value: Option<u64>) -> String {
+    value.map_or_else(|| "unavailable".to_owned(), |bytes| bytes.to_string())
+}
+
+/// Nearest-rank percentile; empty input is a caller bug.
+fn w1_percentile(values: &[f64], percentile: f64) -> f64 {
+    let mut ordered = values.to_vec();
+    ordered.sort_by(f64::total_cmp);
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let rank = ((percentile / 100.0) * ordered.len() as f64).ceil() as usize;
+    ordered[rank.saturating_sub(1).min(ordered.len() - 1)]
+}
+
+fn w1_duration_summary(shape: &str, prefix: &str, millis: &[f64]) {
+    if millis.is_empty() {
+        return;
+    }
+    w1_line(
+        shape,
+        &format!("{prefix}_median_ms"),
+        format!("{:.3}", median(millis.to_vec())),
+    );
+    w1_line(
+        shape,
+        &format!("{prefix}_p95_ms"),
+        format!("{:.3}", w1_percentile(millis, 95.0)),
+    );
+    w1_line(
+        shape,
+        &format!("{prefix}_max_ms"),
+        format!("{:.3}", millis.iter().copied().fold(f64::MIN, f64::max)),
+    );
+}
+
+/// `MemTotal` from `/proc/meminfo`, in MiB.
+fn w1_mem_total_mib() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = text.lines().find(|line| line.starts_with("MemTotal:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kib / 1024)
+}
+
+/// Print the median phase table for measured edits, in `PHASE_ORDER` order,
+/// then any label the order does not know.
+fn w1_phase_table(label: &str, samples: &[W1EditSample], whole_median: f64) {
+    println!("| phase `{label}` | median ms | share of edit |");
+    println!("| --- | ---: | ---: |");
+    let median_for = |name: &str| {
+        median(
+            samples
+                .iter()
+                .map(|sample| sample.phases.get(name).copied().unwrap_or(0.0))
+                .collect(),
+        )
+    };
+    for (name, depth) in PHASE_ORDER {
+        if !samples
+            .iter()
+            .any(|sample| sample.phases.contains_key(name))
+        {
+            continue;
+        }
+        let median_ms = median_for(name);
+        let share = if whole_median > 0.0 {
+            median_ms / whole_median * 100.0
+        } else {
+            0.0
+        };
+        let indent = "  ".repeat(*depth);
+        println!("| {indent}`{name}` | {median_ms:.3} | {share:.1}% |");
+    }
+    let mut unknown: Vec<&'static str> = Vec::new();
+    for sample in samples {
+        for name in sample.phases.keys() {
+            if !PHASE_ORDER.iter().any(|(known, _)| known == name) && !unknown.contains(name) {
+                unknown.push(name);
+            }
+        }
+    }
+    for name in unknown {
+        let median_ms = median_for(name);
+        let share = if whole_median > 0.0 {
+            median_ms / whole_median * 100.0
+        } else {
+            0.0
+        };
+        println!("| `{name}` | {median_ms:.3} | {share:.1}% |");
+    }
+}
+
+/// Run `EditScalar` samples through `handle`, drop the first as warm-up, and
+/// print count, durations, clones, reply bytes and the median phase table.
+#[allow(clippy::too_many_arguments)] // One measurement call carries its own knobs.
+fn w1_scalar_edits(
+    shape: &str,
+    label: &str,
+    runtime: &mut DesignerRuntime,
+    rows: usize,
+    field: &str,
+    row_zero: bool,
+    input: W1Input,
+    max_edits: usize,
+    time_limit_ms: f64,
+) -> Vec<W1EditSample> {
+    let started = Instant::now();
+    let mut stopped = false;
+    let mut samples = Vec::new();
+    for iteration in 0..max_edits {
+        if iteration >= 20 && started.elapsed().as_secs_f64() * 1_000.0 > time_limit_ms {
+            stopped = true;
+            break;
+        }
+        let row = if row_zero {
+            0
+        } else {
+            (iteration * 7919) % rows
+        };
+        let revision = runtime.observe_occurrence().revision;
+        let target = FieldTarget {
+            entity: entity_id(row).to_string(),
+            field: field.to_owned(),
+        };
+        #[allow(clippy::cast_precision_loss)]
+        let edit_input = match input {
+            W1Input::Number => ScalarEditInput::Number {
+                input: format!("{}", 1_000.0 + iteration as f64),
+            },
+            W1Input::Text => ScalarEditInput::Text {
+                value: format!("w1-{iteration:05}"),
+            },
+        };
+        instrumentation::reset();
+        instrumentation::reset_phases();
+        let edit_started = Instant::now();
+        let response = runtime.handle(DesignerRequest::EditScalar {
+            expected_revision: revision,
+            target,
+            input: edit_input,
+        });
+        let millis = edit_started.elapsed().as_secs_f64() * 1_000.0;
+        let phases = phase_millis(&instrumentation::take_phases());
+        let clones = instrumentation::counters().document_clones;
+        match response {
+            Ok(DesignerResponse::Published(publication)) => {
+                let json_bytes = serde_json::to_vec(&publication).map_or(0, |bytes| bytes.len());
+                samples.push(W1EditSample {
+                    millis,
+                    clones,
+                    json_bytes,
+                    phases,
+                });
+            }
+            Ok(_) => {
+                w1_failure(shape, label, "handle returned a non-published response");
+                break;
+            }
+            Err(error) => {
+                w1_failure(shape, label, error);
+                break;
+            }
+        }
+    }
+    if samples.len() > 1 {
+        samples.remove(0);
+        println!("{label}: first edit dropped as warm-up");
+    }
+    w1_line(shape, &format!("{label}_n"), samples.len());
+    if stopped {
+        w1_line(
+            shape,
+            &format!("{label}_stopped"),
+            format!("limit {time_limit_ms:.0} ms"),
+        );
+    }
+    if samples.is_empty() {
+        return samples;
+    }
+    let millis = samples
+        .iter()
+        .map(|sample| sample.millis)
+        .collect::<Vec<_>>();
+    let whole_median = median(millis.clone());
+    w1_duration_summary(shape, label, &millis);
+    #[allow(clippy::cast_precision_loss)]
+    let clones = median(samples.iter().map(|sample| sample.clones as f64).collect());
+    w1_line(
+        shape,
+        &format!("{label}_clones_median"),
+        format!("{clones:.0}"),
+    );
+    #[allow(clippy::cast_precision_loss)]
+    let bytes = samples
+        .iter()
+        .map(|sample| sample.json_bytes as f64)
+        .collect::<Vec<_>>();
+    w1_line(
+        shape,
+        &format!("{label}_json_bytes_median"),
+        format!("{:.0}", median(bytes.clone())),
+    );
+    w1_line(
+        shape,
+        &format!("{label}_json_bytes_max"),
+        format!("{:.0}", bytes.iter().copied().fold(0.0, f64::max)),
+    );
+    w1_phase_table(label, &samples, whole_median);
+    samples
+}
+
+/// Varied Number edits over every row of `c0`, one `EditCells` request each.
+fn w1_edit_cells(
+    shape: &str,
+    runtime: &mut DesignerRuntime,
+    rows: usize,
+    samples_wanted: usize,
+    time_limit_ms: f64,
+) {
+    let started = Instant::now();
+    let mut millis = Vec::new();
+    for sample_index in 0..samples_wanted {
+        if sample_index > 0 && started.elapsed().as_secs_f64() * 1_000.0 > time_limit_ms {
+            w1_line(
+                shape,
+                "edit_cells_stopped",
+                format!("limit {time_limit_ms:.0} ms"),
+            );
+            break;
+        }
+        let revision = runtime.observe_occurrence().revision;
+        #[allow(clippy::cast_precision_loss)]
+        let offset = (sample_index as f64 + 1.0) * 10.0;
+        let edits = (0..rows)
+            .map(|row| {
+                #[allow(clippy::cast_precision_loss)]
+                let value = offset + row as f64;
+                CellEdit {
+                    target: FieldTarget {
+                        entity: entity_id(row).to_string(),
+                        field: "c0".to_owned(),
+                    },
+                    input: ScalarEditInput::Number {
+                        input: format!("{value}"),
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        let (response, sample) = observe(|| {
+            runtime.handle(DesignerRequest::EditCells {
+                expected_revision: revision,
+                edits,
+            })
+        });
+        match response {
+            Ok(DesignerResponse::Published(_)) => millis.push(sample.millis),
+            Ok(_) => {
+                w1_failure(
+                    shape,
+                    "edit_cells",
+                    "handle returned a non-published response",
+                );
+                break;
+            }
+            Err(error) => {
+                w1_failure(shape, "edit_cells", error);
+                break;
+            }
+        }
+    }
+    w1_line(shape, "edit_cells_n", millis.len());
+    w1_duration_summary(shape, "edit_cells", &millis);
+}
+
+/// Row maintenance: `InsertRow` at the end with no initializers, then
+/// `AppendRow` once (a different path; it refuses on a non-tracker table).
+fn w1_row_maintenance(shape: &str, runtime: &mut DesignerRuntime) {
+    const MAX_INSERTS: usize = 50;
+    const INSERT_TIME_LIMIT_MS: f64 = 180_000.0;
+    let collection = runtime.default_collection.clone();
+    let started = Instant::now();
+    let mut millis = Vec::new();
+    let mut stopped = false;
+    for iteration in 0..MAX_INSERTS {
+        if iteration >= 5 && started.elapsed().as_secs_f64() * 1_000.0 > INSERT_TIME_LIMIT_MS {
+            stopped = true;
+            break;
+        }
+        let revision = runtime.observe_occurrence().revision;
+        let (response, sample) = observe(|| {
+            runtime.handle(DesignerRequest::InsertRow {
+                expected_revision: revision,
+                collection: collection.clone(),
+                initializers: Vec::new(),
+            })
+        });
+        match response {
+            Ok(DesignerResponse::Published(_)) => millis.push(sample.millis),
+            Ok(_) => {
+                w1_failure(
+                    shape,
+                    "insert_row",
+                    "handle returned a non-published response",
+                );
+                break;
+            }
+            Err(error) => {
+                w1_failure(shape, "insert_row", error);
+                break;
+            }
+        }
+    }
+    w1_line(shape, "insert_row_n", millis.len());
+    if stopped {
+        w1_line(
+            shape,
+            "insert_row_stopped",
+            format!("limit {INSERT_TIME_LIMIT_MS:.0} ms"),
+        );
+    }
+    w1_duration_summary(shape, "insert_row", &millis);
+
+    let revision = runtime.observe_occurrence().revision;
+    let (response, sample) = observe(|| {
+        runtime.handle(DesignerRequest::AppendRow {
+            expected_revision: revision,
+            collection: collection.clone(),
+        })
+    });
+    match response {
+        Ok(DesignerResponse::Published(_)) => {
+            w1_line(shape, "append_row_n", 1);
+            w1_duration_summary(shape, "append_row", &[sample.millis]);
+        }
+        Ok(_) => w1_failure(
+            shape,
+            "append_row",
+            "handle returned a non-published response",
+        ),
+        Err(error) => w1_failure(shape, "append_row", error),
+    }
+}
+
+/// Open a fresh fixture for the copy measurement.
+fn w1_fresh_runtime(shape: &str, serial: u64) -> Option<DesignerRuntime> {
+    let (document, _rows, _columns) = w1_document(shape)?;
+    let occurrence = format!("00000000-0000-4000-8000-{serial:012x}");
+    match DesignerRuntime::from_document_profile_with_opened(document, &occurrence, false) {
+        Ok((runtime, _opened)) => Some(runtime),
+        Err(error) => {
+            w1_failure(shape, "copy_open", error);
+            None
+        }
+    }
+}
+
+/// Copy one formula from row 0 to every other row of its column, then send
+/// 10,000 Number edits in one `EditCells` request.
+fn w1_copy_formula(shape: &str) {
+    const COPY_TIME_LIMIT_MS: f64 = 300_000.0;
+    let Some(mut runtime) = w1_fresh_runtime(shape, 0x400) else {
+        return;
+    };
+    let rows = w1_rows(shape);
+    let (source_field, fixed_references) = match shape {
+        "a" => ("c9", Vec::new()),
+        "a100" => (
+            "calc",
+            vec![FieldTarget {
+                entity: entity_id(0).to_string(),
+                field: RATE_FIELD.to_owned(),
+            }],
+        ),
+        "d" => ("c29", Vec::new()),
+        _ => ("c9", Vec::new()),
+    };
+    if shape == "a" {
+        let revision = runtime.observe_occurrence().revision;
+        let response = runtime.handle(DesignerRequest::FormulaUpdate {
+            expected_revision: revision,
+            target: FieldTarget {
+                entity: entity_id(0).to_string(),
+                field: source_field.to_owned(),
+            },
+            source: "[.c0] * [.c3]".to_owned(),
+        });
+        match response {
+            Ok(DesignerResponse::Published(_)) => {}
+            Ok(_) => w1_failure(shape, "copy_seed_formula", "non-published response"),
+            Err(error) => {
+                w1_failure(shape, "copy_seed_formula", error);
+                return;
+            }
+        }
+    }
+    let destinations = (1..rows)
+        .map(|row| FieldTarget {
+            entity: entity_id(row).to_string(),
+            field: source_field.to_owned(),
+        })
+        .collect::<Vec<_>>();
+    let started = Instant::now();
+    let mut millis = Vec::new();
+    for sample_index in 0..3 {
+        if sample_index > 0 && started.elapsed().as_secs_f64() * 1_000.0 > COPY_TIME_LIMIT_MS {
+            w1_line(
+                shape,
+                "copy_formula_stopped",
+                format!("limit {COPY_TIME_LIMIT_MS:.0} ms"),
+            );
+            break;
+        }
+        let revision = runtime.observe_occurrence().revision;
+        let (response, sample) = observe(|| {
+            runtime.handle(DesignerRequest::CopyFormula {
+                expected_revision: revision,
+                source: FieldTarget {
+                    entity: entity_id(0).to_string(),
+                    field: source_field.to_owned(),
+                },
+                destinations: destinations.clone(),
+                fixed_references: fixed_references.clone(),
+                relative_rows: true,
+                relative_columns: false,
+            })
+        });
+        match response {
+            Ok(DesignerResponse::Published(_)) => millis.push(sample.millis),
+            Ok(_) => {
+                w1_failure(
+                    shape,
+                    "copy_formula",
+                    "handle returned a non-published response",
+                );
+                break;
+            }
+            Err(error) => {
+                w1_failure(shape, "copy_formula", error);
+                break;
+            }
+        }
+    }
+    w1_line(shape, "copy_formula_n", millis.len());
+    w1_duration_summary(shape, "copy_formula", &millis);
+    w1_edit_cells(shape, &mut runtime, rows, 3, COPY_TIME_LIMIT_MS);
+}
+
+fn w1_rows(shape: &str) -> usize {
+    shape
+        .strip_prefix("c1-")
+        .or_else(|| shape.strip_prefix("c2-"))
+        .and_then(|rows| rows.parse().ok())
+        .unwrap_or(10_000)
+}
+
+/// Export the live runtime both ways, then reopen the v3 bytes.
+fn w1_save_and_reopen(shape: &str, runtime: &DesignerRuntime) {
+    let revision = runtime.observe_occurrence().revision;
+    let mut v3_bytes = None;
+    let (exported, sample) = observe(|| runtime.export_project_v3(&revision));
+    match exported {
+        Ok(export) => {
+            w1_line(shape, "export_v3_ms", format!("{:.3}", sample.millis));
+            w1_line(shape, "export_v3_bytes", export.bytes.len());
+            v3_bytes = Some(export.bytes);
+        }
+        Err(error) => w1_failure(shape, "export_v3", error),
+    }
+    let (exported, sample) = observe(|| runtime.export_project(&revision));
+    match exported {
+        Ok(export) => {
+            w1_line(shape, "export_legacy_ms", format!("{:.3}", sample.millis));
+            w1_line(shape, "export_legacy_bytes", export.bytes.len());
+        }
+        Err(error) => w1_failure(shape, "export_legacy", error),
+    }
+    if let Some(bytes) = v3_bytes {
+        let mut reopened: Option<DesignerRuntime> = None;
+        let occurrence = format!("00000000-0000-4000-8000-{:012x}", 0x500_u64);
+        let (result, sample) = observe(|| open_project(&mut reopened, &bytes, &occurrence));
+        match result {
+            Ok(_) => {
+                w1_line(shape, "reopen_ms", format!("{:.3}", sample.millis));
+                w1_line(
+                    shape,
+                    "reopen_peak_delta_bytes",
+                    w1_optional(sample.peak_delta_bytes),
+                );
+                w1_line(
+                    shape,
+                    "reopen_vmrss_bytes",
+                    w1_optional(memory_stats::rss_bytes()),
+                );
+                w1_line(
+                    shape,
+                    "reopen_vmhwm_bytes",
+                    w1_optional(memory_stats::peak_bytes()),
+                );
+            }
+            Err(error) => w1_failure(shape, "reopen", error),
+        }
+    }
+}
+
+/// Eight minutes of scalar edits on the phase-5 runtime, sampling VmRSS every
+/// 200 edits and reporting the second-half slope in bytes per edit.
+fn w1_long_run(shape: &str, runtime: &mut DesignerRuntime, rows: usize) {
+    const LIMIT_MS: f64 = 480_000.0;
+    let started = Instant::now();
+    let mut readings: Vec<(u64, Option<u64>)> = Vec::new();
+    let mut edits: u64 = 0;
+    loop {
+        if started.elapsed().as_secs_f64() * 1_000.0 > LIMIT_MS {
+            w1_line(shape, "long_run_stopped", format!("limit {LIMIT_MS:.0} ms"));
+            break;
+        }
+        let index = usize::try_from(edits).unwrap_or(usize::MAX);
+        let row = index.saturating_mul(7919) % rows;
+        let revision = runtime.observe_occurrence().revision;
+        #[allow(clippy::cast_precision_loss)]
+        let input = ScalarEditInput::Number {
+            input: format!("{}", 20_000.0 + edits as f64),
+        };
+        let response = runtime.handle(DesignerRequest::EditScalar {
+            expected_revision: revision,
+            target: FieldTarget {
+                entity: entity_id(row).to_string(),
+                field: "c0".to_owned(),
+            },
+            input,
+        });
+        match response {
+            Ok(DesignerResponse::Published(_)) => {}
+            Ok(_) => {
+                w1_failure(
+                    shape,
+                    "long_run",
+                    "handle returned a non-published response",
+                );
+                break;
+            }
+            Err(error) => {
+                w1_failure(shape, "long_run", error);
+                break;
+            }
+        }
+        edits += 1;
+        if edits % 200 == 0 {
+            let rss = memory_stats::rss_bytes();
+            w1_line(
+                shape,
+                &format!("long_run_rss_at_{edits}_bytes"),
+                w1_optional(rss),
+            );
+            readings.push((edits, rss));
+        }
+    }
+    w1_line(shape, "long_run_edits", edits);
+    if readings.len() >= 2 {
+        let half = readings.len() / 2;
+        let first = readings[half];
+        let last = readings[readings.len() - 1];
+        if let (Some(before), Some(after)) = (first.1, last.1) {
+            let edit_span = last.0.saturating_sub(first.0);
+            if edit_span > 0 {
+                #[allow(clippy::cast_precision_loss)]
+                let slope = (after as f64 - before as f64) / edit_span as f64;
+                w1_line(
+                    shape,
+                    "long_run_slope_bytes_per_edit",
+                    format!("{slope:.2}"),
+                );
+            }
+        }
+    }
+    w1_line(shape, "long_run_undo_depth", runtime.undo.len());
+    w1_line(
+        shape,
+        "long_run_execution_receipts",
+        runtime.lifecycle.execution_receipts().len(),
+    );
+    w1_line(
+        shape,
+        "long_run_execution_receipts_v2",
+        runtime.lifecycle.execution_receipts_v2().len(),
+    );
+}
+
+/// Plan W1: one working-size shape per process.
+#[test]
+#[ignore = "W1 working-size measurement; run one shape per process with W1_SHAPE"]
+#[allow(clippy::too_many_lines)] // One linear measurement script reads best in one place.
+fn capacity_w1_shape() {
+    let shape = std::env::var("W1_SHAPE").expect("W1_SHAPE must name one shape");
+    if let Some(mib) = w1_mem_total_mib() {
+        w1_line(&shape, "mem_total_mib", mib);
+    }
+    let rss_before_build = memory_stats::rss_bytes();
+    let Some((document, rows, columns)) = w1_document(&shape) else {
+        w1_line(&shape, "unknown_shape", 1);
+        return;
+    };
+    let rss_after_build = memory_stats::rss_bytes();
+    w1_line(&shape, "rows", rows);
+    w1_line(&shape, "columns", columns);
+    w1_line(
+        &shape,
+        "document_rss_before_bytes",
+        w1_optional(rss_before_build),
+    );
+    w1_line(
+        &shape,
+        "document_rss_after_bytes",
+        w1_optional(rss_after_build),
+    );
+    w1_line(
+        &shape,
+        "document_rss_delta_bytes",
+        w1_optional(
+            rss_before_build
+                .zip(rss_after_build)
+                .map(|(before, after)| after.saturating_sub(before)),
+        ),
+    );
+
+    // 1. Document accounting and one clone.
+    let (usage, usage_sample) = observe(|| crate::CapacityUsage::measure(&document));
+    w1_line(
+        &shape,
+        "usage_measure_ms",
+        format!("{:.3}", usage_sample.millis),
+    );
+    w1_line(&shape, "usage_formulas", usage.formulas);
+    w1_line(&shape, "usage_formula_ast_nodes", usage.formula_ast_nodes);
+    w1_line(&shape, "usage_dependency_edges", usage.dependency_edges);
+    w1_line(&shape, "usage_populated_cells", usage.populated_cells);
+    let mut clone_millis = Vec::new();
+    for _ in 0..5 {
+        let (_, sample) = observe(|| std::hint::black_box(document.clone()));
+        clone_millis.push(sample.millis);
+    }
+    w1_line(
+        &shape,
+        "document_clone_median_ms",
+        format!("{:.3}", median(clone_millis)),
+    );
+
+    // 2. Retained calculation state.
+    let (retained, retained_sample) = observe(|| RetainedCalculationState::rebuild(&document));
+    w1_line(
+        &shape,
+        "retained_rebuild_ms",
+        format!("{:.3}", retained_sample.millis),
+    );
+    w1_line(
+        &shape,
+        "retained_peak_delta_bytes",
+        w1_optional(retained_sample.peak_delta_bytes),
+    );
+    let sizes = retained.sizes();
+    w1_line(&shape, "retained_nodes", sizes.nodes);
+    w1_line(&shape, "retained_values", sizes.values);
+    w1_line(&shape, "retained_dependency_keys", sizes.dependency_keys);
+    w1_line(&shape, "retained_dependency_edges", sizes.dependency_edges);
+    w1_line(&shape, "retained_reverse_keys", sizes.reverse_keys);
+    w1_line(&shape, "retained_reverse_edges", sizes.reverse_edges);
+    drop(retained);
+
+    // 3. Open and the first window.
+    let occurrence = format!("00000000-0000-4000-8000-{:012x}", 0x300_u64);
+    let open_document = document.clone();
+    let (opened, open_sample) = observe(|| {
+        DesignerRuntime::from_document_profile_with_opened(open_document, &occurrence, false)
+    });
+    let mut runtime = match opened {
+        Ok((runtime, opened_projection)) => {
+            w1_line(&shape, "open_ms", format!("{:.3}", open_sample.millis));
+            w1_line(
+                &shape,
+                "open_projection_json_bytes",
+                serde_json::to_vec(&opened_projection).map_or(0, |bytes| bytes.len()),
+            );
+            w1_line(
+                &shape,
+                "open_vmhwm_bytes",
+                w1_optional(memory_stats::peak_bytes()),
+            );
+            w1_line(
+                &shape,
+                "open_vmrss_bytes",
+                w1_optional(memory_stats::rss_bytes()),
+            );
+            Some(runtime)
+        }
+        Err(error) => {
+            w1_failure(&shape, "open", error);
+            None
+        }
+    };
+    if let Some(runtime) = &mut runtime {
+        let revision = runtime.observe_occurrence().revision;
+        let collection = runtime.default_collection.clone();
+        let (response, sample) = observe(|| {
+            runtime.handle(DesignerRequest::QueryTableWindow {
+                expected_revision: revision,
+                collection,
+                view: TableView::default(),
+                start: 0,
+                count: 100,
+            })
+        });
+        match response {
+            Ok(DesignerResponse::TableWindow(window)) => {
+                w1_line(&shape, "window_100_ms", format!("{:.3}", sample.millis));
+                w1_line(
+                    &shape,
+                    "window_100_json_bytes",
+                    serde_json::to_vec(&window).map_or(0, |bytes| bytes.len()),
+                );
+            }
+            Ok(_) => w1_failure(
+                &shape,
+                "window_100",
+                "handle returned a non-window response",
+            ),
+            Err(error) => w1_failure(&shape, "window_100", error),
+        }
+    }
+
+    // 4. One full calculate.
+    let (calculated, calculate_sample) = observe(|| calculate(&document));
+    match calculated {
+        Ok(_) => w1_line(
+            &shape,
+            "calculate_ms",
+            format!("{:.3}", calculate_sample.millis),
+        ),
+        Err(error) => w1_failure(&shape, "calculate", error),
+    }
+    drop(document);
+
+    // 5. Scalar edits.
+    if let Some(runtime) = &mut runtime {
+        match shape.as_str() {
+            "a" => {
+                w1_scalar_edits(
+                    &shape,
+                    "edit",
+                    runtime,
+                    rows,
+                    "c0",
+                    false,
+                    W1Input::Number,
+                    300,
+                    300_000.0,
+                );
+            }
+            "a100" => {
+                w1_scalar_edits(
+                    &shape,
+                    "edit",
+                    runtime,
+                    rows,
+                    RATE_FIELD,
+                    true,
+                    W1Input::Number,
+                    300,
+                    300_000.0,
+                );
+            }
+            "b1" | "b3" | "d" => {
+                w1_scalar_edits(
+                    &shape,
+                    "edit",
+                    runtime,
+                    rows,
+                    "c0",
+                    false,
+                    W1Input::Number,
+                    300,
+                    300_000.0,
+                );
+            }
+            shape if shape.starts_with("c1-") || shape.starts_with("c2-") => {
+                w1_scalar_edits(
+                    &shape,
+                    "edit_unrelated",
+                    runtime,
+                    rows,
+                    "c1",
+                    false,
+                    W1Input::Text,
+                    300,
+                    180_000.0,
+                );
+                w1_scalar_edits(
+                    &shape,
+                    "edit_column",
+                    runtime,
+                    rows,
+                    "c0",
+                    false,
+                    W1Input::Number,
+                    300,
+                    180_000.0,
+                );
+            }
+            _ => {}
+        }
+        // 5a. Preflight ON, for the old table's comparison shapes.
+        if shape == "a" || shape == "a100" {
+            instrumentation::set_skip_preflight(false);
+            let field = if shape == "a100" { RATE_FIELD } else { "c0" };
+            w1_scalar_edits(
+                &shape,
+                "edit_preflight_on",
+                runtime,
+                rows,
+                field,
+                shape == "a100",
+                W1Input::Number,
+                20,
+                300_000.0,
+            );
+            instrumentation::set_skip_preflight(true);
+        }
+
+        // 6. Row maintenance.
+        w1_row_maintenance(&shape, runtime);
+
+        // 8. Save and reopen.
+        w1_save_and_reopen(&shape, runtime);
+
+        // 9. Long run on a and b3.
+        if shape == "a" || shape == "b3" {
+            w1_long_run(&shape, runtime, rows);
+        }
+    }
+
+    // 7. Copy formula and one bulk EditCells on a fresh runtime.
+    drop(runtime);
+    w1_copy_formula(&shape);
 }

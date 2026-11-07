@@ -11,8 +11,9 @@
 use std::collections::BTreeMap;
 
 use tachiko_workspace_engine::{
-    Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate, Date, Document, Entity,
+    EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 /// Field carrying the shared driver value for the dependent-formula fixture.
@@ -174,6 +175,168 @@ fn apply_formulas(document: &mut Document, formula_cells: usize) {
             FieldId::from(TOTAL_FIELD),
             Value::Formula(balanced_sum(&terms)),
         );
+}
+
+/// Rows in every fixed W1 shape (Plan W1 scratch measurement).
+pub const W1_ROWS: usize = 10_000;
+
+/// Build one W1 working-size shape and return it with its rows and columns.
+///
+/// The value mix, blank pattern and seeded stream match [`capacity_document`];
+/// the derived columns replace the named last columns and become Number.
+/// Returns `None` for an unknown shape name.
+#[must_use]
+pub fn w1_document(shape: &str) -> Option<(Document, usize, usize)> {
+    let (rows, columns, derived) = match shape {
+        "a" => (W1_ROWS, 10, Vec::new()),
+        // The old table's 100-dependent case: 99 same-row formulas plus the
+        // balanced total; edits `rate` on row 0.
+        "a100" => {
+            return Some((
+                capacity_document(FixtureSpec {
+                    rows: W1_ROWS,
+                    columns: 10,
+                    formula_cells: DEPENDENT_FORMULAS,
+                    seed: 0x00C0_FFEE_D00D_1234,
+                }),
+                W1_ROWS,
+                10,
+            ));
+        }
+        "b1" => (W1_ROWS, 10, vec![(9, w1_product())]),
+        "b3" => (
+            W1_ROWS,
+            10,
+            vec![(9, w1_product()), (8, w1_sum()), (7, w1_chain())],
+        ),
+        "d" => (
+            W1_ROWS,
+            30,
+            vec![
+                (29, w1_product()),
+                (28, w1_sum()),
+                (27, w1_chain_over("c29")),
+            ],
+        ),
+        _ => {
+            if let Some(rows) = shape.strip_prefix("c1-") {
+                let rows = rows.parse().ok()?;
+                (rows, 10, vec![(9, w1_column_ratio())])
+            } else if let Some(rows) = shape.strip_prefix("c2-") {
+                let rows = rows.parse().ok()?;
+                (rows, 10, vec![(9, w1_column_conditional())])
+            } else {
+                return None;
+            }
+        }
+    };
+    Some((w1_grid(rows, columns, &derived), rows, columns))
+}
+
+/// The grid used by every W1 shape: the [`capacity_document`] value stream
+/// with the listed columns replaced by one formula in every row.
+fn w1_grid(rows: usize, columns: usize, derived: &[(usize, Expression)]) -> Document {
+    let mut rng = SplitMix64(0x00C0_FFEE_D00D_1234);
+    let mut document = Document::empty("capacity-benchmark", "W1 Shape");
+    let mut schema = Schema {
+        field_order: None,
+        id: SchemaId::from("grid"),
+        key: SchemaKey::from("grid"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    for column in 0..columns {
+        let id = column_id(column);
+        let field_type = if derived.iter().any(|(index, _)| *index == column) {
+            FieldType::Number
+        } else {
+            column_type(column)
+        };
+        schema.fields.insert(
+            id.clone(),
+            FieldDefinition {
+                key: FieldKey::from(column_key(column)),
+                id,
+                display_name: None,
+                field_type,
+                required: false,
+                constraint: FieldConstraint::None,
+                number_format: None,
+            },
+        );
+    }
+    document.schemas.insert(schema.id.clone(), schema);
+    for row in 0..rows {
+        let entity_id = entity_id(row);
+        let mut fields = BTreeMap::new();
+        for column in 0..columns {
+            let blank = column > 0 && rng.next() % 10 == 0;
+            if blank {
+                continue;
+            }
+            fields.insert(column_id(column), column_value(column, row, rng.next()));
+        }
+        for (column, expression) in derived {
+            fields.insert(column_id(*column), Value::Formula(expression.clone()));
+        }
+        document.entities.insert(
+            entity_id.clone(),
+            Entity {
+                id: entity_id.clone(),
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields,
+            },
+        );
+    }
+    document
+}
+
+fn w1_same_row(field: &str) -> Expression {
+    Expression::SameRowReference(FieldId::from(field))
+}
+
+fn w1_product() -> Expression {
+    Expression::Multiply {
+        left: Box::new(w1_same_row("c0")),
+        right: Box::new(w1_same_row("c3")),
+    }
+}
+
+fn w1_sum() -> Expression {
+    Expression::Add {
+        left: Box::new(w1_same_row("c0")),
+        right: Box::new(w1_same_row("c6")),
+    }
+}
+
+fn w1_chain() -> Expression {
+    w1_chain_over("c9")
+}
+
+fn w1_chain_over(source: &str) -> Expression {
+    Expression::Multiply {
+        left: Box::new(w1_same_row(source)),
+        right: Box::new(Expression::Number(number(1.1))),
+    }
+}
+
+fn w1_column_ratio() -> Expression {
+    Expression::Divide {
+        left: Box::new(w1_same_row("c0")),
+        right: Box::new(Expression::ColumnTotal(ColumnRef::new("grid", "c0"))),
+    }
+}
+
+fn w1_column_conditional() -> Expression {
+    Expression::ColumnConditional {
+        aggregate: Box::new(ConditionalAggregate::Sum(ColumnRef::new("grid", "c0"))),
+        criteria: vec![ColumnCriterion {
+            column: ColumnRef::new("grid", "c3"),
+            operator: ComparisonOperator::Equal,
+            value: Some(Box::new(w1_same_row("c3"))),
+        }],
+    }
 }
 
 fn balanced_sum(terms: &[FieldRef]) -> Expression {
