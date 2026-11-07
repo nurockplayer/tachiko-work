@@ -927,8 +927,8 @@ fn import_workbook_working_size_candidate(
     ledger.push(stable_reference_binding());
     // The reply also carries the metadata and ledger, so the window gets what
     // is left of the one reply budget.
-    let overhead = super::serialized_projection_bytes(&(&metadata, &ledger))?
-        + super::REPLY_ENVELOPE_RESERVE;
+    let overhead =
+        super::serialized_projection_bytes(&(&metadata, &ledger))? + super::REPLY_ENVELOPE_RESERVE;
     let maximum = super::MAX_TEXT_CAPACITY_PROJECTION_BYTES.saturating_sub(overhead);
     let opened = runtime.opened_window_within(maximum)?;
     let projection = ImportedWindowProjection {

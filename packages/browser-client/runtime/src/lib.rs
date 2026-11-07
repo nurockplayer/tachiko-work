@@ -93,11 +93,10 @@ use interop_document::PendingCleanup;
 pub use interop_document::{
     CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
     ImportSelection, ImportedProjection, ImportedWindowProjection, InteropMetadata,
-    NativeBudgetExportCollection,
-    NativeBudgetExportPresentation, NativeBudgetExportRow, NativeBudgetExportView,
-    NativeTrackerExportPresentation, NativeTrackerExportRow, SpreadsheetExportProjection,
-    import_workbook, import_workbook_working_size, inspect_imported_project,
-    validate_import_metadata,
+    NativeBudgetExportCollection, NativeBudgetExportPresentation, NativeBudgetExportRow,
+    NativeBudgetExportView, NativeTrackerExportPresentation, NativeTrackerExportRow,
+    SpreadsheetExportProjection, import_workbook, import_workbook_working_size,
+    inspect_imported_project, validate_import_metadata,
 };
 
 // Exercise the browser bridge logic in native unit tests without dereferencing

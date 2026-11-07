@@ -425,33 +425,28 @@ fn spreadsheet_operation(
                 }
             }
         }
-        SpreadsheetOperation::InspectProject { metadata, profile } => {
-            match profile {
-                None => {
-                    let (opened, profile) =
-                        crate::interop_document::inspect_imported_project_with_profile(
-                            project,
-                            &metadata,
-                        )?;
-                    let mut result =
-                        SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
-                    result.profile = profile;
-                    Ok(result)
-                }
-                Some(DesignerProfile::WorkingSize) => {
-                    let (opened, profile) =
-                        crate::interop_document::inspect_imported_project_working_size(
-                            project,
-                            &metadata,
-                        )?;
-                    let mut result = SpreadsheetResult::read_only(
-                        DesignerResponse::OpenedWindow(Box::new(opened)),
-                    );
-                    result.profile = profile;
-                    Ok(result)
-                }
+        SpreadsheetOperation::InspectProject { metadata, profile } => match profile {
+            None => {
+                let (opened, profile) =
+                    crate::interop_document::inspect_imported_project_with_profile(
+                        project, &metadata,
+                    )?;
+                let mut result =
+                    SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
+                result.profile = profile;
+                Ok(result)
             }
-        }
+            Some(DesignerProfile::WorkingSize) => {
+                let (opened, profile) =
+                    crate::interop_document::inspect_imported_project_working_size(
+                        project, &metadata,
+                    )?;
+                let mut result =
+                    SpreadsheetResult::read_only(DesignerResponse::OpenedWindow(Box::new(opened)));
+                result.profile = profile;
+                Ok(result)
+            }
+        },
         SpreadsheetOperation::OpenProject {
             occurrence_id,
             metadata,

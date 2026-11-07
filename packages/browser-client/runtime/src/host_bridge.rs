@@ -20,11 +20,11 @@ use crate::interop_adapter::{
 };
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
-    FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES,
-    ProjectExportProjection, encode_reply, ensure_wire_reply_size, inspect_project,
-    inspect_project_working_size, open_local_document, open_local_document_working_size,
-    open_portable_ro, open_portable_ro_working_size, open_project, open_project_working_size,
-    process_wire_request, request_too_large_reply, verify_portable_ro,
+    FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection,
+    encode_reply, ensure_wire_reply_size, inspect_project, inspect_project_working_size,
+    open_local_document, open_local_document_working_size, open_portable_ro,
+    open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
+    request_too_large_reply, verify_portable_ro,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
@@ -591,33 +591,28 @@ fn spreadsheet_operation(
                 }
             }
         }
-        SpreadsheetOperation::InspectProject { metadata, profile } => {
-            match profile {
-                None => {
-                    let (opened, profile) =
-                        crate::interop_document::inspect_imported_project_with_profile(
-                            project,
-                            &metadata,
-                        )?;
-                    let mut result =
-                        SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
-                    result.profile = profile;
-                    Ok(result)
-                }
-                Some(DesignerProfile::WorkingSize) => {
-                    let (opened, profile) =
-                        crate::interop_document::inspect_imported_project_working_size(
-                            project,
-                            &metadata,
-                        )?;
-                    let mut result = SpreadsheetResult::read_only(
-                        DesignerResponse::OpenedWindow(Box::new(opened)),
-                    );
-                    result.profile = profile;
-                    Ok(result)
-                }
+        SpreadsheetOperation::InspectProject { metadata, profile } => match profile {
+            None => {
+                let (opened, profile) =
+                    crate::interop_document::inspect_imported_project_with_profile(
+                        project, &metadata,
+                    )?;
+                let mut result =
+                    SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
+                result.profile = profile;
+                Ok(result)
             }
-        }
+            Some(DesignerProfile::WorkingSize) => {
+                let (opened, profile) =
+                    crate::interop_document::inspect_imported_project_working_size(
+                        project, &metadata,
+                    )?;
+                let mut result =
+                    SpreadsheetResult::read_only(DesignerResponse::OpenedWindow(Box::new(opened)));
+                result.profile = profile;
+                Ok(result)
+            }
+        },
         SpreadsheetOperation::OpenProject {
             occurrence_id,
             metadata,

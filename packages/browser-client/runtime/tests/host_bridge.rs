@@ -679,7 +679,10 @@ fn working_size_import_installs_only_after_admission() {
 
     let candidate = json_of(
         &host
-            .spreadsheet(&spreadsheet_import(THIRD, false, Some("working_size"), 2), source)
+            .spreadsheet(
+                &spreadsheet_import(THIRD, false, Some("working_size"), 2),
+                source,
+            )
             .reply,
     );
     assert_eq!(candidate["status"], "ok", "{candidate}");
@@ -696,13 +699,22 @@ fn working_size_import_installs_only_after_admission() {
 
     let installed = json_of(
         &host
-            .spreadsheet(&spreadsheet_import(THIRD, true, Some("working_size"), 2), source)
+            .spreadsheet(
+                &spreadsheet_import(THIRD, true, Some("working_size"), 2),
+                source,
+            )
             .reply,
     );
     assert_eq!(installed["status"], "ok", "{installed}");
     let payload = &installed["response"]["payload"]["opened"];
-    let revision = payload["bootstrap"]["revision"].as_str().unwrap().to_owned();
-    let collection = payload["window"]["collection"]["id"].as_str().unwrap().to_owned();
+    let revision = payload["bootstrap"]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let collection = payload["window"]["collection"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     assert_eq!(
         json_of(&host.observe_occurrence())["status"],
         "ok",
@@ -723,10 +735,17 @@ fn working_size_import_installs_only_after_admission() {
 fn working_size_import_matches_the_ordinary_mapping() {
     let source = b"Name,Note\nAlpha,first\nBeta,second\n";
     let mut host = DesignerHost::new();
-    let ordinary = json_of(&host.spreadsheet(&spreadsheet_import(THIRD, false, None, 2), source).reply);
+    let ordinary = json_of(
+        &host
+            .spreadsheet(&spreadsheet_import(THIRD, false, None, 2), source)
+            .reply,
+    );
     let working = json_of(
         &host
-            .spreadsheet(&spreadsheet_import(THIRD, false, Some("working_size"), 2), source)
+            .spreadsheet(
+                &spreadsheet_import(THIRD, false, Some("working_size"), 2),
+                source,
+            )
             .reply,
     );
     assert_eq!(ordinary["status"], "ok", "{ordinary}");
@@ -737,7 +756,10 @@ fn working_size_import_matches_the_ordinary_mapping() {
     assert_eq!(ordinary["ledger"], working["ledger"]);
     assert_eq!(working["opened"]["window"]["total_rows"], 2);
     assert_eq!(
-        ordinary["opened"]["table"]["rows"].as_array().unwrap().len(),
+        ordinary["opened"]["table"]["rows"]
+            .as_array()
+            .unwrap()
+            .len(),
         working["opened"]["window"]["total_rows"].as_u64().unwrap() as usize
     );
 }
@@ -823,7 +845,10 @@ fn working_size_import_keeps_todays_geometry_for_a_promoted_csv() {
     let observed = host.observe_occurrence();
     let reply = json_of(
         &host
-            .spreadsheet(&spreadsheet_import(THIRD, true, Some("working_size"), 2), &source)
+            .spreadsheet(
+                &spreadsheet_import(THIRD, true, Some("working_size"), 2),
+                &source,
+            )
             .reply,
     );
     assert_eq!(
@@ -850,7 +875,10 @@ fn working_size_imported_project_saves_and_reopens() {
     let source = b"Name,Note\nAlpha,first\nBeta,second\n";
     let imported = json_of(
         &host
-            .spreadsheet(&spreadsheet_import(THIRD, true, Some("working_size"), 2), source)
+            .spreadsheet(
+                &spreadsheet_import(THIRD, true, Some("working_size"), 2),
+                source,
+            )
             .reply,
     );
     assert_eq!(imported["status"], "ok", "{imported}");
@@ -864,7 +892,9 @@ fn working_size_imported_project_saves_and_reopens() {
 
     let saved = host.export_project_v3(revision.as_bytes());
     assert_eq!(json_of(&saved.reply)["status"], "ok");
-    let bytes = saved.bytes.expect("the working-size import saves a v3 bundle");
+    let bytes = saved
+        .bytes
+        .expect("the working-size import saves a v3 bundle");
 
     let mut reopened = DesignerHost::new();
     let opened = json_of(
@@ -883,7 +913,10 @@ fn working_size_imported_project_saves_and_reopens() {
     assert_eq!(opened["status"], "ok", "{opened}");
     assert_eq!(opened["response"]["type"], "opened_window");
     assert_eq!(opened["response"]["payload"]["profile"], "working_size");
-    assert_eq!(opened["response"]["payload"]["window"]["total_rows"], total_rows);
+    assert_eq!(
+        opened["response"]["payload"]["window"]["total_rows"],
+        total_rows
+    );
 
     let observed = reopened.observe_occurrence();
     let inspected = json_of(
@@ -979,8 +1012,11 @@ fn working_size_profile_typos_are_refused_on_every_operation() {
     let observed = host.observe_occurrence();
     let metadata = json!({ "version": 1, "sheets": [] });
     let replies = [
-        host.spreadsheet(&spreadsheet_import(SECOND, false, Some("other"), 2), b"a,b\n1,2\n")
-            .reply,
+        host.spreadsheet(
+            &spreadsheet_import(SECOND, false, Some("other"), 2),
+            b"a,b\n1,2\n",
+        )
+        .reply,
         host.spreadsheet(
             &request(&json!({
                 "type": "inspect_project",

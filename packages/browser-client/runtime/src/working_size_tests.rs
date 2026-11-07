@@ -952,7 +952,8 @@ fn handle_and_the_wire_agree_on_a_working_size_new_table() {
 #[test]
 fn opened_window_within_halves_to_the_budget() {
     let document = text_grid(4, 1);
-    let mut full_runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    let mut full_runtime =
+        DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
     let full = full_runtime.opened_window().unwrap();
     assert_eq!(full.window.rows.len(), 4);
     let full_bytes = serde_json::to_vec(&full).unwrap().len();
