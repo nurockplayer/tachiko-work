@@ -91,6 +91,10 @@ boundary stays as it is.
 | Sort or move rows | Nothing: the range stays and reads what's now there |
 | Append a row | Nothing |
 
+At the sheet limit, an inserted row pushes nothing past 1,048,576: `last_row` stays
+there, and a `first_row` or position read that would pass it becomes the marker,
+since what it read has left the sheet.
+
 All of it happens in the same command as the row change, with one Undo. A read of a
 record, `[entity.field]`, on a deleted row also becomes the marker when its owner is
 an Auto cell.
@@ -147,7 +151,7 @@ entity, under ADR-0046.
 Canonical-byte fixtures and strict-reader refusals for `rank` and each Expression
 form. Behaviour fixtures, each including Undo: a range over an empty table; a sort
 under a range; deleting each endpoint; deleting a whole range; inserting inside,
-before and after a range; a rebalance, including an insert between equal ranks after
+before and after a range; inserting before references at the sheet limit; a rebalance, including an insert between equal ranks after
 a merge; a range in the column of its owner; a sort that would make that a cycle. Merge fixtures: equal ranks on two entities; unequal
 ranks on one; each side of `positional_order_change`. A round trip through XLSX for a
 partial range, and for `#REF!`. Conformance runs on native and WASM.
