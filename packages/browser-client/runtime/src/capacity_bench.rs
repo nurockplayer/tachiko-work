@@ -1320,6 +1320,29 @@ fn wb_blank_document() -> Document {
     document
 }
 
+/// A working-size table with `rows` existing rows, every cell populated.
+fn wb_seeded_document(rows: usize) -> Document {
+    let mut document = wb_blank_document();
+    let schema_id = SchemaId::from("grid");
+    for row in 0..rows {
+        let value = f64::from(u32::try_from(row).expect("bounded row")) + 1.0;
+        let fields = (0..WB_COLUMNS)
+            .map(|column| (FieldId::from(format!("c{column}")), number(value)))
+            .collect();
+        let id = EntityId::from(format!("r{row:05}"));
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id,
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: schema_id.clone(),
+                fields,
+            },
+        );
+    }
+    document
+}
+
 fn wb_open(step: &str, document: Document) -> Option<DesignerRuntime> {
     match DesignerRuntime::from_document_working_size(document, WB_OCCURRENCE) {
         Ok(runtime) => Some(runtime),
@@ -1395,12 +1418,11 @@ fn wb_measure(step: &str, mut resident: Option<DesignerRuntime>, request: &Desig
     }
 }
 
-fn wb_paste_blank() {
-    const STEP: &str = "paste_blank";
-    let Some(runtime) = wb_open(STEP, wb_blank_document()) else {
+fn wb_paste(step: &str, existing_rows: usize, pasted_rows: usize) {
+    let Some(runtime) = wb_open(step, wb_seeded_document(existing_rows)) else {
         return;
     };
-    let rows = (0..WB_ROWS)
+    let rows = (0..pasted_rows)
         .map(|row| {
             (0..WB_COLUMNS)
                 .map(|column| {
@@ -1416,7 +1438,7 @@ fn wb_paste_blank() {
         start_field: "c0".to_owned(),
         rows,
     };
-    wb_measure(STEP, Some(runtime), &request);
+    wb_measure(step, Some(runtime), &request);
 }
 
 /// `count` edits over the first `count` cells of the ten-column values shape,
@@ -1516,7 +1538,8 @@ fn wb_fill_9999() {
 #[test]
 #[ignore = "working-size bulk benchmark; run explicitly in release with --features capacity-bench"]
 fn working_size_bulk() {
-    wb_paste_blank();
+    wb_paste("paste_blank", 0, WB_ROWS);
+    wb_paste("paste_append_5000", 5_000, 5_000);
     wb_edit_values("edit_values_10000", 10_000);
     wb_edit_values("edit_values_100000", 100_000);
     wb_edit_formulas();

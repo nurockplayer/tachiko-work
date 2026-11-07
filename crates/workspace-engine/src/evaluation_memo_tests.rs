@@ -2135,3 +2135,201 @@ fn a_prepared_evaluation_from_another_base_document_is_ignored() {
         assert_same_evaluation(&plain, &reused);
     }
 }
+
+/// An entity the planner can append to the `s` collection.
+fn appended_entity(id: &str, key: &str, formula: Option<Expression>) -> Entity {
+    let mut entity = Entity {
+        id: id.into(),
+        key: key.into(),
+        schema: "s".into(),
+        fields: BTreeMap::from([
+            ("f".into(), Value::Text(format!("row-{id}"))),
+            ("g".into(), Value::Number(Number::new(2.0).unwrap())),
+        ]),
+    };
+    if let Some(expression) = formula {
+        entity.fields.insert("h".into(), Value::Formula(expression));
+    }
+    entity
+}
+
+fn append(entity: Entity) -> SemanticCommand {
+    SemanticCommand::AppendEntity { entity }
+}
+
+#[test]
+fn an_append_batch_plans_like_one_command_per_proposal() {
+    let document = batch_document();
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            append(appended_entity("e3", "third", None)),
+            append(appended_entity("e4", "fourth", None)),
+        ],
+    );
+    // Formulas at the first, middle and last positions of the run.
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity(
+                "e2",
+                "second",
+                Some(Expression::Reference(FieldRef::new("e1", "g"))),
+            )),
+            append(appended_entity(
+                "e3",
+                "third",
+                Some(Expression::Number(Number::new(3.0).unwrap())),
+            )),
+            append(appended_entity(
+                "e4",
+                "fourth",
+                Some(Expression::Add {
+                    left: Box::new(Expression::Reference(FieldRef::new("e2", "g"))),
+                    right: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+                }),
+            )),
+        ],
+    );
+}
+
+#[test]
+fn an_append_batch_refuses_keys_like_one_command_per_proposal() {
+    let document = batch_document();
+    // An existing row's key.
+    assert_batch_plans_like_one_at_a_time(&document, &[append(appended_entity("e2", "row", None))]);
+    // A key already appended earlier in the batch, and at a later position.
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            append(appended_entity("e3", "second", None)),
+        ],
+    );
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            append(appended_entity("e3", "third", None)),
+            append(appended_entity("e4", "second", None)),
+        ],
+    );
+}
+
+#[test]
+fn an_append_batch_refuses_ids_schemas_and_keys_like_one_command_per_proposal() {
+    let document = batch_document();
+    // Id collision with the base row and between two rows of the batch.
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[append(appended_entity("e1", "second", None))],
+    );
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            append(appended_entity("e2", "third", None)),
+        ],
+    );
+    // Missing schema at a later position.
+    let mut missing = appended_entity("e3", "third", None);
+    missing.schema = "missing".into();
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            append(missing),
+        ],
+    );
+    // Invalid key at a later position.
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            append(appended_entity("e3", "not a key", None)),
+        ],
+    );
+}
+
+#[test]
+fn an_append_batch_refuses_complex_formulas_like_one_command_per_proposal() {
+    let document = batch_document();
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", Some(oversized_formula()))),
+            append(appended_entity("e3", "third", None)),
+        ],
+    );
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            append(appended_entity("e3", "third", Some(oversized_formula()))),
+        ],
+    );
+}
+
+#[test]
+fn a_remove_resets_the_append_proof_like_one_command_per_proposal() {
+    let document = batch_document();
+    // Remove the base row, then reuse its key in the same batch.
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            SemanticCommand::RemoveEntity {
+                entity: "e1".into(),
+            },
+            append(appended_entity("e2", "row", None)),
+        ],
+    );
+    // Append a row, remove it, then append the same key again.
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            SemanticCommand::RemoveEntity {
+                entity: "e2".into(),
+            },
+            append(appended_entity("e3", "second", None)),
+        ],
+    );
+}
+
+#[test]
+fn a_cell_edit_or_collection_append_resets_the_append_proof() {
+    let document = batch_document();
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            append(appended_entity("e2", "second", None)),
+            set_number("g", 2.0),
+            append(appended_entity("e3", "third", None)),
+        ],
+    );
+
+    let schema = Schema {
+        field_order: None,
+        id: "s2".into(),
+        key: "second_table".into(),
+        display_name: None,
+        fields: BTreeMap::from([("f".into(), text_field("f"))]),
+    };
+    let entity = Entity {
+        id: "x1".into(),
+        key: "x".into(),
+        schema: "s2".into(),
+        fields: BTreeMap::from([("f".into(), Value::Text("new".into()))]),
+    };
+    assert_batch_plans_like_one_at_a_time(
+        &document,
+        &[
+            SemanticCommand::AppendCollection {
+                schema,
+                entities: vec![entity],
+            },
+            append(appended_entity("e2", "second", None)),
+        ],
+    );
+}
