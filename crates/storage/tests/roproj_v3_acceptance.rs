@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use tachiko_semantic_core::{
-    Date, Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldType,
-    KeyedGroupedSumDefinition, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    Number, Schema, Value,
+    ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate, Date, Document, Entity,
+    Expression, FieldConstraint, FieldDefinition, FieldType, KeyedGroupedSumDefinition,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_EXPRESSION_DEPTH, Number,
+    Schema, Value, validate_document,
 };
 use tachiko_storage::{
     CanonicalRoProjectV3, FormatError, decode_roproj_v2, decode_roproj_v3, encode_roproj_v1,
@@ -297,6 +298,102 @@ fn all_constraint_tags_date_formulas_and_stable_ids_roundtrip_without_reinterpre
     );
     let entity = tree.file("entities/6.jsonl").unwrap();
     assert_eq!(entity, "{\"id\":\"entity-a\",\"key\":\"item\",\"schema\":\"schema\",\"fields\":{\"date\":{\"kind\":\"date\",\"value\":\"2024-02-29\"},\"formula\":{\"kind\":\"formula\",\"value\":{\"op\":\"number\",\"args\":5}},\"number\":{\"kind\":\"number\",\"value\":10},\"text\":{\"kind\":\"text\",\"value\":\"封筒\"}}}\n".as_bytes());
+}
+
+fn deepest_conditional_expression() -> Expression {
+    // A Count conditional whose only criterion value is the next conditional is
+    // the v3 DTO shape that nests deepest per semantic depth level: it adds the
+    // expression's `args`, a `criteria` array and a criterion object.
+    let mut expression = Expression::ColumnConditional {
+        aggregate: Box::new(ConditionalAggregate::Count),
+        criteria: vec![ColumnCriterion {
+            column: ColumnRef::new("schema", "number"),
+            operator: ComparisonOperator::Equal,
+            value: None,
+        }],
+    };
+    for _ in 1..MAX_EXPRESSION_DEPTH {
+        expression = Expression::ColumnConditional {
+            aggregate: Box::new(ConditionalAggregate::Count),
+            criteria: vec![ColumnCriterion {
+                column: ColumnRef::new("schema", "number"),
+                operator: ComparisonOperator::Equal,
+                value: Some(Box::new(expression)),
+            }],
+        };
+    }
+    expression
+}
+
+/// JSON container nesting, ignoring structural bytes inside strings.
+fn json_nesting_depth(source: &str) -> usize {
+    let mut nesting = 0_usize;
+    let mut maximum = 0_usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for byte in source.bytes() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                nesting += 1;
+                maximum = maximum.max(nesting);
+            }
+            b'}' | b']' => nesting = nesting.saturating_sub(1),
+            _ => {}
+        }
+    }
+    maximum
+}
+
+#[test]
+fn deepest_valid_conditional_formula_reopens_from_its_canonical_bytes() {
+    let mut document = fixture();
+    document
+        .entities
+        .get_mut("entity-a")
+        .unwrap()
+        .fields
+        .insert(
+            "formula".into(),
+            Value::Formula(deepest_conditional_expression()),
+        );
+    assert_eq!(validate_document(&document).as_slice(), []);
+    let tree = encode_roproj_v3(&document).unwrap();
+    assert_eq!(decode_roproj_v3(&tree).unwrap(), document);
+
+    // One JSON container past the deepest valid record is still refused.
+    let record = std::str::from_utf8(tree.file("entities/6.jsonl").unwrap()).unwrap();
+    let tampered_files = replace(
+        &tree,
+        "entities/6.jsonl",
+        "\"column\":{\"schema\":\"schema\",\"field\":\"number\"},\"operator\":\"=\"}]",
+        "\"column\":{\"schema\":\"schema\",\"field\":{\"z\":{}}},\"operator\":\"=\"}]",
+    );
+    let tampered = tampered_files
+        .iter()
+        .find(|(path, _)| path == "entities/6.jsonl")
+        .map(|(_, bytes)| std::str::from_utf8(bytes).unwrap())
+        .unwrap();
+    assert_eq!(
+        json_nesting_depth(tampered),
+        json_nesting_depth(record) + 1
+    );
+    match CanonicalRoProjectV3::try_from_files(tampered_files) {
+        Err(FormatError::InvalidRoProjectRepresentation { message }) => {
+            assert!(message.contains("JSON nesting limit"), "{message}");
+        }
+        other => panic!("expected a nesting-limit refusal, got {other:?}"),
+    }
 }
 
 #[test]
