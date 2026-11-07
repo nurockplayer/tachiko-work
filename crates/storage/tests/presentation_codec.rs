@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use tachiko_semantic_core::{
-    BorderSide, CellAlignment, CellStyle, ComparisonOperator, ConditionalRule, DateFormat,
-    EntityId, Expression, FieldId, FooterAggregate, Number, NumberFormat, NumberFormatKind,
+    BorderSide, CellAlignment, CellStyle, ColumnCriterion, ColumnRef, ComparisonOperator,
+    ConditionalAggregate, ConditionalRule, DateFormat, EntityId, Expression, FieldId,
+    FooterAggregate, MAX_EXPRESSION_DEPTH, Number, NumberFormat, NumberFormatKind,
     PresentationStore, RuleId, SchemaId, StyleId, TablePresentation,
 };
 use tachiko_storage::{FormatError, decode_presentation, encode_presentation, style_id};
@@ -270,4 +271,47 @@ fn decoder_refuses_noncanonical_spelling() {
     let expected = pinned();
     refuse(&expected.replace("\"bold\":true", "\"bold\": true"));
     refuse(&expected.replace("\"args\":0", "\"args\":0.0"));
+}
+
+fn store_with_condition(condition: Expression) -> PresentationStore {
+    let mut store = store();
+    store.rules.get_mut(&RuleId::from("r1")).unwrap().condition = condition;
+    store
+}
+
+#[test]
+fn encoder_refuses_a_rule_condition_the_reader_refuses() {
+    let number = || Box::new(Expression::Number(Number::new(1.0).unwrap()));
+    for condition in [
+        Expression::Round {
+            value: number(),
+            digits: 11,
+        },
+        Expression::IsBlank(number()),
+    ] {
+        assert!(matches!(
+            encode_presentation(&store_with_condition(condition)),
+            Err(FormatError::InvalidRoProjectRepresentation { .. })
+        ));
+    }
+}
+
+#[test]
+fn the_deepest_allowed_rule_condition_reads_back() {
+    let column = || ColumnRef::new(SchemaId::from("orders"), FieldId::from("f1"));
+    let conditional = |value: Option<Box<Expression>>| Expression::ColumnConditional {
+        aggregate: Box::new(ConditionalAggregate::Count),
+        criteria: vec![ColumnCriterion {
+            column: column(),
+            operator: ComparisonOperator::Equal,
+            value,
+        }],
+    };
+    let mut condition = conditional(None);
+    for _ in 1..MAX_EXPRESSION_DEPTH {
+        condition = conditional(Some(Box::new(condition)));
+    }
+    let store = store_with_condition(condition);
+    let bytes = encode_presentation(&store).unwrap().unwrap();
+    assert_eq!(decode_presentation(&bytes).unwrap(), store);
 }

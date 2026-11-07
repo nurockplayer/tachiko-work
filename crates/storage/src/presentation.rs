@@ -6,7 +6,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
     BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, EntityId, FieldId,
-    FooterAggregate, PresentationStore, RuleId, SchemaId, StyleId, TablePresentation,
+    FooterAggregate, MAX_EXPRESSION_DEPTH, PresentationStore, RuleId, SchemaId, StyleId,
+    TablePresentation,
 };
 
 use crate::{
@@ -20,7 +21,10 @@ use crate::{
     strict_json::inspect_roproj,
 };
 
-const PRESENTATION_MAX_JSON_NESTING: usize = 140;
+// A deepest valid record is: rule -> condition -> 63 conditional aggregates,
+// each adding `args`, `criteria`, a criterion and the expression under `value`,
+// then a last conditional whose innermost container is a criterion's `column`.
+const PRESENTATION_MAX_JSON_NESTING: usize = 1 + 4 * (MAX_EXPRESSION_DEPTH - 1) + 5;
 const PRESENTATION_PATH: &str = "presentation.jsonl";
 
 /// The stable style ID: the first 32 lowercase hex digits of the SHA-256 of the
@@ -56,6 +60,13 @@ pub fn encode_presentation(store: &PresentationStore) -> Result<Option<Vec<u8>>,
     if store.is_empty() {
         return Ok(None);
     }
+    let bytes = write_presentation(store)?;
+    // Whatever is written must read back, or a save would lose the member.
+    parse_presentation(&bytes)?;
+    Ok(Some(bytes))
+}
+
+fn write_presentation(store: &PresentationStore) -> Result<Vec<u8>, FormatError> {
     let mut output = String::new();
     for (id, style) in &store.styles {
         let computed = style_id(style)?;
@@ -81,7 +92,7 @@ pub fn encode_presentation(store: &PresentationStore) -> Result<Option<Vec<u8>>,
         write_cell_record(&mut output, entity, field, style)?;
         output.push('\n');
     }
-    Ok(Some(output.into_bytes()))
+    Ok(output.into_bytes())
 }
 
 /// Decode the canonical member bytes strictly.
@@ -93,8 +104,16 @@ pub fn encode_presentation(store: &PresentationStore) -> Result<Option<Vec<u8>>,
 /// members, a style ID that does not match its content, a contentless table,
 /// a missing final LF, a blank line, an empty member, or any input the writer
 /// would not produce byte for byte.
-#[allow(clippy::too_many_lines)] // One strict record loop keeps the refusal order visible.
 pub fn decode_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatError> {
+    let store = parse_presentation(bytes)?;
+    if write_presentation(&store)? != bytes {
+        return invalid_representation("presentation.jsonl is not canonical".to_owned());
+    }
+    Ok(store)
+}
+
+#[allow(clippy::too_many_lines)] // One strict record loop keeps the refusal order visible.
+fn parse_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatError> {
     let source =
         std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
             path: PRESENTATION_PATH.to_owned(),
@@ -213,13 +232,8 @@ pub fn decode_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatErro
             }
         }
     }
-    let canonical = encode_presentation(&store)?.ok_or_else(|| {
-        FormatError::InvalidRoProjectRepresentation {
-            message: "presentation.jsonl decoded to an empty store".to_owned(),
-        }
-    })?;
-    if canonical != bytes {
-        return invalid_representation("presentation.jsonl is not canonical".to_owned());
+    if store.is_empty() {
+        return invalid_representation("presentation.jsonl decoded to an empty store".to_owned());
     }
     Ok(store)
 }
