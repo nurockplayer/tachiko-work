@@ -12,9 +12,9 @@ use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
     ColumnTotalsProjection, ComparisonOperator, DesignerError, DesignerRequest, DesignerResponse,
-    DesignerRuntime, LocateInViewResult, LocatedInViewProjection, ScalarEditInput, ScalarLiteral,
-    SortDirection, TableView, TableWindowProjection, ViewFilter, ViewSortKey, ViewTextOrder,
-    process_wire_request,
+    DesignerRuntime, LocateInViewResult, LocatedInViewProjection, RowProjection, ScalarEditInput,
+    ScalarLiteral, SortDirection, TableView, TableWindowProjection, ViewFilter, ViewSortKey,
+    ViewTextOrder, process_wire_request,
 };
 use tachiko_workspace_engine::{
     Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
@@ -389,6 +389,23 @@ fn row_ids(window: &TableWindowProjection) -> Vec<String> {
     window.rows.iter().map(|row| row.id.clone()).collect()
 }
 
+/// A window's rows without the window-only `position`, so they compare with a
+/// `queryTable` row as before.
+fn without_positions(rows: &[RowProjection]) -> Vec<RowProjection> {
+    rows.iter()
+        .map(|row| RowProjection {
+            position: None,
+            ..row.clone()
+        })
+        .collect()
+}
+
+fn stored_positions(rows: &[RowProjection]) -> Vec<usize> {
+    rows.iter()
+        .map(|row| row.position.expect("a window row carries its position"))
+        .collect()
+}
+
 fn sorted(field: &str, direction: SortDirection) -> TableView {
     TableView {
         sort: vec![ViewSortKey {
@@ -445,7 +462,16 @@ fn window_edges_clamp_and_reuse_the_complete_projection() {
     assert_eq!(full.unfiltered_rows, 12);
     assert_eq!(full.start, 0);
     assert_eq!(full.columns, table.columns);
-    assert_eq!(full.rows, table.rows);
+    assert_eq!(
+        stored_positions(&full.rows),
+        (1..=full.rows.len()).collect::<Vec<_>>(),
+        "a plain window numbers the stored positions 1..n"
+    );
+    assert_eq!(
+        without_positions(&full.rows),
+        table.rows,
+        "the window reuses the complete projection"
+    );
     assert_eq!(full.collection.entity_count, 12);
     // The digest is stable for another identical query at the same revision.
     let repeated = window(&mut runtime, TableView::default(), 0, 256).expect("repeatable");
@@ -1612,10 +1638,15 @@ fn replies_without_display_carry_no_display_key() {
     let plain =
         window(&mut runtime, TableView::default(), 0, 256).expect("the window is queryable");
     let table_rows = serde_json::to_string(&table.rows).expect("rows encode");
-    let window_rows = serde_json::to_string(&plain.rows).expect("rows encode");
+    let window_rows = serde_json::to_string(&without_positions(&plain.rows)).expect("rows encode");
     assert_eq!(
         window_rows, table_rows,
-        "a window without the option encodes exactly as queryTable"
+        "a window without the option has the queryTable rows, plus position"
+    );
+    assert_eq!(
+        stored_positions(&plain.rows),
+        (1..=plain.rows.len()).collect::<Vec<_>>(),
+        "a plain window numbers the stored positions 1..n"
     );
     assert!(!table_rows.contains("\"display\""));
     assert!(
