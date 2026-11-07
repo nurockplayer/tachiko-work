@@ -616,6 +616,10 @@ pub struct ViewSortKey {
     /// Column ID from [`ColumnProjection::id`].
     pub field: String,
     pub direction: SortDirection,
+    /// How Text values are ordered. Omitted when `bytes`, so a view with the
+    /// default keeps its spelling and cache key.
+    #[serde(default, skip_serializing_if = "is_default_text_order")]
+    pub text_order: ViewTextOrder,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -623,6 +627,23 @@ pub struct ViewSortKey {
 pub enum SortDirection {
     Asc,
     Desc,
+}
+
+/// Text order for one sort key. `bytes` is the default and compares UTF-8
+/// bytes; `natural` follows Sheet's list order — case-insensitive, with digit
+/// runs compared as numbers, and every other character by code point. It has
+/// no effect on a non-Text column.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewTextOrder {
+    #[default]
+    Bytes,
+    Natural,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference.
+fn is_default_text_order(order: &ViewTextOrder) -> bool {
+    matches!(order, ViewTextOrder::Bytes)
 }
 
 /// One AND-ed view filter. Text matching is case-insensitive and text-only;
@@ -2123,6 +2144,7 @@ const fn view_kind_name(kind: ViewKind) -> &'static str {
 struct ViewSortPlan {
     ordinal: usize,
     direction: SortDirection,
+    text_order: ViewTextOrder,
 }
 
 /// One fully resolved AND-ed filter. Every literal is parsed and normalized
@@ -2280,6 +2302,7 @@ fn plan_view(
         sort.push(ViewSortPlan {
             ordinal: builder.ordinal(column),
             direction: key.direction,
+            text_order: key.text_order,
         });
     }
     let mut filters = Vec::with_capacity(view.filters.len());
@@ -2520,8 +2543,8 @@ fn compare_view_rows(
             (None, Some(_)) => Ordering::Greater,
             (Some(_), None) => Ordering::Less,
             (Some(left), Some(right)) => match key.direction {
-                SortDirection::Asc => compare_view_values(left, right),
-                SortDirection::Desc => compare_view_values(right, left),
+                SortDirection::Asc => compare_view_values(left, right, key.text_order),
+                SortDirection::Desc => compare_view_values(right, left, key.text_order),
             },
         };
         if ordering != Ordering::Equal {
@@ -2531,10 +2554,13 @@ fn compare_view_rows(
     entities[left].cmp(&entities[right])
 }
 
-fn compare_view_values(left: &ViewValue, right: &ViewValue) -> Ordering {
+fn compare_view_values(left: &ViewValue, right: &ViewValue, text_order: ViewTextOrder) -> Ordering {
     match (left, right) {
         (ViewValue::Number(left), ViewValue::Number(right)) => left.total_cmp(right),
-        (ViewValue::Text(left), ViewValue::Text(right)) => left.cmp(right),
+        (ViewValue::Text(left), ViewValue::Text(right)) => match text_order {
+            ViewTextOrder::Bytes => left.cmp(right),
+            ViewTextOrder::Natural => display_text::natural_cmp(left, right),
+        },
         (ViewValue::Boolean(left), ViewValue::Boolean(right)) => left.cmp(right),
         (ViewValue::Date(left), ViewValue::Date(right)) => left.cmp(right),
         // A column has one declared kind; this only orders mixed leftovers

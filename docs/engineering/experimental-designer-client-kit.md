@@ -142,7 +142,11 @@ error. The reply repeats `revision`, `collection`, `columns`, a
 
 The view is request state owned by the host: it never enters the document,
 publication history or revision token. Sort keys apply in order with blanks last
-and a stable entity-ID tie-break; filters are AND-ed. Text filters compare
+and a stable entity-ID tie-break; filters are AND-ed. A sort key orders Text
+with `text_order`: `bytes` (the default, UTF-8 byte order) or `natural`, which
+is case-insensitive with runs of ASCII digits compared as numbers, and sorts
+accented letters and CJK by code point. `text_order` has no effect on any other
+column kind. Text filters compare
 case-insensitively and are text-only, number and date filters use
 `= <> < <= > >=`, `is_blank`/`not_blank` find missing or present values, and
 `in_set` takes literals of the column's declared kind. Formula columns filter and
