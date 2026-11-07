@@ -377,17 +377,14 @@ fn deepest_valid_conditional_formula_reopens_from_its_canonical_bytes() {
         &tree,
         "entities/6.jsonl",
         "\"column\":{\"schema\":\"schema\",\"field\":\"number\"},\"operator\":\"=\"}]",
-        "\"column\":{\"schema\":\"schema\",\"field\":{\"z\":{}}},\"operator\":\"=\"}]",
+        "\"column\":{\"schema\":\"schema\",\"field\":{}},\"operator\":\"=\"}]",
     );
     let tampered = tampered_files
         .iter()
         .find(|(path, _)| path == "entities/6.jsonl")
         .map(|(_, bytes)| std::str::from_utf8(bytes).unwrap())
         .unwrap();
-    assert_eq!(
-        json_nesting_depth(tampered),
-        json_nesting_depth(record) + 1
-    );
+    assert_eq!(json_nesting_depth(tampered), json_nesting_depth(record) + 1);
     match CanonicalRoProjectV3::try_from_files(tampered_files) {
         Err(FormatError::InvalidRoProjectRepresentation { message }) => {
             assert!(message.contains("JSON nesting limit"), "{message}");
