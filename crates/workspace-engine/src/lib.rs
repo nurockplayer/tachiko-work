@@ -2232,6 +2232,28 @@ pub(crate) fn formula_inverse_restore_candidate(
     field: &FieldRef,
     value: Number,
 ) -> Result<Document, WorkspaceError> {
+    let mut planning = FieldEditPlanning::new();
+    check_formula_inverse_restore_candidate(document, field, &mut planning)?;
+    let mut candidate = document.clone();
+    insert_number_value(&mut candidate, field, value)?;
+    Ok(candidate)
+}
+
+pub(crate) fn formula_inverse_restore_candidate_in_place(
+    candidate: &mut Document,
+    field: &FieldRef,
+    value: Number,
+    planning: &mut FieldEditPlanning,
+) -> Result<(), WorkspaceError> {
+    check_formula_inverse_restore_candidate(candidate, field, planning)?;
+    insert_number_value(candidate, field, value)
+}
+
+fn check_formula_inverse_restore_candidate(
+    document: &Document,
+    field: &FieldRef,
+    planning: &mut FieldEditPlanning,
+) -> Result<(), WorkspaceError> {
     formula_update_target_rule(document, field)?;
     let entity =
         document
@@ -2245,17 +2267,24 @@ pub(crate) fn formula_inverse_restore_candidate(
             field: field.clone(),
         });
     }
-    preflight_formula_structures(document)?;
-    let mut candidate = document.clone();
-    let entity = candidate.entities.get_mut(&field.entity).ok_or_else(|| {
-        WorkspaceError::MissingEntityId {
+    planning.preflight(document)?;
+    Ok(())
+}
+
+fn insert_number_value(
+    candidate: &mut Document,
+    field: &FieldRef,
+    value: Number,
+) -> Result<(), WorkspaceError> {
+    candidate
+        .entities
+        .get_mut(&field.entity)
+        .ok_or_else(|| WorkspaceError::MissingEntityId {
             entity: field.entity.clone(),
-        }
-    })?;
-    entity
+        })?
         .fields
         .insert(field.field.clone(), Value::Number(value));
-    Ok(candidate)
+    Ok(())
 }
 
 /// Build the narrow restore candidate for one host-cleared formula cell.
@@ -2276,7 +2305,7 @@ pub(crate) fn formula_restore_candidate(
     Ok(candidate)
 }
 
-fn formula_restore_candidate_in_place(
+pub(crate) fn formula_restore_candidate_in_place(
     candidate: &mut Document,
     field: &FieldRef,
     expression: &Expression,
