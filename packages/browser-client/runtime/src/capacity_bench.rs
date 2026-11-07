@@ -18,11 +18,13 @@
 //! retention included — not live heap. Non-Linux targets report "unavailable"
 //! instead of failing the run.
 
+use std::collections::BTreeMap;
+use std::io::Write;
 use std::time::Instant;
 
 use tachiko_storage::{decode_roproj_v3, encode_roproj_v3};
 use tachiko_workspace_engine::{
-    Document, FieldId, Number, Value,
+    Document, Expression, FieldConstraint, FieldId, Number, Value,
     instrumentation::{self, CapacityCounters},
     patch_lifecycle::{DocumentScopeId, SemanticPublicationAuthority, TrustedInstant},
     resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
@@ -30,10 +32,13 @@ use tachiko_workspace_engine::{
 };
 
 use super::{
-    DESIGNER_PRINCIPAL, DesignerClock, DesignerRequest, DesignerRuntime, FieldTarget, PrincipalId,
-    ScalarEditInput, ViewIndexCache, collection_specs, decode_project_bundle, designer_lifecycle,
-    document_scope, encode_project_bundle, ensure_projection_size_with_limit, formula_sources,
-    select_default_collection,
+    CellEdit, DESIGNER_PRINCIPAL, DesignerClock, DesignerRequest, DesignerResponse,
+    DesignerRuntime, Entity, EntityId, EntityKey, FieldDefinition, FieldKey, FieldTarget,
+    FieldType, PrincipalId, RowInitializer, ScalarEditInput, Schema, SchemaId, SchemaKey,
+    ViewIndexCache, collection_specs, decode_project_bundle, designer_lifecycle,
+    document_requires_v2_evidence, document_scope, encode_project_bundle,
+    ensure_projection_size_with_limit, formula_sources, open_portable_ro_working_size,
+    open_project_working_size, select_default_collection,
 };
 use crate::capacity::SessionProfile;
 use crate::capacity_fixtures::{
@@ -909,4 +914,304 @@ fn capacity_formula_count_sweep() {
         );
     }
     print_report(&rows);
+}
+
+/// One working-size qualification shape: 10,000 rows by 30 declared columns.
+///
+/// Every field carries a display name, so both shapes take the v2 evidence
+/// path Sheet's blank workbook takes.
+#[derive(Clone, Copy, Debug)]
+enum WqShape {
+    /// Ten populated Number columns (100,000 cells) and twenty empty ones.
+    Values,
+    /// Nine populated Number columns and one same-row formula column
+    /// (10,000 formulas, 100,000 cells).
+    Formulas,
+}
+
+impl WqShape {
+    const ALL: [Self; 2] = [Self::Values, Self::Formulas];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Values => "values",
+            Self::Formulas => "formulas",
+        }
+    }
+
+    const fn populated_columns(self) -> usize {
+        match self {
+            Self::Values => 10,
+            Self::Formulas => 9,
+        }
+    }
+}
+
+const WQ_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
+const WQ_ROWS: usize = 10_000;
+const WQ_COLUMNS: usize = 30;
+const WQ_EDIT_COUNT: usize = 20;
+
+fn wq_document(shape: WqShape) -> Document {
+    let mut document = Document::empty("working-size-qualification", "Working Size Qualification");
+    let schema_id = SchemaId::from("grid");
+    let mut schema = Schema {
+        field_order: None,
+        id: schema_id.clone(),
+        key: SchemaKey::from("grid"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    for column in 0..WQ_COLUMNS {
+        let id = FieldId::from(format!("c{column}"));
+        schema.fields.insert(
+            id.clone(),
+            FieldDefinition {
+                id,
+                key: FieldKey::from(format!("c{column}")),
+                display_name: Some(format!("Column {}", column + 1)),
+                field_type: FieldType::Number,
+                required: false,
+                constraint: FieldConstraint::None,
+                number_format: None,
+            },
+        );
+    }
+    document.schemas.insert(schema_id.clone(), schema);
+    for row in 0..WQ_ROWS {
+        let id = EntityId::from(format!("r{row:05}"));
+        let mut fields = BTreeMap::new();
+        for column in 0..shape.populated_columns() {
+            let value = u32::try_from(row % 1_000).expect("bounded row") + 1;
+            fields.insert(
+                FieldId::from(format!("c{column}")),
+                number(f64::from(value)),
+            );
+        }
+        if matches!(shape, WqShape::Formulas) {
+            fields.insert(
+                FieldId::from("c9"),
+                Value::Formula(Expression::Add {
+                    left: Box::new(Expression::SameRowReference(FieldId::from("c0"))),
+                    right: Box::new(Expression::SameRowReference(FieldId::from("c1"))),
+                }),
+            );
+        }
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id,
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: schema_id.clone(),
+                fields,
+            },
+        );
+    }
+    document
+}
+
+/// One machine line per fact, flushed as it is printed.
+fn wq_print(shape: &str, fact: &str, value: impl std::fmt::Display) {
+    println!("WQ|{shape}|{fact}|{value}");
+    let _ = std::io::stdout().flush();
+}
+
+fn wq_refused(shape: &str, step: &str, error: &super::DesignerError) {
+    let code = error.failure_projection("").code;
+    wq_print(shape, step, format!("refused:{code}"));
+}
+
+fn wq_millis(sample: &Sample) -> String {
+    format!("{:.3}", sample.millis)
+}
+
+/// Working-size qualification: the two 10,000-row by 30-column shapes Sheet's
+/// blank workbook can produce, measured through the admitted runtime in
+/// release. A refused step prints `refused:<code>` and the run continues.
+#[test]
+#[ignore = "working-size qualification; run explicitly in release with --features capacity-bench"]
+fn working_size_qualification() {
+    for shape in WqShape::ALL {
+        qualify_working_size_shape(shape);
+    }
+}
+
+#[allow(clippy::too_many_lines)] // One linear per-shape script is easier to audit.
+fn qualify_working_size_shape(shape: WqShape) {
+    let name = shape.name();
+    let document = wq_document(shape);
+    assert!(
+        document_requires_v2_evidence(&document),
+        "{name} must take the v2 evidence path"
+    );
+    validate(&document).expect("qualification fixture validates");
+
+    let runtime = match DesignerRuntime::from_document_working_size(document, WQ_OCCURRENCE) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            wq_refused(name, "open_document", &error);
+            return;
+        }
+    };
+    let revision = runtime.observe_occurrence().revision;
+    let (saved, save_sample) = observe(|| runtime.export_project_v3(&revision));
+    let saved = match saved {
+        Ok(saved) => saved,
+        Err(error) => {
+            wq_refused(name, "save_v3", &error);
+            return;
+        }
+    };
+    wq_print(name, "save_v3_ms", wq_millis(&save_sample));
+    wq_print(name, "save_v3_bytes", saved.bytes.len());
+    drop(runtime);
+
+    let mut resident: Option<DesignerRuntime> = None;
+    let (opened, open_sample) =
+        observe(|| open_project_working_size(&mut resident, &saved.bytes, WQ_OCCURRENCE));
+    let opened = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            wq_refused(name, "open", &error);
+            return;
+        }
+    };
+    wq_print(name, "open_ms", wq_millis(&open_sample));
+    wq_print(
+        name,
+        "open_peak_rss",
+        describe_bytes(open_sample.peak_delta_bytes),
+    );
+    wq_print(name, "window_rows", opened.window.rows.len());
+    wq_print(name, "total_rows", opened.window.total_rows);
+    drop(opened);
+    let Some(mut runtime) = resident else {
+        return;
+    };
+
+    qualify_working_size_edits(shape, &mut runtime);
+    qualify_working_size_saves(shape, &runtime);
+
+    let (reply, _) = observe(|| {
+        runtime.handle(DesignerRequest::QueryCapacity {
+            expected_revision: None,
+        })
+    });
+    match reply {
+        Ok(DesignerResponse::Capacity(projection)) => {
+            let usage = projection.usage;
+            wq_print(name, "capacity_edges", usage.dependency_edges);
+            wq_print(name, "capacity_cells", usage.populated_cells);
+            wq_print(name, "capacity_formulas", usage.formulas);
+        }
+        Ok(_) => wq_print(name, "capacity", "unexpected_reply"),
+        Err(error) => wq_refused(name, "capacity", &error),
+    }
+}
+
+fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
+    let name = shape.name();
+    // c0 feeds the same-row formula column in the `formulas` shape.
+    let field = "c0";
+    let mut samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    for row in 0..WQ_EDIT_COUNT {
+        let revision = runtime.observe_occurrence().revision;
+        let target = FieldTarget {
+            entity: format!("r{row:05}"),
+            field: field.to_owned(),
+        };
+        let input = ScalarEditInput::Number {
+            input: format!("{}", 100 + row),
+        };
+        let (result, sample) = observe(|| {
+            runtime.edit_cells(
+                &revision,
+                &[CellEdit {
+                    target: target.clone(),
+                    input: input.clone(),
+                }],
+            )
+        });
+        match result {
+            Ok(_) => samples.push(sample),
+            Err(error) => {
+                wq_refused(name, "edit", &error);
+                return;
+            }
+        }
+    }
+    let mut ordered = samples
+        .iter()
+        .map(|sample| sample.millis)
+        .collect::<Vec<_>>();
+    ordered.sort_by(f64::total_cmp);
+    let median = ordered[ordered.len() / 2];
+    let p95_index = ordered
+        .len()
+        .saturating_mul(95)
+        .div_ceil(100)
+        .saturating_sub(1);
+    wq_print(name, "edit_n", ordered.len());
+    wq_print(name, "edit_median_ms", format!("{median:.3}"));
+    wq_print(name, "edit_p95_ms", format!("{:.3}", ordered[p95_index]));
+
+    // A full table refuses another row, so removal comes first.
+    let revision = runtime.observe_occurrence().revision;
+    let rows = (0..100).map(|row| format!("r{row:05}")).collect::<Vec<_>>();
+    let (removed, sample) = observe(|| runtime.remove_table_rows(&revision, "grid", &rows));
+    match removed {
+        Ok(_) => wq_print(name, "remove_100_rows_ms", wq_millis(&sample)),
+        Err(error) => wq_refused(name, "remove_100_rows", &error),
+    }
+
+    let revision = runtime.observe_occurrence().revision;
+    let initializers = [RowInitializer {
+        field: field.to_owned(),
+        input: ScalarEditInput::Number {
+            input: "7".to_owned(),
+        },
+    }];
+    let (inserted, sample) = observe(|| runtime.insert_row(&revision, "grid", &initializers));
+    match inserted {
+        Ok(_) => wq_print(name, "insert_row_ms", wq_millis(&sample)),
+        Err(error) => wq_refused(name, "insert_row", &error),
+    }
+}
+
+fn qualify_working_size_saves(shape: WqShape, runtime: &DesignerRuntime) {
+    let name = shape.name();
+    let revision = runtime.observe_occurrence().revision;
+
+    let (canonical, sample) = observe(|| runtime.export_canonical_tree(&revision));
+    match canonical {
+        Ok(export) => {
+            wq_print(name, "save_canonical_ms", wq_millis(&sample));
+            wq_print(name, "save_canonical_bytes", export.bytes.len());
+            let mut resident: Option<DesignerRuntime> = None;
+            let (reopened, reopen_sample) =
+                observe(|| open_project_working_size(&mut resident, &export.bytes, WQ_OCCURRENCE));
+            match reopened {
+                Ok(_) => wq_print(name, "reopen_canonical_ms", wq_millis(&reopen_sample)),
+                Err(error) => wq_refused(name, "reopen_canonical", &error),
+            }
+        }
+        Err(error) => wq_refused(name, "save_canonical", &error),
+    }
+
+    let (portable, sample) = observe(|| runtime.export_portable_ro(&revision));
+    match portable {
+        Ok(export) => {
+            wq_print(name, "save_portable_ms", wq_millis(&sample));
+            wq_print(name, "save_portable_bytes", export.bytes.len());
+            let mut resident: Option<DesignerRuntime> = None;
+            let (reopened, reopen_sample) = observe(|| {
+                open_portable_ro_working_size(&mut resident, &export.bytes, WQ_OCCURRENCE)
+            });
+            match reopened {
+                Ok(_) => wq_print(name, "reopen_portable_ms", wq_millis(&reopen_sample)),
+                Err(error) => wq_refused(name, "reopen_portable", &error),
+            }
+        }
+        Err(error) => wq_refused(name, "save_portable", &error),
+    }
 }

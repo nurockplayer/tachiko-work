@@ -2967,7 +2967,7 @@ impl DesignerRuntime {
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
-        let capacity_usage = CapacityUsage::measure(&document);
+        let capacity_usage = CapacityUsage::measure_for(&document, profile);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
             profile,
@@ -6187,8 +6187,7 @@ impl DesignerRuntime {
                 }
             }
         }
-        let capacity_usage =
-            capacity::check_document(&candidate, capacity::limits_for_profile(self.profile))?;
+        let capacity_usage = capacity::check_document_for(&candidate, self.profile)?;
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -6424,7 +6423,7 @@ impl DesignerRuntime {
 
     fn refresh_structure(&mut self) {
         let snapshot = self.session.export_snapshot();
-        self.capacity_usage = CapacityUsage::measure(snapshot.document());
+        self.capacity_usage = CapacityUsage::measure_for(snapshot.document(), self.profile);
         self.collection_specs = collection_specs(snapshot.document());
         self.collections = self
             .collection_specs
@@ -6435,6 +6434,19 @@ impl DesignerRuntime {
 
     fn max_table_rows(&self) -> usize {
         capacity::limits_for_profile(self.profile).table_rows
+    }
+
+    /// Supply the identity space a row allocation may consume beyond the
+    /// current serial.
+    fn row_identity_reserve(&self) -> usize {
+        match self.profile {
+            SessionProfile::WorkingSize => {
+                capacity::WORKING_LIMITS.total_entities + capacity::WORKING_LIMITS.table_rows
+            }
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => {
+                MAX_TOTAL_ENTITIES + MAX_TABLE_ROWS
+            }
+        }
     }
 
     /// Create a bounded operational tracker using existing scalar schema authority.
@@ -6944,7 +6956,7 @@ impl DesignerRuntime {
             spec.entities.len().saturating_add(1),
             Some(collection),
         )?;
-        if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
+        if self.row_serial > usize::MAX - self.row_identity_reserve() {
             return Err(tracker_error("row identity allocation is exhausted"));
         }
         let snapshot = self.session.export_snapshot();
@@ -7026,7 +7038,11 @@ impl DesignerRuntime {
                 "row removal is available for native scalar tables",
             ));
         }
-        if entities.is_empty() || entities.len() > MAX_TABLE_ROWS {
+        let row_limit = match self.profile {
+            SessionProfile::WorkingSize => self.max_table_rows(),
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => MAX_TABLE_ROWS,
+        };
+        if entities.is_empty() || entities.len() > row_limit {
             return Err(table_error("the row selection is empty or too large"));
         }
         let snapshot = self.session.export_snapshot();
@@ -7134,7 +7150,7 @@ impl DesignerRuntime {
                 "paste must be a nonempty rectangular range within the declared typed columns",
             ));
         }
-        if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
+        if self.row_serial > usize::MAX - self.row_identity_reserve() {
             return Err(tracker_error("row identity allocation is exhausted"));
         }
         let snapshot = self.session.export_snapshot();
@@ -9644,7 +9660,7 @@ fn ensure_document_profile(
 ) -> Result<(), DesignerError> {
     // The capacity check is shared with the working-size profile, which runs
     // its own walk below and never rebuilds a projection.
-    capacity::check_document(document, capacity::limits_for_profile(profile))?;
+    capacity::check_document_for(document, profile)?;
     match profile {
         SessionProfile::TextCapacity => return ensure_capacity_document_profile(document),
         SessionProfile::WorkingSize => return ensure_working_document_profile(document),

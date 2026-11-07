@@ -211,8 +211,11 @@ be refused until a later change.
 A working-size reply carries the bootstrap and one bounded window, never the
 whole table. That window may hold fewer than 100 rows when the text is large,
 so read `window.total_rows` and page with the window query instead of assuming
-a full first page. Size limits are still today's counts; higher limits arrive
-in a later change, so a host must not advertise 10,000 rows from this alone.
+a full first page. A working-size session admits 10,000 rows and entities,
+100,000 populated cells, 100,000 formulas, 1,000,000 formula AST nodes and
+1,000,000 dependency edges, with one column read counting as one edge. These
+are the counts a session admits, not a performance claim, so a host should not
+advertise them until later stages land.
 
 ## Authoring formulas
 
