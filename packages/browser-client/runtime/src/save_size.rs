@@ -447,9 +447,7 @@ fn entity_bytes(entity: &Entity) -> usize {
 fn value_bytes(value: &Value) -> usize {
     match value {
         Value::Number(number) => {
-            1 + compact_string("kind", "number", true)
-                + compact_number("value", *number, false)
-                + 1
+            1 + compact_string("kind", "number", true) + compact_number("value", *number, false) + 1
         }
         Value::Text(text) => {
             1 + compact_string("kind", "text", true) + compact_string("value", text, false) + 1
@@ -514,9 +512,7 @@ fn compare_bytes(operator: ComparisonOperator, left: &Expression, right: &Expres
 fn expression_bytes(expression: &Expression) -> usize {
     match expression {
         Expression::Number(number) => {
-            1 + compact_string("op", "number", true)
-                + compact_number("args", *number, false)
-                + 1
+            1 + compact_string("op", "number", true) + compact_number("args", *number, false) + 1
         }
         Expression::Reference(reference) => {
             1 + compact_string("op", "reference", true)

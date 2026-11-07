@@ -3415,8 +3415,8 @@ fn scaled_grid() -> Document {
                 .field_type = FieldType::Number;
         }
     }
-    for row in 0..2_000 {
-        let value = 0.1 + row as f64 * 1.37;
+    for row in 0..2_000i32 {
+        let value = 0.1 + f64::from(row) * 1.37;
         let entity = document
             .entities
             .get_mut(&EntityId::from(format!("r{row:05}")))
@@ -3429,7 +3429,9 @@ fn scaled_grid() -> Document {
             FieldId::from("c1"),
             Value::Formula(Expression::Add {
                 left: Box::new(Expression::Number(Number::new(value * 1e-7).unwrap())),
-                right: Box::new(Expression::Number(Number::new(1e20 + row as f64).unwrap())),
+                right: Box::new(Expression::Number(
+                    Number::new(1e20 + f64::from(row)).unwrap(),
+                )),
             }),
         );
     }
