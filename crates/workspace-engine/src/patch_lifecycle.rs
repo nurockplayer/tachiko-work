@@ -31,7 +31,7 @@ use super::{
     SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
     apply_field_value_candidate_with_planning, finalize_edit_with_validation,
     formula_inverse_restore_candidate_in_place, formula_restore_candidate_in_place,
-    formula_update_candidate_in_place, unset_field_candidate_in_place,
+    formula_update_candidate_in_place, instrumentation, unset_field_candidate_in_place,
 };
 
 #[cfg(test)]
