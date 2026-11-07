@@ -18,12 +18,13 @@ use super::interop_document::CleanupOperation;
 use super::{
     CalculationProjection, CellEdit, DesignerError, DesignerProfile, DesignerRequest,
     DesignerResponse, DesignerRuntime, DesignerWireReply, Document, Entity, EntityId, EntityKey,
-    FieldDefinition, FieldId, FieldKey, FieldProjection, FieldRef, FieldTarget, FieldType,
-    NewTableColumnInput, OpenedWindowProjection, PublicationProjection, RowInitializer,
-    RowProjection, ScalarEditInput, Schema, SchemaId, SchemaKey, StoredValueProjection, TableView,
-    TableWindowProjection, encode_portable_package_v1, encode_project_bundle, open_local_document,
-    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
-    open_project, open_project_working_size, process_wire_request, to_canonical_string,
+    FailureProjection, FieldDefinition, FieldId, FieldKey, FieldProjection, FieldRef, FieldTarget,
+    FieldType, NewTableColumnInput, OpenedWindowProjection, PasteCellInput, PublicationProjection,
+    RowInitializer, RowProjection, ScalarEditInput, Schema, SchemaId, SchemaKey,
+    StoredValueProjection, TableView, TableWindowProjection, encode_portable_package_v1,
+    encode_project_bundle, open_local_document, open_local_document_working_size, open_portable_ro,
+    open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
+    to_canonical_string,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
@@ -93,6 +94,25 @@ fn assert_capacity_refusal(
         }
         other => panic!("expected a capacity refusal, got {other:?}"),
     }
+}
+
+fn assert_tracker_message(error: &DesignerError, fragment: &str) {
+    match error {
+        DesignerError::InvalidTrackerOperation { message } => {
+            assert!(
+                message.contains(fragment),
+                "expected {message:?} to contain {fragment:?}"
+            );
+        }
+        other => panic!("expected a tracker refusal, got {other:?}"),
+    }
+}
+
+fn assert_scalar_edit_message(error: &DesignerError, fragment: &str) {
+    assert!(
+        error.to_string().contains(fragment),
+        "expected {error:?} to contain {fragment:?}"
+    );
 }
 
 fn assert_unsupported_message(error: &DesignerError, fragment: &str) {
@@ -2222,4 +2242,638 @@ fn the_wire_reply_carries_changed_cells() {
             .any(|field| field.target == target("r00000", "value")),
         "{text}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Stage 4: whole-column fill and large pastes in one request (#678).
+// ---------------------------------------------------------------------------
+
+fn number_columns(count: usize) -> Vec<NewTableColumnInput> {
+    (0..count)
+        .map(|index| NewTableColumnInput {
+            name: format!("c{index}"),
+            field_type: "number".to_owned(),
+            required: false,
+        })
+        .collect()
+}
+
+/// A fresh working-size table with `count` Number columns and no rows, plus its
+/// collection key and the stable field ids in declared order.
+fn blank_working_table(occurrence: &str, count: usize) -> (DesignerRuntime, String, Vec<String>) {
+    let runtime =
+        DesignerRuntime::new_working_size_table(occurrence, "Bulk", &number_columns(count))
+            .unwrap();
+    let collection = runtime.default_collection.clone();
+    let fields = runtime.collection_specs[&collection]
+        .columns
+        .iter()
+        .map(|column| column.id.to_string())
+        .collect();
+    (runtime, collection, fields)
+}
+
+/// A Number grid: every row stores `value`, and row 0's `calc` reads its own
+/// row's value by absolute reference, so a relative copy shifts it per row.
+fn fill_grid(rows: usize) -> Document {
+    let mut document = Document::empty("fill", "Fill");
+    let mut schema = Schema {
+        field_order: None,
+        id: SchemaId::from("grid"),
+        key: SchemaKey::from("grid"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    schema
+        .fields
+        .insert(FieldId::from("value"), number_field("value", None));
+    schema
+        .fields
+        .insert(FieldId::from("calc"), number_field("calc", None));
+    document.schemas.insert(schema.id.clone(), schema);
+    for row in 0..rows {
+        let id = EntityId::from(format!("r{row:05}"));
+        let value = f64::from(u32::try_from(row).expect("bounded rows")) + 1.0;
+        let mut fields = BTreeMap::from([(FieldId::from("value"), Value::Number(num(value)))]);
+        if row == 0 {
+            fields.insert(
+                FieldId::from("calc"),
+                Value::Formula(Expression::Reference(FieldRef::new(
+                    EntityId::from("r00000"),
+                    FieldId::from("value"),
+                ))),
+            );
+        }
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields,
+            },
+        );
+    }
+    document
+}
+
+/// Two Number collections, both directly editable, for the lookup tests.
+fn two_collection_grid() -> Document {
+    let mut document = Document::empty("lookups", "Lookups");
+    for collection in ["grid", "mirror"] {
+        let mut schema = Schema {
+            field_order: None,
+            id: SchemaId::from(collection),
+            key: SchemaKey::from(collection),
+            display_name: None,
+            fields: BTreeMap::new(),
+        };
+        schema
+            .fields
+            .insert(FieldId::from("value"), number_field("value", None));
+        schema
+            .fields
+            .insert(FieldId::from("calc"), number_field("calc", None));
+        document.schemas.insert(schema.id.clone(), schema);
+    }
+    for row in 0..3 {
+        let id = EntityId::from(format!("r{row:05}"));
+        let mut fields = BTreeMap::from([(
+            FieldId::from("value"),
+            Value::Number(num(f64::from(u32::try_from(row).expect("bounded")) + 1.0)),
+        )]);
+        if row == 0 {
+            fields.insert(
+                FieldId::from("calc"),
+                Value::Formula(Expression::Reference(FieldRef::new(
+                    EntityId::from("r00000"),
+                    FieldId::from("value"),
+                ))),
+            );
+        }
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields,
+            },
+        );
+    }
+    for row in 0..2 {
+        let id = EntityId::from(format!("m{row:05}"));
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("mk{row:05}")),
+                schema: SchemaId::from("mirror"),
+                fields: BTreeMap::from([(
+                    FieldId::from("value"),
+                    Value::Number(num(f64::from(u32::try_from(row).expect("bounded")) + 10.0)),
+                )]),
+            },
+        );
+    }
+    document
+}
+
+fn collection_window(
+    runtime: &mut DesignerRuntime,
+    collection: &str,
+    start: usize,
+    count: usize,
+) -> TableWindowProjection {
+    let expected_revision = runtime.current_revision().to_owned();
+    match runtime
+        .handle(DesignerRequest::QueryTableWindow {
+            expected_revision,
+            collection: collection.to_owned(),
+            view: TableView::default(),
+            start,
+            count,
+            display: true,
+        })
+        .unwrap()
+    {
+        DesignerResponse::TableWindow(window) => window,
+        other => panic!("expected a table window, got {other:?}"),
+    }
+}
+
+fn published(response: Result<DesignerResponse, DesignerError>) -> PublicationProjection {
+    match response.unwrap_or_else(|error| panic!("request failed: {error:?}")) {
+        DesignerResponse::Published(publication) => publication,
+        other => panic!("expected a publication, got {other:?}"),
+    }
+}
+
+fn edit_request(runtime: &DesignerRuntime, edits: Vec<CellEdit>) -> DesignerRequest {
+    DesignerRequest::EditCells {
+        expected_revision: runtime.current_revision().to_owned(),
+        edits,
+    }
+}
+
+fn cell_edit(entity: &str, field: &str, input: ScalarEditInput) -> CellEdit {
+    CellEdit {
+        target: target(entity, field),
+        input,
+    }
+}
+
+fn paste_request(
+    collection: &str,
+    start_field: &str,
+    rows: Vec<Vec<PasteCellInput>>,
+    expected_revision: &str,
+) -> DesignerRequest {
+    DesignerRequest::PasteCells {
+        expected_revision: expected_revision.to_owned(),
+        collection: collection.to_owned(),
+        start_entity: None,
+        start_field: start_field.to_owned(),
+        rows,
+    }
+}
+
+fn assert_wire_capacity(
+    error: &FailureProjection,
+    limit: CapacityLimit,
+    maximum: usize,
+    attempted: usize,
+) {
+    let capacity = error
+        .capacity
+        .as_ref()
+        .expect("the refusal names its capacity");
+    assert_eq!(capacity.limit, limit);
+    assert_eq!(capacity.maximum, maximum);
+    assert_eq!(capacity.attempted, attempted);
+}
+
+fn copy_request(expected_revision: String, destinations: Vec<FieldTarget>) -> DesignerRequest {
+    DesignerRequest::CopyFormula {
+        expected_revision,
+        source: target("r00000", "calc"),
+        destinations,
+        fixed_references: Vec::new(),
+        relative_rows: true,
+        relative_columns: false,
+    }
+}
+
+#[test]
+fn a_whole_column_edit_reaches_working_size_and_undo_restores_it() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(text_grid(1_025, 1), OCCURRENCE).unwrap();
+    let edits = (0..1_025)
+        .map(|row| {
+            cell_edit(
+                &format!("r{row:05}"),
+                "c0",
+                ScalarEditInput::Text {
+                    value: format!("v{row}"),
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let request = edit_request(&runtime, edits);
+    let publication = published(runtime.handle(request));
+    assert!(publication.many, "1,025 targets are over the listed bound");
+    assert!(
+        publication.changed.is_empty(),
+        "a marked publication carries no changed cells"
+    );
+
+    history(&mut runtime, false);
+    let snapshot = runtime.session.export_snapshot();
+    assert!(
+        snapshot
+            .document()
+            .entities
+            .values()
+            .all(|entity| entity.fields.is_empty()),
+        "undo restores every edited cell to blank"
+    );
+}
+
+#[test]
+fn an_ordinary_session_refuses_a_1_025_cell_edit() {
+    let mut ordinary = DesignerRuntime::tracker(OTHER_OCCURRENCE).unwrap();
+    let edits = (0..1_025)
+        .map(|row| cell_edit(&format!("r{row:05}"), "c0", ScalarEditInput::Clear))
+        .collect::<Vec<_>>();
+    let request = edit_request(&ordinary, edits);
+    assert_tracker_message(
+        &expect_error(ordinary.handle(request)),
+        "the edit range is empty or too large",
+    );
+}
+
+#[test]
+fn an_edit_past_the_working_cell_limit_refuses_and_changes_nothing() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(text_grid(1, 1), OCCURRENCE).unwrap();
+    let before = revision(&runtime);
+    let edits = (0..100_001)
+        .map(|row| cell_edit(&format!("r{row:05}"), "c0", ScalarEditInput::Clear))
+        .collect::<Vec<_>>();
+    let request = DesignerRequest::EditCells {
+        expected_revision: before.clone(),
+        edits,
+    };
+    assert_tracker_message(
+        &expect_error(runtime.handle(request)),
+        "the edit range is empty or too large",
+    );
+    assert_eq!(revision(&runtime), before);
+}
+
+#[test]
+fn a_whole_column_copy_reaches_working_size_and_undo_restores_it() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(fill_grid(1_026), OCCURRENCE).unwrap();
+    let request = DesignerRequest::CopyFormula {
+        expected_revision: revision(&runtime),
+        source: target("r00000", "calc"),
+        destinations: (1..=1_025)
+            .map(|row| target(&format!("r{row:05}"), "calc"))
+            .collect(),
+        fixed_references: Vec::new(),
+        relative_rows: true,
+        relative_columns: false,
+    };
+    let publication = published(runtime.handle(request));
+    assert!(publication.many, "1,025 targets are over the listed bound");
+
+    let window = collection_window(&mut runtime, "grid", 0, 256);
+    assert_eq!(window.rows.len(), 256);
+    for row in &window.rows {
+        let Some(StoredValueProjection::Number { value }) = &projected(row, "value").stored else {
+            panic!("row {} has no stored value", row.id);
+        };
+        assert_eq!(
+            projected(row, "calc")
+                .calculated
+                .as_ref()
+                .and_then(CalculationProjection::number),
+            Some(*value),
+            "row {} must carry its own shifted formula result",
+            row.id
+        );
+    }
+    let tail = collection_window(&mut runtime, "grid", 1_024, 2);
+    assert_eq!(tail.rows.len(), 2);
+    for row in &tail.rows {
+        let Some(StoredValueProjection::Number { value }) = &projected(row, "value").stored else {
+            panic!("row {} has no stored value", row.id);
+        };
+        assert_eq!(
+            projected(row, "calc")
+                .calculated
+                .as_ref()
+                .and_then(CalculationProjection::number),
+            Some(*value),
+            "row {} must carry its own shifted formula result",
+            row.id
+        );
+    }
+
+    history(&mut runtime, false);
+    let snapshot = runtime.session.export_snapshot();
+    for row in 1..=1_025 {
+        let entity = &snapshot.document().entities[&EntityId::from(format!("r{row:05}"))];
+        assert!(
+            !entity.fields.contains_key(&FieldId::from("calc")),
+            "undo clears the copied formula in row {row}"
+        );
+    }
+}
+
+#[test]
+fn an_ordinary_session_refuses_a_1_025_destination_copy() {
+    let mut ordinary = DesignerRuntime::tracker(OTHER_OCCURRENCE).unwrap();
+    let request = DesignerRequest::CopyFormula {
+        expected_revision: revision(&ordinary),
+        source: target("r00000", "calc"),
+        destinations: (1..=1_025)
+            .map(|row| target(&format!("r{row:05}"), "calc"))
+            .collect(),
+        fixed_references: Vec::new(),
+        relative_rows: true,
+        relative_columns: false,
+    };
+    assert_tracker_message(
+        &expect_error(ordinary.handle(request)),
+        "formula copy range is empty or too large",
+    );
+}
+
+#[test]
+fn fill_lookups_keep_their_messages_and_targets() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(two_collection_grid(), OCCURRENCE).unwrap();
+
+    let duplicate = edit_request(
+        &runtime,
+        vec![
+            cell_edit(
+                "r00000",
+                "value",
+                ScalarEditInput::Number { input: "9".into() },
+            ),
+            cell_edit(
+                "r00000",
+                "value",
+                ScalarEditInput::Number { input: "9".into() },
+            ),
+        ],
+    );
+    assert_tracker_message(
+        &expect_error(runtime.handle(duplicate)),
+        "duplicate cell targets are unsupported",
+    );
+
+    let unknown_entity = edit_request(
+        &runtime,
+        vec![cell_edit(
+            "nope",
+            "value",
+            ScalarEditInput::Number { input: "9".into() },
+        )],
+    );
+    assert_scalar_edit_message(
+        &expect_error(runtime.handle(unknown_entity)),
+        "field 'nope.value' is not editable through this directly stored scalar path",
+    );
+
+    let unknown_column = edit_request(
+        &runtime,
+        vec![cell_edit(
+            "r00000",
+            "nope",
+            ScalarEditInput::Number { input: "9".into() },
+        )],
+    );
+    assert_scalar_edit_message(
+        &expect_error(runtime.handle(unknown_column)),
+        "field 'r00000.nope' is not editable through this directly stored scalar path",
+    );
+
+    // A target in a second collection still edits that collection.
+    let second_collection = edit_request(
+        &runtime,
+        vec![cell_edit(
+            "m00000",
+            "value",
+            ScalarEditInput::Number { input: "12".into() },
+        )],
+    );
+    published(runtime.handle(second_collection));
+    let mirror = window_cells(&mut runtime, "mirror");
+    let Some(Some(field)) = mirror.get(&("m00000".to_owned(), "value".to_owned())) else {
+        panic!("the mirror cell is missing");
+    };
+    let Some(StoredValueProjection::Number { value }) = &field.stored else {
+        panic!("the mirror cell is not a stored Number");
+    };
+    assert_eq!(*value, 12.0);
+    let grid = window_cells(&mut runtime, "grid");
+    let Some(Some(field)) = grid.get(&("r00000".to_owned(), "value".to_owned())) else {
+        panic!("the grid cell is missing");
+    };
+    let Some(StoredValueProjection::Number { value }) = &field.stored else {
+        panic!("the grid cell is not a stored Number");
+    };
+    assert_eq!(*value, 1.0, "the other collection is untouched");
+
+    assert_tracker_message(
+        &expect_error(runtime.handle(copy_request(
+            revision(&runtime),
+            vec![target("r00001", "calc"), target("r00001", "calc")],
+        ))),
+        "duplicate formula copy targets are unsupported",
+    );
+    assert_tracker_message(
+        &expect_error(runtime.handle(copy_request(
+            revision(&runtime),
+            vec![target("nope", "calc")],
+        ))),
+        "formula copy target must belong to the source collection",
+    );
+    assert_tracker_message(
+        &expect_error(runtime.handle(copy_request(
+            revision(&runtime),
+            vec![target("r00001", "nope")],
+        ))),
+        "formula copy target must belong to the source collection",
+    );
+    assert_tracker_message(
+        &expect_error(runtime.handle(copy_request(
+            revision(&runtime),
+            vec![target("m00000", "value")],
+        ))),
+        "formula copy target must belong to the source collection",
+    );
+}
+
+#[test]
+fn a_large_paste_reaches_working_size_through_the_wire() {
+    let (runtime, collection, fields) = blank_working_table(OCCURRENCE, 5);
+    let mut resident = Some(runtime);
+    let rows = (0..2_000)
+        .map(|row| {
+            (0..5)
+                .map(|column| PasteCellInput::Text(format!("{}", 1_000_000 + row * 5 + column)))
+                .collect()
+        })
+        .collect::<Vec<Vec<PasteCellInput>>>();
+    let request = paste_request(
+        &collection,
+        &fields[0],
+        rows,
+        resident.as_ref().unwrap().current_revision(),
+    );
+    let input = serde_json::to_vec(&request).unwrap();
+    assert!(
+        input.len() > 65_536,
+        "the paste request is only {} bytes",
+        input.len()
+    );
+    let reply = decode_wire(&process_wire_request(&mut resident, &input));
+    let DesignerWireReply::Ok {
+        response: DesignerResponse::Published(publication),
+    } = reply
+    else {
+        panic!("a working-size paste publishes, got {reply:?}");
+    };
+    assert!(
+        publication.many,
+        "2,000 created rows are over the listed bound"
+    );
+
+    let mut runtime = resident.unwrap();
+    let window = collection_window(&mut runtime, &collection, 0, 256);
+    assert_eq!(window.total_rows, 2_000);
+    assert_eq!(window.rows.len(), 256);
+    let first = &window.rows[0];
+    for (column, field) in fields.iter().enumerate() {
+        let Some(StoredValueProjection::Number { value }) = &projected(first, field).stored else {
+            panic!("the first pasted row has no {field} value");
+        };
+        assert_eq!(
+            *value,
+            1_000_000.0 + f64::from(u32::try_from(column).expect("bounded columns"))
+        );
+    }
+    assert!(
+        window
+            .rows
+            .iter()
+            .all(|row| row.fields.iter().all(|field| field.stored.is_some())),
+        "every pasted row carries every pasted value"
+    );
+
+    let before_undo = revision(&runtime);
+    history(&mut runtime, false);
+    assert_ne!(revision(&runtime), before_undo);
+    let emptied = collection_window(&mut runtime, &collection, 0, 256);
+    assert_eq!(emptied.total_rows, 0);
+    assert!(emptied.rows.is_empty(), "undo empties the pasted table");
+}
+
+#[test]
+fn an_ordinary_session_refuses_a_working_size_paste() {
+    let rows = (0..2_000)
+        .map(|row| {
+            (0..5)
+                .map(|column| PasteCellInput::Text(format!("{}", 1_000_000 + row * 5 + column)))
+                .collect()
+        })
+        .collect::<Vec<Vec<PasteCellInput>>>();
+    let request = paste_request("tracker", "task", rows, "resident/0");
+    let input = serde_json::to_vec(&request).unwrap();
+    assert!(input.len() > 65_536);
+    let mut ordinary = Some(DesignerRuntime::tracker(OTHER_OCCURRENCE).unwrap());
+    let reply = decode_wire(&process_wire_request(&mut ordinary, &input));
+    let DesignerWireReply::Error { error } = reply else {
+        panic!("an ordinary session refuses the paste, got {reply:?}");
+    };
+    assert_eq!(error.code, "request_too_large");
+    assert_eq!(
+        error.message,
+        "The Designer request exceeds the private 65536-byte bridge limit."
+    );
+}
+
+#[test]
+fn the_working_wire_limit_names_itself_and_changes_nothing() {
+    let mut resident =
+        Some(DesignerRuntime::from_document_working_size(text_grid(1, 1), OCCURRENCE).unwrap());
+    let before = revision(resident.as_ref().unwrap());
+    let input = vec![b'x'; super::MAX_WORKING_WIRE_REQUEST_BYTES + 1];
+    let reply = decode_wire(&process_wire_request(&mut resident, &input));
+    let DesignerWireReply::Error { error } = reply else {
+        panic!("a request over the working wire limit refuses, got {reply:?}");
+    };
+    assert_eq!(error.code, "request_too_large");
+    assert!(
+        error.message.contains("67108864"),
+        "unexpected message: {}",
+        error.message
+    );
+    assert_eq!(revision(resident.as_ref().unwrap()), before);
+}
+
+#[test]
+fn a_paste_past_the_working_limits_refuses_and_changes_nothing() {
+    let (runtime, collection, fields) = blank_working_table(OCCURRENCE, 1);
+    let mut resident = Some(runtime);
+    let before = revision(resident.as_ref().unwrap());
+    let rows = (0..10_001)
+        .map(|_| vec![PasteCellInput::Text("1".to_owned())])
+        .collect::<Vec<Vec<PasteCellInput>>>();
+    let request = paste_request(
+        &collection,
+        &fields[0],
+        rows,
+        resident.as_ref().unwrap().current_revision(),
+    );
+    let reply = decode_wire(&process_wire_request(
+        &mut resident,
+        &serde_json::to_vec(&request).unwrap(),
+    ));
+    let DesignerWireReply::Error { error } = reply else {
+        panic!("a paste past the row limit refuses, got {reply:?}");
+    };
+    assert_wire_capacity(&error, CapacityLimit::TableRows, 10_000, 10_001);
+    assert_eq!(revision(resident.as_ref().unwrap()), before);
+
+    let (runtime, collection, fields) = blank_working_table(OTHER_OCCURRENCE, 11);
+    let mut resident = Some(runtime);
+    let before = revision(resident.as_ref().unwrap());
+    let rows = (0..9_091)
+        .map(|_| {
+            (0..11)
+                .map(|_| PasteCellInput::Text("1".to_owned()))
+                .collect()
+        })
+        .collect::<Vec<Vec<PasteCellInput>>>();
+    let request = paste_request(
+        &collection,
+        &fields[0],
+        rows,
+        resident.as_ref().unwrap().current_revision(),
+    );
+    let reply = decode_wire(&process_wire_request(
+        &mut resident,
+        &serde_json::to_vec(&request).unwrap(),
+    ));
+    let DesignerWireReply::Error { error } = reply else {
+        panic!("a paste past the cell limit refuses, got {reply:?}");
+    };
+    assert_wire_capacity(&error, CapacityLimit::PopulatedCells, 100_000, 100_001);
+    assert_eq!(revision(resident.as_ref().unwrap()), before);
 }

@@ -22,10 +22,10 @@ use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES,
     MAX_WORKING_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply, ensure_wire_reply_size,
-    inspect_project, inspect_project_working_size,
-    open_local_document, open_local_document_working_size, open_portable_ro,
-    open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
-    request_too_large_reply, verify_portable_ro,
+    inspect_project, inspect_project_working_size, open_local_document,
+    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
+    open_project, open_project_working_size, process_wire_request, request_too_large_reply,
+    verify_portable_ro,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,

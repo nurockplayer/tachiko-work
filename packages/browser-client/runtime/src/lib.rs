@@ -171,7 +171,9 @@ pub(crate) const MAX_WORKING_WIRE_REQUEST_BYTES: usize = MAX_PROJECT_TRANSFER_BY
 pub(crate) fn wire_request_limit(runtime: Option<&DesignerRuntime>) -> usize {
     match runtime.map(|runtime| runtime.profile) {
         Some(SessionProfile::WorkingSize) => MAX_WORKING_WIRE_REQUEST_BYTES,
-        Some(SessionProfile::Ordinary | SessionProfile::TextCapacity) | None => MAX_WIRE_REQUEST_BYTES,
+        Some(SessionProfile::Ordinary | SessionProfile::TextCapacity) | None => {
+            MAX_WIRE_REQUEST_BYTES
+        }
     }
 }
 const DESIGNER_PRINCIPAL: &str = "designer-human";
@@ -6980,74 +6982,72 @@ impl DesignerRuntime {
         let mut seen = BTreeSet::new();
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
-        {
-            let mut specs: BTreeMap<&EntityId, &CollectionSpec> = BTreeMap::new();
-            for spec in self.collection_specs.values() {
-                for entity in &spec.entities {
-                    specs.entry(entity).or_insert(spec);
-                }
+        let mut specs: BTreeMap<&EntityId, &CollectionSpec> = BTreeMap::new();
+        for spec in self.collection_specs.values() {
+            for entity in &spec.entities {
+                specs.entry(entity).or_insert(spec);
             }
-            for edit in edits {
-                let field = edit.target.as_field_ref();
-                if !seen.insert(field.clone()) {
-                    return Err(tracker_error("duplicate cell targets are unsupported"));
-                }
-                let spec = *specs
+        }
+        for edit in edits {
+            let field = edit.target.as_field_ref();
+            if !seen.insert(field.clone()) {
+                return Err(tracker_error("duplicate cell targets are unsupported"));
+            }
+            let spec =
+                *specs
                     .get(&field.entity)
                     .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
                         field: field.clone(),
                     })?;
-                let column = spec
-                    .columns
-                    .iter()
-                    .find(|column| column.id == field.field)
-                    .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
-                        field: field.clone(),
-                    })?;
-                let present = if let Some(snapshot) = &snapshot {
-                    snapshot.document().entities[&field.entity]
-                        .fields
-                        .contains_key(&field.field)
-                } else {
-                    self.session
-                        .query_entities(std::slice::from_ref(&field.entity))?
-                        .value()[0]
-                        .fields
-                        .contains(&field.field)
-                };
-                if (!present || matches!(edit.input, ScalarEditInput::Clear))
-                    && !spec.native_table_rows
-                {
-                    return Err(DesignerError::UnsupportedScalarEdit { field });
+            let column = spec
+                .columns
+                .iter()
+                .find(|column| column.id == field.field)
+                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                    field: field.clone(),
+                })?;
+            let present = if let Some(snapshot) = &snapshot {
+                snapshot.document().entities[&field.entity]
+                    .fields
+                    .contains_key(&field.field)
+            } else {
+                self.session
+                    .query_entities(std::slice::from_ref(&field.entity))?
+                    .value()[0]
+                    .fields
+                    .contains(&field.field)
+            };
+            if (!present || matches!(edit.input, ScalarEditInput::Clear)) && !spec.native_table_rows
+            {
+                return Err(DesignerError::UnsupportedScalarEdit { field });
+            }
+            let projection = match self.profile {
+                SessionProfile::TextCapacity if present => {
+                    Some(self.session.query_fields(std::slice::from_ref(&field))?)
                 }
-                let projection = match self.profile {
-                    SessionProfile::TextCapacity if present => {
-                        Some(self.session.query_fields(std::slice::from_ref(&field))?)
-                    }
-                    SessionProfile::TextCapacity
-                    | SessionProfile::Ordinary
-                    | SessionProfile::WorkingSize => None,
-                };
-                let old = match self.profile {
-                    SessionProfile::TextCapacity => projection
-                        .as_ref()
-                        .and_then(|query| query.value().first())
-                        .and_then(|value| value.stored_value.as_ref()),
-                    SessionProfile::Ordinary | SessionProfile::WorkingSize => snapshot
-                        .as_ref()
-                        .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
-                        .and_then(|entity| entity.fields.get(&field.field)),
-                };
-                // A formula is not a blank scalar slot.
-                if present && old.is_none() {
-                    return Err(DesignerError::UnsupportedScalarEdit { field });
-                }
-                let value = cell_edit_value(column, old, &edit.input, &field)?;
-                if value.as_ref() != old {
-                    let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
-                    forward.push(command);
-                    inverse.extend(undo);
-                }
+                SessionProfile::TextCapacity
+                | SessionProfile::Ordinary
+                | SessionProfile::WorkingSize => None,
+            };
+            let old = match self.profile {
+                SessionProfile::TextCapacity => projection
+                    .as_ref()
+                    .and_then(|query| query.value().first())
+                    .and_then(|value| value.stored_value.as_ref()),
+                SessionProfile::Ordinary | SessionProfile::WorkingSize => snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
+                    .and_then(|entity| entity.fields.get(&field.field)),
+            };
+            // A formula is not a blank scalar slot.
+            if present && old.is_none() {
+                return Err(DesignerError::UnsupportedScalarEdit { field });
+            }
+            let value = cell_edit_value(column, old, &edit.input, &field)?;
+            if value.as_ref() != old {
+                let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
+                forward.push(command);
+                inverse.extend(undo);
             }
         }
         self.record_edit(expected, forward, inverse)
