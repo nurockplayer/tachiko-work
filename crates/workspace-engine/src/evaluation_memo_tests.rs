@@ -701,7 +701,7 @@ fn propose_with(
     document: &Document,
     revision: &str,
     body: SemanticPatchBody,
-    prepared: &crate::PreparedEvaluation,
+    prepared: &crate::PreparedEvaluation<'_>,
 ) -> Result<SemanticPatch, PatchLifecycleError> {
     lifecycle.propose_prepared(
         &"scope".into(),
@@ -1807,7 +1807,7 @@ fn acceptance_cases() -> Vec<(&'static str, Document, SemanticPatchBody)> {
                 schema: "s".into(),
                 field: "f".into(),
                 constraint: FieldConstraint::TextLiteralSet {
-                    values: vec!["old".into(), "new".into()],
+                    values: vec!["new".into(), "old".into()],
                 },
             }),
         ),
@@ -1989,7 +1989,7 @@ fn prepared_v2_keeps_refusing_an_edit_that_repairs_its_base() {
     let (_, refused_base_projection) = assert_prepared_matches_unprepared(
         &unprojectable_document(),
         SemanticPatchBody::command(SemanticCommand::RenameSchemaField {
-            schema: "s".into(),
+            schema: "t".into(),
             field: "input".into(),
             key: "i".into(),
         }),
@@ -2085,4 +2085,53 @@ fn the_prepared_v2_path_reuses_every_calculation() {
         "the unprepared path validates both documents and records its base"
     );
     assert_same_evaluation(&plain_lifecycle, &prepared_lifecycle);
+}
+
+/// Revision tokens repeat across sessions, so a prepared evaluation from a
+/// session holding another document, with the same candidate and token, must
+/// not supply this document's base results. On both evidence profiles.
+#[test]
+fn a_prepared_evaluation_from_another_base_document_is_ignored() {
+    let body = set_g_number(3.0);
+    let mut other_base = formula_document();
+    other_base
+        .entities
+        .get_mut("e1")
+        .unwrap()
+        .fields
+        .insert("g".into(), Value::Number(Number::new(7.0).unwrap()));
+    assert_ne!(other_base, formula_document());
+    for lifecycle in [formula_lifecycle as fn() -> PatchLifecycle, v2_lifecycle] {
+        let document = formula_document();
+        let candidate = lifecycle().plan_commands(&document, &body).unwrap().0;
+        assert_eq!(
+            candidate,
+            lifecycle().plan_commands(&other_base, &body).unwrap().0
+        );
+        let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+        let other_session = ResidentWorkspaceSession::new("scope".into(), other_base.clone());
+        let revision = session.revision().clone();
+        assert_eq!(&revision, other_session.revision());
+
+        let prepared = other_session.prepare_evaluation(candidate);
+        evaluation_counters::reset();
+        let mut reused = lifecycle();
+        propose_with(
+            &mut reused,
+            &document,
+            revision.as_str(),
+            body.clone(),
+            &prepared,
+        )
+        .unwrap();
+        assert_ne!(
+            evaluation_counters::counts(),
+            (0, 0),
+            "the other session's results must not be reused"
+        );
+
+        let mut plain = lifecycle();
+        propose_plain(&mut plain, &document, revision.as_str(), body.clone()).unwrap();
+        assert_same_evaluation(&plain, &reused);
+    }
 }
