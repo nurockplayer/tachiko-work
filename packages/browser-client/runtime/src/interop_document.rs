@@ -922,9 +922,7 @@ fn import_workbook_candidate(
                 "Text capacity requires the complete original source profile",
             ));
         }
-        SessionProfile::TextCapacity
-        | SessionProfile::Ordinary
-        | SessionProfile::WorkingSize => {}
+        SessionProfile::TextCapacity | SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
     }
     normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
     validate_import_metadata_for_profile(
@@ -946,7 +944,9 @@ fn finish_import(
     // and bound formulas. Reuse the same representation proof as saved-project
     // inspection and export before exposing or installing this occurrence.
     let promote = match runtime.profile {
-        SessionProfile::Ordinary => super::interop_adapter::text_capacity_shape(workbook),
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {
+            super::interop_adapter::text_capacity_shape(workbook)
+        }
         SessionProfile::TextCapacity => false,
     };
     let exported = match runtime.export_workbook(runtime.current_revision(), &metadata) {
@@ -975,7 +975,7 @@ fn finish_import(
             super::interop_adapter::export_csv_for_profile(&exported.sheets[0], profile)
                 .map_err(interop_admission_error)?;
         }
-        SessionProfile::Ordinary => {}
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
     }
     drop(exported);
     let bootstrap = runtime.bootstrap_projection();
@@ -997,7 +997,7 @@ fn finish_import(
                 super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
             )?;
         }
-        SessionProfile::Ordinary => {
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {
             if let Err(original_error) = super::ensure_complete_projection_size(
                 "imported",
                 &projection,
@@ -1277,7 +1277,7 @@ fn normalize_import_date_styles(
     profile: SessionProfile,
 ) {
     match profile {
-        SessionProfile::Ordinary => return,
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => return,
         SessionProfile::TextCapacity => {}
     }
     // The capacity writer supplies this Date format; only the admitted
@@ -2464,7 +2464,7 @@ fn current_import_metadata(
             || sheet.columns.len()
                 > match profile {
                     SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_COLUMNS,
-                    SessionProfile::Ordinary => MAX_COLUMNS,
+                    SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_COLUMNS,
                 }
         {
             return Err(refuse(
@@ -2622,7 +2622,7 @@ fn validate_historical_envelope(
         metadata,
         match profile {
             SessionProfile::TextCapacity => 3 * 1024 * 1024,
-            SessionProfile::Ordinary => super::MAX_PROJECTION_BYTES,
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
         },
     )
     .map_err(|error| refuse("workbook", &error.to_string()))?;
@@ -2668,12 +2668,12 @@ fn reconcile_import_rows(
         || sheet.columns.len()
             > match profile {
                 SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_COLUMNS,
-                SessionProfile::Ordinary => MAX_COLUMNS,
+                SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_COLUMNS,
             }
         || sheet.rows.len()
             > match profile {
                 SessionProfile::TextCapacity => super::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-                SessionProfile::Ordinary => MAX_DATA_ROWS,
+                SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_DATA_ROWS,
             }
     {
         return Err(refuse(
@@ -2845,13 +2845,13 @@ fn validate_exact_import_metadata(
             || sheet.columns.len()
                 > match profile {
                     SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_COLUMNS,
-                    SessionProfile::Ordinary => MAX_COLUMNS,
+                    SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_COLUMNS,
                 }
             || sheet.columns.len() != schema.fields.len()
             || sheet.rows.len()
                 > match profile {
                     SessionProfile::TextCapacity => super::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-                    SessionProfile::Ordinary => MAX_DATA_ROWS,
+                    SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_DATA_ROWS,
                 }
         {
             return Err(tracker_error(
@@ -2934,12 +2934,12 @@ fn validate_metadata_envelope(
         metadata,
         match profile {
             SessionProfile::TextCapacity => 3 * 1024 * 1024,
-            SessionProfile::Ordinary => super::MAX_PROJECTION_BYTES,
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
         },
     )?;
     match profile {
         SessionProfile::TextCapacity => validate_capacity_metadata(document, metadata)?,
-        SessionProfile::Ordinary => {}
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
     }
     Ok(())
 }
@@ -3031,7 +3031,7 @@ impl DesignerRuntime {
     pub(crate) fn imported_output_profile(&self) -> OutputProfile {
         match self.profile {
             SessionProfile::TextCapacity => OutputProfile::TextCapacity,
-            SessionProfile::Ordinary => OutputProfile::Shared,
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => OutputProfile::Shared,
         }
     }
 
@@ -3052,7 +3052,7 @@ impl DesignerRuntime {
                 validate_capacity_metadata(snapshot.document(), &metadata)
                     .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
             }
-            SessionProfile::Ordinary => {}
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
         }
         let profile = self.imported_output_profile();
         let mut workbook = self

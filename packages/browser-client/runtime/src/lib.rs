@@ -2906,11 +2906,7 @@ impl DesignerRuntime {
         document: Document,
         occurrence_id: &str,
     ) -> Result<Self, DesignerError> {
-        Self::from_document_profile_baseline(
-            document,
-            occurrence_id,
-            SessionProfile::WorkingSize,
-        )
+        Self::from_document_profile_baseline(document, occurrence_id, SessionProfile::WorkingSize)
     }
 
     fn from_document_profile_with_opened(
@@ -3003,16 +2999,17 @@ impl DesignerRuntime {
             OPENED_WINDOW_ROWS,
             true,
         )?;
-        ensure_complete_projection_size(
-            "opened window",
-            &window,
-            MAX_TEXT_CAPACITY_PROJECTION_BYTES,
-        )?;
-        Ok(OpenedWindowProjection {
+        let opened = OpenedWindowProjection {
             profile: DesignerProfile::WorkingSize,
             bootstrap,
             window,
-        })
+        };
+        ensure_complete_projection_size(
+            "opened window",
+            &opened,
+            MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+        )?;
+        Ok(opened)
     }
 
     /// Execute one private adapter request without exposing the canonical document.
@@ -6155,10 +6152,7 @@ impl DesignerRuntime {
                     // Working size re-proves only its own item bounds; it never
                     // reconstructs the occurrence or its complete projection.
                     (_, SessionProfile::WorkingSize) => {
-                        ensure_document_profile(
-                            prepared.document(),
-                            SessionProfile::WorkingSize,
-                        )?;
+                        ensure_document_profile(prepared.document(), SessionProfile::WorkingSize)?;
                     }
                     (true, SessionProfile::Ordinary) => {
                         Self::from_document_profile_with_opened(
@@ -8476,9 +8470,7 @@ fn decode_project_files(
             let mut profile_error = None;
             let admitted = CanonicalRoProjectV3::try_from_files_with_profile(files, |document| {
                 let gate = match profile {
-                    DecodeProfile::Admitted => {
-                        ensure_v3_document_profile(document)
-                    }
+                    DecodeProfile::Admitted => ensure_v3_document_profile(document),
                     DecodeProfile::WorkingSize => {
                         ensure_document_profile(document, SessionProfile::WorkingSize)
                     }
@@ -9466,11 +9458,7 @@ fn ensure_document_strings(
             "schema map identity",
             schema_id.as_str(),
         )?;
-        ensure_profile_string(
-            profile_string_bytes,
-            "schema identity",
-            schema.id.as_str(),
-        )?;
+        ensure_profile_string(profile_string_bytes, "schema identity", schema.id.as_str())?;
         ensure_profile_string(profile_string_bytes, "schema key", schema.key.as_str())?;
         if let Some(name) = &schema.display_name {
             ensure_profile_string(profile_string_bytes, "schema display name", name)?;
@@ -9481,11 +9469,7 @@ fn ensure_document_strings(
                 "field map identity",
                 field_id.as_str(),
             )?;
-            ensure_profile_string(
-                profile_string_bytes,
-                "field identity",
-                field.id.as_str(),
-            )?;
+            ensure_profile_string(profile_string_bytes, "field identity", field.id.as_str())?;
             ensure_profile_string(profile_string_bytes, "field key", field.key.as_str())?;
             if let Some(name) = &field.display_name {
                 ensure_profile_string(profile_string_bytes, "field display name", name)?;
@@ -9553,9 +9537,8 @@ fn ensure_cheap_entity_profile(
                         }
                         Some(_) | None => {}
                     }
-                    profile_string_bytes.stored_text = profile_string_bytes
-                        .stored_text
-                        .saturating_add(text.len());
+                    profile_string_bytes.stored_text =
+                        profile_string_bytes.stored_text.saturating_add(text.len());
                     match profile_string_bytes.stored_text_limit {
                         Some(limit) if profile_string_bytes.stored_text > limit => {
                             return Err(DesignerError::UnsupportedProject {
