@@ -10,6 +10,7 @@ pub use translate_a1::{
 };
 
 mod capacity;
+use capacity::SessionProfile;
 pub use capacity::{
     CapacityExceeded, CapacityLimit, CapacityLimits, CapacityProjection, CapacityUsage,
     TableCapacityUsage,
@@ -2074,7 +2075,7 @@ const _: () = {
 
 /// One Rust-authoritative occurrence composed for the experimental browser client.
 pub struct DesignerRuntime {
-    text_capacity: bool,
+    profile: SessionProfile,
     capacity_usage: CapacityUsage,
     title: String,
     document_scope: DocumentScopeId,
@@ -2842,37 +2843,48 @@ impl DesignerRuntime {
         // requires more than the ordinary row cap. Try the ordinary profile
         // first in both cases.
         if is_text_capacity_eligible_document(&document) {
-            if let Ok(runtime) = Self::from_document_profile(document.clone(), occurrence_id, false)
-            {
+            if let Ok(runtime) = Self::from_document_profile(
+                document.clone(),
+                occurrence_id,
+                SessionProfile::Ordinary,
+            ) {
                 return Ok(runtime);
             }
-            return Self::from_document_profile(document, occurrence_id, true);
+            return Self::from_document_profile(
+                document,
+                occurrence_id,
+                SessionProfile::TextCapacity,
+            );
         }
-        let (runtime, opened) =
-            Self::from_document_profile_with_opened(document, occurrence_id, false)?;
-        ensure_opened_projection_size(&opened, false)?;
+        let (runtime, opened) = Self::from_document_profile_with_opened(
+            document,
+            occurrence_id,
+            SessionProfile::Ordinary,
+        )?;
+        ensure_opened_projection_size(&opened, SessionProfile::Ordinary)?;
         Ok(runtime)
     }
 
     fn from_document_profile(
         document: Document,
         occurrence_id: &str,
-        text_capacity: bool,
+        profile: SessionProfile,
     ) -> Result<Self, DesignerError> {
         let (runtime, opened) =
-            Self::from_document_profile_with_opened(document, occurrence_id, text_capacity)?;
-        ensure_opened_wire_projection_size(&opened, text_capacity)?;
+            Self::from_document_profile_with_opened(document, occurrence_id, profile)?;
+        ensure_opened_wire_projection_size(&opened, profile)?;
         Ok(runtime)
     }
 
     fn from_document_profile_with_opened(
         document: Document,
         occurrence_id: &str,
-        text_capacity: bool,
+        profile: SessionProfile,
     ) -> Result<(Self, OpenedProjection), DesignerError> {
-        ensure_document_profile(&document, text_capacity)?;
-        if text_capacity {
-            ensure_capacity_document_encoding(&document)?;
+        ensure_document_profile(&document, profile)?;
+        match profile {
+            SessionProfile::TextCapacity => ensure_capacity_document_encoding(&document)?,
+            SessionProfile::Ordinary => {}
         }
         validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
         let collection_specs = collection_specs(&document);
@@ -2888,7 +2900,7 @@ impl DesignerRuntime {
             &default_collection,
             &collections,
             &collection_specs,
-            text_capacity,
+            profile,
         )?;
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
@@ -2896,7 +2908,7 @@ impl DesignerRuntime {
         let capacity_usage = CapacityUsage::measure(&document);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
-            text_capacity,
+            profile,
             capacity_usage,
             title,
             document_scope,
@@ -2942,7 +2954,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table("tracker")?,
                 };
-                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
+                ensure_opened_wire_projection_size(&opened, candidate.profile)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -2952,7 +2964,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
                 };
-                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
+                ensure_opened_wire_projection_size(&opened, candidate.profile)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -2966,7 +2978,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
                 };
-                ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
+                ensure_opened_wire_projection_size(&opened, candidate.profile)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -3138,7 +3150,7 @@ impl DesignerRuntime {
                 Ok(DesignerResponse::Capacity(CapacityProjection {
                     revision: self.current_revision().to_owned(),
                     usage: self.capacity_usage.clone(),
-                    limits: capacity::limits_for_profile(self.text_capacity),
+                    limits: capacity::limits_for_profile(self.profile),
                 }))
             }
             DesignerRequest::QueryTable { collection } => Ok(DesignerResponse::Table(
@@ -3318,16 +3330,16 @@ impl DesignerRuntime {
             revision: self.session.revision().as_str().to_owned(),
             default_collection: self.default_collection.clone(),
             collections: self.collections.clone(),
-            keyed_grouped_sum_definition_ids: if self.text_capacity {
-                Vec::new()
-            } else {
-                self.session
+            keyed_grouped_sum_definition_ids: match self.profile {
+                SessionProfile::TextCapacity => Vec::new(),
+                SessionProfile::Ordinary => self
+                    .session
                     .export_snapshot()
                     .document()
                     .keyed_grouped_sum_definitions
                     .keys()
                     .map(ToString::to_string)
-                    .collect()
+                    .collect(),
             },
         }
     }
@@ -3447,8 +3459,12 @@ impl DesignerRuntime {
             // publication. Its fixed scalar columns have no formulas, so the
             // generic all-editable-fields refresh is neither reachable nor a
             // valid capacity model for this profile.
-            if table.tracker_profile == Some(true) || self.text_capacity {
+            if table.tracker_profile == Some(true) {
                 continue;
+            }
+            match self.profile {
+                SessionProfile::TextCapacity => continue,
+                SessionProfile::Ordinary => {}
             }
             post_edit_fields.extend(
                 table
@@ -3669,14 +3685,13 @@ impl DesignerRuntime {
 
     fn query_table(&self, collection: &str) -> Result<TableProjection, DesignerError> {
         let projection = self.build_table_projection(collection)?;
-        if self.text_capacity {
-            ensure_complete_projection_size(
+        match self.profile {
+            SessionProfile::TextCapacity => ensure_complete_projection_size(
                 "table",
                 &projection,
                 MAX_TEXT_CAPACITY_PROJECTION_BYTES,
-            )?;
-        } else {
-            ensure_table_projection_size(&projection)?;
+            )?,
+            SessionProfile::Ordinary => ensure_table_projection_size(&projection)?,
         }
         Ok(projection)
     }
@@ -3701,43 +3716,46 @@ impl DesignerRuntime {
     ) -> Result<TableProjection, DesignerError> {
         let spec = self.collection_spec(collection)?;
         let entities = self.session.query_entities(&spec.entities)?;
-        let rows = if self.text_capacity {
-            self.build_capacity_table_rows(spec, entities.value())?
-        } else {
-            let targets = entities
-                .value()
-                .iter()
-                .flat_map(|entity| {
-                    spec.columns
-                        .iter()
-                        .filter(|column| entity.fields.contains(&column.id))
-                        .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
-                })
-                .collect::<Vec<_>>();
-            let field_query = self.session.query_fields(&targets)?;
-            let fields = field_query
-                .value()
-                .iter()
-                .map(|field| (field.field.clone(), self.project_field(field)))
-                .collect::<BTreeMap<_, _>>();
-            entities
-                .value()
-                .iter()
-                .map(|entity| RowProjection {
-                    id: entity.id.to_string(),
-                    key: entity.key.to_string(),
-                    position: None,
-                    blank_fields: blank_field_ids(entity, spec),
-                    fields: spec
-                        .columns
-                        .iter()
-                        .filter_map(|column| {
-                            let target = FieldRef::new(entity.id.clone(), column.id.clone());
-                            fields.get(&target).cloned()
-                        })
-                        .collect(),
-                })
-                .collect()
+        let rows = match self.profile {
+            SessionProfile::TextCapacity => {
+                self.build_capacity_table_rows(spec, entities.value())?
+            }
+            SessionProfile::Ordinary => {
+                let targets = entities
+                    .value()
+                    .iter()
+                    .flat_map(|entity| {
+                        spec.columns
+                            .iter()
+                            .filter(|column| entity.fields.contains(&column.id))
+                            .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                let field_query = self.session.query_fields(&targets)?;
+                let fields = field_query
+                    .value()
+                    .iter()
+                    .map(|field| (field.field.clone(), self.project_field(field)))
+                    .collect::<BTreeMap<_, _>>();
+                entities
+                    .value()
+                    .iter()
+                    .map(|entity| RowProjection {
+                        id: entity.id.to_string(),
+                        key: entity.key.to_string(),
+                        position: None,
+                        blank_fields: blank_field_ids(entity, spec),
+                        fields: spec
+                            .columns
+                            .iter()
+                            .filter_map(|column| {
+                                let target = FieldRef::new(entity.id.clone(), column.id.clone());
+                                fields.get(&target).cloned()
+                            })
+                            .collect(),
+                    })
+                    .collect()
+            }
         };
         let column_totals = column_totals(spec, &rows);
         let projection = TableProjection {
@@ -3973,7 +3991,7 @@ impl DesignerRuntime {
             (false, true) => Ordering::Greater,
             (false, false) => display_text::natural_cmp(left, right),
         });
-        let maximum = table_window_byte_limit(self.text_capacity);
+        let maximum = table_window_byte_limit(self.profile);
         let mut used = TABLE_WINDOW_ENVELOPE_BYTES;
         let mut out = Vec::new();
         let mut truncated = false;
@@ -4490,7 +4508,7 @@ impl DesignerRuntime {
                 .len()
                 + 1;
             *used = used.saturating_add(row_bytes);
-            let maximum = table_window_byte_limit(self.text_capacity);
+            let maximum = table_window_byte_limit(self.profile);
             if *used > maximum {
                 return Err(DesignerError::ProjectionTooLarge {
                     actual: *used,
@@ -5336,7 +5354,7 @@ impl DesignerRuntime {
         let target_key = allocate_key(name, "table", &occupied)?;
         capacity::check_limit(
             CapacityLimit::TotalEntities,
-            capacity::limits_for_profile(self.text_capacity).total_entities,
+            capacity::limits_for_profile(self.profile).total_entities,
             document
                 .entities
                 .len()
@@ -5628,13 +5646,9 @@ impl DesignerRuntime {
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
         if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(
-                candidate,
-                PREFLIGHT_OCCURRENCE,
-                self.text_capacity,
-            )?;
+            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
         } else {
-            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
         }
         let execute_now = self.clock.tick();
         let invalidation = {
@@ -5703,13 +5717,9 @@ impl DesignerRuntime {
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity.fields.insert(field.field, Value::Number(value));
         if self.opened_from_v3 {
-            Self::from_document_profile_with_opened(
-                candidate,
-                PREFLIGHT_OCCURRENCE,
-                self.text_capacity,
-            )?;
+            Self::from_document_profile_with_opened(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
         } else {
-            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.text_capacity)?;
+            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
         }
         let execute_now = self.clock.tick();
         let invalidation = {
@@ -6030,7 +6040,7 @@ impl DesignerRuntime {
             }
         }
         let capacity_usage =
-            capacity::check_document(&candidate, capacity::limits_for_profile(self.text_capacity))?;
+            capacity::check_document(&candidate, capacity::limits_for_profile(self.profile))?;
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -6046,14 +6056,15 @@ impl DesignerRuntime {
                 // A v3-origin text-capacity occurrence edits like any other
                 // capacity occurrence; only strict v3 origins keep the strict
                 // preflight.
-                if self.opened_from_v3 && !self.text_capacity {
-                    Self::from_document_profile_with_opened(
-                        prepared.document().clone(),
-                        PREFLIGHT_OCCURRENCE,
-                        false,
-                    )?;
-                } else if self.text_capacity {
-                    match commands.as_slice() {
+                match (self.opened_from_v3, self.profile) {
+                    (true, SessionProfile::Ordinary) => {
+                        Self::from_document_profile_with_opened(
+                            prepared.document().clone(),
+                            PREFLIGHT_OCCURRENCE,
+                            SessionProfile::Ordinary,
+                        )?;
+                    }
+                    (_, SessionProfile::TextCapacity) => match commands.as_slice() {
                         [
                             SemanticCommand::SetFieldValue {
                                 field,
@@ -6074,16 +6085,17 @@ impl DesignerRuntime {
                             Self::from_document_profile(
                                 prepared.document().clone(),
                                 PREFLIGHT_OCCURRENCE,
-                                true,
+                                SessionProfile::TextCapacity,
                             )?;
                         }
+                    },
+                    (_, SessionProfile::Ordinary) => {
+                        Self::from_document_profile(
+                            prepared.document().clone(),
+                            PREFLIGHT_OCCURRENCE,
+                            SessionProfile::Ordinary,
+                        )?;
                     }
-                } else {
-                    Self::from_document_profile(
-                        prepared.document().clone(),
-                        PREFLIGHT_OCCURRENCE,
-                        false,
-                    )?;
                 }
             }
             // Preflight only upgrades a constraint mismatch into its typed
@@ -6099,17 +6111,21 @@ impl DesignerRuntime {
             }
             PreparedVerdict::InvalidDefinitions => {}
         }
-        let capacity_text_edit = self.text_capacity
-            && !commands.is_empty()
-            && commands.iter().all(|command| {
-                matches!(
-                    command,
-                    SemanticCommand::SetFieldValue {
-                        value: Value::Text(_),
-                        ..
-                    } | SemanticCommand::UnsetField { .. }
-                )
-            });
+        let capacity_text_edit = match self.profile {
+            SessionProfile::TextCapacity => {
+                !commands.is_empty()
+                    && commands.iter().all(|command| {
+                        matches!(
+                            command,
+                            SemanticCommand::SetFieldValue {
+                                value: Value::Text(_),
+                                ..
+                            } | SemanticCommand::UnsetField { .. }
+                        )
+                    })
+            }
+            SessionProfile::Ordinary => false,
+        };
         // Replacing an existing stored Number, Text, Boolean or Date with another
         // of the same kind keeps collection shape, references and formula text
         // unchanged, so the structural caches stay valid.
@@ -6264,10 +6280,9 @@ impl DesignerRuntime {
     }
 
     fn max_table_rows(&self) -> usize {
-        if self.text_capacity {
-            interop_adapter::MAX_TEXT_CAPACITY_ROWS
-        } else {
-            MAX_TABLE_ROWS
+        match self.profile {
+            SessionProfile::TextCapacity => interop_adapter::MAX_TEXT_CAPACITY_ROWS,
+            SessionProfile::Ordinary => MAX_TABLE_ROWS,
         }
     }
 
@@ -6550,7 +6565,10 @@ impl DesignerRuntime {
         if edits.is_empty() || edits.len() > MAX_FIELD_QUERY_TARGETS {
             return Err(tracker_error("the edit range is empty or too large"));
         }
-        let snapshot = (!self.text_capacity).then(|| self.session.export_snapshot());
+        let snapshot = match self.profile {
+            SessionProfile::Ordinary => Some(self.session.export_snapshot()),
+            SessionProfile::TextCapacity => None,
+        };
         let mut seen = BTreeSet::new();
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
@@ -6588,21 +6606,21 @@ impl DesignerRuntime {
             {
                 return Err(DesignerError::UnsupportedScalarEdit { field });
             }
-            let projection = if self.text_capacity && present {
-                Some(self.session.query_fields(std::slice::from_ref(&field))?)
-            } else {
-                None
+            let projection = match self.profile {
+                SessionProfile::TextCapacity if present => {
+                    Some(self.session.query_fields(std::slice::from_ref(&field))?)
+                }
+                SessionProfile::TextCapacity | SessionProfile::Ordinary => None,
             };
-            let old = if self.text_capacity {
-                projection
+            let old = match self.profile {
+                SessionProfile::TextCapacity => projection
                     .as_ref()
                     .and_then(|query| query.value().first())
-                    .and_then(|value| value.stored_value.as_ref())
-            } else {
-                snapshot
+                    .and_then(|value| value.stored_value.as_ref()),
+                SessionProfile::Ordinary => snapshot
                     .as_ref()
                     .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
-                    .and_then(|entity| entity.fields.get(&field.field))
+                    .and_then(|entity| entity.fields.get(&field.field)),
             };
             // A formula is not a blank scalar slot.
             if present && old.is_none() {
@@ -7666,26 +7684,22 @@ fn admit_v3_document(
     document: Document,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
-    let admit = |document: Document, text_capacity: bool| {
-        let (candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
-            document,
-            occurrence_id,
-            text_capacity,
-        )?;
-        ensure_opened_projection_size(&opened, text_capacity)?;
+    let admit = |document: Document, profile: SessionProfile| {
+        let (candidate, opened) =
+            DesignerRuntime::from_document_profile_with_opened(document, occurrence_id, profile)?;
+        ensure_opened_projection_size(&opened, profile)?;
         Ok((candidate, opened))
     };
     if !is_text_capacity_eligible_document(&document) {
-        return admit(document, false);
+        return admit(document, SessionProfile::Ordinary);
     }
-    match admit(document.clone(), false) {
+    match admit(document.clone(), SessionProfile::Ordinary) {
         Ok(admitted) => Ok(admitted),
         Err(DesignerError::InvalidOccurrenceIdentity) => {
             Err(DesignerError::InvalidOccurrenceIdentity)
         }
-        Err(strict) => {
-            admit(document, true).map_err(|capacity| beyond_both_profiles(strict, Some(capacity)))
-        }
+        Err(strict) => admit(document, SessionProfile::TextCapacity)
+            .map_err(|capacity| beyond_both_profiles(strict, Some(capacity))),
     }
 }
 
@@ -7704,14 +7718,17 @@ pub(crate) fn admit_imported_project(
         // gate as the legacy capacity retry below.
         let gate = document.clone();
         let (candidate, opened) = admit_v3_document(document, occurrence_id)?;
-        if candidate.text_capacity {
-            interop_document::validate_saved_open_capacity_metadata(&gate, metadata)?;
+        match candidate.profile {
+            SessionProfile::TextCapacity => {
+                interop_document::validate_saved_open_capacity_metadata(&gate, metadata)?;
+            }
+            SessionProfile::Ordinary => {}
         }
         let mut candidate = candidate;
         candidate.opened_from_v3 = true;
         candidate.presentation = presentation;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
+        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         return Ok((candidate, opened));
     }
 
@@ -7719,9 +7736,9 @@ pub(crate) fn admit_imported_project(
         let (candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
             document.clone(),
             occurrence_id,
-            false,
+            SessionProfile::Ordinary,
         )?;
-        ensure_opened_wire_projection_size(&opened, false)?;
+        ensure_opened_wire_projection_size(&opened, SessionProfile::Ordinary)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
         Ok((candidate, opened))
     })();
@@ -7739,10 +7756,13 @@ pub(crate) fn admit_imported_project(
             // both pass may an eligible non-v3 candidate retry the complete
             // admission in the enlarged profile.
             interop_document::validate_saved_open_capacity_metadata(&document, metadata)?;
-            let (mut candidate, opened) =
-                DesignerRuntime::from_document_profile_with_opened(document, occurrence_id, true)?;
+            let (mut candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
+                document,
+                occurrence_id,
+                SessionProfile::TextCapacity,
+            )?;
             interop_document::validate_saved_open_closure(&candidate, metadata)?;
-            ensure_opened_wire_projection_size(&opened, true)?;
+            ensure_opened_wire_projection_size(&opened, SessionProfile::TextCapacity)?;
             candidate.opened_from_v3 = false;
             candidate.presentation = presentation;
             Ok((candidate, opened))
@@ -7759,7 +7779,7 @@ fn admit_document(
     let bootstrap = candidate.bootstrap_projection();
     let table = candidate.query_table(&bootstrap.default_collection)?;
     let opened = OpenedProjection { bootstrap, table };
-    ensure_opened_projection_size(&opened, candidate.text_capacity)?;
+    ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
 }
 
@@ -7872,10 +7892,11 @@ fn ensure_table_projection_size(table: &TableProjection) -> Result<(), DesignerE
 
 fn ensure_opened_projection_size(
     opened: &OpenedProjection,
-    text_capacity: bool,
+    profile: SessionProfile,
 ) -> Result<(), DesignerError> {
-    if text_capacity {
-        return ensure_capacity_opened_reply(opened);
+    match profile {
+        SessionProfile::TextCapacity => return ensure_capacity_opened_reply(opened),
+        SessionProfile::Ordinary => {}
     }
     ensure_projection_size_with_limit(
         opened,
@@ -7889,10 +7910,11 @@ fn ensure_opened_projection_size(
 
 fn ensure_opened_wire_projection_size(
     opened: &OpenedProjection,
-    text_capacity: bool,
+    profile: SessionProfile,
 ) -> Result<(), DesignerError> {
-    if text_capacity {
-        return ensure_capacity_opened_reply(opened);
+    match profile {
+        SessionProfile::TextCapacity => return ensure_capacity_opened_reply(opened),
+        SessionProfile::Ordinary => {}
     }
     ensure_complete_projection_size(
         "opened",
@@ -7908,17 +7930,16 @@ fn ensure_opened_wire_projection_size(
 /// A window reply keeps the byte budget of the occurrence's profile: a
 /// text-capacity document's rows may each carry long text, so a fixed 1 MiB
 /// cap would refuse windows the complete text-capacity table already admits.
-const fn table_window_byte_limit(text_capacity: bool) -> usize {
-    if text_capacity {
-        MAX_TEXT_CAPACITY_PROJECTION_BYTES
-    } else {
-        MAX_TABLE_WINDOW_BYTES
+const fn table_window_byte_limit(profile: SessionProfile) -> usize {
+    match profile {
+        SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+        SessionProfile::Ordinary => MAX_TABLE_WINDOW_BYTES,
     }
 }
 
 pub(crate) fn ensure_wire_reply_size(
     reply: &DesignerWireReply,
-    text_capacity: bool,
+    profile: SessionProfile,
 ) -> Result<(), DesignerError> {
     let maximum = match reply {
         DesignerWireReply::Ok {
@@ -7929,7 +7950,8 @@ pub(crate) fn ensure_wire_reply_size(
         } if table.tracker_profile == Some(true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
         DesignerWireReply::Ok {
             response: DesignerResponse::Fields(_) | DesignerResponse::FieldExplanation(_),
-        } => MAX_PROJECTION_BYTES,
+        }
+        | DesignerWireReply::Error { .. } => MAX_PROJECTION_BYTES,
         DesignerWireReply::Ok {
             response:
                 DesignerResponse::TableWindow(_)
@@ -7938,9 +7960,11 @@ pub(crate) fn ensure_wire_reply_size(
                 | DesignerResponse::FoundInView(_)
                 | DesignerResponse::ColumnTotals(_)
                 | DesignerResponse::GroupTotals(_),
-        } => table_window_byte_limit(text_capacity),
-        DesignerWireReply::Ok { .. } if text_capacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
-        _ => MAX_PROJECTION_BYTES,
+        } => table_window_byte_limit(profile),
+        DesignerWireReply::Ok { .. } => match profile {
+            SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+            SessionProfile::Ordinary => MAX_PROJECTION_BYTES,
+        },
     };
     ensure_projection_size_with_limit(reply, maximum)
 }
@@ -8374,7 +8398,7 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                     };
                     // New project publication is still an ordinary wire
                     // operation; prove its complete reply before replacement.
-                    ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
+                    ensure_opened_wire_projection_size(&opened, candidate.profile)?;
                     *runtime = Some(candidate);
                     Ok(DesignerResponse::Opened(Box::new(opened)))
                 });
@@ -8429,7 +8453,7 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
         &reply,
         runtime
             .as_ref()
-            .is_some_and(|runtime| runtime.text_capacity),
+            .map_or(SessionProfile::Ordinary, |runtime| runtime.profile),
     ) {
         DesignerWireReply::Error {
             error: error.failure_projection(
@@ -8900,10 +8924,10 @@ fn select_default_collection(
 }
 
 fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
-    match ensure_document_profile(document, false) {
+    match ensure_document_profile(document, SessionProfile::Ordinary) {
         Ok(()) => Ok(()),
         Err(_) if is_text_capacity_eligible_document(document) => {
-            ensure_document_profile(document, true)
+            ensure_document_profile(document, SessionProfile::TextCapacity)
         }
         Err(error) => Err(error),
     }
@@ -9114,14 +9138,14 @@ fn ensure_capacity_document_profile(document: &Document) -> Result<(), DesignerE
 /// in [`admit_v3_document`]: the strict profile, or the text-capacity profile
 /// for an eligible rectangle. A profile refusal names both limits.
 fn ensure_v3_document_profile(document: &Document) -> Result<(), DesignerError> {
-    let strict = match ensure_document_profile(document, false) {
+    let strict = match ensure_document_profile(document, SessionProfile::Ordinary) {
         Ok(()) => return Ok(()),
         Err(error) => error,
     };
     if !is_text_capacity_eligible_document(document) {
         return Err(beyond_both_profiles(strict, None));
     }
-    ensure_document_profile(document, true)
+    ensure_document_profile(document, SessionProfile::TextCapacity)
         .map_err(|capacity| beyond_both_profiles(strict, Some(capacity)))
 }
 
@@ -9147,10 +9171,14 @@ fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) 
     }
 }
 
-fn ensure_document_profile(document: &Document, text_capacity: bool) -> Result<(), DesignerError> {
-    capacity::check_document(document, capacity::limits_for_profile(text_capacity))?;
-    if text_capacity {
-        return ensure_capacity_document_profile(document);
+fn ensure_document_profile(
+    document: &Document,
+    profile: SessionProfile,
+) -> Result<(), DesignerError> {
+    capacity::check_document(document, capacity::limits_for_profile(profile))?;
+    match profile {
+        SessionProfile::TextCapacity => return ensure_capacity_document_profile(document),
+        SessionProfile::Ordinary => {}
     }
     let mut profile_string_bytes = 0usize;
     ensure_profile_string(
@@ -9376,7 +9404,7 @@ fn ensure_static_profile(
     default_collection: &str,
     collections: &[CollectionSummary],
     collection_specs: &BTreeMap<String, CollectionSpec>,
-    text_capacity: bool,
+    profile: SessionProfile,
 ) -> Result<(), DesignerError> {
     if collections.len() > MAX_COLLECTIONS {
         return Err(DesignerError::UnsupportedProject {
@@ -9394,10 +9422,9 @@ fn ensure_static_profile(
     for collection in collection_specs.values() {
         if collection.columns.len() > MAX_TABLE_FIELDS
             || collection.entities.len()
-                > if text_capacity {
-                    interop_adapter::MAX_TEXT_CAPACITY_ROWS
-                } else {
-                    MAX_TABLE_ROWS
+                > match profile {
+                    SessionProfile::TextCapacity => interop_adapter::MAX_TEXT_CAPACITY_ROWS,
+                    SessionProfile::Ordinary => MAX_TABLE_ROWS,
                 }
         {
             return Err(DesignerError::UnsupportedProject {
@@ -9444,6 +9471,14 @@ fn ensure_static_profile(
             .values()
             .next()
             .is_some_and(is_tracker_spec);
+    let affected_calculations = if native_tracker {
+        Vec::new()
+    } else {
+        match profile {
+            SessionProfile::TextCapacity => Vec::new(),
+            SessionProfile::Ordinary => fields.clone(),
+        }
+    };
     let publication = PublicationProjection {
         base_revision: "resident/18446744073709551615".to_owned(),
         resulting_revision: "resident/18446744073709551615".to_owned(),
@@ -9462,20 +9497,14 @@ fn ensure_static_profile(
             .collect(),
         entities,
         fields: fields.clone(),
-        affected_calculations: if native_tracker || text_capacity {
-            Vec::new()
-        } else {
-            fields
-        },
+        affected_calculations,
     };
     ensure_projection_size_with_limit(
         &publication,
-        if text_capacity {
-            MAX_TEXT_CAPACITY_PROJECTION_BYTES
-        } else if native_tracker {
-            MAX_NATIVE_TRACKER_PROJECTION_BYTES
-        } else {
-            MAX_PROJECTION_BYTES
+        match (profile, native_tracker) {
+            (SessionProfile::TextCapacity, _) => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+            (SessionProfile::Ordinary, true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
+            (SessionProfile::Ordinary, false) => MAX_PROJECTION_BYTES,
         },
     )
     .map_err(|error| DesignerError::UnsupportedProject {
@@ -10542,7 +10571,7 @@ mod tests {
         HistoryAction, KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
         NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId, ProposalId,
         RowInitializer, ScalarEditInput, SchemaId, SchemaKey, ScopedSemanticSubject,
-        SemanticCommand, SemanticScope, TableProjection, Value,
+        SemanticCommand, SemanticScope, SessionProfile, TableProjection, Value,
     };
 
     #[test]
@@ -10624,7 +10653,7 @@ mod tests {
         let mut runtime = DesignerRuntime::from_document_profile(
             document,
             "00000000-0000-4000-8000-000000000000",
-            true,
+            SessionProfile::TextCapacity,
         )
         .unwrap();
         // Query projection must preserve presentation order even when it is
@@ -10636,7 +10665,7 @@ mod tests {
             .columns
             .reverse();
         let capacity = runtime.build_table_projection("orders").unwrap();
-        runtime.text_capacity = false;
+        runtime.profile = SessionProfile::Ordinary;
         let ordinary = runtime.build_table_projection("orders").unwrap();
         assert_eq!(capacity, ordinary);
         assert_eq!(
@@ -10657,7 +10686,7 @@ mod tests {
             .push(EntityId::from("missing"));
         let before = runtime.session.export_snapshot();
         let ordinary_error = runtime.build_table_projection("orders").unwrap_err();
-        runtime.text_capacity = true;
+        runtime.profile = SessionProfile::TextCapacity;
         let capacity_error = runtime.build_table_projection("orders").unwrap_err();
         assert_eq!(capacity_error.to_string(), ordinary_error.to_string());
         assert_eq!(runtime.session.export_snapshot(), before);
@@ -10681,7 +10710,7 @@ mod tests {
         let mut runtime = DesignerRuntime::from_document_profile(
             document,
             "00000000-0000-4000-8000-000000000000",
-            false,
+            SessionProfile::Ordinary,
         )
         .unwrap();
         let targets = runtime
@@ -10704,7 +10733,7 @@ mod tests {
                     },
                 }],
             );
-            assert!(!runtime.text_capacity);
+            assert_eq!(runtime.profile, SessionProfile::Ordinary);
             if result.is_err() {
                 assert_eq!(runtime.current_revision(), revision);
                 assert_eq!(
@@ -10733,7 +10762,7 @@ mod tests {
         let runtime =
             DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
                 .unwrap();
-        assert!(!runtime.text_capacity);
+        assert_eq!(runtime.profile, SessionProfile::Ordinary);
     }
 
     #[test]
@@ -10751,7 +10780,7 @@ mod tests {
         let runtime = DesignerRuntime::from_document_profile(
             document,
             "00000000-0000-4000-8000-000000000000",
-            false,
+            SessionProfile::Ordinary,
         )
         .unwrap();
         let mut table = runtime.query_table("orders").unwrap();
@@ -10766,8 +10795,8 @@ mod tests {
         let reply = super::DesignerWireReply::Ok {
             response: super::DesignerResponse::Table(table),
         };
-        assert!(super::ensure_wire_reply_size(&reply, runtime.text_capacity).is_err());
-        assert!(super::ensure_wire_reply_size(&reply, true).is_ok());
+        assert!(super::ensure_wire_reply_size(&reply, runtime.profile).is_err());
+        assert!(super::ensure_wire_reply_size(&reply, SessionProfile::TextCapacity).is_ok());
     }
 
     #[test]
@@ -10779,7 +10808,7 @@ mod tests {
         let mut runtime = DesignerRuntime::from_document_profile(
             base.session.export_snapshot().into_document(),
             "00000000-0000-4000-8000-000000000000",
-            true,
+            SessionProfile::TextCapacity,
         )
         .unwrap();
         assert_eq!(
@@ -10867,7 +10896,7 @@ mod tests {
         let mut runtime = DesignerRuntime::from_document_profile(
             base.session.export_snapshot().into_document(),
             "00000000-0000-4000-8000-000000000000",
-            true,
+            SessionProfile::TextCapacity,
         )
         .unwrap();
         let before = runtime.query_table("orders").unwrap();
@@ -10921,7 +10950,7 @@ mod tests {
                     .is_err()
             );
         }
-        assert!(runtime.text_capacity);
+        assert_eq!(runtime.profile, SessionProfile::TextCapacity);
     }
 
     #[test]
@@ -10953,7 +10982,7 @@ mod tests {
         let mut runtime = DesignerRuntime::from_document_profile(
             document,
             "00000000-0000-4000-8000-000000000000",
-            true,
+            SessionProfile::TextCapacity,
         )
         .unwrap();
         let before = runtime.query_table("orders").unwrap().rows;
@@ -11009,7 +11038,7 @@ mod tests {
                     .is_err()
             );
         }
-        assert!(runtime.text_capacity);
+        assert_eq!(runtime.profile, SessionProfile::TextCapacity);
     }
 
     #[test]
@@ -11044,7 +11073,7 @@ mod tests {
         assert_eq!(remaining, 0);
         let (runtime, imported) =
             super::import_workbook(&workbook, &selection, occurrence).unwrap();
-        assert!(runtime.text_capacity);
+        assert_eq!(runtime.profile, SessionProfile::TextCapacity);
         assert_eq!(wire_size(&imported.opened), super::MAX_PROJECTION_BYTES + 1);
         assert!(
             serde_json::to_vec(&imported.opened.table).unwrap().len() < super::MAX_PROJECTION_BYTES
@@ -11067,7 +11096,7 @@ mod tests {
         .unwrap();
         assert_eq!(reopened.table.rows, imported.opened.table.rows);
         let reopened = destination.unwrap();
-        assert!(reopened.text_capacity);
+        assert_eq!(reopened.profile, SessionProfile::TextCapacity);
         assert_eq!(
             reopened.export_test_project("resident/0").unwrap().bytes,
             saved.bytes
@@ -11081,7 +11110,7 @@ mod tests {
         )
         .unwrap();
         let metadata_candidate = metadata_destination.unwrap();
-        assert!(metadata_candidate.text_capacity);
+        assert_eq!(metadata_candidate.profile, SessionProfile::TextCapacity);
         assert_eq!(metadata_opened.table.rows, imported.opened.table.rows);
     }
 
@@ -11109,7 +11138,7 @@ mod tests {
             let mut runtime = DesignerRuntime::from_document_profile(
                 document,
                 "00000000-0000-4000-8000-000000000000",
-                true,
+                SessionProfile::TextCapacity,
             )
             .unwrap();
             let before = runtime.export_test_project("resident/0").unwrap().bytes;
@@ -11156,7 +11185,7 @@ mod tests {
         let mut runtime =
             DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
                 .unwrap();
-        assert!(!runtime.text_capacity);
+        assert_eq!(runtime.profile, SessionProfile::Ordinary);
         let entities = runtime.collection_specs["orders"]
             .entities
             .iter()
@@ -11196,7 +11225,7 @@ mod tests {
         DesignerRuntime::from_document_profile(
             document,
             "00000000-0000-4000-8000-000000000070",
-            true,
+            SessionProfile::TextCapacity,
         )
         .unwrap()
     }
@@ -11271,7 +11300,7 @@ mod tests {
     #[test]
     fn native_capacity_insert_undo_redo_preserves_complete_history() {
         let mut runtime = native_capacity_127_runtime();
-        assert!(runtime.text_capacity);
+        assert_eq!(runtime.profile, SessionProfile::TextCapacity);
         let (original, original_carriers) = native_saved_state(&runtime);
         let before_row = edit_native_history_scalar(&mut runtime);
         let (_, before_row_carriers) = native_saved_state(&runtime);
@@ -11305,7 +11334,7 @@ mod tests {
     #[test]
     fn native_capacity_remove_undo_redo_preserves_complete_history() {
         let mut runtime = native_capacity_127_runtime();
-        assert!(runtime.text_capacity);
+        assert_eq!(runtime.profile, SessionProfile::TextCapacity);
         let (original, original_carriers) = native_saved_state(&runtime);
         let before_row = edit_native_history_scalar(&mut runtime);
         let (_, before_row_carriers) = native_saved_state(&runtime);

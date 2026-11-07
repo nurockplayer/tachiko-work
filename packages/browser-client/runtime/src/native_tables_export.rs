@@ -666,7 +666,7 @@ pub(crate) fn encode_native_tables_spreadsheet(
     };
     // Keep the existing complete receipt envelope bound. Refuse with a native
     // finding before either transport can return a generic size failure.
-    crate::ensure_wire_reply_size(&reply, runtime.text_capacity).map_err(|error| {
+    crate::ensure_wire_reply_size(&reply, runtime.profile).map_err(|error| {
         refused(
             "native_tables_receipt_bounds",
             "workbook",
