@@ -1500,12 +1500,14 @@ fn w1_edit_cells(
                 }
             })
             .collect::<Vec<_>>();
+        instrumentation::reset_phases();
         let (response, sample) = observe(|| {
             runtime.handle(DesignerRequest::EditCells {
                 expected_revision: revision,
                 edits,
             })
         });
+        w1_print_phases("edit_cells", sample.millis);
         match response {
             Ok(DesignerResponse::Published(_)) => millis.push(sample.millis),
             Ok(_) => {
@@ -1608,6 +1610,17 @@ fn w1_fresh_runtime(shape: &str, serial: u64) -> Option<DesignerRuntime> {
     }
 }
 
+/// One request's phases, summed per label, largest first.
+fn w1_print_phases(label: &str, whole: f64) {
+    let mut phases = phase_millis(&instrumentation::take_phases())
+        .into_iter()
+        .collect::<Vec<_>>();
+    phases.sort_by(|left, right| right.1.total_cmp(&left.1));
+    for (name, millis) in phases.into_iter().take(24) {
+        println!("| {label} `{name}` | {millis:.1} | {:.1}% |", millis / whole * 100.0);
+    }
+}
+
 /// `CopyFormula` and `EditCells` at growing sizes, each on a fresh runtime, one
 /// sample each. A rung over a minute ends that ladder.
 fn w1_copy_ladder(shape: &str) {
@@ -1638,6 +1651,7 @@ fn w1_copy_ladder(shape: &str) {
             })
             .collect::<Vec<_>>();
         let revision = runtime.observe_occurrence().revision;
+        instrumentation::reset_phases();
         let (response, sample) = observe(|| {
             runtime.handle(DesignerRequest::CopyFormula {
                 expected_revision: revision,
@@ -1651,6 +1665,7 @@ fn w1_copy_ladder(shape: &str) {
                 relative_columns: false,
             })
         });
+        w1_print_phases("copy_formula", sample.millis);
         match response {
             Ok(DesignerResponse::Published(publication)) => {
                 w1_line(shape, &format!("copy_formula_{count}_ms"), format!("{:.3}", sample.millis));
