@@ -61,6 +61,7 @@ Only these constructs may enter v3 during the window.
 | `FieldType` tag `auto` and its admission rule | 1, 2 | Value model and failure rule |
 | Expression: Text, Boolean and Date literals; new functions | 2 | Value model and failure rule |
 | Expression: positional range | 3 | Row order and ranges |
+| Expression: deleted-reference marker, added by ADR-0048 | 3 | Row order and ranges |
 | Entity: optional row rank | 3 | Row order and ranges |
 | Presentation member: cell styles, per-cell display, footer, title | 5, 6 | Presentation |
 | Column Date format | 5 | Presentation |
