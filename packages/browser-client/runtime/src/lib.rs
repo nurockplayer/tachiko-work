@@ -3125,6 +3125,10 @@ impl DesignerRuntime {
                 self.attach_changed_cells(&mut keyed.publication);
                 DesignerResponse::KeyedGroupedSumPublished(keyed)
             }
+            DesignerResponse::Duplicated(mut duplicated) => {
+                self.attach_changed_cells(&mut duplicated.publication);
+                DesignerResponse::Duplicated(duplicated)
+            }
             other => other,
         }
     }

@@ -2163,6 +2163,37 @@ fn an_ordinary_edit_carries_no_changed_cells() {
 }
 
 #[test]
+fn a_duplicated_collections_cells_are_changed_cells() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap();
+    let reply = runtime
+        .handle(DesignerRequest::DuplicateCollection {
+            expected_revision: runtime.current_revision().to_owned(),
+            collection: "ledger".into(),
+            name: "Copy".into(),
+            column_names: BTreeMap::new(),
+        })
+        .unwrap();
+    let DesignerResponse::Duplicated(duplicated) = reply else {
+        panic!("expected a duplicated collection");
+    };
+    assert!(!duplicated.publication.many);
+    let copy = window_cells(&mut runtime, &duplicated.collection.key);
+    let populated = copy.values().filter(|cell| cell.is_some()).count();
+    assert!(populated > 0, "the copy has populated cells");
+    for (key, cell) in &copy {
+        let listed = duplicated
+            .publication
+            .changed
+            .iter()
+            .find(|field| (&field.target.entity, &field.target.field) == (&key.0, &key.1));
+        if let Some(window_field) = cell {
+            assert_eq!(listed, Some(window_field), "{key:?}");
+        }
+    }
+}
+
+#[test]
 fn the_wire_reply_carries_changed_cells() {
     let mut runtime =
         Some(DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap());

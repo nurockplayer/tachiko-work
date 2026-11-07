@@ -861,6 +861,8 @@ function expectResponse(
     case "imported_window": validateTablePresence(response.payload.opened.window); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
     case "published": response.payload.changed?.forEach(validateFieldPresence); break;
+    case "duplicated":
+    case "keyed_grouped_sum_published": response.payload.publication.changed?.forEach(validateFieldPresence); break;
     case "field_explanation":
       validateFieldPresence(response.payload.value);
       response.payload.direct_dependencies.forEach(dependency => validateFieldPresence(dependency.value));
