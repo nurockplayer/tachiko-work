@@ -3060,7 +3060,12 @@ impl DesignerRuntime {
     /// Replace the open-time presentation and record its encoded length for
     /// the working-size saved-size bound.
     fn set_presentation(&mut self, presentation: PresentationStore) -> Result<(), DesignerError> {
-        self.presentation_saved_bytes = save_size::presentation_saved_bytes(&presentation)?;
+        // Only a working-size session bounds its saved size, so only it pays
+        // for encoding the presentation here.
+        self.presentation_saved_bytes = match self.profile {
+            SessionProfile::WorkingSize => save_size::presentation_saved_bytes(&presentation)?,
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => 0,
+        };
         self.presentation = presentation;
         Ok(())
     }
