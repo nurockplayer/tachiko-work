@@ -40,14 +40,19 @@ use tachiko_semantic_core::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
+    BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate, RuleId,
+    StyleId, TablePresentation,
+};
+pub use tachiko_semantic_core::{
     ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
     Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity, EntityId, EntityKey,
     Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
     FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
-    NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey,
-    SemanticSubject, StableDiagnosticObservation, Value, display_name_failures, trim_display_name,
+    NumberFormat, NumberFormatError, NumberFormatKind, PresentationStore, Schema, SchemaId,
+    SchemaKey, SemanticSubject, StableDiagnosticObservation, Value, display_name_failures,
+    prune_presentation, trim_display_name,
 };
 pub use tachiko_semantic_core::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use thiserror::Error;
@@ -714,30 +719,36 @@ pub enum PreparedVerdict<'evaluation> {
 /// Only crate-internal callers construct this; its fields are trusted engine
 /// state, not a cache-key, serialization, or transport contract.
 #[derive(Debug)]
-pub struct PreparedEvaluation {
+pub struct PreparedEvaluation<'session> {
     base_revision: patch_lifecycle::SemanticRevision,
+    base_document: &'session Document,
     candidate: Document,
     report: ValidationReport,
     calculation: Option<Calculation>,
     base_calculation: Option<Calculation>,
+    base_report_valid: bool,
     definitions_invalid: bool,
 }
 
-impl PreparedEvaluation {
+impl<'session> PreparedEvaluation<'session> {
     pub(crate) fn new(
         base_revision: patch_lifecycle::SemanticRevision,
+        base_document: &'session Document,
         candidate: Document,
         report: ValidationReport,
         calculation: Option<Calculation>,
         base_calculation: Option<Calculation>,
+        base_report_valid: bool,
     ) -> Self {
         let definitions_invalid = validate_keyed_grouped_sum_definitions(&candidate).is_err();
         Self {
             base_revision,
+            base_document,
             candidate,
             report,
             calculation,
             base_calculation,
+            base_report_valid,
             definitions_invalid,
         }
     }
@@ -746,6 +757,12 @@ impl PreparedEvaluation {
     #[must_use]
     pub fn base_revision(&self) -> &patch_lifecycle::SemanticRevision {
         &self.base_revision
+    }
+
+    /// The document this evaluation's base results belong to. Revision tokens
+    /// aren't unique across sessions, so reuse compares this as well.
+    pub(crate) fn base_document(&self) -> &Document {
+        self.base_document
     }
 
     /// The evaluated candidate.
@@ -778,6 +795,14 @@ impl PreparedEvaluation {
 
     pub(crate) fn base_calculation(&self) -> Option<&Calculation> {
         self.base_calculation.as_ref()
+    }
+
+    /// Whether the base revision's retained semantic report was valid.
+    ///
+    /// A complete base calculation can still carry an invalid report, for
+    /// instance when a stored value violates its declared constraint.
+    pub(crate) fn base_report_valid(&self) -> bool {
+        self.base_report_valid
     }
 }
 
@@ -2376,7 +2401,7 @@ fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, W
 pub(crate) fn finalize_edit_with_validation(
     document: &Document,
     edited: Document,
-    prepared: Option<&PreparedEvaluation>,
+    prepared: Option<&PreparedEvaluation<'_>>,
 ) -> Result<(EditPreview, ValidationReport), WorkspaceError> {
     let prepared = prepared.filter(|prepared| prepared.document() == &edited);
     let fallback;

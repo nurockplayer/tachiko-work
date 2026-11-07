@@ -460,6 +460,149 @@ fn validate_rule_condition(
     Ok(())
 }
 
+/// Drop every presentation record whose target is gone from `document`.
+///
+/// A live occurrence keeps its store whole through a delete and Undo, so Undo
+/// restores the records with no history work. A save writes the result of this
+/// function instead, and a file never holds a dangling reference. The result
+/// passes [`validate_presentation`] whenever the input passed it against an
+/// earlier version of the document.
+#[must_use]
+pub fn prune_presentation(store: &PresentationStore, document: &Document) -> PresentationStore {
+    let tables = store
+        .tables
+        .iter()
+        .filter_map(|(schema_id, table)| {
+            let schema = document.schemas.get(schema_id)?;
+            let footer = table
+                .footer
+                .iter()
+                .filter(|(field, _)| schema.fields.contains_key(*field))
+                .map(|(field, aggregate)| (field.clone(), *aggregate))
+                .collect::<BTreeMap<_, _>>();
+            let column_styles = table
+                .column_styles
+                .iter()
+                .filter(|(field, _)| schema.fields.contains_key(*field))
+                .map(|(field, style)| (field.clone(), style.clone()))
+                .collect::<BTreeMap<_, _>>();
+            if table.title.is_none() && footer.is_empty() && column_styles.is_empty() {
+                return None;
+            }
+            Some((
+                schema_id.clone(),
+                TablePresentation {
+                    title: table.title.clone(),
+                    footer,
+                    column_styles,
+                },
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let rules = store
+        .rules
+        .iter()
+        .filter(|(_, rule)| rule_survives_prune(rule, document))
+        .map(|(rule_id, rule)| (rule_id.clone(), rule.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    let cells = store
+        .cells
+        .iter()
+        .filter(|entry| {
+            let (entity_id, field) = entry.0;
+            document
+                .entities
+                .get(entity_id)
+                .and_then(|entity| document.schemas.get(&entity.schema))
+                .is_some_and(|schema| schema.fields.contains_key(field))
+        })
+        .map(|(key, style)| (key.clone(), style.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut used = BTreeSet::new();
+    for style in tables
+        .values()
+        .flat_map(|table| table.column_styles.values())
+    {
+        used.insert(style.clone());
+    }
+    used.extend(rules.values().map(|rule| rule.style.clone()));
+    used.extend(cells.values().cloned());
+    let styles = store
+        .styles
+        .iter()
+        .filter(|(style_id, _)| used.contains(*style_id))
+        .map(|(style_id, style)| (style_id.clone(), style.clone()))
+        .collect();
+
+    PresentationStore {
+        styles,
+        tables,
+        rules,
+        cells,
+    }
+}
+
+fn rule_survives_prune(rule: &ConditionalRule, document: &Document) -> bool {
+    let Some(schema) = document.schemas.get(&rule.schema) else {
+        return false;
+    };
+    if rule
+        .fields
+        .iter()
+        .any(|field| !schema.fields.contains_key(field))
+    {
+        return false;
+    }
+    let mut stack = vec![&rule.condition];
+    while let Some(node) = stack.pop() {
+        match node {
+            Expression::SameRowReference(field) => {
+                if !schema.fields.contains_key(field) {
+                    return false;
+                }
+            }
+            Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
+                if !column_exists(document, column) {
+                    return false;
+                }
+            }
+            Expression::ColumnConditional {
+                aggregate,
+                criteria,
+            } => {
+                let aggregate_column = match aggregate.as_ref() {
+                    ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
+                        Some(column)
+                    }
+                    ConditionalAggregate::Count => None,
+                };
+                if aggregate_column.is_some_and(|column| !column_exists(document, column)) {
+                    return false;
+                }
+                if criteria
+                    .iter()
+                    .any(|criterion| !column_exists(document, &criterion.column))
+                {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        stack.extend(node.children());
+    }
+    true
+}
+
+fn column_exists(document: &Document, column: &crate::ColumnRef) -> bool {
+    document
+        .schemas
+        .get(&column.schema)
+        .is_some_and(|schema| schema.fields.contains_key(&column.field))
+}
+
 /// Check a presentation store against the document it belongs to.
 ///
 /// # Errors

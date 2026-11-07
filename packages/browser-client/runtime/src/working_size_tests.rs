@@ -3,7 +3,10 @@
 
 use std::collections::BTreeMap;
 
-use tachiko_workspace_engine::{Expression, FieldConstraint, Number, Value};
+use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation};
+use tachiko_workspace_engine::{
+    Expression, FieldConstraint, Number, PresentationStore, TablePresentation, Value,
+};
 
 use super::capacity::{CapacityExceeded, CapacityLimit, SessionProfile};
 use super::capacity_fixtures::{CALC_FIELD, FixtureSpec, capacity_document, entity_id};
@@ -13,7 +16,7 @@ use super::{
     Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey, FieldProjection, FieldTarget,
     FieldType, NewTableColumnInput, OpenedWindowProjection, RowInitializer, RowProjection,
     ScalarEditInput, Schema, SchemaId, SchemaKey, StoredValueProjection,
-    encode_portable_package_v1, encode_project_bundle, encode_roproj_v3, open_local_document,
+    encode_portable_package_v1, encode_project_bundle, open_local_document,
     open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
     open_project, open_project_working_size, to_canonical_string,
 };
@@ -756,4 +759,52 @@ fn a_row_of_the_largest_cells_opens_and_saves() {
     runtime.export_project_v3(&current).unwrap();
     runtime.export_canonical_tree(&current).unwrap();
     runtime.export_portable_ro(&current).unwrap();
+}
+
+/// Stored presentation arrives through every working-size open and leaves
+/// through every save, as it does on the ordinary routes.
+#[test]
+fn working_size_open_and_save_carry_the_presentation_store() {
+    let document = text_grid(2, 1);
+    let store = PresentationStore {
+        tables: BTreeMap::from([(
+            SchemaId::from("grid"),
+            TablePresentation {
+                title: Some("Styled".into()),
+                footer: BTreeMap::new(),
+                column_styles: BTreeMap::new(),
+            },
+        )]),
+        ..PresentationStore::default()
+    };
+    let tree = encode_roproj_v3_with_presentation(&document, &store).unwrap();
+    let bundle =
+        encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes()))).unwrap();
+    let portable = encode_portable_package_v1(&tree).unwrap();
+
+    let mut resident: Option<DesignerRuntime> = None;
+    open_project_working_size(&mut resident, &bundle, OCCURRENCE).unwrap();
+    let runtime = resident.unwrap();
+    assert_eq!(runtime.presentation, store);
+
+    let mut from_portable: Option<DesignerRuntime> = None;
+    open_portable_ro_working_size(&mut from_portable, &portable, OCCURRENCE).unwrap();
+    assert_eq!(from_portable.unwrap().presentation, store);
+    let mut from_local: Option<DesignerRuntime> = None;
+    open_local_document_working_size(&mut from_local, &portable, OCCURRENCE).unwrap();
+    assert_eq!(from_local.unwrap().presentation, store);
+
+    let current = revision(&runtime);
+    for bytes in [
+        runtime.export_project_v3(&current).unwrap().bytes,
+        runtime.export_canonical_tree(&current).unwrap().bytes,
+    ] {
+        let mut reopened: Option<DesignerRuntime> = None;
+        open_project_working_size(&mut reopened, &bytes, OCCURRENCE).unwrap();
+        assert_eq!(reopened.unwrap().presentation, store);
+    }
+    let saved = runtime.export_portable_ro(&current).unwrap().bytes;
+    let mut reopened: Option<DesignerRuntime> = None;
+    open_portable_ro_working_size(&mut reopened, &saved, OCCURRENCE).unwrap();
+    assert_eq!(reopened.unwrap().presentation, store);
 }

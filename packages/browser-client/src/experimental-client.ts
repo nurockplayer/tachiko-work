@@ -23,7 +23,7 @@ import type {
 
 export const EXPERIMENTAL_CLIENT_KIT_ID = "tachiko-designer-client-kit/v0-experimental";
 
-const MAX_CANONICAL_PROJECT_FILE_COUNT = 19;
+const MAX_CANONICAL_PROJECT_FILE_COUNT = 20;
 const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
 
 /**
@@ -68,7 +68,7 @@ export function preflightCanonicalProjectEntries(
   entries: readonly CanonicalProjectTransferEntry[],
 ): void {
   if (entries.length > MAX_CANONICAL_PROJECT_FILE_COUNT) {
-    throw new Error("A canonical .roproj directory cannot contain more than 19 files.");
+    throw new Error("A canonical .roproj directory cannot contain more than 20 files.");
   }
   const paths = new Set<string>();
   let total = 8 + 4;

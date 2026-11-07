@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use tachiko_formula_engine::{CalculationError, calculate};
+use tachiko_formula_engine::{Calculation, CalculationError, calculate};
 use tachiko_semantic_core::{
     Diagnostic, Document, DocumentId, EntityId, FieldConstraint, FieldDefinition, FieldId,
     FieldKey, FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
@@ -326,6 +326,37 @@ pub fn canonical_delta(
     before: &Document,
     after: &Document,
 ) -> Result<CanonicalSemanticDelta, CanonicalDeltaError> {
+    admit_delta_inputs(contract, before, after)?;
+    let before_values = calculate(before).map_err(CanonicalDeltaError::BeforeCalculation)?;
+    let after_values = calculate(after).map_err(CanonicalDeltaError::AfterCalculation)?;
+    compare_admitted_documents(before, after, &before_values, &after_values)
+}
+
+/// Compare admitted document states using calculations the caller already produced.
+///
+/// Returns the same value as [`canonical_delta`] when each calculation is the
+/// one [`calculate`] produces for its document.
+///
+/// # Errors
+/// Returns an explicit refusal if the selector or document scope differs, or
+/// either input or its saved-definition binding validation fails.
+pub fn canonical_delta_with_calculations(
+    contract: &str,
+    before: &Document,
+    after: &Document,
+    before_calculation: &Calculation,
+    after_calculation: &Calculation,
+) -> Result<CanonicalSemanticDelta, CanonicalDeltaError> {
+    admit_delta_inputs(contract, before, after)?;
+    compare_admitted_documents(before, after, before_calculation, after_calculation)
+}
+
+/// Refuse a selector, document pair, or input state before any comparison.
+fn admit_delta_inputs(
+    contract: &str,
+    before: &Document,
+    after: &Document,
+) -> Result<(), CanonicalDeltaError> {
     if contract != CANONICAL_SEMANTIC_DELTA_V2 {
         return Err(CanonicalDeltaError::UnsupportedContract {
             contract: contract.to_owned(),
@@ -338,12 +369,19 @@ pub fn canonical_delta(
         });
     }
     admit_input(before, DeltaInputSide::Before)?;
-    admit_input(after, DeltaInputSide::After)?;
-    let before_values = calculate(before).map_err(CanonicalDeltaError::BeforeCalculation)?;
-    let after_values = calculate(after).map_err(CanonicalDeltaError::AfterCalculation)?;
+    admit_input(after, DeltaInputSide::After)
+}
+
+/// Validate admitted inputs against their calculations and compare them.
+fn compare_admitted_documents(
+    before: &Document,
+    after: &Document,
+    before_calculation: &Calculation,
+    after_calculation: &Calculation,
+) -> Result<CanonicalSemanticDelta, CanonicalDeltaError> {
     for (document, side, calculation) in [
-        (before, DeltaInputSide::Before, &before_values),
-        (after, DeltaInputSide::After, &after_values),
+        (before, DeltaInputSide::Before, before_calculation),
+        (after, DeltaInputSide::After, after_calculation),
     ] {
         let diagnostics = validate_complete_formula_constraints(document, calculation.values());
         if !diagnostics.is_empty() {

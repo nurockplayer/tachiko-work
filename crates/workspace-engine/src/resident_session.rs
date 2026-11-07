@@ -235,18 +235,21 @@ impl ResidentWorkspaceSession {
     /// document. A failed retained outcome contributes no base calculation and
     /// leaves the proposal on its existing recalculation path.
     #[must_use]
-    pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation {
+    pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
         let base_calculation = match self.retained.calculation_state.outcome() {
             CalculationOutcome::Complete(calculation) => Some(calculation),
             CalculationOutcome::Failed(_) => None,
         };
+        let base_report_valid = self.retained.validation_report.is_valid();
         let (report, calculation) = semantic_validation(&candidate);
         PreparedEvaluation::new(
             self.revision.clone(),
+            &self.document,
             candidate,
             report,
             calculation,
             base_calculation,
+            base_report_valid,
         )
     }
 

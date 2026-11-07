@@ -80,8 +80,8 @@ describe("Work directory ordering", () => {
     });
     it(`refuses damaged v${version} path sets instead of repairing them`, async () => {
       for (const [selected, message] of [
-        [files.slice(0, -1), /exactly 18 or 19 files|unexpected path|missing/],
-        [[...files, file("extra.txt")], /exactly 18 or 19 files|unexpected path/],
+        [files.slice(0, -1), /exactly 18, 19 or 20 files|unexpected path|missing/],
+        [[...files, file("extra.txt")], /exactly 18, 19 or 20 files|unexpected path/],
         [[...files.slice(0, -1), files[0]!], /duplicate path/],
         [[...files.slice(0, -1), file("unknown.json")], /unexpected path/],
         [[...files.slice(0, -1), file("entities/nested/f.jsonl")], /unexpected path/],
