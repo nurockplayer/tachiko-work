@@ -227,10 +227,10 @@ impl DesignerRuntime {
         let inverse = pending.inverse.clone();
         let publication = self.publish_commands(expected_revision, commands.clone())?;
         self.pending_cleanup = None;
-        self.record_history_entry(HistoryEntry {
-            forward: HistoryAction::Commands(commands),
-            inverse: HistoryAction::Commands(inverse),
-        });
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::Commands(commands),
+            HistoryAction::Commands(inverse),
+        ));
         Ok(publication)
     }
 }
