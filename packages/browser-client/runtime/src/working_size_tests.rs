@@ -3626,6 +3626,7 @@ fn an_ordinary_session_never_computes_the_saved_bound() {
         },
     );
     assert!(super::save_size::saved_bound_calls() > working_baseline);
+}
 
 fn undo_once(runtime: &mut DesignerRuntime) {
     let expected_revision = revision(runtime);
