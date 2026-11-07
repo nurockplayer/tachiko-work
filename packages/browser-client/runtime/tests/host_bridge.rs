@@ -39,6 +39,7 @@ fn revision_of(reply: &Value) -> String {
     reply["response"]["payload"]["bootstrap"]["revision"]
         .as_str()
         .or_else(|| reply["response"]["payload"]["revision"].as_str())
+        .or_else(|| reply["response"]["payload"]["resulting_revision"].as_str())
         .expect("reply carries a revision")
         .to_owned()
 }
@@ -569,7 +570,7 @@ fn working_size_refusals_preserve_the_resident_occurrence() {
 fn working_size_inspection_replies_one_window_and_keeps_the_resident() {
     let (_, bundle, _) = long_text_transfers();
 
-    let mut empty = DesignerHost::new();
+    let empty = DesignerHost::new();
     let inspected = json_of(&empty.inspect_project_working_size(&bundle));
     assert_eq!(inspected["status"], "ok", "{inspected}");
     assert_eq!(inspected["response"]["type"], "opened_window");
