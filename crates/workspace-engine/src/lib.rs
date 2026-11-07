@@ -1968,29 +1968,7 @@ impl FieldEditPlanning {
     }
 }
 
-/// Reuse a request-local candidate that the planner already owns. The same
-/// ordered checks run before any mutation; an unsuccessful atomic batch still
-/// drops its private candidate without touching the caller's document.
-///
-/// The planner runs the same checks through the batch state; this one-value
-/// shape stays for callers that apply a single command.
-#[expect(
-    dead_code,
-    reason = "kept as the one-value shape for single-command callers"
-)]
-pub(crate) fn apply_field_value_candidate(
-    candidate: &mut Document,
-    field: &FieldRef,
-    value: &Value,
-) -> Result<(), WorkspaceError> {
-    apply_field_value_candidate_with_planning(
-        candidate,
-        field,
-        value,
-        &mut FieldEditPlanning::new(),
-    )
-}
-
+/// Reuse a request-local candidate that the planner already owns.
 pub(crate) fn apply_field_value_candidate_with_planning(
     candidate: &mut Document,
     field: &FieldRef,
@@ -2071,32 +2049,6 @@ fn install_checked_field_value(
         .fields
         .insert(field.field.clone(), value.clone());
     Ok(())
-}
-
-/// Build the explicit clear candidate for one optional stored value.
-///
-/// This authoring and history operation preserves the distinction
-/// between an optional field that was absent and one that contained a scalar,
-/// while keeping required fields and formula structure under the shared
-/// validation boundary.
-///
-/// The planner clears in place through [`unset_field_candidate_in_place`];
-/// this document-returning shape stays for callers that need a whole document.
-#[expect(
-    dead_code,
-    reason = "kept as the document-returning shape for other callers"
-)]
-pub(crate) fn unset_field_candidate(
-    document: &Document,
-    field: &FieldRef,
-) -> Result<Document, WorkspaceError> {
-    let mut planning = FieldEditPlanning::new();
-    if !check_unset_field_candidate(document, field, &mut planning)? {
-        return Ok(document.clone());
-    }
-    let mut candidate = document.clone();
-    remove_field_value(&mut candidate, field)?;
-    Ok(candidate)
 }
 
 /// Clear one optional field in the planner's private candidate. The ordered
