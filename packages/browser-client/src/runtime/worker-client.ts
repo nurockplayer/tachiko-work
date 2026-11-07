@@ -389,7 +389,7 @@ export class WorkerDesignerClient implements DesignerClient {
         view,
         start,
         count,
-        display: options?.display,
+        ...(options?.display === undefined ? {} : { display: options.display }),
       }),
     );
   }
