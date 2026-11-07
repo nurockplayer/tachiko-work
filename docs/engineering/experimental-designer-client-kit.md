@@ -545,6 +545,22 @@ Deeper authority: [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic
 the [Semantic API specification](../specs/semantic-api.md), and the
 [frontend/runtime boundary](../architecture/frontend-backend-boundary.md).
 
+## Working-size sessions
+
+A host can ask for the working-size session profile when the occurrence is
+created or opened: pass `profile: "working_size"` to `newTableWorkingSize`, or
+use `inspectProjectWorkingSize`, `openProjectWorkingSize`,
+`openCanonicalTreeWorkingSize`, `openLocalDocumentWorkingSize` and
+`openPortableRoWorkingSize`. The profile is fixed when the occurrence is
+created and cannot be switched afterwards. Not asking changes nothing: every
+ordinary method keeps today's request bytes and reply shape.
+
+A working-size reply carries the bootstrap and one bounded window, never the
+whole table. That window may hold fewer than 100 rows when the text is large,
+so read `window.total_rows` and page with the window query instead of assuming
+a full first page. Size limits are still today's counts; higher limits arrive
+in a later change, so a host must not advertise 10,000 rows from this alone.
+
 ### Builds behind an existing HTTP proxy
 
 The exporter isolates package and compiler configuration. On a host whose
