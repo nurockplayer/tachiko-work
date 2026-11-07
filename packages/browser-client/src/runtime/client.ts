@@ -23,6 +23,7 @@ import type {
   TableView,
   TableWindowProjection,
   LocatedInViewProjection,
+  DistinctValuesProjection,
   ColumnTotalsProjection,
   GroupDimension,
   GroupScope,
@@ -93,6 +94,17 @@ export interface DesignerClient {
     view: TableView,
     entity: string,
   ): Promise<LocatedInViewProjection>;
+  /**
+   * Distinct display texts of one column over the view's rows, in Sheet's list
+   * order (`""` first, then natural order); `limit` is 1..=1,000.
+   */
+  queryDistinctValues(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    field: string,
+    limit: number,
+  ): Promise<DistinctValuesProjection>;
   /** Number totals over exactly these entities; unknown, duplicate or foreign ids refuse. */
   queryColumnTotals(
     expectedRevision: string,

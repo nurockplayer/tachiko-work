@@ -152,7 +152,12 @@ export type ComparisonOperator = "=" | "<>" | "<" | "<=" | ">" | ">=";
 /** One literal member of an `in_set` filter; it must fit the filtered column's type. */
 export type ScalarLiteral = number | string | boolean;
 
-/** One AND-ed view filter. Comparisons and sets match only same-kind values; blanks match `is_blank`. */
+/**
+ * One AND-ed view filter. Comparisons and sets match only same-kind values;
+ * blanks match `is_blank`. The `display_*` filters compare the text the grid
+ * shows, on every column kind including Reference, where a blank, failed,
+ * unavailable or Reference cell has the text `""`.
+ */
 export type ViewFilter =
   | { kind: "text_equals"; field: string; value: string }
   | { kind: "text_contains"; field: string; value: string }
@@ -160,7 +165,11 @@ export type ViewFilter =
   | { kind: "date_compare"; field: string; op: ComparisonOperator; value: string }
   | { kind: "is_blank"; field: string }
   | { kind: "not_blank"; field: string }
-  | { kind: "in_set"; field: string; values: ScalarLiteral[] };
+  | { kind: "in_set"; field: string; values: ScalarLiteral[] }
+  /** Trimmed, case-insensitive containment; an empty value matches blank cells. */
+  | { kind: "display_contains"; field: string; value: string }
+  /** Exact display-text equality with no folding; `""` means blank. */
+  | { kind: "display_in"; field: string; values: string[] };
 
 export type ViewSortKey = { field: string; direction: SortDirection };
 
@@ -203,6 +212,19 @@ export type LocatedInViewProjection = {
   revision: string;
   result: "found" | "filtered_out";
   index?: number;
+};
+
+/**
+ * The distinct display texts of one column inside a view, in Sheet's list
+ * order: `""` first when any row has no display text, then natural order
+ * (case-insensitive, digit runs compared as numbers). `truncated` is true when
+ * more values exist than the reply carries or the byte budget admits.
+ */
+export type DistinctValuesProjection = {
+  revision: string;
+  field: string;
+  values: string[];
+  truncated: boolean;
 };
 
 /** Number totals over the named entities at one revision; blank cells are skipped, as in `column_totals`. */
@@ -528,6 +550,14 @@ export type DesignerRequest =
       entity: string;
     }
   | {
+      type: "query_distinct_values";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
+      field: string;
+      limit: number;
+    }
+  | {
       type: "query_column_totals";
       expected_revision: string;
       collection: string;
@@ -578,6 +608,7 @@ export type DesignerResponse =
   | { type: "table"; payload: TableProjection }
   | { type: "table_window"; payload: TableWindowProjection }
   | { type: "located_in_view"; payload: LocatedInViewProjection }
+  | { type: "distinct_values"; payload: DistinctValuesProjection }
   | { type: "column_totals"; payload: ColumnTotalsProjection }
   | { type: "group_totals"; payload: GroupTotalsProjection }
   | { type: "fields"; payload: FieldBatchProjection }
