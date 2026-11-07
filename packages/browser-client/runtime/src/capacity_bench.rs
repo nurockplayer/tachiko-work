@@ -1335,6 +1335,18 @@ fn w1_phase_table(label: &str, samples: &[W1EditSample], whole_median: f64) {
 /// Run `EditScalar` samples through `handle`, drop the first as warm-up, and
 /// print count, durations, clones, reply bytes and the median phase table.
 #[allow(clippy::too_many_arguments)] // One measurement call carries its own knobs.
+static W1_VALUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Never the same value twice in one process: the same row and value again
+/// would be refused as a no-op and end the phase.
+fn w1_next_value() -> u64 {
+    100_000 + W1_VALUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn w1_lite() -> bool {
+    std::env::var("W1_MODE").is_ok_and(|value| value == "lite")
+}
+
 fn w1_scalar_edits(
     shape: &str,
     label: &str,
@@ -1350,7 +1362,7 @@ fn w1_scalar_edits(
     let mut stopped = false;
     let mut samples = Vec::new();
     for iteration in 0..max_edits {
-        if iteration >= 20 && started.elapsed().as_secs_f64() * 1_000.0 > time_limit_ms {
+        if iteration >= (if w1_lite() { 3 } else { 20 }) && started.elapsed().as_secs_f64() * 1_000.0 > time_limit_ms {
             stopped = true;
             break;
         }
@@ -1367,10 +1379,10 @@ fn w1_scalar_edits(
         #[allow(clippy::cast_precision_loss)]
         let edit_input = match input {
             W1Input::Number => ScalarEditInput::Number {
-                input: format!("{}", 1_000.0 + iteration as f64),
+                input: format!("{}", w1_next_value()),
             },
             W1Input::Text => ScalarEditInput::Text {
-                value: format!("w1-{iteration:05}"),
+                value: format!("w1-{}", w1_next_value()),
             },
         };
         instrumentation::reset();
@@ -1596,101 +1608,60 @@ fn w1_fresh_runtime(shape: &str, serial: u64) -> Option<DesignerRuntime> {
     }
 }
 
-/// Copy one formula from row 0 to every other row of its column, then send
-/// 10,000 Number edits in one `EditCells` request.
-///
-/// Each copy sample starts from a fresh fixture, because after one copy the
-/// column already holds the formula on every row and a second would be a
-/// no-op.
-fn w1_copy_formula(shape: &str) {
-    const COPY_TIME_LIMIT_MS: f64 = 300_000.0;
-    const MAX_SAMPLES: usize = 3;
-    if shape == "a100" {
-        // Its formula cells are scattered same-row formulas; a column copy is
-        // not the shape's cost. Keep the bulk `EditCells` measurement.
-        let Some(mut runtime) = w1_fresh_runtime(shape, 0x400) else {
+/// `CopyFormula` and `EditCells` at growing sizes, each on a fresh runtime, one
+/// sample each. A rung over a minute ends that ladder.
+fn w1_copy_ladder(shape: &str) {
+    const STOP_AFTER_MS: f64 = 60_000.0;
+    let field = if shape == "d" { "c29" } else { "c9" };
+    for (index, count) in [100_usize, 500, 1_000, 2_000, 5_000, 9_999].into_iter().enumerate() {
+        let Some(mut runtime) = w1_fresh_runtime(shape, 0x400 + index as u64) else {
             return;
-        };
-        let rows = w1_rows(shape);
-        w1_line(
-            shape,
-            "copy_formula_skipped",
-            "scattered formula cells; column copy measured on a, b1, b3, c1-*, c2-*, d",
-        );
-        w1_edit_cells(shape, &mut runtime, rows, 3, COPY_TIME_LIMIT_MS);
-        return;
-    }
-    let rows = w1_rows(shape);
-    // The copy target starts with row 0's formula and Numbers on every other
-    // row, so the copy writes the shape's full formula count.
-    let source_field = if shape == "d" { "c29" } else { "c9" };
-    let destinations = (1..rows)
-        .map(|row| FieldTarget {
-            entity: entity_id(row).to_string(),
-            field: source_field.to_owned(),
-        })
-        .collect::<Vec<_>>();
-    let started = Instant::now();
-    let mut millis = Vec::new();
-    let mut last_runtime = None;
-    for sample_index in 0..MAX_SAMPLES {
-        if sample_index > 0 && started.elapsed().as_secs_f64() * 1_000.0 > COPY_TIME_LIMIT_MS {
-            w1_line(
-                shape,
-                "copy_formula_stopped",
-                format!("limit {COPY_TIME_LIMIT_MS:.0} ms"),
-            );
-            break;
-        }
-        let serial = 0x400 + u64::try_from(sample_index).unwrap_or(0);
-        let Some(mut runtime) = w1_fresh_runtime(shape, serial) else {
-            break;
         };
         if shape == "a" {
             let revision = runtime.observe_occurrence().revision;
-            let response = runtime.handle(DesignerRequest::FormulaUpdate {
+            if let Err(error) = runtime.handle(DesignerRequest::FormulaUpdate {
                 expected_revision: revision,
                 target: FieldTarget {
                     entity: entity_id(0).to_string(),
-                    field: source_field.to_owned(),
+                    field: field.to_owned(),
                 },
                 source: "[.c0] * [.c3]".to_owned(),
-            });
-            match response {
-                Ok(DesignerResponse::Published(_)) => {}
-                Ok(_) => {
-                    w1_failure(shape, "copy_seed_formula", "non-published response");
-                    break;
-                }
-                Err(error) => {
-                    w1_failure(shape, "copy_seed_formula", error);
-                    break;
-                }
+            }) {
+                w1_failure(shape, "copy_seed_formula", error);
+                return;
             }
         }
+        let destinations = (1..=count)
+            .map(|row| FieldTarget {
+                entity: entity_id(row).to_string(),
+                field: field.to_owned(),
+            })
+            .collect::<Vec<_>>();
         let revision = runtime.observe_occurrence().revision;
         let (response, sample) = observe(|| {
             runtime.handle(DesignerRequest::CopyFormula {
                 expected_revision: revision,
                 source: FieldTarget {
                     entity: entity_id(0).to_string(),
-                    field: source_field.to_owned(),
+                    field: field.to_owned(),
                 },
-                destinations: destinations.clone(),
+                destinations,
                 fixed_references: Vec::new(),
                 relative_rows: true,
                 relative_columns: false,
             })
         });
-        last_runtime = Some(runtime);
         match response {
-            Ok(DesignerResponse::Published(_)) => millis.push(sample.millis),
-            Ok(_) => {
-                w1_failure(
+            Ok(DesignerResponse::Published(publication)) => {
+                w1_line(shape, &format!("copy_formula_{count}_ms"), format!("{:.3}", sample.millis));
+                w1_line(
                     shape,
-                    "copy_formula",
-                    "handle returned a non-published response",
+                    &format!("copy_formula_{count}_json_bytes"),
+                    serde_json::to_vec(&publication).map_or(0, |bytes| bytes.len()),
                 );
+            }
+            Ok(_) => {
+                w1_failure(shape, "copy_formula", "non-published response");
                 break;
             }
             Err(error) => {
@@ -1698,11 +1669,22 @@ fn w1_copy_formula(shape: &str) {
                 break;
             }
         }
+        if sample.millis > STOP_AFTER_MS {
+            w1_line(shape, "copy_formula_ladder_stopped", count);
+            break;
+        }
     }
-    w1_line(shape, "copy_formula_n", millis.len());
-    w1_duration_summary(shape, "copy_formula", &millis);
-    if let Some(mut runtime) = last_runtime {
-        w1_edit_cells(shape, &mut runtime, rows, 3, COPY_TIME_LIMIT_MS);
+    for (index, count) in [100_usize, 1_000, 5_000, 10_000].into_iter().enumerate() {
+        let Some(mut runtime) = w1_fresh_runtime(shape, 0x500 + index as u64) else {
+            return;
+        };
+        w1_line(shape, "edit_cells_count", count);
+        let started = Instant::now();
+        w1_edit_cells(shape, &mut runtime, count, 1, STOP_AFTER_MS);
+        if started.elapsed().as_secs_f64() * 1_000.0 > STOP_AFTER_MS {
+            w1_line(shape, "edit_cells_ladder_stopped", count);
+            break;
+        }
     }
 }
 
@@ -1844,7 +1826,7 @@ fn w1_views(shape: &str, runtime: &mut DesignerRuntime, rows: usize) {
             let revision = runtime.observe_occurrence().revision;
             #[allow(clippy::cast_precision_loss)]
             let input = ScalarEditInput::Number {
-                input: format!("{}", 2_000.0 + iteration as f64),
+                input: format!("{}", w1_next_value()),
             };
             let edit_started = Instant::now();
             let response = runtime.handle(DesignerRequest::EditScalar {
@@ -2039,7 +2021,7 @@ fn w1_long_run(shape: &str, runtime: &mut DesignerRuntime, rows: usize) {
         let revision = runtime.observe_occurrence().revision;
         #[allow(clippy::cast_precision_loss)]
         let input = ScalarEditInput::Number {
-            input: format!("{}", 20_000.0 + edits as f64),
+            input: format!("{}", w1_next_value()),
         };
         let response = runtime.handle(DesignerRequest::EditScalar {
             expected_revision: revision,
@@ -2103,6 +2085,11 @@ fn w1_long_run(shape: &str, runtime: &mut DesignerRuntime, rows: usize) {
         shape,
         "long_run_execution_receipts_v2",
         runtime.lifecycle.execution_receipts_v2().len(),
+    );
+    w1_line(
+        shape,
+        "long_run_receipts_json_bytes",
+        serde_json::to_vec(runtime.lifecycle.execution_receipts()).map_or(0, |bytes| bytes.len()),
     );
 }
 
@@ -2279,6 +2266,23 @@ fn capacity_w1_shape() {
     }
     drop(document);
 
+    match std::env::var("W1_MODE").as_deref() {
+        Ok("copy") => {
+            drop(runtime);
+            w1_copy_ladder(&shape);
+            return;
+        }
+        Ok("long") => {
+            // First thing after open, in its own process. Freed pages from the
+            // open still absorb early growth; see the receipts line.
+            if let Some(runtime) = &mut runtime {
+                w1_long_run(&shape, runtime, rows);
+            }
+            return;
+        }
+        _ => {}
+    }
+
     // 5. Scalar edits.
     if let Some(runtime) = &mut runtime {
         if views_only {
@@ -2334,8 +2338,8 @@ fn capacity_w1_shape() {
                         "c1",
                         false,
                         W1Input::Text,
-                        300,
-                        180_000.0,
+                        if w1_lite() { 4 } else { 300 },
+                        if w1_lite() { 1.0 } else { 180_000.0 },
                     );
                     w1_scalar_edits(
                         shape,
@@ -2345,11 +2349,14 @@ fn capacity_w1_shape() {
                         "c0",
                         false,
                         W1Input::Number,
-                        300,
-                        180_000.0,
+                        if w1_lite() { 4 } else { 300 },
+                        if w1_lite() { 1.0 } else { 180_000.0 },
                     );
                 }
                 _ => {}
+            }
+            if w1_lite() {
+                return;
             }
             // 5a. Preflight ON, for the old table's comparison shapes.
             if shape == "a" || shape == "a100" {
@@ -2375,16 +2382,7 @@ fn capacity_w1_shape() {
             // 8. Save and reopen.
             w1_save_and_reopen(&shape, runtime);
 
-            // 9. Long run on a and b3.
-            if shape == "a" || shape == "b3" {
-                w1_long_run(&shape, runtime, rows);
-            }
         }
     }
 
-    // 7. Copy formula and one bulk EditCells on a fresh runtime.
-    drop(runtime);
-    if !views_only {
-        w1_copy_formula(&shape);
-    }
 }
