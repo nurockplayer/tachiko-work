@@ -51,9 +51,9 @@ use tachiko_storage::{
     encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, ColumnRef, Date, DiagnosticCode, Document, Entity, EntityId, EntityKey,
-    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FormulaBindError,
-    IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    CalculationFailure, ColumnRef, ConditionalAggregate, Date, DiagnosticCode, Document, Entity,
+    EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    FormulaBindError, IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
     SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
     WorkspaceError, create_document, diagnostic_codes,
@@ -221,6 +221,12 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         required: bool,
+    },
+    ChangeColumnType {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        field_type: String,
     },
     SetColumnNumberFormat {
         expected_revision: String,
@@ -1494,6 +1500,12 @@ pub enum DesignerError {
     FieldQueryTooLarge { requested: usize, maximum: usize },
     #[error("projection is {actual} bytes; the bounded maximum is {maximum}")]
     ProjectionTooLarge { actual: usize, maximum: usize },
+    /// The post-edit refresh exceeded the projection bound. Keeps the ordinary
+    /// `UnsupportedProject` presentation while carrying the measured sizes.
+    #[error(
+        "this canonical project is outside the bounded Designer profile: the worst-case post-edit refresh is not bounded: projection is {actual} bytes; the bounded maximum is {maximum}"
+    )]
+    PostEditRefreshTooLarge { actual: usize, maximum: usize },
     #[error("Designer lifecycle failed: {0}")]
     Lifecycle(#[from] PatchLifecycleError),
     #[error("'{input}' is not a finite Number")]
@@ -1695,7 +1707,9 @@ impl DesignerError {
             | Self::InvalidProjectWorkspace { .. }
             | Self::InvalidProjectTransfer { .. } => ("invalid_project", Vec::new()),
             Self::ProjectTransferTooLarge { .. } => ("project_too_large", Vec::new()),
-            Self::UnsupportedProject { .. } => ("unsupported_project", Vec::new()),
+            Self::UnsupportedProject { .. } | Self::PostEditRefreshTooLarge { .. } => {
+                ("unsupported_project", Vec::new())
+            }
             Self::InvalidOccurrenceIdentity => ("invalid_occurrence", Vec::new()),
             Self::MissingCollection { .. } => ("missing_collection", Vec::new()),
             Self::CollectionTooLarge { .. }
@@ -2665,6 +2679,17 @@ impl DesignerRuntime {
                 &field,
                 required,
             )?)),
+            DesignerRequest::ChangeColumnType {
+                expected_revision,
+                collection,
+                field,
+                field_type,
+            } => Ok(DesignerResponse::Published(self.change_column_type(
+                &expected_revision,
+                &collection,
+                &field,
+                &field_type,
+            )?)),
             DesignerRequest::SetColumnNumberFormat {
                 expected_revision,
                 collection,
@@ -3081,9 +3106,7 @@ impl DesignerRuntime {
                 self.current_revision(),
                 &post_edit_fields.into_iter().collect::<Vec<_>>(),
             )
-            .map_err(|error| DesignerError::UnsupportedProject {
-                message: format!("the worst-case post-edit refresh is not bounded: {error}"),
-            })?;
+            .map_err(post_edit_refresh_failure)?;
         "resident/18446744073709551615".clone_into(&mut post_edit_refresh.revision);
         for field in &mut post_edit_refresh.fields {
             if let Some(StoredValueProjection::Number { value }) = &mut field.stored {
@@ -3093,11 +3116,7 @@ impl DesignerRuntime {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
             }
         }
-        ensure_projection_size(&post_edit_refresh).map_err(|error| {
-            DesignerError::UnsupportedProject {
-                message: format!("the worst-case post-edit refresh is not bounded: {error}"),
-            }
-        })?;
+        ensure_projection_size(&post_edit_refresh).map_err(post_edit_refresh_failure)?;
         Ok(())
     }
 
@@ -4483,6 +4502,163 @@ impl DesignerRuntime {
             schema: schema_id,
             order: previous_order,
         });
+        self.record_edit(expected, forward, inverse)
+    }
+
+    /// Change one native scalar column's type as one atomic, undoable
+    /// operation: every present value converts with the interop rules, or the
+    /// whole command refuses without a partial change.
+    #[allow(clippy::too_many_lines)] // One sequential admission, conversion and atomic batch.
+    fn change_column_type(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        field_type: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (schema_id, entities) = self.native_column_schema(collection)?;
+        let snapshot = self.session.export_snapshot();
+        let schema = snapshot
+            .document()
+            .schemas
+            .get(&schema_id)
+            .ok_or_else(|| table_error("native table schema is unavailable"))?;
+        let field_id = FieldId::from(field.to_owned());
+        let definition = schema
+            .fields
+            .get(&field_id)
+            .cloned()
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        if !matches!(
+            definition.field_type,
+            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+        ) {
+            return Err(table_error("column is not a supported scalar"));
+        }
+        let kind = native_table_field_type(field_type)?;
+        if kind == definition.field_type {
+            return Err(table_error("column already has that type"));
+        }
+        let formula_cells = entities
+            .iter()
+            .filter(|entity| {
+                snapshot
+                    .document()
+                    .entities
+                    .get(*entity)
+                    .and_then(|record| record.fields.get(&field_id))
+                    .is_some_and(|value| matches!(value, Value::Formula(_)))
+            })
+            .count();
+        if formula_cells > 0 {
+            return Err(table_error(&format!(
+                "column '{}' holds formula cells; a calculated column keeps its type",
+                definition.effective_name()
+            )));
+        }
+        let dependent_cells = dependent_formula_cells(
+            snapshot.document(),
+            |reference| reference.field == field_id && entities.contains(&reference.entity),
+            |column| column.field == field_id && column.schema == schema.id,
+            |entity, removed| *removed == field_id && entities.contains(entity),
+        );
+        if dependent_cells > 0 {
+            return Err(DesignerError::FormulaDependencyInUse {
+                dependent_cells,
+                subject: format!(
+                    "column '{}' in collection '{}'",
+                    definition.effective_name(),
+                    collection
+                ),
+            });
+        }
+        // Present empty Text becomes blank when an optional column gains a
+        // non-Text type; in a required column it converts (and refuses) like
+        // any other value. `convert_value` itself stays unchanged.
+        let empty_text_becomes_blank = !definition.required
+            && matches!(
+                kind,
+                FieldType::Number | FieldType::Boolean | FieldType::Date
+            );
+        let mut old_values = BTreeMap::new();
+        let mut new_values = BTreeMap::new();
+        for (index, entity) in entities.iter().enumerate() {
+            let Some(value) = snapshot
+                .document()
+                .entities
+                .get(entity)
+                .and_then(|record| record.fields.get(&field_id))
+            else {
+                continue;
+            };
+            old_values.insert(entity.clone(), value.clone());
+            if empty_text_becomes_blank && matches!(value, Value::Text(text) if text.is_empty()) {
+                continue;
+            }
+            let converted = interop_document::convert_value(value, &kind).map_err(|error| {
+                let reason = match error {
+                    DesignerError::InvalidTrackerOperation { message } => message,
+                    other => other.to_string(),
+                };
+                let shown = match interop_document::convert_value(value, &FieldType::Text) {
+                    Ok(Value::Text(text)) => text,
+                    _ => String::new(),
+                };
+                table_error(&format!(
+                    "row {} of column '{}' holds '{}': {}",
+                    index + 1,
+                    definition.effective_name(),
+                    shown.chars().take(40).collect::<String>(),
+                    reason
+                ))
+            })?;
+            new_values.insert(entity.clone(), converted);
+        }
+        let mut changed = definition.clone();
+        changed.field_type = kind.clone();
+        changed.number_format = if kind == FieldType::Number {
+            definition.number_format.clone()
+        } else {
+            None
+        };
+        // No existing constraint declaration is defined across types.
+        changed.constraint = tachiko_workspace_engine::FieldConstraint::None;
+        let previous_order = schema.field_order.clone();
+        let forward = vec![
+            SemanticCommand::RemoveSchemaField {
+                schema: schema_id.clone(),
+                field: definition.clone(),
+                values: old_values.clone(),
+            },
+            SemanticCommand::AppendSchemaField {
+                schema: schema_id.clone(),
+                field: changed.clone(),
+                values: new_values.clone(),
+            },
+            SemanticCommand::SetSchemaFieldOrder {
+                schema: schema_id.clone(),
+                order: previous_order.clone(),
+            },
+        ];
+        // The mirror restores the previous definition, values, order, number
+        // format and constraint in one history step.
+        let inverse = vec![
+            SemanticCommand::RemoveSchemaField {
+                schema: schema_id.clone(),
+                field: changed,
+                values: new_values,
+            },
+            SemanticCommand::AppendSchemaField {
+                schema: schema_id.clone(),
+                field: definition,
+                values: old_values,
+            },
+            SemanticCommand::SetSchemaFieldOrder {
+                schema: schema_id,
+                order: previous_order,
+            },
+        ];
         self.record_edit(expected, forward, inverse)
     }
 
@@ -6951,6 +7127,19 @@ pub fn close_project(runtime: &mut Option<DesignerRuntime>) {
     *runtime = None;
 }
 
+/// Keep the ordinary post-edit refusal presentation while carrying the measured
+/// projection sizes for import, which reports them as a capacity refusal.
+fn post_edit_refresh_failure(error: DesignerError) -> DesignerError {
+    match error {
+        DesignerError::ProjectionTooLarge { actual, maximum } => {
+            DesignerError::PostEditRefreshTooLarge { actual, maximum }
+        }
+        error => DesignerError::UnsupportedProject {
+            message: format!("the worst-case post-edit refresh is not bounded: {error}"),
+        },
+    }
+}
+
 fn ensure_projection_size(projection: &impl Serialize) -> Result<(), DesignerError> {
     ensure_projection_size_with_limit(projection, MAX_PROJECTION_BYTES)
 }
@@ -7721,7 +7910,7 @@ fn require_copy_expression_numbers(
     for (reference, numeric) in expression.reference_uses(owner) {
         require_copy_reference(document, &reference, numeric)?;
     }
-    for column in expression.column_totals() {
+    for column in expression.numeric_columns() {
         require_copy_column_number(document, column)?;
     }
     Ok(())
@@ -7756,6 +7945,21 @@ fn map_copy_references(
         | Expression::SameRowReference(_)
         | Expression::ColumnTotal(_)
         | Expression::ColumnAggregate { .. } => Ok(()),
+        // A column argument names a schema column, but a criterion expression
+        // can read a cell of the copied row and must be rebased like any
+        // other formula text.
+        Expression::ColumnConditional { criteria, .. } => {
+            for criterion in criteria {
+                if let Some(expression) = &mut criterion.value {
+                    match expression.as_mut() {
+                        Expression::Reference(reference) => visit(reference, false)?,
+                        Expression::SameRowReference(_) => {}
+                        other => map_copy_references(other, visit)?,
+                    }
+                }
+            }
+            Ok(())
+        }
         Expression::Reference(reference) => visit(reference, true),
         Expression::IsBlank(reference) => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
@@ -7876,17 +8080,24 @@ fn map_duplicate_expression(
             Ok(())
         }
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
-            // A total of the copied table's own column follows the copy; a
-            // total of any other table keeps pointing at that table.
-            if let Some(schema) = schemas.get(&column.schema) {
-                let field = fields.get(&column.field).cloned().ok_or_else(|| {
-                    table_error(&format!(
-                        "internal column-total field '{}' has no copied field",
-                        column.field
-                    ))
-                })?;
-                column.schema = schema.clone();
-                column.field = field;
+            map_duplicate_column(column, fields, schemas)
+        }
+        // Every column of the node follows the copy, and a criterion
+        // expression is remapped like any other formula subtree.
+        Expression::ColumnConditional {
+            aggregate,
+            criteria,
+        } => {
+            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                aggregate.as_mut()
+            {
+                map_duplicate_column(column, fields, schemas)?;
+            }
+            for criterion in criteria {
+                map_duplicate_column(&mut criterion.column, fields, schemas)?;
+                if let Some(expression) = &mut criterion.value {
+                    map_duplicate_expression(expression, entities, fields, schemas)?;
+                }
             }
             Ok(())
         }
@@ -7897,6 +8108,26 @@ fn map_duplicate_expression(
             Ok(())
         }
     }
+}
+
+/// A column of the copied table's own schema follows the copy; any other
+/// table's column keeps pointing at that table.
+fn map_duplicate_column(
+    column: &mut ColumnRef,
+    fields: &BTreeMap<FieldId, FieldId>,
+    schemas: &BTreeMap<SchemaId, SchemaId>,
+) -> Result<(), DesignerError> {
+    if let Some(schema) = schemas.get(&column.schema) {
+        let field = fields.get(&column.field).cloned().ok_or_else(|| {
+            table_error(&format!(
+                "internal column-total field '{}' has no copied field",
+                column.field
+            ))
+        })?;
+        column.schema = schema.clone();
+        column.field = field;
+    }
+    Ok(())
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
@@ -8419,6 +8650,33 @@ fn ensure_formula_reference_profile(
                     "formula column field identity",
                     column.field.as_str(),
                 )?;
+            }
+            Expression::ColumnConditional {
+                aggregate,
+                criteria,
+            } => {
+                let values = match aggregate.as_ref() {
+                    ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
+                        Some(column)
+                    }
+                    ConditionalAggregate::Count => None,
+                };
+                for column in values
+                    .into_iter()
+                    .chain(criteria.iter().map(|criterion| &criterion.column))
+                {
+                    ensure_profile_string(
+                        profile_string_bytes,
+                        "formula column schema identity",
+                        column.schema.as_str(),
+                    )?;
+                    ensure_profile_string(
+                        profile_string_bytes,
+                        "formula column field identity",
+                        column.field.as_str(),
+                    )?;
+                }
+                pending.extend(expression.children());
             }
             _ => pending.extend(expression.children()),
         }
@@ -9244,6 +9502,22 @@ fn expression_references(
         }
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
             columns.insert(column.clone());
+        }
+        Expression::ColumnConditional {
+            aggregate,
+            criteria,
+        } => {
+            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                aggregate.as_ref()
+            {
+                columns.insert(column.clone());
+            }
+            for criterion in criteria {
+                columns.insert(criterion.column.clone());
+                if let Some(expression) = &criterion.value {
+                    expression_references(owner, expression, references, columns);
+                }
+            }
         }
         _ => expression
             .children()

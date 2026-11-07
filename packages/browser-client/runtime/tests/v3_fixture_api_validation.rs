@@ -220,13 +220,17 @@ fn real_import_keeps_the_unedited_26_date_and_new_occurrence_identities() {
     );
 }
 
+#[cfg(windows)]
+const CAPTURE_DIRECTORY: &str = r"C:\capture";
+#[cfg(not(windows))]
+const CAPTURE_DIRECTORY: &str = "/tmp/capture";
 const CAPTURE_HEAD: &str = "6ed764735ad2bbd7be6a04a67eaaaf4d8e107817";
 const CAPTURE_RUN: &str = "00000000-0000-4000-8000-000000000001";
 
 fn complete_capture_context() -> fixtures::CaptureInputs<'static> {
     fixtures::CaptureInputs {
         required: Some("1"),
-        directory: Some("/tmp/capture"),
+        directory: Some(CAPTURE_DIRECTORY),
         head: Some(CAPTURE_HEAD),
         run_id: Some(CAPTURE_RUN),
     }
@@ -248,7 +252,7 @@ fn capture_context_distinguishes_regression_from_qualified_capture() {
     .unwrap();
     assert_eq!(
         (complete.directory, complete.head, complete.run_id),
-        ("/tmp/capture", CAPTURE_HEAD, CAPTURE_RUN)
+        (CAPTURE_DIRECTORY, CAPTURE_HEAD, CAPTURE_RUN)
     );
 }
 
@@ -262,7 +266,7 @@ fn capture_context_rejects_partial_runtime_inputs() {
             ..CaptureInputs::default()
         },
         CaptureInputs {
-            directory: Some("/tmp/capture"),
+            directory: Some(CAPTURE_DIRECTORY),
             ..CaptureInputs::default()
         },
         CaptureInputs {

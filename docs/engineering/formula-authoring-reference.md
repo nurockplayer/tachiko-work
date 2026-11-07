@@ -23,6 +23,7 @@ revision unchanged.
 | Same-row field reference (the formula owner's own row) | `[.expense]` |
 | Column total (sum of one Number column over a table) | `[plan.reserve:total]` |
 | Column aggregates | `[plan.reserve:average]`, `[plan.reserve:count]`, `[plan.reserve:min]`, `[plan.reserve:max]` |
+| Conditional aggregates | `SUMIFS([plan.reserve:column], [plan.category:column], [settings.criterion])`, `COUNTIFS([plan.category:column], [settings.criterion])` |
 | Binary `+`, `-`, `*`, `/` with standard precedence | `[rent.expense] * [settings.rate]` |
 | Unary `+` and `-` | `-[enemy.defense] + 2` |
 | Parentheses | `([rent.expense] + 100) * 2` |
@@ -108,6 +109,41 @@ cells are skipped; failed or non-Number contributors fail the calculation.
 Count returns zero for an empty column; the other aggregates report
 `aggregate_empty`. Column identity, cycle, copy and row-change rules match column
 totals.
+
+## Conditional aggregates `SUMIFS`, `COUNTIFS`, `AVERAGEIFS`
+
+```text
+summary.result  SUMIFS([plan.quantity:column], [plan.category:column], [settings.criterion])
+```
+
+The value column and every criterion column must belong to one table; the value
+column must be Number. Criteria read a cell at evaluation time, so the usual
+trick works: keep the criterion text in a Text cell such as
+`settings.criterion` and edit that cell to change what matches. A Text criterion
+cell may hold `Food`, `f*`, `>5`, `TRUE`, or `2026-01-05`. `Count` counts every
+matching row; `Sum` and `Average` skip matching rows whose value is blank.
+`SUMIF(range, criterion)` repeats the range as the value column; canonical text
+prints it as `SUMIFS`.
+
+A written string literal is restricted until stored text is accepted by an ADR.
+Only a number (`"5"`, `">=5"`, `"<>5"`) or a blank test (`""`, `"<>"`) may be
+written; anything else refuses with:
+
+```text
+text, date and yes/no criteria can't be written in the formula yet; put the value in a cell and reference it
+```
+
+That is the workaround: put the criterion text in a Text cell and reference it.
+A relational criterion (`>`, `>=`, `<`, `<=`) must be followed by a number
+literal or a Number-typed expression; `=` and `<>` also accept a bare reference.
+A1 entry translates all six names when every range is one whole data column of
+the same rows, and refuses a non-writable literal with `unsupported_criterion`.
+XLSX import keeps Excel's last calculated value, with a finding, for a
+conditional call it cannot translate, rather than failing the import.
+Removing or retyping a criterion column is refused while the formula reads it.
+`.roproj/v3` stores the column, the comparison, and an optional value
+expression; the frozen `.roproj/v1` and `.roproj/v2` formats and direct `.ro/v2`
+refuse conditional aggregates.
 
 ## Column totals `[schema.field:total]`
 

@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
-    ColumnAggregateFunction, ComparisonOperator, Document, Expression, FieldRef, FieldType, Number,
+    ColumnAggregateFunction, ColumnCriterion, ComparisonOperator, ConditionalAggregate,
+    CriterionCell, CriterionTest, Document, Expression, FieldRef, FieldType, Number, Value,
 };
 
 use crate::{CalculationFailure, column_cells};
@@ -28,6 +29,36 @@ impl Evaluation<'_> {
                 }
                 Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                     references.extend(column_cells(self.document, column));
+                }
+                // A conditional aggregate reads every cell of every column it
+                // names, matched row or not, so any failed contributor fails
+                // the formula. That is stricter than Excel and visible.
+                Expression::ColumnConditional {
+                    aggregate,
+                    criteria,
+                } => {
+                    if let ConditionalAggregate::Sum(column)
+                    | ConditionalAggregate::Average(column) = aggregate.as_ref()
+                    {
+                        references.extend(column_cells(self.document, column));
+                    }
+                    for criterion in criteria {
+                        references.extend(column_cells(self.document, &criterion.column));
+                        if let Some(expression) = &criterion.value {
+                            match expression.as_ref() {
+                                Expression::Reference(reference) => {
+                                    references.insert(reference.clone());
+                                }
+                                Expression::SameRowReference(field) => {
+                                    references.insert(FieldRef::new(
+                                        self.owner.entity.clone(),
+                                        field.clone(),
+                                    ));
+                                }
+                                other => pending.push(other),
+                            }
+                        }
+                    }
                 }
                 Expression::If {
                     condition,
@@ -103,6 +134,10 @@ impl Evaluation<'_> {
                     }
                 })
             }
+            Expression::ColumnConditional {
+                aggregate,
+                criteria,
+            } => self.conditional(aggregate, criteria),
             Expression::Round { value, digits } => round(self.number(value)?, *digits),
             Expression::Add { left, right } => {
                 self.binary(left, right, |left, right| number_result(left + right))
@@ -127,6 +162,141 @@ impl Evaluation<'_> {
                 self.binary(left, right, |left, right| number_result(left.max(right)))
             }
             _ => Err(CalculationFailure::TypeMismatch),
+        }
+    }
+
+    fn conditional(
+        &self,
+        aggregate: &ConditionalAggregate,
+        criteria: &[ColumnCriterion],
+    ) -> Result<Number, CalculationFailure> {
+        let Some(first) = criteria.first() else {
+            return Err(CalculationFailure::TypeMismatch);
+        };
+        let schema = first.column.schema.clone();
+        let mut tests = Vec::with_capacity(criteria.len());
+        for criterion in criteria {
+            tests.push(self.criterion_test(criterion)?);
+        }
+        let mut values = Vec::new();
+        let mut matched = 0_usize;
+        for entity in self.document.entities.values() {
+            if entity.schema != schema {
+                continue;
+            }
+            let mut included = true;
+            for (criterion, test) in criteria.iter().zip(&tests) {
+                let cell = self.criterion_cell(entity, &criterion.column.field)?;
+                if !test.matches(cell) {
+                    included = false;
+                    break;
+                }
+            }
+            if !included {
+                continue;
+            }
+            matched += 1;
+            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                aggregate
+            {
+                if entity.fields.contains_key(&column.field) {
+                    let reference = FieldRef::new(entity.id.clone(), column.field.clone());
+                    let Some(value) = self.values.get(&reference) else {
+                        return Err(CalculationFailure::FailedDependencies {
+                            dependencies: BTreeSet::from([reference]),
+                        });
+                    };
+                    values.push(value.get());
+                }
+            }
+        }
+        number_result(match aggregate {
+            ConditionalAggregate::Count => value_count(matched),
+            ConditionalAggregate::Sum(_) => values.iter().copied().sum(),
+            ConditionalAggregate::Average(_) => {
+                if values.is_empty() {
+                    return Err(CalculationFailure::EmptyAggregate);
+                }
+                average(&values)
+            }
+        })
+    }
+
+    fn criterion_test(
+        &self,
+        criterion: &ColumnCriterion,
+    ) -> Result<CriterionTest, CalculationFailure> {
+        match (criterion.operator, criterion.value.as_deref()) {
+            (ComparisonOperator::Equal, None) => {
+                Ok(CriterionTest::blank(ComparisonOperator::Equal))
+            }
+            (ComparisonOperator::NotEqual, None) => {
+                Ok(CriterionTest::blank(ComparisonOperator::NotEqual))
+            }
+            (ComparisonOperator::Equal, Some(Expression::Reference(reference))) => {
+                self.reference_criterion_test(reference)
+            }
+            (ComparisonOperator::Equal, Some(Expression::SameRowReference(field))) => self
+                .reference_criterion_test(&FieldRef::new(self.owner.entity.clone(), field.clone())),
+            (_, Some(Expression::Number(number))) => {
+                Ok(CriterionTest::number(criterion.operator, number.get()))
+            }
+            (ComparisonOperator::Equal, Some(other)) => {
+                Ok(CriterionTest::equal_number(self.number(other)?.get()))
+            }
+            _ => Err(CalculationFailure::TypeMismatch),
+        }
+    }
+
+    fn reference_criterion_test(
+        &self,
+        reference: &FieldRef,
+    ) -> Result<CriterionTest, CalculationFailure> {
+        let cell = self
+            .document
+            .entities
+            .get(&reference.entity)
+            .and_then(|entity| entity.fields.get(&reference.field));
+        match cell {
+            // Excel compares a blank referenced cell as zero.
+            None => Ok(CriterionTest::equal_number(0.0)),
+            Some(Value::Number(_) | Value::Formula(_)) => {
+                let Some(value) = self.values.get(reference) else {
+                    return Err(CalculationFailure::FailedDependencies {
+                        dependencies: BTreeSet::from([reference.clone()]),
+                    });
+                };
+                Ok(CriterionTest::equal_number(value.get()))
+            }
+            Some(Value::Text(text)) => {
+                CriterionTest::parse(text).map_err(|_| CalculationFailure::TypeMismatch)
+            }
+            Some(Value::Boolean(boolean)) => Ok(CriterionTest::equal_boolean(*boolean)),
+            Some(Value::Date(date)) => Ok(CriterionTest::equal_date(*date)),
+            Some(Value::Reference(_)) => Err(CalculationFailure::TypeMismatch),
+        }
+    }
+
+    fn criterion_cell<'a>(
+        &self,
+        entity: &'a tachiko_semantic_core::Entity,
+        field: &tachiko_semantic_core::FieldId,
+    ) -> Result<Option<CriterionCell<'a>>, CalculationFailure> {
+        match entity.fields.get(field) {
+            None => Ok(None),
+            Some(Value::Number(_) | Value::Formula(_)) => {
+                let reference = FieldRef::new(entity.id.clone(), field.clone());
+                let Some(value) = self.values.get(&reference) else {
+                    return Err(CalculationFailure::FailedDependencies {
+                        dependencies: BTreeSet::from([reference]),
+                    });
+                };
+                Ok(Some(CriterionCell::Number(value.get())))
+            }
+            Some(Value::Text(text)) => Ok(Some(CriterionCell::Text(text))),
+            Some(Value::Boolean(boolean)) => Ok(Some(CriterionCell::Boolean(*boolean))),
+            Some(Value::Date(date)) => Ok(Some(CriterionCell::Date(*date))),
+            Some(Value::Reference(_)) => Err(CalculationFailure::TypeMismatch),
         }
     }
 

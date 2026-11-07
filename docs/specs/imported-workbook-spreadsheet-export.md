@@ -152,8 +152,15 @@ policy remains disclosure, without rounding the file's decimal text. Formulas ar
 rebuilt from stable references using relative A1 for a same-row reference (so a
 spreadsheet fill-down follows the row) and current absolute A1 coordinates for
 other references, including column removal and row deletion; missing references
-or unsupported formulas refuse the whole export. Calculation and formula-editing
-rules do not change.
+or unsupported formulas refuse the whole export. A conditional aggregate exports
+as Excel's plural `SUMIFS`, `AVERAGEIFS` or `COUNTIFS` call over whole-column
+ranges: a blank test writes `""` or `"<>"`, a written number keeps its operator
+inside a quoted criterion, and an equality test writes its number or cell. Any
+other criterion expression refuses, because import wouldn't carry it back. A
+Date column takes only an exact date or a blank, and a date only tests a Date
+column, because Excel compares by serial number and reads more date spellings than
+Tachiko. Anything else refuses. A Text cell counts by its content at export:
+`">=45000"` is a number and `2026-09-05` is a date. Calculation and formula-editing rules do not change.
 
 An absent optional value is an Empty cell. Present empty Text remains Text in
 XLSX; CSV represents both with an empty field and discloses this in
@@ -300,6 +307,23 @@ carry `relative_copy_semantics_changed`; a `$` column alone has no effect.
 `SUM`, `AVERAGE`, and `COUNT` over exactly one whole numeric data column, starting
 at the header or first data row and ending at the last data row, become
 `[collection.field:total]`, `:average`, and `:count`, with `range_tracks_collection`.
+`SUMIF`, `AVERAGEIF` and `COUNTIF` (and their plural `*IFS` forms) keep the
+caller's function spelling when every column argument is one whole data column
+of the same sheet covering the same first and last row. Their value column must
+be numeric; a criterion column may hold any scalar. A call takes at most sixteen
+criteria, the formula parser's limit; more is `unsupported_function`. A criterion that is one
+written literal stays verbatim when the formula parser accepts it. Otherwise it
+must be a number or one cell reference, and any other expression is
+`unsupported_criterion`. A Date column tested against anything but an exact date
+or a blank, or a date tested against any other column, is
+`formula_type_mismatch`. A reference to a Text cell counts by its content at
+translation, as at export. A range
+that includes the header row is `unsupported_range`, because Excel could match
+the header and the column form reads data rows only. XLSX import applies these
+rules and keeps Excel's last value when one fails. It also keeps the value when a
+Text cell criterion would fail to calculate (`">abc"`), and when a Date column is
+tested against anything but an exact date or a blank, since Excel compares serial
+numbers and reads more date spellings than Tachiko.
 Collection and field spellings in formulas use semantic keys, not ids. Aggregates
 require all collection rows; filtered geometry still supports cell references.
 Notes are unique and returned in deterministic order.
@@ -310,9 +334,10 @@ import semantics. Partial ranges, range `MIN`/`MAX`, text concatenation and
 other functions are outside this call's profile.
 
 Typed refusals are `unknown_sheet`, `out_of_bounds`, `header_reference`,
-`unsupported_range`, `unsupported_function`, `unsupported_operator`,
-`formula_syntax`, `formula_type_mismatch`, `formula_cycle`, `invalid_geometry`,
-and `stale_revision`. Each carries `span: {start, end}`, half-open UTF-8 byte
+`unsupported_range`, `unsupported_criterion`, `unsupported_function`,
+`unsupported_operator`, `formula_syntax`, `formula_type_mismatch`,
+`formula_cycle`, `invalid_geometry`, and `stale_revision`. Each carries
+`span: {start, end}`, half-open UTF-8 byte
 offsets in the original input. Geometry and revision refusals use the empty span
 at zero because they have no offending text token.
 

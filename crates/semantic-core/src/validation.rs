@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    ColumnRef, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity,
-    Document, Expression, FieldConstraint, FieldRef, FieldType, Number, Schema, SemanticSubject,
-    Value,
+    ColumnRef, ComparisonOperator, ConditionalAggregate, Diagnostic, DiagnosticCode,
+    DiagnosticFact, DiagnosticProvider, DiagnosticSeverity, Document, Expression, FieldConstraint,
+    FieldRef, FieldType, FormulaExpressionType, MAX_CONDITIONAL_CRITERIA, Number, Schema,
+    SemanticSubject, Value,
 };
 
 const CORE_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.semantic-core");
@@ -734,8 +735,147 @@ fn validate_expression(
     for (reference, numeric) in expression.reference_uses(owner) {
         validate_formula_reference(document, owner, &reference, numeric, path, diagnostics);
     }
-    for column in expression.column_totals() {
+    let mut pending = vec![expression];
+    while let Some(node) = pending.pop() {
+        match node {
+            Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
+                validate_formula_column(document, owner, column, path, diagnostics);
+            }
+            Expression::ColumnConditional {
+                aggregate,
+                criteria,
+            } => {
+                validate_column_conditional(
+                    document,
+                    owner,
+                    aggregate,
+                    criteria,
+                    path,
+                    diagnostics,
+                );
+            }
+            _ => {}
+        }
+        pending.extend(node.children());
+    }
+}
+
+fn validate_column_conditional(
+    document: &Document,
+    owner: &FieldRef,
+    aggregate: &ConditionalAggregate,
+    criteria: &[crate::ColumnCriterion],
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut schemas = std::collections::BTreeSet::new();
+    match aggregate {
+        ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
+            validate_formula_column(document, owner, column, path, diagnostics);
+            schemas.insert(&column.schema);
+        }
+        ConditionalAggregate::Count => {}
+    }
+    if criteria.is_empty() {
+        diagnostics.push(core_diagnostic(
+            path,
+            DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+            "a conditional aggregate requires at least one criterion",
+            vec![SemanticSubject::EntityField(owner.clone())],
+        ));
+    }
+    if criteria.len() > MAX_CONDITIONAL_CRITERIA {
+        diagnostics.push(core_diagnostic(
+            path,
+            DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+            format!(
+                "a conditional aggregate admits at most {MAX_CONDITIONAL_CRITERIA} criteria, found {}",
+                criteria.len()
+            ),
+            vec![SemanticSubject::EntityField(owner.clone())],
+        ));
+    }
+    for criterion in criteria {
+        validate_formula_scalar_column(document, owner, &criterion.column, path, diagnostics);
+        schemas.insert(&criterion.column.schema);
+        let valid = match (&criterion.operator, criterion.value.as_deref()) {
+            (ComparisonOperator::Equal | ComparisonOperator::NotEqual, None)
+            | (_, Some(Expression::Number(_))) => true,
+            (ComparisonOperator::Equal, Some(expression)) => {
+                matches!(
+                    expression,
+                    Expression::Reference(_) | Expression::SameRowReference(_)
+                ) || expression.expression_type() == Some(FormulaExpressionType::Number)
+            }
+            (_, Some(_) | None) => false,
+        };
+        if !valid {
+            let message = if criterion.value.is_none() {
+                "a blank criterion admits only '=' or '<>'"
+            } else if criterion.operator == ComparisonOperator::Equal {
+                "a conditional criterion value must be a number or a cell reference"
+            } else {
+                "a relational criterion requires a number literal"
+            };
+            diagnostics.push(core_diagnostic(
+                path,
+                DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+                message,
+                vec![SemanticSubject::EntityField(owner.clone())],
+            ));
+        }
+    }
+    if schemas.len() > 1 {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+                "conditional aggregate columns must all belong to one schema",
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_fact(DiagnosticFact::new(
+                "schemas",
+                schemas
+                    .iter()
+                    .map(|schema| schema.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )),
+        );
+    }
+}
+
+/// Existence checks for a criterion column: any scalar type is readable.
+fn validate_formula_scalar_column(
+    document: &Document,
+    owner: &FieldRef,
+    column: &ColumnRef,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let some_definition = document
+        .schemas
+        .get(&column.schema)
+        .and_then(|schema| schema.fields.get(&column.field));
+    let Some(definition) = some_definition else {
+        // Reuse the numeric check for its missing-schema/missing-field text.
         validate_formula_column(document, owner, column, path, diagnostics);
+        return;
+    };
+    if matches!(definition.field_type, FieldType::Reference { .. }) {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+                format!("criterion column '{column}' targets a reference field"),
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_related_subjects(vec![SemanticSubject::SchemaField {
+                schema: column.schema.clone(),
+                field: column.field.clone(),
+            }])
+            .with_fact(DiagnosticFact::new("actual_kind", "reference")),
+        );
     }
 }
 
@@ -1435,6 +1575,28 @@ mod issue_175_research {
                 ),
                 Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                     validate_formula_column(document, owner, column, path, diagnostics);
+                }
+                Expression::ColumnConditional {
+                    aggregate,
+                    criteria,
+                } => {
+                    super::validate_column_conditional(
+                        document,
+                        owner,
+                        aggregate,
+                        criteria,
+                        path,
+                        diagnostics,
+                    );
+                    for criterion in criteria {
+                        if let Some(expression) = &criterion.value {
+                            let bare = matches!(
+                                expression.as_ref(),
+                                Expression::Reference(_) | Expression::SameRowReference(_)
+                            );
+                            pending.push((expression, !bare));
+                        }
+                    }
                 }
                 Expression::IsBlank(value) => pending.push((value, false)),
                 _ => pending.extend(

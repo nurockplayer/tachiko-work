@@ -1,8 +1,11 @@
 //! Private bounded file adapter. This module never evaluates formulas or executes source content.
+use crate::interop_document::quoted_sheet_name;
 use quick_xml::{Reader, events::Event};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
+use tachiko_formula_engine::{UnboundExpression, parse_expression};
+use tachiko_workspace_engine::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 // Plan A-06b scratch measurement: lifted so a 100k-cell text-capacity
@@ -848,9 +851,17 @@ fn compatible_formula(
     while !remaining.is_empty() {
         if remaining.starts_with('\'') {
             remaining = strip_quoted_formula_reference(remaining, location, &refuse)?;
+        } else if remaining.starts_with('"') {
+            remaining = strip_criterion_literal(remaining, &refuse)?;
         } else if remaining.starts_with("SUM(")
             || remaining.starts_with("AVERAGE(")
             || remaining.starts_with("COUNT(")
+            || remaining.starts_with("SUMIF(")
+            || remaining.starts_with("SUMIFS(")
+            || remaining.starts_with("AVERAGEIF(")
+            || remaining.starts_with("AVERAGEIFS(")
+            || remaining.starts_with("COUNTIF(")
+            || remaining.starts_with("COUNTIFS(")
             || remaining.starts_with("MIN(")
             || remaining.starts_with("MAX(")
             || remaining.starts_with("IF(")
@@ -956,6 +967,25 @@ fn strip_quoted_formula_reference<'a>(
     }
     remaining = &remaining[rows..];
     strip_column_range(remaining).ok_or_else(refuse)
+}
+
+/// Consume one written criterion string literal, doubled quotes included.
+fn strip_criterion_literal<'a>(
+    mut remaining: &'a str,
+    refuse: &dyn Fn() -> FidelityFinding,
+) -> std::result::Result<&'a str, FidelityFinding> {
+    remaining = &remaining[1..];
+    loop {
+        let character = remaining.chars().next().ok_or_else(refuse)?;
+        remaining = &remaining[character.len_utf8()..];
+        if character == '"' {
+            if remaining.starts_with('"') {
+                remaining = &remaining[1..];
+            } else {
+                return Ok(remaining);
+            }
+        }
+    }
 }
 
 pub(crate) fn validate_native_tables_xlsx(
@@ -3993,13 +4023,163 @@ pub(crate) fn call_argument(source: &str) -> Option<(&str, usize)> {
     None
 }
 
+/// Split one call's argument text at top-level commas, keeping each part's
+/// byte offset in `argument`. Quoted text, doubled quotes and nested calls stay
+/// inside their part.
+pub(crate) fn split_arguments(argument: &str) -> Option<Vec<(usize, &str)>> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut start = 0usize;
+    let mut cursor = 0usize;
+    while cursor < argument.len() {
+        let character = argument[cursor..].chars().next()?;
+        cursor += character.len_utf8();
+        match quote {
+            Some(open) if character == open => {
+                if argument[cursor..].starts_with(open) {
+                    cursor += open.len_utf8();
+                } else {
+                    quote = None;
+                }
+            }
+            Some(_) => {}
+            None => match character {
+                '\'' | '"' => quote = Some(character),
+                '(' => depth += 1,
+                ')' => depth = depth.checked_sub(1)?,
+                ',' if depth == 0 => {
+                    parts.push((start, &argument[start..cursor - 1]));
+                    start = cursor;
+                }
+                _ => {}
+            },
+        }
+    }
+    if quote.is_some() || depth != 0 {
+        return None;
+    }
+    parts.push((start, &argument[start..]));
+    Some(parts)
+}
+
+/// Whether `text` is exactly one `"` string literal, doubled quotes included.
+pub(crate) fn criterion_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.first() != Some(&b'"') {
+        return false;
+    }
+    let mut cursor = 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'"' {
+            if bytes.get(cursor + 1) == Some(&b'"') {
+                cursor += 2;
+                continue;
+            }
+            return cursor + 1 == bytes.len();
+        }
+        cursor += 1;
+    }
+    false
+}
+
+/// The value class of a criterion Tachiko can store today.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CriterionKind {
+    Number,
+    Blank,
+    Date,
+    Other,
+}
+
+/// A criterion literal is writable when the formula parser accepts it in a
+/// conditional call. The parser stays the one home of the rule.
+pub(crate) fn writable_criterion(literal: &str) -> Option<CriterionKind> {
+    let source = format!("COUNTIF([a.b:column], {literal})");
+    let UnboundExpression::ColumnConditional { criteria, .. } = parse_expression(&source).ok()?
+    else {
+        return None;
+    };
+    match criteria.first()?.value.as_deref() {
+        None => Some(CriterionKind::Blank),
+        Some(UnboundExpression::Number(_)) => Some(CriterionKind::Number),
+        Some(_) => None,
+    }
+}
+
+/// Where each argument of one conditional call sits: its column arguments in
+/// argument order and each criterion paired with its column argument.
+pub(crate) struct ConditionalShape {
+    /// `(argument index, is the numeric value column)`.
+    pub columns: Vec<(usize, bool)>,
+    /// `(criterion argument index, its column argument index)`.
+    pub criteria: Vec<(usize, usize)>,
+}
+
+/// The argument layout of a conditional aggregate, or `None` for a wrong
+/// argument count or more criteria than the formula parser accepts.
+pub(crate) fn conditional_shape(name: &str, count: usize) -> Option<ConditionalShape> {
+    let mut shape = ConditionalShape {
+        columns: Vec::new(),
+        criteria: Vec::new(),
+    };
+    match name {
+        "SUMIF" | "AVERAGEIF" => {
+            if !(2..=3).contains(&count) {
+                return None;
+            }
+            // Without a separate sum range, the criterion range is the sum range.
+            shape.columns.push((0, count == 2));
+            shape.criteria.push((1, 0));
+            if count == 3 {
+                shape.columns.push((2, true));
+            }
+        }
+        "COUNTIF" => {
+            if count != 2 {
+                return None;
+            }
+            shape.columns.push((0, false));
+            shape.criteria.push((1, 0));
+        }
+        "SUMIFS" | "AVERAGEIFS" => {
+            if count < 3 || count % 2 == 0 {
+                return None;
+            }
+            shape.columns.push((0, true));
+            let mut index = 1;
+            while index + 1 < count {
+                shape.columns.push((index, false));
+                shape.criteria.push((index + 1, index));
+                index += 2;
+            }
+        }
+        "COUNTIFS" => {
+            if count < 2 || count % 2 != 0 {
+                return None;
+            }
+            let mut index = 0;
+            while index + 1 < count {
+                shape.columns.push((index, false));
+                shape.criteria.push((index + 1, index));
+                index += 2;
+            }
+        }
+        _ => return None,
+    }
+    (shape.criteria.len() <= MAX_CONDITIONAL_CRITERIA).then_some(shape)
+}
+
 /// `argument` is the exact argument of an aggregate call. It must be one range
-/// covering exactly one whole data column of a sheet; returns that sheet and column.
+/// covering exactly one whole data column of a sheet; returns that sheet, its
+/// column and the range's first and last sheet rows. A criterion column may
+/// hold any scalar, so `numeric` is only required for a value column.
 pub(crate) fn whole_column_argument(
     argument: &str,
     current: usize,
     sheets: &[SourceSheet],
-) -> Option<(usize, usize)> {
+    numeric: bool,
+) -> Option<(usize, usize, usize, usize)> {
     let mut cursor = skip_whitespace(argument, 0);
     let mut named = None;
     if argument[cursor..].starts_with('\'') {
@@ -4065,7 +4245,8 @@ pub(crate) fn whole_column_argument(
         return None;
     }
     let column = column_index(&start_column)?;
-    numeric_column(&sheet.rows, column).then_some((target, column))
+    (column < sheet.columns.len() && (!numeric || numeric_column(&sheet.rows, column)))
+        .then_some((target, column, start_row, end_row))
 }
 
 /// Excel's SUM/AVERAGE/COUNT skip text, Yes/No and dates in a range, while a
@@ -4081,19 +4262,27 @@ fn numeric_column(rows: &[Vec<SourceCell>], column: usize) -> bool {
     })
 }
 
-/// Every SUM, AVERAGE or COUNT call, and every MIN/MAX call whose argument holds
-/// a range, must cover exactly one whole data column of a sheet.
-fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]) -> bool {
+/// Whether Tachiko can calculate one source formula, and why not when it
+/// cannot.
+enum FormulaAdmission {
+    Admitted,
+    Refused(Option<&'static str>),
+}
+
+/// Every SUM, AVERAGE or COUNT call, every conditional aggregate call, and
+/// every MIN/MAX call whose argument holds a range, must stay inside the
+/// translated profile.
+fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> FormulaAdmission {
     let mut cursor = 0;
     while cursor < formula.len() {
         let Some(character) = formula[cursor..].chars().next() else {
-            return false;
+            return FormulaAdmission::Refused(None);
         };
         if character == '\'' || character == '"' {
             cursor += character.len_utf8();
             loop {
                 let Some(next) = formula[cursor..].chars().next() else {
-                    return false;
+                    return FormulaAdmission::Refused(None);
                 };
                 cursor += next.len_utf8();
                 if next != character {
@@ -4115,24 +4304,36 @@ fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]
             }
             let name = formula[start..cursor].to_ascii_uppercase();
             let required = matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT");
+            let conditional = matches!(
+                name.as_str(),
+                "SUMIF" | "SUMIFS" | "AVERAGEIF" | "AVERAGEIFS" | "COUNTIF" | "COUNTIFS"
+            );
             // Excel's MIN/MAX of an all-blank range is 0 while a Tachiko column
             // min/max fails, so a range MIN/MAX is never translated.
-            if required || matches!(name.as_str(), "MIN" | "MAX") {
+            if required || conditional || matches!(name.as_str(), "MIN" | "MAX") {
                 let call = skip_whitespace(formula, cursor);
                 if formula[call..].starts_with('(') {
                     let Some((argument, consumed)) = call_argument(&formula[call..]) else {
-                        return false;
+                        return FormulaAdmission::Refused(None);
                     };
+                    if conditional {
+                        match conditional_admission(&name, argument, current, sheets) {
+                            FormulaAdmission::Admitted => {}
+                            refused @ FormulaAdmission::Refused(_) => return refused,
+                        }
+                        cursor = call + consumed;
+                        continue;
+                    }
                     if !required {
                         // A range directly inside MIN/MAX is refused; nested
                         // calls such as MIN(SUM(B2:B9),1) are scanned in turn.
                         if top_level_colon(argument) {
-                            return false;
+                            return FormulaAdmission::Refused(None);
                         }
                         continue;
                     }
-                    if whole_column_argument(argument, current, sheets).is_none() {
-                        return false;
+                    if whole_column_argument(argument, current, sheets, true).is_none() {
+                        return FormulaAdmission::Refused(None);
                     }
                     cursor = call + consumed;
                 }
@@ -4141,7 +4342,155 @@ fn whole_column_aggregates(formula: &str, current: usize, sheets: &[SourceSheet]
             cursor += character.len_utf8();
         }
     }
-    true
+    FormulaAdmission::Admitted
+}
+
+/// A conditional call is admitted only when the translator will accept every
+/// argument: one whole column per column argument under the same-rows rule, a
+/// writable written criterion, and no Number criterion over a Date column.
+fn conditional_admission(
+    name: &str,
+    argument: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+) -> FormulaAdmission {
+    let Some(arguments) = split_arguments(argument) else {
+        return FormulaAdmission::Refused(None);
+    };
+    let Some(shape) = conditional_shape(name, arguments.len()) else {
+        return FormulaAdmission::Refused(None);
+    };
+    let mut bounds = None;
+    for &(index, numeric) in &shape.columns {
+        let Some((sheet, _, first_row, last_row)) =
+            whole_column_argument(arguments[index].1, current, sheets, numeric)
+        else {
+            return FormulaAdmission::Refused(None);
+        };
+        // A range holding the header could match the header in Excel, and the
+        // column form reads data rows only.
+        if last_row + 1 - first_row != sheets[sheet].rows.len() {
+            return FormulaAdmission::Refused(Some(
+                "a conditional range that includes the header row isn't supported",
+            ));
+        }
+        let span = (sheet, first_row, last_row);
+        if bounds.is_some_and(|bounds| bounds != span) {
+            return FormulaAdmission::Refused(None);
+        }
+        bounds = Some(span);
+    }
+    for &(criterion_index, column_index) in &shape.criteria {
+        let criterion = arguments[criterion_index].1.trim();
+        let Some((sheet, column, _, _)) =
+            whole_column_argument(arguments[column_index].1, current, sheets, false)
+        else {
+            return FormulaAdmission::Refused(None);
+        };
+        let kind = if criterion_literal(criterion) {
+            let Some(kind) = writable_criterion(criterion) else {
+                return FormulaAdmission::Refused(Some(
+                    "text criteria can't be written in a Tachiko formula yet",
+                ));
+            };
+            kind
+        } else {
+            let Some(kind) = criterion_form(criterion, current, sheets) else {
+                return FormulaAdmission::Refused(Some(
+                    "the criterion isn't a cell reference or a writable literal yet",
+                ));
+            };
+            kind
+        };
+        // Excel compares dates by serial number and reads more date spellings
+        // than Tachiko, so only an exact date or a blank means the same in both.
+        let date = date_column(sheet, column, sheets);
+        if date && !matches!(kind, CriterionKind::Date | CriterionKind::Blank) {
+            return FormulaAdmission::Refused(Some(
+                "a date column can only be tested against a date",
+            ));
+        }
+        if !date && kind == CriterionKind::Date {
+            return FormulaAdmission::Refused(Some("a date criterion only tests a date column"));
+        }
+    }
+    FormulaAdmission::Admitted
+}
+
+/// The value class of one non-literal criterion as the translator will read it,
+/// or `None` when the import cannot guarantee that the translation succeeds.
+fn criterion_form(
+    criterion: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+) -> Option<CriterionKind> {
+    if let Some(kind) = writable_criterion(criterion) {
+        return Some(kind);
+    }
+    let (sheet, column, row) = criterion_cell(criterion, current, sheets)?;
+    let above = usize::try_from(sheets[sheet].layout.rows_above_header).ok()?;
+    let data_row = row.checked_sub(above + 1 + usize::from(sheets[sheet].has_header))?;
+    let cell = sheets[sheet].rows.get(data_row)?.get(column)?;
+    Some(match &cell.value {
+        SourceValue::Number { .. } => CriterionKind::Number,
+        SourceValue::Date { .. } => CriterionKind::Date,
+        // The translator judges a reference by its column's type, blank or not.
+        SourceValue::Empty if date_column(sheet, column, sheets) => CriterionKind::Date,
+        SourceValue::Empty
+            if sheets[sheet].rows.iter().any(|row| {
+                row.get(column)
+                    .is_some_and(|cell| matches!(cell.value, SourceValue::Number { .. }))
+            }) =>
+        {
+            CriterionKind::Number
+        }
+        SourceValue::Empty => CriterionKind::Blank,
+        // Tachiko reads a Text cell as a criterion when it calculates, so it's
+        // judged the same way here. Text it refuses would fail the formula.
+        SourceValue::Text { value } => match CriterionTest::parse(value).ok()?.operand_kind() {
+            CriterionOperandKind::Number => CriterionKind::Number,
+            CriterionOperandKind::Date => CriterionKind::Date,
+            CriterionOperandKind::Text | CriterionOperandKind::Boolean => CriterionKind::Other,
+        },
+        SourceValue::Boolean { .. } => CriterionKind::Other,
+    })
+}
+
+/// Resolve one plain, optionally quoted-sheet-qualified A1 cell criterion.
+fn criterion_cell(
+    criterion: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+) -> Option<(usize, usize, usize)> {
+    let (name, address) = if criterion.starts_with('\'') {
+        let mut cursor = 0;
+        let name = quoted_sheet_name(criterion, &mut cursor).ok()?;
+        (Some(name), &criterion[cursor..])
+    } else if let Some((name, address)) = criterion.split_once('!') {
+        (Some(name.to_owned()), address)
+    } else {
+        (None, criterion)
+    };
+    let address = address.trim();
+    if cell_reference_span(address)? != address.len() {
+        return None;
+    }
+    let (letters, row) = cell_reference(address)?;
+    let sheet = match name {
+        Some(name) => sheets
+            .iter()
+            .position(|sheet| sheet.name.eq_ignore_ascii_case(&name))?,
+        None => current,
+    };
+    Some((sheet, column_index(&letters)?, row))
+}
+
+/// Whether any cell of one source column holds a Date.
+fn date_column(sheet: usize, column: usize, sheets: &[SourceSheet]) -> bool {
+    sheets[sheet].rows.iter().any(|row| {
+        row.get(column)
+            .is_some_and(|cell| matches!(cell.value, SourceValue::Date { .. }))
+    })
 }
 
 /// Whether a call argument has a `:` outside nested calls and quoted text.
@@ -4171,14 +4520,16 @@ fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<Fideli
         for (row_index, row) in sheet.rows.iter().enumerate() {
             for (column, cell) in row.iter().enumerate() {
                 if let Some(formula) = cell.formula.as_deref() {
-                    if !whole_column_aggregates(formula, sheet_index, sheets) {
-                        refused.push((sheet_index, row_index, column));
+                    if let FormulaAdmission::Refused(reason) =
+                        formula_admission(formula, sheet_index, sheets)
+                    {
+                        refused.push((sheet_index, row_index, column, reason));
                     }
                 }
             }
         }
     }
-    for (sheet_index, row_index, column) in refused {
+    for (sheet_index, row_index, column, reason) in refused {
         let sheet = &mut sheets[sheet_index];
         let above = usize::try_from(sheet.layout.rows_above_header).unwrap_or(usize::MAX);
         let location = format!(
@@ -4188,11 +4539,17 @@ fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<Fideli
             above + 2 + row_index
         );
         let cell = &mut sheet.rows[row_index][column];
-        keep_cached_value(&mut cell.value, &mut cell.formula, &location, ledger, None);
+        keep_cached_value(
+            &mut cell.value,
+            &mut cell.formula,
+            &location,
+            ledger,
+            reason,
+        );
     }
 }
 
-const ADMITTED_FORMULAS: &str = "Tachiko calculates numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND, ISBLANK and SUM, AVERAGE or COUNT over one whole column";
+const ADMITTED_FORMULAS: &str = "Tachiko calculates numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND, ISBLANK, SUM, AVERAGE or COUNT over one whole column, and SUMIF, SUMIFS, AVERAGEIF, AVERAGEIFS, COUNTIF or COUNTIFS over whole columns with written number or blank criteria or a cell reference";
 
 /// A formula Tachiko does not calculate keeps Excel's last calculated value as
 /// a plain value, with the original formula named in the finding. Without a
@@ -4393,7 +4750,18 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
                         | "TRUE"
                         | "FALSE"
                 ) || (column_aggregates
-                    && matches!(name.as_str(), "SUM" | "AVERAGE" | "COUNT"));
+                    && matches!(
+                        name.as_str(),
+                        "SUM"
+                            | "AVERAGE"
+                            | "COUNT"
+                            | "SUMIF"
+                            | "SUMIFS"
+                            | "AVERAGEIF"
+                            | "AVERAGEIFS"
+                            | "COUNTIF"
+                            | "COUNTIFS"
+                    ));
                 if !allowed {
                     return true;
                 }

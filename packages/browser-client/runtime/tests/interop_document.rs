@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use tachiko_designer_runtime::{
     CleanupOperation, CleanupPreview, DesignerRequest, DesignerResponse, DesignerRuntime,
-    FieldTarget,
+    FieldTarget, ScalarEditInput,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey,
@@ -1938,4 +1938,420 @@ fn imported_export_follows_a_moved_column() {
         exported.sheets[0].rows[0][0].value,
         SourceValue::Number { .. }
     ));
+}
+
+fn conditional_workbook(formulas: [Option<&str>; 3]) -> (SourceWorkbook, ImportSelection) {
+    let rows = [
+        ("housing", 2.0, "housing"),
+        ("housing", 3.0, "food"),
+        ("food", 5.0, "housing"),
+    ];
+    let workbook = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: ["Category", "Amount", "Result", "Filter", "When"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows: rows
+                .iter()
+                .zip(formulas)
+                .map(|((category, amount, filter), formula)| {
+                    vec![
+                        source_cell(
+                            SourceValue::Text {
+                                value: (*category).into(),
+                            },
+                            None,
+                        ),
+                        source_cell(SourceValue::Number { value: *amount }, None),
+                        source_cell(SourceValue::Number { value: 99.0 }, formula),
+                        source_cell(
+                            SourceValue::Text {
+                                value: (*filter).into(),
+                            },
+                            None,
+                        ),
+                        source_cell(
+                            SourceValue::Date {
+                                value: "2026-09-05".into(),
+                            },
+                            None,
+                        ),
+                    ]
+                })
+                .collect(),
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![
+            ImportFieldType::Text,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Text,
+            ImportFieldType::Date,
+        ]],
+        extra_columns: vec![Vec::new()],
+    };
+    (workbook, selection)
+}
+
+#[test]
+fn conditional_aggregate_imports_live_and_editing_updates_values() {
+    let (source, selection) =
+        conditional_workbook([Some("=SUMIF($A$2:$A$4,$D2,$B$2:$B$4)"), None, None]);
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][2].formula.as_deref(),
+        Some("SUMIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,D2)")
+    );
+    assert_eq!(
+        exported.sheets[0].rows[0][2].value,
+        SourceValue::Number { value: 5.0 }
+    );
+    let DesignerResponse::Published(published) = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/0".into(),
+            target: FieldTarget {
+                entity: imported.metadata.sheets[0].rows[2].entity_id.clone(),
+                field: imported.metadata.sheets[0].columns[0].field_id.clone(),
+            },
+            input: ScalarEditInput::Text {
+                value: "housing".into(),
+            },
+        })
+        .unwrap()
+    else {
+        panic!("editing a cell publishes");
+    };
+    let exported = runtime
+        .export_workbook(&published.resulting_revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][2].value,
+        SourceValue::Number { value: 10.0 }
+    );
+}
+
+#[test]
+fn a_criterion_on_a_sheet_with_an_apostrophe_imports_live() {
+    use tachiko_designer_runtime::interop_adapter::{ImportOptions, export_xlsx, import_xlsx_with};
+    let (mut workbook, _) = conditional_workbook([
+        Some("=SUMIF($A$2:$A$4,'Owner''s Data'!$D2,$B$2:$B$4)"),
+        None,
+        None,
+    ]);
+    workbook.sheets[0].name = "Owner's Data".into();
+    let bytes = export_xlsx(&workbook).unwrap();
+    let source = import_xlsx_with(
+        &bytes,
+        &ImportOptions {
+            header_rows: vec![Some(1)],
+            ..ImportOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(source.sheets[0].rows[0][2].formula.is_some());
+    assert!(
+        !source
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value"),
+        "{:?}",
+        source.ledger
+    );
+}
+
+#[test]
+fn export_judges_a_text_cell_criterion_by_its_content() {
+    for (filter, refusal) in [
+        (
+            ">=45000",
+            Some("a date column can only be tested against a date"),
+        ),
+        (
+            "9/5/2026",
+            Some("a date column can only be tested against a date"),
+        ),
+        (
+            "housing",
+            Some("a date column can only be tested against a date"),
+        ),
+        ("2026-09-05", None),
+    ] {
+        let (mut workbook, selection) = conditional_workbook([None, None, None]);
+        workbook.sheets[0].rows[0][3].value = SourceValue::Text {
+            value: filter.into(),
+        };
+        let (mut runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
+        let DesignerResponse::Published(published) = runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: "resident/0".into(),
+                target: FieldTarget {
+                    entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[2].field_id.clone(),
+                },
+                source: "COUNTIFS([sheet_1.column_5:column], [.column_4])".into(),
+            })
+            .unwrap()
+        else {
+            panic!("updating a formula publishes");
+        };
+        let exported = runtime.export_workbook(&published.resulting_revision, &imported.metadata);
+        match (exported, refusal) {
+            (Err(error), Some(refusal)) => {
+                assert!(error.to_string().contains(refusal), "{filter}: {error}");
+            }
+            (Ok(exported), None) => assert_eq!(
+                exported.sheets[0].rows[0][2].formula.as_deref(),
+                Some("COUNTIFS('Data'!$E$2:$E$4,D2)"),
+                "{filter}"
+            ),
+            (Err(error), None) => panic!("{filter}: {error}"),
+            (Ok(_), Some(_)) => panic!("{filter} has no faithful export"),
+        }
+    }
+}
+
+#[test]
+fn a_date_cell_criterion_on_a_date_column_imports_live() {
+    let (workbook, selection) = conditional_workbook([Some("=COUNTIF($E$2:$E$4,$E2)"), None, None]);
+    let (runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][2].formula.as_deref(),
+        Some("COUNTIFS('Data'!$E$2:$E$4,E2)")
+    );
+    assert_eq!(
+        exported.sheets[0].rows[0][2].value,
+        SourceValue::Number { value: 3.0 }
+    );
+}
+
+#[test]
+fn untranslatable_conditional_aggregates_keep_the_cached_value() {
+    use tachiko_designer_runtime::interop_adapter::{ImportOptions, export_xlsx, import_xlsx_with};
+    let seventeen_criteria = format!("=COUNTIFS({})", ["$B$2:$B$4,5"; 17].join(","));
+    for (formula, filter, reason) in [
+        (
+            "=SUMIF($A$2:$A$4,\"housing\",$B$2:$B$4)",
+            None,
+            Some("text criteria can't be written in a Tachiko formula yet"),
+        ),
+        ("=SUMIF($A$2:$A$3,$D2,$B$2:$B$4)", None, None),
+        (
+            "=SUMIF($E$2:$E$4,5,$B$2:$B$4)",
+            None,
+            Some("a date column can only be tested against a date"),
+        ),
+        // Excel would match the header row, which the column form doesn't read.
+        (
+            "=COUNTIF($A$1:$A$4,$D2)",
+            Some("Category"),
+            Some("includes the header row"),
+        ),
+        // Excel compares a date's serial number with text holding a number.
+        (
+            "=COUNTIF($E$2:$E$4,$D2)",
+            Some(">=45000"),
+            Some("a date column can only be tested against a date"),
+        ),
+        // Excel reads this as a date; Tachiko reads only `YYYY-MM-DD`.
+        (
+            "=COUNTIF($E$2:$E$4,$D2)",
+            Some("9/5/2026"),
+            Some("a date column can only be tested against a date"),
+        ),
+        // Tachiko refuses relational text, so calculating it would fail.
+        ("=COUNTIF($A$2:$A$4,$D2)", Some(">abc"), None),
+        // Excel matches a number with a date's serial; Tachiko doesn't.
+        (
+            "=COUNTIF($B$2:$B$4,$E2)",
+            None,
+            Some("a date criterion only tests a date column"),
+        ),
+        // A column past the table's own has no field, so it keeps the value too.
+        ("=COUNTIF($Z$2:$Z$4,1)", None, None),
+        // The formula parser takes sixteen criteria, so a seventeenth keeps the
+        // value instead of failing the import.
+        (seventeen_criteria.as_str(), None, None),
+        // Only a number or one cell survives a round trip.
+        (
+            "=COUNTIF($B$2:$B$4,$B2*2)",
+            None,
+            Some("the criterion isn't a cell reference or a writable literal yet"),
+        ),
+        // A blank cell in a Number column still reads as that column's type.
+        (
+            "=COUNTIF($E$2:$E$4,$B3)",
+            Some("blank B3"),
+            Some("a date column can only be tested against a date"),
+        ),
+    ] {
+        let (mut workbook, selection) = conditional_workbook([Some(formula), None, None]);
+        if filter == Some("blank B3") {
+            workbook.sheets[0].rows[1][1].value = SourceValue::Empty;
+        } else if let Some(filter) = filter {
+            workbook.sheets[0].rows[0][3].value = SourceValue::Text {
+                value: filter.into(),
+            };
+        }
+        // The conditional admission lives in the XLSX reader, so round-trip the
+        // source through real workbook bytes before importing the projection.
+        let bytes =
+            export_xlsx(&workbook).unwrap_or_else(|error| panic!("{formula} exports: {error}"));
+        let source = import_xlsx_with(
+            &bytes,
+            &ImportOptions {
+                header_rows: vec![Some(1)],
+                ..ImportOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{formula} reimports: {error}"));
+        let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE)
+            .unwrap_or_else(|error| panic!("{formula} keeps the import alive: {error}"));
+        assert!(
+            !imported.ledger.iter().any(|finding| finding.blocking),
+            "{formula}: {:?}",
+            imported.ledger
+        );
+        let finding = imported
+            .ledger
+            .iter()
+            .find(|finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking)
+            .unwrap_or_else(|| panic!("{formula}: {:?}", imported.ledger));
+        if let Some(reason) = reason {
+            assert!(finding.message.contains(reason), "{formula}: {finding:?}");
+        }
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(exported.sheets[0].rows[0][2].formula, None);
+        assert_eq!(
+            exported.sheets[0].rows[0][2].value,
+            SourceValue::Number { value: 99.0 }
+        );
+    }
+}
+
+#[test]
+fn conditional_aggregates_round_trip_through_xlsx() {
+    let (source, selection) = conditional_workbook([
+        Some("=SUMIFS($B$2:$B$4,$A$2:$A$4,$D2)"),
+        Some("=COUNTIFS($A$2:$A$4,$D3)"),
+        Some("=AVERAGEIFS($B$2:$B$4,$A$2:$A$4,$D4)"),
+    ]);
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for (row, formula) in [
+        (0, "SUMIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,D2)"),
+        (1, "COUNTIFS('Data'!$A$2:$A$4,D3)"),
+        (2, "AVERAGEIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,D4)"),
+    ] {
+        assert_eq!(
+            exported.sheets[0].rows[row][2].formula.as_deref(),
+            Some(formula)
+        );
+    }
+    for (row, value) in [(0, 5.0), (1, 1.0), (2, 2.5)] {
+        assert_eq!(
+            exported.sheets[0].rows[row][2].value,
+            SourceValue::Number { value }
+        );
+    }
+    let bytes = tachiko_designer_runtime::interop_adapter::export_xlsx(&exported).unwrap();
+    let inspected = tachiko_designer_runtime::interop_adapter::import_xlsx(&bytes).unwrap();
+    assert!(
+        !inspected.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        inspected.ledger
+    );
+    let (reopened, imported) = import_workbook(&inspected, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let round_trip = reopened
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for row in 0..3 {
+        assert_eq!(
+            round_trip.sheets[0].rows[row][2].formula,
+            exported.sheets[0].rows[row][2].formula
+        );
+        assert_eq!(
+            round_trip.sheets[0].rows[row][2].value,
+            exported.sheets[0].rows[row][2].value
+        );
+    }
+}
+
+#[test]
+fn export_refuses_a_number_criterion_over_a_date_column() {
+    for (source_text, message) in [
+        (
+            "COUNTIFS([sheet_1.column_4:column], 5)",
+            "a date column can only be tested against a date",
+        ),
+        (
+            "COUNTIFS([sheet_1.column_4:column], [.column_2])",
+            "a date column can only be tested against a date",
+        ),
+        (
+            "COUNTIFS([sheet_1.column_2:column], [.column_4])",
+            "a date criterion only tests a date column",
+        ),
+        (
+            "COUNTIFS([sheet_1.column_2:column], 1+1)",
+            "a criterion expression is outside the export mapping",
+        ),
+    ] {
+        let (source, selection) = workbook_fixture();
+        let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        let DesignerResponse::Published(published) = runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: "resident/0".into(),
+                target: FieldTarget {
+                    entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[2].field_id.clone(),
+                },
+                source: source_text.into(),
+            })
+            .unwrap()
+        else {
+            panic!("updating a formula publishes");
+        };
+        let error = runtime
+            .export_workbook(&published.resulting_revision, &imported.metadata)
+            .expect_err("this criterion has no faithful export");
+        assert!(
+            error.to_string().contains(message),
+            "{source_text}: {error}"
+        );
+    }
 }

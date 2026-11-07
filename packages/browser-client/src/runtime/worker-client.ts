@@ -187,6 +187,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("published", await this.#command({type: "edit_scalar", expected_revision: expectedRevision, target, input: {kind: "clear"}}));
   }
 
+  async changeColumnType(expectedRevision: string, collection: string, field: string, fieldType: string): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "change_column_type", expected_revision: expectedRevision, collection, field, field_type: fieldType});
+  }
+
   async setColumnRequiredness(expectedRevision: string, collection: string, field: string, required: boolean): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_requiredness", expected_revision: expectedRevision, collection, field, required});
   }

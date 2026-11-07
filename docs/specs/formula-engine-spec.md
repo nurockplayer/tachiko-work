@@ -92,6 +92,68 @@ empty column. Average divides the sum by that count; min and max select the
 smallest and largest present values. A failed or non-Number contributor causes `failed_dependencies`. Average, min, and max over no present values fail with
 `aggregate_empty`.
 
+### Conditional aggregates
+
+`SUMIFS`, `COUNTIFS`, and `AVERAGEIFS` sum, count, or average one Number column
+over the rows of one schema that satisfy up to sixteen column criteria. The
+two-argument `SUMIF(range, criterion)` and `COUNTIF(range, criterion)` are the
+shorter spellings: `SUMIF` repeats its range as the value column, and canonical
+text writes both as their `IFS` form (`SUMIFS(range, range, criterion)` and
+`COUNTIFS(range, criterion)`).
+
+The value column and every criterion column must name the same schema; a value
+column must be Number. Matching rows are the entities of the first criterion
+column's schema, in ascending `EntityId` order. `Count` counts matching rows
+including rows whose criterion columns are blank. `Sum` and `Average` read the
+value column on each matching row and skip rows where it is blank: an empty or
+all-blank match sums semantic zero, and `Average` over no present value fails
+with `aggregate_empty`. A failed or non-Number contributor makes the aggregate
+unavailable rather than partially aggregated, on a matching row or not, which is
+stricter than Excel. Each criterion column and every
+reference inside a criterion expression is a static dependency, so removal,
+retyping, or cycle detection treat them like any other column read.
+
+A criterion is one column, one comparison, and an optional value. The value is
+absent for a blank test and present otherwise. Criterion text follows Excel's
+rule: a leading operator is optional and defaults to `=`.
+
+| Criterion text | Matches |
+| --- | --- |
+| `""` or `"="` | a blank cell or empty Text |
+| `"<>"` | every other cell |
+| `"Food"` | a Text cell equal ignoring case; `*`, `?`, and `~` wildcards apply |
+| `"5"` or `"=5"` | a Number cell equal to 5, or a Text cell whose whole content parses as 5 |
+| `">5"`, `">=5"`, `"<5"`, `"<=5"` | a Number cell compared with the number |
+| `"<>5"` | every cell not equal to 5, including a blank cell |
+| `"TRUE"` or `"FALSE"` | that Boolean, or a Text cell spelled the same ignoring case |
+| `"2026-01-01"` | a Date cell equal to that date, or a Text cell spelled the same |
+| `">=2026-01-01"` | a Date cell on or after that date |
+
+A relational operator never matches a Text or Boolean cell, and text such as
+`">abc"` is refused because Excel's text ordering depends on collation. A number
+never matches a Date cell, since a Date here is not a serial number. A blank cell
+that a criterion reads compares as zero. Criterion text is
+read from a cell at evaluation, so a Text cell may hold any of these spellings,
+including dates, booleans, wildcards, and text operands.
+
+Written literals in the formula remain restricted until the ADR for stored text
+is Accepted: a string literal is limited to a number (`"5"`, `">=5"`, `"<>5"`)
+or a blank test (`""` and `"<>"`). Any other written literal is a parse error
+asking for the value in a cell:
+
+```text
+text, date and yes/no criteria can't be written in the formula yet; put the
+value in a cell and reference it
+```
+
+A criterion with an operator other than `=` holds a number literal or is a blank
+test. A `=` criterion also admits a bare cell reference or any Number-typed
+expression. Canonical text prints a blank test as `""` or `"<>"`, a number criterion
+in its operator form (`">=5"`), and a reference or other expression as itself.
+The stored semantic form keeps the column, the comparison, and an optional
+value expression, so `.roproj/v3` can decode a blank test and a number
+criterion without reparsing text.
+
 ### Column totals
 
 `[schema.field:total]` is the sum of one Number column over every entity of the
@@ -625,9 +687,11 @@ stable IDs, and bound AST on rejection.
 
 ## Deferred language features
 
-- aggregate clauses and general reductions beyond the single saved form
-  [column totals](#column-totals) admits; ADR-0036's fixed saved live
-  definition remains outside this formula language;
+- aggregate clauses and general reductions beyond the saved forms [column
+  totals](#column-totals) and [conditional
+  aggregates](#conditional-aggregates) admit; ADR-0036's fixed saved live
+  definition remains outside this formula language, and the remaining general
+  aggregation work is tracked as Sheet issue #292 P0-06;
 - lookups and schema-level computed defaults; ADR-0036 admits only its explicit
   exact-Text lookup as a non-formula semantic family;
 - user-defined or extension functions;

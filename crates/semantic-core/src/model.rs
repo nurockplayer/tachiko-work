@@ -665,6 +665,28 @@ impl ColumnAggregateFunction {
     }
 }
 
+/// The aggregation one conditional node performs over its matched rows.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "function", content = "column", rename_all = "snake_case")]
+pub enum ConditionalAggregate {
+    Sum(ColumnRef),
+    Average(ColumnRef),
+    Count,
+}
+
+/// One column/operator/value triple a conditional aggregate tests on every
+/// row. An absent value tests for a blank cell: `""` with `Equal` and `"<>"`
+/// with `NotEqual`. Only `Equal` admits a non-literal value; a relational
+/// operator requires a number literal until stored text is allowed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnCriterion {
+    pub column: ColumnRef,
+    pub operator: ComparisonOperator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Box<Expression>>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "op", content = "args", rename_all = "snake_case")]
 pub enum Expression {
@@ -681,6 +703,14 @@ pub enum Expression {
     ColumnAggregate {
         function: ColumnAggregateFunction,
         column: ColumnRef,
+    },
+    // SUMIF(S), AVERAGEIF(S) and COUNTIF(S): one aggregate over the rows whose
+    // columns satisfy every criterion. The node names schemas and fields, so
+    // row membership is part of its dependencies.
+    ColumnConditional {
+        // Boxed so this rare node doesn't grow every other expression node.
+        aggregate: Box<ConditionalAggregate>,
+        criteria: Vec<ColumnCriterion>,
     },
     Add {
         left: Box<Self>,
@@ -768,6 +798,10 @@ impl Expression {
             | Self::SameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Vec::new(),
+            Self::ColumnConditional { criteria, .. } => criteria
+                .iter()
+                .filter_map(|criterion| criterion.value.as_deref())
+                .collect(),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -793,6 +827,10 @@ impl Expression {
             | Self::SameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Vec::new(),
+            Self::ColumnConditional { criteria, .. } => criteria
+                .iter_mut()
+                .filter_map(|criterion| criterion.value.as_deref_mut())
+                .collect(),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -820,6 +858,15 @@ impl Expression {
             | Self::SameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Some(Number),
+            Self::ColumnConditional { criteria, .. } => criteria
+                .iter()
+                .all(|criterion| {
+                    criterion
+                        .value
+                        .as_deref()
+                        .is_none_or(|expression| expression.expression_type() == Some(Number))
+                })
+                .then_some(Number),
             Self::Add { left, right }
             | Self::Subtract { left, right }
             | Self::Multiply { left, right }
@@ -892,6 +939,19 @@ impl Expression {
                     uses.push((FieldRef::new(owner.entity.clone(), field.clone()), numeric));
                 }
                 Self::IsBlank(value) => pending.push((value, false)),
+                // A criterion that is itself a cell reference is compared to
+                // the cell's value whatever the column type, like ISBLANK.
+                Self::ColumnConditional { criteria, .. } => {
+                    for criterion in criteria {
+                        if let Some(expression) = &criterion.value {
+                            let bare = matches!(
+                                expression.as_ref(),
+                                Self::Reference(_) | Self::SameRowReference(_)
+                            );
+                            pending.push((expression, !bare));
+                        }
+                    }
+                }
                 _ => pending.extend(
                     node.children()
                         .into_iter()
@@ -903,6 +963,32 @@ impl Expression {
         uses
     }
 
+    /// Every column whose cells the expression reads as numbers. A conditional
+    /// aggregate's criterion columns are read whatever their scalar type, so
+    /// only its value column counts.
+    #[must_use]
+    pub fn numeric_columns(&self) -> Vec<&ColumnRef> {
+        let mut columns = Vec::new();
+        let mut pending = vec![self];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::ColumnTotal(column) | Self::ColumnAggregate { column, .. } => {
+                    columns.push(column);
+                }
+                Self::ColumnConditional { aggregate, .. } => {
+                    if let ConditionalAggregate::Sum(column)
+                    | ConditionalAggregate::Average(column) = aggregate.as_ref()
+                    {
+                        columns.push(column);
+                    }
+                }
+                _ => {}
+            }
+            pending.extend(node.children().into_iter().rev());
+        }
+        columns
+    }
+
     /// Every column total the expression reads, in evaluation order.
     #[must_use]
     pub fn column_totals(&self) -> Vec<&ColumnRef> {
@@ -912,6 +998,20 @@ impl Expression {
             match node {
                 Self::ColumnTotal(column) | Self::ColumnAggregate { column, .. } => {
                     columns.push(column);
+                }
+                // Row membership comes from every column the node reads: the
+                // values column when there is one, and every criterion column.
+                Self::ColumnConditional {
+                    aggregate,
+                    criteria,
+                } => {
+                    if let ConditionalAggregate::Sum(column)
+                    | ConditionalAggregate::Average(column) = aggregate.as_ref()
+                    {
+                        columns.push(column);
+                    }
+                    columns.extend(criteria.iter().map(|criterion| &criterion.column));
+                    pending.extend(node.children().into_iter().rev());
                 }
                 _ => pending.extend(node.children().into_iter().rev()),
             }

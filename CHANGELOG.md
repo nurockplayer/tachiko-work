@@ -6,6 +6,30 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Conditional aggregates (Work #681): `SUMIFS`, `COUNTIFS` and `AVERAGEIFS`
+  sum, count or average one Number column over the rows that satisfy up to
+  sixteen column criteria; `SUMIF` and `COUNTIF` are their shorter spellings.
+  Criterion text follows Excel's rules (operators, case-insensitive Text,
+  `*`/`?`/`~` wildcards, numbers, dates, yes/no, blank tests) and is usually
+  read from a Text cell, so editing that cell updates the projection. Written
+  string literals are limited to numbers and blank tests until stored text is
+  accepted; any other written criterion refuses with a message asking for a
+  cell reference. `.roproj/v3` stores the comparison and an optional value
+  expression, while `.roproj/v1`/`v2` and direct `.ro/v2` refuse the form.
+  `translateA1Formula` and XLSX import and export carry these formulas over
+  whole columns. A written text, date or yes/no criterion refuses in A1 entry
+  with `unsupported_criterion` and keeps Excel's last value on import.
+
+- A native column changes type as one operation (Work #660): the experimental
+  client's `changeColumnType` and the `change_column_type` tracker command
+  convert every stored value of one scalar column to Text, Number, Boolean or
+  Date as one revision-pinned publication and one undo step. The definition
+  keeps its ID, key, display name and requiredness, keeps `number_format` only
+  when the new type is Number, and resets its constraint; an empty Text cell
+  becomes blank in an optional column and refuses in a required one. Any value
+  that cannot convert, a formula cell, or a column a surviving formula reads
+  refuses the whole command with no change.
+
 - Experimental kit: read-only `translateA1Formula` converts explicit grid A1 formulas, discloses changed reference/range semantics, and dry-run checks types and cycles.
 
 - XLSX cell Text and headers decode SpreadsheetML `_xHHHH_` escapes in one

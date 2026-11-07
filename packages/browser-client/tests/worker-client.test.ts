@@ -77,6 +77,16 @@ describe("capacity refusal wire validation", () => {
     return {rejected: client.bootstrap()};
   }
 
+  it("accepts an import projection-bytes refusal", async () => {
+    const {rejected} = await rejectWithFailure({
+      ...failureBase, limit: "projection_bytes", maximum: 65_536, attempted: 65_537,
+      message: "Workbook is too large to open: it needs 65537 bytes and the limit is 65536. The workbook was not imported.",
+    });
+    await expect(rejected).rejects.toMatchObject({
+      failure: {code: "capacity_exceeded", limit: "projection_bytes", maximum: 65_536, attempted: 65_537},
+    });
+  });
+
   it("accepts a valid workbook capacity refusal", async () => {
     const {rejected} = await rejectWithFailure({
       ...failureBase, limit: "populated_cells", maximum: 100_000, attempted: 100_001,
