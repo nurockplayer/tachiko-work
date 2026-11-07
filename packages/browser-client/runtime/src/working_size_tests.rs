@@ -1445,7 +1445,7 @@ fn a_window_under_its_bytes_has_no_byte_limited_key() {
 /// with, so the unchanged ordinary branch is checked at its budget check.
 #[test]
 fn an_ordinary_window_over_its_bytes_still_refuses() {
-    let mut runtime = DesignerRuntime::from_document(text_grid(2, 1), OCCURRENCE).unwrap();
+    let runtime = DesignerRuntime::from_document(text_grid(2, 1), OCCURRENCE).unwrap();
     assert_eq!(runtime.profile, SessionProfile::Ordinary);
     let spec = runtime.collection_spec("grid").unwrap();
     let entities = spec.entities.clone();
