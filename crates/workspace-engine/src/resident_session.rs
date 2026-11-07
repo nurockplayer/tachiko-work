@@ -240,6 +240,7 @@ impl ResidentWorkspaceSession {
             CalculationOutcome::Complete(calculation) => Some(calculation),
             CalculationOutcome::Failed(_) => None,
         };
+        let base_report_valid = self.retained.validation_report.is_valid();
         let (report, calculation) = semantic_validation(&candidate);
         PreparedEvaluation::new(
             self.revision.clone(),
@@ -247,6 +248,7 @@ impl ResidentWorkspaceSession {
             report,
             calculation,
             base_calculation,
+            base_report_valid,
         )
     }
 
