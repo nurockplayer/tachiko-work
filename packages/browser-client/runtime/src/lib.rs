@@ -55,9 +55,9 @@ use tachiko_workspace_engine::{
     CalculationFailure, ColumnRef, ConditionalAggregate, Date, DiagnosticCode, Document, Entity,
     EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     FormulaBindError, IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
-    SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
-    WorkspaceError, create_document, diagnostic_codes,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, PreparedVerdict, Schema,
+    SchemaId, SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport,
+    Value, WorkspaceError, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -5458,12 +5458,12 @@ impl DesignerRuntime {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
-        let validation = {
+        let prepared = {
             let _phase = instrumentation::PhaseTimer::new("publish_commands/validate");
-            validate(&candidate)
+            self.session.prepare_evaluation(candidate)
         };
-        match validation {
-            Ok(()) => {
+        match prepared.verdict() {
+            PreparedVerdict::Valid => {
                 if !instrumentation::skip_preflight() {
                     let _phase = instrumentation::PhaseTimer::new("publish_commands/preflight");
                     // A v3-origin text-capacity occurrence edits like any other
@@ -5471,7 +5471,7 @@ impl DesignerRuntime {
                     // preflight.
                     if self.opened_from_v3 && !self.text_capacity {
                         Self::from_document_profile_with_opened(
-                            candidate,
+                            prepared.document().clone(),
                             PREFLIGHT_OCCURRENCE,
                             false,
                         )?;
@@ -5491,14 +5491,14 @@ impl DesignerRuntime {
                                 Some(Value::Text(_))
                             ) =>
                             {
-                                self.preflight_capacity_scalar(&candidate, field, value)?;
+                                self.preflight_capacity_scalar(prepared.document(), field, value)?;
                             }
                             _ => {
-                                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, true)?;
+                                Self::from_document_profile(prepared.document().clone(), PREFLIGHT_OCCURRENCE, true)?;
                             }
                         }
                     } else {
-                        Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
+                        Self::from_document_profile(prepared.document().clone(), PREFLIGHT_OCCURRENCE, false)?;
                     }
                 }
             }
@@ -5506,12 +5506,14 @@ impl DesignerRuntime {
             // refusal. Every other invalid candidate is still refused
             // atomically by the lifecycle's own validation at execute time, so
             // the proposal below cannot publish it.
-            Err(WorkspaceError::InvalidDocument { report, .. }) => {
-                if let Some(error) = constraint_failure(&candidate, &constraint_targets, &report) {
+            PreparedVerdict::InvalidDocument { report } => {
+                if let Some(error) =
+                    constraint_failure(prepared.document(), &constraint_targets, report)
+                {
                     return Err(error);
                 }
             }
-            Err(_) => {}
+            PreparedVerdict::InvalidDefinitions => {}
         }
         let capacity_text_edit = self.text_capacity
             && !commands.is_empty()
@@ -5582,7 +5584,7 @@ impl DesignerRuntime {
         let proposal_id = self.next_proposal_id()?;
         let body = SemanticPatchBody::atomic_batch(commands)?;
         let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
-        lifecycle.propose(
+        lifecycle.propose_prepared(
             snapshot.document_scope(),
             snapshot.document(),
             snapshot.revision(),
@@ -5593,6 +5595,7 @@ impl DesignerRuntime {
                 self.principal.clone(),
             ),
             self.clock.tick(),
+            Some(&prepared),
         )?;
         designer_preview(
             lifecycle,
