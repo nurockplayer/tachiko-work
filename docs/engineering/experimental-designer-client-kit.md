@@ -118,18 +118,30 @@ const located = await client.locateInView(revision, collection, view, pinnedRow.
 // located = { revision, result: "found", index: 12 } or { result: "filtered_out" }
 ```
 
-To total exactly the rows a view shows, pass their entity ids to
-`queryColumnTotals`. It sums each Number column over the named entities, in
-collection order, and returns `{ revision, rows, column_totals }` with the same
-null and blank-cell rules as the window footer. Naming every entity of the
-collection gives the footer's totals exactly. The request accepts any set of
-unique ids of that collection, up to all of them; an unknown, duplicate or
-foreign id, or a stale revision, refuses with no change. Use it for the footer of a filtered view:
-the window's `column_totals` always cover the whole collection.
+To total exactly the rows a view shows, pass the view itself to
+`queryViewTotals`. It sums each Number column over the view's rows — filtered
+rows left out, `keep_entities` rows kept in — in collection order, so the
+view's sort cannot change a float sum, and returns
+`{ revision, rows, column_totals }` with the same null and blank-cell rules as
+the window footer. The request names the view instead of every shown entity, so
+a filter that still shows thousands of rows stays well under the request size
+limit. A stale revision or an unknown view column refuses with no change. The
+window's `column_totals` always cover the whole collection, so this is the way
+to total a filtered footer.
 
 ```ts
-const shownIds = visibleRows.map((row) => row.id);
-const shown = await client.queryColumnTotals(revision, collection, shownIds);
+const shown = await client.queryViewTotals(revision, collection, view);
+```
+
+`queryColumnTotals` naming entity ids stays available for every other set: it
+sums the named entities in collection order, and naming every entity of the
+collection gives the window footer's totals exactly. The request accepts any
+set of unique ids of that collection, up to all of them; an unknown, duplicate
+or foreign id, or a stale revision, refuses with no change.
+
+```ts
+const allIds = tableRows.map((row) => row.id);
+const whole = await client.queryColumnTotals(revision, collection, allIds);
 ```
 
 `count` is 0..=256 and `0` returns the columns and totals only. `start` clamps
@@ -165,6 +177,18 @@ a window would return, in Sheet's list order: `""` first when any shown row is
 blank, then natural order (case-insensitive, digit runs compared as numbers).
 `limit` is 1..=1,000, the reply stays inside the window byte cap, and
 `truncated` reports whether more values exist.
+
+`findInView` finds matching cells the way Sheet's Find does: a cell matches when
+its display text, lowercased, contains the query lowercased, with neither side
+trimmed, and a blank or all-whitespace query matches nothing. Matches run row by
+row, then through `fields` — the shown columns in shown order, 1..=32 column IDs
+of the collection with no repeats. `from` is a `{row, field}` cell position (a
+zero-based view row index and a column ID) that need not itself match, so a
+stale position is admissible; `next` and `previous` take the following or
+preceding match and wrap at either end. The reply carries the revision, `total`
+(every matching cell in the view) and `found`, with its entity, column, view row
+and zero-based `ordinal` — Sheet's "n of m". Blank, failed, unavailable and
+Reference cells match no text.
 
 A window above the reply cap (1 MiB, or 16 MiB for a text-capacity
 document) refuses with

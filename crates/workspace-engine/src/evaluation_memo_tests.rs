@@ -1,12 +1,13 @@
 //! One evaluation serves propose, preview and execute while the inputs are unchanged.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    AuthorizationAction, Document, DocumentScopeId, Entity, FieldConstraint, FieldDefinition,
-    FieldRef, FieldType, Grant, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
-    PatchLifecycleError, PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticCommand,
-    SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
-    SemanticRevision, SemanticScope, TrustedInstant, V2ReceiptEvidence, Value,
+    AssociatedWriteRequirement, AuthorizationAction, Document, DocumentScopeId, Entity,
+    FieldConstraint, FieldDefinition, FieldRef, FieldType, Grant, GrantRequirement, MutationClass,
+    OperationFamily, PatchLifecycle, PatchLifecycleError, PrincipalKind, ProposalId,
+    ScopedSemanticSubject, SemanticCommand, SemanticPatch, SemanticPatchBody,
+    SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
+    TrustedInstant, V2ReceiptEvidence, Value,
 };
 use crate::{
     Expression, Number, Schema, WorkspaceError, evaluation_counters,
@@ -946,4 +947,294 @@ fn an_invalid_prepared_candidate_is_refused_like_propose() {
     };
     assert_eq!(report, plain_report);
     assert!(!report.is_valid());
+}
+
+// --- One batch walks each document-wide structure once (#678 stage 4) ---
+
+fn optional_text_field(id: &str) -> FieldDefinition {
+    FieldDefinition {
+        required: false,
+        ..text_field(id)
+    }
+}
+
+/// `formula_document` plus an optional `note` slot that starts filled.
+fn batch_document() -> Document {
+    let mut document = formula_document();
+    document
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .insert("note".into(), optional_text_field("note"));
+    document
+        .entities
+        .get_mut("e1")
+        .unwrap()
+        .fields
+        .insert("note".into(), Value::Text("note0".into()));
+    document
+}
+
+/// An accepted entity the planner can append to or remove from.
+fn second_entity() -> Entity {
+    Entity {
+        id: "e2".into(),
+        key: "second".into(),
+        schema: "s".into(),
+        fields: BTreeMap::from([
+            ("f".into(), Value::Text("row2".into())),
+            ("g".into(), Value::Number(Number::new(4.0).unwrap())),
+            (
+                "h".into(),
+                Value::Formula(Expression::Number(Number::new(1.0).unwrap())),
+            ),
+        ]),
+    }
+}
+
+/// A balanced sum of 256 leaves: 511 nodes, over the structure limit.
+fn oversized_formula() -> Expression {
+    let mut level = (0..256)
+        .map(|_| Expression::Number(Number::new(1.0).unwrap()))
+        .collect::<Vec<_>>();
+    while level.len() > 1 {
+        let mut parents = Vec::new();
+        let mut leaves = level.into_iter();
+        while let (Some(left), Some(right)) = (leaves.next(), leaves.next()) {
+            parents.push(Expression::Add {
+                left: Box::new(left),
+                right: Box::new(right),
+            });
+        }
+        level = parents;
+    }
+    level.pop().unwrap()
+}
+
+fn planning_lifecycle() -> PatchLifecycle {
+    PatchLifecycle::new(
+        "domain".into(),
+        "scope".into(),
+        "doc".into(),
+        "api".into(),
+        "policy".into(),
+        "meaning".into(),
+    )
+}
+
+/// The reference behaviour: one proposal per command, each planning from the
+/// previous result, exactly as before the batch state existed.
+fn plan_one_at_a_time(
+    lifecycle: &PatchLifecycle,
+    document: &Document,
+    commands: &[SemanticCommand],
+) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
+    let mut candidate = document.clone();
+    let mut writes = BTreeSet::new();
+    for command in commands {
+        let body = SemanticPatchBody::command(command.clone());
+        let (next, command_writes) = lifecycle.plan_commands(&candidate, &body)?;
+        candidate = next;
+        writes.extend(command_writes);
+    }
+    Ok((candidate, writes))
+}
+
+/// Assert that one atomic batch plans like the same commands applied one
+/// proposal at a time, including the refusal.
+fn assert_batch_plans_like_one_at_a_time(document: &Document, commands: &[SemanticCommand]) {
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(commands.to_vec()).unwrap();
+    let batch = lifecycle.plan_commands(document, &body);
+    let one_at_a_time = plan_one_at_a_time(&lifecycle, document, commands);
+    match (batch, one_at_a_time) {
+        (Ok((batch_candidate, batch_writes)), Ok((one_candidate, one_writes))) => {
+            assert_eq!(batch_candidate, one_candidate);
+            assert_eq!(batch_writes, one_writes);
+        }
+        (Err(batch_error), Err(one_error)) => {
+            assert_eq!(format!("{batch_error:?}"), format!("{one_error:?}"));
+        }
+        (batch, one_at_a_time) => {
+            panic!("batch and one-command plans disagree: {batch:?} vs {one_at_a_time:?}");
+        }
+    }
+}
+
+fn set_value(field: &str, value: Value) -> SemanticCommand {
+    SemanticCommand::SetFieldValue {
+        field: FieldRef::new("e1", field),
+        value,
+    }
+}
+
+fn set_number(field: &str, value: f64) -> SemanticCommand {
+    set_value(field, Value::Number(Number::new(value).unwrap()))
+}
+
+fn set_formula(field: &str, expression: Expression) -> SemanticCommand {
+    set_value(field, Value::Formula(expression))
+}
+
+fn unset(field: &str) -> SemanticCommand {
+    SemanticCommand::UnsetField {
+        field: FieldRef::new("e1", field),
+    }
+}
+
+#[test]
+fn a_field_edit_batch_plans_like_one_command_per_proposal() {
+    let document = batch_document();
+    let commands = vec![
+        set_value("f", Value::Text("first".into())),
+        set_formula("h", Expression::Number(Number::new(3.0).unwrap())),
+        unset("note"),
+        set_number("g", 2.0),
+        set_value("note", Value::Text("again".into())),
+        unset("note"),
+        set_formula("h", Expression::Reference(FieldRef::new("e1", "g"))),
+    ];
+
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(commands.clone()).unwrap();
+    let (candidate, _) = lifecycle.plan_commands(&document, &body).unwrap();
+
+    assert_eq!(
+        candidate.entities["e1"].fields["f"],
+        Value::Text("first".into())
+    );
+    assert_eq!(
+        candidate.entities["e1"].fields["h"],
+        Value::Formula(Expression::Reference(FieldRef::new("e1", "g")))
+    );
+    assert!(!candidate.entities["e1"].fields.contains_key("note"));
+    assert_eq!(candidate.schemas, document.schemas);
+    assert_batch_plans_like_one_at_a_time(&document, &commands);
+}
+
+#[test]
+fn a_later_edit_failure_keeps_todays_error() {
+    let document = batch_document();
+    let allowed = set_value("f", Value::Text("first".into()));
+    for failing in [
+        // NoChange on the second command.
+        set_value("g", document.entities["e1"].fields["g"].clone()),
+        // A missing entity.
+        SemanticCommand::SetFieldValue {
+            field: FieldRef::new("missing", "g"),
+            value: Value::Number(Number::new(2.0).unwrap()),
+        },
+        // A value of the wrong kind for the field.
+        set_value("f", Value::Number(Number::new(2.0).unwrap())),
+        // A formula over the structure limit.
+        set_formula("h", oversized_formula()),
+    ] {
+        let commands = vec![allowed.clone(), failing];
+        assert_batch_plans_like_one_at_a_time(&document, &commands);
+    }
+}
+
+#[test]
+fn a_formula_over_the_structure_limit_is_refused_at_todays_point() {
+    let mut document = formula_document();
+    document
+        .entities
+        .get_mut("e1")
+        .unwrap()
+        .fields
+        .insert("h".into(), Value::Formula(oversized_formula()));
+
+    // The first command's own refusal still comes first.
+    let earlier_failure = vec![
+        set_value("g", document.entities["e1"].fields["g"].clone()),
+        set_value("f", Value::Text("first".into())),
+    ];
+    assert_batch_plans_like_one_at_a_time(&document, &earlier_failure);
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(earlier_failure).unwrap();
+    assert!(matches!(
+        lifecycle.plan_commands(&document, &body).unwrap_err(),
+        WorkspaceError::NoChange { .. }
+    ));
+
+    // Otherwise the structure preflight refuses on the first command that
+    // reaches it.
+    let reaches_preflight = vec![
+        set_value("f", Value::Text("first".into())),
+        set_number("g", 2.0),
+    ];
+    assert_batch_plans_like_one_at_a_time(&document, &reaches_preflight);
+    let body = SemanticPatchBody::atomic_batch(reaches_preflight).unwrap();
+    let error = lifecycle.plan_commands(&document, &body).unwrap_err();
+    let WorkspaceError::ExpressionComplexity { field, .. } = error else {
+        panic!("expected the structure refusal, got {error:?}");
+    };
+    assert_eq!(field, FieldRef::new("e1", "h"));
+}
+
+#[test]
+fn a_structural_command_resets_the_batch_state() {
+    let document = batch_document();
+
+    // A formula before the append builds the index; the append changes the
+    // addresses, so the later formula must project against the new document.
+    let append_then_project = vec![
+        set_formula("h", Expression::Number(Number::new(3.0).unwrap())),
+        SemanticCommand::AppendEntity {
+            entity: second_entity(),
+        },
+        set_formula("h", Expression::Reference(FieldRef::new("e2", "g"))),
+    ];
+    assert_batch_plans_like_one_at_a_time(&document, &append_then_project);
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(append_then_project).unwrap();
+    let (candidate, _) = lifecycle.plan_commands(&document, &body).unwrap();
+    assert_eq!(
+        candidate.entities["e1"].fields["h"],
+        Value::Formula(Expression::Reference(FieldRef::new("e2", "g")))
+    );
+
+    // A reference the structural command removed keeps today's refusal.
+    let mut with_second = document.clone();
+    with_second.entities.insert("e2".into(), second_entity());
+    let remove_then_project = vec![
+        set_formula("h", Expression::Number(Number::new(3.0).unwrap())),
+        SemanticCommand::RemoveEntity {
+            entity: "e2".into(),
+        },
+        set_formula("h", Expression::Reference(FieldRef::new("e2", "g"))),
+    ];
+    assert_batch_plans_like_one_at_a_time(&with_second, &remove_then_project);
+    let body = SemanticPatchBody::atomic_batch(remove_then_project).unwrap();
+    assert!(matches!(
+        lifecycle.plan_commands(&with_second, &body).unwrap_err(),
+        WorkspaceError::FormulaProjection { .. }
+    ));
+}
+
+#[test]
+fn unset_keeps_todays_absent_and_required_behaviour() {
+    let mut document = batch_document();
+    document
+        .entities
+        .get_mut("e1")
+        .unwrap()
+        .fields
+        .remove("note");
+
+    let commands = vec![unset("note"), set_number("g", 2.0)];
+    assert_batch_plans_like_one_at_a_time(&document, &commands);
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(commands).unwrap();
+    let (candidate, _) = lifecycle.plan_commands(&document, &body).unwrap();
+    assert!(!candidate.entities["e1"].fields.contains_key("note"));
+
+    let required = vec![unset("f")];
+    assert_batch_plans_like_one_at_a_time(&document, &required);
+    let body = SemanticPatchBody::atomic_batch(required).unwrap();
+    assert!(matches!(
+        lifecycle.plan_commands(&document, &body).unwrap_err(),
+        WorkspaceError::MissingField { .. }
+    ));
 }

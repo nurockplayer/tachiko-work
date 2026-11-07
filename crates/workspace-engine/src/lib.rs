@@ -1884,15 +1884,88 @@ pub(crate) fn field_value_candidate(
     Ok(candidate)
 }
 
-/// Reuse a request-local candidate that the planner already owns. The same
-/// ordered checks run before any mutation; an unsuccessful atomic batch still
-/// drops its private candidate without touching the caller's document.
-pub(crate) fn apply_field_value_candidate(
+/// Batch-local planning state for the field edits of one proposal.
+///
+/// Both the formula-structure preflight and the human-address index read the
+/// whole document, so one batch runs each of them once instead of once per
+/// command. Every other command can change formulas, entities or schema keys,
+/// so the planner drops the state before running one.
+#[derive(Debug, Default)]
+pub(crate) struct FieldEditPlanning {
+    structures_checked: bool,
+    index: Option<AddressIndex>,
+}
+
+impl FieldEditPlanning {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Run the whole-document formula-structure preflight once per batch.
+    ///
+    /// A later field edit stays covered because every value installed in
+    /// between passed `validate_expression_structure`.
+    fn preflight(&mut self, document: &Document) -> Result<(), WorkspaceError> {
+        if self.structures_checked {
+            return Ok(());
+        }
+        preflight_formula_structures(document)?;
+        self.structures_checked = true;
+        Ok(())
+    }
+
+    /// Project a formula through one index built at the batch's first formula
+    /// edit. The index reads only keys and schema, which field edits leave
+    /// intact. A document whose keys cannot be indexed falls back to today's
+    /// per-command projection, so its error is unchanged.
+    fn project(
+        &mut self,
+        document: &Document,
+        field: &FieldRef,
+        expression: &Expression,
+    ) -> Result<(), WorkspaceError> {
+        let projected = match self.index.as_ref() {
+            Some(index) => project_expression_with_index(document, index, field, expression),
+            None => match AddressIndex::build(document) {
+                Ok(index) => {
+                    let projected =
+                        project_expression_with_index(document, &index, field, expression);
+                    self.index = Some(index);
+                    projected
+                }
+                Err(_) => project_expression(document, field, expression),
+            },
+        };
+        projected
+            .map_err(|source| match source {
+                CanonicalAuthoringProjectionError::Complexity(source) => {
+                    WorkspaceError::ExpressionComplexity {
+                        field: field.clone(),
+                        source,
+                    }
+                }
+                source @ (CanonicalAuthoringProjectionError::UnresolvableBoundReferences {
+                    ..
+                }
+                | CanonicalAuthoringProjectionError::UnresolvableBoundColumns {
+                    ..
+                }) => WorkspaceError::FormulaProjection {
+                    field: field.clone(),
+                    source,
+                },
+            })
+            .map(|_| ())
+    }
+}
+
+/// Reuse a request-local candidate that the planner already owns.
+pub(crate) fn apply_field_value_candidate_with_planning(
     candidate: &mut Document,
     field: &FieldRef,
     value: &Value,
+    planning: &mut FieldEditPlanning,
 ) -> Result<(), WorkspaceError> {
-    check_field_value_candidate(candidate, field, value)?;
+    check_field_value_candidate_with_planning(candidate, field, value, planning)?;
     install_checked_field_value(candidate, field, value)
 }
 
@@ -1900,6 +1973,15 @@ fn check_field_value_candidate(
     document: &Document,
     field: &FieldRef,
     value: &Value,
+) -> Result<(), WorkspaceError> {
+    check_field_value_candidate_with_planning(document, field, value, &mut FieldEditPlanning::new())
+}
+
+fn check_field_value_candidate_with_planning(
+    document: &Document,
+    field: &FieldRef,
+    value: &Value,
+    planning: &mut FieldEditPlanning,
 ) -> Result<(), WorkspaceError> {
     let entity =
         document
@@ -1922,7 +2004,7 @@ fn check_field_value_candidate(
         &definition.field_type,
         definition.required,
     )?;
-    preflight_formula_structures(document)?;
+    planning.preflight(document)?;
     if let Value::Formula(expression) = value {
         validate_expression_structure(expression).map_err(|source| {
             WorkspaceError::ExpressionComplexity {
@@ -1937,21 +2019,7 @@ fn check_field_value_candidate(
         });
     }
     if let Value::Formula(expression) = value {
-        project_expression(document, field, expression).map_err(|source| match source {
-            CanonicalAuthoringProjectionError::Complexity(source) => {
-                WorkspaceError::ExpressionComplexity {
-                    field: field.clone(),
-                    source,
-                }
-            }
-            source @ (CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. }
-            | CanonicalAuthoringProjectionError::UnresolvableBoundColumns { .. }) => {
-                WorkspaceError::FormulaProjection {
-                    field: field.clone(),
-                    source,
-                }
-            }
-        })?;
+        planning.project(document, field, expression)?;
     }
 
     Ok(())
@@ -1973,16 +2041,26 @@ fn install_checked_field_value(
     Ok(())
 }
 
-/// Build the explicit clear candidate for one optional stored value.
-///
-/// This authoring and history operation preserves the distinction
-/// between an optional field that was absent and one that contained a scalar,
-/// while keeping required fields and formula structure under the shared
-/// validation boundary.
-pub(crate) fn unset_field_candidate(
+/// Clear one optional field in the planner's private candidate. The ordered
+/// checks run first and an absent optional field stays absent.
+pub(crate) fn unset_field_candidate_in_place(
+    candidate: &mut Document,
+    field: &FieldRef,
+    planning: &mut FieldEditPlanning,
+) -> Result<(), WorkspaceError> {
+    if !check_unset_field_candidate(candidate, field, planning)? {
+        return Ok(());
+    }
+    remove_field_value(candidate, field)
+}
+
+/// Report whether the value is present and removable, after today's ordered
+/// checks.
+fn check_unset_field_candidate(
     document: &Document,
     field: &FieldRef,
-) -> Result<Document, WorkspaceError> {
+    planning: &mut FieldEditPlanning,
+) -> Result<bool, WorkspaceError> {
     let entity =
         document
             .entities
@@ -1997,10 +2075,13 @@ pub(crate) fn unset_field_candidate(
         });
     }
     if !entity.fields.contains_key(&field.field) {
-        return Ok(document.clone());
+        return Ok(false);
     }
-    preflight_formula_structures(document)?;
-    let mut candidate = document.clone();
+    planning.preflight(document)?;
+    Ok(true)
+}
+
+fn remove_field_value(candidate: &mut Document, field: &FieldRef) -> Result<(), WorkspaceError> {
     candidate
         .entities
         .get_mut(&field.entity)
@@ -2009,7 +2090,7 @@ pub(crate) fn unset_field_candidate(
         })?
         .fields
         .remove(&field.field);
-    Ok(candidate)
+    Ok(())
 }
 
 /// Classify one existing semantic value without exposing its payload.
