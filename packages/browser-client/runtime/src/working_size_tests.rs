@@ -1239,7 +1239,7 @@ fn edited(
             expected_revision,
             edits: vec![CellEdit { target, input }],
         })
-        .unwrap()
+        .unwrap_or_else(|error| panic!("edit failed: {error:?}"))
     {
         DesignerResponse::Published(publication) => publication,
         other => panic!("expected a publication, got {other:?}"),
@@ -1943,38 +1943,31 @@ fn changed_cells_carry_the_windows_display_text() {
     assert_eq!(label.display, None);
 }
 
+/// A failed formula never reaches a reply: the lifecycle refuses to publish a
+/// document whose calculation failed, so `changed` never has to carry one.
 #[test]
-fn a_failed_formula_dependent_carries_its_failure() {
+fn a_failing_edit_is_refused_before_it_reaches_a_reply() {
     let mut runtime =
         DesignerRuntime::from_document_working_size(redraw_grid(), OCCURRENCE).unwrap();
-    let publication = edited(
-        &mut runtime,
-        target("r00000", "divisor"),
-        ScalarEditInput::Number { input: "0".into() },
-    );
-    let second = publication
-        .changed
-        .iter()
-        .find(|field| field.target == target("r00000", "second"))
-        .expect("the dependent formula is a changed cell");
-    let Some(CalculationProjection::Failure { code, .. }) = &second.calculated else {
-        panic!("expected a failed calculation, got {:?}", second.calculated);
-    };
-    assert_eq!(code, "division_by_zero");
+    let revision = runtime.current_revision().to_owned();
+    let error = runtime
+        .handle(DesignerRequest::EditCells {
+            expected_revision: revision.clone(),
+            edits: vec![CellEdit {
+                target: target("r00000", "divisor"),
+                input: ScalarEditInput::Number { input: "0".into() },
+            }],
+        })
+        .expect_err("a document with a failed formula is not published");
     assert!(
-        !second.diagnostics.is_empty(),
-        "a failed formula carries diagnostics"
+        matches!(&error, DesignerError::Lifecycle(_)),
+        "the refusal is a lifecycle validation failure: {error:?}"
     );
-
-    // The window shows exactly the same field.
-    let window = all_rows_window(&mut runtime, "ledger");
-    let window_field = window
-        .rows
-        .iter()
-        .find(|row| row.id == "r00000")
-        .and_then(|row| row.fields.iter().find(|field| field.target.field == "second"))
-        .expect("the window carries the formula");
-    assert_eq!(second, window_field);
+    assert!(
+        format!("{error:?}").contains("formula.division_by_zero"),
+        "the refusal names the failure: {error:?}"
+    );
+    assert_eq!(runtime.current_revision(), revision);
 }
 
 #[test]
@@ -2020,7 +2013,10 @@ fn a_removed_rows_cells_are_not_changed_cells() {
         DesignerResponse::Published(publication) => publication,
         other => panic!("expected a publication, got {other:?}"),
     };
-    assert!(publication.entities.contains(&"r00002".to_owned()));
+    assert!(
+        publication.entities.contains(&"r00002".to_owned()),
+        "the removed row is named: {publication:?}"
+    );
     assert!(
         publication
             .changed

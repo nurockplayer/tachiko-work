@@ -3154,6 +3154,7 @@ impl DesignerRuntime {
         let mut present = Vec::new();
         let mut columns = BTreeMap::new();
         let mut blanks = BTreeMap::new();
+        let mut removed = BTreeSet::new();
         for target in &targets {
             let field_ref = target.as_field_ref();
             let entities = match self
@@ -3162,7 +3163,10 @@ impl DesignerRuntime {
             {
                 Ok(entities) => entities,
                 // The row was removed; `entities` lists it instead.
-                Err(WorkspaceError::MissingEntityId { .. }) => continue,
+                Err(WorkspaceError::MissingEntityId { .. }) => {
+                    removed.insert(field_ref);
+                    continue;
+                }
                 Err(_) => return None,
             };
             let entity = &entities.value()[0];
@@ -3196,6 +3200,9 @@ impl DesignerRuntime {
         let mut bytes = 0;
         for target in &targets {
             let field = target.as_field_ref();
+            if removed.contains(&field) {
+                continue;
+            }
             let projection = match fields.remove(&field) {
                 Some(mut projection) => {
                     projection.display = columns
