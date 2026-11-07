@@ -3,7 +3,7 @@
 //! These Rust shapes are in-process implementation details. They preserve the
 //! Accepted logical behavior without defining a public wire or SDK contract.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use tachiko_formula_engine::FormulaBindError;
 use thiserror::Error;
@@ -255,7 +255,6 @@ struct ScenarioTargetProjection<'a> {
     now: TrustedInstant,
     baseline: &'a CalculationOutcome,
     candidate: &'a CalculationOutcome,
-    dependencies: &'a BTreeMap<FieldRef, BTreeSet<FieldRef>>,
 }
 
 /// Formula authoring request admitted before the immutable proposal occurrence.
@@ -363,15 +362,12 @@ impl PatchLifecycle {
                     unreachable!("formula reasoning applicability checked above")
                 };
                 let calculation = calculate_complete(document);
-                let dependencies = calculation_dependencies(&calculation);
-                let direct_inputs = dependencies
-                    .get(target)
-                    .cloned()
+                let direct_inputs = calculation_dependencies_of(&calculation, target)
                     .unwrap_or_default()
                     .into_iter()
                     .collect::<Vec<_>>();
-                let direct_dependents = direct_dependents(dependencies, target);
-                let affected_subjects = affected_by(dependencies, target);
+                let direct_dependents = calculation_direct_dependents(&calculation, target);
+                let affected_subjects = calculation_affected_by(&calculation, target);
                 for field in direct_inputs
                     .iter()
                     .chain(&direct_dependents)
@@ -525,7 +521,6 @@ impl PatchLifecycle {
             now,
             baseline: &baseline_calculation,
             candidate: &candidate_calculation,
-            dependencies: calculation_dependencies(&baseline_calculation),
         };
         let targets = requested_targets
             .into_iter()
@@ -827,14 +822,11 @@ impl PatchLifecycle {
             };
         }
 
-        let direct_inputs = projection
-            .dependencies
-            .get(target)
-            .cloned()
+        let direct_inputs = calculation_dependencies_of(projection.baseline, target)
             .unwrap_or_default()
             .into_iter()
             .collect::<Vec<_>>();
-        let direct_dependents = direct_dependents(projection.dependencies, target);
+        let direct_dependents = calculation_direct_dependents(projection.baseline, target);
         let mut requirements = BTreeSet::from([target_requirement]);
         for field in direct_inputs.iter().chain(&direct_dependents) {
             requirements.insert(self.field_or_document_requirement(
@@ -1077,15 +1069,42 @@ pub(crate) fn formula_reasoning_target_is_applicable(value: &Value) -> bool {
     matches!(value, Value::Formula(_))
 }
 
-pub(crate) fn calculation_dependencies(
+/// The expanded static dependency set of one target, whether or not the
+/// calculation completed.
+pub(crate) fn calculation_dependencies_of(
     outcome: &CalculationOutcome,
-) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+    target: &FieldRef,
+) -> Option<BTreeSet<FieldRef>> {
     match outcome {
-        CalculationOutcome::Complete(calculation) => calculation.dependencies(),
-        CalculationOutcome::Failed(failures) => failures.dependencies(),
+        CalculationOutcome::Complete(calculation) => calculation.dependencies_of(target),
+        CalculationOutcome::Failed(failures) => failures.dependencies_of(target),
     }
 }
 
+/// The formula keys of an outcome, without expanding per-cell dependencies.
+pub(crate) fn calculation_formula_keys(outcome: &CalculationOutcome) -> Vec<&FieldRef> {
+    match outcome {
+        CalculationOutcome::Complete(calculation) => calculation.formulas().collect(),
+        CalculationOutcome::Failed(failures) => failures.formulas().collect(),
+    }
+}
+
+fn calculation_direct_dependents(outcome: &CalculationOutcome, target: &FieldRef) -> Vec<FieldRef> {
+    let dependents = match outcome {
+        CalculationOutcome::Complete(calculation) => calculation.direct_dependents(target),
+        CalculationOutcome::Failed(failures) => failures.direct_dependents(target),
+    };
+    dependents.into_iter().collect()
+}
+
+fn calculation_affected_by(outcome: &CalculationOutcome, target: &FieldRef) -> Vec<FieldRef> {
+    match outcome {
+        CalculationOutcome::Complete(calculation) => calculation.affected_by(target),
+        CalculationOutcome::Failed(failures) => failures.affected_by(target),
+    }
+}
+
+/// The projected calculation outcome of one field.
 pub(crate) fn calculation_for(
     outcome: &CalculationOutcome,
     target: &FieldRef,
@@ -1119,48 +1138,6 @@ fn calculation_evidence_subjects(outcome: &FormulaCalculationOutcome) -> BTreeSe
         | CalculationFailure::NonFiniteResult
         | CalculationFailure::InvalidColumn { .. } => BTreeSet::new(),
     }
-}
-
-fn direct_dependents(
-    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
-    target: &FieldRef,
-) -> Vec<FieldRef> {
-    dependencies
-        .iter()
-        .filter(|(_, inputs)| inputs.contains(target))
-        .map(|(formula, _)| formula.clone())
-        .collect()
-}
-
-fn affected_by(
-    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
-    target: &FieldRef,
-) -> Vec<FieldRef> {
-    affected_by_all(dependencies, &BTreeSet::from([target.clone()]))
-}
-
-pub(crate) fn affected_by_all(
-    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
-    changed: &BTreeSet<FieldRef>,
-) -> Vec<FieldRef> {
-    let mut frontier = changed.clone();
-    let mut affected = BTreeSet::new();
-    loop {
-        let next = dependencies
-            .iter()
-            .filter(|(formula, inputs)| {
-                !affected.contains(*formula) && !inputs.is_disjoint(&frontier)
-            })
-            .map(|(formula, _)| formula.clone())
-            .collect::<BTreeSet<_>>();
-        if next.is_empty() {
-            break;
-        }
-        frontier.clone_from(&next);
-        affected.extend(next);
-    }
-    affected.retain(|field| !changed.contains(field));
-    affected.into_iter().collect()
 }
 
 fn scenario_impact(before: &Document, after: &Document) -> Option<ScenarioImpact> {

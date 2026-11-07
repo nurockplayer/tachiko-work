@@ -56,10 +56,11 @@ fn borrowed_dependency_facts_are_direct_deduplicated_and_available_on_failure() 
         let before = session.export_snapshot();
         let work = session.runtime_measurements();
         for _ in 0..3 {
-            let edges = session.direct_field_dependencies();
-            assert_eq!(edges[&damage].iter().collect::<Vec<_>>(), vec![&interval]);
-            assert_eq!(edges[&dps].iter().collect::<Vec<_>>(), vec![&damage]);
-            assert!(!edges.contains_key(&interval));
+            let damage_edges = session.direct_field_dependencies(&damage).unwrap();
+            assert_eq!(damage_edges.iter().collect::<Vec<_>>(), vec![&interval]);
+            let dps_edges = session.direct_field_dependencies(&dps).unwrap();
+            assert_eq!(dps_edges.iter().collect::<Vec<_>>(), vec![&damage]);
+            assert!(session.direct_field_dependencies(&interval).is_none());
         }
         assert_eq!(session.validation_report().value().is_valid(), !failed);
         assert_eq!(session.runtime_measurements(), work);

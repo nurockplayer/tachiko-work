@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tachiko_formula_engine::{CalculationOutcome, calculate_complete, extract_dependencies};
 use tachiko_workspace_engine::{
-    CalculationFailure, Diagnostic, Document, Entity, EntityId, EntityKey, Expression,
+    CalculationFailure, ColumnRef, Diagnostic, Document, Entity, EntityId, EntityKey, Expression,
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey,
     SemanticSubject, ValidationReport, Value, calculate_fields,
     formula_operations::FormulaCalculationOutcome,
@@ -27,6 +27,10 @@ const TARGET_USER: &str = "target_user";
 const TARGET_TAIL: &str = "target_tail";
 const ISOLATED_INPUT: &str = "isolated_input";
 const ISOLATED_FORMULA: &str = "isolated_formula";
+const COLUMN_TOTAL: &str = "column_total";
+const EXTRA: &str = "extra";
+const PLAN_ROW: &str = "plan_row";
+const RESERVE: &str = "reserve";
 
 struct FixedTime;
 
@@ -42,6 +46,16 @@ fn retained_state_matches_fresh_full_oracles_across_generated_revisions() {
     for seed in [0x095_u64, 0x5eed_u64, 0x00c0_ffee_u64] {
         run_generated_sequence(seed);
     }
+}
+
+#[test]
+fn retained_state_matches_full_oracles_across_row_membership_changes() {
+    let scope = DocumentScopeId::from("retained-oracle-membership");
+    let mut session = ResidentWorkspaceSession::new(scope.clone(), oracle_document());
+    assert_revision_oracles(&session, "membership-initial");
+    let mutations = row_membership_mutations();
+    let mut checks = SequenceChecks::default();
+    run_sequence(&mut session, &scope, &mutations, &mut checks);
 }
 
 fn run_scripted_sequence() {
@@ -478,6 +492,58 @@ fn fallback_mutations() -> Vec<MutationCase> {
     ]
 }
 
+fn row_membership_mutations() -> Vec<MutationCase> {
+    vec![
+        MutationCase::static_case(
+            "insert-row-into-read-column",
+            SpecificCheck::None,
+            |document| {
+                document
+                    .entities
+                    .insert(EntityId::from(EXTRA), extra_entity());
+            },
+        ),
+        MutationCase::static_case("edit-inserted-row", SpecificCheck::None, |document| {
+            set_value(document, EXTRA, RESERVE, number(6.5));
+        }),
+        MutationCase::static_case(
+            "remove-row-from-read-column",
+            SpecificCheck::None,
+            |document| {
+                document.entities.remove(EXTRA);
+            },
+        ),
+        MutationCase::static_case("edit-after-row-removal", SpecificCheck::None, |document| {
+            set_value(document, ISOLATED, ISOLATED_INPUT, number(12.0));
+        }),
+    ]
+}
+
+fn extra_entity() -> Entity {
+    plan_row(EXTRA, 5.0)
+}
+
+fn plan_row(id: &str, reserve: f64) -> Entity {
+    Entity {
+        id: EntityId::from(id),
+        key: EntityKey::from(id),
+        schema: SchemaId::from("plan"),
+        fields: BTreeMap::from([(FieldId::from(RESERVE), number(reserve))]),
+    }
+}
+
+fn number_field_definition(id: &str) -> FieldDefinition {
+    FieldDefinition {
+        id: FieldId::from(id),
+        key: FieldKey::from(id),
+        display_name: None,
+        number_format: None,
+        field_type: FieldType::Number,
+        required: false,
+        constraint: tachiko_semantic_core::FieldConstraint::None,
+    }
+}
+
 fn generated_numeric_mutations(seed: u64, revisions: usize) -> Vec<MutationCase> {
     let targets = [
         (PRIMARY, SOURCE_A),
@@ -551,7 +617,7 @@ fn assert_revision_oracles(session: &ResidentWorkspaceSession, context: &str) {
         CalculationOutcome::Failed(failures) => failures.dependencies(),
     };
     assert_eq!(
-        &projected_dependencies, full_dependencies,
+        projected_dependencies, full_dependencies,
         "formula dependency sets at {context}"
     );
 
@@ -622,12 +688,12 @@ fn full_oracle_invalidation(
     let before_calculation = calculate_complete(before);
     let after_calculation = calculate_complete(after);
     let mut affected_calculations = full_oracle_affected_by_all(
-        full_oracle_dependencies(&before_calculation),
+        &full_oracle_dependencies(&before_calculation),
         &changes.calculation_roots,
     )
     .into_iter()
     .chain(full_oracle_affected_by_all(
-        full_oracle_dependencies(&after_calculation),
+        &full_oracle_dependencies(&after_calculation),
         &changes.calculation_roots,
     ))
     .collect::<BTreeSet<_>>();
@@ -842,7 +908,7 @@ fn full_oracle_diagnostics_for_field(
 
 fn full_oracle_dependencies(
     outcome: &CalculationOutcome,
-) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
     match outcome {
         CalculationOutcome::Complete(calculation) => calculation.dependencies(),
         CalculationOutcome::Failed(failures) => failures.dependencies(),
@@ -1140,52 +1206,14 @@ fn oracle_document() -> Document {
         TARGET_TAIL,
         ISOLATED_INPUT,
         ISOLATED_FORMULA,
+        COLUMN_TOTAL,
     ];
     let fields = field_ids
         .into_iter()
-        .map(|id| {
-            (
-                FieldId::from(id),
-                FieldDefinition {
-                    id: FieldId::from(id),
-                    key: FieldKey::from(id),
-                    display_name: None,
-                    number_format: None,
-                    field_type: FieldType::Number,
-                    required: false,
-                    constraint: tachiko_semantic_core::FieldConstraint::None,
-                },
-            )
-        })
+        .map(|id| (FieldId::from(id), number_field_definition(id)))
         .collect();
 
-    let mut primary_fields = BTreeMap::new();
-    primary_fields.insert(FieldId::from(SOURCE_A), number(2.0));
-    primary_fields.insert(FieldId::from(SOURCE_B), number(3.0));
-    primary_fields.insert(
-        FieldId::from(MID),
-        Value::Formula(add(
-            reference(PRIMARY, SOURCE_A),
-            reference(PRIMARY, SOURCE_B),
-        )),
-    );
-    primary_fields.insert(
-        FieldId::from(MASKED),
-        Value::Formula(multiply(reference(PRIMARY, MID), literal(0.0))),
-    );
-    primary_fields.insert(
-        FieldId::from(TAIL),
-        Value::Formula(add(reference(PRIMARY, MASKED), literal(1.0))),
-    );
-    primary_fields.insert(FieldId::from(TARGET), number(4.0));
-    primary_fields.insert(
-        FieldId::from(TARGET_USER),
-        Value::Formula(add(reference(PRIMARY, TARGET), literal(1.0))),
-    );
-    primary_fields.insert(
-        FieldId::from(TARGET_TAIL),
-        Value::Formula(add(reference(PRIMARY, TARGET_USER), literal(1.0))),
-    );
+    let primary_fields = primary_field_values();
 
     let isolated_fields = BTreeMap::from([
         (FieldId::from(ISOLATED_INPUT), number(10.0)),
@@ -1198,16 +1226,31 @@ fn oracle_document() -> Document {
     Document {
         id: "retained-oracle".into(),
         title: "Retained oracle".to_owned(),
-        schemas: BTreeMap::from([(
-            SchemaId::from("metrics"),
-            Schema {
-                field_order: None,
-                id: SchemaId::from("metrics"),
-                key: SchemaKey::from("metrics"),
-                display_name: None,
-                fields,
-            },
-        )]),
+        schemas: BTreeMap::from([
+            (
+                SchemaId::from("metrics"),
+                Schema {
+                    field_order: None,
+                    id: SchemaId::from("metrics"),
+                    key: SchemaKey::from("metrics"),
+                    display_name: None,
+                    fields,
+                },
+            ),
+            (
+                SchemaId::from("plan"),
+                Schema {
+                    field_order: None,
+                    id: SchemaId::from("plan"),
+                    key: SchemaKey::from("plan"),
+                    display_name: None,
+                    fields: BTreeMap::from([(
+                        FieldId::from(RESERVE),
+                        number_field_definition(RESERVE),
+                    )]),
+                },
+            ),
+        ]),
         entities: BTreeMap::from([
             (
                 EntityId::from(PRIMARY),
@@ -1227,9 +1270,45 @@ fn oracle_document() -> Document {
                     fields: isolated_fields,
                 },
             ),
+            (EntityId::from(PLAN_ROW), plan_row(PLAN_ROW, 10.0)),
         ]),
         keyed_grouped_sum_definitions: BTreeMap::new(),
     }
+}
+
+fn primary_field_values() -> BTreeMap<FieldId, Value> {
+    BTreeMap::from([
+        (FieldId::from(SOURCE_A), number(2.0)),
+        (FieldId::from(SOURCE_B), number(3.0)),
+        (
+            FieldId::from(MID),
+            Value::Formula(add(
+                reference(PRIMARY, SOURCE_A),
+                reference(PRIMARY, SOURCE_B),
+            )),
+        ),
+        (
+            FieldId::from(MASKED),
+            Value::Formula(multiply(reference(PRIMARY, MID), literal(0.0))),
+        ),
+        (
+            FieldId::from(TAIL),
+            Value::Formula(add(reference(PRIMARY, MASKED), literal(1.0))),
+        ),
+        (FieldId::from(TARGET), number(4.0)),
+        (
+            FieldId::from(TARGET_USER),
+            Value::Formula(add(reference(PRIMARY, TARGET), literal(1.0))),
+        ),
+        (
+            FieldId::from(TARGET_TAIL),
+            Value::Formula(add(reference(PRIMARY, TARGET_USER), literal(1.0))),
+        ),
+        (
+            FieldId::from(COLUMN_TOTAL),
+            Value::Formula(column_total("plan", RESERVE)),
+        ),
+    ])
 }
 
 fn field(entity: &str, field_id: &str) -> FieldRef {
@@ -1246,6 +1325,10 @@ fn literal(value: f64) -> Expression {
 
 fn reference(entity: &str, field_id: &str) -> Expression {
     Expression::Reference(field(entity, field_id))
+}
+
+fn column_total(schema: &str, field_id: &str) -> Expression {
+    Expression::ColumnTotal(ColumnRef::new(schema, field_id))
 }
 
 fn primary_addition() -> Expression {

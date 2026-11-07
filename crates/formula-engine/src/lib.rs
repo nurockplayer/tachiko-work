@@ -1,5 +1,7 @@
 //! Deterministic formula parsing, binding, projection, and evaluation.
 
+#[cfg(test)]
+mod column_graph_differential;
 mod evaluation;
 mod parser;
 
@@ -8,7 +10,7 @@ use std::sync::Arc;
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, ColumnAddress, ColumnCriterion, ColumnRef, ComparisonOperator,
-    ConditionalAggregate, Document, Expression, FieldAddress, FieldId, FieldRef, FieldType,
+    ConditionalAggregate, Document, Expression, FieldAddress, FieldRef, FieldType,
     FormulaExpressionType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
@@ -900,7 +902,7 @@ pub fn extract_dependencies(
 #[derive(Clone, Debug, PartialEq)]
 pub struct Calculation {
     values: BTreeMap<FieldRef, Number>,
-    dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    graph: DependencyGraph,
 }
 
 /// Complete atomic result of a fresh full-document recomputation.
@@ -926,8 +928,7 @@ pub struct RetainedCalculationState {
     nodes: BTreeSet<FieldRef>,
     values: BTreeMap<FieldRef, Number>,
     failures: FailureMap,
-    dependencies: DependencyMap,
-    reverse_dependents: DependencyMap,
+    graph: DependencyGraph,
 }
 
 /// Deterministic work evidence for one retained calculation transition.
@@ -972,7 +973,7 @@ struct FullCalculationParts {
     nodes: BTreeSet<FieldRef>,
     values: BTreeMap<FieldRef, Number>,
     failures: FailureMap,
-    dependencies: DependencyMap,
+    graph: DependencyGraph,
 }
 
 impl RetainedCalculationState {
@@ -984,9 +985,8 @@ impl RetainedCalculationState {
             nodes,
             values,
             failures,
-            dependencies,
+            graph,
         } = full_calculation_parts(document);
-        let reverse_dependents = reverse_dependency_index(&dependencies);
         let work = IncrementalCalculationWork {
             full_rebuilds: 1,
             nodes_recomputed: nodes.len(),
@@ -997,8 +997,7 @@ impl RetainedCalculationState {
                 nodes,
                 values,
                 failures,
-                dependencies,
-                reverse_dependents,
+                graph,
             },
             work,
         )
@@ -1029,8 +1028,8 @@ impl RetainedCalculationState {
         }
 
         let before_failed = self.is_failed();
-        let before_formulas = self.dependencies.keys().cloned().collect::<BTreeSet<_>>();
-        let dirty_roots = &self.with_column_total_roots(document, dirty_roots);
+        let before_formulas = self.graph.formulas().cloned().collect::<BTreeSet<_>>();
+        let dirty_roots = &Self::with_column_total_roots(document, &self.graph, dirty_roots);
         let impact = self.update_dependency_impact(document, dirty_roots);
         let before_projections = impact
             .dirty
@@ -1054,7 +1053,7 @@ impl RetainedCalculationState {
         let after_failed = self.is_failed();
         let formula_fields = before_formulas
             .into_iter()
-            .chain(self.dependencies.keys().cloned())
+            .chain(self.graph.formulas().cloned())
             .collect::<BTreeSet<_>>();
         let changed_calculation_projections = if before_failed == after_failed {
             formula_fields
@@ -1086,54 +1085,23 @@ impl RetainedCalculationState {
     /// before (old graph) or totals a root's schema now, so its dependencies
     /// are re-extracted rather than left stale.
     fn with_column_total_roots(
-        &self,
         document: &Document,
+        graph: &DependencyGraph,
         dirty_roots: &BTreeSet<FieldRef>,
     ) -> BTreeSet<FieldRef> {
         let mut roots = dirty_roots.clone();
+        // A read column's member set changes whenever a row of its schema is
+        // added, removed or moved. Promotion is schema-wide rather than
+        // slot-exact so those cases cannot be missed; the extra readers it
+        // dirties are recomputed, which is safe.
         let root_schemas = dirty_roots
             .iter()
-            .filter_map(|root| document.entities.get(&root.entity))
-            .map(|entity| &entity.schema)
+            .flat_map(|root| graph.schemas_of(document, &root.entity))
             .collect::<BTreeSet<_>>();
-        // A total also holds reverse edges from a root row's blank slots, which
-        // are never roots themselves (only stored fields are). Walk every
-        // reverse edge of each root's row, so deleting a row whose totalled
-        // cell is blank still refreshes the total.
-        let root_entities = dirty_roots
-            .iter()
-            .map(|root| &root.entity)
-            .collect::<BTreeSet<_>>();
-        for entity in root_entities {
-            let first = FieldRef::new(entity.clone(), FieldId::from(String::new()));
-            for (_, dependents) in self
-                .reverse_dependents
-                .range(first..)
-                .take_while(|(slot, _)| &slot.entity == entity)
-            {
-                for dependent in dependents {
-                    if matches!(
-                        calculation_value(document, dependent),
-                        Some(Value::Formula(expression))
-                            if !extract_column_totals(expression).is_empty()
-                    ) {
-                        roots.insert(dependent.clone());
-                    }
-                }
-            }
-        }
-        if root_schemas.is_empty() {
-            return roots;
-        }
-        for (entity_id, entity) in &document.entities {
-            for (field_id, value) in &entity.fields {
-                if let Value::Formula(expression) = value {
-                    if extract_column_totals(expression)
-                        .iter()
-                        .any(|column| root_schemas.contains(&column.schema))
-                    {
-                        roots.insert(FieldRef::new(entity_id.clone(), field_id.clone()));
-                    }
+        for column in graph.tracked_columns() {
+            if root_schemas.contains(&column.schema) {
+                for dependent in graph.column_readers(column) {
+                    roots.insert(dependent.clone());
                 }
             }
         }
@@ -1145,18 +1113,28 @@ impl RetainedCalculationState {
         document: &Document,
         dirty_roots: &BTreeSet<FieldRef>,
     ) -> DirtyCalculationImpact {
-        let (old_dependents, old_edges) =
-            reverse_dependent_closure(&self.reverse_dependents, dirty_roots);
+        let (old_dependents, old_edges) = self.graph.reverse_closure(dirty_roots, false);
+        let mut touched_schemas = BTreeSet::new();
         for root in dirty_roots {
-            replace_root_dependencies(
-                &mut self.dependencies,
-                &mut self.reverse_dependents,
-                root,
-                formula_dependencies(document, root),
-            );
+            touched_schemas.extend(self.graph.schemas_of(document, &root.entity));
+            self.graph.remember_entity(document, &root.entity);
+            self.graph.replace_formula(document, root);
         }
-        let (new_dependents, new_edges) =
-            reverse_dependent_closure(&self.reverse_dependents, dirty_roots);
+        // Inserting or removing a row changes the member slots of every read
+        // column of that row's schema, whether or not the row was blank.
+        let touched_columns = self
+            .graph
+            .tracked_columns()
+            .filter(|column| touched_schemas.contains(&column.schema))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        self.graph.refresh_column_slots(document, &touched_columns);
+        for root in dirty_roots {
+            if !document.entities.contains_key(&root.entity) {
+                self.graph.forget_entity(&root.entity);
+            }
+        }
+        let (new_dependents, new_edges) = self.graph.reverse_closure(dirty_roots, false);
         let dirty = dirty_roots
             .iter()
             .chain(old_dependents.iter())
@@ -1208,13 +1186,13 @@ impl RetainedCalculationState {
         }
         self.failures
             .extend(pregraph_failures(document, &dirty_nodes, &dirty_formulas));
-        assign_cycle_failures(&dirty_formulas, &self.dependencies, &mut self.failures);
+        assign_cycle_failures(&dirty_formulas, &self.graph, &mut self.failures);
         self.values
             .extend(initial_values(&dirty_nodes, &self.failures));
         evaluate_remaining_formulas(
             document,
             &dirty_formulas,
-            &self.dependencies,
+            &self.graph,
             &mut self.failures,
             &mut self.values,
         );
@@ -1226,12 +1204,12 @@ impl RetainedCalculationState {
         if self.failures.is_empty() {
             CalculationOutcome::Complete(Calculation {
                 values: self.values.clone(),
-                dependencies: self.dependencies.clone(),
+                graph: self.graph.clone(),
             })
         } else {
             CalculationOutcome::Failed(CalculationFailures {
                 failures: self.failures.clone(),
-                dependencies: self.dependencies.clone(),
+                graph: self.graph.clone(),
             })
         }
     }
@@ -1270,10 +1248,36 @@ impl RetainedCalculationState {
         &self.failures
     }
 
-    /// Return every current static formula dependency set.
+    /// Return every current static formula dependency set, expanded per cell.
+    ///
+    /// The expansion costs O(formulas x rows); use [`Self::dependencies_of`]
+    /// and [`Self::formulas`] on edit paths.
     #[must_use]
-    pub fn dependencies(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
-        &self.dependencies
+    pub fn dependencies(&self) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        self.graph.expanded_dependencies()
+    }
+
+    /// Return the expanded static dependency set of one formula.
+    #[must_use]
+    pub fn dependencies_of(&self, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
+        self.graph.dependencies_of(field)
+    }
+
+    /// Return the formulas whose expanded dependencies contain `field`.
+    #[must_use]
+    pub fn direct_dependents(&self, field: &FieldRef) -> BTreeSet<FieldRef> {
+        self.graph.direct_dependents(field)
+    }
+
+    /// Iterate the formula keys of the current dependency graph.
+    pub fn formulas(&self) -> impl Iterator<Item = &FieldRef> {
+        self.graph.formulas()
+    }
+
+    /// Total entry count of the dependency graph, for memory-size assertions.
+    #[must_use]
+    pub fn graph_entry_count(&self) -> usize {
+        self.graph.entry_count()
     }
 
     fn node_projection(&self, field: &FieldRef) -> RetainedNodeProjection {
@@ -1292,18 +1296,12 @@ impl RetainedCalculationState {
         }
     }
 
-    /// Return the retained reverse dependency index used for bounded impact
-    /// traversal.
-    #[must_use]
-    pub fn reverse_dependents(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
-        &self.reverse_dependents
-    }
-
     /// Return the deterministic reverse transitive closure, excluding the
     /// supplied dirty roots themselves.
     #[must_use]
     pub fn affected_by_all(&self, dirty_roots: &BTreeSet<FieldRef>) -> Vec<FieldRef> {
-        reverse_dependent_closure(&self.reverse_dependents, dirty_roots)
+        self.graph
+            .reverse_closure(dirty_roots, false)
             .0
             .into_iter()
             .collect()
@@ -1314,7 +1312,7 @@ impl RetainedCalculationState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CalculationFailures {
     failures: BTreeMap<FieldRef, CalculationFailure>,
-    dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    graph: DependencyGraph,
 }
 
 impl CalculationFailures {
@@ -1325,10 +1323,37 @@ impl CalculationFailures {
     }
 
     /// Return every statically extracted formula dependency set, including
-    /// edges incident to failed nodes.
+    /// edges incident to failed nodes, expanded per cell.
+    ///
+    /// The expansion costs O(formulas x rows); use [`Self::dependencies_of`]
+    /// and [`Self::formulas`] on edit paths.
     #[must_use]
-    pub fn dependencies(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
-        &self.dependencies
+    pub fn dependencies(&self) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        self.graph.expanded_dependencies()
+    }
+
+    /// Return the expanded static dependency set of one formula.
+    #[must_use]
+    pub fn dependencies_of(&self, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
+        self.graph.dependencies_of(field)
+    }
+
+    /// Iterate the formula keys of the current dependency graph.
+    pub fn formulas(&self) -> impl Iterator<Item = &FieldRef> {
+        self.graph.formulas()
+    }
+
+    /// Return the formulas whose expanded dependencies contain `field`.
+    #[must_use]
+    pub fn direct_dependents(&self, field: &FieldRef) -> BTreeSet<FieldRef> {
+        self.graph.direct_dependents(field)
+    }
+
+    /// Return the reverse transitive closure of `changed`, including a changed
+    /// formula that reaches itself.
+    #[must_use]
+    pub fn affected_by(&self, changed: &FieldRef) -> Vec<FieldRef> {
+        self.graph.affected_by(changed)
     }
 
     fn compatibility_error(&self) -> CalculationError {
@@ -1439,15 +1464,10 @@ impl CalculationFailures {
                 .first()
                 .expect("cycle failure must contain an SCC member")
         };
-        let outgoing = self
-            .dependencies
-            .get(start)
-            .into_iter()
-            .flatten()
-            .filter(|dependency| members.contains(*dependency));
+        let outgoing = self.graph.formula_dependencies_within(start, members);
 
         for next in outgoing {
-            if next == start {
+            if &next == start {
                 return vec![start.clone(), start.clone()];
             }
 
@@ -1455,16 +1475,10 @@ impl CalculationFailures {
             let mut visited = BTreeSet::from([next.clone()]);
             let mut parents: BTreeMap<FieldRef, FieldRef> = BTreeMap::new();
             while let Some(node) = queue.pop_front() {
-                for dependency in self
-                    .dependencies
-                    .get(&node)
-                    .into_iter()
-                    .flatten()
-                    .filter(|dependency| members.contains(*dependency))
-                {
-                    if dependency == start {
+                for dependency in self.graph.formula_dependencies_within(&node, members) {
+                    if &dependency == start {
                         let mut reverse_path = vec![node.clone()];
-                        while reverse_path.last() != Some(next) {
+                        while reverse_path.last() != Some(&next) {
                             let parent = parents
                                 .get(reverse_path.last().expect("path is non-empty"))
                                 .expect("visited SCC node has a parent")
@@ -1544,42 +1558,37 @@ impl Calculation {
         &self.values
     }
 
+    /// Return every static formula dependency set, expanded per cell.
+    ///
+    /// The expansion costs O(formulas x rows); use [`Self::dependencies_of`]
+    /// and [`Self::formulas`] on edit paths.
     #[must_use]
-    pub fn dependencies(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
-        &self.dependencies
+    pub fn dependencies(&self) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        self.graph.expanded_dependencies()
     }
 
     #[must_use]
-    pub fn dependencies_of(&self, field: &FieldRef) -> Option<&BTreeSet<FieldRef>> {
-        self.dependencies.get(field)
+    pub fn dependencies_of(&self, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
+        self.graph.dependencies_of(field)
+    }
+
+    /// Iterate the formula keys of the current dependency graph.
+    pub fn formulas(&self) -> impl Iterator<Item = &FieldRef> {
+        self.graph.formulas()
+    }
+
+    /// Return the formulas whose expanded dependencies contain `field`.
+    #[must_use]
+    pub fn direct_dependents(&self, field: &FieldRef) -> BTreeSet<FieldRef> {
+        self.graph.direct_dependents(field)
     }
 
     #[must_use]
     pub fn affected_by(&self, changed: &FieldRef) -> Vec<FieldRef> {
-        let mut frontier = BTreeSet::from([changed.clone()]);
-        let mut affected = BTreeSet::new();
-
-        loop {
-            let newly_affected: BTreeSet<_> = self
-                .dependencies
-                .iter()
-                .filter(|(formula, dependencies)| {
-                    !affected.contains(*formula) && !dependencies.is_disjoint(&frontier)
-                })
-                .map(|(formula, _)| formula.clone())
-                .collect();
-            if newly_affected.is_empty() {
-                break;
-            }
-            frontier.clone_from(&newly_affected);
-            affected.extend(newly_affected);
-        }
-
-        affected.into_iter().collect()
+        self.graph.affected_by(changed)
     }
 
-    /// For each of `targets`, the fields of `changed` that reach it. One reverse
-    /// index, one walk per changed field, and only target pairs are kept.
+    /// For each of `targets`, the fields of `changed` that reach it.
     ///
     /// A changed field reaches exactly the formulas in [`Self::affected_by`]'s
     /// result for that field, including itself when the graph loops back to it.
@@ -1589,28 +1598,7 @@ impl Calculation {
         changed: impl IntoIterator<Item = &'a FieldRef>,
         targets: &BTreeSet<FieldRef>,
     ) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
-        let reverse_dependents = reverse_dependency_index(&self.dependencies);
-        let mut reaching = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
-        for changed in changed {
-            let mut queue = VecDeque::from([changed]);
-            let mut reached = BTreeSet::new();
-            while let Some(field) = queue.pop_front() {
-                for dependent in reverse_dependents.get(field).into_iter().flatten() {
-                    if reached.insert(dependent) {
-                        queue.push_back(dependent);
-                    }
-                }
-            }
-            for formula in reached {
-                if targets.contains(formula) {
-                    reaching
-                        .entry(formula.clone())
-                        .or_default()
-                        .insert(changed.clone());
-                }
-            }
-        }
-        reaching
+        self.graph.reaching_fields(changed, targets)
     }
 }
 
@@ -1664,70 +1652,53 @@ pub fn calculate_complete(document: &Document) -> CalculationOutcome {
     let FullCalculationParts {
         values,
         failures,
-        dependencies,
+        graph,
         ..
     } = full_calculation_parts(document);
 
     if failures.is_empty() {
-        CalculationOutcome::Complete(Calculation {
-            values,
-            dependencies,
-        })
+        CalculationOutcome::Complete(Calculation { values, graph })
     } else {
-        CalculationOutcome::Failed(CalculationFailures {
-            failures,
-            dependencies,
-        })
+        CalculationOutcome::Failed(CalculationFailures { failures, graph })
     }
 }
 
 type ValueNodes<'document> = BTreeMap<FieldRef, &'document Value>;
 type FormulaNodes<'document> = BTreeMap<FieldRef, &'document Expression>;
-type DependencyMap = BTreeMap<FieldRef, BTreeSet<FieldRef>>;
 type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
 
 fn full_calculation_parts(document: &Document) -> FullCalculationParts {
-    let (nodes, formulas, dependencies) = collect_calculation_nodes(document);
+    let (nodes, formulas, graph) = collect_calculation_nodes(document);
     let mut failures = pregraph_failures(document, &nodes, &formulas);
-    assign_cycle_failures(&formulas, &dependencies, &mut failures);
+    assign_cycle_failures(&formulas, &graph, &mut failures);
     let mut values = initial_values(&nodes, &failures);
-    evaluate_remaining_formulas(
-        document,
-        &formulas,
-        &dependencies,
-        &mut failures,
-        &mut values,
-    );
+    evaluate_remaining_formulas(document, &formulas, &graph, &mut failures, &mut values);
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
         values,
         failures,
-        dependencies,
+        graph,
     }
 }
 
 fn collect_calculation_nodes(
     document: &Document,
-) -> (ValueNodes<'_>, FormulaNodes<'_>, DependencyMap) {
+) -> (ValueNodes<'_>, FormulaNodes<'_>, DependencyGraph) {
     let mut nodes = BTreeMap::new();
     let mut formulas = BTreeMap::new();
-    let mut dependencies = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
             if matches!(value, Value::Number(_) | Value::Formula(_)) {
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
                 nodes.insert(field.clone(), value);
                 if let Value::Formula(expression) = value {
-                    dependencies.insert(
-                        field.clone(),
-                        extract_dependencies(document, &field, expression),
-                    );
                     formulas.insert(field, expression);
                 }
             }
         }
     }
-    (nodes, formulas, dependencies)
+    let graph = DependencyGraph::new(document, &formulas);
+    (nodes, formulas, graph)
 }
 
 fn calculation_value<'document>(
@@ -1741,9 +1712,16 @@ fn calculation_value<'document>(
         .filter(|value| matches!(value, Value::Number(_) | Value::Formula(_)))
 }
 
-fn formula_dependencies(document: &Document, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
+/// The cells and columns one formula reads, from a document snapshot.
+fn formula_uses(
+    document: &Document,
+    field: &FieldRef,
+) -> Option<(BTreeSet<FieldRef>, BTreeSet<ColumnRef>)> {
     match calculation_value(document, field) {
-        Some(Value::Formula(expression)) => Some(extract_dependencies(document, field, expression)),
+        Some(Value::Formula(expression)) => Some((
+            direct_references(field, expression),
+            extract_column_totals(expression),
+        )),
         Some(
             Value::Number(_)
             | Value::Text(_)
@@ -1755,67 +1733,294 @@ fn formula_dependencies(document: &Document, field: &FieldRef) -> Option<BTreeSe
     }
 }
 
-fn reverse_dependency_index(dependencies: &DependencyMap) -> DependencyMap {
-    let mut reverse = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
-    for (formula, inputs) in dependencies {
-        for input in inputs {
-            reverse
-                .entry(input.clone())
+/// Formula dependency graph: a formula holds one edge per column it reads,
+/// not one per row, so memory stays linear in rows.
+///
+/// `reference_uses` keeps the cells a formula names directly and `column_uses`
+/// the columns it reads. `cell_readers` and `column_readers` invert those
+/// edges; `column_slots` holds every entity of a read column's schema (blank
+/// slots included), exactly the set [`extract_dependencies`] expands to, and
+/// `slot_columns` maps a slot back to its column.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct DependencyGraph {
+    reference_uses: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    column_uses: BTreeMap<FieldRef, BTreeSet<ColumnRef>>,
+    cell_readers: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    column_readers: BTreeMap<ColumnRef, BTreeSet<FieldRef>>,
+    column_slots: BTreeMap<ColumnRef, BTreeSet<FieldRef>>,
+    slot_columns: BTreeMap<FieldRef, ColumnRef>,
+    entity_schemas: BTreeMap<tachiko_semantic_core::EntityId, tachiko_semantic_core::SchemaId>,
+}
+
+impl DependencyGraph {
+    fn new(document: &Document, formulas: &FormulaNodes<'_>) -> Self {
+        let mut graph = Self::default();
+        for (entity_id, entity) in &document.entities {
+            graph
+                .entity_schemas
+                .insert(entity_id.clone(), entity.schema.clone());
+        }
+        for (formula, expression) in formulas {
+            let references = direct_references(formula, expression);
+            let columns = extract_column_totals(expression);
+            graph.insert_edges(document, formula, references, columns);
+        }
+        graph
+    }
+
+    fn insert_edges(
+        &mut self,
+        document: &Document,
+        formula: &FieldRef,
+        references: BTreeSet<FieldRef>,
+        columns: BTreeSet<ColumnRef>,
+    ) {
+        for reference in &references {
+            self.cell_readers
+                .entry(reference.clone())
                 .or_default()
                 .insert(formula.clone());
         }
+        for column in &columns {
+            self.column_readers
+                .entry(column.clone())
+                .or_default()
+                .insert(formula.clone());
+            self.ensure_column_slots(document, column);
+        }
+        self.reference_uses.insert(formula.clone(), references);
+        self.column_uses.insert(formula.clone(), columns);
     }
-    reverse
-}
 
-fn replace_root_dependencies(
-    dependencies: &mut DependencyMap,
-    reverse_dependents: &mut DependencyMap,
-    root: &FieldRef,
-    replacement: Option<BTreeSet<FieldRef>>,
-) {
-    if let Some(previous) = dependencies.remove(root) {
-        for input in previous {
-            let remove_entry = reverse_dependents
-                .get_mut(&input)
-                .is_some_and(|dependents| {
-                    dependents.remove(root);
-                    dependents.is_empty()
+    fn ensure_column_slots(&mut self, document: &Document, column: &ColumnRef) {
+        if self.column_slots.contains_key(column) {
+            return;
+        }
+        let slots = document
+            .entities
+            .iter()
+            .filter(|(_, entity)| entity.schema == column.schema)
+            .map(|(entity_id, _)| FieldRef::new(entity_id.clone(), column.field.clone()))
+            .collect::<BTreeSet<_>>();
+        for slot in &slots {
+            self.slot_columns.insert(slot.clone(), column.clone());
+        }
+        self.column_slots.insert(column.clone(), slots);
+    }
+
+    /// Replace one formula's outgoing edges from the current document.
+    fn replace_formula(&mut self, document: &Document, root: &FieldRef) {
+        if let Some(references) = self.reference_uses.remove(root) {
+            for reference in references {
+                let empty = self
+                    .cell_readers
+                    .get_mut(&reference)
+                    .is_some_and(|readers| {
+                        readers.remove(root);
+                        readers.is_empty()
+                    });
+                if empty {
+                    self.cell_readers.remove(&reference);
+                }
+            }
+        }
+        if let Some(columns) = self.column_uses.remove(root) {
+            for column in columns {
+                let empty = self.column_readers.get_mut(&column).is_some_and(|readers| {
+                    readers.remove(root);
+                    readers.is_empty()
                 });
-            if remove_entry {
-                reverse_dependents.remove(&input);
+                if empty {
+                    self.column_readers.remove(&column);
+                    if let Some(slots) = self.column_slots.remove(&column) {
+                        for slot in slots {
+                            self.slot_columns.remove(&slot);
+                        }
+                    }
+                }
             }
         }
+        if let Some((references, columns)) = formula_uses(document, root) {
+            self.insert_edges(document, root, references, columns);
+        }
     }
-    let Some(replacement) = replacement else {
-        return;
-    };
-    for input in &replacement {
-        reverse_dependents
-            .entry(input.clone())
-            .or_default()
-            .insert(root.clone());
-    }
-    dependencies.insert(root.clone(), replacement);
-}
 
-fn reverse_dependent_closure(
-    reverse_dependents: &DependencyMap,
-    roots: &BTreeSet<FieldRef>,
-) -> (BTreeSet<FieldRef>, usize) {
-    let mut queue = roots.iter().cloned().collect::<VecDeque<_>>();
-    let mut affected = BTreeSet::new();
-    let mut traversed = 0_usize;
-    while let Some(field) = queue.pop_front() {
-        for dependent in reverse_dependents.get(&field).into_iter().flatten() {
-            traversed = traversed.saturating_add(1);
-            if roots.contains(dependent) || !affected.insert(dependent.clone()) {
-                continue;
+    /// Recompute the member slots of every column the document's row set may
+    /// have changed.
+    fn refresh_column_slots(&mut self, document: &Document, columns: &BTreeSet<ColumnRef>) {
+        // Clear every column before refilling any: a row moved between two of
+        // them must not lose its new slot when its old column is cleared.
+        for column in columns {
+            if let Some(previous) = self.column_slots.remove(column) {
+                for slot in previous {
+                    self.slot_columns.remove(&slot);
+                }
             }
-            queue.push_back(dependent.clone());
+        }
+        for column in columns {
+            if self.column_readers.contains_key(column) {
+                self.ensure_column_slots(document, column);
+            }
         }
     }
-    (affected, traversed)
+
+    /// Remember the current schema of a root's row so a later removal of that
+    /// row can still refresh its columns' slots.
+    fn remember_entity(&mut self, document: &Document, entity: &tachiko_semantic_core::EntityId) {
+        if let Some(entity) = document.entities.get(entity) {
+            self.entity_schemas
+                .insert(entity.id.clone(), entity.schema.clone());
+        }
+    }
+
+    fn forget_entity(&mut self, entity: &tachiko_semantic_core::EntityId) {
+        self.entity_schemas.remove(entity);
+    }
+
+    /// The schemas a root's row belongs to on either side of this update: the
+    /// retained one and the current one differ when the row moved, and it may
+    /// exist on only one side when it was inserted or removed.
+    fn schemas_of(
+        &self,
+        document: &Document,
+        entity: &tachiko_semantic_core::EntityId,
+    ) -> impl Iterator<Item = tachiko_semantic_core::SchemaId> {
+        let retained = self.entity_schemas.get(entity).cloned();
+        let current = document
+            .entities
+            .get(entity)
+            .map(|entity| entity.schema.clone());
+        retained.into_iter().chain(current)
+    }
+
+    fn formulas(&self) -> impl Iterator<Item = &FieldRef> {
+        self.reference_uses.keys()
+    }
+
+    fn tracked_columns(&self) -> impl Iterator<Item = &ColumnRef> {
+        self.column_slots.keys()
+    }
+
+    fn column_readers<'a>(&'a self, column: &ColumnRef) -> impl Iterator<Item = &'a FieldRef> + 'a {
+        self.column_readers.get(column).into_iter().flatten()
+    }
+
+    fn columns_of<'a>(&'a self, formula: &FieldRef) -> impl Iterator<Item = &'a ColumnRef> + 'a {
+        self.column_uses.get(formula).into_iter().flatten()
+    }
+
+    fn expanded_dependencies(&self) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        self.reference_uses
+            .keys()
+            .map(|formula| {
+                (
+                    formula.clone(),
+                    self.dependencies_of(formula)
+                        .expect("every tracked formula has an edge entry"),
+                )
+            })
+            .collect()
+    }
+
+    fn dependencies_of(&self, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
+        let references = self.reference_uses.get(field)?;
+        let mut dependencies = references.clone();
+        for column in self.column_uses.get(field).into_iter().flatten() {
+            if let Some(slots) = self.column_slots.get(column) {
+                dependencies.extend(slots.iter().cloned());
+            }
+        }
+        Some(dependencies)
+    }
+
+    /// Formulas whose expanded dependencies contain `field`: the ones naming
+    /// it directly plus the readers of the column it is a slot of.
+    fn direct_dependents(&self, field: &FieldRef) -> BTreeSet<FieldRef> {
+        let mut dependents = self.cell_readers.get(field).cloned().unwrap_or_default();
+        if let Some(column) = self.slot_columns.get(field) {
+            dependents.extend(self.column_readers(column).cloned());
+        }
+        dependents
+    }
+
+    /// The formula dependencies of `formula` that are members of `within`.
+    fn formula_dependencies_within(
+        &self,
+        formula: &FieldRef,
+        within: &BTreeSet<FieldRef>,
+    ) -> BTreeSet<FieldRef> {
+        let mut dependencies: BTreeSet<FieldRef> = self
+            .reference_uses
+            .get(formula)
+            .map(|references| references.intersection(within).cloned().collect())
+            .unwrap_or_default();
+        for column in self.column_uses.get(formula).into_iter().flatten() {
+            for slot in self.column_slots.get(column).into_iter().flatten() {
+                if within.contains(slot) {
+                    dependencies.insert(slot.clone());
+                }
+            }
+        }
+        dependencies
+    }
+
+    fn reverse_closure(
+        &self,
+        roots: &BTreeSet<FieldRef>,
+        include_roots: bool,
+    ) -> (BTreeSet<FieldRef>, usize) {
+        let mut queue = roots.iter().cloned().collect::<VecDeque<_>>();
+        let mut affected = BTreeSet::new();
+        let mut traversed = 0_usize;
+        while let Some(field) = queue.pop_front() {
+            for dependent in self.direct_dependents(&field) {
+                traversed = traversed.saturating_add(1);
+                if (!include_roots && roots.contains(&dependent))
+                    || !affected.insert(dependent.clone())
+                {
+                    continue;
+                }
+                queue.push_back(dependent);
+            }
+        }
+        (affected, traversed)
+    }
+
+    fn affected_by(&self, changed: &FieldRef) -> Vec<FieldRef> {
+        let roots = BTreeSet::from([changed.clone()]);
+        self.reverse_closure(&roots, true).0.into_iter().collect()
+    }
+
+    fn reaching_fields<'a>(
+        &self,
+        changed: impl IntoIterator<Item = &'a FieldRef>,
+        targets: &BTreeSet<FieldRef>,
+    ) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        let mut reaching = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
+        for changed in changed {
+            let roots = BTreeSet::from([changed.clone()]);
+            for formula in self.reverse_closure(&roots, true).0 {
+                if targets.contains(&formula) {
+                    reaching.entry(formula).or_default().insert(changed.clone());
+                }
+            }
+        }
+        reaching
+    }
+
+    fn entry_count(&self) -> usize {
+        self.reference_uses.len()
+            + self.column_uses.len()
+            + self.cell_readers.values().map(BTreeSet::len).sum::<usize>()
+            + self
+                .column_readers
+                .values()
+                .map(BTreeSet::len)
+                .sum::<usize>()
+            + self.column_slots.values().map(BTreeSet::len).sum::<usize>()
+            + self.slot_columns.len()
+            + self.entity_schemas.len()
+    }
 }
 
 fn pregraph_failures(
@@ -1910,7 +2115,7 @@ fn pregraph_failures(
 
 fn assign_cycle_failures(
     formulas: &FormulaNodes<'_>,
-    dependencies: &DependencyMap,
+    graph: &DependencyGraph,
     failures: &mut FailureMap,
 ) {
     // Phase 2: semantic cycles are complete SCCs in the graph induced by
@@ -1920,7 +2125,7 @@ fn assign_cycle_failures(
         .filter(|formula| !failures.contains_key(*formula))
         .cloned()
         .collect::<BTreeSet<_>>();
-    for members in cyclic_components(&eligible_formulas, dependencies) {
+    for members in cyclic_components(&eligible_formulas, graph) {
         let members = Arc::new(members);
         for member in members.iter() {
             failures.insert(
@@ -1950,7 +2155,7 @@ fn initial_values(nodes: &ValueNodes<'_>, failures: &FailureMap) -> BTreeMap<Fie
 fn evaluate_remaining_formulas(
     document: &Document,
     formulas: &FormulaNodes<'_>,
-    dependencies: &DependencyMap,
+    graph: &DependencyGraph,
     failures: &mut FailureMap,
     values: &mut BTreeMap<FieldRef, Number>,
 ) {
@@ -1965,29 +2170,12 @@ fn evaluate_remaining_formulas(
     let mut remaining_dependency_counts = remaining_formulas
         .iter()
         .map(|formula| {
-            let count = dependencies
-                .get(formula)
-                .into_iter()
-                .flatten()
-                .filter(|dependency| remaining_formulas.contains(*dependency))
-                .count();
+            let count = graph
+                .formula_dependencies_within(formula, &remaining_formulas)
+                .len();
             (formula.clone(), count)
         })
         .collect::<BTreeMap<_, _>>();
-    let mut dependents: BTreeMap<FieldRef, BTreeSet<FieldRef>> = BTreeMap::new();
-    for formula in &remaining_formulas {
-        for dependency in dependencies
-            .get(formula)
-            .into_iter()
-            .flatten()
-            .filter(|dependency| remaining_formulas.contains(*dependency))
-        {
-            dependents
-                .entry(dependency.clone())
-                .or_default()
-                .insert(formula.clone());
-        }
-    }
     let mut ready = remaining_dependency_counts
         .iter()
         .filter(|(_, count)| **count == 0)
@@ -2026,8 +2214,8 @@ fn evaluate_remaining_formulas(
             );
         }
 
-        for dependent in dependents.get(&formula).into_iter().flatten() {
-            let Some(count) = remaining_dependency_counts.get_mut(dependent) else {
+        for dependent in graph.direct_dependents(&formula) {
+            let Some(count) = remaining_dependency_counts.get_mut(&dependent) else {
                 continue;
             };
             *count -= 1;
@@ -2128,99 +2316,142 @@ fn reference_failure(
     }
 }
 
-fn cyclic_components(
-    eligible: &BTreeSet<FieldRef>,
-    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
-) -> Vec<BTreeSet<FieldRef>> {
-    let mut visited = BTreeSet::new();
+fn depth_first_finish_order(adjacency: &[Vec<usize>]) -> Vec<usize> {
+    let mut visited = vec![false; adjacency.len()];
     let mut finish_order = Vec::new();
-    for root in eligible {
-        if !visited.insert(root.clone()) {
+    for root in 0..adjacency.len() {
+        if visited[root] {
             continue;
         }
-        let root_dependencies = dependencies
-            .get(root)
-            .into_iter()
-            .flatten()
-            .filter(|dependency| eligible.contains(*dependency))
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut stack = vec![(root.clone(), root_dependencies, 0_usize)];
+        visited[root] = true;
+        let mut stack = vec![(root, 0_usize)];
         while !stack.is_empty() {
-            let next_dependency = {
-                let (_, node_dependencies, next_index) =
-                    stack.last_mut().expect("DFS stack is non-empty");
-                if *next_index < node_dependencies.len() {
-                    let dependency = node_dependencies[*next_index].clone();
+            let next = {
+                let (node, next_index) = stack.last_mut().expect("DFS stack is non-empty");
+                if *next_index < adjacency[*node].len() {
+                    let target = adjacency[*node][*next_index];
                     *next_index += 1;
-                    Some(dependency)
+                    Some(target)
                 } else {
                     None
                 }
             };
-            if let Some(dependency) = next_dependency {
-                if !visited.insert(dependency.clone()) {
-                    continue;
+            if let Some(target) = next {
+                if !visited[target] {
+                    visited[target] = true;
+                    stack.push((target, 0));
                 }
-                let child_dependencies = dependencies
-                    .get(&dependency)
-                    .into_iter()
-                    .flatten()
-                    .filter(|candidate| eligible.contains(*candidate))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                stack.push((dependency, child_dependencies, 0));
             } else {
-                let (node, _, _) = stack.pop().expect("DFS stack is non-empty");
+                let (node, _) = stack.pop().expect("DFS stack is non-empty");
                 finish_order.push(node);
             }
         }
     }
+    finish_order
+}
 
-    let mut reverse: BTreeMap<FieldRef, BTreeSet<FieldRef>> = eligible
+fn cyclic_components(
+    eligible: &BTreeSet<FieldRef>,
+    graph: &DependencyGraph,
+) -> Vec<BTreeSet<FieldRef>> {
+    // Walk a bipartite view of the graph: formula cells and column nodes.
+    // Formula -> column -> each formula slot of that column gives exactly the
+    // expanded formula edges without materializing one edge per row.
+    let mut nodes = eligible
         .iter()
         .cloned()
-        .map(|node| (node, BTreeSet::new()))
-        .collect();
-    for source in eligible {
-        for dependency in dependencies
-            .get(source)
-            .into_iter()
-            .flatten()
-            .filter(|dependency| eligible.contains(*dependency))
-        {
-            reverse
-                .get_mut(dependency)
-                .expect("eligible reverse node exists")
-                .insert(source.clone());
+        .map(GraphNode::Cell)
+        .collect::<Vec<_>>();
+    let formula_count = nodes.len();
+    let mut columns = BTreeSet::new();
+    for formula in eligible {
+        columns.extend(graph.columns_of(formula).cloned());
+    }
+    nodes.extend(columns.iter().cloned().map(GraphNode::Column));
+    let mut index = BTreeMap::<GraphNode, usize>::new();
+    for (position, node) in nodes.iter().enumerate() {
+        index.insert(node.clone(), position);
+    }
+
+    let mut adjacency = vec![Vec::<usize>::new(); nodes.len()];
+    let mut reverse = vec![Vec::<usize>::new(); nodes.len()];
+    let mut connect = |source: usize, target: usize| {
+        adjacency[source].push(target);
+        reverse[target].push(source);
+    };
+    for (source, formula) in eligible.iter().enumerate() {
+        for reference in graph.reference_uses.get(formula).into_iter().flatten() {
+            if eligible.contains(reference) {
+                let target = index[&GraphNode::Cell(reference.clone())];
+                connect(source, target);
+            }
+        }
+        for column in graph.columns_of(formula) {
+            let target = index[&GraphNode::Column(column.clone())];
+            connect(source, target);
+        }
+    }
+    for column in &columns {
+        let source = index[&GraphNode::Column(column.clone())];
+        for slot in graph.column_slots.get(column).into_iter().flatten() {
+            if eligible.contains(slot) {
+                let target = index[&GraphNode::Cell(slot.clone())];
+                connect(source, target);
+            }
         }
     }
 
-    let mut assigned = BTreeSet::new();
+    let finish_order = depth_first_finish_order(&adjacency);
+
+    let mut assigned = vec![false; nodes.len()];
     let mut cycles = Vec::new();
     for root in finish_order.into_iter().rev() {
-        if !assigned.insert(root.clone()) {
+        if assigned[root] {
             continue;
         }
-        let mut members = BTreeSet::new();
+        assigned[root] = true;
+        let mut component = Vec::new();
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
-            members.insert(node.clone());
-            for dependent in reverse[&node].iter().rev() {
-                if assigned.insert(dependent.clone()) {
-                    stack.push(dependent.clone());
+            component.push(node);
+            for dependent in &reverse[node] {
+                if !assigned[*dependent] {
+                    assigned[*dependent] = true;
+                    stack.push(*dependent);
                 }
             }
         }
-        let cyclic = members.len() > 1
-            || members.first().is_some_and(|member| {
-                dependencies
-                    .get(member)
-                    .is_some_and(|targets| targets.contains(member))
-            });
+        let members = component
+            .iter()
+            .filter(|position| **position < formula_count)
+            .map(|position| {
+                let GraphNode::Cell(formula) = &nodes[*position] else {
+                    unreachable!("formula positions hold cells")
+                };
+                formula.clone()
+            })
+            .collect::<BTreeSet<_>>();
+        let cyclic = component.len() > 1
+            || component
+                .first()
+                .is_some_and(|position| *position < formula_count)
+                && members.first().is_some_and(|member| {
+                    graph
+                        .reference_uses
+                        .get(member)
+                        .is_some_and(|targets| targets.contains(member))
+                });
         if cyclic {
             cycles.push(members);
         }
     }
     cycles
+}
+
+/// One node of the bipartite cycle graph. A column node never appears in any
+/// output; it only links a formula to the formula slots of the column it reads.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum GraphNode {
+    Cell(FieldRef),
+    Column(ColumnRef),
 }
