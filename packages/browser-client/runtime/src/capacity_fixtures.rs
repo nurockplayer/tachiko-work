@@ -244,6 +244,20 @@ fn w1_definition(shape: &str) -> Option<W1Definition> {
             Some(29),
         ),
         _ => {
+            // A failing column that every row totals: readers x failed cells.
+            if let Some(rows) = shape.strip_prefix("g-") {
+                let rows = rows.parse().ok()?;
+                let zero = Expression::Subtract {
+                    left: Box::new(w1_same_row("c1")),
+                    right: Box::new(w1_same_row("c1")),
+                };
+                let failing = Expression::Divide {
+                    left: Box::new(w1_same_row("c0")),
+                    right: Box::new(zero),
+                };
+                let total = Expression::ColumnTotal(ColumnRef::new("grid", "c9"));
+                return Some((rows, 10, vec![(9, failing), (8, total)], Some(8)));
+            }
             if let Some(rows) = shape.strip_prefix("c1-") {
                 let rows = rows.parse().ok()?;
                 (rows, 10, vec![(9, w1_column_ratio())], Some(9))

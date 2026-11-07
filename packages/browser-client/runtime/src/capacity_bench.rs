@@ -1968,6 +1968,7 @@ fn w1_rows(shape: &str) -> usize {
     shape
         .strip_prefix("c1-")
         .or_else(|| shape.strip_prefix("c2-"))
+        .or_else(|| shape.strip_prefix("g-"))
         .and_then(|rows| rows.parse().ok())
         .unwrap_or(10_000)
 }
@@ -2347,7 +2348,7 @@ fn capacity_w1_shape() {
                         300_000.0,
                     );
                 }
-                shape if shape.starts_with("c1-") || shape.starts_with("c2-") => {
+                shape if shape.starts_with("c1-") || shape.starts_with("c2-") || shape.starts_with("g-") => {
                     w1_scalar_edits(
                         shape,
                         "edit_unrelated",
