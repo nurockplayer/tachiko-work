@@ -2396,7 +2396,7 @@ fn import_binds_the_same_document_as_per_formula_updates() {
         extra_columns: vec![vec![]],
     };
     let (runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
-    let imported_bytes = runtime.export_project("resident/0").unwrap().bytes;
+    let imported_bytes = runtime.export_project_v3("resident/0").unwrap().bytes;
     let exported = runtime
         .export_workbook("resident/0", &imported.metadata)
         .unwrap();
@@ -2431,6 +2431,6 @@ fn import_binds_the_same_document_as_per_formula_updates() {
         };
         revision = published.resulting_revision;
     }
-    let reference_bytes = reference.export_project(&revision).unwrap().bytes;
+    let reference_bytes = reference.export_project_v3(&revision).unwrap().bytes;
     assert_eq!(reference_bytes, imported_bytes);
 }
