@@ -301,7 +301,7 @@ fn w1_grid(
             FieldDefinition {
                 key: FieldKey::from(column_key(column)),
                 id,
-                display_name: std::env::var_os("W1_V2").map(|_| "Named".to_owned()),
+                display_name: std::env::var_os("W1_V2").map(|_| format!("Column {column}")),
                 field_type,
                 required: false,
                 constraint: FieldConstraint::None,
