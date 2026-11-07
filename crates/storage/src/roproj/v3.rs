@@ -339,7 +339,7 @@ struct EntityV3 {
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(transparent)]
-struct NumberV3(f64);
+pub(crate) struct NumberV3(f64);
 
 #[derive(Deserialize)]
 #[serde(

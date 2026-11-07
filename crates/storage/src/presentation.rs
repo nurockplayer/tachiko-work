@@ -159,7 +159,7 @@ pub fn decode_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatErro
                 ensure_increasing("rule", previous_rule.as_deref(), &dto.id)?;
                 previous_rule = Some(dto.id.clone());
                 dto.condition.validate_ids_and_limits()?;
-                let fields = rule_fields(dto.fields)?;
+                let fields = rule_fields(&dto.fields)?;
                 let rule = ConditionalRule {
                     schema: SchemaId::from(dto.schema),
                     rank: dto.rank,
@@ -408,7 +408,7 @@ fn table_into_semantic(record: TableRecordV3) -> Result<(String, TablePresentati
     ))
 }
 
-fn rule_fields(fields: Vec<String>) -> Result<Vec<FieldId>, FormatError> {
+fn rule_fields(fields: &[String]) -> Result<Vec<FieldId>, FormatError> {
     if fields.is_empty() {
         return invalid_representation("rule fields must be nonempty".to_owned());
     }
