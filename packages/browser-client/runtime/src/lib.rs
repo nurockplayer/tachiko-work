@@ -7900,7 +7900,8 @@ pub(crate) fn ensure_wire_reply_size(
         } if table.tracker_profile == Some(true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
         DesignerWireReply::Ok {
             response: DesignerResponse::Fields(_) | DesignerResponse::FieldExplanation(_),
-        } => MAX_PROJECTION_BYTES,
+        }
+        | DesignerWireReply::Error { .. } => MAX_PROJECTION_BYTES,
         DesignerWireReply::Ok {
             response:
                 DesignerResponse::TableWindow(_)
@@ -7914,7 +7915,6 @@ pub(crate) fn ensure_wire_reply_size(
             SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_PROJECTION_BYTES,
             SessionProfile::Ordinary => MAX_PROJECTION_BYTES,
         },
-        _ => MAX_PROJECTION_BYTES,
     };
     ensure_projection_size_with_limit(reply, maximum)
 }
@@ -10477,7 +10477,7 @@ mod tests {
         HistoryAction, KeyedGroupedSumDefinitionInput, MAX_WIDTH_FINITE_JSON_NUMBER, MutationClass,
         NewTableColumnInput, OperationFamily, PatchLifecycleError, PrincipalId, ProposalId,
         RowInitializer, ScalarEditInput, SchemaId, SchemaKey, ScopedSemanticSubject,
-        SemanticCommand, SemanticScope, TableProjection, Value,
+        SemanticCommand, SemanticScope, SessionProfile, TableProjection, Value,
     };
 
     #[test]

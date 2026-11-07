@@ -3037,7 +3037,7 @@ impl DesignerRuntime {
         match self.profile {
             SessionProfile::TextCapacity => {
                 validate_capacity_metadata(snapshot.document(), &metadata)
-                    .map_err(|error| imported_export_error("workbook", &error.to_string()))?
+                    .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
             }
             SessionProfile::Ordinary => {}
         }
