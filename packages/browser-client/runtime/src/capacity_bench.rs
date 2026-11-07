@@ -1753,6 +1753,7 @@ impl W1ViewKind {
     fn view(self) -> TableView {
         let sort_asc = |field: &str| {
             vec![ViewSortKey {
+                text_order: Default::default(),
                 field: field.to_owned(),
                 direction: SortDirection::Asc,
             }]
