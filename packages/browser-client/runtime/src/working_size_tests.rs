@@ -3449,3 +3449,53 @@ fn an_accepted_working_size_edit_can_always_be_saved() {
     );
     assert!(serde_json::to_string(&error).unwrap().contains("\"saved_bytes\""));
 }
+
+#[test]
+fn an_over_limit_document_is_refused_at_working_size_only() {
+    let (_, after, _) = crossing_documents();
+    let after_bound = bound_of(&after, &empty_presentation());
+    assert!(after_bound > super::capacity::MAX_WORKING_SAVED_BYTES);
+
+    let error = DesignerRuntime::from_document_working_size(after.clone(), OCCURRENCE).unwrap_err();
+    assert_capacity_refusal(
+        &error,
+        CapacityLimit::SavedBytes,
+        super::capacity::MAX_WORKING_SAVED_BYTES,
+        after_bound,
+    );
+
+    // The ordinary profile is unchanged: it still admits what its own limits admit.
+    let mut ordinary = DesignerRuntime::from_document(after, OCCURRENCE).unwrap();
+    edited(
+        &mut ordinary,
+        target("r00000", "c0"),
+        ScalarEditInput::Text {
+            value: "still editable".to_owned(),
+        },
+    );
+}
+
+#[test]
+fn an_ordinary_session_never_computes_the_saved_bound() {
+    let mut ordinary = DesignerRuntime::from_document(values_grid(), OCCURRENCE).unwrap();
+    let ordinary_baseline = super::save_size::saved_bound_calls();
+    edited(
+        &mut ordinary,
+        target("r00000", "t"),
+        ScalarEditInput::Text {
+            value: "edited".to_owned(),
+        },
+    );
+    assert_eq!(super::save_size::saved_bound_calls(), ordinary_baseline);
+
+    let mut working = DesignerRuntime::from_document_working_size(values_grid(), OCCURRENCE).unwrap();
+    let working_baseline = super::save_size::saved_bound_calls();
+    edited(
+        &mut working,
+        target("r00000", "t"),
+        ScalarEditInput::Text {
+            value: "edited".to_owned(),
+        },
+    );
+    assert!(super::save_size::saved_bound_calls() > working_baseline);
+}
