@@ -1807,7 +1807,7 @@ fn acceptance_cases() -> Vec<(&'static str, Document, SemanticPatchBody)> {
                 schema: "s".into(),
                 field: "f".into(),
                 constraint: FieldConstraint::TextLiteralSet {
-                    values: vec!["old".into(), "new".into()],
+                    values: vec!["new".into(), "old".into()],
                 },
             }),
         ),
@@ -1989,7 +1989,7 @@ fn prepared_v2_keeps_refusing_an_edit_that_repairs_its_base() {
     let (_, refused_base_projection) = assert_prepared_matches_unprepared(
         &unprojectable_document(),
         SemanticPatchBody::command(SemanticCommand::RenameSchemaField {
-            schema: "s".into(),
+            schema: "t".into(),
             field: "input".into(),
             key: "i".into(),
         }),
