@@ -5,9 +5,10 @@ use super::{
     AssociatedWriteRequirement, AuthorizationAction, Document, DocumentScopeId, Entity,
     FieldConstraint, FieldDefinition, FieldId, FieldRef, FieldType, FormulaUpdateCommand, Grant,
     GrantRequirement, KeyedGroupedSumDefinition, MutationClass, OperationFamily, PatchLifecycle,
-    PatchLifecycleError, PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticCommand,
-    SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
-    SemanticRevision, SemanticScope, TrustedInstant, V2ReceiptEvidence, Value,
+    PatchLifecycleError, PatchLifecycleState, PrincipalKind, ProposalId, ScopedSemanticSubject,
+    SemanticCommand, SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority,
+    SemanticPublicationError, SemanticRevision, SemanticScope, TrustedInstant, V2ReceiptEvidence,
+    Value,
 };
 use crate::{
     Expression, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat,
@@ -2331,5 +2332,125 @@ fn a_cell_edit_or_collection_append_resets_the_append_proof() {
             },
             append(appended_entity("e2", "second", None)),
         ],
+    );
+}
+
+/// A host that keeps publishing: every publication advances the revision.
+struct AdvancingHost {
+    snapshot: Document,
+    revision: SemanticRevision,
+    publications: usize,
+}
+
+impl AdvancingHost {
+    fn new(snapshot: Document) -> Self {
+        Self {
+            snapshot,
+            revision: "r1".into(),
+            publications: 0,
+        }
+    }
+}
+
+impl SemanticPublicationAuthority for AdvancingHost {
+    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
+        ("scope".into(), self.snapshot.clone(), self.revision.clone())
+    }
+
+    fn publish_if_current<A>(
+        &mut self,
+        expected_scope: &DocumentScopeId,
+        expected_revision: &SemanticRevision,
+        candidate: Document,
+        authorize: impl FnOnce(TrustedInstant) -> Option<A>,
+    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+        if expected_scope != &DocumentScopeId::from("scope") || expected_revision != &self.revision
+        {
+            return Err(SemanticPublicationError::Stale);
+        }
+        let authorization = authorize(TrustedInstant::new(30))
+            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
+        self.publications += 1;
+        self.snapshot = candidate.clone();
+        self.revision = SemanticRevision::from(format!("r{}", self.publications + 1));
+        Ok((
+            "scope".into(),
+            candidate,
+            self.revision.clone(),
+            authorization,
+        ))
+    }
+}
+
+#[test]
+fn discard_settled_records_keeps_one_receipt_and_the_pending_proposal() {
+    let mut lifecycle = lifecycle(false);
+    let mut document = document();
+    let mut host = AdvancingHost::new(document.clone());
+    let mut executed = Vec::new();
+    let mut receipts = Vec::new();
+    for (index, value) in ["a", "b", "c"].into_iter().enumerate() {
+        let proposal = lifecycle
+            .propose(
+                &"scope".into(),
+                &document,
+                &host.revision.clone(),
+                super::ProposalRequest::new(
+                    format!("proposal-{index}").into(),
+                    host.revision.clone(),
+                    set_f(value),
+                    "human".into(),
+                ),
+                TrustedInstant::new(1),
+            )
+            .map(|patch| patch.id().clone())
+            .unwrap();
+        let receipt = lifecycle
+            .execute(
+                &proposal,
+                None,
+                &"human".into(),
+                &mut host,
+                TrustedInstant::new(20),
+            )
+            .unwrap();
+        executed.push(proposal);
+        receipts.push(receipt);
+        document = host.snapshot.clone();
+    }
+    let pending = lifecycle
+        .propose(
+            &"scope".into(),
+            &document,
+            &host.revision.clone(),
+            super::ProposalRequest::new(
+                "pending".into(),
+                host.revision.clone(),
+                set_f("d"),
+                "human".into(),
+            ),
+            TrustedInstant::new(1),
+        )
+        .map(|patch| patch.id().clone())
+        .unwrap();
+    // Without the call the registry still keeps every publication.
+    assert_eq!(lifecycle.execution_receipts().len(), 3);
+    assert_eq!(lifecycle.execution_receipts_v2(), []);
+    assert_eq!(lifecycle.proposals.len(), 4);
+
+    lifecycle.discard_settled_records(1);
+
+    assert_eq!(lifecycle.execution_receipts(), [receipts[2].clone()]);
+    assert_eq!(lifecycle.execution_receipts_v2(), []);
+    assert_eq!(lifecycle.proposals.len(), 2);
+    assert!(!lifecycle.proposals.contains_key(&executed[0]));
+    assert!(!lifecycle.proposals.contains_key(&executed[1]));
+    assert!(super::proposal_is_terminal(
+        &lifecycle.proposals[&executed[2]]
+    ));
+    assert!(!super::proposal_is_terminal(&lifecycle.proposals[&pending]));
+    assert_eq!(
+        lifecycle.proposal_history(&pending).unwrap().last(),
+        Some(&PatchLifecycleState::Planned)
     );
 }

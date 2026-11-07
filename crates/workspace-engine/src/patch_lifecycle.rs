@@ -449,6 +449,198 @@ impl SemanticCommand {
     pub fn formula_restore(field: FieldRef, expression: Expression) -> Self {
         Self::FormulaRestore(FormulaRestoreCommand::new(field, expression))
     }
+
+    /// Rough heap and inline bytes this command holds, for bounding retained
+    /// history. Not an encoding size.
+    #[must_use]
+    pub fn approx_bytes(&self) -> usize {
+        let inline = std::mem::size_of::<Self>();
+        inline
+            + match self {
+                Self::AppendCollection { schema, entities } => {
+                    schema_approx_bytes(schema)
+                        + entities.iter().map(entity_approx_bytes).sum::<usize>()
+                }
+                Self::RemoveCollection { schema, entities } => {
+                    schema.as_str().len()
+                        + entities
+                            .iter()
+                            .map(|entity| entity.as_str().len())
+                            .sum::<usize>()
+                }
+                Self::AppendEntity { entity } => entity_approx_bytes(entity),
+                Self::RemoveEntity { entity } => entity.as_str().len(),
+                Self::AppendSchemaField {
+                    schema,
+                    field,
+                    values,
+                }
+                | Self::RemoveSchemaField {
+                    schema,
+                    field,
+                    values,
+                } => {
+                    schema.as_str().len()
+                        + field_definition_approx_bytes(field)
+                        + values_approx_bytes(values)
+                }
+                Self::RenameSchemaField { schema, field, key } => {
+                    schema.as_str().len() + field.as_str().len() + key.as_str().len()
+                }
+                Self::SetSchemaFieldDisplayName {
+                    schema,
+                    field,
+                    display_name,
+                } => {
+                    schema.as_str().len()
+                        + field.as_str().len()
+                        + display_name.as_ref().map_or(0, String::len)
+                }
+                Self::SetSchemaFieldRequiredness { schema, field, .. } => {
+                    schema.as_str().len() + field.as_str().len()
+                }
+                Self::SetFieldNumberFormat {
+                    schema,
+                    field,
+                    number_format,
+                } => {
+                    schema.as_str().len()
+                        + field.as_str().len()
+                        + number_format.as_ref().map_or(0, number_format_approx_bytes)
+                }
+                Self::SetSchemaFieldOrder { schema, order } => {
+                    schema.as_str().len()
+                        + order
+                            .as_ref()
+                            .map_or(0, |order| order.iter().map(|id| id.as_str().len()).sum())
+                }
+                Self::SetFieldConstraint {
+                    schema,
+                    field,
+                    constraint,
+                } => {
+                    schema.as_str().len()
+                        + field.as_str().len()
+                        + constraint_approx_bytes(constraint)
+                }
+                Self::SetFieldValue { field, value } => {
+                    field_approx_bytes(field) + value_approx_bytes(value)
+                }
+                Self::UnsetField { field } => field_approx_bytes(field),
+                Self::FormulaUpdate(command) => {
+                    field_approx_bytes(command.target())
+                        + expression_approx_bytes(command.expression())
+                        + command
+                            .references()
+                            .iter()
+                            .map(field_approx_bytes)
+                            .sum::<usize>()
+                }
+                Self::FormulaInverseRestore(command) => field_approx_bytes(command.target()),
+                Self::FormulaRestore(command) => {
+                    field_approx_bytes(command.target())
+                        + expression_approx_bytes(command.expression())
+                }
+                Self::UpsertKeyedGroupedSumDefinition { definition } => {
+                    definition_approx_bytes(definition)
+                }
+                Self::RemoveKeyedGroupedSumDefinition { definition } => definition.as_str().len(),
+            }
+    }
+}
+
+fn field_approx_bytes(field: &FieldRef) -> usize {
+    field.entity.as_str().len() + field.field.as_str().len()
+}
+
+fn value_approx_bytes(value: &Value) -> usize {
+    match value {
+        Value::Number(_) | Value::Boolean(_) | Value::Date(_) => 0,
+        Value::Text(text) => text.len(),
+        Value::Reference(entity) => entity.as_str().len(),
+        Value::Formula(expression) => expression_approx_bytes(expression),
+    }
+}
+
+/// Count formula nodes iteratively; admitted formulas are shallow but the walk
+/// never relies on the call stack.
+fn expression_approx_bytes(expression: &Expression) -> usize {
+    let mut nodes = 0usize;
+    let mut pending = vec![expression];
+    while let Some(node) = pending.pop() {
+        nodes += 1;
+        pending.extend(node.children());
+    }
+    nodes.saturating_mul(std::mem::size_of::<Expression>())
+}
+
+fn constraint_approx_bytes(constraint: &FieldConstraint) -> usize {
+    match constraint {
+        FieldConstraint::None | FieldConstraint::NumberInclusiveRange { .. } => 0,
+        FieldConstraint::TextLiteralSet { values } => values.iter().map(String::len).sum(),
+    }
+}
+
+fn number_format_approx_bytes(number_format: &super::NumberFormat) -> usize {
+    match &number_format.kind {
+        super::NumberFormatKind::Plain | super::NumberFormatKind::Percent => 0,
+        super::NumberFormatKind::Currency { code } => code.len(),
+    }
+}
+
+fn field_definition_approx_bytes(field: &FieldDefinition) -> usize {
+    field.id.as_str().len()
+        + field.key.as_str().len()
+        + field.display_name.as_ref().map_or(0, String::len)
+        + constraint_approx_bytes(&field.constraint)
+        + field
+            .number_format
+            .as_ref()
+            .map_or(0, number_format_approx_bytes)
+}
+
+fn schema_approx_bytes(schema: &super::Schema) -> usize {
+    schema.id.as_str().len()
+        + schema.key.as_str().len()
+        + schema.display_name.as_ref().map_or(0, String::len)
+        + schema
+            .fields
+            .values()
+            .map(field_definition_approx_bytes)
+            .sum::<usize>()
+        + schema
+            .field_order
+            .as_ref()
+            .map_or(0, |order| order.iter().map(|id| id.as_str().len()).sum())
+}
+
+fn entity_approx_bytes(entity: &Entity) -> usize {
+    entity.id.as_str().len()
+        + entity.key.as_str().len()
+        + entity.schema.as_str().len()
+        + entity
+            .fields
+            .iter()
+            .map(|(field, value)| field.as_str().len() + value_approx_bytes(value))
+            .sum::<usize>()
+}
+
+fn values_approx_bytes(values: &BTreeMap<EntityId, Value>) -> usize {
+    values
+        .iter()
+        .map(|(entity, value)| entity.as_str().len() + value_approx_bytes(value))
+        .sum()
+}
+
+fn definition_approx_bytes(definition: &KeyedGroupedSumDefinition) -> usize {
+    definition.id.as_str().len()
+        + definition.orders.schema.as_str().len()
+        + definition.orders.lookup_key_field.as_str().len()
+        + definition.orders.quantity_field.as_str().len()
+        + definition.products.schema.as_str().len()
+        + definition.products.key_field.as_str().len()
+        + definition.products.category_field.as_str().len()
+        + definition.products.price_field.as_str().len()
 }
 
 /// One admitted formula-update Command with complete bound meaning.
@@ -1103,6 +1295,8 @@ struct ProposalRecord {
     policy_version: AuthorizationPolicyVersion,
     history: Vec<PatchLifecycleState>,
     reviewed_by: BTreeSet<PrincipalId>,
+    /// Issuance order inside this registry; never part of semantic meaning.
+    sequence: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -1183,6 +1377,9 @@ pub struct PatchLifecycle {
     approvals: BTreeMap<ApprovalId, StoredApproval>,
     execution_receipts: Vec<ExecutionReceipt>,
     execution_receipts_v2: Vec<ExecutionReceiptV2>,
+    /// Monotonic issuance order, so retention can keep the newest proposals
+    /// even when their opaque textual ids do not sort by age.
+    next_proposal_sequence: u64,
     policy_meanings: BTreeMap<AuthorizationPolicyVersion, PolicyMeaningId>,
     effective_policy: AuthorizationPolicyVersion,
     policy_selection: u64,
@@ -1259,6 +1456,7 @@ impl PatchLifecycle {
             approvals: BTreeMap::new(),
             execution_receipts: Vec::new(),
             execution_receipts_v2: Vec::new(),
+            next_proposal_sequence: 0,
             policy_meanings: self.policy_meanings.clone(),
             effective_policy: self.effective_policy.clone(),
             policy_selection: self.policy_selection,
@@ -1289,6 +1487,7 @@ impl PatchLifecycle {
             approvals: BTreeMap::new(),
             execution_receipts: Vec::new(),
             execution_receipts_v2: Vec::new(),
+            next_proposal_sequence: 0,
             policy_meanings: BTreeMap::from([(effective_policy.clone(), policy_meaning)]),
             effective_policy,
             policy_selection: 0,
@@ -1548,7 +1747,9 @@ impl PatchLifecycle {
             policy_version: self.effective_policy.clone(),
             history: vec![PatchLifecycleState::Draft, PatchLifecycleState::Planned],
             reviewed_by: BTreeSet::new(),
+            sequence: self.next_proposal_sequence,
         };
+        self.next_proposal_sequence = self.next_proposal_sequence.saturating_add(1);
         let conservative_disclosure = self.body_document_disclosure(patch.exact_change.body());
 
         if patch.exact_change.base_revision != *current_revision {
@@ -2571,6 +2772,36 @@ impl PatchLifecycle {
     #[must_use]
     pub fn execution_receipts_v2(&self) -> &[ExecutionReceiptV2] {
         &self.execution_receipts_v2
+    }
+
+    /// Drop settled records except the latest `keep` of each kind. A proposal
+    /// that hasn't been executed or refused yet always stays.
+    ///
+    /// Receipts stay in publication order, so the last `keep` of each receipt
+    /// vector survive. Proposals keep the `keep` most recently issued settled
+    /// records; pending, retryable and expired proposals are never dropped.
+    /// Nothing reads the stored records during a request: callers use the
+    /// receipt returned by execution.
+    pub fn discard_settled_records(&mut self, keep: usize) {
+        if self.execution_receipts.len() > keep {
+            let excess = self.execution_receipts.len() - keep;
+            self.execution_receipts.drain(..excess);
+        }
+        if self.execution_receipts_v2.len() > keep {
+            let excess = self.execution_receipts_v2.len() - keep;
+            self.execution_receipts_v2.drain(..excess);
+        }
+        let mut settled: Vec<(u64, ProposalId)> = self
+            .proposals
+            .iter()
+            .filter(|(_, record)| proposal_is_terminal(record))
+            .map(|(id, record)| (record.sequence, id.clone()))
+            .collect();
+        settled.sort_by_key(|(sequence, _)| *sequence);
+        let excess = settled.len().saturating_sub(keep);
+        for (_, id) in settled.into_iter().take(excess) {
+            self.proposals.remove(&id);
+        }
     }
 
     /// Read the current trusted Approval registry state.
@@ -6622,6 +6853,176 @@ mod tests {
             assert!(!footprint.contains(&keyed_grouped_sum_query_requirement(
                 keyed_grouped_sum_entity_field("order", "orders", field),
             )));
+        }
+    }
+
+    #[test]
+    fn approx_bytes_counts_text_length_and_formula_nodes() {
+        let field = FieldRef::new("entity", "field");
+        let short = SemanticCommand::set_field_value(field.clone(), Value::Text("x".to_owned()));
+        let long = SemanticCommand::set_field_value(field.clone(), Value::Text("x".repeat(1024)));
+        assert_eq!(long.approx_bytes() - short.approx_bytes(), 1023);
+
+        let leaf = Expression::Number(Number::new(1.0).unwrap());
+        let one_node =
+            SemanticCommand::set_field_value(field.clone(), Value::Formula(leaf.clone()));
+        let two_nodes = SemanticCommand::set_field_value(
+            field,
+            Value::Formula(Expression::Add {
+                left: Box::new(leaf),
+                right: Box::new(Expression::Number(Number::new(2.0).unwrap())),
+            }),
+        );
+        assert_eq!(
+            two_nodes.approx_bytes() - one_node.approx_bytes(),
+            2 * std::mem::size_of::<Expression>()
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // One literal command per admitted variant.
+    fn approx_bytes_covers_every_command_variant() {
+        let field = FieldRef::new("entity", "field");
+        let field_definition = FieldDefinition {
+            id: FieldId::from("field"),
+            key: FieldKey::from("field"),
+            display_name: Some("Field".to_owned()),
+            number_format: Some(crate::NumberFormat {
+                decimals: 2,
+                kind: crate::NumberFormatKind::Currency {
+                    code: "JPY".to_owned(),
+                },
+                thousands_separator: true,
+            }),
+            field_type: FieldType::Text,
+            required: false,
+            constraint: FieldConstraint::TextLiteralSet {
+                values: vec!["a".to_owned(), "b".to_owned()],
+            },
+        };
+        let schema = Schema {
+            id: SchemaId::from("schema"),
+            key: SchemaKey::from("schema"),
+            display_name: Some("Schema".to_owned()),
+            fields: BTreeMap::from([(field_definition.id.clone(), field_definition.clone())]),
+            field_order: Some(vec![FieldId::from("field")]),
+        };
+        let formula = Expression::Add {
+            left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            right: Box::new(Expression::Reference(field.clone())),
+        };
+        let entity = Entity {
+            id: EntityId::from("entity"),
+            key: EntityKey::from("entity"),
+            schema: SchemaId::from("schema"),
+            fields: BTreeMap::from([
+                (FieldId::from("field"), Value::Text("stored".to_owned())),
+                (FieldId::from("formula"), Value::Formula(formula.clone())),
+            ]),
+        };
+        let values = BTreeMap::from([(EntityId::from("entity"), Value::Text("value".to_owned()))]);
+        let definition = KeyedGroupedSumDefinition {
+            id: KeyedGroupedSumDefinitionId::from("definition"),
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: SchemaId::from("orders"),
+                lookup_key_field: FieldId::from("lookup-key"),
+                quantity_field: FieldId::from("quantity"),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: SchemaId::from("products"),
+                key_field: FieldId::from("key"),
+                category_field: FieldId::from("category"),
+                price_field: FieldId::from("price"),
+            },
+        };
+        let commands = vec![
+            SemanticCommand::AppendCollection {
+                schema: schema.clone(),
+                entities: vec![entity.clone()],
+            },
+            SemanticCommand::RemoveCollection {
+                schema: SchemaId::from("schema"),
+                entities: vec![EntityId::from("entity")],
+            },
+            SemanticCommand::AppendEntity {
+                entity: entity.clone(),
+            },
+            SemanticCommand::RemoveEntity {
+                entity: EntityId::from("entity"),
+            },
+            SemanticCommand::AppendSchemaField {
+                schema: SchemaId::from("schema"),
+                field: field_definition.clone(),
+                values: values.clone(),
+            },
+            SemanticCommand::RemoveSchemaField {
+                schema: SchemaId::from("schema"),
+                field: field_definition.clone(),
+                values: values.clone(),
+            },
+            SemanticCommand::RenameSchemaField {
+                schema: SchemaId::from("schema"),
+                field: FieldId::from("field"),
+                key: FieldKey::from("renamed"),
+            },
+            SemanticCommand::SetSchemaFieldDisplayName {
+                schema: SchemaId::from("schema"),
+                field: FieldId::from("field"),
+                display_name: Some("Display".to_owned()),
+            },
+            SemanticCommand::SetSchemaFieldRequiredness {
+                schema: SchemaId::from("schema"),
+                field: FieldId::from("field"),
+                required: true,
+            },
+            SemanticCommand::SetFieldNumberFormat {
+                schema: SchemaId::from("schema"),
+                field: FieldId::from("field"),
+                number_format: field_definition.number_format.clone(),
+            },
+            SemanticCommand::SetSchemaFieldOrder {
+                schema: SchemaId::from("schema"),
+                order: Some(vec![FieldId::from("field")]),
+            },
+            SemanticCommand::SetFieldConstraint {
+                schema: SchemaId::from("schema"),
+                field: FieldId::from("field"),
+                constraint: field_definition.constraint.clone(),
+            },
+            SemanticCommand::SetFieldValue {
+                field: field.clone(),
+                value: Value::Formula(formula.clone()),
+            },
+            SemanticCommand::UnsetField {
+                field: field.clone(),
+            },
+            SemanticCommand::FormulaUpdate(FormulaUpdateCommand {
+                target: field.clone(),
+                expression: formula.clone(),
+                references: BTreeSet::from([field.clone()]),
+            }),
+            SemanticCommand::FormulaInverseRestore(FormulaInverseRestoreCommand {
+                target: field.clone(),
+                value: Number::new(3.0).unwrap(),
+            }),
+            SemanticCommand::FormulaRestore(FormulaRestoreCommand {
+                target: field,
+                expression: formula,
+            }),
+            SemanticCommand::UpsertKeyedGroupedSumDefinition {
+                definition: definition.clone(),
+            },
+            SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                definition: definition.id.clone(),
+            },
+        ];
+
+        let baseline = std::mem::size_of::<SemanticCommand>();
+        for command in &commands {
+            assert!(
+                command.approx_bytes() >= baseline,
+                "under-sized variant: {command:?}"
+            );
         }
     }
 }

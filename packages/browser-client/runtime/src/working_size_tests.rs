@@ -19,9 +19,9 @@ use super::{
     CalculationProjection, CellEdit, DesignerError, DesignerProfile, DesignerRequest,
     DesignerResponse, DesignerRuntime, DesignerWireReply, Document, Entity, EntityId, EntityKey,
     FailureProjection, FieldDefinition, FieldId, FieldKey, FieldProjection, FieldRef, FieldTarget,
-    FieldType, NewTableColumnInput, OpenedWindowProjection, PasteCellInput, PublicationProjection,
-    RowInitializer, RowProjection, ScalarEditInput, Schema, SchemaId, SchemaKey,
-    StoredValueProjection, TableView, TableWindowProjection, encode_portable_package_v1,
+    FieldType, NewTableColumnInput, OpenedWindowProjection, PasteCellInput, ProposalId,
+    PublicationProjection, RowInitializer, RowProjection, ScalarEditInput, Schema, SchemaId,
+    SchemaKey, StoredValueProjection, TableView, TableWindowProjection, encode_portable_package_v1,
     encode_project_bundle, open_local_document, open_local_document_working_size, open_portable_ro,
     open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
     to_canonical_string,
@@ -2876,4 +2876,120 @@ fn a_paste_past_the_working_limits_refuses_and_changes_nothing() {
     };
     assert_wire_capacity(&error, CapacityLimit::PopulatedCells, 100_000, 100_001);
     assert_eq!(revision(resident.as_ref().unwrap()), before);
+}
+
+fn undo_once(runtime: &mut DesignerRuntime) {
+    let expected_revision = revision(runtime);
+    assert!(matches!(
+        runtime
+            .handle(DesignerRequest::Undo { expected_revision })
+            .unwrap(),
+        DesignerResponse::Published(_)
+    ));
+}
+
+fn settled_proposals(runtime: &DesignerRuntime) -> usize {
+    use tachiko_workspace_engine::patch_lifecycle::PatchLifecycleState;
+
+    (1..=runtime.proposal_serial)
+        .filter(|serial| {
+            let id = ProposalId::from(format!(
+                "designer-proposal/{}/{serial}",
+                runtime.row_namespace
+            ));
+            runtime
+                .lifecycle
+                .proposal_history(&id)
+                .is_ok_and(|history| {
+                    history.iter().any(|state| {
+                        matches!(
+                            state,
+                            PatchLifecycleState::Verified
+                                | PatchLifecycleState::Rejected
+                                | PatchLifecycleState::ValidationFailed
+                                | PatchLifecycleState::Stale
+                                | PatchLifecycleState::Conflict
+                        )
+                    })
+                })
+        })
+        .count()
+}
+
+#[test]
+fn a_long_working_size_session_keeps_one_record_and_sixty_four_undos() {
+    let mut runtime = DesignerRuntime::from_document_working_size(fixture(), OCCURRENCE).unwrap();
+    for index in 0..70 {
+        edited(
+            &mut runtime,
+            target("r00000", "c1"),
+            ScalarEditInput::Text {
+                value: format!("value-{index}"),
+            },
+        );
+    }
+    assert!(runtime.lifecycle.execution_receipts().len() <= 1);
+    assert!(runtime.lifecycle.execution_receipts_v2().len() <= 1);
+    assert!(settled_proposals(&runtime) <= 1);
+    assert_eq!(runtime.undo.len(), 64);
+    for _ in 0..64 {
+        undo_once(&mut runtime);
+    }
+    assert!(runtime.undo.is_empty());
+    assert_eq!(runtime.redo.len(), 64);
+}
+
+#[test]
+fn working_size_history_over_the_byte_limit_drops_the_oldest_entry() {
+    // 510 x 64 KiB is about 32 MiB but leaves room for each command's counted
+    // identities, so exactly two entries fit the 128 MiB budget.
+    let mut document = text_grid(510, 1);
+    for row in 0..510 {
+        fill_text(&mut document, row, 0, STORED_TEXT_ITEM_MAX);
+    }
+    let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    for byte in *b"abc" {
+        let text = (byte as char).to_string().repeat(STORED_TEXT_ITEM_MAX);
+        let edits = (0..510)
+            .map(|row| CellEdit {
+                target: target(&format!("r{row:05}"), "c0"),
+                input: ScalarEditInput::Text {
+                    value: text.clone(),
+                },
+            })
+            .collect::<Vec<_>>();
+        let expected_revision = revision(&runtime);
+        runtime.edit_cells(&expected_revision, &edits).unwrap();
+    }
+    assert_eq!(runtime.undo.len(), 2);
+    assert!(runtime.redo.is_empty());
+
+    undo_once(&mut runtime);
+    undo_once(&mut runtime);
+    let restored = runtime.session.export_snapshot().into_document();
+    assert_eq!(
+        restored.entities[&EntityId::from("r00000")].fields[&FieldId::from("c0")],
+        Value::Text("a".repeat(STORED_TEXT_ITEM_MAX))
+    );
+
+    let expected_revision = revision(&runtime);
+    let error = expect_error(runtime.handle(DesignerRequest::Undo { expected_revision }));
+    assert_tracker_message(&error, "no operation");
+}
+
+#[test]
+fn ordinary_history_still_keeps_sixty_four_entries() {
+    let mut runtime = DesignerRuntime::from_document(text_grid(2, 1), OCCURRENCE).unwrap();
+    assert_eq!(runtime.profile, SessionProfile::Ordinary);
+    for index in 0..65 {
+        edited(
+            &mut runtime,
+            target("r00000", "c0"),
+            ScalarEditInput::Text {
+                value: format!("ordinary-{index}"),
+            },
+        );
+    }
+    assert_eq!(runtime.undo.len(), 64);
+    assert!(runtime.redo.is_empty());
 }

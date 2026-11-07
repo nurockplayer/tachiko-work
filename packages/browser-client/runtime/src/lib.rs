@@ -2194,11 +2194,27 @@ pub struct DesignerRuntime {
     presentation: PresentationStore,
 }
 
+/// Most bytes a working-size session's undo and redo history holds together.
+const MAX_WORKING_HISTORY_BYTES: usize = 128 * 1024 * 1024;
+
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug))]
 struct HistoryEntry {
     forward: HistoryAction,
     inverse: HistoryAction,
+    /// Approximate bytes both directions hold; fixed when the entry is made.
+    weight: usize,
+}
+
+impl HistoryEntry {
+    fn new(forward: HistoryAction, inverse: HistoryAction) -> Self {
+        let weight = forward.approx_bytes() + inverse.approx_bytes();
+        Self {
+            forward,
+            inverse,
+            weight,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -2207,6 +2223,20 @@ enum HistoryAction {
     Commands(Vec<SemanticCommand>),
     FormulaUpdate { target: FieldTarget, source: String },
     FormulaInverseRestore { target: FieldTarget, value: Number },
+}
+
+impl HistoryAction {
+    fn approx_bytes(&self) -> usize {
+        match self {
+            Self::Commands(commands) => commands.iter().map(SemanticCommand::approx_bytes).sum(),
+            Self::FormulaUpdate { target, source } => {
+                target.entity.len() + target.field.len() + source.len()
+            }
+            Self::FormulaInverseRestore { target, .. } => {
+                target.entity.len() + target.field.len() + 16
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -5800,10 +5830,10 @@ impl DesignerRuntime {
         };
         let publication = self.publish_commands(expected_revision, forward.clone())?;
         self.duplicate_serial = ids.serial;
-        self.record_history_entry(HistoryEntry {
-            forward: HistoryAction::Commands(forward),
-            inverse: HistoryAction::Commands(inverse),
-        });
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::Commands(forward),
+            HistoryAction::Commands(inverse),
+        ));
         let collection = self
             .collection_specs
             .get(&target_key)
@@ -5832,13 +5862,13 @@ impl DesignerRuntime {
             self.publish_formula_update(expected_revision, target, source, Some(&mut inverse))?;
         let inverse =
             inverse.ok_or_else(|| tracker_error("accepted formula inverse is unavailable"))?;
-        self.record_history_entry(HistoryEntry {
-            forward: HistoryAction::FormulaUpdate {
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::FormulaUpdate {
                 target: target.clone(),
                 source: forward,
             },
             inverse,
-        });
+        ));
         Ok(publication)
     }
 
@@ -6203,10 +6233,10 @@ impl DesignerRuntime {
         }
         inverse.reverse();
         let publication = self.publish_commands(expected, forward.clone())?;
-        self.record_history_entry(HistoryEntry {
-            forward: HistoryAction::Commands(forward),
-            inverse: HistoryAction::Commands(inverse),
-        });
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::Commands(forward),
+            HistoryAction::Commands(inverse),
+        ));
         Ok(publication)
     }
 
@@ -6593,6 +6623,14 @@ impl DesignerRuntime {
                 self.formula_sources = sources;
             }
         }
+        // Only the resident registry accumulates one receipt and settled
+        // proposal per publication; a forked request registry is dropped whole.
+        if local_lifecycle.is_none() {
+            match self.profile {
+                SessionProfile::Ordinary | SessionProfile::TextCapacity => {}
+                SessionProfile::WorkingSize => self.lifecycle.discard_settled_records(1),
+            }
+        }
         Ok(self.published_projection(&invalidation))
     }
 
@@ -6946,6 +6984,24 @@ impl DesignerRuntime {
         }
         self.undo.push(entry);
         self.redo.clear();
+        match self.profile {
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => {}
+            SessionProfile::WorkingSize => {
+                while self.undo.len() > 1
+                    && self
+                        .undo
+                        .iter()
+                        .chain(self.redo.iter())
+                        .map(|entry| entry.weight)
+                        .sum::<usize>()
+                        > MAX_WORKING_HISTORY_BYTES
+                {
+                    // The newest entry always stays, so the edit just made can
+                    // always be undone.
+                    self.undo.remove(0);
+                }
+            }
+        }
     }
 
     fn record_edit(
@@ -6958,10 +7014,10 @@ impl DesignerRuntime {
             return Err(PatchLifecycleError::NoChange.into());
         }
         let publication = self.publish_commands(expected, forward.clone())?;
-        self.record_history_entry(HistoryEntry {
-            forward: HistoryAction::Commands(forward),
-            inverse: HistoryAction::Commands(inverse),
-        });
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::Commands(forward),
+            HistoryAction::Commands(inverse),
+        ));
         Ok(publication)
     }
 
