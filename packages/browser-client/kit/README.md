@@ -193,10 +193,9 @@ after emitting these artifacts, including during producer rollback.
 ## Working-size sessions
 
 A host can ask for the working-size session profile when the occurrence is
-created or opened: pass `profile: "working_size"` to `newTableWorkingSize`, or
-use `inspectProjectWorkingSize`, `openProjectWorkingSize`,
-`openCanonicalTreeWorkingSize`, `openLocalDocumentWorkingSize` and
-`openPortableRoWorkingSize`. The profile is fixed when the occurrence is
+created or opened, through `newTableWorkingSize`, `inspectProjectWorkingSize`,
+`openProjectWorkingSize`, `openCanonicalTreeWorkingSize`,
+`openLocalDocumentWorkingSize` and `openPortableRoWorkingSize`. The profile is fixed when the occurrence is
 created and cannot be switched afterwards. Not asking changes nothing: every
 ordinary method keeps today's request bytes and reply shape.
 
