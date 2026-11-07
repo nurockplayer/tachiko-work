@@ -118,6 +118,8 @@ entity ids, stays available for any other set.
 ```ts
 const { rows, column_totals } = await client.queryViewTotals(
   revision, "tasks", view,
+);
+```
 
 `findInView` walks the view for cells whose display text contains the query,
 case-insensitively and untrimmed, row by row and then through the shown columns;
