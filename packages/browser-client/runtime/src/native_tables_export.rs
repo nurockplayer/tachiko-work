@@ -11,7 +11,9 @@ use crate::interop_adapter::{
     native_tables_trim_worksheet_name, native_tables_xlsx_number_findings, st_xstring,
     validate_native_tables_csv, validate_native_tables_xlsx, validate_output_for_profile,
 };
-use crate::interop_document::{ExportCell, column_letters, export_expression};
+use crate::interop_document::{
+    ExportCell, ExportColumn, column_letters, criterion_type, export_expression,
+};
 use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
     SpreadsheetExportProjection,
@@ -176,12 +178,20 @@ fn write_formulas(
             };
             columns.insert(
                 ColumnRef::new(spec.summary.id.clone(), column.id.clone()),
-                range,
+                ExportColumn::new(range, Some(column.field_type.clone())),
             );
             for (i, entity) in spec.entities.iter().enumerate() {
                 addresses.insert(
                     FieldRef::new(entity.clone(), column.id.clone()),
-                    ExportCell::new(quoted.clone(), letters.clone(), i + 2),
+                    ExportCell::new(
+                        quoted.clone(),
+                        letters.clone(),
+                        i + 2,
+                        criterion_type(
+                            Some(&column.field_type),
+                            document.entities[entity].fields.get(&column.id),
+                        ),
+                    ),
                 );
                 count += usize::from(matches!(
                     document.entities[entity].fields.get(&column.id),

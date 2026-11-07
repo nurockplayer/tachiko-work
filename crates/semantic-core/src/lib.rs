@@ -10,7 +10,9 @@ mod model;
 mod validation;
 
 pub use address::{AddressIndex, AddressIndexError};
-pub use criterion::{CriterionCell, CriterionTest, InvalidCriterion, MAX_CONDITIONAL_CRITERIA};
+pub use criterion::{
+    CriterionCell, CriterionOperandKind, CriterionTest, InvalidCriterion, MAX_CONDITIONAL_CRITERIA,
+};
 pub use diagnostic::{
     Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, SemanticSubject, StableDiagnosticObservation,

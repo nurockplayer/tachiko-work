@@ -53,6 +53,15 @@ pub struct CriterionTest {
     text: String,
 }
 
+/// What a criterion compares against, for checks against a column's type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CriterionOperandKind {
+    Number,
+    Text,
+    Boolean,
+    Date,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Operand {
     Number(f64),
@@ -125,6 +134,17 @@ impl CriterionTest {
             operator,
             operand: Operand::Text,
             text: String::new(),
+        }
+    }
+
+    /// What this criterion compares against.
+    #[must_use]
+    pub const fn operand_kind(&self) -> CriterionOperandKind {
+        match self.operand {
+            Operand::Number(_) => CriterionOperandKind::Number,
+            Operand::Text => CriterionOperandKind::Text,
+            Operand::Boolean(_) => CriterionOperandKind::Boolean,
+            Operand::Date(_) => CriterionOperandKind::Date,
         }
     }
 
