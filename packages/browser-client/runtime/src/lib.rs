@@ -55,9 +55,9 @@ use tachiko_workspace_engine::{
     CalculationFailure, ColumnRef, ConditionalAggregate, Date, DiagnosticCode, Document, Entity,
     EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     FormulaBindError, IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat, Schema,
-    SchemaId, SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value,
-    WorkspaceError, create_document, diagnostic_codes,
+    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat,
+    PreparedVerdict, Schema, SchemaId, SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate,
+    ValidationReport, Value, WorkspaceError, create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -364,6 +364,15 @@ pub enum DesignerRequest {
         collection: String,
         entities: Vec<String>,
     },
+    /// Number totals over the rows a stateless view shows, summed in
+    /// collection order. `keep_entities` rows count even when filtered out,
+    /// so the view's sort never changes a total.
+    QueryViewTotals {
+        expected_revision: String,
+        collection: String,
+        #[serde(default)]
+        view: TableView,
+    },
     /// Number totals grouped by one or two Text, Date or Yes/No columns over
     /// the rows in `scope`, at one revision.
     QueryGroupTotals {
@@ -667,6 +676,10 @@ pub struct ViewSortKey {
     /// Column ID from [`ColumnProjection::id`].
     pub field: String,
     pub direction: SortDirection,
+    /// How Text values are ordered. Omitted when `bytes`, so a view with the
+    /// default keeps its spelling and cache key.
+    #[serde(default, skip_serializing_if = "is_default_text_order")]
+    pub text_order: ViewTextOrder,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -674,6 +687,23 @@ pub struct ViewSortKey {
 pub enum SortDirection {
     Asc,
     Desc,
+}
+
+/// Text order for one sort key. `bytes` is the default and compares UTF-8
+/// bytes; `natural` follows Sheet's list order — case-insensitive, with digit
+/// runs compared as numbers, and every other character by code point. It has
+/// no effect on a non-Text column.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewTextOrder {
+    #[default]
+    Bytes,
+    Natural,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference.
+fn is_default_text_order(order: &ViewTextOrder) -> bool {
+    matches!(order, ViewTextOrder::Bytes)
 }
 
 /// One AND-ed view filter. Text matching is case-insensitive and text-only;
@@ -2174,6 +2204,7 @@ const fn view_kind_name(kind: ViewKind) -> &'static str {
 struct ViewSortPlan {
     ordinal: usize,
     direction: SortDirection,
+    text_order: ViewTextOrder,
 }
 
 /// One fully resolved AND-ed filter. Every literal is parsed and normalized
@@ -2331,6 +2362,7 @@ fn plan_view(
         sort.push(ViewSortPlan {
             ordinal: builder.ordinal(column),
             direction: key.direction,
+            text_order: key.text_order,
         });
     }
     let mut filters = Vec::with_capacity(view.filters.len());
@@ -2571,8 +2603,8 @@ fn compare_view_rows(
             (None, Some(_)) => Ordering::Greater,
             (Some(_), None) => Ordering::Less,
             (Some(left), Some(right)) => match key.direction {
-                SortDirection::Asc => compare_view_values(left, right),
-                SortDirection::Desc => compare_view_values(right, left),
+                SortDirection::Asc => compare_view_values(left, right, key.text_order),
+                SortDirection::Desc => compare_view_values(right, left, key.text_order),
             },
         };
         if ordering != Ordering::Equal {
@@ -2582,10 +2614,13 @@ fn compare_view_rows(
     entities[left].cmp(&entities[right])
 }
 
-fn compare_view_values(left: &ViewValue, right: &ViewValue) -> Ordering {
+fn compare_view_values(left: &ViewValue, right: &ViewValue, text_order: ViewTextOrder) -> Ordering {
     match (left, right) {
         (ViewValue::Number(left), ViewValue::Number(right)) => left.total_cmp(right),
-        (ViewValue::Text(left), ViewValue::Text(right)) => left.cmp(right),
+        (ViewValue::Text(left), ViewValue::Text(right)) => match text_order {
+            ViewTextOrder::Bytes => left.cmp(right),
+            ViewTextOrder::Natural => display_text::natural_cmp(left, right),
+        },
         (ViewValue::Boolean(left), ViewValue::Boolean(right)) => left.cmp(right),
         (ViewValue::Date(left), ViewValue::Date(right)) => left.cmp(right),
         // A column has one declared kind; this only orders mixed leftovers
@@ -3151,6 +3186,15 @@ impl DesignerRuntime {
                 &expected_revision,
                 &collection,
                 &entities,
+            )?)),
+            DesignerRequest::QueryViewTotals {
+                expected_revision,
+                collection,
+                view,
+            } => Ok(DesignerResponse::ColumnTotals(self.query_view_totals(
+                &expected_revision,
+                &collection,
+                &view,
             )?)),
             DesignerRequest::QueryGroupTotals {
                 expected_revision,
@@ -4197,6 +4241,36 @@ impl DesignerRuntime {
             .iter()
             .filter(|id| requested.contains(*id))
             .cloned()
+            .collect::<Vec<_>>();
+        let column_totals = self.totals_for_entities(spec, &members)?;
+        Ok(ColumnTotalsProjection {
+            revision,
+            rows: members.len(),
+            column_totals,
+        })
+    }
+
+    /// Totals over the rows a stateless view shows, which are the window's
+    /// `total_rows`: filtered rows are left out and `keep_entities` rows stay
+    /// in. The order's row positions are sorted back to collection order
+    /// before summing, so the view's sort cannot change a float sum. The
+    /// request stays small however many rows the filter shows.
+    fn query_view_totals(
+        &mut self,
+        expected_revision: &str,
+        collection: &str,
+        view: &TableView,
+    ) -> Result<ColumnTotalsProjection, DesignerError> {
+        validate_view_bounds(view)?;
+        self.check_revision(expected_revision)?;
+        let revision = self.current_revision().to_owned();
+        let order = self.view_order(collection, view)?;
+        let spec = self.collection_spec(collection)?;
+        let mut rows = order.to_vec();
+        rows.sort_unstable();
+        let members = rows
+            .iter()
+            .map(|row| spec.entities[*row].clone())
             .collect::<Vec<_>>();
         let column_totals = self.totals_for_entities(spec, &members)?;
         Ok(ColumnTotalsProjection {
@@ -5918,14 +5992,15 @@ impl DesignerRuntime {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
-        match validate(&candidate) {
-            Ok(()) => {
+        let prepared = self.session.prepare_evaluation(candidate);
+        match prepared.verdict() {
+            PreparedVerdict::Valid => {
                 // A v3-origin text-capacity occurrence edits like any other
                 // capacity occurrence; only strict v3 origins keep the strict
                 // preflight.
                 if self.opened_from_v3 && !self.text_capacity {
                     Self::from_document_profile_with_opened(
-                        candidate,
+                        prepared.document().clone(),
                         PREFLIGHT_OCCURRENCE,
                         false,
                     )?;
@@ -5945,26 +6020,36 @@ impl DesignerRuntime {
                             Some(Value::Text(_))
                         ) =>
                         {
-                            self.preflight_capacity_scalar(&candidate, field, value)?;
+                            self.preflight_capacity_scalar(prepared.document(), field, value)?;
                         }
                         _ => {
-                            Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, true)?;
+                            Self::from_document_profile(
+                                prepared.document().clone(),
+                                PREFLIGHT_OCCURRENCE,
+                                true,
+                            )?;
                         }
                     }
                 } else {
-                    Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, false)?;
+                    Self::from_document_profile(
+                        prepared.document().clone(),
+                        PREFLIGHT_OCCURRENCE,
+                        false,
+                    )?;
                 }
             }
             // Preflight only upgrades a constraint mismatch into its typed
             // refusal. Every other invalid candidate is still refused
             // atomically by the lifecycle's own validation at execute time, so
             // the proposal below cannot publish it.
-            Err(WorkspaceError::InvalidDocument { report, .. }) => {
-                if let Some(error) = constraint_failure(&candidate, &constraint_targets, &report) {
+            PreparedVerdict::InvalidDocument { report } => {
+                if let Some(error) =
+                    constraint_failure(prepared.document(), &constraint_targets, report)
+                {
                     return Err(error);
                 }
             }
-            Err(_) => {}
+            PreparedVerdict::InvalidDefinitions => {}
         }
         let capacity_text_edit = self.text_capacity
             && !commands.is_empty()
@@ -6035,7 +6120,7 @@ impl DesignerRuntime {
         let proposal_id = self.next_proposal_id()?;
         let body = SemanticPatchBody::atomic_batch(commands)?;
         let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
-        lifecycle.propose(
+        lifecycle.propose_prepared(
             snapshot.document_scope(),
             snapshot.document(),
             snapshot.revision(),
@@ -6046,6 +6131,7 @@ impl DesignerRuntime {
                 self.principal.clone(),
             ),
             self.clock.tick(),
+            Some(&prepared),
         )?;
         designer_preview(
             lifecycle,

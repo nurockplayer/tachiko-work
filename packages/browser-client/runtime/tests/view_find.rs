@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use tachiko_designer_runtime::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, FindDirection,
     FindInViewProjection, FindPosition, FoundCell, SortDirection, TableView, ViewFilter,
-    ViewSortKey,
+    ViewSortKey, ViewTextOrder,
 };
 use tachiko_workspace_engine::{
     Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
@@ -351,6 +351,7 @@ fn sorted_and_filtered_views_are_walked_in_view_order() {
         sort: vec![ViewSortKey {
             field: "f02_price".to_owned(),
             direction: SortDirection::Asc,
+            text_order: ViewTextOrder::Bytes,
         }],
         ..TableView::default()
     };
@@ -376,6 +377,7 @@ fn sorted_and_filtered_views_are_walked_in_view_order() {
             sort: vec![ViewSortKey {
                 field: "f02_price".to_owned(),
                 direction: SortDirection::Asc,
+                text_order: ViewTextOrder::Bytes,
             }],
             ..TableView::default()
         },

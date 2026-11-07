@@ -171,7 +171,16 @@ export type ViewFilter =
   /** Exact display-text equality with no folding; `""` means blank. */
   | { kind: "display_in"; field: string; values: string[] };
 
-export type ViewSortKey = { field: string; direction: SortDirection };
+/**
+ * One sort key. `text_order` stays `bytes` (UTF-8) by default; `natural` orders
+ * Text case-insensitively with digit runs compared as numbers, and has no
+ * effect on other column kinds.
+ */
+export type ViewSortKey = {
+  field: string;
+  direction: SortDirection;
+  text_order?: "bytes" | "natural";
+};
 
 /**
  * Stateless view state owned by the caller, never by the document: sort keys
@@ -596,6 +605,12 @@ export type DesignerRequest =
       expected_revision: string;
       collection: string;
       entities: string[];
+    }
+  | {
+      type: "query_view_totals";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
     }
   | {
       type: "query_group_totals";

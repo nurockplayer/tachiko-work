@@ -108,6 +108,17 @@ const { values, truncated } = await client.queryDistinctValues(
 );
 ```
 
+`queryViewTotals` totals each Number column over the rows a view shows — the
+same rows a window returns, `keep_entities` included — and sums them in
+collection order, so the view's sort never changes a float sum. The request
+names the view rather than every shown entity id, so a filtered footer stays
+small when thousands of rows are still shown. `queryColumnTotals`, which names
+entity ids, stays available for any other set.
+
+```ts
+const { rows, column_totals } = await client.queryViewTotals(
+  revision, "tasks", view,
+
 `findInView` walks the view for cells whose display text contains the query,
 case-insensitively and untrimmed, row by row and then through the shown columns;
 a blank query finds nothing. `from` is a `{row, field}` view position that need
