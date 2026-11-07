@@ -153,6 +153,9 @@ Other merged cells stay a disclosed import boundary with a ledger finding.
   style nothing uses are all dropped, and the merge report lists them. So a rule added
   on one side and a column deleted on the other merge cleanly and never reach the strict
   reader as a dangling reference.
+- **After a delete:** the occurrence keeps its records, so Undo brings them back, and
+  each save writes a copy pruned by the same rule. What's written never holds a
+  dangling reference.
 - **History:** a presentation command is an ordinary revision with one Undo.
 - **Capacity:** cell records count up to the profile's `populated_cells`, and the
   palette holds up to 4,096 styles. Editing past a bound refuses with a typed capacity

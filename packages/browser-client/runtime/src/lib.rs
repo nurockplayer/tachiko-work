@@ -48,16 +48,18 @@ use serde::{Deserialize, Serialize};
 use tachiko_storage::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2,
     CanonicalRoProjectV3, FormatError, ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, ROPROJ_V3_PATHS,
-    decode_portable_package_v1, decode_roproj_v2, decode_roproj_v3, encode_portable_package_v1,
-    encode_roproj_v1, encode_roproj_v2, encode_roproj_v3, from_bytes, to_canonical_string,
+    ROPROJ_V3_PRESENTATION_PATH, decode_portable_package_v1, decode_presentation, decode_roproj_v2,
+    decode_roproj_v3, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
+    encode_roproj_v3_with_presentation, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, ColumnRef, ConditionalAggregate, Date, DiagnosticCode, Document, Entity,
     EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     FormulaBindError, IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat,
-    PreparedVerdict, Schema, SchemaId, SchemaKey, SemanticIdKind, SemanticSubject, StarterTemplate,
-    ValidationReport, Value, WorkspaceError, create_document, diagnostic_codes,
+    PreparedVerdict, PresentationStore, Schema, SchemaId, SchemaKey, SemanticIdKind,
+    SemanticSubject, StarterTemplate, ValidationReport, Value, WorkspaceError, create_document,
+    diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -71,6 +73,7 @@ use tachiko_workspace_engine::{
         SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticRevision,
         SemanticScope, TrustedInstant,
     },
+    prune_presentation,
     resident_session::{
         ResidentProjectionInvalidation, ResidentSnapshot, ResidentWorkspaceSession,
         TrustedPublicationTimeSource,
@@ -2100,6 +2103,10 @@ pub struct DesignerRuntime {
     pending_cleanup: Option<PendingCleanup>,
     duplicate_serial: usize,
     opened_from_v3: bool,
+    /// Stored presentation beside the semantic document. It is never part of
+    /// the session, so it never moves the revision. Each save prunes a copy
+    /// against the snapshot's document.
+    presentation: PresentationStore,
 }
 
 #[derive(Clone)]
@@ -2911,6 +2918,7 @@ impl DesignerRuntime {
             pending_cleanup: None,
             duplicate_serial: 0,
             opened_from_v3: false,
+            presentation: PresentationStore::default(),
         };
         runtime.ensure_supported_project()?;
         let opened = OpenedProjection {
@@ -3505,6 +3513,13 @@ impl DesignerRuntime {
                         .to_owned(),
             });
         }
+        if !self.presentation.is_empty() {
+            return Err(DesignerError::LegacyExportUnsupported {
+                message:
+                    "presentation requires exportProjectV3, exportCanonicalTree or exportPortableRo"
+                        .to_owned(),
+            });
+        }
         if self.opened_from_v3 {
             return Err(DesignerError::UnsupportedProject {
                 message: "This occurrence was opened from .roproj/v3; use explicit v3 export."
@@ -3539,7 +3554,7 @@ impl DesignerRuntime {
         // The same profile decision as v3 open, so the preflight below admits
         // exactly what this writes.
         ensure_v3_document_profile(snapshot.document())?;
-        let tree = encode_roproj_v3(snapshot.document())?;
+        let tree = self.encode_v3_export_tree(snapshot.document())?;
         let bytes =
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?;
         admit_project(&bytes, PREFLIGHT_OCCURRENCE)?;
@@ -3565,9 +3580,12 @@ impl DesignerRuntime {
         expected_revision: &str,
     ) -> Result<CanonicalTreeExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
-        let bytes = if self.opened_from_v3 || document_requires_v2_evidence(snapshot.document()) {
+        let bytes = if self.opened_from_v3
+            || !self.presentation.is_empty()
+            || document_requires_v2_evidence(snapshot.document())
+        {
             ensure_v3_document_profile(snapshot.document())?;
-            let tree = encode_roproj_v3(snapshot.document())?;
+            let tree = self.encode_v3_export_tree(snapshot.document())?;
             encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))?
         } else {
             encode_project_bundle_v1(&encode_v1_tree(snapshot.document())?)?
@@ -3591,13 +3609,23 @@ impl DesignerRuntime {
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
         ensure_v3_document_profile(snapshot.document())?;
-        let tree = encode_roproj_v3(snapshot.document())?;
+        let tree = self.encode_v3_export_tree(snapshot.document())?;
         let bytes = encode_portable_package_v1(&tree)?;
         admit_portable_ro(&bytes, PREFLIGHT_OCCURRENCE)?;
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
         })
+    }
+
+    /// Encode one exact v3 tree for a snapshot save, writing the store pruned
+    /// against the snapshot's document so no file carries a dangling record.
+    fn encode_v3_export_tree(
+        &self,
+        document: &Document,
+    ) -> Result<CanonicalRoProjectV3, DesignerError> {
+        let presentation = prune_presentation(&self.presentation, document);
+        Ok(encode_roproj_v3_with_presentation(document, &presentation)?)
     }
 
     /// Project the trusted identity of the live resident occurrence.
@@ -7571,9 +7599,11 @@ fn admit_portable_ro(
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     let verified = decode_portable_package_v1(input)?;
-    let document = decode_roproj_v3(verified.tree())?;
+    let tree = verified.tree();
+    let document = decode_roproj_v3(tree)?;
     let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
+    candidate.presentation = presentation_from_tree(tree)?;
     Ok((candidate, opened))
 }
 
@@ -7604,14 +7634,27 @@ fn admit_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
-    let (document, opened_from_v3) = decode_project_bundle(input)?;
+    let DecodedProject {
+        document,
+        opened_from_v3,
+        presentation,
+    } = decode_project_bundle(input)?;
     let (mut candidate, opened) = if opened_from_v3 {
         admit_v3_document(document, occurrence_id)?
     } else {
         admit_document(document, occurrence_id)?
     };
     candidate.opened_from_v3 = opened_from_v3;
+    candidate.presentation = presentation;
     Ok((candidate, opened))
+}
+
+/// Read the optional presentation member from an already admitted v3 tree.
+fn presentation_from_tree(tree: &CanonicalRoProjectV3) -> Result<PresentationStore, DesignerError> {
+    match tree.file(ROPROJ_V3_PRESENTATION_PATH) {
+        Some(bytes) => Ok(decode_presentation(bytes)?),
+        None => Ok(PresentationStore::default()),
+    }
 }
 
 /// Admit a v3/.ro document in the same profile order as
@@ -7651,7 +7694,11 @@ pub(crate) fn admit_imported_project(
     occurrence_id: &str,
     metadata: &InteropMetadata,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
-    let (document, opened_from_v3) = decode_project_bundle(input)?;
+    let DecodedProject {
+        document,
+        opened_from_v3,
+        presentation,
+    } = decode_project_bundle(input)?;
     if opened_from_v3 {
         // A capacity-profile v3 save of an import keeps the same provenance
         // gate as the legacy capacity retry below.
@@ -7662,6 +7709,7 @@ pub(crate) fn admit_imported_project(
         }
         let mut candidate = candidate;
         candidate.opened_from_v3 = true;
+        candidate.presentation = presentation;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
         ensure_opened_wire_projection_size(&opened, candidate.text_capacity)?;
         return Ok((candidate, opened));
@@ -7680,6 +7728,7 @@ pub(crate) fn admit_imported_project(
     match ordinary {
         Ok((mut candidate, opened)) => {
             candidate.opened_from_v3 = false;
+            candidate.presentation = presentation;
             Ok((candidate, opened))
         }
         Err(error)
@@ -7695,6 +7744,7 @@ pub(crate) fn admit_imported_project(
             interop_document::validate_saved_open_closure(&candidate, metadata)?;
             ensure_opened_wire_projection_size(&opened, true)?;
             candidate.opened_from_v3 = false;
+            candidate.presentation = presentation;
             Ok((candidate, opened))
         }
         Err(error) => Err(error),
@@ -8032,7 +8082,15 @@ fn encode_project_record_v2(document: &Document) -> Result<Vec<u8>, DesignerErro
     Ok(output)
 }
 
-fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError> {
+/// One admitted project: its semantic document, the origin that selects a
+/// representation, and the presentation store read beside it.
+struct DecodedProject {
+    document: Document,
+    opened_from_v3: bool,
+    presentation: PresentationStore,
+}
+
+fn decode_project_bundle(input: &[u8]) -> Result<DecodedProject, DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     if input.starts_with(PROJECT_RECORD_V2_MAGIC) {
         let payload = &input[PROJECT_RECORD_V2_MAGIC.len()..];
@@ -8048,7 +8106,11 @@ fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError
             });
         }
         return from_bytes(payload)
-            .map(|document| (document, false))
+            .map(|document| DecodedProject {
+                document,
+                opened_from_v3: false,
+                presentation: PresentationStore::default(),
+            })
             .map_err(DesignerError::from);
     }
     let mut cursor = ProjectBundleCursor::new(input);
@@ -8105,17 +8167,25 @@ fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError
             });
         }
     };
-    if version.is_some_and(|found| found >= 3)
-        && ordered_paths
-            .iter()
-            .map(String::as_str)
-            .ne(expected_paths.iter().copied())
-    {
-        return Err(DesignerError::InvalidProjectTransfer {
-            message: "canonical .roproj/v3 paths are not in their required order".to_owned(),
-        });
+    if version.is_some_and(|found| found >= 3) {
+        let required = ROPROJ_V3_PATHS.len();
+        let canonical_prefix = ordered_paths.len() >= required
+            && ordered_paths[..required]
+                .iter()
+                .map(String::as_str)
+                .eq(ROPROJ_V3_PATHS.iter().copied());
+        let presentation_last = ordered_paths.len() == required + 1
+            && ordered_paths
+                .last()
+                .is_some_and(|path| path == ROPROJ_V3_PRESENTATION_PATH);
+        if !canonical_prefix || (ordered_paths.len() != required && !presentation_last) {
+            return Err(DesignerError::InvalidProjectTransfer {
+                message: "canonical .roproj/v3 paths are not in their required order".to_owned(),
+            });
+        }
     }
-    let mut files = Vec::with_capacity(expected_paths.len());
+    let optional_presentation = version.is_some_and(|found| found >= 3);
+    let mut files = Vec::with_capacity(expected_paths.len() + usize::from(optional_presentation));
     for &path in expected_paths {
         let bytes =
             files_by_path
@@ -8124,6 +8194,11 @@ fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError
                     message: format!("project transfer is missing '{path}'"),
                 })?;
         files.push((path.to_owned(), bytes));
+    }
+    if optional_presentation {
+        if let Some(bytes) = files_by_path.remove(ROPROJ_V3_PRESENTATION_PATH) {
+            files.push((ROPROJ_V3_PRESENTATION_PATH.to_owned(), bytes));
+        }
     }
     if let Some(extra) = files_by_path.keys().next() {
         return Err(DesignerError::InvalidProjectTransfer {
@@ -8136,13 +8211,17 @@ fn decode_project_bundle(input: &[u8]) -> Result<(Document, bool), DesignerError
 fn decode_project_files(
     files: Vec<(String, Vec<u8>)>,
     version: Option<u64>,
-) -> Result<(Document, bool), DesignerError> {
+) -> Result<DecodedProject, DesignerError> {
     match version {
         Some(1) => match CanonicalRoProjectV1::try_from_files_with_profile(
             files,
             ensure_cheap_document_profile,
         ) {
-            Ok((_, document)) => Ok((document, false)),
+            Ok((_, document)) => Ok(DecodedProject {
+                document,
+                opened_from_v3: false,
+                presentation: PresentationStore::default(),
+            }),
             Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
             Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
         },
@@ -8150,7 +8229,11 @@ fn decode_project_files(
             let tree = CanonicalRoProjectV2::try_from_files(files)?;
             let document = decode_roproj_v2(&tree)?;
             ensure_cheap_document_profile(&document)?;
-            Ok((document, false))
+            Ok(DecodedProject {
+                document,
+                opened_from_v3: false,
+                presentation: PresentationStore::default(),
+            })
         }
         Some(3) => {
             // The storage callback is resource-only. Its private error type is
@@ -8162,12 +8245,16 @@ fn decode_project_files(
                     profile_error = Some(error);
                 })
             });
-            let (_, document) = admitted.map_err(|error| {
+            let (tree, document) = admitted.map_err(|error| {
                 profile_error.unwrap_or_else(|| DesignerError::InvalidProjectTransfer {
                     message: format!("invalid canonical .roproj/v3: {error:?}"),
                 })
             })?;
-            Ok((document, true))
+            Ok(DecodedProject {
+                document,
+                opened_from_v3: true,
+                presentation: presentation_from_tree(&tree)?,
+            })
         }
         Some(found) if found > 3 => Err(DesignerError::UnsupportedProject {
             message: format!("unsupported project manifest version {found}"),

@@ -516,3 +516,249 @@ fn rules_store(count: usize) -> (Document, PresentationStore) {
     }
     (document, store)
 }
+
+fn schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
+    Schema {
+        field_order: None,
+        id: id.into(),
+        key: id.into(),
+        display_name: None,
+        fields: fields
+            .iter()
+            .map(|(name, field_type)| field(name, field_type.clone()))
+            .collect(),
+    }
+}
+
+#[test]
+fn a_store_with_nothing_to_drop_is_returned_unchanged() {
+    let store = valid_store();
+    assert_eq!(prune_presentation(&store, &document()), store);
+}
+
+#[test]
+fn a_cell_for_a_missing_entity_or_field_is_dropped() {
+    let mut store = valid_store();
+    store
+        .cells
+        .insert(("gone".into(), "due".into()), StyleId::from("s1"));
+    assert_eq!(prune_presentation(&store, &document()), valid_store());
+
+    let mut store = valid_store();
+    store
+        .cells
+        .insert(("e1".into(), "gone".into()), StyleId::from("s1"));
+    assert_eq!(prune_presentation(&store, &document()), valid_store());
+}
+
+#[test]
+fn a_cell_off_the_entitys_schema_is_dropped() {
+    let mut document = document();
+    document.schemas.insert(
+        "other".into(),
+        schema("other", &[("other_field", FieldType::Number)]),
+    );
+    document.entities.get_mut(&"e1".into()).unwrap().schema = "other".into();
+    let pruned = prune_presentation(&valid_store(), &document);
+    assert!(pruned.cells.is_empty());
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
+
+#[test]
+fn a_table_for_a_missing_schema_is_dropped() {
+    let mut document = document();
+    document.schemas.insert(
+        "legacy".into(),
+        schema("legacy", &[("x", FieldType::Number)]),
+    );
+    let mut store = valid_store();
+    store.tables.insert(
+        "legacy".into(),
+        TablePresentation {
+            title: Some("Legacy".into()),
+            ..TablePresentation::default()
+        },
+    );
+    let pruned = prune_presentation(&store, &document);
+    assert_eq!(pruned, store);
+
+    document.schemas.remove(&SchemaId::from("legacy"));
+    let pruned = prune_presentation(&store, &document);
+    assert!(!pruned.tables.contains_key(&"legacy".into()));
+    assert_eq!(
+        pruned.tables.get(&"orders".into()),
+        store.tables.get(&"orders".into())
+    );
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
+
+#[test]
+fn a_footer_or_column_style_on_a_missing_field_is_dropped() {
+    let mut document = document();
+    document
+        .schemas
+        .get_mut(&"orders".into())
+        .unwrap()
+        .fields
+        .remove(&"amount".into());
+    let pruned = prune_presentation(&valid_store(), &document);
+    let orders = pruned.tables.get(&"orders".into()).unwrap();
+    assert!(!orders.footer.contains_key(&"amount".into()));
+    assert_eq!(orders.column_styles.get(&"due".into()), Some(&"s1".into()));
+    assert!(!pruned.rules.contains_key(&"r1".into()));
+    assert!(!pruned.styles.contains_key(&"s2".into()));
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+
+    let mut document = document();
+    document
+        .schemas
+        .get_mut(&"orders".into())
+        .unwrap()
+        .fields
+        .remove(&"due".into());
+    let pruned = prune_presentation(&valid_store(), &document);
+    let orders = pruned.tables.get(&"orders".into()).unwrap();
+    assert!(orders.column_styles.is_empty());
+    assert!(pruned.cells.is_empty());
+    assert!(!pruned.styles.contains_key(&"s1".into()));
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
+
+#[test]
+fn a_table_left_with_no_content_is_dropped() {
+    let mut store = PresentationStore {
+        styles: BTreeMap::from([("s3".into(), CellStyle::default())]),
+        ..PresentationStore::default()
+    };
+    store.tables.insert(
+        "orders".into(),
+        TablePresentation {
+            title: None,
+            footer: BTreeMap::from([("amount".into(), FooterAggregate::Sum)]),
+            column_styles: BTreeMap::from([("amount".into(), StyleId::from("s3"))]),
+        },
+    );
+    let mut document = document();
+    assert_eq!(validate_presentation(&store, &document), Ok(()));
+    document
+        .schemas
+        .get_mut(&"orders".into())
+        .unwrap()
+        .fields
+        .remove(&"amount".into());
+    let pruned = prune_presentation(&store, &document);
+    assert!(pruned.is_empty());
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
+
+#[test]
+fn a_rule_for_a_missing_schema_is_dropped() {
+    let mut document = document();
+    document
+        .schemas
+        .insert("other".into(), schema("other", &[("x", FieldType::Number)]));
+    let mut store = valid_store();
+    store.rules.insert(
+        "r2".into(),
+        ConditionalRule {
+            schema: "other".into(),
+            rank: "a1".into(),
+            fields: vec!["x".into()],
+            condition: Expression::IsBlank(Box::new(Expression::SameRowReference("x".into()))),
+            style: "s1".into(),
+        },
+    );
+    assert_eq!(prune_presentation(&store, &document), store);
+
+    document.schemas.remove(&SchemaId::from("other"));
+    let pruned = prune_presentation(&store, &document);
+    assert!(!pruned.rules.contains_key(&"r2".into()));
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
+
+#[test]
+fn a_rule_painting_a_missing_field_is_dropped() {
+    let mut store = valid_store();
+    store.rules.insert(
+        "r2".into(),
+        ConditionalRule {
+            schema: "orders".into(),
+            rank: "a2".into(),
+            fields: vec!["amount".into(), "due".into()],
+            condition: Expression::IsBlank(Box::new(Expression::SameRowReference("due".into()))),
+            style: "s2".into(),
+        },
+    );
+    let mut document = document();
+    assert_eq!(validate_presentation(&store, &document), Ok(()));
+    document
+        .schemas
+        .get_mut(&"orders".into())
+        .unwrap()
+        .fields
+        .remove(&"amount".into());
+    let pruned = prune_presentation(&store, &document);
+    assert!(!pruned.rules.contains_key(&"r2".into()));
+    assert!(!pruned.rules.contains_key(&"r1".into()));
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
+
+#[test]
+fn a_rule_reading_a_missing_field_is_dropped() {
+    let mut store = valid_store();
+    store.rules.insert(
+        "r2".into(),
+        ConditionalRule {
+            schema: "orders".into(),
+            rank: "a2".into(),
+            fields: vec!["due".into()],
+            condition: Expression::IsBlank(Box::new(Expression::SameRowReference("due".into()))),
+            style: "s2".into(),
+        },
+    );
+    store.rules.insert(
+        "r3".into(),
+        ConditionalRule {
+            schema: "orders".into(),
+            rank: "a3".into(),
+            fields: vec!["due".into()],
+            condition: Expression::ColumnTotal(ColumnRef::new("orders", "amount")),
+            style: "s2".into(),
+        },
+    );
+    let mut document = document();
+    assert_eq!(validate_presentation(&store, &document), Ok(()));
+    document
+        .schemas
+        .get_mut(&"orders".into())
+        .unwrap()
+        .fields
+        .remove(&"amount".into());
+    let pruned = prune_presentation(&store, &document);
+    assert!(!pruned.rules.contains_key(&"r1".into()));
+    assert!(pruned.rules.contains_key(&"r2".into()));
+    assert!(!pruned.rules.contains_key(&"r3".into()));
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
+
+#[test]
+fn a_style_nothing_uses_is_dropped() {
+    let mut store = valid_store();
+    store
+        .tables
+        .get_mut(&"orders".into())
+        .unwrap()
+        .column_styles
+        .clear();
+    store.cells.clear();
+    store
+        .cells
+        .insert(("e1".into(), "due".into()), StyleId::from("s1"));
+    let mut document = document();
+    assert_eq!(validate_presentation(&store, &document), Ok(()));
+    document.entities.clear();
+    let pruned = prune_presentation(&store, &document);
+    assert!(pruned.cells.is_empty());
+    assert!(!pruned.styles.contains_key(&"s1".into()));
+    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
