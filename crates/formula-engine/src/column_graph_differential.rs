@@ -624,6 +624,83 @@ fn retained_update_matches_the_expanded_reference_after_row_edits() {
     }
 }
 
+/// Move every row between two schemas sharing a column, both directions, for a
+/// row holding a number, a formula, or a blank in that column.
+#[test]
+fn retained_update_matches_the_expanded_reference_after_schema_moves() {
+    for (from, to) in [("a", "b"), ("b", "a")] {
+        for mover_value in [
+            Some(Value::Number(Number::new(5.0).expect("finite"))),
+            Some(Value::Formula(literal(5.0))),
+            None,
+        ] {
+            let row = |id: &str, schema: &str, fields: BTreeMap<FieldId, Value>| Entity {
+                id: EntityId::from(id),
+                key: EntityKey::from(id),
+                schema: SchemaId::from(schema),
+                fields,
+            };
+            let mut mover_fields = BTreeMap::from([(
+                FieldId::from("c1"),
+                Value::Number(Number::new(1.0).expect("finite")),
+            )]);
+            if let Some(value) = mover_value {
+                mover_fields.insert(FieldId::from("c0"), value);
+            }
+            let summary = |schema: &str| {
+                BTreeMap::from([(FieldId::from("c1"), Value::Formula(total(schema, "c0")))])
+            };
+            let mut document = Document {
+                schemas: BTreeMap::from([
+                    (SchemaId::from("a"), generated_schema("a")),
+                    (SchemaId::from("b"), generated_schema("b")),
+                ]),
+                entities: BTreeMap::from([
+                    (EntityId::from("mover"), row("mover", from, mover_fields)),
+                    (
+                        EntityId::from("sum-a"),
+                        row("sum-a", "summary", summary("a")),
+                    ),
+                    (
+                        EntityId::from("sum-b"),
+                        row("sum-b", "summary", summary("b")),
+                    ),
+                ]),
+                ..generated_document(0)
+            };
+            document
+                .schemas
+                .insert(SchemaId::from("summary"), generated_schema("summary"));
+            let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+            document
+                .entities
+                .get_mut(&EntityId::from("mover"))
+                .expect("row exists")
+                .schema = SchemaId::from(to);
+            let roots = document.entities[&EntityId::from("mover")]
+                .fields
+                .keys()
+                .map(|field| FieldRef::new(EntityId::from("mover"), field.clone()))
+                .collect::<BTreeSet<_>>();
+            let _ = retained.update(&document, &roots);
+            let expected = reference::calculate(&document);
+            assert_eq!(
+                retained.dependencies(),
+                expected.dependencies,
+                "{from} to {to}"
+            );
+            match retained.outcome() {
+                CalculationOutcome::Complete(calculation) => {
+                    assert_eq!(calculation.values(), &expected.values, "{from} to {to}");
+                }
+                CalculationOutcome::Failed(failures) => {
+                    assert_eq!(failures.failures(), &expected.failures, "{from} to {to}");
+                }
+            }
+        }
+    }
+}
+
 fn linear_document(rows: usize) -> Document {
     let mut entities = BTreeMap::new();
     for index in 0..rows {
