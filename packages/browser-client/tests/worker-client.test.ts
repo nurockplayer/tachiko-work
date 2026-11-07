@@ -514,4 +514,43 @@ describe("Published changed-cell wire validation", () => {
     await expect(pending).rejects.toThrow("non-blank field payload");
     client.close();
   });
+
+  it("refuses a duplicated collection's changed cell with bad presence", async () => {
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const requests: { id: number }[] = [];
+    vi.stubGlobal("Worker", class {
+      addEventListener(type: string, callback: (event: MessageEvent) => void) {
+        if (type === "message") receive = callback;
+      }
+      postMessage(request: { id: number }) { requests.push(structuredClone(request)); }
+      terminate() {}
+    });
+    const client = createExperimentalDesignerClient();
+    const target = {entity: "row", field: "note"};
+    const pending = client.duplicateCollection!("resident/0", "items", "Copy");
+    const publication = {
+      base_revision: "resident/0",
+      resulting_revision: "resident/1",
+      schemas: [],
+      schema_fields: [],
+      entities: [],
+      fields: [target],
+      affected_calculations: [],
+      changed: [{
+        target,
+        address: "items.row.note",
+        stored: null,
+        formula: null,
+        calculated: null,
+        diagnostics: [],
+        editable_scalar: null,
+      }],
+    };
+    const collection = {id: "copy", key: "copy", display_name: "Copy"};
+    receive!(new MessageEvent("message", {
+      data: {id: requests.at(-1)!.id, status: "ok", response: {type: "duplicated", payload: {publication, collection}}},
+    }));
+    await expect(pending).rejects.toThrow("non-blank field payload");
+    client.close();
+  });
 });
