@@ -1155,6 +1155,15 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     wq_print(name, "edit_median_ms", format!("{median:.3}"));
     wq_print(name, "edit_p95_ms", format!("{:.3}", ordered[p95_index]));
 
+    // A full table refuses another row, so removal comes first.
+    let revision = runtime.observe_occurrence().revision;
+    let rows = (0..100).map(|row| format!("r{row:05}")).collect::<Vec<_>>();
+    let (removed, sample) = observe(|| runtime.remove_table_rows(&revision, "grid", &rows));
+    match removed {
+        Ok(_) => wq_print(name, "remove_100_rows_ms", wq_millis(&sample)),
+        Err(error) => wq_refused(name, "remove_100_rows", &error),
+    }
+
     let revision = runtime.observe_occurrence().revision;
     let initializers = [RowInitializer {
         field: field.to_owned(),
@@ -1166,14 +1175,6 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     match inserted {
         Ok(_) => wq_print(name, "insert_row_ms", wq_millis(&sample)),
         Err(error) => wq_refused(name, "insert_row", &error),
-    }
-
-    let revision = runtime.observe_occurrence().revision;
-    let rows = (0..100).map(|row| format!("r{row:05}")).collect::<Vec<_>>();
-    let (removed, sample) = observe(|| runtime.remove_table_rows(&revision, "grid", &rows));
-    match removed {
-        Ok(_) => wq_print(name, "remove_100_rows_ms", wq_millis(&sample)),
-        Err(error) => wq_refused(name, "remove_100_rows", &error),
     }
 }
 
