@@ -198,6 +198,7 @@ fn real_import_keeps_the_unedited_26_date_and_new_occurrence_identities() {
                     name: "value".into(),
                     field_type: "not-a-type".into(),
                 }],
+                profile: None,
             })
             .unwrap_err();
         assert_eq!(

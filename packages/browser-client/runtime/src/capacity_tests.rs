@@ -411,6 +411,7 @@ fn csv_import_admits_8406_rows_and_refuses_8407_atomically() {
                 name: "value".into(),
                 field_type: "text".into(),
             }],
+            profile: None,
         },
     ) {
         DesignerWireReply::Ok {
