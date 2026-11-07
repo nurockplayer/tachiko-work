@@ -19,23 +19,23 @@ fn date(year: u16, month: u8, day: u8) -> Date {
     Date::new(year, month, day).expect("test date is valid")
 }
 
-fn check(input: &str, order: Option<DateOrder>, expected: ClassifiedInput) {
-    assert_eq!(classify_input(input, order), expected, "input {input:?}");
+fn check(input: &str, order: Option<DateOrder>, expected: &ClassifiedInput) {
+    assert_eq!(&classify_input(input, order), expected, "input {input:?}");
 }
 
 #[test]
 fn classifies_blank_formula_boolean_and_text_rows() {
-    check("", None, ClassifiedInput::Blank);
-    check("   ", None, ClassifiedInput::Text("   ".into()));
-    check("hello", None, ClassifiedInput::Text("hello".into()));
+    check("", None, &ClassifiedInput::Blank);
+    check("   ", None, &ClassifiedInput::Text("   ".into()));
+    check("hello", None, &ClassifiedInput::Text("hello".into()));
     check(
         "=A1+1",
         None,
-        ClassifiedInput::FormulaSource("=A1+1".into()),
+        &ClassifiedInput::FormulaSource("=A1+1".into()),
     );
-    check("=", None, ClassifiedInput::FormulaSource("=".into()));
-    check("TRUE", None, ClassifiedInput::Boolean(true));
-    check("false", None, ClassifiedInput::Boolean(false));
+    check("=", None, &ClassifiedInput::FormulaSource("=".into()));
+    check("TRUE", None, &ClassifiedInput::Boolean(true));
+    check("false", None, &ClassifiedInput::Boolean(false));
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn classifies_numeric_rows() {
         check(
             input,
             None,
-            ClassifiedInput::Number {
+            &ClassifiedInput::Number {
                 value: number(value),
                 display: None,
             },
@@ -67,7 +67,7 @@ fn classifies_numeric_rows() {
         "1,0000",
         "１２３ｘ",
     ] {
-        check(input, None, ClassifiedInput::Text(input.into()));
+        check(input, None, &ClassifiedInput::Text(input.into()));
     }
 }
 
@@ -106,7 +106,7 @@ fn classifies_grouped_numbers_with_thousands_display() {
     check(
         "1,000",
         None,
-        ClassifiedInput::Number {
+        &ClassifiedInput::Number {
             value: number(1_000.0),
             display: Some(display(0, NumberFormatKind::Plain, true)),
         },
@@ -114,7 +114,7 @@ fn classifies_grouped_numbers_with_thousands_display() {
     check(
         "1,234,567.5",
         None,
-        ClassifiedInput::Number {
+        &ClassifiedInput::Number {
             value: number(1_234_567.5),
             display: Some(display(1, NumberFormatKind::Plain, true)),
         },
@@ -136,7 +136,7 @@ fn classifies_currency_rows() {
         check(
             input,
             None,
-            ClassifiedInput::Number {
+            &ClassifiedInput::Number {
                 value: number(value),
                 display: Some(display(
                     decimals,
@@ -149,7 +149,7 @@ fn classifies_currency_rows() {
     check(
         "$1.12345678901",
         None,
-        ClassifiedInput::Number {
+        &ClassifiedInput::Number {
             value: number(1.123_456_789_01),
             display: Some(display(
                 10,
@@ -165,7 +165,7 @@ fn classifies_percent_rows() {
     check(
         "50%",
         None,
-        ClassifiedInput::Number {
+        &ClassifiedInput::Number {
             value: number(0.5),
             display: Some(display(0, NumberFormatKind::Percent, false)),
         },
@@ -173,7 +173,7 @@ fn classifies_percent_rows() {
     check(
         "１２．５％",
         None,
-        ClassifiedInput::Number {
+        &ClassifiedInput::Number {
             value: number(0.125),
             display: Some(display(1, NumberFormatKind::Percent, false)),
         },
@@ -185,7 +185,7 @@ fn classifies_dates_and_date_orders() {
     check(
         "2026-11-07",
         None,
-        ClassifiedInput::Date {
+        &ClassifiedInput::Date {
             value: date(2026, 11, 7),
             display: None,
         },
@@ -193,7 +193,7 @@ fn classifies_dates_and_date_orders() {
     check(
         "2026/11/7",
         None,
-        ClassifiedInput::Date {
+        &ClassifiedInput::Date {
             value: date(2026, 11, 7),
             display: Some(ClassifiedDateDisplay::YmdSlash),
         },
@@ -201,17 +201,21 @@ fn classifies_dates_and_date_orders() {
     check(
         "２０２６年１１月７日",
         None,
-        ClassifiedInput::Date {
+        &ClassifiedInput::Date {
             value: date(2026, 11, 7),
             display: Some(ClassifiedDateDisplay::YmdCjk),
         },
     );
-    check("2026/2/30", None, ClassifiedInput::Text("2026/2/30".into()));
-    check("1/2/2026", None, ClassifiedInput::Text("1/2/2026".into()));
+    check(
+        "2026/2/30",
+        None,
+        &ClassifiedInput::Text("2026/2/30".into()),
+    );
+    check("1/2/2026", None, &ClassifiedInput::Text("1/2/2026".into()));
     check(
         "1/2/2026",
         Some(DateOrder::MonthFirst),
-        ClassifiedInput::Date {
+        &ClassifiedInput::Date {
             value: date(2026, 1, 2),
             display: Some(ClassifiedDateDisplay::MonthFirst),
         },
@@ -219,7 +223,7 @@ fn classifies_dates_and_date_orders() {
     check(
         "1/2/2026",
         Some(DateOrder::DayFirst),
-        ClassifiedInput::Date {
+        &ClassifiedInput::Date {
             value: date(2026, 2, 1),
             display: Some(ClassifiedDateDisplay::DayFirst),
         },
