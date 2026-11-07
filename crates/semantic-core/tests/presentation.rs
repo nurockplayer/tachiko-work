@@ -336,6 +336,75 @@ fn a_number_format_failing_the_r3_check_is_refused() {
 }
 
 #[test]
+fn a_color_without_canonical_spelling_is_refused() {
+    let mut store = valid_store();
+    store.styles.insert(
+        "s1".into(),
+        CellStyle {
+            fill: Some("#aabbcc".into()),
+            ..full_style()
+        },
+    );
+    assert_eq!(
+        validate_presentation(&store, &document()),
+        Err(PresentationError::InvalidColor {
+            style: "s1".into(),
+            member: "fill",
+            value: "#aabbcc".into(),
+        })
+    );
+
+    let mut store = valid_store();
+    store.styles.insert(
+        "s1".into(),
+        CellStyle {
+            text_color: Some("112233".into()),
+            ..full_style()
+        },
+    );
+    assert_eq!(
+        validate_presentation(&store, &document()),
+        Err(PresentationError::InvalidColor {
+            style: "s1".into(),
+            member: "text_color",
+            value: "112233".into(),
+        })
+    );
+}
+
+#[test]
+fn duplicate_or_out_of_order_borders_are_refused() {
+    let mut store = valid_store();
+    store.styles.insert(
+        "s1".into(),
+        CellStyle {
+            borders: Some(vec![BorderSide::Top, BorderSide::Top]),
+            ..full_style()
+        },
+    );
+    assert_eq!(
+        validate_presentation(&store, &document()),
+        Err(PresentationError::DuplicateBorderSide {
+            style: "s1".into(),
+            side: BorderSide::Top,
+        })
+    );
+
+    let mut store = valid_store();
+    store.styles.insert(
+        "s1".into(),
+        CellStyle {
+            borders: Some(vec![BorderSide::Bottom, BorderSide::Top]),
+            ..full_style()
+        },
+    );
+    assert_eq!(
+        validate_presentation(&store, &document()),
+        Err(PresentationError::BorderSidesOutOfOrder { style: "s1".into() })
+    );
+}
+
+#[test]
 fn an_empty_rule_field_list_is_refused() {
     let mut store = valid_store();
     store

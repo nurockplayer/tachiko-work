@@ -128,12 +128,13 @@ fn an_empty_store_encodes_to_none() {
 
 #[test]
 fn style_ids_are_stable_and_false_differs_from_absent() {
-    assert_eq!(style_id(&full_style()), StyleId::from(STYLE_FULL));
+    assert_eq!(style_id(&full_style()).unwrap(), StyleId::from(STYLE_FULL));
     assert_eq!(
         style_id(&CellStyle {
             italic: Some(true),
             ..CellStyle::default()
-        }),
+        })
+        .unwrap(),
         StyleId::from(STYLE_ITALIC)
     );
     assert_eq!(
@@ -141,16 +142,50 @@ fn style_ids_are_stable_and_false_differs_from_absent() {
             bold: Some(false),
             borders: Some(Vec::new()),
             ..CellStyle::default()
-        }),
+        })
+        .unwrap(),
         StyleId::from(STYLE_FALSE)
     );
     assert_ne!(
         style_id(&CellStyle {
             bold: Some(false),
             ..CellStyle::default()
-        }),
-        style_id(&CellStyle::default())
+        })
+        .unwrap(),
+        style_id(&CellStyle::default()).unwrap()
     );
+}
+
+#[test]
+fn style_id_refuses_unspellable_styles_without_panicking() {
+    let lowercase = CellStyle {
+        fill: Some("#aabbcc".into()),
+        ..CellStyle::default()
+    };
+    assert!(matches!(
+        style_id(&lowercase),
+        Err(FormatError::InvalidRoProjectRepresentation { .. })
+    ));
+    let duplicate_borders = CellStyle {
+        borders: Some(vec![BorderSide::Top, BorderSide::Top]),
+        ..CellStyle::default()
+    };
+    assert!(matches!(
+        style_id(&duplicate_borders),
+        Err(FormatError::InvalidRoProjectRepresentation { .. })
+    ));
+}
+
+#[test]
+fn encoder_refuses_a_style_keyed_by_another_id() {
+    let store = PresentationStore {
+        styles: BTreeMap::from([(StyleId::from("s1"), full_style())]),
+        ..PresentationStore::default()
+    };
+    assert!(matches!(
+        encode_presentation(&store),
+        Err(FormatError::InvalidRoProjectRepresentation { .. })
+    ));
 }
 
 #[test]

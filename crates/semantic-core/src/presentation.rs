@@ -4,6 +4,7 @@
 //! and a change to it is never a semantic change.
 
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     fmt,
 };
@@ -204,6 +205,18 @@ pub enum PresentationError {
         style: StyleId,
         error: NumberFormatError,
     },
+    InvalidColor {
+        style: StyleId,
+        member: &'static str,
+        value: String,
+    },
+    DuplicateBorderSide {
+        style: StyleId,
+        side: BorderSide,
+    },
+    BorderSidesOutOfOrder {
+        style: StyleId,
+    },
     RuleConditionReference {
         rule: RuleId,
     },
@@ -279,6 +292,21 @@ impl fmt::Display for PresentationError {
                     "style '{style}' number_format is invalid: {error}"
                 )
             }
+            Self::InvalidColor {
+                style,
+                member,
+                value,
+            } => write!(
+                formatter,
+                "style '{style}' {member} '{value}' is not '#' and six uppercase hexadecimal digits"
+            ),
+            Self::DuplicateBorderSide { style, side } => {
+                write!(formatter, "style '{style}' lists border {side:?} twice")
+            }
+            Self::BorderSidesOutOfOrder { style } => write!(
+                formatter,
+                "style '{style}' borders are not in top, right, bottom, left order"
+            ),
             Self::RuleConditionReference { rule } => write!(
                 formatter,
                 "rule '{rule}' condition holds a record reference"
@@ -302,6 +330,57 @@ fn rule_rank_is_valid(rank: &str) -> bool {
         && rank.len() <= 64
         && rank.bytes().all(|byte| byte.is_ascii_alphanumeric())
         && !rank.ends_with('0')
+}
+
+const fn border_rank(side: BorderSide) -> u8 {
+    match side {
+        BorderSide::Top => 0,
+        BorderSide::Right => 1,
+        BorderSide::Bottom => 2,
+        BorderSide::Left => 3,
+    }
+}
+
+fn is_canonical_color(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 7
+        && bytes[0] == b'#'
+        && bytes[1..]
+            .iter()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'A'..=b'F'))
+}
+
+fn validate_style_spelling(style_id: &StyleId, style: &CellStyle) -> Result<(), PresentationError> {
+    for (member, color) in [("fill", &style.fill), ("text_color", &style.text_color)] {
+        let Some(value) = color else { continue };
+        if !is_canonical_color(value) {
+            return Err(PresentationError::InvalidColor {
+                style: style_id.clone(),
+                member,
+                value: value.clone(),
+            });
+        }
+    }
+    let Some(borders) = &style.borders else {
+        return Ok(());
+    };
+    for pair in borders.windows(2) {
+        match border_rank(pair[0]).cmp(&border_rank(pair[1])) {
+            Ordering::Less => {}
+            Ordering::Equal => {
+                return Err(PresentationError::DuplicateBorderSide {
+                    style: style_id.clone(),
+                    side: pair[0],
+                });
+            }
+            Ordering::Greater => {
+                return Err(PresentationError::BorderSidesOutOfOrder {
+                    style: style_id.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_column(document: &Document, column: &crate::ColumnRef) -> Result<(), PresentationError> {
@@ -386,8 +465,9 @@ fn validate_rule_condition(
 /// # Errors
 ///
 /// Returns a typed [`PresentationError`] for a dangling or unused reference, a
-/// form a rule condition may not use, an out-of-bounds store, or a title, rank
-/// or number format outside its declared grammar.
+/// form a rule condition may not use, an out-of-bounds store, a title, rank or
+/// number format outside its declared grammar, or a color or border list with
+/// no canonical spelling.
 #[allow(clippy::too_many_lines)] // One ordered refusal pass keeps the error precedence visible.
 pub fn validate_presentation(
     store: &PresentationStore,
@@ -434,6 +514,7 @@ pub fn validate_presentation(
     }
 
     for (style_id, style) in &store.styles {
+        validate_style_spelling(style_id, style)?;
         if let Some(format) = &style.number_format {
             format
                 .validate_for(&crate::FieldType::Number)

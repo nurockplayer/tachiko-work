@@ -26,22 +26,21 @@ const PRESENTATION_PATH: &str = "presentation.jsonl";
 /// The stable style ID: the first 32 lowercase hex digits of the SHA-256 of the
 /// `style` object's canonical compact JSON bytes.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics only if JSON encoding a style object into a `String` fails, which the
-/// serializer cannot do when writing strings into an owned `String`.
-#[must_use]
-pub fn style_id(style: &CellStyle) -> StyleId {
+/// Returns [`FormatError::InvalidRoProjectRepresentation`] when the style has no
+/// canonical spelling: a `fill` or `text_color` that is not `#` and six
+/// uppercase hexadecimal digits, or the same border side listed twice.
+pub fn style_id(style: &CellStyle) -> Result<StyleId, FormatError> {
     let mut object = String::new();
-    write_style_object(&mut object, style)
-        .expect("writing a style object into a String cannot fail");
+    write_style_object(&mut object, style)?;
     let digest = Sha256::digest(object.as_bytes());
     let mut id = String::with_capacity(32);
     for byte in digest.iter().take(16) {
         id.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
         id.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
     }
-    StyleId::from(id)
+    Ok(StyleId::from(id))
 }
 
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -51,14 +50,22 @@ const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 /// # Errors
 ///
 /// Returns [`FormatError::InvalidRoProjectRepresentation`] when the store
-/// cannot be written canonically, or [`FormatError::Json`] when JSON string
-/// encoding fails.
+/// cannot be written canonically, including a style whose map key is not the
+/// ID of its content, or [`FormatError::Json`] when JSON string encoding fails.
 pub fn encode_presentation(store: &PresentationStore) -> Result<Option<Vec<u8>>, FormatError> {
     if store.is_empty() {
         return Ok(None);
     }
     let mut output = String::new();
     for (id, style) in &store.styles {
+        let computed = style_id(style)?;
+        if computed.as_str() != id.as_str() {
+            return invalid_representation(format!(
+                "style '{}' is not keyed by its content ID '{}'",
+                id.as_str(),
+                computed.as_str()
+            ));
+        }
         write_style_record(&mut output, id, style)?;
         output.push('\n');
     }
@@ -133,7 +140,7 @@ pub fn decode_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatErro
                 require_id("style id", &dto.id)?;
                 ensure_increasing("style", previous_style.as_deref(), &dto.id)?;
                 let style = style_into_semantic(dto.style)?;
-                let computed = style_id(&style);
+                let computed = style_id(&style)?;
                 if computed.as_str() != dto.id {
                     return invalid_representation(format!(
                         "style '{}' does not match its content",
