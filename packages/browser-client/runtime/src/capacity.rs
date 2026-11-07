@@ -57,8 +57,7 @@ pub(crate) enum SessionProfile {
 /// Largest v3 save a working-size edit may leave behind. One mebibyte of the
 /// 64 MiB project-transfer limit stays free for `export_portable_ro`'s ZIP
 /// framing around the same file bodies.
-pub(crate) const MAX_WORKING_SAVED_BYTES: usize =
-    crate::MAX_PROJECT_TRANSFER_BYTES - 1024 * 1024;
+pub(crate) const MAX_WORKING_SAVED_BYTES: usize = crate::MAX_PROJECT_TRANSFER_BYTES - 1024 * 1024;
 
 /// Refuse a working-size document whose v3 save could pass the transfer limit.
 ///

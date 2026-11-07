@@ -2902,11 +2902,7 @@ fn real_saves(document: &Document, presentation: &PresentationStore) -> (usize, 
     (bundle.len(), portable.len())
 }
 
-fn assert_bound_covers(
-    name: &str,
-    document: &Document,
-    presentation: &PresentationStore,
-) -> usize {
+fn assert_bound_covers(name: &str, document: &Document, presentation: &PresentationStore) -> usize {
     let bound = bound_of(document, presentation);
     let (bundle, portable) = real_saves(document, presentation);
     let parts = super::save_size::saved_bytes_parts(document);
@@ -2917,7 +2913,10 @@ fn assert_bound_covers(
         .map(|file| (file.path(), file.bytes().len()))
         .collect::<Vec<_>>();
     eprintln!("PARTS|{name}|{parts:?}|files={files:?}");
-    assert!(bound >= bundle, "{name}: bound {bound} < project save {bundle}");
+    assert!(
+        bound >= bundle,
+        "{name}: bound {bound} < project save {bundle}"
+    );
     assert!(
         bound >= portable,
         "{name}: bound {bound} < portable save {portable}"
@@ -2976,17 +2975,42 @@ fn values_grid() -> Document {
             id: EntityId::from("t00000"),
             key: EntityKey::from("kt00000"),
             schema: SchemaId::from("refs"),
-            fields: BTreeMap::from([(
-                FieldId::from("name"),
-                Value::Text("target".to_owned()),
-            )]),
+            fields: BTreeMap::from([(FieldId::from("name"), Value::Text("target".to_owned()))]),
         },
     );
     let mut fields = BTreeMap::new();
-    add_field(&mut fields, "n", FieldType::Number, None, FieldConstraint::None, None);
-    add_field(&mut fields, "t", FieldType::Text, None, FieldConstraint::None, None);
-    add_field(&mut fields, "b", FieldType::Boolean, None, FieldConstraint::None, None);
-    add_field(&mut fields, "d", FieldType::Date, None, FieldConstraint::None, None);
+    add_field(
+        &mut fields,
+        "n",
+        FieldType::Number,
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    add_field(
+        &mut fields,
+        "t",
+        FieldType::Text,
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    add_field(
+        &mut fields,
+        "b",
+        FieldType::Boolean,
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    add_field(
+        &mut fields,
+        "d",
+        FieldType::Date,
+        None,
+        FieldConstraint::None,
+        None,
+    );
     add_field(
         &mut fields,
         "r",
@@ -3008,14 +3032,20 @@ fn values_grid() -> Document {
         },
     );
     let mut row = BTreeMap::new();
-    row.insert(FieldId::from("n"), Value::Number(Number::new(12.5).unwrap()));
+    row.insert(
+        FieldId::from("n"),
+        Value::Number(Number::new(12.5).unwrap()),
+    );
     row.insert(FieldId::from("t"), Value::Text("value".to_owned()));
     row.insert(FieldId::from("b"), Value::Boolean(true));
     row.insert(
         FieldId::from("d"),
         Value::Date(Date::new(2026, 11, 8).unwrap()),
     );
-    row.insert(FieldId::from("r"), Value::Reference(EntityId::from("t00000")));
+    row.insert(
+        FieldId::from("r"),
+        Value::Reference(EntityId::from("t00000")),
+    );
     for index in 0..3 {
         let id = EntityId::from(format!("r{index:05}"));
         document.entities.insert(
@@ -3024,7 +3054,11 @@ fn values_grid() -> Document {
                 id: id.clone(),
                 key: EntityKey::from(format!("k{index:05}")),
                 schema: SchemaId::from("grid"),
-                fields: if index == 0 { row.clone() } else { BTreeMap::new() },
+                fields: if index == 0 {
+                    row.clone()
+                } else {
+                    BTreeMap::new()
+                },
             },
         );
     }
@@ -3226,8 +3260,22 @@ fn formats_fixture() -> (Document, PresentationStore) {
         },
         None,
     );
-    add_field(&mut fields, "flag", FieldType::Boolean, None, FieldConstraint::None, None);
-    add_field(&mut fields, "day", FieldType::Date, None, FieldConstraint::None, None);
+    add_field(
+        &mut fields,
+        "flag",
+        FieldType::Boolean,
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    add_field(
+        &mut fields,
+        "day",
+        FieldType::Date,
+        None,
+        FieldConstraint::None,
+        None,
+    );
     let field_order = ["amount", "ratio", "label", "flag", "day"]
         .map(FieldId::from)
         .to_vec();
@@ -3242,8 +3290,22 @@ fn formats_fixture() -> (Document, PresentationStore) {
         },
     );
     let mut products = BTreeMap::new();
-    add_field(&mut products, "key", FieldType::Text, None, FieldConstraint::None, None);
-    add_field(&mut products, "category", FieldType::Text, None, FieldConstraint::None, None);
+    add_field(
+        &mut products,
+        "key",
+        FieldType::Text,
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    add_field(
+        &mut products,
+        "category",
+        FieldType::Text,
+        None,
+        FieldConstraint::None,
+        None,
+    );
     add_field(
         &mut products,
         "price",
@@ -3266,23 +3328,30 @@ fn formats_fixture() -> (Document, PresentationStore) {
             fields: products,
         },
     );
-    document
-        .entities
-        .insert(
-            EntityId::from("e00000"),
-            Entity {
-                id: EntityId::from("e00000"),
-                key: EntityKey::from("ke00000"),
-                schema: SchemaId::from("entries"),
-                fields: BTreeMap::from([
-                    (FieldId::from("amount"), Value::Number(Number::new(12.5).unwrap())),
-                    (FieldId::from("ratio"), Value::Number(Number::new(0.25).unwrap())),
-                    (FieldId::from("label"), Value::Text("a\"b".to_owned())),
-                    (FieldId::from("flag"), Value::Boolean(false)),
-                    (FieldId::from("day"), Value::Date(Date::new(2026, 11, 8).unwrap())),
-                ]),
-            },
-        );
+    document.entities.insert(
+        EntityId::from("e00000"),
+        Entity {
+            id: EntityId::from("e00000"),
+            key: EntityKey::from("ke00000"),
+            schema: SchemaId::from("entries"),
+            fields: BTreeMap::from([
+                (
+                    FieldId::from("amount"),
+                    Value::Number(Number::new(12.5).unwrap()),
+                ),
+                (
+                    FieldId::from("ratio"),
+                    Value::Number(Number::new(0.25).unwrap()),
+                ),
+                (FieldId::from("label"), Value::Text("a\"b".to_owned())),
+                (FieldId::from("flag"), Value::Boolean(false)),
+                (
+                    FieldId::from("day"),
+                    Value::Date(Date::new(2026, 11, 8).unwrap()),
+                ),
+            ]),
+        },
+    );
     let definition_id = KeyedGroupedSumDefinitionId::from("definition");
     document.keyed_grouped_sum_definitions.insert(
         definition_id.clone(),
@@ -3324,7 +3393,10 @@ fn formats_fixture() -> (Document, PresentationStore) {
             },
         )]),
         rules: BTreeMap::new(),
-        cells: BTreeMap::from([((EntityId::from("e00000"), FieldId::from("amount")), style_id)]),
+        cells: BTreeMap::from([(
+            (EntityId::from("e00000"), FieldId::from("amount")),
+            style_id,
+        )]),
     };
     (document, presentation)
 }
@@ -3447,7 +3519,11 @@ fn an_accepted_working_size_edit_can_always_be_saved() {
         super::capacity::MAX_WORKING_SAVED_BYTES,
         after_bound,
     );
-    assert!(serde_json::to_string(&error).unwrap().contains("\"saved_bytes\""));
+    assert!(
+        serde_json::to_string(&error)
+            .unwrap()
+            .contains("\"saved_bytes\"")
+    );
 }
 
 #[test]
@@ -3456,9 +3532,8 @@ fn an_over_limit_document_is_refused_at_working_size_only() {
     let after_bound = bound_of(&after, &empty_presentation());
     assert!(after_bound > super::capacity::MAX_WORKING_SAVED_BYTES);
 
-    let error = match DesignerRuntime::from_document_working_size(after.clone(), OCCURRENCE) {
-        Ok(_) => panic!("an over-limit document must not open at working size"),
-        Err(error) => error,
+    let Err(error) = DesignerRuntime::from_document_working_size(after.clone(), OCCURRENCE) else {
+        panic!("an over-limit document must not open at working size");
     };
     assert_capacity_refusal(
         &error,
@@ -3502,7 +3577,8 @@ fn an_ordinary_session_never_computes_the_saved_bound() {
     );
     assert_eq!(super::save_size::saved_bound_calls(), ordinary_baseline);
 
-    let mut working = DesignerRuntime::from_document_working_size(values_grid(), OCCURRENCE).unwrap();
+    let mut working =
+        DesignerRuntime::from_document_working_size(values_grid(), OCCURRENCE).unwrap();
     let working_baseline = super::save_size::saved_bound_calls();
     edited(
         &mut working,

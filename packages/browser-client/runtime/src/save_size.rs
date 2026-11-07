@@ -83,8 +83,7 @@ fn escaped_bytes(value: &str) -> usize {
     value
         .bytes()
         .map(|byte| match byte {
-            b'"' | b'\\' => 2,
-            0x08 | 0x09 | 0x0A | 0x0C | 0x0D => 2,
+            b'"' | b'\\' | 0x08 | 0x09 | 0x0A | 0x0C | 0x0D => 2,
             0x00..=0x1F => 6,
             _ => 1,
         })
