@@ -108,6 +108,18 @@ const { values, truncated } = await client.queryDistinctValues(
 );
 ```
 
+`findInView` walks the view for cells whose display text contains the query,
+case-insensitively and untrimmed, row by row and then through the shown columns;
+a blank query finds nothing. `from` is a `{row, field}` view position that need
+not match, and `next`/`previous` wrap. The reply gives the total match count and
+the found cell's entity, column, view row and zero-based ordinal.
+
+```ts
+const { total, found } = await client.findInView(
+  revision, "tasks", view, "acme", ["name", "notes"], undefined, "next",
+);
+```
+
 Columns can be reordered with `moveColumn`. `toIndex` is a zero-based position
 after the column is removed from its current place, clamped to the last column.
 The order is durable document state: it is saved, undone, diffed and exported,

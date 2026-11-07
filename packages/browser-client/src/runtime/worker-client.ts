@@ -37,6 +37,9 @@ import type {
   TableWindowProjection,
   LocatedInViewProjection,
   DistinctValuesProjection,
+  FindDirection,
+  FindInViewProjection,
+  FindPosition,
   ColumnTotalsProjection,
   GroupDimension,
   GroupKey,
@@ -433,6 +436,30 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async findInView(
+    expectedRevision: string,
+    collection: string,
+    view: TableView,
+    query: string,
+    fields: string[],
+    from: FindPosition | undefined,
+    direction: FindDirection,
+  ): Promise<FindInViewProjection> {
+    return expectResponse(
+      "found_in_view",
+      await this.#command({
+        type: "find_in_view",
+        expected_revision: expectedRevision,
+        collection,
+        view,
+        query,
+        fields,
+        ...(from === undefined ? {} : { from }),
+        direction,
+      }),
+    );
+  }
+
   async queryColumnTotals(
     expectedRevision: string,
     collection: string,
@@ -657,6 +684,10 @@ function expectResponse(
   type: "distinct_values",
   response: DesignerResponse,
 ): DistinctValuesProjection;
+function expectResponse(
+  type: "found_in_view",
+  response: DesignerResponse,
+): FindInViewProjection;
 function expectResponse(
   type: "column_totals",
   response: DesignerResponse,
