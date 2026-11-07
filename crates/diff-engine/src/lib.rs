@@ -340,43 +340,41 @@ pub fn diff_with_calculations(
         .cloned()
         .collect::<BTreeSet<_>>();
 
-    // Built once per calculation, and only when the first formula with a
-    // changed value is found: edits that reach no formula never pay for it.
-    let mut before_affected: Option<BTreeMap<FieldRef, BTreeSet<FieldRef>>> = None;
-    let mut after_affected: Option<BTreeMap<FieldRef, BTreeSet<FieldRef>>> = None;
+    let impacted = formula_fields
+        .into_iter()
+        .filter_map(|formula| {
+            let before_value = before_calculation.value(&formula)?;
+            let after_value = after_calculation.value(&formula)?;
+            (before_value != after_value).then_some((formula, before_value, after_value))
+        })
+        .collect::<Vec<_>>();
 
-    for formula in formula_fields {
-        let (Some(before_value), Some(after_value)) = (
-            before_calculation.value(&formula),
-            after_calculation.value(&formula),
-        ) else {
-            continue;
-        };
-        if before_value == after_value {
-            continue;
+    // Only the formulas with a changed value need causes, and an edit reaching
+    // none of them never pays for the walks.
+    if !impacted.is_empty() {
+        let targets = impacted
+            .iter()
+            .map(|(formula, _, _)| formula.clone())
+            .collect::<BTreeSet<_>>();
+        let before_reaching = before_calculation.reaching_fields(&changed_fields, &targets);
+        let after_reaching = after_calculation.reaching_fields(&changed_fields, &targets);
+        for (formula, before_value, after_value) in impacted {
+            let mut causes = BTreeSet::new();
+            if changed_fields.contains(&formula) {
+                causes.insert(formula.clone());
+            }
+            for reaching in [&before_reaching, &after_reaching] {
+                if let Some(fields) = reaching.get(&formula) {
+                    causes.extend(fields.iter().cloned());
+                }
+            }
+            changes.push(SemanticChange::FormulaImpact {
+                field: formula,
+                before: before_value,
+                after: after_value,
+                causes: causes.into_iter().collect(),
+            });
         }
-
-        let before_affected = before_affected
-            .get_or_insert_with(|| before_calculation.affected_by_each(&changed_fields));
-        let after_affected = after_affected
-            .get_or_insert_with(|| after_calculation.affected_by_each(&changed_fields));
-
-        let mut causes = BTreeSet::new();
-        if changed_fields.contains(&formula) {
-            causes.insert(formula.clone());
-        }
-        if let Some(reaching) = before_affected.get(&formula) {
-            causes.extend(reaching.iter().cloned());
-        }
-        if let Some(reaching) = after_affected.get(&formula) {
-            causes.extend(reaching.iter().cloned());
-        }
-        changes.push(SemanticChange::FormulaImpact {
-            field: formula,
-            before: before_value,
-            after: after_value,
-            causes: causes.into_iter().collect(),
-        });
     }
 
     Ok(SemanticDiff {

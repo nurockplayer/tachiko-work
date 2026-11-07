@@ -1560,35 +1560,39 @@ impl Calculation {
         affected.into_iter().collect()
     }
 
-    /// For each of `changed`, the formulas it reaches, as formula -> the
-    /// changed fields reaching it. One reverse index, one walk per changed
-    /// field.
+    /// For each of `targets`, the fields of `changed` that reach it. One reverse
+    /// index, one walk per changed field, and only target pairs are kept.
     ///
-    /// The formulas reachable from one changed field are exactly
-    /// [`Self::affected_by`]'s result for that field, including the changed
-    /// field itself when the graph loops back to it.
+    /// A changed field reaches exactly the formulas in [`Self::affected_by`]'s
+    /// result for that field, including itself when the graph loops back to it.
     #[must_use]
-    pub fn affected_by_each<'a>(
+    pub fn reaching_fields<'a>(
         &self,
         changed: impl IntoIterator<Item = &'a FieldRef>,
+        targets: &BTreeSet<FieldRef>,
     ) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
         let reverse_dependents = reverse_dependency_index(&self.dependencies);
-        let mut affected = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
+        let mut reaching = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
         for changed in changed {
-            let mut queue = VecDeque::from([changed.clone()]);
+            let mut queue = VecDeque::from([changed]);
             let mut reached = BTreeSet::new();
             while let Some(field) = queue.pop_front() {
-                for dependent in reverse_dependents.get(&field).into_iter().flatten() {
-                    if reached.insert(dependent.clone()) {
-                        queue.push_back(dependent.clone());
+                for dependent in reverse_dependents.get(field).into_iter().flatten() {
+                    if reached.insert(dependent) {
+                        queue.push_back(dependent);
                     }
                 }
             }
             for formula in reached {
-                affected.entry(formula).or_default().insert(changed.clone());
+                if targets.contains(formula) {
+                    reaching
+                        .entry(formula.clone())
+                        .or_default()
+                        .insert(changed.clone());
+                }
             }
         }
-        affected
+        reaching
     }
 }
 
