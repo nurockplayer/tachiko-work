@@ -11,6 +11,7 @@ pub use translate_a1::{
 
 mod capacity;
 use capacity::SessionProfile;
+mod save_size;
 pub use capacity::{
     CapacityExceeded, CapacityLimit, CapacityLimits, CapacityProjection, CapacityUsage,
     TableCapacityUsage,
@@ -2192,6 +2193,11 @@ pub struct DesignerRuntime {
     /// the session, so it never moves the revision. Each save prunes a copy
     /// against the snapshot's document.
     presentation: PresentationStore,
+    /// Encoded length of `presentation` when it was stored, added to the
+    /// working-size saved-size bound. Any future command that changes
+    /// presentation must go through [`DesignerRuntime::set_presentation`] so
+    /// this stays current.
+    presentation_saved_bytes: usize,
 }
 
 #[derive(Clone)]
@@ -3046,8 +3052,38 @@ impl DesignerRuntime {
             duplicate_serial: 0,
             opened_from_v3: false,
             presentation: PresentationStore::default(),
+            presentation_saved_bytes: 0,
         };
         Ok(runtime)
+    }
+
+    /// Replace the open-time presentation and record its encoded length for
+    /// the working-size saved-size bound.
+    fn set_presentation(
+        &mut self,
+        presentation: PresentationStore,
+    ) -> Result<(), DesignerError> {
+        self.presentation_saved_bytes = save_size::presentation_saved_bytes(&presentation)?;
+        self.presentation = presentation;
+        Ok(())
+    }
+
+    /// Refuse a working-size occurrence whose v3 save could pass the transfer
+    /// limit. Ordinary and text-capacity sessions keep their own limits.
+    fn ensure_working_saved_bytes(&self) -> Result<(), DesignerError> {
+        self.ensure_working_saved_bytes_for(self.session.document())
+    }
+
+    /// Check one candidate document against the same bound, adding the bytes
+    /// the stored presentation contributes to a save.
+    fn ensure_working_saved_bytes_for(&self, document: &Document) -> Result<(), DesignerError> {
+        match self.profile {
+            SessionProfile::WorkingSize => capacity::check_working_saved_bytes(
+                document,
+                self.presentation_saved_bytes,
+            ),
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => Ok(()),
+        }
     }
 
     /// Project the profile's opening reply: the bootstrap plus the first
@@ -5966,6 +6002,7 @@ impl DesignerRuntime {
             // own document bounds against the exact candidate.
             SessionProfile::WorkingSize => {
                 ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+                self.ensure_working_saved_bytes_for(&candidate)?;
             }
             SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
                 Self::from_document_profile_with_opened(
@@ -6049,6 +6086,7 @@ impl DesignerRuntime {
             // own document bounds against the exact candidate.
             SessionProfile::WorkingSize => {
                 ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+                self.ensure_working_saved_bytes_for(&candidate)?;
             }
             SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
                 Self::from_document_profile_with_opened(
@@ -6398,6 +6436,8 @@ impl DesignerRuntime {
             }
         }
         let capacity_usage = capacity::check_document_for(&candidate, self.profile)?;
+        // A working-size edit must be saveable before it publishes.
+        self.ensure_working_saved_bytes_for(&candidate)?;
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -8125,7 +8165,7 @@ fn admit_portable_ro(
     let document = decode_roproj_v3(tree)?;
     let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
-    candidate.presentation = presentation_from_tree(tree)?;
+    candidate.set_presentation(presentation_from_tree(tree)?)?;
     Ok((candidate, opened))
 }
 
@@ -8161,7 +8201,8 @@ fn admit_portable_ro_working_size(
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
     let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = true;
-    candidate.presentation = presentation_from_tree(tree)?;
+    candidate.set_presentation(presentation_from_tree(tree)?)?;
+    candidate.ensure_working_saved_bytes()?;
     Ok((candidate, opened))
 }
 
@@ -8214,7 +8255,7 @@ fn admit_project(
         admit_document(document, occurrence_id)?
     };
     candidate.opened_from_v3 = opened_from_v3;
-    candidate.presentation = presentation;
+    candidate.set_presentation(presentation)?;
     Ok((candidate, opened))
 }
 
@@ -8248,7 +8289,8 @@ fn admit_project_working_size(
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
     let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = opened_from_v3;
-    candidate.presentation = presentation;
+    candidate.set_presentation(presentation)?;
+    candidate.ensure_working_saved_bytes()?;
     Ok((candidate, opened))
 }
 
@@ -8303,7 +8345,7 @@ pub(crate) fn admit_imported_project(
         }
         let mut candidate = candidate;
         candidate.opened_from_v3 = true;
-        candidate.presentation = presentation;
+        candidate.set_presentation(presentation)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
         ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         return Ok((candidate, opened));
@@ -8322,7 +8364,7 @@ pub(crate) fn admit_imported_project(
     match ordinary {
         Ok((mut candidate, opened)) => {
             candidate.opened_from_v3 = false;
-            candidate.presentation = presentation;
+            candidate.set_presentation(presentation)?;
             Ok((candidate, opened))
         }
         Err(error)
@@ -9899,7 +9941,10 @@ fn ensure_document_profile(
 /// Working size keeps every per-item bound, drops the aggregate projection
 /// bounds, and adds one document-wide stored-text bound.
 fn ensure_working_document_profile(document: &Document) -> Result<(), DesignerError> {
-    ensure_document_strings(document, &mut ProfileBudget::working_size())
+    ensure_document_strings(document, &mut ProfileBudget::working_size())?;
+    // Presentation bytes, which are not part of `Document`, are added by the
+    // runtime's own check after the presentation is attached.
+    capacity::check_working_saved_bytes(document, 0)
 }
 
 fn ensure_document_strings(

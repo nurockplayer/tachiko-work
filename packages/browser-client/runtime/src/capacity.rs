@@ -54,6 +54,31 @@ pub(crate) enum SessionProfile {
     WorkingSize,
 }
 
+/// Largest v3 save a working-size edit may leave behind. One mebibyte of the
+/// 64 MiB project-transfer limit stays free for `export_portable_ro`'s ZIP
+/// framing around the same file bodies.
+pub(crate) const MAX_WORKING_SAVED_BYTES: usize =
+    crate::MAX_PROJECT_TRANSFER_BYTES - 1024 * 1024;
+
+/// Refuse a working-size document whose v3 save could pass the transfer limit.
+///
+/// The admission gate runs before anything publishes, so an edit that cannot
+/// be saved is refused instead of stranding the session at save time.
+pub(crate) fn check_working_saved_bytes(
+    document: &Document,
+    presentation_saved_bytes: usize,
+) -> Result<(), DesignerError> {
+    let attempted = crate::save_size::saved_bytes_upper_bound(document)
+        .saturating_add(presentation_saved_bytes);
+    check_limit(
+        CapacityLimit::SavedBytes,
+        MAX_WORKING_SAVED_BYTES,
+        attempted,
+        None,
+    )?;
+    Ok(())
+}
+
 /// Preserve the independently admitted Text/Number rectangle. Its content and
 /// encoding restrictions remain owned by the existing profile gates.
 pub(crate) const fn limits_for_profile(profile: SessionProfile) -> CapacityLimits {
@@ -80,6 +105,7 @@ pub enum CapacityLimit {
     FormulaAstNodes,
     DependencyEdges,
     ProjectionBytes,
+    SavedBytes,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Error, PartialEq, Serialize)]
