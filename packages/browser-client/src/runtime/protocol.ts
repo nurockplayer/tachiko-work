@@ -73,6 +73,8 @@ export type FieldProjection = {
   calculated: CalculationProjection | null;
   diagnostics: DiagnosticProjection[];
   editable_scalar: "number" | "text" | "boolean" | "date" | null;
+  /** Sheet's display text for a Number cell, present only when the window asked for it. */
+  display?: string;
 };
 
 /** One durable field constraint; absence of the projection means unconstrained. */
@@ -515,6 +517,8 @@ export type DesignerRequest =
       view: TableView;
       start: number;
       count: number;
+      /** Ask each Number cell to carry its display text. */
+      display?: boolean;
     }
   | {
       type: "locate_in_view";

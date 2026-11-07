@@ -1259,6 +1259,7 @@ fn independent_opened_projection(
                         formula: None,
                         calculated: None,
                         diagnostics: vec![],
+                        display: None,
                     }
                 })
                 .collect(),

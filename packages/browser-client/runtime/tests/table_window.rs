@@ -345,6 +345,7 @@ fn window(
         view,
         start,
         count,
+        display: false,
     })? {
         DesignerResponse::TableWindow(window) => Ok(window),
         other => panic!("expected a table window, got {other:?}"),
@@ -828,6 +829,7 @@ fn view_validation_fails_with_typed_errors() {
         view: TableView::default(),
         start: 0,
         count: 1,
+        display: false,
     });
     assert!(matches!(stale_view, Err(DesignerError::StaleQuery { .. })));
 }
