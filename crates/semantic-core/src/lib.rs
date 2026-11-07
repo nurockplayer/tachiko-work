@@ -7,6 +7,7 @@ mod display_name;
 pub mod instrumentation;
 mod keyed_grouped_sum;
 mod model;
+mod presentation;
 mod validation;
 
 pub use address::{AddressIndex, AddressIndexError};
@@ -32,6 +33,11 @@ pub use model::{
     FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     FormulaExpressionType, InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES,
     Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey, Value,
+};
+pub use presentation::{
+    BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate,
+    MAX_RULES_PER_TABLE, MAX_STYLES, PresentationError, PresentationStore, RuleId, StyleId,
+    TablePresentation, validate_presentation,
 };
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;
