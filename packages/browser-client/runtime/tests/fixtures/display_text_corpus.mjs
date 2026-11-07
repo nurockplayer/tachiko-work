@@ -78,6 +78,17 @@ const currency = (code, decimals, thousands_separator) => ({
   thousands_separator,
 });
 
+/** mulberry32: a deterministic 32-bit PRNG, so the random cases are stable. */
+function seededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let value = Math.imul(state ^ (state >>> 15), 1 | state);
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** `String(value)` plus a spelling that keeps the negative zero's sign. */
 function spelling(value) {
   return Object.is(value, -0) ? "-0" : String(value);
@@ -132,6 +143,23 @@ for (const code of [...CURRENCY_SYMBOLS, NO_SYMBOL_CODE]) {
 for (const code of ["JPY", "TWD", "USD", NO_SYMBOL_CODE]) {
   add(1234.5, currency(code, 0, true));
   add(-1234.5, currency(code, 0, true));
+}
+
+// 200 doubles from a fixed seed, half in a practical range and half across
+// the whole exponent range, each without a format and with 2-decimal USD and
+// percent formatting. The seed makes the corpus reproducible.
+const random = seededRandom(0x0686_0001);
+for (let index = 0; index < 200; index += 1) {
+  const exponent =
+    index % 2 === 1
+      ? Math.floor(random() * 601) - 300
+      : Math.floor(random() * 25) - 12;
+  const mantissa = 1 + random() * 9;
+  const sign = random() < 0.5 ? -1 : 1;
+  const value = sign * mantissa * 10 ** exponent;
+  add(value, null);
+  add(value, currency("USD", 2, true));
+  add(value, percent(2, true));
 }
 
 const target = fileURLToPath(new URL("./display_text_corpus.json", import.meta.url));
