@@ -9,6 +9,14 @@ remain outside this implementation slice.
 
 ## Canonical tree
 
+### Pre-1.0 revision window — ADR-0046
+
+[ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) lets a
+closed list of constructs enter v3 in place until #579 freezes it. A new tree
+member is present only when it has content, so a document using none of them
+keeps the exact nineteen-file tree. None is part of this layout until its own
+Accepted ADR amends this text.
+
 ### Native display-name amendment — ADR-0043
 
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)
