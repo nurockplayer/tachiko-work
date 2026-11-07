@@ -2989,6 +2989,19 @@ impl DesignerRuntime {
     ///
     /// Returns a revision or bounded-window failure.
     pub(crate) fn opened_window(&mut self) -> Result<OpenedWindowProjection, DesignerError> {
+        let mut count = OPENED_WINDOW_ROWS;
+        loop {
+            match self.opened_window_of(count) {
+                // A document this profile admits can hold more text than one
+                // reply, so the first window comes back shorter rather than
+                // leaving the document unable to open.
+                Err(DesignerError::ProjectionTooLarge { .. }) if count > 1 => count /= 2,
+                result => return result,
+            }
+        }
+    }
+
+    fn opened_window_of(&mut self, count: usize) -> Result<OpenedWindowProjection, DesignerError> {
         let bootstrap = self.bootstrap_projection();
         let revision = self.current_revision().to_owned();
         let window = self.query_table_window(
@@ -2996,7 +3009,7 @@ impl DesignerRuntime {
             &bootstrap.default_collection,
             &TableView::default(),
             0,
-            OPENED_WINDOW_ROWS,
+            count,
             true,
         )?;
         let opened = OpenedWindowProjection {
@@ -3675,6 +3688,12 @@ impl DesignerRuntime {
         } else {
             encode_project_bundle_v1(&encode_v1_tree(snapshot.document())?)?
         };
+        match self.profile {
+            SessionProfile::WorkingSize => {
+                admit_project_working_size(&bytes, PREFLIGHT_OCCURRENCE)?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {}
+        }
         Ok(CanonicalTreeExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,

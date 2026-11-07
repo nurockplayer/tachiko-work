@@ -699,3 +699,61 @@ fn saved_projects_reopen_at_working_size_with_the_same_window() {
         &open_portable_ro(&mut resident, &portable.bytes, OCCURRENCE).unwrap_err(),
     );
 }
+
+/// A document can hold more text than one reply, so its first window is short
+/// rather than leaving the document unable to open or save.
+#[test]
+fn a_first_window_over_the_reply_budget_comes_back_shorter() {
+    let mut document = text_grid(128, 5);
+    for row in 0..100 {
+        for column in 0..5 {
+            fill_text(&mut document, row, column, 48 * 1024);
+        }
+    }
+    let mut resident: Option<DesignerRuntime> = None;
+    let opened =
+        open_project_working_size(&mut resident, &project_bundle(&document), OCCURRENCE).unwrap();
+    assert!(
+        (1..100).contains(&opened.window.rows.len()),
+        "{} rows",
+        opened.window.rows.len()
+    );
+    assert_eq!(opened.window.total_rows, 128);
+
+    let runtime = resident.unwrap();
+    let current = revision(&runtime);
+    for bytes in [
+        runtime.export_project_v3(&current).unwrap().bytes,
+        runtime.export_canonical_tree(&current).unwrap().bytes,
+    ] {
+        let mut reopened: Option<DesignerRuntime> = None;
+        let again = open_project_working_size(&mut reopened, &bytes, OCCURRENCE).unwrap();
+        assert_eq!(again.window, opened.window);
+    }
+}
+
+/// The largest row this profile admits still fits one reply: 32 cells of the
+/// largest text, each byte escaped six times over. So a first window of one row
+/// can always open, and every writer's reopen check passes.
+#[test]
+fn a_row_of_the_largest_cells_opens_and_saves() {
+    let mut document = text_grid(1, 32);
+    let text = "\u{1}".repeat(STORED_TEXT_ITEM_MAX);
+    for column in 0..32 {
+        document
+            .entities
+            .get_mut(&EntityId::from("r00000"))
+            .unwrap()
+            .fields
+            .insert(
+                FieldId::from(format!("c{column}")),
+                Value::Text(text.clone()),
+            );
+    }
+    let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    assert_eq!(runtime.opened_window().unwrap().window.rows.len(), 1);
+    let current = revision(&runtime);
+    runtime.export_project_v3(&current).unwrap();
+    runtime.export_canonical_tree(&current).unwrap();
+    runtime.export_portable_ro(&current).unwrap();
+}
