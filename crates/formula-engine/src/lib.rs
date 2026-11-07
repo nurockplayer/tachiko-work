@@ -2091,7 +2091,7 @@ fn pregraph_failures(
     // Phase 1c: capture every directly discovered missing/stale/type target.
     // A column total re-checks the same cells for every formula that reads the
     // column, so resolve one column's cell failures once for the whole phase.
-    let mut column_targets: BTreeMap<ColumnRef, Vec<(FieldRef, Option<ReferenceFailure>)>> =
+    let mut column_targets: BTreeMap<ColumnRef, Vec<(FieldRef, ReferenceFailure)>> =
         BTreeMap::new();
     for (field, value) in nodes {
         if failures.contains_key(field) {
@@ -2126,13 +2126,17 @@ fn pregraph_failures(
                 if let Expression::ColumnTotal(column) = node {
                     let targets = column_targets.entry(column.clone()).or_insert_with(|| {
                         column_cells(document, column)
-                            .map(|cell| {
-                                let failure = reference_failure(document, &cell, true);
-                                (cell, failure)
+                            .filter_map(|cell| {
+                                let failure = reference_failure(document, &cell, true)?;
+                                Some((cell, failure))
                             })
                             .collect::<Vec<_>>()
                     });
-                    checks.extend(targets.iter().cloned());
+                    checks.extend(
+                        targets
+                            .iter()
+                            .map(|(cell, failure)| (cell.clone(), Some(*failure))),
+                    );
                 }
                 pending.extend(node.children());
             }

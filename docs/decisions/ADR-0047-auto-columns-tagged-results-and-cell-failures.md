@@ -72,13 +72,18 @@ matches decides:
 | `M/D/YYYY`, or `D/M/YYYY`, by the host's date order | Date, when the host gives an order and the date is valid |
 | Anything else | Text, exactly as typed |
 
-So `00123` and a digit run over 15 significant digits stay Text, because a Number
-couldn't give the spelling or the digits back, and `1/2/2026` stays Text without a
+So `00123`, a digit run over 15 significant digits and a value outside binary64
+such as `1e309` stay Text, because a Number couldn't give the spelling or the digits
+back, and `1/2/2026` stays Text without a
 date order. The host's order comes from the OS region and is visible in settings.
 The function reads no clock and no locale: it depends only on its arguments.
 
 The classifier runs at authoring and its output is an ordinary stored value, so
 widening this table later changes no existing document.
+
+A display the table implies lands in the presentation ADR's per-cell display record,
+which is what lets `$1,234.50` keep its currency next to a plain `1234.50` through a
+save.
 
 ### 3. Three layers, kept apart
 
@@ -93,8 +98,9 @@ widening this table later changes no existing document.
 
 A formula's result is never blank: `=A1` with A1 blank is the Number 0, as in Excel.
 
-Failure codes are closed: `division_by_zero`, `value` and `number`, shown as
-`#DIV/0!`, `#VALUE!` and `#NUM!`. A dependent formula carries the first failure
+Failure codes are closed: `division_by_zero`, `value`, `number` and, from
+[ADR-0048](ADR-0048-stored-row-order-and-positional-ranges.md), `reference`, shown
+as `#DIV/0!`, `#VALUE!`, `#NUM!` and `#REF!`. A dependent formula carries the first failure
 found evaluating left to right, with its code. `explainField` names the cell it
 came from.
 
