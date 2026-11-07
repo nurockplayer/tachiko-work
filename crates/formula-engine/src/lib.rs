@@ -72,11 +72,29 @@ pub fn bind_expression(
     owner: &FieldRef,
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
-    validate_unbound_expression_structure(expression)?;
     let index = AddressIndex::build(document).map_err(|source| FormulaBindError::Index {
         source: Box::new(source),
     })?;
-    let bound = bind_node(document, &index, owner, expression)?;
+    bind_expression_with_index(document, &index, owner, expression)
+}
+
+/// Bind a formula through an [`AddressIndex`] the caller built once.
+///
+/// Returns the same value as [`bind_expression`]; callers that bind every
+/// formula of one document reuse a single index instead of rebuilding it.
+///
+/// # Errors
+///
+/// Returns an error when a reference does not resolve to a valid target or
+/// the bound expression is not a Number.
+pub fn bind_expression_with_index(
+    document: &Document,
+    index: &AddressIndex,
+    owner: &FieldRef,
+    expression: &UnboundExpression,
+) -> Result<Expression, FormulaBindError> {
+    validate_unbound_expression_structure(expression)?;
+    let bound = bind_node(document, index, owner, expression)?;
     if bound.expression_type() != Some(FormulaExpressionType::Number) {
         return Err(FormulaBindError::TypeMismatch {
             message:

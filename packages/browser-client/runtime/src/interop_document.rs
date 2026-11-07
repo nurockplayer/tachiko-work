@@ -7,8 +7,8 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use tachiko_formula_engine::{
-    CanonicalAuthoringProjectionError, ExpressionComplexityError, bind_expression,
-    parse_expression, project_expression, validate_expression_structure,
+    CanonicalAuthoringProjectionError, ExpressionComplexityError, bind_expression_with_index,
+    parse_expression, project_expression_with_index, validate_expression_structure,
 };
 
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
@@ -113,8 +113,8 @@ use tachiko_workspace_engine::patch_lifecycle::{
     ProposalRequest, SemanticPatchBody, SemanticRevision,
 };
 use tachiko_workspace_engine::{
-    ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
-    Date, Document, EntityId, FieldId, FieldRef, FieldType, Number, Value,
+    AddressIndex, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
+    ConditionalAggregate, Date, Document, EntityId, FieldId, FieldRef, FieldType, Number, Value,
 };
 
 impl DesignerRuntime {
@@ -873,6 +873,9 @@ fn import_workbook_candidate(
         pending.insert(target, (source, references, (sheet_index, row, column)));
     }
     let export_maps = export_a1_maps(&document, &metadata);
+    // Binding only replaces field values, so one index serves every formula.
+    let index = AddressIndex::build(&document)
+        .map_err(|error| tracker_error(&format!("workbook addresses do not resolve: {error}")))?;
     for next in import_formula_order(&pending)? {
         let (source, _, (sheet_index, row, column)) = pending
             .get(&next)
@@ -886,6 +889,7 @@ fn import_workbook_candidate(
         );
         bind_import_formula(
             &mut document,
+            &index,
             &next,
             source,
             &sheet.rows[*row][*column],
@@ -1468,6 +1472,7 @@ fn import_formula_order(
 // Bind and guard without publishing an unguarded intermediate calculation.
 fn bind_import_formula(
     document: &mut Document,
+    index: &AddressIndex,
     target: &FieldRef,
     source: &str,
     cell: &SourceCell,
@@ -1485,12 +1490,13 @@ fn bind_import_formula(
             source: error,
         }
     })?;
-    let expression = bind_expression(document, target, &unbound).map_err(|error| {
-        tachiko_workspace_engine::WorkspaceError::FormulaBinding {
-            field: target.clone(),
-            source: Box::new(error),
-        }
-    })?;
+    let expression =
+        bind_expression_with_index(document, index, target, &unbound).map_err(|error| {
+            tachiko_workspace_engine::WorkspaceError::FormulaBinding {
+                field: target.clone(),
+                source: Box::new(error),
+            }
+        })?;
     // Guarding can outgrow any engine bound (nodes, depth or canonical text);
     // each keeps Excel's cached value rather than failing the whole import.
     // The export round trip in `finish_import` writes the same formula as A1
@@ -1498,7 +1504,8 @@ fn bind_import_formula(
     // counts nodes (such as ROUND digits) the bound tree does not, so the
     // parser itself decides.
     let projected = match excel_extremum(expression, target, document) {
-        Ok(expression) => match project_expression(document, target, &expression) {
+        Ok(expression) => match project_expression_with_index(document, index, target, &expression)
+        {
             Ok(source)
                 if parse_expression(&source).is_err()
                     || export_expression(&expression, target, &export_maps.0, &export_maps.1)
@@ -1526,7 +1533,7 @@ fn bind_import_formula(
             source: error,
         }
     })?;
-    let bound = bind_expression(document, target, &unbound).map_err(|error| {
+    let bound = bind_expression_with_index(document, index, target, &unbound).map_err(|error| {
         tachiko_workspace_engine::WorkspaceError::FormulaBinding {
             field: target.clone(),
             source: Box::new(error),
