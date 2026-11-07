@@ -18,6 +18,8 @@ use super::conditional_walks;
 enum Walk {
     /// The first criterion named the candidate rows.
     Candidates,
+    /// The first criterion named no candidate row at all.
+    NoCandidates,
     /// The first criterion had no keys, or its column holds a cell that may
     /// fail, so every row was read.
     Full,
@@ -326,6 +328,10 @@ fn same_as_the_full_walk(document: &Document, walk: Walk) -> CalculationOutcome 
     match walk {
         Walk::Candidates => {
             assert!(rows > 0, "the candidate walk must read rows");
+            assert!(candidate_walks > 0, "the candidate walk must run");
+        }
+        Walk::NoCandidates => {
+            assert_eq!(rows, 0, "an empty candidate list reads no row");
             assert!(candidate_walks > 0, "the candidate walk must run");
         }
         Walk::Full => {
@@ -649,7 +655,7 @@ fn every_aggregate_matches_the_full_walk() {
                 vec![criterion(column("tag"), literal(99.0))],
             ),
         ),
-        Walk::Candidates,
+        Walk::NoCandidates,
     );
     let CalculationOutcome::Failed(failures) = empty else {
         panic!("an empty average must not calculate");
@@ -907,14 +913,14 @@ fn a_retained_edit_matches_the_full_walk() {
     let (mut retained, _) = RetainedCalculationState::rebuild(&document);
 
     set(&mut document, "summary", "criterion_text", text("drink"));
-    retained.update(
+    let _ = retained.update(
         &document,
         &BTreeSet::from([FieldRef::new("summary", "criterion_text")]),
     );
     assert_eq!(retained.outcome(), forced_calculation(&document));
 
     set(&mut document, "a", "amount", number(4.0));
-    retained.update(&document, &BTreeSet::from([FieldRef::new("a", "amount")]));
+    let _ = retained.update(&document, &BTreeSet::from([FieldRef::new("a", "amount")]));
     assert_eq!(retained.outcome(), forced_calculation(&document));
 }
 
