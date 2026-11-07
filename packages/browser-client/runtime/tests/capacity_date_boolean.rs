@@ -91,6 +91,7 @@ fn table(runtime: &mut DesignerRuntime, collection: &str) -> TableProjection {
                 view: TableView::default(),
                 start,
                 count: 128,
+                display: false,
             })
             .unwrap()
         else {

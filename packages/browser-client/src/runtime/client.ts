@@ -84,6 +84,7 @@ export interface DesignerClient {
     view: TableView,
     start: number,
     count: number,
+    options?: { display?: boolean },
   ): Promise<TableWindowProjection>;
   /** The entity's zero-based position in that same view, or `filtered_out`. */
   locateInView(

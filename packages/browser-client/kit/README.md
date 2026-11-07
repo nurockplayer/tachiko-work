@@ -67,6 +67,23 @@ uppercase ISO-4217 letters), or `{ type: "percent" }`. `decimals` is an integer
 from 0 through 10. A column projection includes `number_format` only when a
 format is stored.
 
+A bounded table window can carry the text the grid shows in Number cells, so a
+client renders Work's string instead of formatting again:
+
+```ts
+const window = await client.queryTableWindow(revision, collection, view, 0, 256, {
+  display: true,
+});
+window.rows[0]?.fields[0]?.display; // "1,234.50", or undefined for a non-Number cell
+```
+
+`field.display` is present on stored and calculated Number cells only, formatted
+through the column's `number_format` with en-US grouping, percent and currency
+symbols, or at most 15 significant digits when the column has no format. Text,
+Date, Yes/No and Reference cells carry none, and the text counts against the
+window's reply cap. The option defaults to off, so every other window and
+`queryTable` reply is unchanged.
+
 Columns can be reordered with `moveColumn`. `toIndex` is a zero-based position
 after the column is removed from its current place, clamped to the last column.
 The order is durable document state: it is saved, undone, diffed and exported,

@@ -485,6 +485,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                             calculated: None,
                             diagnostics: Vec::new(),
                             editable_scalar: Some(ScalarKind::Text),
+                            display: None,
                         }
                     })
                     .collect(),

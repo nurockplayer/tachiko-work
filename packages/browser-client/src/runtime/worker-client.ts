@@ -378,6 +378,7 @@ export class WorkerDesignerClient implements DesignerClient {
     view: TableView,
     start: number,
     count: number,
+    options?: { display?: boolean },
   ): Promise<TableWindowProjection> {
     return expectResponse(
       "table_window",
@@ -388,6 +389,7 @@ export class WorkerDesignerClient implements DesignerClient {
         view,
         start,
         count,
+        ...(options?.display === undefined ? {} : { display: options.display }),
       }),
     );
   }

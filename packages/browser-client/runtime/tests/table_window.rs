@@ -17,7 +17,8 @@ use tachiko_designer_runtime::{
 };
 use tachiko_workspace_engine::{
     Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition,
-    FieldId, FieldKey, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    FieldId, FieldKey, FieldType, Number, NumberFormat, NumberFormatKind, Schema, SchemaId,
+    SchemaKey, Value,
 };
 
 const SMALL: &str = "00000000-0000-4000-8000-000000000b01";
@@ -338,6 +339,16 @@ fn window(
     start: usize,
     count: usize,
 ) -> Result<TableWindowProjection, DesignerError> {
+    window_with_display(runtime, view, start, count, false)
+}
+
+fn window_with_display(
+    runtime: &mut DesignerRuntime,
+    view: TableView,
+    start: usize,
+    count: usize,
+    display: bool,
+) -> Result<TableWindowProjection, DesignerError> {
     let expected_revision = runtime.observe_occurrence().revision;
     match runtime.handle(DesignerRequest::QueryTableWindow {
         expected_revision,
@@ -345,6 +356,7 @@ fn window(
         view,
         start,
         count,
+        display,
     })? {
         DesignerResponse::TableWindow(window) => Ok(window),
         other => panic!("expected a table window, got {other:?}"),
@@ -828,6 +840,7 @@ fn view_validation_fails_with_typed_errors() {
         view: TableView::default(),
         start: 0,
         count: 1,
+        display: false,
     });
     assert!(matches!(stale_view, Err(DesignerError::StaleQuery { .. })));
 }
@@ -1518,5 +1531,97 @@ fn column_totals_accept_every_row_of_a_large_collection() {
     assert!(
         totals.column_totals.is_empty(),
         "a Text-only table has no totals"
+    );
+}
+
+fn set_number_format(runtime: &mut DesignerRuntime, field: &str, number_format: NumberFormat) {
+    let expected_revision = runtime.observe_occurrence().revision;
+    let DesignerResponse::Published(_) = runtime
+        .handle(DesignerRequest::SetColumnNumberFormat {
+            expected_revision,
+            collection: "rows".to_owned(),
+            field: field.to_owned(),
+            number_format: Some(number_format),
+        })
+        .expect("the number format publishes")
+    else {
+        panic!("expected a publication");
+    };
+}
+
+fn display_of<'a>(window: &'a TableWindowProjection, entity: &str, field: &str) -> Option<&'a str> {
+    window
+        .rows
+        .iter()
+        .find(|row| row.id == entity)?
+        .fields
+        .iter()
+        .find(|candidate| candidate.target.field == field)?
+        .display
+        .as_deref()
+}
+
+#[test]
+fn display_text_covers_stored_and_calculated_numbers_only() {
+    let mut runtime = small_runtime();
+    set_number_format(
+        &mut runtime,
+        "f03_amount",
+        NumberFormat {
+            decimals: 2,
+            kind: NumberFormatKind::Percent,
+            thousands_separator: true,
+        },
+    );
+    let window = window_with_display(&mut runtime, TableView::default(), 0, 256, true)
+        .expect("the window is queryable");
+    assert_eq!(display_of(&window, "e01", "f03_amount"), Some("1,000.00%"));
+    assert_eq!(display_of(&window, "e03", "f03_amount"), Some("-200.00%"));
+    assert_eq!(display_of(&window, "e11", "f03_amount"), Some("0.00%"));
+    // A formula column carries its calculated Number without a stored value.
+    assert_eq!(display_of(&window, "e01", "f06_double"), Some("20"));
+    assert_eq!(display_of(&window, "e03", "f06_double"), Some("-4"));
+    // Text, Date, Yes/No and blank cells carry no display text.
+    assert_eq!(display_of(&window, "e01", "f01_name"), None);
+    assert_eq!(display_of(&window, "e01", "f04_due"), None);
+    assert_eq!(display_of(&window, "e01", "f05_done"), None);
+    assert_eq!(display_of(&window, "e04", "f03_amount"), None);
+    let blank = window
+        .rows
+        .iter()
+        .find(|row| row.id == "e04")
+        .expect("e04 is in the window");
+    assert!(blank.blank_fields.contains(&"f03_amount".to_owned()));
+}
+
+#[test]
+fn replies_without_display_carry_no_display_key() {
+    let mut runtime = small_runtime();
+    let DesignerResponse::Table(table) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: "rows".to_owned(),
+        })
+        .expect("the small table is below the compatibility cap")
+    else {
+        panic!("expected a complete table");
+    };
+    let plain =
+        window(&mut runtime, TableView::default(), 0, 256).expect("the window is queryable");
+    let table_rows = serde_json::to_string(&table.rows).expect("rows encode");
+    let window_rows = serde_json::to_string(&plain.rows).expect("rows encode");
+    assert_eq!(
+        window_rows, table_rows,
+        "a window without the option encodes exactly as queryTable"
+    );
+    assert!(!table_rows.contains("\"display\""));
+    assert!(
+        !serde_json::to_string(&table)
+            .expect("the table encodes")
+            .contains("\"display\"")
+    );
+    assert!(
+        !serde_json::to_string(&plain)
+            .expect("the window encodes")
+            .contains("\"display\"")
     );
 }

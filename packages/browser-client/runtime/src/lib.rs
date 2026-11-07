@@ -22,6 +22,7 @@ mod capacity_tests;
 mod constraints_tests;
 #[cfg(test)]
 mod display_names_tests;
+mod display_text;
 #[cfg(test)]
 mod field_order_tests;
 #[cfg(test)]
@@ -309,7 +310,8 @@ pub enum DesignerRequest {
     ///
     /// The view is a stateless request parameter: it is never stored in the
     /// document and creates no history. `count` is `0..=256`; `0` returns the
-    /// totals and no rows.
+    /// totals and no rows. `display` asks each Number cell to carry its display
+    /// text; the default reply is unchanged.
     QueryTableWindow {
         expected_revision: String,
         collection: String,
@@ -317,6 +319,8 @@ pub enum DesignerRequest {
         view: TableView,
         start: usize,
         count: usize,
+        #[serde(default)]
+        display: bool,
     },
     /// The zero-based position of one entity inside the same view order a
     /// window query would return, without projecting any row.
@@ -1011,6 +1015,10 @@ pub struct FieldProjection {
     pub calculated: Option<CalculationProjection>,
     pub diagnostics: Vec<DiagnosticProjection>,
     pub editable_scalar: Option<ScalarKind>,
+    /// Sheet's display text for a Number cell. A window sets it only when the
+    /// request asked for display text; every other reply omits the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -2820,12 +2828,14 @@ impl DesignerRuntime {
                 view,
                 start,
                 count,
+                display,
             } => Ok(DesignerResponse::TableWindow(self.query_table_window(
                 &expected_revision,
                 &collection,
                 &view,
                 start,
                 count,
+                display,
             )?)),
             DesignerRequest::LocateInView {
                 expected_revision,
@@ -3425,6 +3435,7 @@ impl DesignerRuntime {
         view: &TableView,
         start: usize,
         count: usize,
+        display: bool,
     ) -> Result<TableWindowProjection, DesignerError> {
         if count > MAX_TABLE_WINDOW_ROWS {
             return Err(DesignerError::InvalidView {
@@ -3460,7 +3471,7 @@ impl DesignerRuntime {
                 .map_err(|error| view_encoding_failure("column_totals", &error))?
                 .len(),
         );
-        let rows = self.build_window_rows(spec, &entities, &mut used)?;
+        let rows = self.build_window_rows(spec, &entities, &mut used, display)?;
         Ok(TableWindowProjection {
             revision,
             tracker_profile: is_tracker_spec(spec).then_some(true),
@@ -3843,6 +3854,7 @@ impl DesignerRuntime {
         spec: &CollectionSpec,
         entities_in_order: &[EntityId],
         used: &mut usize,
+        display: bool,
     ) -> Result<Vec<RowProjection>, DesignerError> {
         let entities = self.session.query_entities(entities_in_order)?;
         let mut row_of = entities
@@ -3859,7 +3871,12 @@ impl DesignerRuntime {
                     collection: spec.summary.id.clone(),
                     entity: id.to_string(),
                 })?;
-            let row = self.build_row(spec, entity, &mut targets)?;
+            let mut row = self.build_row(spec, entity, &mut targets)?;
+            if display {
+                // Set the text before the row's bytes are counted, so an
+                // oversized reply still refuses.
+                attach_display_text(spec, &mut row);
+            }
             let row_bytes = serde_json::to_vec(&row)
                 .map_err(|error| view_encoding_failure("row", &error))?
                 .len()
@@ -3905,6 +3922,7 @@ impl DesignerRuntime {
                 .iter()
                 .map(diagnostic_projection)
                 .collect(),
+            display: None,
         }
     }
 
@@ -6778,6 +6796,24 @@ fn group_key(bucket: GroupBucket, stored: Option<&StoredValueProjection>) -> Gro
     }
 }
 
+/// Attach Sheet's display text to every Number cell of one window row. Text,
+/// Date, Yes/No and Reference cells carry none, because their own value is
+/// already the text and repeating it would double the reply bytes.
+fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
+    for field in &mut row.fields {
+        let Some(column) = spec
+            .columns
+            .iter()
+            .find(|column| column.id.as_str() == field.target.field)
+        else {
+            continue;
+        };
+        field.display =
+            display_text::displayed_number(field.stored.as_ref(), field.calculated.as_ref())
+                .map(|value| display_text::format_number(value, column.number_format.as_ref()));
+    }
+}
+
 fn blank_field_ids(
     entity: &tachiko_workspace_engine::EntityInspection,
     spec: &CollectionSpec,
@@ -6817,6 +6853,7 @@ fn blank_field_projection(
         } else {
             None
         },
+        display: None,
     }
 }
 
@@ -12459,6 +12496,7 @@ mod tests {
                 calculated,
                 diagnostics: Vec::new(),
                 editable_scalar: None,
+                display: None,
             }],
         }
     }
