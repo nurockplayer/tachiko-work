@@ -1898,17 +1898,22 @@ fn prepared_v2_refusals_match_unprepared_refusals() {
         ("invalid definitions", formula.clone(), invalid_definition),
     ];
     for (label, document, body) in invalid {
-        assert_prepared_matches_unprepared(&document, body, label);
+        let _ = assert_prepared_matches_unprepared(&document, body, label);
     }
 
     // The retained base outcome failed, so `base_calculation` is `None` and
     // the prepared evaluation cannot replace today's refusal.
-    assert_prepared_matches_unprepared(
+    let _ = assert_prepared_matches_unprepared(
         &failing_formula_document(),
         set_g_number(2.0),
         "a base whose retained calculation failed",
     );
+}
 
+/// An edit that repairs an invalid base keeps today's refusal: the prepared
+/// path needs the base to pass everything the unprepared path checks.
+#[test]
+fn prepared_v2_keeps_refusing_an_edit_that_repairs_its_base() {
     // The base still fails validation that `ResidentWorkspaceSession::new`
     // accepts, while the edit repairs it and the candidate is valid. Each
     // refusal must keep today's exact variant, not merely look alike.
