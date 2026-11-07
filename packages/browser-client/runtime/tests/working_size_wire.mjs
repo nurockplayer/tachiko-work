@@ -164,7 +164,8 @@ const pastedWindow = ok({
 });
 assert.equal(pastedWindow.total_rows, 3_002);
 assert.equal(pastedWindow.rows.length, 5);
-assert.equal(pastedWindow.rows[0].fields[0].stored.value, "pasted-0000");
+assert.equal(pastedWindow.rows[0].fields[0].stored.value, "Alpha");
+assert.equal(pastedWindow.rows[2].fields[0].stored.value, "pasted-0000");
 
 // A host that never asks keeps the ordinary reply and profile.
 const ordinary = ok({
