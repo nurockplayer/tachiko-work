@@ -8090,28 +8090,49 @@ struct DecodedProject {
     presentation: PresentationStore,
 }
 
+fn decode_project_record_v2(payload: &[u8]) -> Result<DecodedProject, DesignerError> {
+    if payload.is_empty() {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: "TWDPROJ2 transfer is missing direct-ro/v2 bytes".to_owned(),
+        });
+    }
+    if payload.starts_with(b"PK\x03\x04") {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: "TWDPROJ2 requires direct-ro/v2 JSON, not portable-package bytes".to_owned(),
+        });
+    }
+    from_bytes(payload)
+        .map(|document| DecodedProject {
+            document,
+            opened_from_v3: false,
+            presentation: PresentationStore::default(),
+        })
+        .map_err(DesignerError::from)
+}
+
+fn check_v3_transfer_order(ordered_paths: &[String]) -> Result<(), DesignerError> {
+    let required = ROPROJ_V3_PATHS.len();
+    let canonical_prefix = ordered_paths.len() >= required
+        && ordered_paths[..required]
+            .iter()
+            .map(String::as_str)
+            .eq(ROPROJ_V3_PATHS.iter().copied());
+    let presentation_last = ordered_paths.len() == required + 1
+        && ordered_paths
+            .last()
+            .is_some_and(|path| path == ROPROJ_V3_PRESENTATION_PATH);
+    if canonical_prefix && (ordered_paths.len() == required || presentation_last) {
+        return Ok(());
+    }
+    Err(DesignerError::InvalidProjectTransfer {
+        message: "canonical .roproj/v3 paths are not in their required order".to_owned(),
+    })
+}
+
 fn decode_project_bundle(input: &[u8]) -> Result<DecodedProject, DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     if input.starts_with(PROJECT_RECORD_V2_MAGIC) {
-        let payload = &input[PROJECT_RECORD_V2_MAGIC.len()..];
-        if payload.is_empty() {
-            return Err(DesignerError::InvalidProjectTransfer {
-                message: "TWDPROJ2 transfer is missing direct-ro/v2 bytes".to_owned(),
-            });
-        }
-        if payload.starts_with(b"PK\x03\x04") {
-            return Err(DesignerError::InvalidProjectTransfer {
-                message: "TWDPROJ2 requires direct-ro/v2 JSON, not portable-package bytes"
-                    .to_owned(),
-            });
-        }
-        return from_bytes(payload)
-            .map(|document| DecodedProject {
-                document,
-                opened_from_v3: false,
-                presentation: PresentationStore::default(),
-            })
-            .map_err(DesignerError::from);
+        return decode_project_record_v2(&input[PROJECT_RECORD_V2_MAGIC.len()..]);
     }
     let mut cursor = ProjectBundleCursor::new(input);
     if cursor.take(PROJECT_BUNDLE_V1_MAGIC.len())? != PROJECT_BUNDLE_V1_MAGIC {
@@ -8168,21 +8189,7 @@ fn decode_project_bundle(input: &[u8]) -> Result<DecodedProject, DesignerError> 
         }
     };
     if version.is_some_and(|found| found >= 3) {
-        let required = ROPROJ_V3_PATHS.len();
-        let canonical_prefix = ordered_paths.len() >= required
-            && ordered_paths[..required]
-                .iter()
-                .map(String::as_str)
-                .eq(ROPROJ_V3_PATHS.iter().copied());
-        let presentation_last = ordered_paths.len() == required + 1
-            && ordered_paths
-                .last()
-                .is_some_and(|path| path == ROPROJ_V3_PRESENTATION_PATH);
-        if !canonical_prefix || (ordered_paths.len() != required && !presentation_last) {
-            return Err(DesignerError::InvalidProjectTransfer {
-                message: "canonical .roproj/v3 paths are not in their required order".to_owned(),
-            });
-        }
+        check_v3_transfer_order(&ordered_paths)?;
     }
     let optional_presentation = version.is_some_and(|found| found >= 3);
     let mut files = Vec::with_capacity(expected_paths.len() + usize::from(optional_presentation));

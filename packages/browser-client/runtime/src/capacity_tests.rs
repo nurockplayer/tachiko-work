@@ -3,9 +3,9 @@ use super::capacity_fixtures::{FixtureSpec, capacity_document};
 use super::{
     CapacityProjection, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
     DesignerWireReply, Expression, FieldId, ImportFieldType, ImportSelection, NewTableColumnInput,
-    PasteCellInput, RowInitializer, ScalarEditInput, Value, encode_roproj_v3, import_workbook,
-    open_project,
+    PasteCellInput, RowInitializer, ScalarEditInput, Value, import_workbook, open_project,
 };
+use tachiko_storage::encode_roproj_v3;
 
 fn assert_capacity_boundary(
     document: &super::Document,

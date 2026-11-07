@@ -558,7 +558,11 @@ fn a_cell_off_the_entitys_schema_is_dropped() {
         "other".into(),
         schema("other", &[("other_field", FieldType::Number)]),
     );
-    document.entities.get_mut(&"e1".into()).unwrap().schema = "other".into();
+    document
+        .entities
+        .get_mut(&EntityId::from("e1"))
+        .unwrap()
+        .schema = "other".into();
     let pruned = prune_presentation(&valid_store(), &document);
     assert!(pruned.cells.is_empty());
     assert_eq!(validate_presentation(&pruned, &document), Ok(()));
@@ -584,44 +588,47 @@ fn a_table_for_a_missing_schema_is_dropped() {
 
     document.schemas.remove(&SchemaId::from("legacy"));
     let pruned = prune_presentation(&store, &document);
-    assert!(!pruned.tables.contains_key(&"legacy".into()));
+    assert!(!pruned.tables.contains_key(&SchemaId::from("legacy")));
     assert_eq!(
-        pruned.tables.get(&"orders".into()),
-        store.tables.get(&"orders".into())
+        pruned.tables.get(&SchemaId::from("orders")),
+        store.tables.get(&SchemaId::from("orders"))
     );
     assert_eq!(validate_presentation(&pruned, &document), Ok(()));
 }
 
 #[test]
 fn a_footer_or_column_style_on_a_missing_field_is_dropped() {
-    let mut document = document();
-    document
+    let mut without_amount = document();
+    without_amount
         .schemas
-        .get_mut(&"orders".into())
+        .get_mut(&SchemaId::from("orders"))
         .unwrap()
         .fields
-        .remove(&"amount".into());
-    let pruned = prune_presentation(&valid_store(), &document);
-    let orders = pruned.tables.get(&"orders".into()).unwrap();
-    assert!(!orders.footer.contains_key(&"amount".into()));
-    assert_eq!(orders.column_styles.get(&"due".into()), Some(&"s1".into()));
-    assert!(!pruned.rules.contains_key(&"r1".into()));
-    assert!(!pruned.styles.contains_key(&"s2".into()));
-    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+        .remove(&FieldId::from("amount"));
+    let pruned = prune_presentation(&valid_store(), &without_amount);
+    let orders = pruned.tables.get(&SchemaId::from("orders")).unwrap();
+    assert!(!orders.footer.contains_key(&FieldId::from("amount")));
+    assert_eq!(
+        orders.column_styles.get(&FieldId::from("due")),
+        Some(&StyleId::from("s1"))
+    );
+    assert!(!pruned.rules.contains_key(&RuleId::from("r1")));
+    assert!(!pruned.styles.contains_key(&StyleId::from("s2")));
+    assert_eq!(validate_presentation(&pruned, &without_amount), Ok(()));
 
-    let mut document = document();
-    document
+    let mut without_due = document();
+    without_due
         .schemas
-        .get_mut(&"orders".into())
+        .get_mut(&SchemaId::from("orders"))
         .unwrap()
         .fields
-        .remove(&"due".into());
-    let pruned = prune_presentation(&valid_store(), &document);
-    let orders = pruned.tables.get(&"orders".into()).unwrap();
+        .remove(&FieldId::from("due"));
+    let pruned = prune_presentation(&valid_store(), &without_due);
+    let orders = pruned.tables.get(&SchemaId::from("orders")).unwrap();
     assert!(orders.column_styles.is_empty());
     assert!(pruned.cells.is_empty());
-    assert!(!pruned.styles.contains_key(&"s1".into()));
-    assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+    assert!(!pruned.styles.contains_key(&StyleId::from("s1")));
+    assert_eq!(validate_presentation(&pruned, &without_due), Ok(()));
 }
 
 #[test]
@@ -642,10 +649,10 @@ fn a_table_left_with_no_content_is_dropped() {
     assert_eq!(validate_presentation(&store, &document), Ok(()));
     document
         .schemas
-        .get_mut(&"orders".into())
+        .get_mut(&SchemaId::from("orders"))
         .unwrap()
         .fields
-        .remove(&"amount".into());
+        .remove(&FieldId::from("amount"));
     let pruned = prune_presentation(&store, &document);
     assert!(pruned.is_empty());
     assert_eq!(validate_presentation(&pruned, &document), Ok(()));
@@ -672,7 +679,7 @@ fn a_rule_for_a_missing_schema_is_dropped() {
 
     document.schemas.remove(&SchemaId::from("other"));
     let pruned = prune_presentation(&store, &document);
-    assert!(!pruned.rules.contains_key(&"r2".into()));
+    assert!(!pruned.rules.contains_key(&RuleId::from("r2")));
     assert_eq!(validate_presentation(&pruned, &document), Ok(()));
 }
 
@@ -693,13 +700,13 @@ fn a_rule_painting_a_missing_field_is_dropped() {
     assert_eq!(validate_presentation(&store, &document), Ok(()));
     document
         .schemas
-        .get_mut(&"orders".into())
+        .get_mut(&SchemaId::from("orders"))
         .unwrap()
         .fields
-        .remove(&"amount".into());
+        .remove(&FieldId::from("amount"));
     let pruned = prune_presentation(&store, &document);
-    assert!(!pruned.rules.contains_key(&"r2".into()));
-    assert!(!pruned.rules.contains_key(&"r1".into()));
+    assert!(!pruned.rules.contains_key(&RuleId::from("r2")));
+    assert!(!pruned.rules.contains_key(&RuleId::from("r1")));
     assert_eq!(validate_presentation(&pruned, &document), Ok(()));
 }
 
@@ -730,14 +737,14 @@ fn a_rule_reading_a_missing_field_is_dropped() {
     assert_eq!(validate_presentation(&store, &document), Ok(()));
     document
         .schemas
-        .get_mut(&"orders".into())
+        .get_mut(&SchemaId::from("orders"))
         .unwrap()
         .fields
-        .remove(&"amount".into());
+        .remove(&FieldId::from("amount"));
     let pruned = prune_presentation(&store, &document);
-    assert!(!pruned.rules.contains_key(&"r1".into()));
-    assert!(pruned.rules.contains_key(&"r2".into()));
-    assert!(!pruned.rules.contains_key(&"r3".into()));
+    assert!(!pruned.rules.contains_key(&RuleId::from("r1")));
+    assert!(pruned.rules.contains_key(&RuleId::from("r2")));
+    assert!(!pruned.rules.contains_key(&RuleId::from("r3")));
     assert_eq!(validate_presentation(&pruned, &document), Ok(()));
 }
 
@@ -746,7 +753,7 @@ fn a_style_nothing_uses_is_dropped() {
     let mut store = valid_store();
     store
         .tables
-        .get_mut(&"orders".into())
+        .get_mut(&SchemaId::from("orders"))
         .unwrap()
         .column_styles
         .clear();
@@ -759,6 +766,6 @@ fn a_style_nothing_uses_is_dropped() {
     document.entities.clear();
     let pruned = prune_presentation(&store, &document);
     assert!(pruned.cells.is_empty());
-    assert!(!pruned.styles.contains_key(&"s1".into()));
+    assert!(!pruned.styles.contains_key(&StyleId::from("s1")));
     assert_eq!(validate_presentation(&pruned, &document), Ok(()));
 }
