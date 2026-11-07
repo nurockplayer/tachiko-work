@@ -1470,6 +1470,7 @@ fn import_formula_order(
 }
 
 // Bind and guard without publishing an unguarded intermediate calculation.
+#[allow(clippy::too_many_arguments)]
 fn bind_import_formula(
     document: &mut Document,
     index: &AddressIndex,
