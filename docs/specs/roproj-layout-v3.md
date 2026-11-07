@@ -9,6 +9,17 @@ remain outside this implementation slice.
 
 ## Canonical tree
 
+### Presentation member — ADR-0049
+
+Implementation state: pending. Until the implementing PR lands, the writer can't
+emit it and a reader refuses the path, as for any unknown file.
+
+[ADR-0049](../decisions/ADR-0049-stored-presentation.md) adds the optional root file
+`presentation.jsonl`, after every existing path in tree order, present only when it
+has content. It uses the compact one-record JSONL profile, with records ordered
+`style`, `table`, `rule`, `cell`. An empty member is never written, so a document
+without presentation keeps the exact nineteen-file tree.
+
 ### Pre-1.0 revision window — ADR-0046
 
 [ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) lets a

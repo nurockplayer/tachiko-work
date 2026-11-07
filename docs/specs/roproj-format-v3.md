@@ -151,6 +151,13 @@ decimals outside 0..=10, and malformed currency identifiers fail admission. Omit
 there is no default format materialized into an older document. Consequently
 all previously canonical format-free trees and package hashes remain exact.
 
+### Optional Date display format — ADR-0049
+
+Implementation state: pending. FieldDefinition admits optional `date_format`, after
+`number_format`, on Date and Auto fields, with the value `iso`, `mdy`, `dmy`,
+`month_day_year` or `day_month_year`. Anything else fails admission. Omitted formats
+stay omitted, so existing bytes and hashes remain exact.
+
 ### FieldType
 
 The complete v3 tag set is `number`, `text`, `boolean`, `date`, and

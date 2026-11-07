@@ -24,6 +24,15 @@ Decision issue: [#488](https://github.com/nurockplayer/tachiko-work/issues/488)
 
 ## Scope and version ownership
 
+### Presentation entry — ADR-0049
+
+Implementation state: pending.
+
+[ADR-0049](../decisions/ADR-0049-stored-presentation.md) admits one more optional
+entry, `payload/presentation.jsonl`, last in entry order, present exactly when the v3
+tree has that file. A package without it keeps its exact twenty entries and hashes.
+The payload integrity root covers it like any other payload path.
+
 ### Pre-1.0 revision window — ADR-0046
 
 [ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) lets a
