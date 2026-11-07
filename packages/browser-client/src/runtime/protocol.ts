@@ -564,6 +564,12 @@ export type DesignerRequest =
       entities: string[];
     }
   | {
+      type: "query_view_totals";
+      expected_revision: string;
+      collection: string;
+      view: TableView;
+    }
+  | {
       type: "query_group_totals";
       expected_revision: string;
       collection: string;
