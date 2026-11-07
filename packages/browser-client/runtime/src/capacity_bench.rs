@@ -2088,8 +2088,8 @@ fn w1_long_run(shape: &str, runtime: &mut DesignerRuntime, rows: usize) {
     );
     w1_line(
         shape,
-        "long_run_receipts_json_bytes",
-        serde_json::to_vec(runtime.lifecycle.execution_receipts()).map_or(0, |bytes| bytes.len()),
+        "long_run_receipts_debug_bytes",
+        format!("{:?}", runtime.lifecycle.execution_receipts()).len(),
     );
 }
 
