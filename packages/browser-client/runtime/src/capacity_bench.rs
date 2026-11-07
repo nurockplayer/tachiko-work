@@ -1719,6 +1719,7 @@ fn w1_query_view(
             view: view.clone(),
             start,
             count,
+                display: Default::default(),
         })
     })
 }
@@ -2249,6 +2250,7 @@ fn capacity_w1_shape() {
                 view: TableView::default(),
                 start: 0,
                 count: 100,
+                display: Default::default(),
             })
         });
         match response {
