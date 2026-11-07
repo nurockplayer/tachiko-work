@@ -3,10 +3,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation};
+use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation, style_id};
 use tachiko_workspace_engine::{
-    ColumnRef, Expression, FieldConstraint, Number, NumberFormat, NumberFormatKind,
-    PresentationStore, TablePresentation, Value,
+    CellStyle, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
+    ConditionalAggregate, Date, Expression, FieldConstraint, FooterAggregate,
+    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
+    KeyedGroupedSumProductsBinding, Number, NumberFormat, NumberFormatKind, PresentationStore,
+    TablePresentation, Value,
 };
 
 use super::capacity::{
@@ -2876,4 +2879,573 @@ fn a_paste_past_the_working_limits_refuses_and_changes_nothing() {
     };
     assert_wire_capacity(&error, CapacityLimit::PopulatedCells, 100_000, 100_001);
     assert_eq!(revision(resident.as_ref().unwrap()), before);
+}
+
+// ---------------------------------------------------------------------------
+// Saved-size bound (#678 stage 6)
+// ---------------------------------------------------------------------------
+
+fn empty_presentation() -> PresentationStore {
+    PresentationStore::default()
+}
+
+fn bound_of(document: &Document, presentation: &PresentationStore) -> usize {
+    super::save_size::saved_bytes_upper_bound(document)
+        + super::save_size::presentation_saved_bytes(presentation).unwrap()
+}
+
+fn real_saves(document: &Document, presentation: &PresentationStore) -> (usize, usize) {
+    let tree = encode_roproj_v3_with_presentation(document, presentation).unwrap();
+    let bundle =
+        encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes()))).unwrap();
+    let portable = encode_portable_package_v1(&tree).unwrap();
+    (bundle.len(), portable.len())
+}
+
+fn assert_bound_covers(
+    name: &str,
+    document: &Document,
+    presentation: &PresentationStore,
+) -> usize {
+    let bound = bound_of(document, presentation);
+    let (bundle, portable) = real_saves(document, presentation);
+    let parts = super::save_size::saved_bytes_parts(document);
+    let tree = encode_roproj_v3_with_presentation(document, presentation).unwrap();
+    let files = tree
+        .files()
+        .iter()
+        .map(|file| (file.path(), file.bytes().len()))
+        .collect::<Vec<_>>();
+    eprintln!("PARTS|{name}|{parts:?}|files={files:?}");
+    assert!(bound >= bundle, "{name}: bound {bound} < project save {bundle}");
+    assert!(
+        bound >= portable,
+        "{name}: bound {bound} < portable save {portable}"
+    );
+    eprintln!("SAVED|{name}|bound={bound}|project={bundle}|portable={portable}");
+    bound
+}
+
+fn add_field(
+    fields: &mut BTreeMap<FieldId, FieldDefinition>,
+    id: &str,
+    field_type: FieldType,
+    display_name: Option<&str>,
+    constraint: FieldConstraint,
+    number_format: Option<NumberFormat>,
+) {
+    let field_id = FieldId::from(id);
+    fields.insert(
+        field_id.clone(),
+        FieldDefinition {
+            id: field_id,
+            key: FieldKey::from(id),
+            display_name: display_name.map(str::to_owned),
+            field_type,
+            required: false,
+            constraint,
+            number_format,
+        },
+    );
+}
+
+fn values_grid() -> Document {
+    let mut document = Document::empty("working-size-values", "Working Size Values");
+    let mut refs_fields = BTreeMap::new();
+    add_field(
+        &mut refs_fields,
+        "name",
+        FieldType::Text,
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    document.schemas.insert(
+        SchemaId::from("refs"),
+        Schema {
+            field_order: None,
+            id: SchemaId::from("refs"),
+            key: SchemaKey::from("refs"),
+            display_name: None,
+            fields: refs_fields,
+        },
+    );
+    document.entities.insert(
+        EntityId::from("t00000"),
+        Entity {
+            id: EntityId::from("t00000"),
+            key: EntityKey::from("kt00000"),
+            schema: SchemaId::from("refs"),
+            fields: BTreeMap::from([(
+                FieldId::from("name"),
+                Value::Text("target".to_owned()),
+            )]),
+        },
+    );
+    let mut fields = BTreeMap::new();
+    add_field(&mut fields, "n", FieldType::Number, None, FieldConstraint::None, None);
+    add_field(&mut fields, "t", FieldType::Text, None, FieldConstraint::None, None);
+    add_field(&mut fields, "b", FieldType::Boolean, None, FieldConstraint::None, None);
+    add_field(&mut fields, "d", FieldType::Date, None, FieldConstraint::None, None);
+    add_field(
+        &mut fields,
+        "r",
+        FieldType::Reference {
+            schema: SchemaId::from("refs"),
+        },
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    document.schemas.insert(
+        SchemaId::from("grid"),
+        Schema {
+            field_order: None,
+            id: SchemaId::from("grid"),
+            key: SchemaKey::from("grid"),
+            display_name: None,
+            fields,
+        },
+    );
+    let mut row = BTreeMap::new();
+    row.insert(FieldId::from("n"), Value::Number(Number::new(12.5).unwrap()));
+    row.insert(FieldId::from("t"), Value::Text("value".to_owned()));
+    row.insert(FieldId::from("b"), Value::Boolean(true));
+    row.insert(
+        FieldId::from("d"),
+        Value::Date(Date::new(2026, 11, 8).unwrap()),
+    );
+    row.insert(FieldId::from("r"), Value::Reference(EntityId::from("t00000")));
+    for index in 0..3 {
+        let id = EntityId::from(format!("r{index:05}"));
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("k{index:05}")),
+                schema: SchemaId::from("grid"),
+                fields: if index == 0 { row.clone() } else { BTreeMap::new() },
+            },
+        );
+    }
+    document
+}
+
+fn escape_text_grid() -> Document {
+    let mut document = text_grid(1, 1);
+    document
+        .entities
+        .get_mut(&EntityId::from("r00000"))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("c0"),
+            Value::Text("\"\\\u{8}\u{9}\u{a}\u{c}\u{d}\u{0}\u{1}\u{1f}é中🙂".to_owned()),
+        );
+    document
+}
+
+fn long_identity_grid() -> Document {
+    let long = "a".repeat(4096);
+    let mut document = Document::empty("working-size-identities", "Working Size Identities");
+    let schema_id = SchemaId::from(long.clone());
+    let field_id = FieldId::from(long.clone());
+    let mut fields = BTreeMap::new();
+    fields.insert(
+        field_id.clone(),
+        FieldDefinition {
+            id: field_id.clone(),
+            key: FieldKey::from(long.clone()),
+            display_name: Some(long.clone()),
+            field_type: FieldType::Text,
+            required: false,
+            constraint: FieldConstraint::None,
+            number_format: None,
+        },
+    );
+    document.schemas.insert(
+        schema_id.clone(),
+        Schema {
+            field_order: Some(vec![field_id.clone()]),
+            id: schema_id.clone(),
+            key: SchemaKey::from(long.clone()),
+            display_name: Some(long.clone()),
+            fields,
+        },
+    );
+    let entity_id = EntityId::from(long.clone());
+    document.entities.insert(
+        entity_id.clone(),
+        Entity {
+            id: entity_id,
+            key: EntityKey::from(long.clone()),
+            schema: schema_id,
+            fields: BTreeMap::from([(field_id, Value::Text(long))]),
+        },
+    );
+    document
+}
+
+fn formula_grid() -> Document {
+    let mut document = text_grid(21, 2);
+    {
+        let schema = document.schemas.get_mut(&SchemaId::from("grid")).unwrap();
+        for field in ["c0", "c1"] {
+            schema
+                .fields
+                .get_mut(&FieldId::from(field))
+                .unwrap()
+                .field_type = FieldType::Number;
+        }
+    }
+    let column = || ColumnRef {
+        schema: SchemaId::from("grid"),
+        field: FieldId::from("c0"),
+    };
+    let number = || Expression::Number(Number::new(1.0).unwrap());
+    let criterion = |value: Option<Expression>| ColumnCriterion {
+        column: column(),
+        operator: ComparisonOperator::Equal,
+        value: value.map(Box::new),
+    };
+    let comparison = || Expression::Compare {
+        operator: ComparisonOperator::Less,
+        left: Box::new(number()),
+        right: Box::new(number()),
+    };
+    let expressions = vec![
+        number(),
+        Expression::Reference(FieldRef::new("r00000", "c0")),
+        Expression::SameRowReference(FieldId::from("c0")),
+        Expression::ColumnTotal(column()),
+        Expression::ColumnAggregate {
+            function: ColumnAggregateFunction::Average,
+            column: column(),
+        },
+        Expression::ColumnConditional {
+            aggregate: Box::new(ConditionalAggregate::Sum(column())),
+            criteria: vec![criterion(Some(number()))],
+        },
+        Expression::ColumnConditional {
+            aggregate: Box::new(ConditionalAggregate::Average(column())),
+            criteria: vec![criterion(None)],
+        },
+        Expression::ColumnConditional {
+            aggregate: Box::new(ConditionalAggregate::Count),
+            criteria: vec![criterion(Some(number()))],
+        },
+        Expression::Add {
+            left: Box::new(number()),
+            right: Box::new(number()),
+        },
+        Expression::Subtract {
+            left: Box::new(number()),
+            right: Box::new(number()),
+        },
+        Expression::Multiply {
+            left: Box::new(number()),
+            right: Box::new(number()),
+        },
+        Expression::Divide {
+            left: Box::new(number()),
+            right: Box::new(number()),
+        },
+        Expression::Minimum {
+            left: Box::new(number()),
+            right: Box::new(number()),
+        },
+        Expression::Maximum {
+            left: Box::new(number()),
+            right: Box::new(number()),
+        },
+        comparison(),
+        Expression::If {
+            condition: Box::new(comparison()),
+            then_value: Box::new(number()),
+            else_value: Box::new(number()),
+        },
+        Expression::And(vec![comparison(), comparison()]),
+        Expression::Or(vec![comparison(), comparison()]),
+        Expression::Not(Box::new(comparison())),
+        Expression::IsBlank(Box::new(Expression::SameRowReference(FieldId::from("c0")))),
+        Expression::Round {
+            value: Box::new(number()),
+            digits: 2,
+        },
+    ];
+    for (index, expression) in expressions.into_iter().enumerate() {
+        document
+            .entities
+            .get_mut(&EntityId::from(format!("r{index:05}")))
+            .unwrap()
+            .fields
+            .insert(FieldId::from("c1"), Value::Formula(expression));
+    }
+    document
+}
+
+fn formats_fixture() -> (Document, PresentationStore) {
+    let mut document = Document::empty("working-size-formats", "Working Size Formats");
+    let mut fields = BTreeMap::new();
+    add_field(
+        &mut fields,
+        "amount",
+        FieldType::Number,
+        Some("Amount"),
+        FieldConstraint::NumberInclusiveRange {
+            min: Number::new(-1.5).unwrap(),
+            max: Number::new(1_000_000.0).unwrap(),
+        },
+        Some(NumberFormat {
+            decimals: 2,
+            kind: NumberFormatKind::Currency {
+                code: "USD".to_owned(),
+            },
+            thousands_separator: true,
+        }),
+    );
+    add_field(
+        &mut fields,
+        "ratio",
+        FieldType::Number,
+        None,
+        FieldConstraint::None,
+        Some(NumberFormat {
+            decimals: 0,
+            kind: NumberFormatKind::Percent,
+            thousands_separator: false,
+        }),
+    );
+    add_field(
+        &mut fields,
+        "label",
+        FieldType::Text,
+        None,
+        FieldConstraint::TextLiteralSet {
+            values: vec!["a\"b".to_owned(), "é\n".to_owned()],
+        },
+        None,
+    );
+    add_field(&mut fields, "flag", FieldType::Boolean, None, FieldConstraint::None, None);
+    add_field(&mut fields, "day", FieldType::Date, None, FieldConstraint::None, None);
+    let field_order = ["amount", "ratio", "label", "flag", "day"]
+        .map(FieldId::from)
+        .to_vec();
+    document.schemas.insert(
+        SchemaId::from("entries"),
+        Schema {
+            field_order: Some(field_order),
+            id: SchemaId::from("entries"),
+            key: SchemaKey::from("entries"),
+            display_name: Some("Entries".to_owned()),
+            fields,
+        },
+    );
+    let mut products = BTreeMap::new();
+    add_field(&mut products, "key", FieldType::Text, None, FieldConstraint::None, None);
+    add_field(&mut products, "category", FieldType::Text, None, FieldConstraint::None, None);
+    add_field(
+        &mut products,
+        "price",
+        FieldType::Number,
+        None,
+        FieldConstraint::None,
+        Some(NumberFormat {
+            decimals: 2,
+            kind: NumberFormatKind::Plain,
+            thousands_separator: false,
+        }),
+    );
+    document.schemas.insert(
+        SchemaId::from("products"),
+        Schema {
+            field_order: None,
+            id: SchemaId::from("products"),
+            key: SchemaKey::from("products"),
+            display_name: None,
+            fields: products,
+        },
+    );
+    document
+        .entities
+        .insert(
+            EntityId::from("e00000"),
+            Entity {
+                id: EntityId::from("e00000"),
+                key: EntityKey::from("ke00000"),
+                schema: SchemaId::from("entries"),
+                fields: BTreeMap::from([
+                    (FieldId::from("amount"), Value::Number(Number::new(12.5).unwrap())),
+                    (FieldId::from("ratio"), Value::Number(Number::new(0.25).unwrap())),
+                    (FieldId::from("label"), Value::Text("a\"b".to_owned())),
+                    (FieldId::from("flag"), Value::Boolean(false)),
+                    (FieldId::from("day"), Value::Date(Date::new(2026, 11, 8).unwrap())),
+                ]),
+            },
+        );
+    let definition_id = KeyedGroupedSumDefinitionId::from("definition");
+    document.keyed_grouped_sum_definitions.insert(
+        definition_id.clone(),
+        KeyedGroupedSumDefinition {
+            id: definition_id,
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: SchemaId::from("entries"),
+                lookup_key_field: FieldId::from("label"),
+                quantity_field: FieldId::from("amount"),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: SchemaId::from("products"),
+                key_field: FieldId::from("key"),
+                category_field: FieldId::from("category"),
+                price_field: FieldId::from("price"),
+            },
+        },
+    );
+    let style = CellStyle {
+        bold: Some(true),
+        italic: None,
+        fill: Some("#FFEEAA".to_owned()),
+        text_color: None,
+        alignment: None,
+        wrap: None,
+        borders: None,
+        number_format: None,
+        date_format: None,
+    };
+    let style_id = style_id(&style).unwrap();
+    let presentation = PresentationStore {
+        styles: BTreeMap::from([(style_id.clone(), style)]),
+        tables: BTreeMap::from([(
+            SchemaId::from("entries"),
+            TablePresentation {
+                title: Some("Formatted".to_owned()),
+                footer: BTreeMap::from([(FieldId::from("amount"), FooterAggregate::Sum)]),
+                column_styles: BTreeMap::from([(FieldId::from("ratio"), style_id.clone())]),
+            },
+        )]),
+        rules: BTreeMap::new(),
+        cells: BTreeMap::from([((EntityId::from("e00000"), FieldId::from("amount")), style_id)]),
+    };
+    (document, presentation)
+}
+
+fn bound_fixtures() -> Vec<(&'static str, Document, PresentationStore)> {
+    let (formats, presentation) = formats_fixture();
+    vec![
+        ("values", values_grid(), empty_presentation()),
+        ("formula_grid", formula_grid(), empty_presentation()),
+        ("escapes", escape_text_grid(), empty_presentation()),
+        ("identities", long_identity_grid(), empty_presentation()),
+        ("formats", formats, presentation),
+        ("qualification", fixture(), empty_presentation()),
+    ]
+}
+
+#[test]
+fn the_saved_bound_never_shortens_a_real_save() {
+    for (name, document, presentation) in bound_fixtures() {
+        assert_bound_covers(name, &document, &presentation);
+    }
+}
+
+#[test]
+fn the_saved_bound_is_tight_on_realistic_documents() {
+    for (name, document, presentation) in bound_fixtures() {
+        let bound = assert_bound_covers(name, &document, &presentation);
+        let (bundle, portable) = real_saves(&document, &presentation);
+        let real = bundle.max(portable);
+        assert!(
+            bound <= real * 105 / 100 + 64 * 1024,
+            "{name}: bound {bound} is not tight against real save {real}"
+        );
+    }
+}
+
+fn fill_control_cells(document: &mut Document, cells: usize) {
+    let text = "\u{1}".repeat(STORED_TEXT_ITEM_MAX);
+    let mut filled = 0;
+    for row in 0..6 {
+        for column in 0..28 {
+            if filled == cells {
+                return;
+            }
+            document
+                .entities
+                .get_mut(&EntityId::from(format!("r{row:05}")))
+                .unwrap()
+                .fields
+                .insert(
+                    FieldId::from(format!("c{column}")),
+                    Value::Text(text.clone()),
+                );
+            filled += 1;
+        }
+    }
+}
+
+fn crossing_documents() -> (Document, Document, String) {
+    let mut before = text_grid(6, 28);
+    fill_control_cells(&mut before, 167);
+    let mut after = before.clone();
+    after
+        .entities
+        .get_mut(&EntityId::from("r00005"))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("c27"),
+            Value::Text("\u{1}".repeat(STORED_TEXT_ITEM_MAX)),
+        );
+    let pasted = "\u{1}".repeat(STORED_TEXT_ITEM_MAX);
+    (before, after, pasted)
+}
+
+#[test]
+fn an_accepted_working_size_edit_can_always_be_saved() {
+    let (before, after, pasted) = crossing_documents();
+    let before_bound = bound_of(&before, &empty_presentation());
+    let after_bound = bound_of(&after, &empty_presentation());
+    assert!(before_bound <= super::capacity::MAX_WORKING_SAVED_BYTES);
+    assert!(after_bound > super::capacity::MAX_WORKING_SAVED_BYTES);
+
+    let mut runtime = DesignerRuntime::from_document_working_size(before, OCCURRENCE).unwrap();
+    let current = revision(&runtime);
+    let project = runtime.export_project_v3(&current).unwrap().bytes;
+    runtime.export_portable_ro(&current).unwrap();
+    let mut reopened: Option<DesignerRuntime> = None;
+    open_project_working_size(&mut reopened, &project, OCCURRENCE).unwrap();
+    assert_eq!(revision(reopened.as_ref().unwrap()), current);
+
+    let request = DesignerRequest::PasteCells {
+        expected_revision: current.clone(),
+        collection: "grid".to_owned(),
+        start_entity: Some("r00005".to_owned()),
+        start_field: "c27".to_owned(),
+        rows: vec![vec![PasteCellInput::Text(pasted)]],
+    };
+    let error = runtime.handle(request.clone()).unwrap_err();
+    assert_capacity_refusal(
+        &error,
+        CapacityLimit::SavedBytes,
+        super::capacity::MAX_WORKING_SAVED_BYTES,
+        after_bound,
+    );
+    assert_eq!(revision(&runtime), current);
+
+    // The same refusal over the wire names the limit for the typed client.
+    let mut wire = Some(runtime);
+    let reply = decode_wire(&process_wire_request(
+        &mut wire,
+        &serde_json::to_vec(&request).unwrap(),
+    ));
+    let DesignerWireReply::Error { error } = reply else {
+        panic!("a crossing paste refuses, got {reply:?}");
+    };
+    assert_wire_capacity(
+        &error,
+        CapacityLimit::SavedBytes,
+        super::capacity::MAX_WORKING_SAVED_BYTES,
+        after_bound,
+    );
+    assert!(serde_json::to_string(&error).unwrap().contains("\"saved_bytes\""));
 }

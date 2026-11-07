@@ -23,9 +23,9 @@ const NUMBER_BYTES: usize = 24;
 /// portable ZIP framing is used so one bound covers both exports: 21 entries
 /// (the package manifest, the nineteen payload files and the optional
 /// presentation member) at 30-byte local and 46-byte central headers plus the
-/// 22-byte end record, their names, and the fixed 228-byte `package.json`.
-/// The app-private bundle's framing is smaller still.
-const EXPORT_FRAMING_BYTES: usize = 2_496;
+/// 22-byte end record, every name written in both headers, and the fixed
+/// 228-byte `package.json`. The app-private bundle's framing is smaller still.
+const EXPORT_FRAMING_BYTES: usize = 2_880;
 
 /// Bytes `export_project_v3` can write for this document, never less than it
 /// does. It also covers `export_portable_ro`, whose framing is larger.
@@ -45,6 +45,16 @@ pub(crate) fn saved_bytes_upper_bound(document: &Document) -> usize {
 /// Bytes the optional `presentation.jsonl` member adds to a save.
 pub(crate) fn presentation_saved_bytes(store: &PresentationStore) -> Result<usize, DesignerError> {
     Ok(encode_presentation(store)?.map_or(0, |bytes| bytes.len()))
+}
+
+#[cfg(test)]
+pub(crate) fn saved_bytes_parts(document: &Document) -> (usize, usize, usize, usize) {
+    (
+        manifest_bytes(document),
+        schemas_bytes(document),
+        definitions_bytes(document),
+        entities_bytes(document),
+    )
 }
 
 #[cfg(test)]
@@ -176,7 +186,7 @@ fn schema_bytes(schema: &Schema) -> usize {
                 .values()
                 .enumerate()
                 .map(|(index, field)| {
-                    field_bytes(field) + 1 + usize::from(index + 1 != field_count)
+                    field_bytes(field, indent + 2) + 1 + usize::from(index + 1 != field_count)
                 })
                 .sum::<usize>();
             2 // "[\n"
@@ -188,8 +198,7 @@ fn schema_bytes(schema: &Schema) -> usize {
         + 1 // "}"
 }
 
-fn field_bytes(field: &FieldDefinition) -> usize {
-    let indent = 2;
+fn field_bytes(field: &FieldDefinition, indent: usize) -> usize {
     indent_bytes(indent)
         + 2 // "{\n"
         + pretty_string(indent + 1, "id", field.id.as_str(), true)
