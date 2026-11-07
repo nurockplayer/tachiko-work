@@ -414,7 +414,7 @@ fn rule_fields(fields: &[String]) -> Result<Vec<FieldId>, FormatError> {
     }
     let mut previous: Option<&str> = None;
     let mut mapped = Vec::with_capacity(fields.len());
-    for field in &fields {
+    for field in fields {
         require_id("rule field id", field)?;
         ensure_increasing("rule field", previous, field)?;
         previous = Some(field);
