@@ -101,6 +101,7 @@ fn table(runtime: &mut DesignerRuntime) -> TableProjection {
                 view: TableView::default(),
                 start,
                 count: 256,
+                display: false,
             })
             .expect("the capacity table is windowable")
         else {

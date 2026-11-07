@@ -1587,6 +1587,37 @@ impl Calculation {
 
         affected.into_iter().collect()
     }
+
+    /// For each of `changed`, the formulas it reaches, as formula -> the
+    /// changed fields reaching it. One reverse index, one walk per changed
+    /// field.
+    ///
+    /// The formulas reachable from one changed field are exactly
+    /// [`Self::affected_by`]'s result for that field, including the changed
+    /// field itself when the graph loops back to it.
+    #[must_use]
+    pub fn affected_by_each<'a>(
+        &self,
+        changed: impl IntoIterator<Item = &'a FieldRef>,
+    ) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        let reverse_dependents = reverse_dependency_index(&self.dependencies);
+        let mut affected = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
+        for changed in changed {
+            let mut queue = VecDeque::from([changed.clone()]);
+            let mut reached = BTreeSet::new();
+            while let Some(field) = queue.pop_front() {
+                for dependent in reverse_dependents.get(&field).into_iter().flatten() {
+                    if reached.insert(dependent.clone()) {
+                        queue.push_back(dependent.clone());
+                    }
+                }
+            }
+            for formula in reached {
+                affected.entry(formula).or_default().insert(changed.clone());
+            }
+        }
+        affected
+    }
 }
 
 #[derive(Clone, Debug, Error, PartialEq)]

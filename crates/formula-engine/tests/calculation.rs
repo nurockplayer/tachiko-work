@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_formula_engine::{CalculationError, calculate};
+use tachiko_formula_engine::{Calculation, CalculationError, calculate};
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    ColumnRef, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId,
+    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 fn balance_document() -> Document {
@@ -641,4 +641,218 @@ fn evaluation_obeys_the_bound_tree_without_reassociation() {
             .value(&FieldRef::new("sword", "burst")),
         Some(expected(0.0))
     );
+}
+
+#[test]
+fn affected_by_each_matches_affected_by_per_field() {
+    for document in [
+        balance_document(),
+        fan_out_document(),
+        column_total_document(),
+        same_row_document(),
+    ] {
+        let calculation = calculate(&document).unwrap();
+        assert_affected_by_each_matches(&calculation, &document);
+    }
+}
+
+fn assert_affected_by_each_matches(calculation: &Calculation, document: &Document) {
+    let mut fields = document
+        .entities
+        .iter()
+        .flat_map(|(entity_id, entity)| {
+            entity
+                .fields
+                .keys()
+                .map(|field_id| FieldRef::new(entity_id.clone(), field_id.clone()))
+        })
+        .collect::<BTreeSet<_>>();
+    for (formula, dependencies) in calculation.dependencies() {
+        fields.insert(formula.clone());
+        fields.extend(dependencies.iter().cloned());
+    }
+
+    let affected_by_each = calculation.affected_by_each(&fields);
+    let mut expected_keys = BTreeSet::new();
+    for field in &fields {
+        let expected = calculation
+            .affected_by(field)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        expected_keys.extend(expected.iter().cloned());
+        // The map is keyed by the formula reached; a field's reach is every
+        // formula whose value names it.
+        let reached = affected_by_each
+            .iter()
+            .filter(|(_, changed)| changed.contains(field))
+            .map(|(formula, _)| formula.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(reached, expected, "{field:?}");
+    }
+    assert_eq!(
+        affected_by_each.keys().cloned().collect::<BTreeSet<_>>(),
+        expected_keys
+    );
+}
+
+/// One field feeds two formulas (fan-out); `both` is two levels below it, and
+/// `unused` reaches nothing.
+fn fan_out_document() -> Document {
+    let entity = Entity {
+        id: EntityId::from("node"),
+        key: "node".into(),
+        schema: SchemaId::from("node"),
+        fields: BTreeMap::from([
+            (FieldId::from("root"), number(4.0)),
+            (FieldId::from("unused"), number(9.0)),
+            (
+                FieldId::from("left"),
+                Value::Formula(Expression::Multiply {
+                    left: Box::new(reference("node", "root")),
+                    right: Box::new(numeric(2.0)),
+                }),
+            ),
+            (
+                FieldId::from("right"),
+                Value::Formula(Expression::Multiply {
+                    left: Box::new(reference("node", "root")),
+                    right: Box::new(numeric(3.0)),
+                }),
+            ),
+            (
+                FieldId::from("both"),
+                Value::Formula(Expression::Add {
+                    left: Box::new(reference("node", "left")),
+                    right: Box::new(reference("node", "right")),
+                }),
+            ),
+        ]),
+    };
+    let schema = Schema {
+        field_order: None,
+        id: SchemaId::from("node"),
+        key: SchemaKey::from("node"),
+        display_name: None,
+        fields: BTreeMap::from([
+            (FieldId::from("root"), number_field("root")),
+            (FieldId::from("unused"), number_field("unused")),
+            (FieldId::from("left"), number_field("left")),
+            (FieldId::from("right"), number_field("right")),
+            (FieldId::from("both"), number_field("both")),
+        ]),
+    };
+    Document {
+        id: DocumentId::from("fan-out"),
+        title: "Fan out".to_owned(),
+        schemas: BTreeMap::from([(SchemaId::from("node"), schema)]),
+        entities: BTreeMap::from([(EntityId::from("node"), entity)]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
+    }
+}
+
+/// A summary formula reads a whole plan column, so each plan row reaches it.
+fn column_total_document() -> Document {
+    let plan_schema = Schema {
+        field_order: None,
+        id: SchemaId::from("plan"),
+        key: SchemaKey::from("plan"),
+        display_name: None,
+        fields: BTreeMap::from([(FieldId::from("reserve"), number_field("reserve"))]),
+    };
+    let summary_schema = Schema {
+        field_order: None,
+        id: SchemaId::from("summary"),
+        key: SchemaKey::from("summary"),
+        display_name: None,
+        fields: BTreeMap::from([(FieldId::from("total"), number_field("total"))]),
+    };
+    let plan_row = |id: &str, reserve: f64| Entity {
+        id: EntityId::from(id),
+        key: id.into(),
+        schema: SchemaId::from("plan"),
+        fields: BTreeMap::from([(FieldId::from("reserve"), number(reserve))]),
+    };
+    Document {
+        id: DocumentId::from("monthly-plan"),
+        title: "Monthly plan".to_owned(),
+        schemas: BTreeMap::from([
+            (SchemaId::from("plan"), plan_schema),
+            (SchemaId::from("summary"), summary_schema),
+        ]),
+        entities: BTreeMap::from([
+            (EntityId::from("rent"), plan_row("rent", 12_000.0)),
+            (EntityId::from("ads"), plan_row("ads", 500.0)),
+            (
+                EntityId::from("summary"),
+                Entity {
+                    id: EntityId::from("summary"),
+                    key: "summary".into(),
+                    schema: SchemaId::from("summary"),
+                    fields: BTreeMap::from([(
+                        FieldId::from("total"),
+                        Value::Formula(Expression::ColumnTotal(ColumnRef::new("plan", "reserve"))),
+                    )]),
+                },
+            ),
+        ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
+    }
+}
+
+/// Each plan row's reserve reads its own row's expense and one shared rate.
+fn same_row_document() -> Document {
+    let plan_schema = Schema {
+        field_order: None,
+        id: SchemaId::from("plan"),
+        key: SchemaKey::from("plan"),
+        display_name: None,
+        fields: BTreeMap::from([
+            (FieldId::from("expense"), number_field("expense")),
+            (FieldId::from("reserve"), number_field("reserve")),
+        ]),
+    };
+    let global_schema = Schema {
+        field_order: None,
+        id: SchemaId::from("global"),
+        key: SchemaKey::from("global"),
+        display_name: None,
+        fields: BTreeMap::from([(FieldId::from("rate"), number_field("rate"))]),
+    };
+    let plan_row = |id: &str, expense: f64| Entity {
+        id: EntityId::from(id),
+        key: id.into(),
+        schema: SchemaId::from("plan"),
+        fields: BTreeMap::from([
+            (FieldId::from("expense"), number(expense)),
+            (
+                FieldId::from("reserve"),
+                Value::Formula(Expression::Multiply {
+                    left: Box::new(Expression::SameRowReference(FieldId::from("expense"))),
+                    right: Box::new(reference("global", "rate")),
+                }),
+            ),
+        ]),
+    };
+    Document {
+        id: DocumentId::from("monthly-plan"),
+        title: "Monthly plan".to_owned(),
+        schemas: BTreeMap::from([
+            (SchemaId::from("plan"), plan_schema),
+            (SchemaId::from("global"), global_schema),
+        ]),
+        entities: BTreeMap::from([
+            (EntityId::from("rent"), plan_row("rent", 10.0)),
+            (EntityId::from("ads"), plan_row("ads", 20.0)),
+            (
+                EntityId::from("global"),
+                Entity {
+                    id: EntityId::from("global"),
+                    key: "global".into(),
+                    schema: SchemaId::from("global"),
+                    fields: BTreeMap::from([(FieldId::from("rate"), number(2.0))]),
+                },
+            ),
+        ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
+    }
 }

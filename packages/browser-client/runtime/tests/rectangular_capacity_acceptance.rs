@@ -102,6 +102,7 @@ fn table(runtime: &mut DesignerRuntime, collection: &str) -> TableProjection {
                 view: TableView::default(),
                 start,
                 count: 128,
+                display: false,
             })
             .unwrap()
         else {
@@ -837,6 +838,7 @@ fn native_rectangular_capacity_complete_lifecycle() {
                     view: TableView::default(),
                     start: 0,
                     count: 128,
+                    display: false,
                 })
                 .unwrap();
                 let window_reply = process_wire_request(&mut resident, &window);

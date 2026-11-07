@@ -151,6 +151,22 @@ document) refuses with
 `query_too_large` rather than serialising an oversized response; ask for
 fewer rows or fewer columns.
 
+A window can ask for the text the grid shows in its Number cells:
+
+```ts
+const window = await client.queryTableWindow(revision, collection, view, 0, 256, {
+  display: true,
+});
+window.rows[0]?.fields[0]?.display; // "1,234.50", or undefined for a non-Number cell
+```
+
+`field.display` is present on stored and calculated Number cells only, formatted
+through the column's `number_format` exactly as Sheet renders it (en-US
+grouping, percent and currency symbols; at most 15 significant digits without a
+format). Text, Date, Yes/No and Reference cells carry none. The display text is
+counted against the reply cap, and the option defaults to off: a window without
+it and every `queryTable` reply encode exactly as before.
+
 ## Grouped totals
 
 `queryGroupTotals` sums Number columns grouped by one or two Text, Date or
