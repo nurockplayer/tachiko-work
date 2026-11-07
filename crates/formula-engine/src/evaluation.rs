@@ -1,21 +1,94 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
-    ColumnAggregateFunction, ColumnCriterion, ComparisonOperator, ConditionalAggregate,
+    ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
     CriterionCell, CriterionTest, Document, Expression, FieldRef, FieldType, Number, Value,
 };
 
-use crate::{CalculationFailure, column_cells};
+use crate::{CalculationFailure, FailureMap, column_cells};
+
+/// One pass's read of one column, in entity order.
+struct ColumnValues {
+    /// The column's cells that already carry a failure.
+    failed: Vec<FieldRef>,
+    /// The first cell with no entry in the pass's value map.
+    first_missing: Option<FieldRef>,
+    /// The present values, in entity order.
+    present: Vec<f64>,
+    /// The plain running sum of `present` in that same order.
+    total: f64,
+}
+
+/// One calculation pass's read of each column, filled on first use.
+///
+/// A column's formula members are its static dependencies, so all of them have
+/// resolved before the first reader of the column is ready, and nothing writes
+/// to them later in the pass: an entry cannot go stale. A retained update reads
+/// the same invariant from the other side, where members outside the dirty set
+/// are already resolved.
+#[derive(Default)]
+pub(crate) struct ColumnCache {
+    entries: BTreeMap<ColumnRef, ColumnValues>,
+}
+
+impl ColumnCache {
+    pub(crate) fn fill(
+        &mut self,
+        document: &Document,
+        values: &BTreeMap<FieldRef, Number>,
+        failures: &FailureMap,
+        column: &ColumnRef,
+    ) {
+        if self.entries.contains_key(column) {
+            return;
+        }
+        let mut failed = Vec::new();
+        let mut first_missing = None;
+        let mut present = Vec::new();
+        let mut total = 0.0;
+        for reference in column_cells(document, column) {
+            if failures.contains_key(&reference) {
+                failed.push(reference.clone());
+            }
+            match values.get(&reference) {
+                Some(value) => {
+                    present.push(value.get());
+                    total += value.get();
+                }
+                None if first_missing.is_none() => first_missing = Some(reference),
+                None => {}
+            }
+        }
+        self.entries.insert(
+            column.clone(),
+            ColumnValues {
+                failed,
+                first_missing,
+                present,
+                total,
+            },
+        );
+    }
+
+    fn entry(&self, column: &ColumnRef) -> &ColumnValues {
+        self.entries
+            .get(column)
+            .expect("every column a formula names is filled before evaluation")
+    }
+}
 
 pub(crate) struct Evaluation<'a> {
     pub(crate) document: &'a Document,
     pub(crate) owner: &'a FieldRef,
     pub(crate) values: &'a BTreeMap<FieldRef, Number>,
+    pub(crate) columns: &'a ColumnCache,
 }
 
 impl Evaluation<'_> {
     // Static dependencies still govern scheduling, cycles, and invalidation.
     // Failure propagation follows only the branches that are actually read.
+    // The differential oracle keeps this expanded per-cell form.
+    #[cfg(test)]
     pub(crate) fn required_references(&self, expression: &Expression) -> BTreeSet<FieldRef> {
         let mut references = BTreeSet::new();
         let mut pending = vec![expression];
@@ -78,6 +151,84 @@ impl Evaluation<'_> {
         references
     }
 
+    /// The failed references the expression actually reads: the same branch
+    /// rules as the expanded reference walk, but its columns answered from the
+    /// pass cache instead of expanded per cell.
+    pub(crate) fn failed_required_references(
+        &self,
+        expression: &Expression,
+        failures: &FailureMap,
+    ) -> BTreeSet<FieldRef> {
+        let mut references = BTreeSet::new();
+        let mut pending = vec![expression];
+        while let Some(node) = pending.pop() {
+            match node {
+                Expression::Reference(reference) => {
+                    if failures.contains_key(reference) {
+                        references.insert(reference.clone());
+                    }
+                }
+                Expression::SameRowReference(field) => {
+                    let reference = FieldRef::new(self.owner.entity.clone(), field.clone());
+                    if failures.contains_key(&reference) {
+                        references.insert(reference);
+                    }
+                }
+                Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
+                    references.extend(self.columns.entry(column).failed.iter().cloned());
+                }
+                // A conditional aggregate reads every cell of every column it
+                // names, matched row or not, so any failed contributor fails
+                // the formula. That is stricter than Excel and visible.
+                Expression::ColumnConditional {
+                    aggregate,
+                    criteria,
+                } => {
+                    if let ConditionalAggregate::Sum(column)
+                    | ConditionalAggregate::Average(column) = aggregate.as_ref()
+                    {
+                        references.extend(self.columns.entry(column).failed.iter().cloned());
+                    }
+                    for criterion in criteria {
+                        references
+                            .extend(self.columns.entry(&criterion.column).failed.iter().cloned());
+                        if let Some(expression) = &criterion.value {
+                            match expression.as_ref() {
+                                Expression::Reference(reference) => {
+                                    if failures.contains_key(reference) {
+                                        references.insert(reference.clone());
+                                    }
+                                }
+                                Expression::SameRowReference(field) => {
+                                    let reference =
+                                        FieldRef::new(self.owner.entity.clone(), field.clone());
+                                    if failures.contains_key(&reference) {
+                                        references.insert(reference);
+                                    }
+                                }
+                                other => pending.push(other),
+                            }
+                        }
+                    }
+                }
+                Expression::If {
+                    condition,
+                    then_value,
+                    else_value,
+                } => {
+                    pending.push(condition);
+                    if let Ok(condition) = self.condition(condition) {
+                        pending.push(if condition { then_value } else { else_value });
+                    }
+                }
+                // ISBLANK observes presence, not the referenced calculated value.
+                Expression::IsBlank(_) => {}
+                _ => pending.extend(node.children().into_iter().rev()),
+            }
+        }
+        references
+    }
+
     pub(crate) fn number(&self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match expression {
             Expression::Number(number) => Ok(*number),
@@ -95,43 +246,38 @@ impl Evaluation<'_> {
                 else_value
             }),
             Expression::ColumnTotal(column) => {
-                // Blank cells are skipped. Every other row already passed the
-                // target checks, so a value missing here is a failed
-                // contributing row rather than an empty column.
-                let mut total = 0.0;
-                for reference in column_cells(self.document, column) {
-                    let Some(value) = self.values.get(&reference) else {
-                        return Err(CalculationFailure::FailedDependencies {
-                            dependencies: BTreeSet::from([reference]),
-                        });
-                    };
-                    total += value.get();
+                // Blank cells are skipped, and the pass cache added the values
+                // in entity order, so the total is bit-identical to a walk.
+                let values = self.columns.entry(column);
+                if let Some(reference) = &values.first_missing {
+                    return Err(CalculationFailure::FailedDependencies {
+                        dependencies: BTreeSet::from([reference.clone()]),
+                    });
                 }
-                number_result(total)
+                number_result(values.total)
             }
             Expression::ColumnAggregate { function, column } => {
-                let mut values = Vec::new();
-                for reference in column_cells(self.document, column) {
-                    let Some(value) = self.values.get(&reference) else {
-                        return Err(CalculationFailure::FailedDependencies {
-                            dependencies: BTreeSet::from([reference]),
-                        });
-                    };
-                    values.push(value.get());
+                let values = self.columns.entry(column);
+                if let Some(reference) = &values.first_missing {
+                    return Err(CalculationFailure::FailedDependencies {
+                        dependencies: BTreeSet::from([reference.clone()]),
+                    });
                 }
-                let count = value_count(values.len());
-                if values.is_empty() && *function != ColumnAggregateFunction::Count {
+                let count = value_count(values.present.len());
+                if values.present.is_empty() && *function != ColumnAggregateFunction::Count {
                     return Err(CalculationFailure::EmptyAggregate);
                 }
                 number_result(match function {
-                    ColumnAggregateFunction::Average => average(&values),
+                    ColumnAggregateFunction::Average => average(&values.present),
                     ColumnAggregateFunction::Count => count,
                     ColumnAggregateFunction::Minimum => {
-                        values.iter().copied().fold(f64::INFINITY, f64::min)
+                        values.present.iter().copied().fold(f64::INFINITY, f64::min)
                     }
-                    ColumnAggregateFunction::Maximum => {
-                        values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-                    }
+                    ColumnAggregateFunction::Maximum => values
+                        .present
+                        .iter()
+                        .copied()
+                        .fold(f64::NEG_INFINITY, f64::max),
                 })
             }
             Expression::ColumnConditional {
