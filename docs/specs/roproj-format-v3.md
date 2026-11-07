@@ -226,7 +226,7 @@ admission. Bound Expression gains three forms:
 ```json
 {"op":"range_aggregate","args":{"function":"sum","schema":"...","field":"...","first_row":1,"last_row":8}}
 {"op":"position_read","args":{"schema":"...","field":"...","row":5}}
-{"op":"deleted_reference"}
+{"op":"deleted_reference","args":{}}
 ```
 
 `function` is `sum`, `average`, `count`, `min` or `max`. Rows are integers from 1 to

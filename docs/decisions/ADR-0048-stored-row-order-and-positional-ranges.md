@@ -46,9 +46,11 @@ unsigned byte order, with unranked rows after ranked ones in `EntityId` order. S
 two collaborators generating one rank still get one defined order, and a table with
 no ranks keeps today's order and its exact bytes.
 
-A rank matches `[0-9A-Za-z]{1,64}` and doesn't end in `0`, so a rank always exists
-between two others. An insert that would exceed the length rebalances the table's
-ranks in that command. Ranks carry no meaning beyond order, and nobody reads them.
+A rank matches `[0-9A-Za-z]{1,64}` and doesn't end in `0`, so a rank exists between
+two unequal ranks. An insert rebalances the table's ranks in that command when the
+new rank would exceed the length, or when its neighbours hold one rank, which a merge
+can produce and no rank can split. Ranks carry no meaning beyond order, and nobody
+reads them.
 
 The first positional insert or sort in an unranked table ranks every row in that
 command. Appending to an unranked table adds no rank when the new row already sorts
@@ -84,7 +86,7 @@ boundary stays as it is.
 | Command | Effect on bounds |
 |---|---|
 | Insert a row at `p` | Each bound at or past `p` moves down by one, so a range containing `p` grows |
-| Delete the row at `p` | Each bound past `p` moves up by one, so a range containing `p` shrinks |
+| Delete the row at `p` | `first_row` moves up by one when it's past `p`, and `last_row` when it's at or past `p`, so a range containing `p` shrinks |
 | Delete every row of a range, or the row of a position read | The reference becomes the deleted-reference marker |
 | Sort or move rows | Nothing: the range stays and reads what's now there |
 | Append a row | Nothing |
@@ -93,7 +95,7 @@ All of it happens in the same command as the row change, with one Undo. A read o
 record, `[entity.field]`, on a deleted row also becomes the marker when its owner is
 an Auto cell.
 
-The marker is an Expression with no arguments. It evaluates to a new failure code,
+The marker is an Expression with empty arguments. It evaluates to a new failure code,
 `reference`, shown as `#REF!`, and exports as `#REF!`. So deleting a row can leave a
 visible failure in an Auto cell, as in Excel, and it refuses when the owner is a
 declared column, under ADR-0047 §4. Deleting a column keeps today's dependency-safe
@@ -101,10 +103,16 @@ refusal from ADR-0040; a later ADR can change that.
 
 ### 5. Dependencies and calculation
 
-A range aggregate or position read depends on its field across the table, plus the
-table's row order. That's the column-aggregate edge from stage 1 of #678, plus one
-order edge, and both are static under ADR-0018 §7. A narrower dirty check by row is
-an optimization, and full recomputation stays the oracle.
+A range aggregate or position read depends on the cells it covers at the document's
+row order. Its positions come from the bound formula and its rows from the revision,
+so the edges are still derived without evaluating anything, as ADR-0018 §7 requires.
+Full recomputation stays the oracle.
+
+Cycles use these resolved cells. So `=SUM(A2:A5)` in A7 isn't a cycle, though both
+are in column A. A command that would make a range cover its own owner, such as a
+sort moving A7 into rows 2 to 5, is a cycle and refuses like any other, naming the
+formula. Marking the whole field dirty, the column edge from stage 1 of #678 plus one
+order edge, is a sound way to find what to recalculate.
 
 ### 6. Delta and merge
 
@@ -138,8 +146,9 @@ entity, under ADR-0046.
 
 Canonical-byte fixtures and strict-reader refusals for `rank` and each Expression
 form. Behaviour fixtures, each including Undo: a range over an empty table; a sort
-under a range; deleting an endpoint; deleting a whole range; inserting inside, before
-and after a range; a rebalance. Merge fixtures: equal ranks on two entities; unequal
+under a range; deleting each endpoint; deleting a whole range; inserting inside,
+before and after a range; a rebalance, including an insert between equal ranks after
+a merge; a range in the column of its owner; a sort that would make that a cycle. Merge fixtures: equal ranks on two entities; unequal
 ranks on one; each side of `positional_order_change`. A round trip through XLSX for a
 partial range, and for `#REF!`. Conformance runs on native and WASM.
 
