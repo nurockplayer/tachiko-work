@@ -1427,8 +1427,10 @@ fn export_a1_maps(
 /// Order pending formulas so each one is bound after every pending formula it
 /// references, breaking ties by the lowest `FieldRef` so the order stays
 /// deterministic and identical to the former repeated scan.
+type PendingImportFormula = (String, BTreeSet<FieldRef>, (usize, usize, usize));
+
 fn import_formula_order(
-    pending: &BTreeMap<FieldRef, (String, BTreeSet<FieldRef>, (usize, usize, usize))>,
+    pending: &BTreeMap<FieldRef, PendingImportFormula>,
 ) -> Result<Vec<FieldRef>, DesignerError> {
     let mut dependents: BTreeMap<FieldRef, Vec<FieldRef>> = BTreeMap::new();
     let mut remaining: BTreeMap<FieldRef, usize> = BTreeMap::new();
