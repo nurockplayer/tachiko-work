@@ -1331,3 +1331,148 @@ fn a_later_formula_update_failure_keeps_todays_error() {
         assert_batch_plans_like_one_at_a_time(&document, &commands);
     }
 }
+
+// --- Formula restores keep the batch state too (#678 stage 4) ---
+
+/// `formula_update_document` plus a second absent optional Number slot.
+fn formula_restore_document() -> Document {
+    let mut document = formula_update_document();
+    document
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .insert("spare2".into(), optional_number_field("spare2"));
+    document
+}
+
+fn restore(field: &str, expression: Expression) -> SemanticCommand {
+    SemanticCommand::formula_restore(FieldRef::new("e1", field), expression)
+}
+
+fn inverse_restore(field: &str, value: f64) -> SemanticCommand {
+    SemanticCommand::formula_inverse_restore(
+        FieldRef::new("e1", field),
+        Number::new(value).unwrap(),
+    )
+}
+
+#[test]
+fn a_formula_restore_batch_plans_like_one_command_per_proposal() {
+    let document = formula_restore_document();
+    let commands = vec![
+        set_value("f", Value::Text("first".into())),
+        restore("spare", Expression::Number(Number::new(1.0).unwrap())),
+        set_value("f", Value::Text("second".into())),
+        restore("spare2", Expression::Number(Number::new(2.0).unwrap())),
+        unset("spare"),
+        restore("spare", Expression::Number(Number::new(3.0).unwrap())),
+    ];
+
+    assert_batch_plans_like_one_at_a_time(&document, &commands);
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(commands).unwrap();
+    let (candidate, _) = lifecycle.plan_commands(&document, &body).unwrap();
+    assert_eq!(
+        candidate.entities["e1"].fields["spare"],
+        Value::Formula(Expression::Number(Number::new(3.0).unwrap()))
+    );
+    assert_eq!(
+        candidate.entities["e1"].fields["spare2"],
+        Value::Formula(Expression::Number(Number::new(2.0).unwrap()))
+    );
+}
+
+#[test]
+fn a_formula_inverse_restore_batch_plans_like_one_command_per_proposal() {
+    let document = formula_restore_document();
+    let commands = vec![
+        set_value("f", Value::Text("first".into())),
+        inverse_restore("h", 9.0),
+        set_value("f", Value::Text("second".into())),
+        formula_update(
+            &document,
+            "g",
+            Expression::Number(Number::new(4.0).unwrap()),
+        ),
+        inverse_restore("g", 5.0),
+    ];
+
+    assert_batch_plans_like_one_at_a_time(&document, &commands);
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(commands).unwrap();
+    let (candidate, _) = lifecycle.plan_commands(&document, &body).unwrap();
+    assert_eq!(
+        candidate.entities["e1"].fields["g"],
+        Value::Number(Number::new(5.0).unwrap())
+    );
+    assert_eq!(
+        candidate.entities["e1"].fields["h"],
+        Value::Number(Number::new(9.0).unwrap())
+    );
+}
+
+#[test]
+fn a_later_formula_restore_failure_keeps_todays_error() {
+    let document = formula_restore_document();
+    let first = set_value("f", Value::Text("first".into()));
+    for failing in [
+        // Restore refusals: a missing entity, a non-Number field, a required
+        // field.
+        restore("missing", Expression::Number(Number::new(1.0).unwrap())),
+        restore("f", Expression::Number(Number::new(1.0).unwrap())),
+        restore("g", Expression::Number(Number::new(1.0).unwrap())),
+        // Inverse-restore refusals: a non-Number field, a non-formula value,
+        // an absent optional slot, and a missing entity.
+        inverse_restore("f", 1.0),
+        inverse_restore("g", 1.0),
+        inverse_restore("spare", 1.0),
+        SemanticCommand::formula_inverse_restore(
+            FieldRef::new("missing", "g"),
+            Number::new(1.0).unwrap(),
+        ),
+    ] {
+        let commands = vec![first.clone(), failing];
+        assert_batch_plans_like_one_at_a_time(&document, &commands);
+    }
+
+    // A target the first command filled refuses with today's NoChange.
+    let commands = vec![
+        restore("spare", Expression::Number(Number::new(1.0).unwrap())),
+        restore("spare", Expression::Number(Number::new(2.0).unwrap())),
+    ];
+    assert_batch_plans_like_one_at_a_time(&document, &commands);
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(commands).unwrap();
+    assert!(matches!(
+        lifecycle.plan_commands(&document, &body).unwrap_err(),
+        WorkspaceError::NoChange { .. }
+    ));
+}
+
+#[test]
+fn undoing_a_restore_batch_returns_the_original_document() {
+    let document = formula_restore_document();
+    let forward = vec![
+        inverse_restore("h", 9.0),
+        restore("spare", Expression::Number(Number::new(3.0).unwrap())),
+        set_value("f", Value::Text("changed".into())),
+    ];
+    let inverse = vec![
+        set_value(
+            "h",
+            Value::Formula(Expression::Reference(FieldRef::new("e1", "g"))),
+        ),
+        unset("spare"),
+        set_value("f", Value::Text("old".into())),
+    ];
+
+    let lifecycle = planning_lifecycle();
+    let forward_body = SemanticPatchBody::atomic_batch(forward).unwrap();
+    let (changed, _) = lifecycle.plan_commands(&document, &forward_body).unwrap();
+    assert_ne!(changed, document);
+
+    let inverse_body = SemanticPatchBody::atomic_batch(inverse).unwrap();
+    let (restored, _) = lifecycle.plan_commands(&changed, &inverse_body).unwrap();
+    assert_eq!(restored, document);
+}
