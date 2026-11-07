@@ -356,7 +356,7 @@ fn failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calcul
         vec![node("m-failure"), node("z-failure")]
     );
     assert_eq!(
-        failures.dependencies(),
+        &failures.dependencies(),
         &BTreeMap::from([
             (node("a-success"), BTreeSet::new()),
             (node("m-failure"), BTreeSet::new()),
@@ -613,7 +613,7 @@ fn generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle(
             let CalculationOutcome::Complete(calculation) = first else {
                 panic!("generated DAG {graph} must calculate")
             };
-            assert_eq!(calculation.dependencies(), &dependencies, "graph {graph}");
+            assert_eq!(&calculation.dependencies(), &dependencies, "graph {graph}");
             assert_eq!(calculation.values().len(), FIELD_COUNT, "graph {graph}");
             assert!(
                 calculation
@@ -667,7 +667,7 @@ fn generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle(
         }
 
         let failures = failed(first);
-        assert_eq!(failures.dependencies(), &dependencies, "graph {graph}");
+        assert_eq!(&failures.dependencies(), &dependencies, "graph {graph}");
         assert_eq!(failures.failures(), &expected_failures, "graph {graph}");
     }
 }
