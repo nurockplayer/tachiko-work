@@ -826,29 +826,19 @@ fn working_size_import_keeps_todays_geometry_for_a_promoted_csv() {
             .spreadsheet(&spreadsheet_import(THIRD, true, Some("working_size"), 2), &source)
             .reply,
     );
-    if reply["status"] == "error" {
-        assert_eq!(
-            reply["error"]["code"], "invalid_tracker_operation",
-            "the export proof refuses above today's geometry: {reply}"
-        );
-        assert_eq!(
-            host.observe_occurrence(),
-            observed,
-            "a refused working-size import installs nothing"
-        );
-    } else {
-        // Not refused for some reason: it still never moves to another profile.
-        assert_eq!(reply["response"]["type"], "imported_window", "{reply}");
-        assert_eq!(
-            reply["response"]["payload"]["opened"]["profile"],
-            "working_size",
-            "{reply}"
-        );
-        assert_eq!(
-            reply["response"]["payload"]["opened"]["window"]["total_rows"],
-            200
-        );
-    }
+    assert_eq!(
+        reply["status"], "error",
+        "the metadata profile refuses above today's geometry: {reply}"
+    );
+    assert_eq!(
+        reply["error"]["code"], "imported_spreadsheet_export_refused",
+        "the refusal names the spreadsheet representation: {reply}"
+    );
+    assert_eq!(
+        host.observe_occurrence(),
+        observed,
+        "a refused working-size import installs nothing"
+    );
 }
 
 #[test]
