@@ -82,8 +82,10 @@ The original spelling isn't kept.
 
 FieldDefinition gains optional `date_format`, after `number_format`, on Date and Auto
 fields. It's a closed set: `iso` (`2026-11-07`), `mdy` (`11/7/2026`), `dmy`
-(`7/11/2026`), `month_day_year` (`Nov 7, 2026`) and `day_month_year` (`7 Nov 2026`).
-Absent means `iso`, today's display. English month names, as with en-US numbers. Like
+(`7/11/2026`), `ymd_slash` (`2026/11/7`), `ymd_cjk` (`2026年11月7日`), `month_day_year`
+(`Nov 7, 2026`) and `day_month_year` (`7 Nov 2026`). Absent means `iso`, today's display.
+Month names are English, as with en-US numbers. An XLSX format that matches one of these
+keeps it on import, and any other falls to `iso` with a ledger finding. Like
 `number_format`, it's a direct field fact in the delta, because it lives on the
 definition and is edited with a revision-pinned command. It's a fact about display
 and it changes no value.
@@ -103,7 +105,8 @@ The row being painted takes the place of a formula's owner. So `[due]` is the ex
 `same_row_reference`, reading that row's field, and one rule covers every row. A
 condition reads only same-row references, whole-column aggregates, literals, functions
 and `TODAY()`. It can't name a record or a position, so deleting or sorting rows never
-leaves a rule pointing at nothing.
+leaves a rule pointing at nothing. A condition evaluates under ADR-0047 §5 whatever the
+column's kind, so `[due] < TODAY()` compares two Dates on a declared Date column too.
 
 - **It isn't a formula.** A rule has no owner cell and adds no edge to the dependency
   graph, so it can't form a cycle or slow an edit. It's evaluated when a window is
@@ -157,7 +160,8 @@ Other merged cells stay a disclosed import boundary with a ledger finding.
   finding, as #678 decided.
 - **A merge past a bound:** two valid sides can add up to more than a bound, and that
   must not block the merge. The prune above also drops, in canonical order, rules past
-  64 by rank and styles past 4,096 by ID with the records that use them. The merge
+  64 by rank, styles past 4,096 by ID with the records that use them, and cell records
+  past `populated_cells` by `(entity, field)`, then any style left unused. The merge
   report lists what went, and the values stay.
 - **Older representations:** direct-ro/v2 and roproj/v1 and v2 writers refuse, under
   ADR-0046. CSV carries no styles and keeps its existing disclosure.
@@ -174,7 +178,8 @@ each including Undo: a styled cell through sort, insert and delete; a rule on a
 failing condition; rule layering; `TODAY()` across two host inputs; a column removal
 with rules attached; a rule painting many rows from one `same_row_reference`; a merge
 of unequal styles from each side; two sides creating different new styles; a new rule
-against a concurrent column deletion. An XLSX round trip for
+against a concurrent column deletion; two sides that together pass each of the rule,
+style and cell bounds. An XLSX round trip for
 every mapping and finding.
 
 ## Consequences

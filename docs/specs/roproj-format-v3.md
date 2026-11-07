@@ -155,7 +155,7 @@ all previously canonical format-free trees and package hashes remain exact.
 
 Implementation state: pending. FieldDefinition admits optional `date_format`, after
 `number_format`, on Date and Auto fields, with the value `iso`, `mdy`, `dmy`,
-`month_day_year` or `day_month_year`. Anything else fails admission. Omitted formats
+`ymd_slash`, `ymd_cjk`, `month_day_year` or `day_month_year`. Anything else fails admission. Omitted formats
 stay omitted, so existing bytes and hashes remain exact.
 
 ### FieldType
@@ -276,6 +276,13 @@ the `op` and `args` form:
 | `and`, `or` | An array of Expressions |
 | `not`, `is_blank` | One Expression |
 | `round` | `value`, `digits` |
+
+A `column` is an object with `schema` and `field`. `column_aggregate`'s `function` is
+`average`, `count`, `minimum` or `maximum`. `compare`'s and a criterion's `operator` is
+`=`, `<>`, `<`, `<=`, `>` or `>=`. `column_conditional`'s `aggregate` is `sum`, `average`
+or `count`; `values` is a column; and each `criteria` element has members `column`,
+`operator` and optional `value`, an Expression, in that order. Members appear in the
+order shown here.
 
 The ADR-0047 and ADR-0048 sections add to this table once implemented. #579 freezes it.
 
