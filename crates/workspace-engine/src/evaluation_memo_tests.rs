@@ -3,14 +3,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     AssociatedWriteRequirement, AuthorizationAction, Document, DocumentScopeId, Entity,
-    FieldConstraint, FieldDefinition, FieldRef, FieldType, FormulaUpdateCommand, Grant,
-    GrantRequirement, MutationClass, OperationFamily, PatchLifecycle, PatchLifecycleError,
-    PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticCommand, SemanticPatch,
-    SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
-    SemanticScope, TrustedInstant, V2ReceiptEvidence, Value,
+    FieldConstraint, FieldDefinition, FieldId, FieldRef, FieldType, FormulaUpdateCommand, Grant,
+    GrantRequirement, KeyedGroupedSumDefinition, MutationClass, OperationFamily, PatchLifecycle,
+    PatchLifecycleError, PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticCommand,
+    SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
+    SemanticRevision, SemanticScope, TrustedInstant, V2ReceiptEvidence, Value,
 };
 use crate::{
-    Expression, Number, Schema, WorkspaceError, evaluation_counters,
+    Expression, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat,
+    NumberFormatKind, Schema, WorkspaceError, evaluation_counters,
     resident_session::ResidentWorkspaceSession,
 };
 
@@ -1475,4 +1476,472 @@ fn undoing_a_restore_batch_returns_the_original_document() {
     let inverse_body = SemanticPatchBody::atomic_batch(inverse).unwrap();
     let (restored, _) = lifecycle.plan_commands(&changed, &inverse_body).unwrap();
     assert_eq!(restored, document);
+}
+
+// --- V2 evidence reuses the prepared evaluation (#678) ---
+
+/// A lifecycle that may propose every command the v2 cases need.
+fn v2_lifecycle() -> PatchLifecycle {
+    let mut lifecycle = PatchLifecycle::new_v2(
+        "domain".into(),
+        "scope".into(),
+        "doc".into(),
+        "api".into(),
+        "policy".into(),
+        "meaning".into(),
+    );
+    lifecycle
+        .register_principal("human".into(), PrincipalKind::Human)
+        .unwrap();
+    let scope = ScopedSemanticSubject::new("scope".into(), "doc".into(), SemanticScope::Document);
+    let mut requirements = Vec::new();
+    for (family, classes) in [
+        (
+            OperationFamily::SetFieldValue,
+            [
+                MutationClass::Value,
+                MutationClass::Formula,
+                MutationClass::Destructive,
+            ]
+            .as_slice(),
+        ),
+        (
+            OperationFamily::SchemaFieldMutation,
+            [
+                MutationClass::Schema,
+                MutationClass::Structure,
+                MutationClass::Destructive,
+            ]
+            .as_slice(),
+        ),
+        (
+            OperationFamily::AppendEntity,
+            [MutationClass::Structure, MutationClass::Formula].as_slice(),
+        ),
+        (
+            OperationFamily::RemoveEntity,
+            [
+                MutationClass::Structure,
+                MutationClass::Destructive,
+                MutationClass::Formula,
+            ]
+            .as_slice(),
+        ),
+        (
+            OperationFamily::FormulaUpdate,
+            [MutationClass::Formula].as_slice(),
+        ),
+        (
+            OperationFamily::KeyedGroupedSumDefinition,
+            [MutationClass::Structure, MutationClass::Destructive].as_slice(),
+        ),
+    ] {
+        requirements.push(GrantRequirement::query(family, scope.clone()));
+        for action in [AuthorizationAction::Propose, AuthorizationAction::Execute] {
+            for mutation_class in classes {
+                requirements.push(
+                    GrantRequirement::mutation(action, family, *mutation_class, scope.clone())
+                        .unwrap(),
+                );
+            }
+        }
+    }
+    lifecycle
+        .provision_grant(Grant::new(
+            "grant.v2".into(),
+            "human".into(),
+            "human".into(),
+            requirements,
+            None,
+        ))
+        .unwrap();
+    lifecycle
+}
+
+fn multi_field_schema(id: &str, key: &str, fields: &[(&str, FieldType)]) -> Schema {
+    Schema {
+        field_order: None,
+        id: id.into(),
+        key: key.into(),
+        display_name: None,
+        fields: fields
+            .iter()
+            .map(|(field, field_type)| {
+                let definition = match field_type {
+                    FieldType::Number => number_field(field),
+                    _ => text_field(field),
+                };
+                (FieldId::from(*field), definition)
+            })
+            .collect(),
+    }
+}
+
+fn keyed_definition() -> KeyedGroupedSumDefinition {
+    KeyedGroupedSumDefinition {
+        id: "summary".into(),
+        orders: KeyedGroupedSumOrdersBinding {
+            schema: "orders".into(),
+            lookup_key_field: "lookup".into(),
+            quantity_field: "quantity".into(),
+        },
+        products: KeyedGroupedSumProductsBinding {
+            schema: "products".into(),
+            key_field: "key".into(),
+            category_field: "category".into(),
+            price_field: "price".into(),
+        },
+    }
+}
+
+/// `formula_document` plus both schemas a saved keyed grouped sum binds.
+fn keyed_document() -> Document {
+    let mut document = formula_document();
+    document.schemas.insert(
+        "orders".into(),
+        multi_field_schema(
+            "orders",
+            "orders",
+            &[("lookup", FieldType::Text), ("quantity", FieldType::Number)],
+        ),
+    );
+    document.schemas.insert(
+        "products".into(),
+        multi_field_schema(
+            "products",
+            "products",
+            &[
+                ("key", FieldType::Text),
+                ("category", FieldType::Text),
+                ("price", FieldType::Number),
+            ],
+        ),
+    );
+    document
+}
+
+/// `formula_document` plus a second schema whose column `h` reads.
+fn cross_schema_document() -> Document {
+    let mut document = formula_document();
+    document.schemas.insert(
+        "s2".into(),
+        multi_field_schema("s2", "other", &[("n", FieldType::Number)]),
+    );
+    document.entities.insert(
+        "e2".into(),
+        Entity {
+            id: "e2".into(),
+            key: "row2".into(),
+            schema: "s2".into(),
+            fields: BTreeMap::from([("n".into(), Value::Number(Number::new(2.0).unwrap()))]),
+        },
+    );
+    document.entities.get_mut("e1").unwrap().fields.insert(
+        "h".into(),
+        Value::Formula(Expression::Reference(FieldRef::new("e2", "n"))),
+    );
+    document
+}
+
+/// Compare `propose_prepared` with `propose` for one document and body.
+///
+/// The proposal payload and every evaluated result must be identical, and a
+/// refusal must keep its exact error.
+fn assert_prepared_matches_unprepared(document: &Document, body: SemanticPatchBody, label: &str) {
+    let planner = v2_lifecycle();
+    let candidate = planner
+        .plan_commands(document, &body)
+        .unwrap_or_else(|error| panic!("{label}: planning refused: {error:?}"))
+        .0;
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let revision = session.revision().clone();
+    let prepared = session.prepare_evaluation(candidate);
+
+    let mut plain_lifecycle = v2_lifecycle();
+    let plain_result = propose_plain(
+        &mut plain_lifecycle,
+        document,
+        revision.as_str(),
+        body.clone(),
+    );
+    let mut prepared_lifecycle = v2_lifecycle();
+    let prepared_result = propose_with(
+        &mut prepared_lifecycle,
+        document,
+        revision.as_str(),
+        body,
+        &prepared,
+    );
+
+    match (plain_result, prepared_result) {
+        (Ok(plain), Ok(reused)) => {
+            assert_eq!(plain, reused, "{label}: proposal payloads differ");
+            assert_same_evaluation(&plain_lifecycle, &prepared_lifecycle);
+        }
+        (Err(plain), Err(reused)) => {
+            assert_eq!(
+                format!("{plain:?}"),
+                format!("{reused:?}"),
+                "{label}: refusals differ"
+            );
+        }
+        (plain, reused) => panic!("{label}: outcomes differ: {plain:?} vs {reused:?}"),
+    }
+}
+
+fn acceptance_cases() -> Vec<(&'static str, Document, SemanticPatchBody)> {
+    let formula = formula_document();
+    let update = formula_update_document();
+    let mut with_second = formula_document();
+    with_second.entities.insert("e2".into(), second_entity());
+    let formula_update_body = SemanticPatchBody::command(formula_update(
+        &formula,
+        "h",
+        Expression::Number(Number::new(3.0).unwrap()),
+    ));
+    let restore_body = SemanticPatchBody::command(restore(
+        "spare",
+        Expression::Number(Number::new(1.0).unwrap()),
+    ));
+    let batch_body = SemanticPatchBody::atomic_batch(vec![
+        set_value("f", Value::Text("batch".into())),
+        set_number("g", 2.0),
+    ])
+    .unwrap();
+    vec![
+        (
+            "a value edit that reaches a formula",
+            formula.clone(),
+            set_g_number(2.0),
+        ),
+        ("a formula update", formula.clone(), formula_update_body),
+        ("a formula restore", update, restore_body),
+        ("a batch of edits", formula.clone(), batch_body),
+        (
+            "a row insert",
+            formula.clone(),
+            SemanticPatchBody::command(SemanticCommand::AppendEntity {
+                entity: second_entity(),
+            }),
+        ),
+        (
+            "a row remove",
+            with_second,
+            SemanticPatchBody::command(SemanticCommand::RemoveEntity {
+                entity: "e2".into(),
+            }),
+        ),
+        (
+            "a display name change",
+            formula.clone(),
+            SemanticPatchBody::command(SemanticCommand::SetSchemaFieldDisplayName {
+                schema: "s".into(),
+                field: "f".into(),
+                display_name: Some("Name".into()),
+            }),
+        ),
+        (
+            "a number format change",
+            formula.clone(),
+            SemanticPatchBody::command(SemanticCommand::SetFieldNumberFormat {
+                schema: "s".into(),
+                field: "g".into(),
+                number_format: Some(NumberFormat {
+                    decimals: 2,
+                    kind: NumberFormatKind::Percent,
+                    thousands_separator: true,
+                }),
+            }),
+        ),
+        (
+            "a field order change",
+            formula.clone(),
+            SemanticPatchBody::command(SemanticCommand::SetSchemaFieldOrder {
+                schema: "s".into(),
+                order: Some(vec![
+                    FieldId::from("h"),
+                    FieldId::from("f"),
+                    FieldId::from("g"),
+                ]),
+            }),
+        ),
+        (
+            "a constraint set",
+            formula.clone(),
+            SemanticPatchBody::command(SemanticCommand::SetFieldConstraint {
+                schema: "s".into(),
+                field: "f".into(),
+                constraint: FieldConstraint::TextLiteralSet {
+                    values: vec!["old".into(), "new".into()],
+                },
+            }),
+        ),
+        (
+            "a keyed grouped sum definition change",
+            keyed_document(),
+            SemanticPatchBody::command(SemanticCommand::UpsertKeyedGroupedSumDefinition {
+                definition: keyed_definition(),
+            }),
+        ),
+        (
+            "a formula reading another schema",
+            cross_schema_document(),
+            set_f_text("new"),
+        ),
+    ]
+}
+
+/// Acceptance 1: a prepared proposal equals an unprepared one for every kind
+/// of v2 evidence.
+#[test]
+fn prepared_v2_proposals_match_unprepared_proposals() {
+    for (label, document, body) in acceptance_cases() {
+        assert_prepared_matches_unprepared(&document, body, label);
+    }
+}
+
+/// Acceptance 2: every refusal keeps its exact error with a prepared
+/// evaluation, including a base whose retained calculation failed.
+#[test]
+fn prepared_v2_refusals_match_unprepared_refusals() {
+    let formula = formula_document();
+    let cyclic = SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+        field: FieldRef::new("e1", "h"),
+        value: Value::Formula(Expression::Reference(FieldRef::new("e1", "h"))),
+    });
+    let failing = SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+        field: FieldRef::new("e1", "h"),
+        value: Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+        }),
+    });
+    let violated_constraint = set_f_text("not allowed");
+    let invalid_definition =
+        SemanticPatchBody::command(SemanticCommand::UpsertKeyedGroupedSumDefinition {
+            definition: KeyedGroupedSumDefinition {
+                id: "summary".into(),
+                orders: KeyedGroupedSumOrdersBinding {
+                    schema: "missing".into(),
+                    lookup_key_field: "lookup".into(),
+                    quantity_field: "quantity".into(),
+                },
+                products: KeyedGroupedSumProductsBinding {
+                    schema: "missing".into(),
+                    key_field: "key".into(),
+                    category_field: "category".into(),
+                    price_field: "price".into(),
+                },
+            },
+        });
+    let mut constrained = formula_document();
+    constrained
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("f")
+        .unwrap()
+        .constraint = FieldConstraint::TextLiteralSet {
+        values: vec!["old".into()],
+    };
+
+    let invalid = vec![
+        ("an invalid candidate", formula.clone(), cyclic),
+        (
+            "an edit that makes a formula fail",
+            formula.clone(),
+            failing,
+        ),
+        ("a constraint violation", constrained, violated_constraint),
+        ("invalid definitions", formula.clone(), invalid_definition),
+    ];
+    for (label, document, body) in invalid {
+        assert_prepared_matches_unprepared(&document, body, label);
+    }
+
+    // The retained base outcome failed, so `base_calculation` is `None` and
+    // the prepared evaluation cannot replace today's refusal.
+    assert_prepared_matches_unprepared(
+        &failing_formula_document(),
+        set_g_number(2.0),
+        "a base whose retained calculation failed",
+    );
+}
+
+/// Acceptance 3: a prepared evaluation for a different candidate is ignored,
+/// by the counters and by the resulting evaluation.
+#[test]
+fn a_prepared_v2_evaluation_for_another_candidate_is_ignored() {
+    let document = formula_document();
+    let planner = v2_lifecycle();
+    let prepared_candidate = planner
+        .plan_commands(&document, &set_f_text("new"))
+        .unwrap()
+        .0;
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let revision = session.revision().clone();
+
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(prepared_candidate);
+    let mut lifecycle = v2_lifecycle();
+    propose_with(
+        &mut lifecycle,
+        &document,
+        revision.as_str(),
+        set_h_formula(),
+        &prepared,
+    )
+    .unwrap();
+
+    // One calculation for the ignored prepared candidate, then the same two
+    // document validations and base record as the unprepared path.
+    assert_eq!(evaluation_counters::counts(), (3, 1));
+    let mut plain_lifecycle = v2_lifecycle();
+    propose_plain(
+        &mut plain_lifecycle,
+        &document,
+        revision.as_str(),
+        set_h_formula(),
+    )
+    .unwrap();
+    assert_same_evaluation(&plain_lifecycle, &lifecycle);
+}
+
+/// Acceptance 4: the prepared path only calculates in `prepare_evaluation`;
+/// the unprepared path validates both documents and records the base.
+#[test]
+fn the_prepared_v2_path_reuses_every_calculation() {
+    let document = formula_document();
+    let body = set_g_number(2.0);
+    let candidate = v2_lifecycle().plan_commands(&document, &body).unwrap().0;
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let revision = session.revision().clone();
+
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate);
+    let mut prepared_lifecycle = v2_lifecycle();
+    propose_with(
+        &mut prepared_lifecycle,
+        &document,
+        revision.as_str(),
+        body.clone(),
+        &prepared,
+    )
+    .unwrap();
+    assert_eq!(
+        evaluation_counters::counts(),
+        (1, 0),
+        "the proposal reuses the prepared candidate and base"
+    );
+
+    evaluation_counters::reset();
+    let mut plain_lifecycle = v2_lifecycle();
+    propose_plain(&mut plain_lifecycle, &document, revision.as_str(), body).unwrap();
+    assert_eq!(
+        evaluation_counters::counts(),
+        (2, 1),
+        "the unprepared path validates both documents and records its base"
+    );
+    assert_same_evaluation(&plain_lifecycle, &prepared_lifecycle);
 }

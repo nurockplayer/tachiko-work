@@ -18,7 +18,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
-use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta};
+use tachiko_diff_engine::{
+    CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta,
+    canonical_delta_with_calculations,
+};
 use tachiko_formula_engine::Calculation;
 use tachiko_semantic_core::{
     FieldConstraint, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
@@ -28,7 +31,7 @@ use thiserror::Error;
 use super::{
     ColumnRef, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition,
     FieldEditPlanning, FieldId, FieldKey, FieldRef, FieldType, Number, PreparedEvaluation,
-    SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
+    PreparedVerdict, SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
     apply_field_value_candidate_with_planning, finalize_edit_with_validation,
     formula_inverse_restore_candidate_in_place, formula_restore_candidate_in_place,
     formula_update_candidate_in_place, unset_field_candidate_in_place,
@@ -3783,19 +3786,69 @@ impl PatchLifecycle {
         candidate: Document,
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
-        // V2 evidence is not the hot one-edit path this evaluation prepares for,
-        // so it deliberately keeps its own validation and calculation.
-        _prepared: Option<&PreparedEvaluation>,
+        prepared: Option<&PreparedEvaluation>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
-        let (_, base_calculation) = Self::validate_and_preflight(base)?;
-        let (validation_report, candidate_calculation) = Self::validate_and_preflight(&candidate)?;
-
-        let delta =
-            canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &candidate).map_err(|source| {
-                PatchLifecycleError::CommandRejected {
+        // Only a successful evaluation of this exact candidate against a
+        // completely calculated base can replace today's validation,
+        // calculation and evidence work; every other case keeps it unchanged.
+        let prepared = prepared.filter(|prepared| {
+            prepared.document() == &candidate
+                && matches!(prepared.verdict(), PreparedVerdict::Valid)
+                && prepared.base_calculation().is_some()
+        });
+        let fallback_base_calculation;
+        let fallback_candidate_calculation;
+        let (validation_report, base_calculation, candidate_calculation, delta) =
+            if let Some(prepared) = prepared {
+                // The prepared candidate is already completely validated and
+                // calculated; only its formula projection preflight remains.
+                // The base keeps no preflight, which is why the delta still
+                // admits it.
+                super::preflight_formula_projections(&candidate).map_err(|source| {
+                    PatchLifecycleError::CommandRejected {
+                        source: Box::new(source),
+                    }
+                })?;
+                let base_calculation = prepared
+                    .base_calculation()
+                    .expect("a reusable prepared evaluation carries its base calculation");
+                let candidate_calculation = prepared
+                    .calculation()
+                    .expect("a valid prepared evaluation carries its candidate calculation");
+                let delta = canonical_delta_with_calculations(
+                    CANONICAL_SEMANTIC_DELTA_V2,
+                    base,
+                    &candidate,
+                    base_calculation,
+                    candidate_calculation,
+                )
+                .map_err(|source| PatchLifecycleError::CommandRejected {
                     source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
-                }
-            })?;
+                })?;
+                (
+                    prepared.report().clone(),
+                    base_calculation,
+                    candidate_calculation,
+                    delta,
+                )
+            } else {
+                let (_, base_calculation) = Self::validate_and_preflight(base)?;
+                fallback_base_calculation = base_calculation;
+                #[cfg(test)]
+                super::evaluation_counters::record_base_calculation();
+                let (report, candidate_calculation) = Self::validate_and_preflight(&candidate)?;
+                fallback_candidate_calculation = candidate_calculation;
+                let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &candidate)
+                    .map_err(|source| PatchLifecycleError::CommandRejected {
+                        source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
+                    })?;
+                (
+                    report,
+                    &fallback_base_calculation,
+                    &fallback_candidate_calculation,
+                    delta,
+                )
+            };
 
         // Formula impact remains derived evidence. Run the frozen formula/diff
         // projection over snapshots without names, constraints, or saved definitions.
@@ -3804,8 +3857,8 @@ impl PatchLifecycle {
         let formula_projection = super::diff_with_calculations(
             &formula_projection_document(base),
             &formula_projection_document(&candidate),
-            &base_calculation,
-            &candidate_calculation,
+            base_calculation,
+            candidate_calculation,
         )
         .map_err(|source| PatchLifecycleError::CommandRejected {
             source: Box::new(source.into()),
