@@ -1414,6 +1414,15 @@ struct ProposalRecord {
     sequence: u64,
 }
 
+/// The retained proposal state a preview entry-point comparison reads.
+#[cfg(test)]
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct RetainedProposalState {
+    history: Vec<PatchLifecycleState>,
+    reviewed_by: BTreeSet<PrincipalId>,
+    footprint: Option<AuthorizationFootprint>,
+}
+
 #[derive(Clone, Debug)]
 struct StoredApproval {
     approval: Approval,
@@ -1476,6 +1485,10 @@ struct EvaluationMemo {
 enum ProfiledPreview {
     V1(PatchPreview),
     V2(PatchPreviewV2),
+    /// The proposal alone, for callers that ask the shared preview path to
+    /// skip building evidence they would discard. The full-preview entry
+    /// points always build evidence, so they never see this variant.
+    ProposalOnly(SemanticPatch),
 }
 
 enum ProfiledReceipt {
@@ -2078,9 +2091,10 @@ impl PatchLifecycle {
             now,
             EvidenceProfile::V1,
             None,
+            true,
         )? {
             ProfiledPreview::V1(preview) => Ok(preview),
-            ProfiledPreview::V2(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+            _ => Err(PatchLifecycleError::EvidenceProfileMismatch),
         }
     }
 
@@ -2107,9 +2121,44 @@ impl PatchLifecycle {
             now,
             EvidenceProfile::V1,
             Some(witness),
+            true,
         )? {
             ProfiledPreview::V1(preview) => Ok(preview),
-            ProfiledPreview::V2(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+            _ => Err(PatchLifecycleError::EvidenceProfileMismatch),
+        }
+    }
+
+    /// Return the proposal of a disclosure-authorized preview for a proposal
+    /// issued at the resident occurrence and revision the witness names,
+    /// skipping only the evidence the caller would discard.
+    ///
+    /// This runs every check, state change and refusal of
+    /// [`Self::preview_witnessed`] and leaves the same lifecycle state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::preview_witnessed`].
+    pub fn preview_proposal_witnessed(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        witness: &DocumentWitness<'_>,
+        proposal_id: &ProposalId,
+        viewer: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<SemanticPatch, PatchLifecycleError> {
+        match self.preview_profile(
+            document_scope,
+            witness.document(),
+            witness.revision(),
+            proposal_id,
+            viewer,
+            now,
+            EvidenceProfile::V1,
+            Some(witness),
+            false,
+        )? {
+            ProfiledPreview::ProposalOnly(patch) => Ok(patch),
+            _ => Err(PatchLifecycleError::EvidenceProfileMismatch),
         }
     }
 
@@ -2137,9 +2186,10 @@ impl PatchLifecycle {
             now,
             EvidenceProfile::V2,
             None,
+            true,
         )? {
             ProfiledPreview::V2(preview) => Ok(preview),
-            ProfiledPreview::V1(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+            _ => Err(PatchLifecycleError::EvidenceProfileMismatch),
         }
     }
 
@@ -2166,9 +2216,44 @@ impl PatchLifecycle {
             now,
             EvidenceProfile::V2,
             Some(witness),
+            true,
         )? {
             ProfiledPreview::V2(preview) => Ok(preview),
-            ProfiledPreview::V1(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+            _ => Err(PatchLifecycleError::EvidenceProfileMismatch),
+        }
+    }
+
+    /// Return the proposal of a disclosure-authorized v2 preview for a
+    /// proposal issued at the resident occurrence and revision the witness
+    /// names, skipping only the evidence the caller would discard.
+    ///
+    /// This runs every check, state change and refusal of
+    /// [`Self::preview_v2_witnessed`] and leaves the same lifecycle state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::preview_v2_witnessed`].
+    pub fn preview_v2_proposal_witnessed(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        witness: &DocumentWitness<'_>,
+        proposal_id: &ProposalId,
+        viewer: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<SemanticPatch, PatchLifecycleError> {
+        match self.preview_profile(
+            document_scope,
+            witness.document(),
+            witness.revision(),
+            proposal_id,
+            viewer,
+            now,
+            EvidenceProfile::V2,
+            Some(witness),
+            false,
+        )? {
+            ProfiledPreview::ProposalOnly(patch) => Ok(patch),
+            _ => Err(PatchLifecycleError::EvidenceProfileMismatch),
         }
     }
 
@@ -2183,6 +2268,7 @@ impl PatchLifecycle {
         now: TrustedInstant,
         expected_profile: EvidenceProfile,
         witness: Option<&DocumentWitness<'_>>,
+        evidence: bool,
     ) -> Result<ProfiledPreview, PatchLifecycleError> {
         self.require_document(document_scope, document)?;
         let record = self.select_disclosable_proposal(proposal_id, viewer, now)?;
@@ -2199,11 +2285,13 @@ impl PatchLifecycle {
             return Err(PatchLifecycleError::Stale);
         }
         let patch = record.patch;
-        self.with_evaluated(document, &patch, witness, |lifecycle, evaluated| {
+        let preview = self.with_evaluated(document, &patch, witness, |lifecycle, evaluated| {
             if evaluated.footprint != stored_footprint {
                 lifecycle.append_state(proposal_id, PatchLifecycleState::Conflict);
                 return Err(PatchLifecycleError::ApprovalBindingMismatch);
             }
+            // A refusal here still reaches the caller even when the caller
+            // discards the evidence, so keep the check unconditional.
             let constraint_reviews = if matches!(&evaluated.evidence, PatchEvidence::V2(_)) {
                 constraint_review_evidence(
                     document,
@@ -2228,16 +2316,21 @@ impl PatchLifecycle {
             ] {
                 push_once(&mut proposal_record.history, state);
             }
+            if !evidence {
+                return Ok(None);
+            }
             match &evaluated.evidence {
-                PatchEvidence::V1(semantic_changes) => Ok(ProfiledPreview::V1(PatchPreview {
-                    proposal: patch.clone(),
-                    semantic_changes: semantic_changes.clone(),
-                    formula_impacts: evaluated.formula_impacts.clone(),
-                    validation_report: evaluated.validation_report.clone(),
-                    authorization_footprint: evaluated.footprint.clone(),
-                    risk,
-                })),
-                PatchEvidence::V2(delta) => Ok(ProfiledPreview::V2(PatchPreviewV2 {
+                PatchEvidence::V1(semantic_changes) => {
+                    Ok(Some(ProfiledPreview::V1(PatchPreview {
+                        proposal: patch.clone(),
+                        semantic_changes: semantic_changes.clone(),
+                        formula_impacts: evaluated.formula_impacts.clone(),
+                        validation_report: evaluated.validation_report.clone(),
+                        authorization_footprint: evaluated.footprint.clone(),
+                        risk,
+                    })))
+                }
+                PatchEvidence::V2(delta) => Ok(Some(ProfiledPreview::V2(PatchPreviewV2 {
                     proposal: patch.clone(),
                     delta: delta.clone(),
                     constraint_reviews,
@@ -2245,9 +2338,13 @@ impl PatchLifecycle {
                     validation_report: evaluated.validation_report.clone(),
                     authorization_footprint: evaluated.footprint.clone(),
                     risk,
-                })),
+                }))),
             }
-        })
+        })?;
+        match preview {
+            Some(preview) => Ok(preview),
+            None => Ok(ProfiledPreview::ProposalOnly(patch)),
+        }
     }
 
     /// Issue one exact finite Human Approval after authorized review.
@@ -3098,6 +3195,27 @@ impl PatchLifecycle {
         self.proposals
             .get(id)
             .map(|proposal| proposal.history.as_slice())
+            .ok_or(PatchLifecycleError::ProposalNotFound)
+    }
+
+    /// Read the retained proposal state previews leave behind, for tests that
+    /// compare preview entry points.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PatchLifecycleError::ProposalNotFound`] when absent.
+    #[cfg(test)]
+    pub(crate) fn retained_proposal_state(
+        &self,
+        id: &ProposalId,
+    ) -> Result<RetainedProposalState, PatchLifecycleError> {
+        self.proposals
+            .get(id)
+            .map(|proposal| RetainedProposalState {
+                history: proposal.history.clone(),
+                reviewed_by: proposal.reviewed_by.clone(),
+                footprint: proposal.footprint.clone(),
+            })
             .ok_or(PatchLifecycleError::ProposalNotFound)
     }
 

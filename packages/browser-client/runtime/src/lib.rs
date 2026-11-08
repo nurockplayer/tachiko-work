@@ -10729,13 +10729,21 @@ fn designer_preview_witnessed(
     now: TrustedInstant,
 ) -> Result<SemanticPatch, DesignerError> {
     if lifecycle.uses_v2_evidence() {
-        Ok(lifecycle
-            .preview_v2_witnessed(document_scope, witness, proposal, principal, now)?
-            .proposal)
+        Ok(lifecycle.preview_v2_proposal_witnessed(
+            document_scope,
+            witness,
+            proposal,
+            principal,
+            now,
+        )?)
     } else {
-        Ok(lifecycle
-            .preview_witnessed(document_scope, witness, proposal, principal, now)?
-            .proposal)
+        Ok(lifecycle.preview_proposal_witnessed(
+            document_scope,
+            witness,
+            proposal,
+            principal,
+            now,
+        )?)
     }
 }
 
