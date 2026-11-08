@@ -108,22 +108,112 @@ pub fn validate_complete_formula_constraints(
                 continue;
             };
             let field = FieldRef::new(entity_id.clone(), field_id.clone());
-            let (FieldConstraint::NumberInclusiveRange { min, max }, Some(value)) =
-                (&definition.constraint, values.get(&field))
-            else {
-                continue;
-            };
-            if value < min || value > max {
-                diagnostics.push(core_diagnostic(
-                    format!("entities.{entity_id}.fields.{field_id}"),
-                    DiagnosticCode::FIELD_VALUE_CONSTRAINT_MISMATCH,
-                    "calculated field value does not satisfy its declared constraint",
-                    vec![SemanticSubject::EntityField(field)],
-                ));
+            if let Some(diagnostic) = formula_value_constraint_diagnostic(
+                entity_id,
+                field_id,
+                definition,
+                values.get(&field),
+            ) {
+                diagnostics.push(diagnostic);
             }
         }
     }
     diagnostics.sort();
+    diagnostics
+}
+
+/// Validate one formula field's calculated value against its durable
+/// constraint, exactly as [`validate_complete_formula_constraints`] does for it.
+///
+/// The other formula fields' constraints are independent, so a caller that
+/// knows only this field's calculated value can change gets the same
+/// diagnostics for it as the whole-document pass.
+#[must_use]
+pub fn validate_formula_value_constraint(
+    document: &Document,
+    field: &FieldRef,
+    values: &BTreeMap<FieldRef, Number>,
+) -> Vec<Diagnostic> {
+    let Some(entity) = document.entities.get(&field.entity) else {
+        return Vec::new();
+    };
+    let Some(schema) = document.schemas.get(&entity.schema) else {
+        return Vec::new();
+    };
+    let Some(Value::Formula(_)) = entity.fields.get(&field.field) else {
+        return Vec::new();
+    };
+    let Some(definition) = schema.fields.get(&field.field) else {
+        return Vec::new();
+    };
+    formula_value_constraint_diagnostic(&field.entity, &field.field, definition, values.get(field))
+        .into_iter()
+        .collect()
+}
+
+fn formula_value_constraint_diagnostic(
+    entity_id: &crate::EntityId,
+    field_id: &crate::FieldId,
+    definition: &crate::FieldDefinition,
+    value: Option<&Number>,
+) -> Option<Diagnostic> {
+    let (FieldConstraint::NumberInclusiveRange { min, max }, Some(value)) =
+        (&definition.constraint, value)
+    else {
+        return None;
+    };
+    (value < min || value > max).then(|| {
+        core_diagnostic(
+            format!("entities.{entity_id}.fields.{field_id}"),
+            DiagnosticCode::FIELD_VALUE_CONSTRAINT_MISMATCH,
+            "calculated field value does not satisfy its declared constraint",
+            vec![SemanticSubject::EntityField(FieldRef::new(
+                entity_id.clone(),
+                field_id.clone(),
+            ))],
+        )
+    })
+}
+
+/// Validate one entity field with the rules [`validate_document_core`] applies
+/// to that field alone.
+///
+/// A present value gets its declared type, stored value constraint, reference
+/// target and declaration checked; an absent field gets the required-presence
+/// check. The result is exactly the diagnostics whole-document validation
+/// raises about this field, so a caller that knows only this field changed can
+/// stand in for the whole-document pass when the result is empty.
+#[must_use]
+pub fn validate_entity_field_core(document: &Document, field: &FieldRef) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let Some(entity) = document.entities.get(&field.entity) else {
+        return diagnostics;
+    };
+    let Some(schema) = document.schemas.get(&entity.schema) else {
+        return diagnostics;
+    };
+    match entity.fields.get(&field.field) {
+        Some(value) => validate_present_entity_field(
+            document,
+            schema,
+            &field.entity,
+            &field.field,
+            value,
+            false,
+            &mut diagnostics,
+        ),
+        None => {
+            if let Some(definition) = schema.fields.get(&field.field) {
+                if definition.required {
+                    diagnostics.push(missing_required_field_diagnostic(
+                        &field.entity,
+                        &field.field,
+                        definition,
+                    ));
+                }
+            }
+        }
+    }
     diagnostics
 }
 
@@ -395,37 +485,55 @@ fn validate_entities(
         validate_required_fields(schema, entity_id, entity, diagnostics);
 
         for (field, value) in &entity.fields {
-            let field_path = || format!("{}.fields.{field}", entity_path());
-            let field_ref = || FieldRef::new(entity_id.clone(), field.clone());
-            let Some(definition) = schema.fields.get(field) else {
-                diagnostics.push(
-                    core_diagnostic(
-                        field_path(),
-                        DiagnosticCode::UNEXPECTED_FIELD,
-                        format!("field '{field}' is not declared by schema '{}'", schema.id),
-                        vec![SemanticSubject::EntityField(field_ref())],
-                    )
-                    .with_related_subjects(vec![
-                        SemanticSubject::SchemaField {
-                            schema: schema.id.clone(),
-                            field: field.clone(),
-                        },
-                    ]),
-                );
-                continue;
-            };
-            validate_value(
+            validate_present_entity_field(
                 document,
-                &field_ref,
+                schema,
+                entity_id,
+                field,
                 value,
-                &definition.field_type,
-                &definition.constraint,
-                &field_path,
                 include_formula_references,
                 diagnostics,
             );
         }
     }
+}
+
+fn validate_present_entity_field(
+    document: &Document,
+    schema: &Schema,
+    entity_id: &crate::EntityId,
+    field: &crate::FieldId,
+    value: &Value,
+    include_formula_references: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let field_path = || format!("entities.{entity_id}.fields.{field}");
+    let field_ref = || FieldRef::new(entity_id.clone(), field.clone());
+    let Some(definition) = schema.fields.get(field) else {
+        diagnostics.push(
+            core_diagnostic(
+                field_path(),
+                DiagnosticCode::UNEXPECTED_FIELD,
+                format!("field '{field}' is not declared by schema '{}'", schema.id),
+                vec![SemanticSubject::EntityField(field_ref())],
+            )
+            .with_related_subjects(vec![SemanticSubject::SchemaField {
+                schema: schema.id.clone(),
+                field: field.clone(),
+            }]),
+        );
+        return;
+    };
+    validate_value(
+        document,
+        &field_ref,
+        value,
+        &definition.field_type,
+        &definition.constraint,
+        &field_path,
+        include_formula_references,
+        diagnostics,
+    );
 }
 
 fn validate_schema_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
@@ -552,17 +660,27 @@ fn validate_required_fields(
 ) {
     for (field, definition) in &schema.fields {
         if definition.required && !entity.fields.contains_key(field) {
-            diagnostics.push(core_diagnostic(
-                format!("entities.{entity_id}.fields.{field}"),
-                DiagnosticCode::MISSING_REQUIRED_FIELD,
-                format!("required field '{}' is missing", definition.key),
-                vec![SemanticSubject::EntityField(FieldRef::new(
-                    entity_id.clone(),
-                    field.clone(),
-                ))],
+            diagnostics.push(missing_required_field_diagnostic(
+                entity_id, field, definition,
             ));
         }
     }
+}
+
+fn missing_required_field_diagnostic(
+    entity_id: &crate::EntityId,
+    field: &crate::FieldId,
+    definition: &crate::FieldDefinition,
+) -> Diagnostic {
+    core_diagnostic(
+        format!("entities.{entity_id}.fields.{field}"),
+        DiagnosticCode::MISSING_REQUIRED_FIELD,
+        format!("required field '{}' is missing", definition.key),
+        vec![SemanticSubject::EntityField(FieldRef::new(
+            entity_id.clone(),
+            field.clone(),
+        ))],
+    )
 }
 
 fn validate_field_constraint(
