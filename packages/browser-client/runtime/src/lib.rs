@@ -6640,8 +6640,14 @@ impl DesignerRuntime {
             self.clock.tick(),
         )?;
         let execute_now = self.clock.tick();
+        // Hand publication the state this request already derived, so an
+        // accepted edit doesn't derive it a second time.
+        let installation = prepared.into_installable();
         let invalidation = {
-            let mut publication = self.session.publication_authority(&mut self.clock);
+            let mut publication = self
+                .session
+                .publication_authority(&mut self.clock)
+                .with_prepared(installation);
             let receipt = designer_execute(
                 lifecycle,
                 &proposal_id,

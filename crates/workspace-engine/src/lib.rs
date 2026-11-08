@@ -723,11 +723,8 @@ pub enum PreparedVerdict<'evaluation> {
 /// state, not a cache-key, serialization, or transport contract.
 #[derive(Debug)]
 pub struct PreparedEvaluation<'session> {
-    base_revision: patch_lifecycle::SemanticRevision,
+    installation: PreparedInstallation,
     base_document: &'session Document,
-    candidate: Document,
-    report: ValidationReport,
-    calculation: RetainedCalculationState,
     base_calculation: Option<&'session Calculation>,
     base_report_valid: bool,
     definitions_invalid: bool,
@@ -735,21 +732,16 @@ pub struct PreparedEvaluation<'session> {
 
 impl<'session> PreparedEvaluation<'session> {
     pub(crate) fn new(
-        base_revision: patch_lifecycle::SemanticRevision,
+        installation: PreparedInstallation,
         base_document: &'session Document,
-        candidate: Document,
-        report: ValidationReport,
-        calculation: RetainedCalculationState,
         base_calculation: Option<&'session Calculation>,
         base_report_valid: bool,
     ) -> Self {
-        let definitions_invalid = validate_keyed_grouped_sum_definitions(&candidate).is_err();
+        let definitions_invalid =
+            validate_keyed_grouped_sum_definitions(&installation.candidate).is_err();
         Self {
-            base_revision,
+            installation,
             base_document,
-            candidate,
-            report,
-            calculation,
             base_calculation,
             base_report_valid,
             definitions_invalid,
@@ -759,7 +751,7 @@ impl<'session> PreparedEvaluation<'session> {
     /// The base revision this evaluation was prepared against.
     #[must_use]
     pub fn base_revision(&self) -> &patch_lifecycle::SemanticRevision {
-        &self.base_revision
+        &self.installation.base_revision
     }
 
     /// The document this evaluation's base results belong to. Revision tokens
@@ -771,7 +763,7 @@ impl<'session> PreparedEvaluation<'session> {
     /// The evaluated candidate.
     #[must_use]
     pub fn document(&self) -> &Document {
-        &self.candidate
+        &self.installation.candidate
     }
 
     /// The verdict [`validate`] would give for this candidate.
@@ -781,7 +773,7 @@ impl<'session> PreparedEvaluation<'session> {
             PreparedVerdict::InvalidDefinitions
         } else if self.calculation().is_none() {
             PreparedVerdict::InvalidDocument {
-                report: &self.report,
+                report: self.installation.retained.report(),
             }
         } else {
             PreparedVerdict::Valid
@@ -789,16 +781,24 @@ impl<'session> PreparedEvaluation<'session> {
     }
 
     pub(crate) fn report(&self) -> &ValidationReport {
-        &self.report
+        self.installation.retained.report()
     }
 
     /// The candidate's calculation exactly when [`validate`] would publish
     /// one: the retained outcome is complete and the report has no
     /// diagnostics.
     pub(crate) fn calculation(&self) -> Option<&Calculation> {
-        self.calculation
-            .complete()
-            .filter(|_| self.report.is_valid())
+        self.installation.retained.calculation()
+    }
+
+    /// Turn this evaluation into the value publication installs.
+    ///
+    /// The result owns everything it needs, so consuming the evaluation ends
+    /// its borrow of the session and the host can take the exclusive
+    /// publication authority.
+    #[must_use]
+    pub fn into_installable(self) -> PreparedInstallation {
+        self.installation
     }
 
     pub(crate) fn base_calculation(&self) -> Option<&Calculation> {
@@ -812,6 +812,27 @@ impl<'session> PreparedEvaluation<'session> {
     pub(crate) fn base_report_valid(&self) -> bool {
         self.base_report_valid
     }
+}
+
+/// One evaluation's installable state, prepared before publication and handed
+/// to [`resident_session::ResidentPublicationAuthority::with_prepared`].
+///
+/// It owns the evaluated candidate, the derived state and the projection
+/// changes and transition that publication would otherwise derive from the
+/// base. Publication installs it only when it was prepared against the
+/// expected revision for exactly the published candidate; otherwise it takes
+/// its existing path and this value is dropped.
+///
+/// The value crosses the engine/host boundary owned: it holds no borrow, so it
+/// outlives the session borrow [`PreparedEvaluation`] takes. Only the engine
+/// constructs it, through [`PreparedEvaluation::into_installable`].
+#[derive(Debug)]
+pub struct PreparedInstallation {
+    base_revision: patch_lifecycle::SemanticRevision,
+    candidate: Document,
+    retained: resident_session::ResidentDerivedState,
+    changes: resident_session::ProjectionChanges,
+    transition: resident_session::DerivedStateTransition,
 }
 
 /// Calculate every numeric field and project it through current human keys.

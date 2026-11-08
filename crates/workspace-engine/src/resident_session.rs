@@ -9,14 +9,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{
-    CalculationOutcome, IncrementalCalculationTransition, IncrementalCalculationWork,
+    Calculation, CalculationOutcome, IncrementalCalculationTransition, IncrementalCalculationWork,
     RetainedCalculationState,
 };
 
 use super::{
     AddressIndex, AddressIndexError, CalculatedField, Diagnostic, Document, EntityId,
-    EntityInspection, Expression, FieldAddress, FieldId, FieldRef, PreparedEvaluation, SchemaId,
-    SemanticSubject, ValidationReport, ValidationRole, Value, WorkspaceError,
+    EntityInspection, Expression, FieldAddress, FieldId, FieldRef, PreparedEvaluation,
+    PreparedInstallation, SchemaId, SemanticSubject, ValidationReport, ValidationRole, Value,
+    WorkspaceError,
     formula_operations::{FormulaCalculationOutcome, calculation_for, calculation_formula_keys},
     instrumentation, invalid_document,
     patch_lifecycle::{
@@ -239,7 +240,8 @@ impl ResidentWorkspaceSession {
         }
     }
 
-    /// Evaluate one candidate against this revision for later proposal reuse.
+    /// Evaluate one candidate against this revision for later proposal reuse
+    /// and publication.
     ///
     /// The candidate's report and calculation are derived from this revision's
     /// retained state through the same projection changes publication uses, so
@@ -247,11 +249,15 @@ impl ResidentWorkspaceSession {
     /// document. This revision's complete calculation is lent to the result as
     /// the base. A failed retained outcome contributes no base calculation and
     /// leaves the proposal on its existing recalculation path.
+    ///
+    /// The prepared derived state, the projection changes and the derived-state
+    /// transition are kept instead of discarded; [`PreparedEvaluation`] can hand
+    /// them to publication as a [`PreparedInstallation`].
     #[must_use]
     pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
         let base_calculation = self.retained.calculation_state.complete();
         let base_report_valid = self.retained.validation_report.is_valid();
-        let changes = projection_changes(&self.document, &candidate);
+        let mut changes = projection_changes(&self.document, &candidate);
         // The prepared path evaluates the candidate exactly once, as it did
         // through `semantic_validation`; the update is that one evaluation. It
         // rebuilds on its own whenever an incremental update cannot express the
@@ -259,13 +265,26 @@ impl ResidentWorkspaceSession {
         #[cfg(test)]
         super::evaluation_counters::record_candidate_calculation();
         let mut retained = self.retained.clone();
-        retained.update(&candidate, &changes);
-        PreparedEvaluation::new(
-            self.revision.clone(),
+        let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
+        let transition = retained.update(&candidate, &changes);
+        // Publication folds the diagnostics projection changes into the same
+        // changes; prepare has the same before and after state, so it does too.
+        collect_diagnostic_projection_changes(
             &self.document,
-            candidate,
-            retained.validation_report,
-            retained.calculation_state,
+            &before_diagnostics,
+            &candidate,
+            &retained.diagnostics_by_field,
+            &mut changes,
+        );
+        PreparedEvaluation::new(
+            PreparedInstallation {
+                base_revision: self.revision.clone(),
+                candidate,
+                retained,
+                changes,
+                transition,
+            },
+            &self.document,
             base_calculation,
             base_report_valid,
         )
@@ -286,13 +305,14 @@ impl ResidentWorkspaceSession {
         ResidentPublicationAuthority {
             session: self,
             time,
+            prepared: None,
             projection_invalidation: None,
         }
     }
 }
 
-#[derive(Clone, Debug)]
-struct ResidentDerivedState {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ResidentDerivedState {
     calculation_state: RetainedCalculationState,
     validation_report: ValidationReport,
     address_index: Result<AddressIndex, AddressIndexError>,
@@ -407,6 +427,18 @@ impl ResidentDerivedState {
         Ok(fields)
     }
 
+    /// The candidate's validation report, as full semantic validation gives it.
+    pub(crate) fn report(&self) -> &ValidationReport {
+        &self.validation_report
+    }
+
+    /// The candidate's complete calculation, exactly when the report is valid.
+    pub(crate) fn calculation(&self) -> Option<&Calculation> {
+        self.calculation_state
+            .complete()
+            .filter(|_| self.report().is_valid())
+    }
+
     fn diagnostics_for_field(&self, field: &FieldRef) -> Vec<Diagnostic> {
         self.diagnostics_by_field
             .get(field)
@@ -423,7 +455,7 @@ struct DerivedStateTransitionWork {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct DerivedStateTransition {
+pub(crate) struct DerivedStateTransition {
     work: DerivedStateTransitionWork,
     affected_calculations: Vec<FieldRef>,
     changed_calculation_projections: Vec<FieldRef>,
@@ -617,10 +649,24 @@ pub trait TrustedPublicationTimeSource {
 pub struct ResidentPublicationAuthority<'session, Time> {
     session: &'session mut ResidentWorkspaceSession,
     time: &'session mut Time,
+    prepared: Option<PreparedInstallation>,
     projection_invalidation: Option<ResidentProjectionInvalidation>,
 }
 
 impl<Time> ResidentPublicationAuthority<'_, Time> {
+    /// Offer an evaluation prepared against a candidate so publication can
+    /// install its derived state instead of deriving it a second time.
+    ///
+    /// The installation is only used when it was prepared against the expected
+    /// revision and for exactly the candidate being published; otherwise
+    /// publication takes its existing path. A refused or failed publication
+    /// drops it.
+    #[must_use]
+    pub fn with_prepared(mut self, installation: PreparedInstallation) -> Self {
+        self.prepared = Some(installation);
+        self
+    }
+
     /// Return invalidation derived from this authority's exact successful
     /// publication when both revision tokens match that publication.
     ///
@@ -665,6 +711,9 @@ where
         (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
+        // Any installation belongs to this one attempt: it is used or dropped,
+        // and never carried into a later compare-and-publish call.
+        let prepared = self.prepared.take();
         self.projection_invalidation = None;
         if expected_document_scope != &self.session.document_scope {
             return Err(SemanticPublicationError::DocumentScopeMismatch);
@@ -687,16 +736,42 @@ where
             .checked_add(1)
             .ok_or(SemanticPublicationError::Conflict)?;
         let resulting_revision = revision_for(next_generation);
-        let (projection_invalidation, transition_work) = projection_invalidation(
-            &self.session.document,
-            &mut self.session.retained,
-            candidate,
-            self.session.document_scope.clone(),
-            expected_revision.clone(),
-            resulting_revision.clone(),
-        );
+        let (projection_invalidation, transition_work) = match prepared {
+            // The installation is exactly this publication: same base revision
+            // and the same candidate document. Installing its derived state
+            // gives what the unassisted path derives below, without deriving it
+            // twice.
+            Some(installation)
+                if installation.base_revision == *expected_revision
+                    && installation.candidate == *candidate =>
+            {
+                let (invalidation, transition_work) = invalidation_from_transition(
+                    installation.changes,
+                    installation.transition,
+                    self.session.document_scope.clone(),
+                    expected_revision.clone(),
+                    resulting_revision.clone(),
+                );
+                self.session.retained = installation.retained;
+                self.session.document = installation.candidate;
+                #[cfg(test)]
+                installation_counters::record_prepared_installation();
+                (invalidation, transition_work)
+            }
+            _ => {
+                let (invalidation, transition_work) = projection_invalidation(
+                    &self.session.document,
+                    &mut self.session.retained,
+                    candidate,
+                    self.session.document_scope.clone(),
+                    expected_revision.clone(),
+                    resulting_revision.clone(),
+                );
+                self.session.document = candidate.clone();
+                (invalidation, transition_work)
+            }
+        };
 
-        self.session.document = candidate.clone();
         self.session.generation = next_generation;
         self.session.revision = resulting_revision.clone();
         self.session.measurements.record_transition(transition_work);
@@ -713,6 +788,26 @@ where
 
 fn revision_for(generation: u64) -> SemanticRevision {
     SemanticRevision::from(format!("resident/{generation}"))
+}
+
+/// Test-only count of publications that installed a prepared installation.
+/// It proves the differential publication tests exercise both paths, not just
+/// the fallback.
+#[cfg(test)]
+pub(crate) mod installation_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static PREPARED_INSTALLATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn record_prepared_installation() {
+        PREPARED_INSTALLATIONS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn prepared_installations() -> usize {
+        PREPARED_INSTALLATIONS.with(Cell::get)
+    }
 }
 
 fn projection_invalidation(
@@ -734,6 +829,27 @@ fn projection_invalidation(
         &mut changes,
     );
 
+    invalidation_from_transition(
+        changes,
+        transition,
+        document_scope,
+        base_revision,
+        resulting_revision,
+    )
+}
+
+/// Build one projection invalidation from already-computed projection changes
+/// and a derived-state transition.
+///
+/// Publication and a prepared installation share this construction so the two
+/// paths cannot drift.
+fn invalidation_from_transition(
+    changes: ProjectionChanges,
+    transition: DerivedStateTransition,
+    document_scope: DocumentScopeId,
+    base_revision: SemanticRevision,
+    resulting_revision: SemanticRevision,
+) -> (ResidentProjectionInvalidation, DerivedStateTransitionWork) {
     let affected_calculations = transition
         .affected_calculations
         .into_iter()
@@ -769,8 +885,8 @@ fn projection_changes(before: &Document, after: &Document) -> ProjectionChanges 
     changes
 }
 
-#[derive(Default)]
-struct ProjectionChanges {
+#[derive(Debug, Default)]
+pub(crate) struct ProjectionChanges {
     schemas: BTreeSet<SchemaId>,
     schema_fields: BTreeSet<(SchemaId, FieldId)>,
     entities: BTreeSet<EntityId>,
