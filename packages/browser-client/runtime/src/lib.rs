@@ -6930,35 +6930,44 @@ impl DesignerRuntime {
         // or comparing the whole document.
         let witness = self.session.witness();
         let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
-        lifecycle.propose_prepared_witnessed(
-            &document_scope,
-            &witness,
-            ProposalRequest::new(
-                proposal_id.clone(),
-                SemanticRevision::from(expected_revision.to_owned()),
-                body,
-                self.principal.clone(),
-            ),
-            self.clock.tick(),
-            Some(&prepared),
-        )?;
-        designer_preview_witnessed(
-            lifecycle,
-            &document_scope,
-            &witness,
-            &proposal_id,
-            &self.principal,
-            self.clock.tick(),
-        )?;
+        {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/propose");
+            lifecycle.propose_prepared_witnessed(
+                &document_scope,
+                &witness,
+                ProposalRequest::new(
+                    proposal_id.clone(),
+                    SemanticRevision::from(expected_revision.to_owned()),
+                    body,
+                    self.principal.clone(),
+                ),
+                self.clock.tick(),
+                Some(&prepared),
+            )?;
+        }
+        {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/preview");
+            designer_preview_witnessed(
+                lifecycle,
+                &document_scope,
+                &witness,
+                &proposal_id,
+                &self.principal,
+                self.clock.tick(),
+            )?;
+        }
         let execute_now = self.clock.tick();
         // Hand publication the state this request already derived, so an
         // accepted edit doesn't derive it a second time.
         let installation = prepared.into_installable();
         let invalidation = {
-            let mut publication = self
-                .session
-                .publication_authority(&mut self.clock)
-                .with_prepared(installation);
+            let mut publication = {
+                let _phase =
+                    instrumentation::PhaseTimer::new("publish_commands/execute/authority");
+                self.session
+                    .publication_authority(&mut self.clock)
+                    .with_prepared(installation)
+            };
             let receipt = designer_execute(
                 lifecycle,
                 &proposal_id,
@@ -6966,14 +6975,18 @@ impl DesignerRuntime {
                 &mut publication,
                 execute_now,
             )?;
-            publication
+            let invalidation = publication
                 .projection_invalidation_for(
                     &document_scope,
                     &receipt.base_revision,
                     &receipt.resulting_revision,
                 )
-                .ok_or(DesignerError::MissingInvalidation)?
-                .clone()
+                .ok_or(DesignerError::MissingInvalidation)?;
+            {
+                let _phase =
+                    instrumentation::PhaseTimer::new("publish_commands/invalidation_clone");
+                invalidation.clone()
+            }
         };
         self.capacity_usage = capacity_usage;
         // The Valid arm above always fills both for a working-size publish;
