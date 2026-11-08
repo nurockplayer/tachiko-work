@@ -4220,12 +4220,15 @@ impl PatchLifecycle {
                     prepared.report(),
                     prepared.base_calculation()?,
                     prepared.calculation()?,
+                    prepared.projection_changes(),
                 ))
             });
-        let fallback_base_calculation;
-        let fallback_candidate_calculation;
-        let (validation_report, base_calculation, candidate_calculation, delta) =
-            if let Some((report, base_calculation, candidate_calculation)) = reusable {
+        // Formula impact remains derived evidence. Run the frozen formula/diff
+        // projection over snapshots without names, constraints, or saved definitions.
+        // Formulas cannot read definitions; both real snapshots passed complete
+        // validation above. Direct v2 evidence is always produced separately.
+        let (validation_report, delta, formula_changes) =
+            if let Some((report, base_calculation, candidate_calculation, changes)) = reusable {
                 // The prepared candidate is already completely validated and
                 // calculated. Both snapshots still need the formula projection
                 // preflight today's path runs, base first.
@@ -4263,48 +4266,77 @@ impl PatchLifecycle {
                         }
                     })?
                 };
-                (
-                    report.clone(),
-                    base_calculation,
-                    candidate_calculation,
-                    delta,
-                )
+                // The prepared evaluation found every differing schema and
+                // entity, so the projection only has to compare those.
+                let base_projection = {
+                    let _phase = instrumentation::PhaseTimer::new(
+                        "finalize_evaluation/projection_base_clone",
+                    );
+                    formula_projection_document(base)
+                };
+                let candidate_projection = {
+                    let _phase = instrumentation::PhaseTimer::new(
+                        "finalize_evaluation/projection_candidate_clone",
+                    );
+                    formula_projection_document(&candidate)
+                };
+                let formula_changes = {
+                    let _phase =
+                        instrumentation::PhaseTimer::new("finalize_evaluation/diff_changes_scoped");
+                    super::diff_changes_scoped(
+                        &base_projection,
+                        &candidate_projection,
+                        base_calculation,
+                        candidate_calculation,
+                        &changes.diff_scope(),
+                    )
+                };
+                {
+                    let _phase =
+                        instrumentation::PhaseTimer::new("finalize_evaluation/path_scoped");
+                }
+                (report.clone(), delta, formula_changes)
             } else {
                 let (_, base_calculation) = Self::validate_and_preflight(base)?;
-                fallback_base_calculation = base_calculation;
                 #[cfg(test)]
                 super::evaluation_counters::record_base_calculation();
                 let (report, candidate_calculation) = Self::validate_and_preflight(&candidate)?;
-                fallback_candidate_calculation = candidate_calculation;
                 let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &candidate)
                     .map_err(|source| PatchLifecycleError::CommandRejected {
                         source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
                     })?;
-                (
-                    report,
-                    &fallback_base_calculation,
-                    &fallback_candidate_calculation,
-                    delta,
-                )
+                let base_projection = {
+                    let _phase = instrumentation::PhaseTimer::new(
+                        "finalize_evaluation/projection_base_clone",
+                    );
+                    formula_projection_document(base)
+                };
+                let candidate_projection = {
+                    let _phase = instrumentation::PhaseTimer::new(
+                        "finalize_evaluation/projection_candidate_clone",
+                    );
+                    formula_projection_document(&candidate)
+                };
+                let formula_projection = {
+                    let _phase =
+                        instrumentation::PhaseTimer::new("finalize_evaluation/formula_diff");
+                    super::diff_with_calculations(
+                        &base_projection,
+                        &candidate_projection,
+                        &base_calculation,
+                        &candidate_calculation,
+                    )
+                    .map_err(|source| {
+                        PatchLifecycleError::CommandRejected {
+                            source: Box::new(source.into()),
+                        }
+                    })?
+                };
+                {
+                    let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/path_full");
+                }
+                (report, delta, formula_projection.changes().to_vec())
             };
-
-        // Formula impact remains derived evidence. Run the frozen formula/diff
-        // projection over snapshots without names, constraints, or saved definitions.
-        // Formulas cannot read definitions; both real snapshots passed complete
-        // validation above. Direct v2 evidence is always produced separately.
-        let formula_projection = {
-            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/formula_diff");
-            super::diff_with_calculations(
-                &formula_projection_document(base),
-                &formula_projection_document(&candidate),
-                base_calculation,
-                candidate_calculation,
-            )
-            .map_err(|source| PatchLifecycleError::CommandRejected {
-                source: Box::new(source.into()),
-            })?
-        };
-        let formula_changes = formula_projection.changes().to_vec();
         let formula_impacts = formula_impacts(&formula_changes);
         let disclosure_requirements = {
             let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/derive_disclosures");

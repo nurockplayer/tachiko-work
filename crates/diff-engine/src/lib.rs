@@ -308,40 +308,135 @@ pub fn diff_with_calculations(
         .chain(after.entities.keys())
         .cloned()
         .collect();
+    compare_entities(
+        before,
+        after,
+        &entity_ids,
+        &mut changes,
+        &mut changed_fields,
+        Some(&mut descriptors),
+    );
 
-    for entity_id in entity_ids {
-        match (
-            before.entities.get(&entity_id),
-            after.entities.get(&entity_id),
-        ) {
-            (None, Some(entity)) => {
-                descriptors.insert(entity_id.clone(), descriptor(after, entity));
-                changes.push(SemanticChange::EntityAdded { entity: entity_id });
-            }
-            (Some(entity), None) => {
-                descriptors.insert(entity_id.clone(), descriptor(before, entity));
-                changes.push(SemanticChange::EntityRemoved { entity: entity_id });
-            }
-            (Some(before_entity), Some(after_entity)) => {
-                descriptors.insert(entity_id.clone(), descriptor(after, after_entity));
-                compare_entity(
-                    &entity_id,
-                    before_entity,
-                    after_entity,
-                    &mut changes,
-                    &mut changed_fields,
-                );
-            }
-            (None, None) => unreachable!("entity id came from the document key union"),
-        }
+    push_formula_impacts(
+        formula_fields(before)
+            .union(&formula_fields(after))
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        before_calculation,
+        after_calculation,
+        &changed_fields,
+        &mut changes,
+    );
+
+    Ok(SemanticDiff {
+        changes,
+        descriptors,
+        before: before.clone(),
+        after: after.clone(),
+    })
+}
+
+/// The schema and entity ids that may differ between two documents a scoped
+/// diff compares.
+///
+/// Every id the caller leaves out is assumed equal, so an incomplete scope
+/// silently drops real changes.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DiffScope {
+    /// Schema ids whose definitions may differ.
+    pub schemas: BTreeSet<SchemaId>,
+    /// Entity ids whose definitions or values may differ.
+    pub entities: BTreeSet<EntityId>,
+}
+
+/// Compare only the parts of two documents the caller says may differ.
+///
+/// Returns the changes [`diff_with_calculations`] would report for the same
+/// pair and calculations when `scope` names every difference between them, in
+/// the same order: document changes, scoped schema changes, scoped entity
+/// changes, then formula impacts. Extra ids cost only comparison work.
+///
+/// Unlike [`diff_with_calculations`] this entry does not refuse the v1 change
+/// vocabulary, so the caller must pass a supported pair. It is meant for the
+/// formula projection, which carries no durable presentation or saved
+/// definition the v1 vocabulary refuses.
+///
+/// Each calculation must be the one [`calculate`] produces for its document.
+#[must_use]
+pub fn diff_changes_scoped(
+    before: &Document,
+    after: &Document,
+    before_calculation: &Calculation,
+    after_calculation: &Calculation,
+    scope: &DiffScope,
+) -> Vec<SemanticChange> {
+    let mut changes = Vec::new();
+    let mut changed_fields = BTreeSet::new();
+
+    {
+        let _phase =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("diff_changes_scoped/document");
+        compare_document(before, after, &mut changes);
+    }
+    {
+        let _phase =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("diff_changes_scoped/schemas");
+        compare_schema_ids(before, after, &scope.schemas, &mut changes);
+    }
+    {
+        let _phase =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("diff_changes_scoped/entities");
+        compare_entities(
+            before,
+            after,
+            &scope.entities,
+            &mut changes,
+            &mut changed_fields,
+            None,
+        );
     }
 
-    let formula_fields = formula_fields(before)
-        .union(&formula_fields(after))
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    // A formula's value can move without any field of the scope changing, as
+    // when an added row moves a column average, so the candidate set is the
+    // formula keys of the two calculations themselves. They are the same keys
+    // a document walk would collect, without the walk.
+    let formulas = {
+        let _phase = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "diff_changes_scoped/formula_keys",
+        );
+        before_calculation
+            .formulas()
+            .chain(after_calculation.formulas())
+            .cloned()
+            .collect::<BTreeSet<_>>()
+    };
+    {
+        // Formula impacts walk every formula in both calculations.
+        let _phase = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "diff_changes_scoped/formula_impacts",
+        );
+        push_formula_impacts(
+            formulas,
+            before_calculation,
+            after_calculation,
+            &changed_fields,
+            &mut changes,
+        );
+    }
 
-    let impacted = formula_fields
+    changes
+}
+
+/// Append one [`SemanticChange::FormulaImpact`] for every candidate whose
+/// calculated value differs, in candidate order.
+fn push_formula_impacts(
+    formulas: impl IntoIterator<Item = FieldRef>,
+    before_calculation: &Calculation,
+    after_calculation: &Calculation,
+    changed_fields: &BTreeSet<FieldRef>,
+    changes: &mut Vec<SemanticChange>,
+) {
+    let impacted = formulas
         .into_iter()
         .filter_map(|formula| {
             let before_value = before_calculation.value(&formula)?;
@@ -352,38 +447,32 @@ pub fn diff_with_calculations(
 
     // Only the formulas with a changed value need causes, and an edit reaching
     // none of them never pays for the walks.
-    if !impacted.is_empty() {
-        let targets = impacted
-            .iter()
-            .map(|(formula, _, _)| formula.clone())
-            .collect::<BTreeSet<_>>();
-        let before_reaching = before_calculation.reaching_fields(&changed_fields, &targets);
-        let after_reaching = after_calculation.reaching_fields(&changed_fields, &targets);
-        for (formula, before_value, after_value) in impacted {
-            let mut causes = BTreeSet::new();
-            if changed_fields.contains(&formula) {
-                causes.insert(formula.clone());
-            }
-            for reaching in [&before_reaching, &after_reaching] {
-                if let Some(fields) = reaching.get(&formula) {
-                    causes.extend(fields.iter().cloned());
-                }
-            }
-            changes.push(SemanticChange::FormulaImpact {
-                field: formula,
-                before: before_value,
-                after: after_value,
-                causes: causes.into_iter().collect(),
-            });
-        }
+    if impacted.is_empty() {
+        return;
     }
-
-    Ok(SemanticDiff {
-        changes,
-        descriptors,
-        before: before.clone(),
-        after: after.clone(),
-    })
+    let targets = impacted
+        .iter()
+        .map(|(formula, _, _)| formula.clone())
+        .collect::<BTreeSet<_>>();
+    let before_reaching = before_calculation.reaching_fields(changed_fields, &targets);
+    let after_reaching = after_calculation.reaching_fields(changed_fields, &targets);
+    for (formula, before_value, after_value) in impacted {
+        let mut causes = BTreeSet::new();
+        if changed_fields.contains(&formula) {
+            causes.insert(formula.clone());
+        }
+        for reaching in [&before_reaching, &after_reaching] {
+            if let Some(fields) = reaching.get(&formula) {
+                causes.extend(fields.iter().cloned());
+            }
+        }
+        changes.push(SemanticChange::FormulaImpact {
+            field: formula,
+            before: before_value,
+            after: after_value,
+            causes: causes.into_iter().collect(),
+        });
+    }
 }
 
 /// Refuse a document pair that [`diff`] does not support, before any calculation.
@@ -440,23 +529,30 @@ fn compare_schemas(before: &Document, after: &Document, changes: &mut Vec<Semant
         .chain(after.schemas.keys())
         .cloned()
         .collect();
+    compare_schema_ids(before, after, &schema_ids, changes);
+}
+
+/// Compare one pair per schema id, in the caller's order.
+fn compare_schema_ids<'a>(
+    before: &Document,
+    after: &Document,
+    schema_ids: impl IntoIterator<Item = &'a SchemaId>,
+    changes: &mut Vec<SemanticChange>,
+) {
     for schema_id in schema_ids {
-        match (
-            before.schemas.get(&schema_id),
-            after.schemas.get(&schema_id),
-        ) {
+        match (before.schemas.get(schema_id), after.schemas.get(schema_id)) {
             (None, Some(schema)) => changes.push(SemanticChange::SchemaAdded {
-                schema: schema_id,
+                schema: schema_id.clone(),
                 definition: schema.clone(),
             }),
             (Some(schema), None) => changes.push(SemanticChange::SchemaRemoved {
-                schema: schema_id,
+                schema: schema_id.clone(),
                 definition: schema.clone(),
             }),
             (Some(before_schema), Some(after_schema)) => {
-                compare_schema(&schema_id, before_schema, after_schema, changes);
+                compare_schema(schema_id, before_schema, after_schema, changes);
             }
-            (None, None) => unreachable!("schema id came from the document key union"),
+            (None, None) => unreachable!("schema id came from the caller's id set"),
         }
     }
 }
@@ -517,6 +613,56 @@ fn compare_schema(
             }
             (Some(_), Some(_)) => {}
             (None, None) => unreachable!("field id came from the schema field key union"),
+        }
+    }
+}
+
+/// Compare one pair per entity id, in the caller's order.
+///
+/// Descriptors are presentation for [`SemanticDiff::render_text`], so a caller
+/// that only reads changes passes `None`.
+fn compare_entities(
+    before: &Document,
+    after: &Document,
+    entity_ids: &BTreeSet<EntityId>,
+    changes: &mut Vec<SemanticChange>,
+    changed_fields: &mut BTreeSet<FieldRef>,
+    mut descriptors: Option<&mut BTreeMap<EntityId, EntityDescriptor>>,
+) {
+    for entity_id in entity_ids {
+        match (
+            before.entities.get(entity_id),
+            after.entities.get(entity_id),
+        ) {
+            (None, Some(entity)) => {
+                if let Some(descriptors) = descriptors.as_deref_mut() {
+                    descriptors.insert(entity_id.clone(), descriptor(after, entity));
+                }
+                changes.push(SemanticChange::EntityAdded {
+                    entity: entity_id.clone(),
+                });
+            }
+            (Some(entity), None) => {
+                if let Some(descriptors) = descriptors.as_deref_mut() {
+                    descriptors.insert(entity_id.clone(), descriptor(before, entity));
+                }
+                changes.push(SemanticChange::EntityRemoved {
+                    entity: entity_id.clone(),
+                });
+            }
+            (Some(before_entity), Some(after_entity)) => {
+                if let Some(descriptors) = descriptors.as_deref_mut() {
+                    descriptors.insert(entity_id.clone(), descriptor(after, after_entity));
+                }
+                compare_entity(
+                    entity_id,
+                    before_entity,
+                    after_entity,
+                    changes,
+                    changed_fields,
+                );
+            }
+            (None, None) => unreachable!("entity id came from the caller's id set"),
         }
     }
 }

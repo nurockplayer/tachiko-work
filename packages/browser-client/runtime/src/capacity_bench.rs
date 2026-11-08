@@ -1251,6 +1251,18 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
         );
     }
 
+    // Which finalize diff path ran, one marker per edit.
+    let scoped_edits = handle_phases
+        .iter()
+        .filter(|phases| phases.contains_key("finalize_evaluation/path_scoped"))
+        .count();
+    let full_edits = handle_phases
+        .iter()
+        .filter(|phases| phases.contains_key("finalize_evaluation/path_full"))
+        .count();
+    wq_print(name, "finalize_scoped_edits", scoped_edits);
+    wq_print(name, "finalize_full_edits", full_edits);
+
     // A full table refuses another row, so removal comes first.
     let revision = runtime.observe_occurrence().revision;
     let rows = (0..100).map(|row| format!("r{row:05}")).collect::<Vec<_>>();
@@ -1633,6 +1645,16 @@ const PHASE_ORDER: &[(&str, usize)] = &[
     ("finalize_evaluation/preflight_candidate", 4),
     ("finalize_evaluation/canonical_delta", 4),
     ("finalize_evaluation/formula_diff", 4),
+    ("finalize_evaluation/path_scoped", 4),
+    ("finalize_evaluation/path_full", 4),
+    ("finalize_evaluation/projection_base_clone", 4),
+    ("finalize_evaluation/projection_candidate_clone", 4),
+    ("finalize_evaluation/diff_changes_scoped", 4),
+    ("diff_changes_scoped/document", 5),
+    ("diff_changes_scoped/schemas", 5),
+    ("diff_changes_scoped/entities", 5),
+    ("diff_changes_scoped/formula_keys", 5),
+    ("diff_changes_scoped/formula_impacts", 5),
     ("finalize_evaluation/derive_disclosures", 4),
     ("finalize_evaluation/base_calculate", 4),
     ("finalize_evaluation/diff", 4),
