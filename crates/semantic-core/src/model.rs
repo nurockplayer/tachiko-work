@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
     hash::{Hash, Hasher},
+    sync::Arc,
 };
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -12,11 +13,12 @@ use crate::{KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId};
 
 macro_rules! text_newtype {
     ($name:ident) => {
-        #[derive(
-            Clone, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-        )]
-        #[serde(transparent)]
-        pub struct $name(String);
+        /// An id or key is immutable text named by many owners at once (a
+        /// document, its copies, the retained calculation, the address index),
+        /// so those owners share one allocation instead of copying the text.
+        /// `Arc`, not `Rc`, because these types must stay `Send` and `Sync`.
+        #[derive(Clone, Debug, Eq, Ord, PartialOrd)]
+        pub struct $name(Arc<str>);
 
         impl $name {
             #[must_use]
@@ -25,15 +27,47 @@ macro_rules! text_newtype {
             }
         }
 
+        impl Default for $name {
+            fn default() -> Self {
+                Self(Arc::from(""))
+            }
+        }
+
+        // Copies of one document share their text, so they compare without
+        // reading it; distinct allocations still compare by text.
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                Arc::ptr_eq(&self.0, &other.0) || self.0 == other.0
+            }
+        }
+
+        impl Hash for $name {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.as_str().hash(state);
+            }
+        }
+
+        impl Serialize for $name {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(self.as_str())
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                String::deserialize(deserializer).map(Self::from)
+            }
+        }
+
         impl From<&str> for $name {
             fn from(value: &str) -> Self {
-                Self(value.to_owned())
+                Self(Arc::from(value))
             }
         }
 
         impl From<String> for $name {
             fn from(value: String) -> Self {
-                Self(value)
+                Self(Arc::from(value))
             }
         }
 
@@ -1197,5 +1231,68 @@ impl NumberFormat {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cmp::Ordering;
+    use std::collections::{BTreeMap, hash_map::DefaultHasher};
+    use std::hash::{Hash, Hasher};
+    use std::sync::Arc;
+
+    use super::{DocumentId, FieldId};
+
+    fn hash_of<T: Hash + ?Sized>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn ids_serialize_and_deserialize_as_the_same_text() {
+        for text in [
+            "plain",
+            "quote\" backslash\\ and tab\t",
+            "newline\n line\u{1}",
+            "欄位一 ❤ データ",
+        ] {
+            let expected = serde_json::to_string(text).expect("serialized text");
+            let id = DocumentId::from(text);
+            assert_eq!(serde_json::to_string(&id).expect("serialized id"), expected);
+
+            let decoded: DocumentId = serde_json::from_str(&expected).expect("deserialized id");
+            assert_eq!(decoded, id);
+            assert_eq!(decoded.as_str(), text);
+        }
+    }
+
+    #[test]
+    fn a_number_deserializes_into_an_id_with_the_text_error() {
+        let text_error = serde_json::from_str::<String>("7").expect_err("number is not text");
+        let id_error = serde_json::from_str::<DocumentId>("7").expect_err("number is not an id");
+        assert_eq!(id_error.to_string(), text_error.to_string());
+    }
+
+    #[test]
+    fn clones_share_their_text_and_compare_like_it() {
+        let id = FieldId::from("amount");
+        let other = id.clone();
+        assert!(Arc::ptr_eq(&id.0, &other.0));
+
+        assert_eq!(id, other);
+        assert_eq!(id, FieldId::from("amount"));
+        assert_ne!(id, FieldId::from("total"));
+        assert_eq!(id.cmp(&other), Ordering::Equal);
+        assert_eq!(id.as_str().cmp("total"), id.cmp(&FieldId::from("total")));
+        assert_eq!(hash_of(&id), hash_of(id.as_str()));
+    }
+
+    #[test]
+    fn a_btree_map_looks_up_ids_by_text() {
+        let mut values = BTreeMap::new();
+        values.insert(FieldId::from("amount"), 1);
+        assert_eq!(values.get("amount"), Some(&1));
+        assert_eq!(values.get("total"), None);
     }
 }
