@@ -19,8 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use tachiko_diff_engine::{
-    CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta,
-    canonical_delta_with_calculations,
+    CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta, canonical_delta_scoped,
 };
 use tachiko_formula_engine::Calculation;
 use tachiko_semantic_core::{
@@ -2278,11 +2277,15 @@ impl PatchLifecycle {
         {
             return Err(PatchLifecycleError::AuthorizationDenied);
         }
-        let (proposal, footprint, approval) =
-            self.select_execution_context(proposal_id, approval_id, executor)?;
-        let can_disclose = self
-            .authorize_query(executor, &footprint.disclosure_requirements, now)
-            .is_ok();
+        let (proposal, footprint, approval) = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/context");
+            self.select_execution_context(proposal_id, approval_id, executor)?
+        };
+        let can_disclose = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/authorization");
+            self.authorize_query(executor, &footprint.disclosure_requirements, now)
+                .is_ok()
+        };
         if proposal.patch.exact_change.evidence_profile() != expected_profile {
             return Err(if can_disclose {
                 PatchLifecycleError::EvidenceProfileMismatch
@@ -2300,14 +2303,17 @@ impl PatchLifecycle {
                 PatchLifecycleError::AuthorizationDenied
             });
         }
-        self.require_execution_approval_active(
-            proposal_id,
-            &proposal,
-            approval.as_ref(),
-            executor,
-            &footprint,
-            now,
-        )?;
+        {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/approval_check");
+            self.require_execution_approval_active(
+                proposal_id,
+                &proposal,
+                approval.as_ref(),
+                executor,
+                &footprint,
+                now,
+            )?;
+        }
 
         let memo_matches = retained.as_ref().is_some_and(|memo| {
             let _phase = instrumentation::PhaseTimer::new("execute_profile/memo_equality");
@@ -2320,14 +2326,20 @@ impl PatchLifecycle {
         if evaluated.footprint != footprint {
             return Err(PatchLifecycleError::ApprovalBindingMismatch);
         }
-        self.authorize_publication_boundary(
-            &proposal,
-            approval.as_ref(),
-            executor,
-            &footprint,
-            now,
-        )?;
-        let evaluated_report = evaluated.validation_report.clone();
+        {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/publication_boundary");
+            self.authorize_publication_boundary(
+                &proposal,
+                approval.as_ref(),
+                executor,
+                &footprint,
+                now,
+            )?;
+        }
+        let evaluated_report = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/report_clone");
+            evaluated.validation_report.clone()
+        };
         let published = {
             let _phase = instrumentation::PhaseTimer::new("execute_profile/publish_candidate");
             self.publish_candidate(
@@ -2345,48 +2357,51 @@ impl PatchLifecycle {
             )?
         };
         let can_disclose = published.authorization.can_disclose;
-        let mut receipt = match evaluated.evidence {
-            PatchEvidence::V1(semantic_changes) => {
-                let receipt = ExecutionReceipt {
-                    proposal_id: proposal_id.clone(),
-                    originator: proposal.originator.clone(),
-                    executor: executor.clone(),
-                    approval: published.approval,
-                    propose_grants: proposal.propose_grants.clone(),
-                    approve_grants: published.authorization.approve_grants,
-                    execute_grants: published.authorization.execute_grants,
-                    authorization_footprint: Some(footprint),
-                    policy_version: self.effective_policy.clone(),
-                    base_revision: current_revision.clone(),
-                    resulting_revision: published.revision.clone(),
-                    verified: false,
-                    semantic_changes,
-                    formula_impacts: evaluated.formula_impacts,
-                    validation_report: Some(evaluated.validation_report),
-                };
-                self.execution_receipts.push(receipt.clone());
-                ProfiledReceipt::V1(receipt)
-            }
-            PatchEvidence::V2(delta) => {
-                let receipt = ExecutionReceiptV2 {
-                    proposal_id: proposal_id.clone(),
-                    originator: proposal.originator.clone(),
-                    executor: executor.clone(),
-                    approval: published.approval,
-                    propose_grants: proposal.propose_grants.clone(),
-                    approve_grants: published.authorization.approve_grants,
-                    execute_grants: published.authorization.execute_grants,
-                    authorization_footprint: Some(footprint),
-                    policy_version: self.effective_policy.clone(),
-                    base_revision: current_revision.clone(),
-                    resulting_revision: published.revision.clone(),
-                    verified: false,
-                    evidence: V2ReceiptEvidence::Disclosed(delta),
-                    formula_impacts: evaluated.formula_impacts,
-                    validation_report: Some(evaluated.validation_report),
-                };
-                self.execution_receipts_v2.push(receipt.clone());
-                ProfiledReceipt::V2(receipt)
+        let mut receipt = {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/receipt_build");
+            match evaluated.evidence {
+                PatchEvidence::V1(semantic_changes) => {
+                    let receipt = ExecutionReceipt {
+                        proposal_id: proposal_id.clone(),
+                        originator: proposal.originator.clone(),
+                        executor: executor.clone(),
+                        approval: published.approval,
+                        propose_grants: proposal.propose_grants.clone(),
+                        approve_grants: published.authorization.approve_grants,
+                        execute_grants: published.authorization.execute_grants,
+                        authorization_footprint: Some(footprint),
+                        policy_version: self.effective_policy.clone(),
+                        base_revision: current_revision.clone(),
+                        resulting_revision: published.revision.clone(),
+                        verified: false,
+                        semantic_changes,
+                        formula_impacts: evaluated.formula_impacts,
+                        validation_report: Some(evaluated.validation_report),
+                    };
+                    self.execution_receipts.push(receipt.clone());
+                    ProfiledReceipt::V1(receipt)
+                }
+                PatchEvidence::V2(delta) => {
+                    let receipt = ExecutionReceiptV2 {
+                        proposal_id: proposal_id.clone(),
+                        originator: proposal.originator.clone(),
+                        executor: executor.clone(),
+                        approval: published.approval,
+                        propose_grants: proposal.propose_grants.clone(),
+                        approve_grants: published.authorization.approve_grants,
+                        execute_grants: published.authorization.execute_grants,
+                        authorization_footprint: Some(footprint),
+                        policy_version: self.effective_policy.clone(),
+                        base_revision: current_revision.clone(),
+                        resulting_revision: published.revision.clone(),
+                        verified: false,
+                        evidence: V2ReceiptEvidence::Disclosed(delta),
+                        formula_impacts: evaluated.formula_impacts,
+                        validation_report: Some(evaluated.validation_report),
+                    };
+                    self.execution_receipts_v2.push(receipt.clone());
+                    ProfiledReceipt::V2(receipt)
+                }
             }
         };
         let verification_report = match {
@@ -2405,33 +2420,42 @@ impl PatchLifecycle {
             Err(_) => return Err(PatchLifecycleError::AuthorizationDenied),
         };
         self.append_state(proposal_id, PatchLifecycleState::Verified);
-        match &mut receipt {
-            ProfiledReceipt::V1(receipt) => {
-                receipt.validation_report = Some(verification_report);
-                receipt.verified = true;
-                if let Some(stored) = self.execution_receipts.last_mut() {
-                    *stored = receipt.clone();
+        {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/receipt_finalize");
+            match &mut receipt {
+                ProfiledReceipt::V1(receipt) => {
+                    receipt.validation_report = Some(verification_report);
+                    receipt.verified = true;
+                    if let Some(stored) = self.execution_receipts.last_mut() {
+                        *stored = receipt.clone();
+                    }
+                    if !can_disclose {
+                        receipt.authorization_footprint = None;
+                        receipt.semantic_changes.clear();
+                        receipt.formula_impacts.clear();
+                        receipt.validation_report = None;
+                    }
                 }
-                if !can_disclose {
-                    receipt.authorization_footprint = None;
-                    receipt.semantic_changes.clear();
-                    receipt.formula_impacts.clear();
-                    receipt.validation_report = None;
+                ProfiledReceipt::V2(receipt) => {
+                    receipt.validation_report = Some(verification_report);
+                    receipt.verified = true;
+                    if let Some(stored) = self.execution_receipts_v2.last_mut() {
+                        *stored = receipt.clone();
+                    }
+                    if !can_disclose {
+                        receipt.authorization_footprint = None;
+                        receipt.formula_impacts.clear();
+                        receipt.validation_report = None;
+                        receipt.evidence = V2ReceiptEvidence::Redacted;
+                    }
                 }
             }
-            ProfiledReceipt::V2(receipt) => {
-                receipt.validation_report = Some(verification_report);
-                receipt.verified = true;
-                if let Some(stored) = self.execution_receipts_v2.last_mut() {
-                    *stored = receipt.clone();
-                }
-                if !can_disclose {
-                    receipt.authorization_footprint = None;
-                    receipt.formula_impacts.clear();
-                    receipt.validation_report = None;
-                    receipt.evidence = V2ReceiptEvidence::Redacted;
-                }
-            }
+        }
+        {
+            // The candidate document is the largest value this call owns.
+            let _phase =
+                instrumentation::PhaseTimer::new("execute_profile/drop_evaluated_document");
+            drop(evaluated.document);
         }
         Ok(receipt)
     }
@@ -4217,6 +4241,7 @@ impl PatchLifecycle {
             })
             .and_then(|prepared| {
                 Some((
+                    prepared,
                     prepared.report(),
                     prepared.base_calculation()?,
                     prepared.calculation()?,
@@ -4228,11 +4253,25 @@ impl PatchLifecycle {
         // Formulas cannot read definitions; both real snapshots passed complete
         // validation above. Direct v2 evidence is always produced separately.
         let (validation_report, delta, formula_changes) =
-            if let Some((report, base_calculation, candidate_calculation, changes)) = reusable {
+            if let Some((prepared, report, base_calculation, candidate_calculation, changes)) =
+                reusable
+            {
                 // The prepared candidate is already completely validated and
-                // calculated. Both snapshots still need the formula projection
-                // preflight today's path runs, base first.
-                {
+                // calculated. The formula projection preflight reads only
+                // keys, schema definitions and expressions: the session knows
+                // whether the base passed it, and preparation already decided
+                // the candidate's outcome, so no run repeats what is known.
+                // A failed candidate still runs in full here to keep the
+                // first failing formula's exact error, base first.
+                let (needs_base_preflight, needs_candidate_preflight) = {
+                    let _phase =
+                        instrumentation::PhaseTimer::new("finalize_evaluation/preflight_decision");
+                    (
+                        !prepared.base_preflight_succeeded(),
+                        !prepared.candidate_preflight_succeeded(),
+                    )
+                };
+                if needs_base_preflight {
                     let _phase =
                         instrumentation::PhaseTimer::new("finalize_evaluation/preflight_base");
                     super::preflight_formula_projections(base).map_err(|source| {
@@ -4241,7 +4280,7 @@ impl PatchLifecycle {
                         }
                     })?;
                 }
-                {
+                if needs_candidate_preflight {
                     let _phase =
                         instrumentation::PhaseTimer::new("finalize_evaluation/preflight_candidate");
                     super::preflight_formula_projections(&candidate).map_err(|source| {
@@ -4250,15 +4289,20 @@ impl PatchLifecycle {
                         }
                     })?;
                 }
+                // Both documents are admitted above and the prepared evaluation
+                // found every differing schema and entity, so the delta only
+                // has to compare those, the title and the saved definitions.
                 let delta = {
-                    let _phase =
-                        instrumentation::PhaseTimer::new("finalize_evaluation/canonical_delta");
-                    canonical_delta_with_calculations(
+                    let _phase = instrumentation::PhaseTimer::new(
+                        "finalize_evaluation/canonical_delta_scoped",
+                    );
+                    canonical_delta_scoped(
                         CANONICAL_SEMANTIC_DELTA_V2,
                         base,
                         &candidate,
                         base_calculation,
                         candidate_calculation,
+                        &changes.diff_scope(),
                     )
                     .map_err(|source| {
                         PatchLifecycleError::CommandRejected {

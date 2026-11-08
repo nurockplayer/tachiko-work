@@ -72,10 +72,20 @@ pub(crate) fn check_working_saved_bytes(
     document: &Document,
     presentation_saved_bytes: u64,
 ) -> Result<(), DesignerError> {
+    check_working_saved_bytes_bound(
+        crate::save_size::saved_bytes_upper_bound(document),
+        presentation_saved_bytes,
+    )
+}
+
+/// The same refusal from a document bound the caller already computed.
+pub(crate) fn check_working_saved_bytes_bound(
+    document_saved_bytes: u64,
+    presentation_saved_bytes: u64,
+) -> Result<(), DesignerError> {
     // Compare in `u64`: on wasm32 `usize` is 32 bits and a working-size
     // document can legitimately bound above 4 GiB.
-    let attempted = crate::save_size::saved_bytes_upper_bound(document)
-        .saturating_add(presentation_saved_bytes);
+    let attempted = document_saved_bytes.saturating_add(presentation_saved_bytes);
     let maximum = u64::try_from(MAX_WORKING_SAVED_BYTES).unwrap_or(u64::MAX);
     if attempted <= maximum {
         return Ok(());
@@ -379,4 +389,106 @@ pub(crate) fn check_document_for(
     let usage = CapacityUsage::measure_for(document, profile);
     usage.check(limits_for_profile(profile))?;
     Ok(usage)
+}
+
+/// Candidate totals for a batch that only replaces stored values on entities
+/// the base document already holds.
+///
+/// Each touched cell leaves the base totals by its old contribution and joins
+/// them by its new one. Row counts cannot change, so formulas reuse the base's
+/// rows per schema instead of recounting every entity.
+pub(crate) fn value_edit_usage(
+    profile: SessionProfile,
+    base: &CapacityUsage,
+    base_document: &Document,
+    candidate: &Document,
+    targets: &BTreeSet<(EntityId, FieldId)>,
+) -> CapacityUsage {
+    let mut usage = base.clone();
+    let rows_per_schema = rows_per_schema(base, base_document);
+    let mut touched_entities = BTreeSet::new();
+    for (entity_id, field_id) in targets {
+        let Some(base_entity) = base_document.entities.get(entity_id) else {
+            continue;
+        };
+        touched_entities.insert(entity_id);
+        let old = base_entity.fields.get(field_id);
+        let new = candidate
+            .entities
+            .get(entity_id)
+            .and_then(|entity| entity.fields.get(field_id));
+        usage.populated_cells = usage
+            .populated_cells
+            .saturating_add(usize::from(new.is_some()))
+            .saturating_sub(usize::from(old.is_some()));
+        let old_formula = stored_formula(old);
+        let new_formula = stored_formula(new);
+        // `formulas` can never exceed `populated_cells`: a formula is a stored
+        // cell, and a value edit that adds one adds a populated cell in the
+        // same step. `check` tests `PopulatedCells` first with the same bound,
+        // so a value edit cannot cross the Formulas limit on its own.
+        usage.formulas = usage
+            .formulas
+            .saturating_add(usize::from(new_formula.is_some()))
+            .saturating_sub(usize::from(old_formula.is_some()));
+        if let Some(expression) = old_formula {
+            let (nodes, edges) =
+                formula_usage(profile, &rows_per_schema, &base_entity.id, expression);
+            usage.formula_ast_nodes = usage.formula_ast_nodes.saturating_sub(nodes);
+            usage.dependency_edges = usage.dependency_edges.saturating_sub(edges);
+        }
+        if let Some(expression) = new_formula {
+            let (nodes, edges) =
+                formula_usage(profile, &rows_per_schema, &base_entity.id, expression);
+            usage.formula_ast_nodes = usage.formula_ast_nodes.saturating_add(nodes);
+            usage.dependency_edges = usage.dependency_edges.saturating_add(edges);
+        }
+    }
+    // A stored entry can only add a field, never remove one, so the largest
+    // stored-field count only grows.
+    for entity_id in touched_entities {
+        let Some(entity) = candidate.entities.get(entity_id) else {
+            continue;
+        };
+        let Some(schema) = base_document.schemas.get(&entity.schema) else {
+            continue;
+        };
+        if let Some(table) = usage.tables.get_mut(schema.key.as_str()) {
+            table.fields = table.fields.max(entity.fields.len());
+        }
+    }
+    usage
+}
+
+/// The formula an optional stored value carries, if any.
+fn stored_formula(value: Option<&Value>) -> Option<&Expression> {
+    match value {
+        Some(Value::Formula(expression)) => Some(expression),
+        Some(
+            Value::Number(_)
+            | Value::Text(_)
+            | Value::Boolean(_)
+            | Value::Date(_)
+            | Value::Reference(_),
+        )
+        | None => None,
+    }
+}
+
+/// Rows per schema read back from the base totals, which already counted them.
+fn rows_per_schema<'a>(
+    usage: &CapacityUsage,
+    document: &'a Document,
+) -> BTreeMap<&'a SchemaId, usize> {
+    document
+        .schemas
+        .iter()
+        .map(|(id, schema)| {
+            let rows = usage
+                .tables
+                .get(schema.key.as_str())
+                .map_or(0, |table| table.rows);
+            (id, rows)
+        })
+        .collect()
 }

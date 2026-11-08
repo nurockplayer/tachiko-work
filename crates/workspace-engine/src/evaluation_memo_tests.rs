@@ -11,11 +11,15 @@ use super::{
     Value,
 };
 use crate::{
-    ColumnRef, Expression, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number,
-    NumberFormat, NumberFormatKind, Schema, WorkspaceError, evaluation_counters, planning_counters,
-    resident_session::ResidentWorkspaceSession,
+    ColumnRef, EntityId, Expression, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    Number, NumberFormat, NumberFormatKind, Schema, SchemaId, WorkspaceError, evaluation_counters,
+    planning_counters,
+    resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
 };
-use tachiko_diff_engine::{diff_changes_scoped, diff_with_calculations};
+use tachiko_diff_engine::{
+    CANONICAL_SEMANTIC_DELTA_V2, canonical_delta_scoped, canonical_delta_with_calculations,
+    diff_changes_scoped, diff_with_calculations,
+};
 use tachiko_formula_engine::calculate;
 
 fn text_field(id: &str) -> FieldDefinition {
@@ -2124,6 +2128,504 @@ fn prepared_v2_keeps_refusing_an_edit_that_repairs_its_base() {
     );
 }
 
+/// The edit chain's base: `formula_document` plus the second schema its
+/// formula reads, both keyed grouped-sum schemas, and a long entity key whose
+/// formula still fits the canonical limit. Renaming that key's field pushes
+/// the formula past the limit, so one edit can fail its projection while the
+/// rest of the document stays valid.
+fn preflight_chain_document() -> Document {
+    let mut document = keyed_document();
+    document.schemas.insert(
+        "s2".into(),
+        multi_field_schema("s2", "other", &[("n", FieldType::Number)]),
+    );
+    document.entities.insert(
+        "e2".into(),
+        Entity {
+            id: "e2".into(),
+            key: "row2".into(),
+            schema: "s2".into(),
+            fields: BTreeMap::from([("n".into(), Value::Number(Number::new(2.0).unwrap()))]),
+        },
+    );
+    document.schemas.insert(
+        "t".into(),
+        multi_field_schema("t", "targets", &[("input", FieldType::Number)]),
+    );
+    document.entities.insert(
+        "target".into(),
+        Entity {
+            id: "target".into(),
+            key: "e".repeat(3_900).into(),
+            schema: "t".into(),
+            fields: BTreeMap::from([("input".into(), Value::Number(Number::new(2.0).unwrap()))]),
+        },
+    );
+    document
+        .schemas
+        .get_mut(&SchemaId::from("s"))
+        .expect("the chain schema exists")
+        .fields
+        .insert("extra".into(), optional_number_field("extra"));
+    document
+        .entities
+        .get_mut(&EntityId::from("e1"))
+        .expect("the chain row exists")
+        .fields
+        .insert(
+            "extra".into(),
+            Value::Formula(Expression::Reference(FieldRef::new("target", "input"))),
+        );
+    document
+}
+
+fn spare_field() -> FieldDefinition {
+    FieldDefinition {
+        id: "spare".into(),
+        key: "spare".into(),
+        display_name: None,
+        number_format: None,
+        field_type: FieldType::Number,
+        required: false,
+        constraint: FieldConstraint::None,
+    }
+}
+
+fn set_h(expression: Expression) -> SemanticPatchBody {
+    SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+        field: FieldRef::new("e1", "h"),
+        value: Value::Formula(expression),
+    })
+}
+
+fn reference_g() -> Expression {
+    Expression::Reference(FieldRef::new("e1", "g"))
+}
+
+fn number(value: f64) -> Expression {
+    Expression::Number(Number::new(value).unwrap())
+}
+
+/// Every edit kind one session has to publish, including structural edits, a
+/// key rename, a field added and removed, an entity added and removed, and a
+/// formula whose projection is too long for the canonical rendering.
+fn fixed_chain_edits() -> Vec<SemanticPatchBody> {
+    let percent = NumberFormat {
+        decimals: 2,
+        kind: NumberFormatKind::Percent,
+        thousands_separator: true,
+    };
+    vec![
+        set_f_text("new"),
+        set_g_number(2.0),
+        set_h(Expression::Multiply {
+            left: Box::new(reference_g()),
+            right: Box::new(number(2.0)),
+        }),
+        set_h(Expression::Reference(FieldRef::new("e2", "n"))),
+        // `extra` reads a 3,900-byte entity key; lengthening its field key
+        // pushes the projected formula past the 4,096-byte canonical limit.
+        SemanticPatchBody::command(SemanticCommand::RenameSchemaField {
+            schema: "t".into(),
+            field: "input".into(),
+            key: "i".repeat(200).into(),
+        }),
+        set_h(Expression::Add {
+            left: Box::new(reference_g()),
+            right: Box::new(number(1.0)),
+        }),
+        SemanticPatchBody::command(SemanticCommand::RenameSchemaField {
+            schema: "s".into(),
+            field: "g".into(),
+            key: "amount".into(),
+        }),
+        SemanticPatchBody::command(SemanticCommand::RenameSchemaField {
+            schema: "s".into(),
+            field: "g".into(),
+            key: "g".into(),
+        }),
+        SemanticPatchBody::command(SemanticCommand::SetSchemaFieldRequiredness {
+            schema: "s".into(),
+            field: "f".into(),
+            required: false,
+        }),
+        SemanticPatchBody::command(SemanticCommand::SetSchemaFieldRequiredness {
+            schema: "s".into(),
+            field: "f".into(),
+            required: true,
+        }),
+        SemanticPatchBody::command(SemanticCommand::AppendSchemaField {
+            schema: "s".into(),
+            field: spare_field(),
+            values: BTreeMap::new(),
+        }),
+        SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+            field: FieldRef::new("e1", "spare"),
+            value: Value::Number(Number::new(3.0).unwrap()),
+        }),
+        SemanticPatchBody::command(SemanticCommand::RemoveSchemaField {
+            schema: "s".into(),
+            field: spare_field(),
+            values: BTreeMap::from([("e1".into(), Value::Number(Number::new(3.0).unwrap()))]),
+        }),
+        SemanticPatchBody::command(SemanticCommand::SetSchemaFieldDisplayName {
+            schema: "s".into(),
+            field: "f".into(),
+            display_name: Some("Name".into()),
+        }),
+        SemanticPatchBody::command(SemanticCommand::SetFieldNumberFormat {
+            schema: "s".into(),
+            field: "g".into(),
+            number_format: Some(percent),
+        }),
+        SemanticPatchBody::command(SemanticCommand::SetSchemaFieldOrder {
+            schema: "s".into(),
+            order: Some(vec![
+                FieldId::from("g"),
+                FieldId::from("h"),
+                FieldId::from("f"),
+                FieldId::from("extra"),
+            ]),
+        }),
+        SemanticPatchBody::command(SemanticCommand::AppendEntity {
+            entity: appended_entity("e3", "third", Some(reference_g())),
+        }),
+        SemanticPatchBody::command(SemanticCommand::SetFieldValue {
+            field: FieldRef::new("e3", "f"),
+            value: Value::Text("edited".into()),
+        }),
+        SemanticPatchBody::command(SemanticCommand::RemoveEntity {
+            entity: "e3".into(),
+        }),
+        SemanticPatchBody::command(SemanticCommand::UpsertKeyedGroupedSumDefinition {
+            definition: keyed_definition(),
+        }),
+        SemanticPatchBody::command(SemanticCommand::RemoveKeyedGroupedSumDefinition {
+            definition: "summary".into(),
+        }),
+    ]
+}
+
+struct ChainRandom(u64);
+
+impl ChainRandom {
+    fn next(&mut self) -> u64 {
+        let mut value = self.0;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.0 = value;
+        value.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+}
+
+/// One seeded random edit that stays valid whatever the chain's current
+/// document looks like: a value, formula, or presentation change.
+fn random_chain_edit(random: &mut ChainRandom, index: usize) -> SemanticPatchBody {
+    let unique = f64::from(u32::try_from(index + 1).unwrap_or(1)) + 0.5;
+    let number_format = NumberFormat {
+        decimals: u8::try_from(index % 11).unwrap_or(0),
+        kind: NumberFormatKind::Plain,
+        thousands_separator: index % 2 == 0,
+    };
+    let field_order = || {
+        if index % 2 == 0 {
+            vec![
+                FieldId::from("h"),
+                FieldId::from("f"),
+                FieldId::from("extra"),
+                FieldId::from("g"),
+            ]
+        } else {
+            vec![
+                FieldId::from("f"),
+                FieldId::from("h"),
+                FieldId::from("g"),
+                FieldId::from("extra"),
+            ]
+        }
+    };
+    match random.next() % 8 {
+        0 => set_f_text(&format!("value-{index}")),
+        1 => set_g_number(unique),
+        2 => set_h(Expression::Multiply {
+            left: Box::new(reference_g()),
+            right: Box::new(number(unique)),
+        }),
+        3 => set_h(Expression::Add {
+            left: Box::new(reference_g()),
+            right: Box::new(number(unique)),
+        }),
+        4 => set_h(Expression::Add {
+            left: Box::new(Expression::Reference(FieldRef::new("e2", "n"))),
+            right: Box::new(number(unique)),
+        }),
+        5 => SemanticPatchBody::command(SemanticCommand::SetSchemaFieldDisplayName {
+            schema: "s".into(),
+            field: "f".into(),
+            display_name: Some(format!("Name {index}")),
+        }),
+        6 => SemanticPatchBody::command(SemanticCommand::SetFieldNumberFormat {
+            schema: "s".into(),
+            field: "g".into(),
+            number_format: Some(number_format),
+        }),
+        _ => SemanticPatchBody::command(SemanticCommand::SetSchemaFieldOrder {
+            schema: "s".into(),
+            order: Some(field_order()),
+        }),
+    }
+}
+
+struct FixedPublicationTime;
+
+impl TrustedPublicationTimeSource for FixedPublicationTime {
+    fn now(&mut self) -> TrustedInstant {
+        TrustedInstant::new(1)
+    }
+}
+
+fn publish_chain_step(
+    session: &mut ResidentWorkspaceSession,
+    candidate: &Document,
+    installation: Option<crate::PreparedInstallation>,
+) -> Result<(), SemanticPublicationError> {
+    let scope = session.document_scope().clone();
+    let revision = session.revision().clone();
+    let mut time = FixedPublicationTime;
+    let mut publication = session.publication_authority(&mut time);
+    if let Some(installation) = installation {
+        publication = publication.with_prepared(installation);
+    }
+    publication
+        .publish_if_current(&scope, &revision, candidate, |_| Some(()))
+        .map(|_| ())
+}
+
+fn chain_candidate(base: &Document, body: &SemanticPatchBody, label: &str) -> Document {
+    v2_lifecycle()
+        .plan_commands(base, body)
+        .unwrap_or_else(|error| panic!("{label}: planning refused: {error:?}"))
+        .0
+}
+
+fn assert_same_chain_proposal(
+    label: &str,
+    control: &Result<SemanticPatch, PatchLifecycleError>,
+    control_lifecycle: &PatchLifecycle,
+    prepared: &Result<SemanticPatch, PatchLifecycleError>,
+    prepared_lifecycle: &PatchLifecycle,
+) {
+    match (control, prepared) {
+        (Ok(control), Ok(prepared)) => {
+            assert_eq!(control, prepared, "{label}: proposals differ");
+            assert_same_evaluation(control_lifecycle, prepared_lifecycle);
+        }
+        (Err(control), Err(prepared)) => {
+            assert_eq!(
+                format!("{control:?}"),
+                format!("{prepared:?}"),
+                "{label}: refusals differ"
+            );
+        }
+        _ => panic!("{label}: outcomes differ: {control:?} vs {prepared:?}"),
+    }
+}
+
+/// Run one edit through `propose_prepared` and plain `propose`, require the
+/// same proposal, then publish through each session the way its path does.
+fn assert_chain_step(
+    label: &str,
+    body: &SemanticPatchBody,
+    prepared_session: &mut ResidentWorkspaceSession,
+    control_session: &mut ResidentWorkspaceSession,
+) -> Result<SemanticPatch, PatchLifecycleError> {
+    let base = prepared_session.document().clone();
+    assert_eq!(&base, control_session.document(), "{label}: bases diverge");
+    let revision = prepared_session.revision().clone();
+    assert_eq!(
+        &revision,
+        control_session.revision(),
+        "{label}: revisions diverge"
+    );
+    let candidate = chain_candidate(&base, body, label);
+
+    let prepared = prepared_session.prepare_evaluation(candidate.clone());
+    let mut prepared_lifecycle = v2_lifecycle();
+    let prepared_result = propose_with(
+        &mut prepared_lifecycle,
+        &base,
+        revision.as_str(),
+        body.clone(),
+        &prepared,
+    );
+    let mut control_lifecycle = v2_lifecycle();
+    let control_result = propose_plain(
+        &mut control_lifecycle,
+        &base,
+        revision.as_str(),
+        body.clone(),
+    );
+    assert_same_chain_proposal(
+        label,
+        &control_result,
+        &control_lifecycle,
+        &prepared_result,
+        &prepared_lifecycle,
+    );
+    let control_patch = control_result?;
+
+    let installation = prepared.into_installable();
+    let prepared_publication = publish_chain_step(prepared_session, &candidate, Some(installation));
+    let control_publication = publish_chain_step(control_session, &candidate, None);
+    assert_eq!(
+        control_publication, prepared_publication,
+        "{label}: publications differ"
+    );
+    if let Err(error) = &prepared_publication {
+        assert_eq!(
+            error,
+            &SemanticPublicationError::NoChange,
+            "{label}: publication failed"
+        );
+    }
+    Ok(control_patch)
+}
+
+/// Differential: acceptance-case edits and 50 seeded random edits published
+/// one after another through a resident session propose exactly what a run
+/// that always preflights both snapshots in full proposes.
+#[test]
+fn chained_prepared_proposals_match_full_preflights() {
+    let document = preflight_chain_document();
+    let mut prepared_session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let mut control_session = ResidentWorkspaceSession::new("scope".into(), document);
+    let mut random = ChainRandom(0x0678_0000_0000_0001);
+    let fixed = fixed_chain_edits()
+        .into_iter()
+        .enumerate()
+        .map(|(index, body)| (format!("fixed edit {index}"), body));
+    let random = (0..50).map(|index| {
+        (
+            format!("random edit {index}"),
+            random_chain_edit(&mut random, index),
+        )
+    });
+    for (label, body) in fixed.chain(random) {
+        let _ = assert_chain_step(&label, &body, &mut prepared_session, &mut control_session);
+    }
+    assert_eq!(
+        prepared_session.export_snapshot(),
+        control_session.export_snapshot(),
+        "the chains must end on the same document and revision"
+    );
+}
+
+fn publish_prepared_edit(
+    session: &mut ResidentWorkspaceSession,
+    body: SemanticPatchBody,
+    label: &str,
+) {
+    let base = session.document().clone();
+    let candidate = chain_candidate(&base, &body, label);
+    let prepared = session.prepare_evaluation(candidate.clone());
+    let mut lifecycle = v2_lifecycle();
+    let revision = session.revision().clone();
+    propose_with(&mut lifecycle, &base, revision.as_str(), body, &prepared)
+        .unwrap_or_else(|error| panic!("{label}: proposal refused: {error:?}"));
+    let installation = prepared.into_installable();
+    assert_eq!(
+        publish_chain_step(session, &candidate, Some(installation)),
+        Ok(()),
+        "{label}: publication"
+    );
+}
+
+/// The preflight counter: a value edit on a known-good base runs none, and a
+/// formula edit projects only the formula that changed.
+#[test]
+fn a_value_edit_and_a_formula_edit_reuse_the_base_preflight() {
+    let mut session = ResidentWorkspaceSession::new("scope".into(), formula_document());
+    publish_prepared_edit(&mut session, set_g_number(2.0), "the base edit");
+
+    let base = session.document().clone();
+    let body = set_f_text("new");
+    let candidate = chain_candidate(&base, &body, "a value edit");
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate.clone());
+    let mut lifecycle = v2_lifecycle();
+    let revision = session.revision().clone();
+    propose_with(&mut lifecycle, &base, revision.as_str(), body, &prepared)
+        .expect("the value edit is accepted");
+    assert_eq!(
+        evaluation_counters::preflight_counts(),
+        (0, 0),
+        "a value edit on a known-good base must run no preflight"
+    );
+    let installation = prepared.into_installable();
+    assert_eq!(
+        publish_chain_step(&mut session, &candidate, Some(installation)),
+        Ok(())
+    );
+
+    let base = session.document().clone();
+    let body = set_h(Expression::Add {
+        left: Box::new(reference_g()),
+        right: Box::new(number(5.0)),
+    });
+    let candidate = chain_candidate(&base, &body, "a formula edit");
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate);
+    let mut lifecycle = v2_lifecycle();
+    let revision = session.revision().clone();
+    propose_with(&mut lifecycle, &base, revision.as_str(), body, &prepared)
+        .expect("the formula edit is accepted");
+    assert_eq!(
+        evaluation_counters::preflight_counts(),
+        (1, 1),
+        "a formula edit must project only its changed formula"
+    );
+}
+
+/// A base known not to have passed the preflight keeps today's error, and a
+/// publication that never established the outcome leaves it unknown.
+#[test]
+fn a_published_base_that_fails_preflight_keeps_its_error() {
+    let document = formula_document();
+    let mut prepared_session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let mut control_session = ResidentWorkspaceSession::new("scope".into(), document);
+    let failing = unprojectable_document();
+    assert_eq!(
+        publish_chain_step(&mut prepared_session, &failing, None),
+        Ok(())
+    );
+    assert_eq!(
+        publish_chain_step(&mut control_session, &failing, None),
+        Ok(())
+    );
+
+    let body = SemanticPatchBody::command(SemanticCommand::RenameSchemaField {
+        schema: "t".into(),
+        field: "input".into(),
+        key: "i".into(),
+    });
+    let result = assert_chain_step(
+        "a published failing base",
+        &body,
+        &mut prepared_session,
+        &mut control_session,
+    );
+    let PatchLifecycleError::CommandRejected { source } =
+        result.expect_err("the base keeps its projection refusal")
+    else {
+        panic!("expected command rejection");
+    };
+    assert!(
+        matches!(source.as_ref(), WorkspaceError::FormulaProjection { .. }),
+        "{source:?}"
+    );
+}
+
 /// Acceptance 3: a prepared evaluation for a different candidate is ignored,
 /// by the counters and by the resulting evaluation.
 #[test]
@@ -2744,10 +3246,11 @@ fn apply_random_edit(document: &mut Document, rng: &mut SeededRng) {
         }
         3 => {
             let entity_id = format!("x{}", rng.next());
-            document.entities.insert(
-                entity_id.clone().into(),
-                mid_sized_entity(&entity_id, rng.below(100)),
-            );
+            let mut entity = mid_sized_entity(&entity_id, rng.below(100));
+            // The added row's key must not repeat an existing row's key, which
+            // document admission requires to be unique.
+            entity.key = format!("added{entity_id}").into();
+            document.entities.insert(entity_id.into(), entity);
         }
         4 => {
             if entity_ids.len() > 8 {
@@ -2800,4 +3303,144 @@ fn scoped_formula_diff_matches_full_diff_for_random_edits() {
         }
         assert_scoped_diff_matches_full(&base, &candidate, &format!("random edit {case}"));
     }
+}
+
+// --- The scoped canonical delta reports exactly the full delta (#678) ---
+
+/// Assert the scoped canonical delta equals the full one for one pair.
+///
+/// The scope comes from the prepared evaluation's projection changes, exactly
+/// as `finalize_evaluation_v2` reads it, and both sides calculate the same two
+/// documents, so any difference is a lost or invented fact.
+fn assert_scoped_delta_matches_full(base: &Document, candidate: &Document, label: &str) {
+    let session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let prepared = session.prepare_evaluation(candidate.clone());
+    let scope = prepared.projection_changes().diff_scope();
+
+    let before_calculation = calculate(base)
+        .unwrap_or_else(|error| panic!("{label}: base calculation refused: {error:?}"));
+    let after_calculation = calculate(candidate)
+        .unwrap_or_else(|error| panic!("{label}: candidate calculation refused: {error:?}"));
+    let full = canonical_delta_with_calculations(
+        CANONICAL_SEMANTIC_DELTA_V2,
+        base,
+        candidate,
+        &before_calculation,
+        &after_calculation,
+    )
+    .unwrap_or_else(|error| panic!("{label}: full delta refused: {error:?}"));
+    let scoped = canonical_delta_scoped(
+        CANONICAL_SEMANTIC_DELTA_V2,
+        base,
+        candidate,
+        &before_calculation,
+        &after_calculation,
+        &scope,
+    )
+    .unwrap_or_else(|error| panic!("{label}: scoped delta refused: {error:?}"));
+    assert_eq!(
+        scoped, full,
+        "{label}: scoped canonical delta differs from the full delta"
+    );
+}
+
+/// Acceptance 1: the scoped delta equals the full delta for every v2 evidence
+/// case the prepared path accepts. The constraint-set case carries the field
+/// constraint change; no command changes the title, so the direct title
+/// comparison is covered by the diff-engine scoped test instead.
+#[test]
+fn scoped_canonical_delta_matches_full_delta_for_every_acceptance_case() {
+    for (label, document, body) in acceptance_cases() {
+        let candidate = v2_lifecycle()
+            .plan_commands(&document, &body)
+            .unwrap_or_else(|error| panic!("{label}: planning refused: {error:?}"))
+            .0;
+        assert_scoped_delta_matches_full(&document, &candidate, label);
+    }
+}
+
+/// Acceptance 1: 50 seeded random edits keep the scoped delta equal to the full
+/// delta on a mid-sized document.
+#[test]
+fn scoped_canonical_delta_matches_full_delta_for_random_edits() {
+    let base = mid_sized_document();
+    let mut rng = SeededRng(0x0678_0026);
+    for case in 0..50 {
+        let mut candidate = base.clone();
+        for _ in 0..=rng.below(3) {
+            apply_random_edit(&mut candidate, &mut rng);
+        }
+        assert_scoped_delta_matches_full(&base, &candidate, &format!("random edit {case}"));
+    }
+}
+
+/// `keyed_document` plus a second schema a changed definition can bind.
+fn alternate_keyed_document() -> Document {
+    let mut document = keyed_document();
+    document.schemas.insert(
+        "orders2".into(),
+        multi_field_schema(
+            "orders2",
+            "orders2",
+            &[("lookup", FieldType::Text), ("quantity", FieldType::Number)],
+        ),
+    );
+    document
+}
+
+/// `keyed_definition` bound to the second orders schema, so it differs without
+/// needing a new field.
+fn changed_keyed_definition() -> KeyedGroupedSumDefinition {
+    let mut definition = keyed_definition();
+    definition.orders.schema = "orders2".into();
+    definition
+}
+
+/// Acceptance 1: a saved keyed grouped-sum definition added, changed and
+/// removed all keep the scoped delta equal to the full delta. Definitions are
+/// not part of `DiffScope`, so this is the part the scoped delta compares in
+/// full.
+#[test]
+fn scoped_canonical_delta_matches_full_delta_for_definition_edits() {
+    let added_base = keyed_document();
+    let added = v2_lifecycle()
+        .plan_commands(
+            &added_base,
+            &SemanticPatchBody::command(SemanticCommand::UpsertKeyedGroupedSumDefinition {
+                definition: keyed_definition(),
+            }),
+        )
+        .expect("adding a definition plans")
+        .0;
+    assert_scoped_delta_matches_full(&added_base, &added, "a definition added");
+
+    let mut changed_base = alternate_keyed_document();
+    changed_base
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), keyed_definition());
+    let changed = v2_lifecycle()
+        .plan_commands(
+            &changed_base,
+            &SemanticPatchBody::command(SemanticCommand::UpsertKeyedGroupedSumDefinition {
+                definition: changed_keyed_definition(),
+            }),
+        )
+        .expect("changing a definition plans")
+        .0;
+    assert_scoped_delta_matches_full(&changed_base, &changed, "a definition changed");
+
+    let mut removed_base = keyed_document();
+    removed_base
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), keyed_definition());
+    let removed = v2_lifecycle()
+        .plan_commands(
+            &removed_base,
+            &SemanticPatchBody::command(SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                definition: "summary".into(),
+            }),
+        )
+        .expect("removing a definition plans")
+        .0;
+    assert_scoped_delta_matches_full(&removed_base, &removed, "a definition removed");
 }
