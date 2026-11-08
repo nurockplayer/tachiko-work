@@ -36,6 +36,8 @@ mod number_format_tests;
 #[cfg(test)]
 mod optional_date_boolean_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod totals_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod working_size_tests;
 
 mod name_admission;
@@ -4740,24 +4742,84 @@ impl DesignerRuntime {
         &mut self,
         collection: &str,
     ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
-        let revision = self.current_revision().to_owned();
-        if let Some((cached_revision, cached_collection, totals)) = &self.totals_cache {
-            if *cached_revision == revision && cached_collection == collection {
-                return Ok(totals.clone());
-            }
+        if let Some(totals) = self.cached_totals(collection) {
+            return Ok(totals);
         }
         let totals = {
             let spec = self.collection_spec(collection)?;
             self.totals_for_entities(spec, &spec.entities)?
         };
-        self.totals_cache = Some((revision, collection.to_owned(), totals.clone()));
+        self.store_totals(collection, &totals);
         Ok(totals)
+    }
+
+    /// Whole-collection totals from the revision cache, otherwise summed over
+    /// `members` (every entity, in collection order) and stored.
+    fn whole_collection_totals(
+        &mut self,
+        collection: &str,
+        members: &[EntityId],
+    ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        if let Some(totals) = self.cached_totals(collection) {
+            return Ok(totals);
+        }
+        let totals = {
+            let spec = self.collection_spec(collection)?;
+            self.totals_for_entities(spec, members)?
+        };
+        self.store_totals(collection, &totals);
+        Ok(totals)
+    }
+
+    /// Totals cached for this revision and collection, if any.
+    fn cached_totals(&self, collection: &str) -> Option<BTreeMap<String, Option<f64>>> {
+        let revision = self.current_revision();
+        let (cached_revision, cached_collection, totals) = self.totals_cache.as_ref()?;
+        if cached_revision == revision && cached_collection == collection {
+            #[cfg(test)]
+            totals_cache_counters::record_hit();
+            return Some(totals.clone());
+        }
+        None
+    }
+
+    /// Retain `totals` as this revision's whole-collection footer.
+    fn store_totals(&mut self, collection: &str, totals: &BTreeMap<String, Option<f64>>) {
+        #[cfg(test)]
+        totals_cache_counters::record_fill();
+        self.totals_cache = Some((
+            self.current_revision().to_owned(),
+            collection.to_owned(),
+            totals.clone(),
+        ));
     }
 
     /// Sums each Number column over `members`, which are collection entities
     /// in collection order. Blank cells are skipped; any unavailable or
     /// non-finite value nulls that column. An empty set totals to `0`.
     fn totals_for_entities(
+        &self,
+        spec: &CollectionSpec,
+        members: &[EntityId],
+    ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        let fields = spec
+            .columns
+            .iter()
+            .filter(|column| column.field_type == FieldType::Number)
+            .map(|column| column.id.clone())
+            .collect::<Vec<_>>();
+        let totals = self.session.query_column_totals(members, &fields)?;
+        Ok(totals
+            .value()
+            .iter()
+            .map(|total| (total.field.to_string(), total.total))
+            .collect())
+    }
+
+    /// The pre-#678 totals path, kept as the differential oracle: project
+    /// every present Number cell, then sum the projections.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    fn reference_totals_for_entities(
         &self,
         spec: &CollectionSpec,
         members: &[EntityId],
@@ -4792,7 +4854,7 @@ impl DesignerRuntime {
     /// or oversized sets before any sum is taken. Members are summed in
     /// collection order, so naming every entity matches the window footer.
     fn query_column_totals(
-        &self,
+        &mut self,
         expected_revision: &str,
         collection: &str,
         entities: &[String],
@@ -4832,7 +4894,13 @@ impl DesignerRuntime {
             .filter(|id| requested.contains(*id))
             .cloned()
             .collect::<Vec<_>>();
-        let column_totals = self.totals_for_entities(spec, &members)?;
+        // Naming every entity is the window footer, so it may share its cache.
+        let column_totals = if members.len() == spec.entities.len() {
+            self.whole_collection_totals(collection, &members)?
+        } else {
+            let spec = self.collection_spec(collection)?;
+            self.totals_for_entities(spec, &members)?
+        };
         Ok(ColumnTotalsProjection {
             revision,
             rows: members.len(),
@@ -4862,7 +4930,13 @@ impl DesignerRuntime {
             .iter()
             .map(|row| spec.entities[*row].clone())
             .collect::<Vec<_>>();
-        let column_totals = self.totals_for_entities(spec, &members)?;
+        // An order over every row is the window footer, so it may share its cache.
+        let column_totals = if members.len() == spec.entities.len() {
+            self.whole_collection_totals(collection, &members)?
+        } else {
+            let spec = self.collection_spec(collection)?;
+            self.totals_for_entities(spec, &members)?
+        };
         Ok(ColumnTotalsProjection {
             revision,
             rows: members.len(),
@@ -10214,6 +10288,34 @@ mod admission_counters {
 
     pub(super) fn full_walk_admissions() -> usize {
         FULL_WALK_ADMISSIONS.with(Cell::get)
+    }
+}
+
+/// Test-only evidence that a query read the whole-collection totals cache
+/// instead of summing again.
+#[cfg(test)]
+mod totals_cache_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static FILLS: Cell<usize> = const { Cell::new(0) };
+        static HITS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record_fill() {
+        FILLS.with(|count| count.set(count.get().saturating_add(1)));
+    }
+
+    pub(super) fn record_hit() {
+        HITS.with(|count| count.set(count.get().saturating_add(1)));
+    }
+
+    pub(super) fn fills() -> usize {
+        FILLS.with(Cell::get)
+    }
+
+    pub(super) fn hits() -> usize {
+        HITS.with(Cell::get)
     }
 }
 
