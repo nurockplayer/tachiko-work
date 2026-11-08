@@ -729,6 +729,7 @@ pub struct PreparedEvaluation<'session> {
     base_document: &'session Document,
     base_calculation: Option<&'session Calculation>,
     base_report_valid: bool,
+    base_preflight_succeeded: bool,
     definitions_invalid: bool,
 }
 
@@ -738,6 +739,7 @@ impl<'session> PreparedEvaluation<'session> {
         base_document: &'session Document,
         base_calculation: Option<&'session Calculation>,
         base_report_valid: bool,
+        base_preflight_succeeded: bool,
     ) -> Self {
         let definitions_invalid =
             validate_keyed_grouped_sum_definitions(&installation.candidate).is_err();
@@ -746,6 +748,7 @@ impl<'session> PreparedEvaluation<'session> {
             base_document,
             base_calculation,
             base_report_valid,
+            base_preflight_succeeded,
             definitions_invalid,
         }
     }
@@ -822,6 +825,24 @@ impl<'session> PreparedEvaluation<'session> {
     pub(crate) fn base_report_valid(&self) -> bool {
         self.base_report_valid
     }
+
+    /// Whether the resident session's current document is known to pass the
+    /// formula projection preflight.
+    ///
+    /// Preflight reads only keys, schema definitions and formula expressions,
+    /// never values, so a base known to have passed needs no second run.
+    pub(crate) fn base_preflight_succeeded(&self) -> bool {
+        self.base_preflight_succeeded
+    }
+
+    /// Whether this candidate passes the formula projection preflight, decided
+    /// while the candidate was prepared.
+    ///
+    /// A `false` keeps the exact error on the full preflight inside the reuse
+    /// gate, where a refusal must report the first failing formula.
+    pub(crate) fn candidate_preflight_succeeded(&self) -> bool {
+        self.installation.candidate_preflight_succeeded
+    }
 }
 
 /// One evaluation's installable state, prepared before publication and handed
@@ -847,6 +868,9 @@ pub struct PreparedInstallation {
     retained: resident_session::ResidentDerivedState,
     changes: resident_session::ProjectionChanges,
     transition: resident_session::DerivedStateTransition,
+    /// Whether the candidate passes the formula projection preflight. The
+    /// session remembers it for the next edit, whose base is this candidate.
+    candidate_preflight_succeeded: bool,
 }
 
 /// Calculate every numeric field and project it through current human keys.
@@ -2529,11 +2553,15 @@ pub(crate) mod evaluation_counters {
     thread_local! {
         static CANDIDATE_CALCULATIONS: Cell<usize> = const { Cell::new(0) };
         static BASE_CALCULATIONS: Cell<usize> = const { Cell::new(0) };
+        static PREFLIGHT_RUNS: Cell<usize> = const { Cell::new(0) };
+        static PREFLIGHT_PROJECTIONS: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(crate) fn reset() {
         CANDIDATE_CALCULATIONS.with(|count| count.set(0));
         BASE_CALCULATIONS.with(|count| count.set(0));
+        PREFLIGHT_RUNS.with(|count| count.set(0));
+        PREFLIGHT_PROJECTIONS.with(|count| count.set(0));
     }
 
     pub(crate) fn record_candidate_calculation() {
@@ -2544,10 +2572,26 @@ pub(crate) mod evaluation_counters {
         BASE_CALCULATIONS.with(|count| count.set(count.get() + 1));
     }
 
+    pub(crate) fn record_preflight_run() {
+        PREFLIGHT_RUNS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn record_preflight_projection() {
+        PREFLIGHT_PROJECTIONS.with(|count| count.set(count.get() + 1));
+    }
+
     pub(crate) fn counts() -> (usize, usize) {
         (
             CANDIDATE_CALCULATIONS.with(Cell::get),
             BASE_CALCULATIONS.with(Cell::get),
+        )
+    }
+
+    /// Return `(preflight runs, projected formulas)` since the last [`reset`].
+    pub(crate) fn preflight_counts() -> (usize, usize) {
+        (
+            PREFLIGHT_RUNS.with(Cell::get),
+            PREFLIGHT_PROJECTIONS.with(Cell::get),
         )
     }
 }
@@ -3135,6 +3179,8 @@ fn field_ref_fact(field: &FieldRef) -> String {
 }
 
 fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceError> {
+    #[cfg(test)]
+    evaluation_counters::record_preflight_run();
     // One index serves every formula. When it cannot be built, each formula
     // keeps the per-formula projection failure reported before the shared
     // index, so the first formula still decides the error.
@@ -3142,6 +3188,8 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
             if let Value::Formula(expression) = value {
+                #[cfg(test)]
+                evaluation_counters::record_preflight_projection();
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
                 let projection = match &index {
                     Ok(index) => project_expression_with_index(document, index, &field, expression),
@@ -3155,6 +3203,48 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
         }
     }
     Ok(())
+}
+
+/// Project only the formulas whose fields are in `changed`.
+///
+/// The candidate's unchanged formulas project exactly as the base's did, so
+/// [`preflight_formula_projections`] and this function visit the same failing
+/// formula first whenever the base passed and neither the address index nor a
+/// schema definition changed.
+fn preflight_changed_formula_projections(
+    document: &Document,
+    changed: &BTreeSet<FieldRef>,
+) -> Result<(), WorkspaceError> {
+    #[cfg(test)]
+    evaluation_counters::record_preflight_run();
+    let index = AddressIndex::build(document);
+    for (entity_id, entity) in &document.entities {
+        for (field_id, value) in &entity.fields {
+            let field = FieldRef::new(entity_id.clone(), field_id.clone());
+            if !changed.contains(&field) {
+                continue;
+            }
+            if let Value::Formula(expression) = value {
+                #[cfg(test)]
+                evaluation_counters::record_preflight_projection();
+                let projection = match &index {
+                    Ok(index) => project_expression_with_index(document, index, &field, expression),
+                    Err(_) => project_expression(document, &field, expression),
+                };
+                projection.map_err(|source| WorkspaceError::FormulaProjection { field, source })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether one field holds a formula value in `document`.
+fn field_holds_formula(document: &Document, field: &FieldRef) -> bool {
+    document
+        .entities
+        .get(&field.entity)
+        .and_then(|entity| entity.fields.get(&field.field))
+        .is_some_and(|value| matches!(value, Value::Formula(_)))
 }
 
 fn preflight_formula_structures(document: &Document) -> Result<(), WorkspaceError> {
