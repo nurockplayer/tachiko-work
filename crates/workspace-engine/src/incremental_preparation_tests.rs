@@ -940,3 +940,49 @@ fn adding_an_entity_with_a_read_blank_field_rebuilds() {
     );
     assert_before_and_after_publication(&mut session, &candidate, "entity added");
 }
+
+/// The third review's case: `e1` holds `n` and `e2` leaves it blank, and `r`
+/// reads `e2.n`. Retyping `n` roots only `e1.n`, so the reader of the blank
+/// cell kept its old result until the definition change rebuilt.
+#[test]
+fn retyping_a_field_some_entity_leaves_blank_rebuilds() {
+    let mut document = Document::empty("doc", "Sheet");
+    document.schemas.insert(
+        SchemaId::from("s"),
+        schema(
+            "s",
+            BTreeMap::from([
+                ("n".into(), optional_number("n")),
+                ("x".into(), optional_number("x")),
+            ]),
+        ),
+    );
+    document.entities.insert(
+        EntityId::from("e1"),
+        row("e1", "s", BTreeMap::from([("n".into(), number(2.0))])),
+    );
+    document
+        .entities
+        .insert(EntityId::from("e2"), row("e2", "s", BTreeMap::new()));
+    document.entities.insert(
+        EntityId::from("r"),
+        row(
+            "r",
+            "s",
+            BTreeMap::from([(
+                "x".into(),
+                Value::Formula(add(reference("e2", "n"), literal(1.0))),
+            )]),
+        ),
+    );
+    let mut session = ResidentWorkspaceSession::new("scope".into(), document);
+    let mut candidate = session.document().clone();
+    candidate
+        .schemas
+        .get_mut(&SchemaId::from("s"))
+        .expect("schema exists")
+        .fields
+        .insert("n".into(), optional_text("n"));
+    set(&mut candidate, "e1", "n", Value::Text("two".into()));
+    assert_before_and_after_publication(&mut session, &candidate, "field retyped with a blank");
+}

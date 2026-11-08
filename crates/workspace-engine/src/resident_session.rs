@@ -317,13 +317,11 @@ impl ResidentDerivedState {
         if changes.address_index_changed {
             self.address_index = AddressIndex::build(document);
         }
-        // A zero-field entity's change has no field root an incremental update
-        // could name, yet it still owns a blank slot in every read column of
-        // its schema and an entry in the graph's schema map. Keep the retained
-        // state equal to a full rebuild by taking that branch.
-        let incremental_safe = previous_address_index_valid
-            && self.address_index.is_ok()
-            && !changes.unaddressable_calculation_change;
+        let address_index_safe = previous_address_index_valid && self.address_index.is_ok();
+        // A structural change no field root can describe keeps the retained
+        // state equal to a full rebuild by taking that branch. It isn't an
+        // address-index fallback, so it isn't counted as one.
+        let incremental_safe = address_index_safe && !changes.unaddressable_calculation_change;
         let calculation = if incremental_safe {
             self.calculation_state
                 .update(document, &changes.calculation_roots)
@@ -354,7 +352,7 @@ impl ResidentDerivedState {
             work: DerivedStateTransitionWork {
                 calculation: calculation.work,
                 address_index_rebuilt: changes.address_index_changed,
-                fell_back_to_full_calculation: !incremental_safe,
+                fell_back_to_full_calculation: !address_index_safe,
             },
             affected_calculations: calculation.affected_calculations,
             changed_calculation_projections: calculation.changed_calculation_projections,
@@ -781,8 +779,7 @@ struct ProjectionChanges {
     address_index_changed: bool,
     /// A structural change that no field root can fully describe: an entity
     /// added, removed, or moved to another schema, a field's semantic
-    /// definition changed with no entity holding the field, or a schema added
-    /// or removed. Roots come from the populated fields an entity holds, but a
+    /// definition changed, or a schema added or removed. Roots come from the populated fields an entity holds, but a
     /// formula may read one of its blank fields, and the retained graph also
     /// tracks blank column slots and a schema map that no field root expresses;
     /// updating from roots alone would leave state that differs from a full
@@ -960,7 +957,6 @@ fn collect_schema_projection_changes(
                 (Some(_), None) | (None, Some(_)) => true,
                 (None, None) => false,
             };
-            let mut held_by_entity = false;
             for entity_id in entity_ids {
                 let entity_id = *entity_id;
                 instrumentation::record_publication_fields_inspected(1);
@@ -971,7 +967,6 @@ fn collect_schema_projection_changes(
                     entity.schema == schema_id && entity.fields.contains_key(&field_id)
                 });
                 if before_has_field || after_has_field {
-                    held_by_entity = true;
                     let field = FieldRef::new(entity_id.clone(), field_id.clone());
                     changes.fields.insert(field.clone());
                     if semantic_definition_changed {
@@ -979,11 +974,12 @@ fn collect_schema_projection_changes(
                     }
                 }
             }
-            // A definition change with no entity holding the field has no
-            // field root to carry it, yet the retained graph's column slots,
-            // schema map and validation still depend on it. These are rare
-            // structural edits, so a full rebuild is acceptable there.
-            if semantic_definition_changed && !held_by_entity {
+            // A definition change reaches every reader of the field, including
+            // readers of entities that leave it blank, which have no field root,
+            // and the retained graph's column slots, schema map and validation
+            // depend on it too. These are rare structural edits, so a full
+            // rebuild is acceptable.
+            if semantic_definition_changed {
                 changes.unaddressable_calculation_change = true;
             }
         }
