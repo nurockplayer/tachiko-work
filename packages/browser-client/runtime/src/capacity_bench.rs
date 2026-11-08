@@ -1317,7 +1317,11 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     let (removed, remove_sample, remove_phases) = {
         instrumentation::reset_phases();
         let (outcome, sample) = observe(|| runtime.remove_table_rows(&revision, "grid", &rows));
-        (outcome, sample, phase_millis(&instrumentation::take_phases()))
+        (
+            outcome,
+            sample,
+            phase_millis(&instrumentation::take_phases()),
+        )
     };
     match removed {
         Ok(_) => wq_print(name, "remove_100_rows_ms", wq_millis(&remove_sample)),
@@ -1334,7 +1338,11 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     let (inserted, insert_sample, insert_phases) = {
         instrumentation::reset_phases();
         let (outcome, sample) = observe(|| runtime.insert_row(&revision, "grid", &initializers));
-        (outcome, sample, phase_millis(&instrumentation::take_phases()))
+        (
+            outcome,
+            sample,
+            phase_millis(&instrumentation::take_phases()),
+        )
     };
     match inserted {
         Ok(_) => wq_print(name, "insert_row_ms", wq_millis(&insert_sample)),
@@ -1431,7 +1439,11 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
         let (edited, edit_sample, phases) = {
             instrumentation::reset_phases();
             let (outcome, sample) = observe(|| runtime.handle(request));
-            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+            (
+                outcome,
+                sample,
+                phase_millis(&instrumentation::take_phases()),
+            )
         };
         edit_phases.push(phases);
         match edited {
@@ -1462,7 +1474,11 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
         let (windowed, requery_sample, phases) = {
             instrumentation::reset_phases();
             let (outcome, sample) = observe(|| runtime.handle(window));
-            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+            (
+                outcome,
+                sample,
+                phase_millis(&instrumentation::take_phases()),
+            )
         };
         window_phases.push(phases);
         if let Err(error) = windowed {
@@ -1484,13 +1500,21 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
         let (totalled, shown_totals_sample, phases) = {
             instrumentation::reset_phases();
             let (outcome, sample) = observe(|| runtime.handle(shown_totals));
-            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+            (
+                outcome,
+                sample,
+                phase_millis(&instrumentation::take_phases()),
+            )
         };
         shown_totals_phases.push(phases);
         let (viewed, view_totals_sample, phases) = {
             instrumentation::reset_phases();
             let (outcome, sample) = observe(|| runtime.handle(view_totals));
-            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+            (
+                outcome,
+                sample,
+                phase_millis(&instrumentation::take_phases()),
+            )
         };
         view_totals_phases.push(phases);
         for (step, outcome) in [
@@ -1933,6 +1957,7 @@ const PHASE_ORDER: &[(&str, usize)] = &[
     ("publish_commands/refresh_structure", 2),
     ("refresh_structure/capacity_measure", 3),
     ("refresh_structure/collection_specs", 3),
+    ("refresh_structure/formula_sources", 3),
     ("validate/semantic/calculate", 3),
     ("query/table_window", 0),
     ("query/table_window/revision_check", 1),
@@ -1976,6 +2001,7 @@ const PHASE_ORDER: &[(&str, usize)] = &[
     ("row/insert/snapshot", 1),
     ("row/insert/columns", 1),
     ("row/insert/row_build", 1),
+    ("row/insert/fills", 2),
     ("row/insert/publish", 1),
     ("row/remove", 0),
     ("row/remove/spec", 1),
@@ -2394,7 +2420,9 @@ fn w1_scalar_edits(
     let mut stopped = false;
     let mut samples = Vec::new();
     for iteration in 0..max_edits {
-        if iteration >= (if w1_lite() { 3 } else { 20 }) && started.elapsed().as_secs_f64() * 1_000.0 > time_limit_ms {
+        if iteration >= (if w1_lite() { 3 } else { 20 })
+            && started.elapsed().as_secs_f64() * 1_000.0 > time_limit_ms
+        {
             stopped = true;
             break;
         }
@@ -2633,7 +2661,11 @@ fn w1_row_maintenance(shape: &str, runtime: &mut DesignerRuntime) {
 fn w1_fresh_runtime(shape: &str, serial: u64) -> Option<DesignerRuntime> {
     let (document, _rows, _columns) = w1_copy_document(shape)?;
     let occurrence = format!("00000000-0000-4000-8000-{serial:012x}");
-    match DesignerRuntime::from_document_profile_with_opened(document, &occurrence, SessionProfile::Ordinary) {
+    match DesignerRuntime::from_document_profile_with_opened(
+        document,
+        &occurrence,
+        SessionProfile::Ordinary,
+    ) {
         Ok((runtime, _opened)) => Some(runtime),
         Err(error) => {
             w1_failure(shape, "copy_open", error);
@@ -2649,7 +2681,10 @@ fn w1_print_phases(label: &str, whole: f64) {
         .collect::<Vec<_>>();
     phases.sort_by(|left, right| right.1.total_cmp(&left.1));
     for (name, millis) in phases.into_iter().take(24) {
-        println!("| {label} `{name}` | {millis:.1} | {:.1}% |", millis / whole * 100.0);
+        println!(
+            "| {label} `{name}` | {millis:.1} | {:.1}% |",
+            millis / whole * 100.0
+        );
     }
 }
 
@@ -2658,7 +2693,10 @@ fn w1_print_phases(label: &str, whole: f64) {
 fn w1_copy_ladder(shape: &str) {
     const STOP_AFTER_MS: f64 = 60_000.0;
     let field = if shape == "d" { "c29" } else { "c9" };
-    for (index, count) in [100_usize, 500, 1_000, 2_000, 5_000, 9_999].into_iter().enumerate() {
+    for (index, count) in [100_usize, 500, 1_000, 2_000, 5_000, 9_999]
+        .into_iter()
+        .enumerate()
+    {
         let Some(mut runtime) = w1_fresh_runtime(shape, 0x400 + index as u64) else {
             return;
         };
@@ -2700,7 +2738,11 @@ fn w1_copy_ladder(shape: &str) {
         w1_print_phases("copy_formula", sample.millis);
         match response {
             Ok(DesignerResponse::Published(publication)) => {
-                w1_line(shape, &format!("copy_formula_{count}_ms"), format!("{:.3}", sample.millis));
+                w1_line(
+                    shape,
+                    &format!("copy_formula_{count}_ms"),
+                    format!("{:.3}", sample.millis),
+                );
                 w1_line(
                     shape,
                     &format!("copy_formula_{count}_json_bytes"),
@@ -2751,7 +2793,7 @@ fn w1_query_view(
             view: view.clone(),
             start,
             count,
-                display: Default::default(),
+            display: Default::default(),
         })
     })
 }
@@ -3247,7 +3289,11 @@ fn capacity_w1_shape() {
     let occurrence = format!("00000000-0000-4000-8000-{:012x}", 0x300_u64);
     let open_document = document.clone();
     let (opened, open_sample) = observe(|| {
-        DesignerRuntime::from_document_profile_with_opened(open_document, &occurrence, SessionProfile::Ordinary)
+        DesignerRuntime::from_document_profile_with_opened(
+            open_document,
+            &occurrence,
+            SessionProfile::Ordinary,
+        )
     });
     let mut runtime = match opened {
         Ok((runtime, opened_projection)) => {
@@ -3380,7 +3426,11 @@ fn capacity_w1_shape() {
                         300_000.0,
                     );
                 }
-                shape if shape.starts_with("c1-") || shape.starts_with("c2-") || shape.starts_with("g-") => {
+                shape
+                    if shape.starts_with("c1-")
+                        || shape.starts_with("c2-")
+                        || shape.starts_with("g-") =>
+                {
                     w1_scalar_edits(
                         shape,
                         "edit_unrelated",
@@ -3432,8 +3482,6 @@ fn capacity_w1_shape() {
 
             // 8. Save and reopen.
             w1_save_and_reopen(&shape, runtime);
-
         }
     }
-
 }

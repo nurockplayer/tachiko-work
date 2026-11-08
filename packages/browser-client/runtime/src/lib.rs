@@ -3745,8 +3745,7 @@ impl DesignerRuntime {
                 collection,
                 view,
             } => {
-                let projection =
-                    self.query_view_totals(&expected_revision, &collection, &view)?;
+                let projection = self.query_view_totals(&expected_revision, &collection, &view)?;
                 let _phase = instrumentation::PhaseTimer::new("query/view_totals/response");
                 Ok(DesignerResponse::ColumnTotals(projection))
             }
@@ -6839,64 +6838,68 @@ impl DesignerRuntime {
                 // A v3-origin text-capacity occurrence edits like any other
                 // capacity occurrence; only strict v3 origins keep the strict
                 // preflight.
-                let preflight_profile = if instrumentation::skip_preflight() { None } else { Some(self.profile) };
+                let preflight_profile = if instrumentation::skip_preflight() {
+                    None
+                } else {
+                    Some(self.profile)
+                };
                 if let Some(profile) = preflight_profile {
-                match (self.opened_from_v3, profile) {
-                    // Working size re-proves only its own item bounds; it never
-                    // reconstructs the occurrence or its complete projection.
-                    // Capacity and saved bytes were already checked above, so
-                    // only the string budget is left.
-                    (_, SessionProfile::WorkingSize) => {
-                        working_strings = Some({
-                            let _phase = instrumentation::PhaseTimer::new(
-                                "publish_commands/working_strings",
-                            );
-                            match &working_edit {
-                                Some(totals) if !totals.needs_full_strings => totals.strings,
-                                _ => ensure_working_size_strings(prepared.document())?,
-                            }
-                        });
-                    }
-                    (true, SessionProfile::Ordinary) => {
-                        Self::from_document_profile_with_opened(
-                            prepared.document().clone(),
-                            PREFLIGHT_OCCURRENCE,
-                            SessionProfile::Ordinary,
-                        )?;
-                    }
-                    (_, SessionProfile::TextCapacity) => match commands.as_slice() {
-                        [
-                            SemanticCommand::SetFieldValue {
-                                field,
-                                value: Value::Text(value),
-                            },
-                        ] if matches!(
-                            self.session
-                                .document()
-                                .entities
-                                .get(&field.entity)
-                                .and_then(|entity| entity.fields.get(&field.field)),
-                            Some(Value::Text(_))
-                        ) =>
-                        {
-                            self.preflight_capacity_scalar(prepared.document(), field, value)?;
+                    match (self.opened_from_v3, profile) {
+                        // Working size re-proves only its own item bounds; it never
+                        // reconstructs the occurrence or its complete projection.
+                        // Capacity and saved bytes were already checked above, so
+                        // only the string budget is left.
+                        (_, SessionProfile::WorkingSize) => {
+                            working_strings = Some({
+                                let _phase = instrumentation::PhaseTimer::new(
+                                    "publish_commands/working_strings",
+                                );
+                                match &working_edit {
+                                    Some(totals) if !totals.needs_full_strings => totals.strings,
+                                    _ => ensure_working_size_strings(prepared.document())?,
+                                }
+                            });
                         }
-                        _ => {
+                        (true, SessionProfile::Ordinary) => {
+                            Self::from_document_profile_with_opened(
+                                prepared.document().clone(),
+                                PREFLIGHT_OCCURRENCE,
+                                SessionProfile::Ordinary,
+                            )?;
+                        }
+                        (_, SessionProfile::TextCapacity) => match commands.as_slice() {
+                            [
+                                SemanticCommand::SetFieldValue {
+                                    field,
+                                    value: Value::Text(value),
+                                },
+                            ] if matches!(
+                                self.session
+                                    .document()
+                                    .entities
+                                    .get(&field.entity)
+                                    .and_then(|entity| entity.fields.get(&field.field)),
+                                Some(Value::Text(_))
+                            ) =>
+                            {
+                                self.preflight_capacity_scalar(prepared.document(), field, value)?;
+                            }
+                            _ => {
+                                Self::from_document_profile(
+                                    prepared.document().clone(),
+                                    PREFLIGHT_OCCURRENCE,
+                                    SessionProfile::TextCapacity,
+                                )?;
+                            }
+                        },
+                        (_, SessionProfile::Ordinary) => {
                             Self::from_document_profile(
                                 prepared.document().clone(),
                                 PREFLIGHT_OCCURRENCE,
-                                SessionProfile::TextCapacity,
+                                SessionProfile::Ordinary,
                             )?;
                         }
-                    },
-                    (_, SessionProfile::Ordinary) => {
-                        Self::from_document_profile(
-                            prepared.document().clone(),
-                            PREFLIGHT_OCCURRENCE,
-                            SessionProfile::Ordinary,
-                        )?;
                     }
-                }
                 }
             }
             // Preflight only upgrades a constraint mismatch into its typed
@@ -7023,8 +7026,7 @@ impl DesignerRuntime {
         let installation = prepared.into_installable();
         let invalidation = {
             let mut publication = {
-                let _phase =
-                    instrumentation::PhaseTimer::new("publish_commands/execute/authority");
+                let _phase = instrumentation::PhaseTimer::new("publish_commands/execute/authority");
                 self.session
                     .publication_authority(&mut self.clock)
                     .with_prepared(installation)
@@ -7068,9 +7070,8 @@ impl DesignerRuntime {
                 // The delta above already produced this edit's exact totals,
                 // so only the collection caches can still need rebuilding.
                 Some(_) => {
-                    let _phase = instrumentation::PhaseTimer::new(
-                        "refresh_structure/collection_specs",
-                    );
+                    let _phase =
+                        instrumentation::PhaseTimer::new("refresh_structure/collection_specs");
                     self.collection_specs = collection_specs(self.session.document());
                     self.collections = self
                         .collection_specs
@@ -7080,8 +7081,11 @@ impl DesignerRuntime {
                 }
                 None => self.refresh_structure(),
             }
-            if let Ok(sources) = formula_sources(self.session.document()) {
-                self.formula_sources = sources;
+            {
+                let _phase = instrumentation::PhaseTimer::new("refresh_structure/formula_sources");
+                if let Ok(sources) = formula_sources(self.session.document()) {
+                    self.formula_sources = sources;
+                }
             }
         }
         // Only the resident registry accumulates one receipt and settled
@@ -7771,13 +7775,16 @@ impl DesignerRuntime {
             for (field, value) in values {
                 entity.fields.insert(field, value);
             }
-            fill_new_rows(
-                snapshot.document(),
-                &[],
-                &fills,
-                std::slice::from_mut(&mut entity),
-                &[typed],
-            );
+            {
+                let _phase = instrumentation::PhaseTimer::new("row/insert/fills");
+                fill_new_rows(
+                    snapshot.document(),
+                    &[],
+                    &fills,
+                    std::slice::from_mut(&mut entity),
+                    &[typed],
+                );
+            }
             entity
         };
         let entity_id = entity.id.clone();
