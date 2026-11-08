@@ -805,6 +805,7 @@ struct TestPublication {
     publish_calls: usize,
     mode: PublishMode,
     publication_time: TrustedInstant,
+    installed: Option<Document>,
 }
 
 impl TestPublication {
@@ -817,6 +818,7 @@ impl TestPublication {
             publish_calls: 0,
             mode: PublishMode::Normal,
             publication_time: TrustedInstant::new(11),
+            installed: None,
         }
     }
 
@@ -832,10 +834,10 @@ impl TestPublication {
 }
 
 impl SemanticPublicationAuthority for TestPublication {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
         (
             self.document_scope.clone(),
-            self.document.clone(),
+            &self.document,
             self.revision.clone(),
         )
     }
@@ -844,10 +846,10 @@ impl SemanticPublicationAuthority for TestPublication {
         &mut self,
         expected_document_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
     ) -> Result<
-        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
         self.publish_calls += 1;
@@ -879,16 +881,16 @@ impl SemanticPublicationAuthority for TestPublication {
                 if candidate.id != self.document.id {
                     return Err(SemanticPublicationError::Conflict);
                 }
-                if candidate == self.document {
+                if candidate == &self.document {
                     return Err(SemanticPublicationError::NoChange);
                 }
-                self.document = candidate;
+                self.document = candidate.clone();
                 if self.mode == PublishMode::TamperAfterSuccess {
                     self.document.title.push_str(" (tampered)");
                 }
                 self.revision = self.next_revision.clone();
                 let installed_document_scope = self.document_scope.clone();
-                let installed_document = self.document.clone();
+                self.installed = Some(self.document.clone());
                 let resulting_revision = self.revision.clone();
                 if self.mode == PublishMode::AdvanceAfterSuccess {
                     // Model another writer advancing live state after the
@@ -899,7 +901,9 @@ impl SemanticPublicationAuthority for TestPublication {
                 }
                 Ok((
                     installed_document_scope,
-                    installed_document,
+                    self.installed
+                        .as_ref()
+                        .expect("successful publication installs a document"),
                     resulting_revision,
                     authorization,
                 ))

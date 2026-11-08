@@ -95,26 +95,21 @@ struct Host {
     publications: usize,
 }
 impl SemanticPublicationAuthority for Host {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        ("scope".into(), self.document.clone(), "r1".into())
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        ("scope".into(), &self.document, "r1".into())
     }
     fn publish_if_current<A>(
         &mut self,
         _: &DocumentScopeId,
         _: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
-    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+    ) -> Result<(DocumentScopeId, &Document, SemanticRevision, A), SemanticPublicationError> {
         let authorization = authorize(TrustedInstant::new(3))
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         self.publications += 1;
-        self.document = candidate;
-        Ok((
-            "scope".into(),
-            self.document.clone(),
-            "r2".into(),
-            authorization,
-        ))
+        self.document = candidate.clone();
+        Ok(("scope".into(), &self.document, "r2".into(), authorization))
     }
 }
 

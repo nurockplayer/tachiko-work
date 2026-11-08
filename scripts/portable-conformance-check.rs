@@ -2502,22 +2502,18 @@ struct PortablePublication {
 }
 
 impl SemanticPublicationAuthority for PortablePublication {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        (
-            self.scope.clone(),
-            self.document.clone(),
-            self.revision.clone(),
-        )
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        (self.scope.clone(), &self.document, self.revision.clone())
     }
 
     fn publish_if_current<Authorization>(
         &mut self,
         expected_document_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
     ) -> Result<
-        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
         if expected_document_scope != &self.scope {
@@ -2528,14 +2524,14 @@ impl SemanticPublicationAuthority for PortablePublication {
         if expected_revision != &self.revision {
             return Err(SemanticPublicationError::Stale);
         }
-        if candidate == self.document {
+        if candidate == &self.document {
             return Err(SemanticPublicationError::NoChange);
         }
-        self.document = candidate;
+        self.document = candidate.clone();
         self.revision = SemanticRevision::from("portable-r2");
         Ok((
             self.scope.clone(),
-            self.document.clone(),
+            &self.document,
             self.revision.clone(),
             authorization,
         ))
@@ -2721,13 +2717,16 @@ fn resident_session_record() -> Record {
     let installed = session.export_snapshot();
     let mut stale_candidate = installed.document().clone();
     stale_candidate.title = "must not install".to_owned();
-    let stale = session.publication_authority(&mut time).publish_if_current(
-        installed.document_scope(),
-        initial.revision(),
-        stale_candidate,
-        |_| Some(()),
+    let stale_refused = matches!(
+        session.publication_authority(&mut time).publish_if_current(
+            installed.document_scope(),
+            initial.revision(),
+            &stale_candidate,
+            |_| Some(()),
+        ),
+        Err(SemanticPublicationError::Stale)
     );
-    if !matches!(stale, Err(SemanticPublicationError::Stale))
+    if !stale_refused
         || session.export_snapshot() != installed
         || receipt.base_revision != *initial.revision()
         || receipt.resulting_revision != *installed.revision()

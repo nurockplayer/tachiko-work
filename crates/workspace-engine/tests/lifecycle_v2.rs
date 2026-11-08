@@ -127,22 +127,22 @@ impl SemanticPublicationAuthority for Host {
         &self,
     ) -> (
         DocumentScopeId,
-        tachiko_workspace_engine::Document,
+        &tachiko_workspace_engine::Document,
         SemanticRevision,
     ) {
-        (scope(), self.document.clone(), self.revision.clone())
+        (scope(), &self.document, self.revision.clone())
     }
 
     fn publish_if_current<A>(
         &mut self,
         expected_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: tachiko_workspace_engine::Document,
+        candidate: &tachiko_workspace_engine::Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
     ) -> Result<
         (
             DocumentScopeId,
-            tachiko_workspace_engine::Document,
+            &tachiko_workspace_engine::Document,
             SemanticRevision,
             A,
         ),
@@ -154,14 +154,14 @@ impl SemanticPublicationAuthority for Host {
         }
         let authorization = authorize(TrustedInstant::new(11))
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
-        if candidate == self.document {
+        if candidate == &self.document {
             return Err(SemanticPublicationError::NoChange);
         }
-        self.document = candidate;
+        self.document = candidate.clone();
         self.revision = revision(&format!("r{}", self.publications + 1));
         Ok((
             scope(),
-            self.document.clone(),
+            &self.document,
             self.revision.clone(),
             authorization,
         ))
