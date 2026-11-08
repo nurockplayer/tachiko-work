@@ -262,6 +262,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
         duplicate_serial: 0,
         opened_from_v3: false,
         presentation: crate::PresentationStore::default(),
+        presentation_saved_bytes: 0,
     }
 }
 
@@ -1046,6 +1047,13 @@ fn qualify_working_size_shape(shape: WqShape) {
     );
     validate(&document).expect("qualification fixture validates");
 
+    // These fixtures carry no presentation, so the document bound is the whole
+    // saved-size bound the working-size session checks.
+    let (saved_bound, bound_sample) =
+        observe(|| super::save_size::saved_bytes_upper_bound(&document));
+    wq_print(name, "saved_bound_ms", wq_millis(&bound_sample));
+    wq_print(name, "saved_bound_bytes", saved_bound);
+
     let runtime = match DesignerRuntime::from_document_working_size(document, WQ_OCCURRENCE) {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -1064,6 +1072,12 @@ fn qualify_working_size_shape(shape: WqShape) {
     };
     wq_print(name, "save_v3_ms", wq_millis(&save_sample));
     wq_print(name, "save_v3_bytes", saved.bytes.len());
+    wq_print(name, "saved_actual_bytes", saved.bytes.len());
+    wq_print(
+        name,
+        "saved_margin_bytes",
+        saved_bound.saturating_sub(u64::try_from(saved.bytes.len()).unwrap_or(u64::MAX)),
+    );
     drop(runtime);
 
     let mut resident: Option<DesignerRuntime> = None;

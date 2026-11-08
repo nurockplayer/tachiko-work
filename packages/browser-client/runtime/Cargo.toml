@@ -21,6 +21,7 @@ tachiko-storage = { path = "../../../crates/storage" }
 tachiko-workspace-engine = { path = "../../../crates/workspace-engine" }
 thiserror = "2.0"
 quick-xml = "0.37"
+ryu-js = "1.0.3"
 zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
 
 [workspace]

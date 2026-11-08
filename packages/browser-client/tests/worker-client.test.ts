@@ -88,6 +88,16 @@ describe("capacity refusal wire validation", () => {
     });
   });
 
+  it("accepts a working-size saved-bytes refusal", async () => {
+    const {rejected} = await rejectWithFailure({
+      ...failureBase, limit: "saved_bytes", maximum: 66_060_288, attempted: 66_257_664,
+      message: "The edit would make the project too large to save.",
+    });
+    await expect(rejected).rejects.toMatchObject({
+      failure: {code: "capacity_exceeded", limit: "saved_bytes", maximum: 66_060_288, attempted: 66_257_664},
+    });
+  });
+
   it("accepts a valid workbook capacity refusal", async () => {
     const {rejected} = await rejectWithFailure({
       ...failureBase, limit: "populated_cells", maximum: 100_000, attempted: 100_001,

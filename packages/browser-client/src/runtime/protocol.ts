@@ -20,8 +20,11 @@ export type BootstrapProjection = {
   keyed_grouped_sum_definition_ids?: string[];
 };
 
-/** `projection_bytes` refuses an import; it is not a counted resource. */
-export type CapacityLimits = Record<Exclude<CapacityLimitName, "projection_bytes">, number>;
+/** `projection_bytes` refuses an import and `saved_bytes` a whole-session save; neither is a counted resource. */
+export type CapacityLimits = Record<
+  Exclude<CapacityLimitName, "projection_bytes" | "saved_bytes">,
+  number
+>;
 
 export type CapacityUsage = {
   collections: number;
@@ -469,7 +472,8 @@ export type CapacityLimitName =
   | "formulas"
   | "formula_ast_nodes"
   | "dependency_edges"
-  | "projection_bytes";
+  | "projection_bytes"
+  | "saved_bytes";
 
 export type CapacityFailureProjection = FailureProjection & {
   code: "capacity_exceeded";
@@ -491,6 +495,7 @@ const CAPACITY_LIMIT_NAMES: readonly CapacityLimitName[] = [
   "formula_ast_nodes",
   "dependency_edges",
   "projection_bytes",
+  "saved_bytes",
 ];
 
 /** Validate the detailed wire payload for a capacity refusal. */
