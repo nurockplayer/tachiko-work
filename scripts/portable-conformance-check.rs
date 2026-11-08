@@ -2717,13 +2717,16 @@ fn resident_session_record() -> Record {
     let installed = session.export_snapshot();
     let mut stale_candidate = installed.document().clone();
     stale_candidate.title = "must not install".to_owned();
-    let stale = session.publication_authority(&mut time).publish_if_current(
-        installed.document_scope(),
-        initial.revision(),
-        &stale_candidate,
-        |_| Some(()),
+    let stale_refused = matches!(
+        session.publication_authority(&mut time).publish_if_current(
+            installed.document_scope(),
+            initial.revision(),
+            &stale_candidate,
+            |_| Some(()),
+        ),
+        Err(SemanticPublicationError::Stale)
     );
-    if !matches!(stale, Err(SemanticPublicationError::Stale))
+    if !stale_refused
         || session.export_snapshot() != installed
         || receipt.base_revision != *initial.revision()
         || receipt.resulting_revision != *installed.revision()
