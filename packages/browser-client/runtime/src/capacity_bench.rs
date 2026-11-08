@@ -1498,7 +1498,6 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
     wq_phase_latency(name, "shown_totals", &shown_totals_phases);
     wq_phase_latency(name, "view_totals", &view_totals_phases);
 }
-}
 
 fn qualify_working_size_saves(shape: WqShape, runtime: &DesignerRuntime) {
     let name = shape.name();
