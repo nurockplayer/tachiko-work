@@ -275,31 +275,31 @@ impl Host {
 }
 
 impl SemanticPublicationAuthority for Host {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        (scope(), self.document.clone(), self.revision.clone())
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        (scope(), &self.document, self.revision.clone())
     }
 
     fn publish_if_current<A>(
         &mut self,
         expected_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
-    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+    ) -> Result<(DocumentScopeId, &Document, SemanticRevision, A), SemanticPublicationError> {
         self.publications += 1;
         if expected_scope != &scope() || expected_revision != &self.revision {
             return Err(SemanticPublicationError::Stale);
         }
         let authorization = authorize(TrustedInstant::new(11))
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
-        if candidate == self.document {
+        if candidate == &self.document {
             return Err(SemanticPublicationError::NoChange);
         }
-        self.document = candidate;
+        self.document = candidate.clone();
         self.revision = rev(&format!("r{}", self.publications + 1));
         Ok((
             scope(),
-            self.document.clone(),
+            &self.document,
             self.revision.clone(),
             authorization,
         ))

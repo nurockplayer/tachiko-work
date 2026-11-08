@@ -734,7 +734,7 @@ fn empty_table_name_publication_wire_invalidates_presentation() {
         .publish_if_current(
             snapshot.document_scope(),
             snapshot.revision(),
-            candidate,
+            &candidate,
             |_| Some(()),
         )
         .unwrap();

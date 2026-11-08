@@ -725,7 +725,7 @@ pub struct PreparedEvaluation<'session> {
     candidate: Document,
     report: ValidationReport,
     calculation: Option<Calculation>,
-    base_calculation: Option<Calculation>,
+    base_calculation: Option<&'session Calculation>,
     base_report_valid: bool,
     definitions_invalid: bool,
 }
@@ -737,7 +737,7 @@ impl<'session> PreparedEvaluation<'session> {
         candidate: Document,
         report: ValidationReport,
         calculation: Option<Calculation>,
-        base_calculation: Option<Calculation>,
+        base_calculation: Option<&'session Calculation>,
         base_report_valid: bool,
     ) -> Self {
         let definitions_invalid = validate_keyed_grouped_sum_definitions(&candidate).is_err();
@@ -794,7 +794,7 @@ impl<'session> PreparedEvaluation<'session> {
     }
 
     pub(crate) fn base_calculation(&self) -> Option<&Calculation> {
-        self.base_calculation.as_ref()
+        self.base_calculation
     }
 
     /// Whether the base revision's retained semantic report was valid.

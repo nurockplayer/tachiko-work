@@ -57,6 +57,18 @@ impl ResidentWorkspaceSession {
         &self.revision
     }
 
+    /// Borrow this occurrence's protected document scope.
+    #[must_use]
+    pub fn document_scope(&self) -> &DocumentScopeId {
+        &self.document_scope
+    }
+
+    /// Borrow the installed document without detaching a snapshot.
+    #[must_use]
+    pub fn document(&self) -> &Document {
+        &self.document
+    }
+
     /// Borrow the current core direct-dependency facts in stable-ID order.
     ///
     /// Entries describe formulas, including failed calculations. Hosts must
@@ -236,10 +248,7 @@ impl ResidentWorkspaceSession {
     /// leaves the proposal on its existing recalculation path.
     #[must_use]
     pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
-        let base_calculation = match self.retained.calculation_state.outcome() {
-            CalculationOutcome::Complete(calculation) => Some(calculation),
-            CalculationOutcome::Failed(_) => None,
-        };
+        let base_calculation = self.retained.calculation_state.complete();
         let base_report_valid = self.retained.validation_report.is_valid();
         let (report, calculation) = semantic_validation(&candidate);
         PreparedEvaluation::new(
@@ -625,10 +634,10 @@ impl<Time> SemanticPublicationAuthority for ResidentPublicationAuthority<'_, Tim
 where
     Time: TrustedPublicationTimeSource,
 {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
         (
             self.session.document_scope.clone(),
-            self.session.document.clone(),
+            &self.session.document,
             self.session.revision.clone(),
         )
     }
@@ -637,10 +646,10 @@ where
         &mut self,
         expected_document_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
     ) -> Result<
-        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
         self.projection_invalidation = None;
@@ -656,7 +665,7 @@ where
             return Err(SemanticPublicationError::Conflict);
         }
         instrumentation::record_publication_document_comparison();
-        if candidate == self.session.document {
+        if candidate == &self.session.document {
             return Err(SemanticPublicationError::NoChange);
         }
         let next_generation = self
@@ -668,13 +677,13 @@ where
         let (projection_invalidation, transition_work) = projection_invalidation(
             &self.session.document,
             &mut self.session.retained,
-            &candidate,
+            candidate,
             self.session.document_scope.clone(),
             expected_revision.clone(),
             resulting_revision.clone(),
         );
 
-        self.session.document = candidate;
+        self.session.document = candidate.clone();
         self.session.generation = next_generation;
         self.session.revision = resulting_revision.clone();
         self.session.measurements.record_transition(transition_work);
@@ -682,7 +691,7 @@ where
 
         Ok((
             self.session.document_scope.clone(),
-            self.session.document.clone(),
+            &self.session.document,
             resulting_revision,
             authorization,
         ))
@@ -1043,7 +1052,7 @@ mod tests {
             .publish_if_current(
                 snapshot.document_scope(),
                 snapshot.revision(),
-                after,
+                &after,
                 |_| Some(()),
             )
             .unwrap();
@@ -1109,14 +1118,14 @@ mod tests {
             .publish_if_current(
                 before.document_scope(),
                 before.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap();
+        let installed = Document::clone(installed);
         assert!(publication.projection_invalidation.is_some());
         let measurements = publication.session.measurements;
-        let result =
-            publication.publish_if_current(&scope, &revision, installed.clone(), |_| Some(()));
+        let result = publication.publish_if_current(&scope, &revision, &installed, |_| Some(()));
         assert_eq!(result, Err(SemanticPublicationError::NoChange));
         assert!(publication.projection_invalidation.is_none());
         assert_eq!(publication.session.document, installed);
@@ -1142,7 +1151,7 @@ mod tests {
             .publish_if_current(
                 before.document_scope(),
                 before.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap_err();

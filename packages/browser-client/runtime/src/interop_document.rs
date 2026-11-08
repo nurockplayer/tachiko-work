@@ -185,7 +185,9 @@ impl DesignerRuntime {
         )?;
         super::designer_preview(
             &mut lifecycle,
-            &snapshot,
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
             &proposal_id,
             &self.principal,
             self.clock.tick(),

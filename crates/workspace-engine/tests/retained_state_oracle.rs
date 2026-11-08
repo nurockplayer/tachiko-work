@@ -99,7 +99,7 @@ fn run_sequence(
         let mut candidate = before.clone();
         mutation.apply(&mut candidate);
 
-        let warm_invalidation = publish(session, candidate.clone());
+        let warm_invalidation = publish(session, &candidate);
         let cold_invalidation =
             full_oracle_invalidation(&before, &candidate, scope, &warm_invalidation);
         assert_invalidation_subjects_equal(
@@ -1011,7 +1011,7 @@ fn assert_invalidation_subjects_equal(
 
 fn publish(
     session: &mut ResidentWorkspaceSession,
-    candidate: Document,
+    candidate: &Document,
 ) -> ResidentProjectionInvalidation {
     let before = session.export_snapshot();
     let mut time = FixedTime;

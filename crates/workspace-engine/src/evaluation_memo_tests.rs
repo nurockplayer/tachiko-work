@@ -165,17 +165,17 @@ impl Host {
 }
 
 impl SemanticPublicationAuthority for Host {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        ("scope".into(), self.snapshot.clone(), self.revision.clone())
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        ("scope".into(), &self.snapshot, self.revision.clone())
     }
 
     fn publish_if_current<A>(
         &mut self,
         expected_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
-    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+    ) -> Result<(DocumentScopeId, &Document, SemanticRevision, A), SemanticPublicationError> {
         if expected_scope != &DocumentScopeId::from("scope") || expected_revision != &self.revision
         {
             return Err(SemanticPublicationError::Stale);
@@ -184,7 +184,14 @@ impl SemanticPublicationAuthority for Host {
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         self.publications += 1;
         self.published = Some(candidate.clone());
-        Ok(("scope".into(), candidate, "r2".into(), authorization))
+        Ok((
+            "scope".into(),
+            self.published
+                .as_ref()
+                .expect("successful publication installs a document"),
+            "r2".into(),
+            authorization,
+        ))
     }
 }
 
@@ -434,29 +441,24 @@ struct InstallingHost {
 }
 
 impl SemanticPublicationAuthority for InstallingHost {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        ("scope".into(), self.snapshot.clone(), self.revision.clone())
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        ("scope".into(), &self.snapshot, self.revision.clone())
     }
 
     fn publish_if_current<A>(
         &mut self,
         expected_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        _candidate: Document,
+        _candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
-    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+    ) -> Result<(DocumentScopeId, &Document, SemanticRevision, A), SemanticPublicationError> {
         if expected_scope != &DocumentScopeId::from("scope") || expected_revision != &self.revision
         {
             return Err(SemanticPublicationError::Stale);
         }
         let authorization = authorize(TrustedInstant::new(30))
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
-        Ok((
-            "scope".into(),
-            self.installed.clone(),
-            "r2".into(),
-            authorization,
-        ))
+        Ok(("scope".into(), &self.installed, "r2".into(), authorization))
     }
 }
 
@@ -2353,17 +2355,17 @@ impl AdvancingHost {
 }
 
 impl SemanticPublicationAuthority for AdvancingHost {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        ("scope".into(), self.snapshot.clone(), self.revision.clone())
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        ("scope".into(), &self.snapshot, self.revision.clone())
     }
 
     fn publish_if_current<A>(
         &mut self,
         expected_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
-    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+    ) -> Result<(DocumentScopeId, &Document, SemanticRevision, A), SemanticPublicationError> {
         if expected_scope != &DocumentScopeId::from("scope") || expected_revision != &self.revision
         {
             return Err(SemanticPublicationError::Stale);
@@ -2375,7 +2377,7 @@ impl SemanticPublicationAuthority for AdvancingHost {
         self.revision = SemanticRevision::from(format!("r{}", self.publications + 1));
         Ok((
             "scope".into(),
-            candidate,
+            &self.snapshot,
             self.revision.clone(),
             authorization,
         ))

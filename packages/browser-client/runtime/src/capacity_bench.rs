@@ -303,7 +303,7 @@ fn measure_scalar_edits(
             let mut time = FixedTime;
             session
                 .publication_authority(&mut time)
-                .publish_if_current(&scope, &revision, candidate, |_| Some(()))
+                .publish_if_current(&scope, &revision, &candidate, |_| Some(()))
                 .expect("scalar publication succeeds");
         });
         samples.push(sample);
@@ -348,7 +348,7 @@ fn measure_formula_edits(size: (usize, usize), rows: &mut Vec<Row>) {
             let mut time = FixedTime;
             session
                 .publication_authority(&mut time)
-                .publish_if_current(&scope, &revision, candidate, |_| Some(()))
+                .publish_if_current(&scope, &revision, &candidate, |_| Some(()))
                 .expect("formula publication succeeds");
         });
         let after = session.runtime_measurements().calculation_nodes_recomputed;

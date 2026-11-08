@@ -10,10 +10,10 @@ use tachiko_workspace_engine::{
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
-        ExecutionReceipt, Grant, GrantId, GrantRequirement, MutationClass, OperationFamily,
-        PatchLifecycle, PatchLifecycleError, PolicyMeaningId, PrincipalId, PrincipalKind,
-        ProposalId, ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
-        SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
+        ExecutionReceipt, ExecutionReceiptV2, Grant, GrantId, GrantRequirement, MutationClass,
+        OperationFamily, PatchLifecycle, PatchLifecycleError, PolicyMeaningId, PrincipalId,
+        PrincipalKind, ProposalId, ProposalRequest, ScopedSemanticSubject, SemanticApiContract,
+        SemanticCommand, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
         SemanticRevision, SemanticScope, TrustedInstant,
     },
     rename_entity, rename_field,
@@ -77,14 +77,28 @@ fn document_scope_id() -> DocumentScopeId {
 }
 
 fn lifecycle() -> PatchLifecycle {
-    let mut lifecycle = PatchLifecycle::new(
+    provisioned(PatchLifecycle::new(
         AuthorizationDomainId::from("local-domain"),
         document_scope_id(),
         DocumentId::from("game"),
         SemanticApiContract::from("tachiko-sem-v1"),
         AuthorizationPolicyVersion::from("policy-v1"),
         PolicyMeaningId::from("policy-v1-meaning"),
-    );
+    ))
+}
+
+fn v2_lifecycle() -> PatchLifecycle {
+    provisioned(PatchLifecycle::new_v2(
+        AuthorizationDomainId::from("local-domain"),
+        document_scope_id(),
+        DocumentId::from("game"),
+        SemanticApiContract::from("tachiko-sem-v1"),
+        AuthorizationPolicyVersion::from("policy-v1"),
+        PolicyMeaningId::from("policy-v1-meaning"),
+    ))
+}
+
+fn provisioned(mut lifecycle: PatchLifecycle) -> PatchLifecycle {
     lifecycle
         .register_principal(PrincipalId::from("authority"), PrincipalKind::Human)
         .unwrap();
@@ -114,6 +128,35 @@ fn lifecycle() -> PatchLifecycle {
                     AuthorizationAction::Execute,
                     OperationFamily::SetFieldValue,
                     MutationClass::Value,
+                    scope,
+                )
+                .unwrap(),
+            ],
+            None,
+        ))
+        .unwrap();
+    let scope = ScopedSemanticSubject::new(
+        document_scope_id(),
+        DocumentId::from("game"),
+        SemanticScope::Document,
+    );
+    lifecycle
+        .provision_grant(Grant::new(
+            GrantId::from("human-editor-formula"),
+            PrincipalId::from("authority"),
+            principal(),
+            vec![
+                GrantRequirement::mutation(
+                    AuthorizationAction::Propose,
+                    OperationFamily::SetFieldValue,
+                    MutationClass::Formula,
+                    scope.clone(),
+                )
+                .unwrap(),
+                GrantRequirement::mutation(
+                    AuthorizationAction::Execute,
+                    OperationFamily::SetFieldValue,
+                    MutationClass::Formula,
                     scope,
                 )
                 .unwrap(),
@@ -312,7 +355,7 @@ fn set_number(document: &mut Document, entity: &str, field: &str, number: f64) {
 
 fn publish_candidate(
     session: &mut ResidentWorkspaceSession,
-    candidate: Document,
+    candidate: &Document,
 ) -> ResidentProjectionInvalidation {
     let snapshot = session.export_snapshot();
     let mut time = FixedTrustedTime { calls: 0 };
@@ -595,7 +638,7 @@ fn global_calculation_failure_invalidates_independent_formula_projections() {
             .publish_if_current(
                 snapshot.document_scope(),
                 snapshot.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap()
@@ -650,7 +693,7 @@ fn target_removal_invalidates_fields_whose_reference_diagnostics_change() {
             .publish_if_current(
                 snapshot.document_scope(),
                 snapshot.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap()
@@ -729,7 +772,7 @@ fn rename_projection_preserves_stable_subject_and_changes_presentation_address()
             .publish_if_current(
                 snapshot.document_scope(),
                 snapshot.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap()
@@ -801,7 +844,7 @@ fn field_rename_invalidates_schema_bound_presentations_without_recomputing_depen
             .publish_if_current(
                 snapshot.document_scope(),
                 snapshot.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap()
@@ -892,7 +935,7 @@ fn stale_expected_revision_rejects_without_installing_candidate() {
             .publish_if_current(
                 before.document_scope(),
                 &SemanticRevision::from("stale-revision"),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap_err()
@@ -918,7 +961,7 @@ fn replaced_document_occurrence_rejects_before_authorization_or_installation() {
             .publish_if_current(
                 &DocumentScopeId::from("replacement-occurrence"),
                 before.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap_err()
@@ -944,7 +987,7 @@ fn candidate_cannot_replace_the_resident_document_identity() {
             .publish_if_current(
                 before.document_scope(),
                 before.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap_err()
@@ -970,7 +1013,7 @@ fn publication_authorization_denial_leaves_state_and_revision_unchanged() {
             .publish_if_current(
                 before.document_scope(),
                 before.revision(),
-                candidate,
+                &candidate,
                 |_| None::<()>,
             )
             .unwrap_err()
@@ -1078,12 +1121,14 @@ fn equal_candidate_still_requires_occurrence_authorization_and_current_revision(
         } else {
             before.revision().clone()
         };
-        let result = session.publication_authority(&mut time).publish_if_current(
-            &scope,
-            &revision,
-            before.document().clone(),
-            |_| (case != "authorization").then_some(()),
-        );
+        let result = {
+            let mut publication = session.publication_authority(&mut time);
+            publication
+                .publish_if_current(&scope, &revision, before.document(), |_| {
+                    (case != "authorization").then_some(())
+                })
+                .map(|_| ())
+        };
         let expected = match case {
             "occurrence" => SemanticPublicationError::DocumentScopeMismatch,
             "authorization" => SemanticPublicationError::AuthorizationDenied,
@@ -1118,7 +1163,7 @@ fn scalar_edit_invalidates_only_the_edited_field() {
     let mut candidate = session.export_snapshot().document().clone();
     set_number(&mut candidate, "row-1", "value", 7.0);
 
-    let invalidation = publish_candidate(&mut session, candidate);
+    let invalidation = publish_candidate(&mut session, &candidate);
 
     assert_eq!(invalidation.schemas, []);
     assert_eq!(invalidation.schema_fields, []);
@@ -1133,7 +1178,7 @@ fn scalar_edit_fields_inspected(rows: usize) -> u64 {
     let mut candidate = session.export_snapshot().document().clone();
     set_number(&mut candidate, "row-1", "value", 7.0);
     let before = tachiko_workspace_engine::instrumentation::counters().publication_fields_inspected;
-    publish_candidate(&mut session, candidate);
+    publish_candidate(&mut session, &candidate);
     tachiko_workspace_engine::instrumentation::counters().publication_fields_inspected - before
 }
 
@@ -1157,7 +1202,7 @@ fn entity_key_change_invalidates_the_whole_renamed_entity() {
         .unwrap()
         .key = EntityKey::from("row-two");
 
-    let invalidation = publish_candidate(&mut session, candidate);
+    let invalidation = publish_candidate(&mut session, &candidate);
 
     assert_eq!(invalidation.schemas, []);
     assert_eq!(invalidation.schema_fields, []);
@@ -1189,7 +1234,7 @@ fn appended_entity_invalidates_its_whole_row() {
         },
     );
 
-    let invalidation = publish_candidate(&mut session, candidate);
+    let invalidation = publish_candidate(&mut session, &candidate);
 
     assert_eq!(invalidation.schemas, []);
     assert_eq!(invalidation.schema_fields, []);
@@ -1210,7 +1255,7 @@ fn removed_entity_invalidates_its_whole_row() {
     let mut candidate = session.export_snapshot().document().clone();
     candidate.entities.remove(&EntityId::from("row-2"));
 
-    let invalidation = publish_candidate(&mut session, candidate);
+    let invalidation = publish_candidate(&mut session, &candidate);
 
     assert_eq!(invalidation.schemas, []);
     assert_eq!(invalidation.schema_fields, []);
@@ -1238,7 +1283,7 @@ fn schema_required_flip_invalidates_that_field_on_every_row() {
         .unwrap()
         .required = true;
 
-    let invalidation = publish_candidate(&mut session, candidate);
+    let invalidation = publish_candidate(&mut session, &candidate);
 
     assert_eq!(invalidation.schemas, []);
     assert_eq!(
@@ -1265,7 +1310,7 @@ fn formula_failure_and_recovery_invalidate_the_formula_field_through_diagnostics
 
     let mut failing = session.export_snapshot().document().clone();
     set_number(&mut failing, "sword", "attack_interval", 0.0);
-    let gained = publish_candidate(&mut session, failing);
+    let gained = publish_candidate(&mut session, &failing);
     // The edit itself only touched the interval; dps enters through the
     // diagnostic that the failing formula gained.
     assert_eq!(gained.fields, [interval.clone(), dps.clone()]);
@@ -1273,8 +1318,229 @@ fn formula_failure_and_recovery_invalidate_the_formula_field_through_diagnostics
 
     let mut fixed = session.export_snapshot().document().clone();
     set_number(&mut fixed, "sword", "attack_interval", 2.0);
-    let lost = publish_candidate(&mut session, fixed);
+    let lost = publish_candidate(&mut session, &fixed);
     // dps is not edited here; it enters because its diagnostic disappeared.
     assert_eq!(lost.fields, [interval, dps.clone()]);
     assert!(lost.affected_calculations.contains(&dps));
+}
+
+fn run_edit(
+    session: &mut ResidentWorkspaceSession,
+    lifecycle: &mut PatchLifecycle,
+    id: &str,
+    body: SemanticPatchBody,
+) -> Result<ExecutionReceipt, PatchLifecycleError> {
+    let before = session.export_snapshot();
+    let proposal = ProposalId::from(id);
+    lifecycle.propose(
+        before.document_scope(),
+        before.document(),
+        before.revision(),
+        ProposalRequest::new(
+            proposal.clone(),
+            before.revision().clone(),
+            body,
+            principal(),
+        ),
+        NOW,
+    )?;
+    lifecycle.preview(
+        before.document_scope(),
+        before.document(),
+        before.revision(),
+        &proposal,
+        &principal(),
+        NOW,
+    )?;
+    let mut time = FixedTrustedTime { calls: 0 };
+    let mut publication = session.publication_authority(&mut time);
+    lifecycle.execute(&proposal, None, &principal(), &mut publication, NOW)
+}
+
+fn run_edit_v2(
+    session: &mut ResidentWorkspaceSession,
+    lifecycle: &mut PatchLifecycle,
+    id: &str,
+    body: SemanticPatchBody,
+) -> Result<ExecutionReceiptV2, PatchLifecycleError> {
+    let before = session.export_snapshot();
+    let proposal = ProposalId::from(id);
+    lifecycle.propose(
+        before.document_scope(),
+        before.document(),
+        before.revision(),
+        ProposalRequest::new(
+            proposal.clone(),
+            before.revision().clone(),
+            body,
+            principal(),
+        ),
+        NOW,
+    )?;
+    lifecycle.preview_v2(
+        before.document_scope(),
+        before.document(),
+        before.revision(),
+        &proposal,
+        &principal(),
+        NOW,
+    )?;
+    let mut time = FixedTrustedTime { calls: 0 };
+    let mut publication = session.publication_authority(&mut time);
+    lifecycle.execute_v2(&proposal, None, &principal(), &mut publication, NOW)
+}
+
+/// The incremental retained calculation must equal a full calculation of the
+/// installed document for every requested field.
+fn assert_calculations_agree(session: &ResidentWorkspaceSession, fields: &[FieldRef]) {
+    let live = session.query_fields(fields).unwrap();
+    let fresh =
+        ResidentWorkspaceSession::new(session.document_scope().clone(), session.document().clone());
+    let full = fresh.query_fields(fields).unwrap();
+    for (live, full) in live.value().iter().zip(full.value()) {
+        assert_eq!(live.field, full.field);
+        assert_eq!(live.stored_value, full.stored_value, "{}", live.field);
+        assert_eq!(
+            live.calculated_value, full.calculated_value,
+            "{}",
+            live.field
+        );
+        assert_eq!(live.diagnostics, full.diagnostics, "{}", live.field);
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One seam, five occurrence shapes kept reviewable together.
+fn an_edit_publishes_the_same_result_through_the_borrowed_publication_seam() {
+    let damage = FieldRef::new("iron_sword", "damage");
+    let dps = FieldRef::new("iron_sword", "dps");
+    let original = game_balance_document("game", "Game");
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), original.clone());
+    let initial = session.export_snapshot();
+    let mut lifecycle = lifecycle();
+
+    // A value edit installs the new value and leaves the retained calculation
+    // equal to a full calculation of the installed document.
+    let receipt = run_edit(&mut session, &mut lifecycle, "value-edit", body(45.0)).unwrap();
+    assert!(receipt.verified);
+    assert_eq!(receipt.base_revision, *initial.revision());
+    let after_value = session.export_snapshot();
+    assert_eq!(after_value.revision(), &receipt.resulting_revision);
+    assert_ne!(after_value.revision(), initial.revision());
+    assert_eq!(
+        after_value.document().entities[&EntityId::from("iron_sword")].fields
+            [&FieldId::from("damage")],
+        value(45.0)
+    );
+    assert_calculations_agree(&session, &[damage.clone(), dps.clone()]);
+
+    // A formula edit publishes the formula itself and its calculated value.
+    let formula = Expression::Add {
+        left: Box::new(Expression::Reference(damage.clone())),
+        right: Box::new(Expression::Reference(damage.clone())),
+    };
+    let formula_receipt = run_edit(
+        &mut session,
+        &mut lifecycle,
+        "formula-edit",
+        SemanticPatchBody::command(SemanticCommand::set_field_value(
+            dps.clone(),
+            Value::Formula(formula),
+        )),
+    )
+    .unwrap();
+    assert!(formula_receipt.verified);
+    assert_eq!(formula_receipt.base_revision, receipt.resulting_revision);
+    let after_formula = session.export_snapshot();
+    assert_eq!(
+        after_formula.revision(),
+        &formula_receipt.resulting_revision
+    );
+    let query = session.query_fields(std::slice::from_ref(&dps)).unwrap();
+    assert_eq!(query.value()[0].stored_value, None);
+    assert!(query.value()[0].formula_definition.is_some());
+    assert_eq!(
+        query.value()[0].calculated_value,
+        Some(FormulaCalculationOutcome::Value(Number::new(90.0).unwrap()))
+    );
+    assert_calculations_agree(&session, &[damage.clone(), dps.clone()]);
+
+    // A refused edit keeps the installed base document and its revision
+    // exactly as they were.
+    let refused = ProposalId::from("refused-edit");
+    lifecycle
+        .propose(
+            initial.document_scope(),
+            initial.document(),
+            initial.revision(),
+            ProposalRequest::new(
+                refused.clone(),
+                initial.revision().clone(),
+                body(99.0),
+                principal(),
+            ),
+            NOW,
+        )
+        .unwrap();
+    lifecycle
+        .preview(
+            initial.document_scope(),
+            initial.document(),
+            initial.revision(),
+            &refused,
+            &principal(),
+            NOW,
+        )
+        .unwrap();
+    let mut time = FixedTrustedTime { calls: 0 };
+    let error = {
+        let mut publication = session.publication_authority(&mut time);
+        lifecycle
+            .execute(&refused, None, &principal(), &mut publication, NOW)
+            .unwrap_err()
+    };
+    assert!(matches!(error, PatchLifecycleError::Stale), "{error:?}");
+    let refused_state = session.export_snapshot();
+    assert_eq!(refused_state, after_formula);
+
+    // Undoing the edits restores exactly the original document content.
+    let original_dps = Expression::Divide {
+        left: Box::new(Expression::Reference(damage.clone())),
+        right: Box::new(Expression::Reference(FieldRef::new(
+            "iron_sword",
+            "attack_interval",
+        ))),
+    };
+    let undo_formula = run_edit(
+        &mut session,
+        &mut lifecycle,
+        "undo-formula",
+        SemanticPatchBody::command(SemanticCommand::set_field_value(
+            dps.clone(),
+            Value::Formula(original_dps),
+        )),
+    )
+    .unwrap();
+    assert!(undo_formula.verified);
+    let undo_value = run_edit(&mut session, &mut lifecycle, "undo-value", body(36.0)).unwrap();
+    assert!(undo_value.verified);
+    let after_undo = session.export_snapshot();
+    assert_eq!(after_undo.document(), initial.document());
+    assert_calculations_agree(&session, &[damage.clone(), dps.clone()]);
+
+    // A v2-evidence occurrence publishes through the same seam and reports
+    // verified v2 evidence.
+    let mut v2_session = ResidentWorkspaceSession::new(document_scope_id(), original);
+    let mut v2 = v2_lifecycle();
+    let v2_receipt = run_edit_v2(&mut v2_session, &mut v2, "value-edit-v2", body(45.0)).unwrap();
+    assert!(v2_receipt.verified);
+    assert_eq!(v2_receipt.base_revision, *initial.revision());
+    let v2_after = v2_session.export_snapshot();
+    assert_eq!(v2_after.revision(), &v2_receipt.resulting_revision);
+    assert_eq!(
+        v2_after.document().entities[&EntityId::from("iron_sword")].fields
+            [&FieldId::from("damage")],
+        value(45.0)
+    );
+    assert_calculations_agree(&v2_session, &[damage, dps]);
 }
