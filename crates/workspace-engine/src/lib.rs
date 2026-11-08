@@ -2526,8 +2526,14 @@ pub fn validation_report(document: &Document) -> ValidationReport {
 fn semantic_validation(document: &Document) -> (ValidationReport, Option<Calculation>) {
     #[cfg(test)]
     evaluation_counters::record_candidate_calculation();
-    let calculation_outcome = calculate_complete(document);
-    let report = validation_report_for_calculation(document, &calculation_outcome);
+    let calculation_outcome = {
+        let _phase = instrumentation::PhaseTimer::new("validate/semantic/calculate");
+        calculate_complete(document)
+    };
+    let report = {
+        let _phase = instrumentation::PhaseTimer::new("validate/semantic/report");
+        validation_report_for_calculation(document, &calculation_outcome)
+    };
     let calculation = match calculation_outcome {
         CalculationOutcome::Complete(calculation) if report.is_valid() => Some(calculation),
         CalculationOutcome::Complete(_) | CalculationOutcome::Failed(_) => None,

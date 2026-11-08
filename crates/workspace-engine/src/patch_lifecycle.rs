@@ -4186,6 +4186,7 @@ impl PatchLifecycle {
         // calculation and evidence work; every other case keeps it unchanged.
         let reusable = prepared
             .filter(|prepared| {
+                let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/reuse_equality");
                 prepared.document() == &candidate
                     && matches!(prepared.verdict(), PreparedVerdict::Valid)
                     && prepared.base_report_valid()
@@ -4205,26 +4206,40 @@ impl PatchLifecycle {
                 // The prepared candidate is already completely validated and
                 // calculated. Both snapshots still need the formula projection
                 // preflight today's path runs, base first.
-                super::preflight_formula_projections(base).map_err(|source| {
-                    PatchLifecycleError::CommandRejected {
-                        source: Box::new(source),
-                    }
-                })?;
-                super::preflight_formula_projections(&candidate).map_err(|source| {
-                    PatchLifecycleError::CommandRejected {
-                        source: Box::new(source),
-                    }
-                })?;
-                let delta = canonical_delta_with_calculations(
-                    CANONICAL_SEMANTIC_DELTA_V2,
-                    base,
-                    &candidate,
-                    base_calculation,
-                    candidate_calculation,
-                )
-                .map_err(|source| PatchLifecycleError::CommandRejected {
-                    source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
-                })?;
+                {
+                    let _phase =
+                        instrumentation::PhaseTimer::new("finalize_evaluation/preflight_base");
+                    super::preflight_formula_projections(base).map_err(|source| {
+                        PatchLifecycleError::CommandRejected {
+                            source: Box::new(source),
+                        }
+                    })?;
+                }
+                {
+                    let _phase =
+                        instrumentation::PhaseTimer::new("finalize_evaluation/preflight_candidate");
+                    super::preflight_formula_projections(&candidate).map_err(|source| {
+                        PatchLifecycleError::CommandRejected {
+                            source: Box::new(source),
+                        }
+                    })?;
+                }
+                let delta = {
+                    let _phase =
+                        instrumentation::PhaseTimer::new("finalize_evaluation/canonical_delta");
+                    canonical_delta_with_calculations(
+                        CANONICAL_SEMANTIC_DELTA_V2,
+                        base,
+                        &candidate,
+                        base_calculation,
+                        candidate_calculation,
+                    )
+                    .map_err(|source| {
+                        PatchLifecycleError::CommandRejected {
+                            source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
+                        }
+                    })?
+                };
                 (
                     report.clone(),
                     base_calculation,
@@ -4254,19 +4269,24 @@ impl PatchLifecycle {
         // projection over snapshots without names, constraints, or saved definitions.
         // Formulas cannot read definitions; both real snapshots passed complete
         // validation above. Direct v2 evidence is always produced separately.
-        let formula_projection = super::diff_with_calculations(
-            &formula_projection_document(base),
-            &formula_projection_document(&candidate),
-            base_calculation,
-            candidate_calculation,
-        )
-        .map_err(|source| PatchLifecycleError::CommandRejected {
-            source: Box::new(source.into()),
-        })?;
+        let formula_projection = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/formula_diff");
+            super::diff_with_calculations(
+                &formula_projection_document(base),
+                &formula_projection_document(&candidate),
+                base_calculation,
+                candidate_calculation,
+            )
+            .map_err(|source| PatchLifecycleError::CommandRejected {
+                source: Box::new(source.into()),
+            })?
+        };
         let formula_changes = formula_projection.changes().to_vec();
         let formula_impacts = formula_impacts(&formula_changes);
-        let disclosure_requirements =
-            self.derive_disclosures(base, &candidate, body, &formula_changes)?;
+        let disclosure_requirements = {
+            let _phase = instrumentation::PhaseTimer::new("finalize_evaluation/derive_disclosures");
+            self.derive_disclosures(base, &candidate, body, &formula_changes)?
+        };
         Ok(EvaluatedPatch {
             document: candidate,
             evidence: PatchEvidence::V2(delta),

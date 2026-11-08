@@ -236,12 +236,18 @@ impl ResidentWorkspaceSession {
     /// leaves the proposal on its existing recalculation path.
     #[must_use]
     pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
-        let base_calculation = match self.retained.calculation_state.outcome() {
-            CalculationOutcome::Complete(calculation) => Some(calculation),
-            CalculationOutcome::Failed(_) => None,
+        let base_calculation = {
+            let _phase = instrumentation::PhaseTimer::new("validate/prepare/base_outcome");
+            match self.retained.calculation_state.outcome() {
+                CalculationOutcome::Complete(calculation) => Some(calculation),
+                CalculationOutcome::Failed(_) => None,
+            }
         };
         let base_report_valid = self.retained.validation_report.is_valid();
-        let (report, calculation) = semantic_validation(&candidate);
+        let (report, calculation) = {
+            let _phase = instrumentation::PhaseTimer::new("validate/prepare/semantic_validation");
+            semantic_validation(&candidate)
+        };
         PreparedEvaluation::new(
             self.revision.clone(),
             &self.document,
