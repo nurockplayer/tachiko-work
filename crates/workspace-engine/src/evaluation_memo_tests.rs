@@ -11,10 +11,12 @@ use super::{
     Value,
 };
 use crate::{
-    Expression, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat,
-    NumberFormatKind, Schema, WorkspaceError, evaluation_counters, planning_counters,
+    ColumnRef, Expression, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number,
+    NumberFormat, NumberFormatKind, Schema, WorkspaceError, evaluation_counters, planning_counters,
     resident_session::ResidentWorkspaceSession,
 };
+use tachiko_diff_engine::{diff_changes_scoped, diff_with_calculations};
+use tachiko_formula_engine::calculate;
 
 fn text_field(id: &str) -> FieldDefinition {
     FieldDefinition {
@@ -2564,4 +2566,238 @@ fn discard_settled_records_keeps_one_receipt_and_the_pending_proposal() {
         lifecycle.proposal_history(&pending).unwrap().last(),
         Some(&PatchLifecycleState::Planned)
     );
+}
+
+// --- The scoped formula diff reports exactly the full diff (#678) ---
+
+/// Assert the scoped formula-projection diff equals the full one for one pair.
+///
+/// The scope comes from the prepared evaluation's projection changes, exactly as
+/// `finalize_evaluation_v2` reads it. Both sides compare the same projected
+/// snapshots and the same calculations, so any difference is a lost change.
+fn assert_scoped_diff_matches_full(base: &Document, candidate: &Document, label: &str) {
+    let session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let prepared = session.prepare_evaluation(candidate.clone());
+    let scope = prepared.projection_changes().diff_scope();
+
+    let before_projection = super::formula_projection_document(base);
+    let after_projection = super::formula_projection_document(candidate);
+    let before_calculation = calculate(&before_projection)
+        .unwrap_or_else(|error| panic!("{label}: base calculation refused: {error:?}"));
+    let after_calculation = calculate(&after_projection)
+        .unwrap_or_else(|error| panic!("{label}: candidate calculation refused: {error:?}"));
+    let full = diff_with_calculations(
+        &before_projection,
+        &after_projection,
+        &before_calculation,
+        &after_calculation,
+    )
+    .unwrap_or_else(|error| panic!("{label}: full diff refused: {error:?}"));
+    let scoped = diff_changes_scoped(
+        &before_projection,
+        &after_projection,
+        &before_calculation,
+        &after_calculation,
+        &scope,
+    );
+    assert_eq!(
+        scoped.as_slice(),
+        full.changes(),
+        "{label}: scoped formula diff differs from the full diff"
+    );
+}
+
+/// Acceptance 1: the scoped diff equals the full diff for every v2 evidence
+/// case the prepared path accepts.
+#[test]
+fn scoped_formula_diff_matches_full_diff_for_every_acceptance_case() {
+    for (label, document, body) in acceptance_cases() {
+        let candidate = v2_lifecycle()
+            .plan_commands(&document, &body)
+            .unwrap_or_else(|error| panic!("{label}: planning refused: {error:?}"))
+            .0;
+        assert_scoped_diff_matches_full(&document, &candidate, label);
+    }
+}
+
+/// One deterministic linear congruential generator for the seeded random edits.
+struct SeededRng(u64);
+
+impl SeededRng {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0 >> 33
+    }
+
+    fn below(&mut self, bound: usize) -> usize {
+        let bound = u64::try_from(bound).expect("a document-sized bound fits u64");
+        usize::try_from(self.next() % bound).expect("the remainder is below the bound")
+    }
+}
+
+/// A handful of rows with three literal Number columns, two row formulas and a
+/// column total, so edits move both row formulas and an aggregate.
+fn mid_sized_document() -> Document {
+    const ROWS: usize = 24;
+    let mut document = Document::empty("doc", "Mid");
+    document.schemas.insert(
+        "s".into(),
+        Schema {
+            field_order: None,
+            id: "s".into(),
+            key: "rows".into(),
+            display_name: None,
+            fields: BTreeMap::from([
+                ("name".into(), text_field("name")),
+                ("n0".into(), number_field("n0")),
+                ("n1".into(), number_field("n1")),
+                ("n2".into(), number_field("n2")),
+                ("h0".into(), number_field("h0")),
+                ("h1".into(), number_field("h1")),
+                ("total".into(), number_field("total")),
+            ]),
+        },
+    );
+    for index in 0..ROWS {
+        let entity_id = format!("e{index:02}");
+        document.entities.insert(
+            entity_id.clone().into(),
+            mid_sized_entity(&entity_id, index),
+        );
+    }
+    document
+}
+
+fn mid_sized_entity(entity_id: &str, index: usize) -> Entity {
+    let value = Number::new(f64::from(
+        u32::try_from(index).expect("a row index fits u32"),
+    ))
+    .unwrap();
+    Entity {
+        id: entity_id.into(),
+        key: format!("row{index}").into(),
+        schema: "s".into(),
+        fields: BTreeMap::from([
+            ("name".into(), Value::Text(format!("row {index}"))),
+            ("n0".into(), Value::Number(value)),
+            ("n1".into(), Value::Number(value)),
+            ("n2".into(), Value::Number(value)),
+            (
+                "h0".into(),
+                Value::Formula(Expression::Reference(FieldRef::new(entity_id, "n0"))),
+            ),
+            (
+                "h1".into(),
+                Value::Formula(Expression::Add {
+                    left: Box::new(Expression::Reference(FieldRef::new(entity_id, "n0"))),
+                    right: Box::new(Expression::Reference(FieldRef::new(entity_id, "n1"))),
+                }),
+            ),
+            (
+                "total".into(),
+                Value::Formula(Expression::ColumnTotal(ColumnRef::new("s", "n0"))),
+            ),
+        ]),
+    }
+}
+
+/// Apply one deterministic random edit that keeps the document valid.
+fn apply_random_edit(document: &mut Document, rng: &mut SeededRng) {
+    let entity_ids = document.entities.keys().cloned().collect::<Vec<_>>();
+    let entity_id = entity_ids[rng.below(entity_ids.len())].clone();
+    match rng.below(6) {
+        0 => {
+            let field = ["n0", "n1", "n2"][rng.below(3)];
+            let value = f64::from(u32::try_from(rng.below(1_000)).expect("below 1,000")) / 10.0;
+            document
+                .entities
+                .get_mut(&entity_id)
+                .expect("the row came from the document")
+                .fields
+                .insert(field.into(), Value::Number(Number::new(value).unwrap()));
+        }
+        1 => {
+            document
+                .entities
+                .get_mut(&entity_id)
+                .expect("the row came from the document")
+                .fields
+                .insert(
+                    "name".into(),
+                    Value::Text(format!("renamed {}", rng.below(10))),
+                );
+        }
+        2 => {
+            let field = ["h0", "h1"][rng.below(2)];
+            document
+                .entities
+                .get_mut(&entity_id)
+                .expect("the row came from the document")
+                .fields
+                .insert(
+                    field.into(),
+                    Value::Formula(random_expression(entity_id.as_str(), rng)),
+                );
+        }
+        3 => {
+            let entity_id = format!("x{}", rng.next());
+            document.entities.insert(
+                entity_id.clone().into(),
+                mid_sized_entity(&entity_id, rng.below(100)),
+            );
+        }
+        4 => {
+            if entity_ids.len() > 8 {
+                document.entities.remove(&entity_id);
+            }
+        }
+        _ => {
+            let field = ["n0", "n1", "h0"][rng.below(3)];
+            let display_name = Some(format!("Column {}", rng.below(10)));
+            document
+                .schemas
+                .get_mut("s")
+                .expect("the schema is present")
+                .fields
+                .get_mut(field)
+                .expect("the field is present")
+                .display_name = display_name;
+        }
+    }
+}
+
+fn random_expression(entity_id: &str, rng: &mut SeededRng) -> Expression {
+    let reference = |field: &str| Expression::Reference(FieldRef::new(entity_id, field));
+    match rng.below(4) {
+        0 => Expression::Number(
+            Number::new(f64::from(u32::try_from(rng.below(100)).expect("below 100"))).unwrap(),
+        ),
+        1 => reference("n0"),
+        2 => Expression::Add {
+            left: Box::new(reference("n0")),
+            right: Box::new(reference("n1")),
+        },
+        _ => Expression::Multiply {
+            left: Box::new(reference("n1")),
+            right: Box::new(reference("n2")),
+        },
+    }
+}
+
+/// Acceptance 1: 50 seeded random edits keep the scoped diff equal to the full
+/// diff on a mid-sized document.
+#[test]
+fn scoped_formula_diff_matches_full_diff_for_random_edits() {
+    let base = mid_sized_document();
+    let mut rng = SeededRng(0x0678_0026);
+    for case in 0..50 {
+        let mut candidate = base.clone();
+        for _ in 0..=rng.below(3) {
+            apply_random_edit(&mut candidate, &mut rng);
+        }
+        assert_scoped_diff_matches_full(&base, &candidate, &format!("random edit {case}"));
+    }
 }

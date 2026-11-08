@@ -6,7 +6,9 @@ use std::{
 };
 
 use serde::{Serialize, Serializer, ser::Error as _};
-use tachiko_diff_engine::{CANONICAL_SEMANTIC_DELTA_V2, diff, diff_with_calculations};
+use tachiko_diff_engine::{
+    CANONICAL_SEMANTIC_DELTA_V2, diff, diff_changes_scoped, diff_with_calculations,
+};
 pub use tachiko_diff_engine::{
     CanonicalDirectFact, CanonicalSemanticDelta, DiffError, SemanticChange, SemanticDiff,
     canonical_delta,
@@ -803,6 +805,14 @@ impl<'session> PreparedEvaluation<'session> {
 
     pub(crate) fn base_calculation(&self) -> Option<&Calculation> {
         self.base_calculation
+    }
+
+    /// The projection changes between the base revision and this candidate.
+    ///
+    /// A scoped diff reads the ids that may differ from here, so it compares
+    /// exactly the schemas and entities this evaluation found different.
+    pub(crate) fn projection_changes(&self) -> &resident_session::ProjectionChanges {
+        &self.installation.changes
     }
 
     /// Whether the base revision's retained semantic report was valid.
