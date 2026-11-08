@@ -23,7 +23,7 @@ use super::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
     },
-    semantic_validation, validation_report_for_retained_calculation,
+    validation_report_for_retained_calculation,
 };
 
 /// One Rust-authoritative semantic document occurrence retained across calls.
@@ -241,22 +241,31 @@ impl ResidentWorkspaceSession {
 
     /// Evaluate one candidate against this revision for later proposal reuse.
     ///
-    /// The candidate is validated and calculated once here, and this
-    /// revision's complete calculation is cloned out of retained state once, so
+    /// The candidate's report and calculation are derived from this revision's
+    /// retained state through the same projection changes publication uses, so
     /// a lifecycle proposal can reuse both instead of recalculating either
-    /// document. A failed retained outcome contributes no base calculation and
+    /// document. This revision's complete calculation is lent to the result as
+    /// the base. A failed retained outcome contributes no base calculation and
     /// leaves the proposal on its existing recalculation path.
     #[must_use]
     pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
         let base_calculation = self.retained.calculation_state.complete();
         let base_report_valid = self.retained.validation_report.is_valid();
-        let (report, calculation) = semantic_validation(&candidate);
+        let changes = projection_changes(&self.document, &candidate);
+        // The prepared path evaluates the candidate exactly once, as it did
+        // through `semantic_validation`; the update is that one evaluation. It
+        // rebuilds on its own whenever an incremental update cannot express the
+        // change.
+        #[cfg(test)]
+        super::evaluation_counters::record_candidate_calculation();
+        let mut retained = self.retained.clone();
+        retained.update(&candidate, &changes);
         PreparedEvaluation::new(
             self.revision.clone(),
             &self.document,
             candidate,
-            report,
-            calculation,
+            retained.validation_report,
+            retained.calculation_state,
             base_calculation,
             base_report_valid,
         )
@@ -308,7 +317,11 @@ impl ResidentDerivedState {
         if changes.address_index_changed {
             self.address_index = AddressIndex::build(document);
         }
-        let incremental_safe = previous_address_index_valid && self.address_index.is_ok();
+        let address_index_safe = previous_address_index_valid && self.address_index.is_ok();
+        // A structural change no field root can describe keeps the retained
+        // state equal to a full rebuild by taking that branch. It isn't an
+        // address-index fallback, so it isn't counted as one.
+        let incremental_safe = address_index_safe && !changes.unaddressable_calculation_change;
         let calculation = if incremental_safe {
             self.calculation_state
                 .update(document, &changes.calculation_roots)
@@ -339,7 +352,7 @@ impl ResidentDerivedState {
             work: DerivedStateTransitionWork {
                 calculation: calculation.work,
                 address_index_rebuilt: changes.address_index_changed,
-                fell_back_to_full_calculation: !incremental_safe,
+                fell_back_to_full_calculation: !address_index_safe,
             },
             affected_calculations: calculation.affected_calculations,
             changed_calculation_projections: calculation.changed_calculation_projections,
@@ -710,14 +723,7 @@ fn projection_invalidation(
     base_revision: SemanticRevision,
     resulting_revision: SemanticRevision,
 ) -> (ResidentProjectionInvalidation, DerivedStateTransitionWork) {
-    let entity_ids = before
-        .entities
-        .keys()
-        .chain(after.entities.keys())
-        .collect::<BTreeSet<_>>();
-    let mut changes = ProjectionChanges::default();
-    collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
-    collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
+    let mut changes = projection_changes(before, after);
     let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
     let transition = retained.update(after, &changes);
     collect_diagnostic_projection_changes(
@@ -749,6 +755,20 @@ fn projection_invalidation(
     )
 }
 
+/// Every projection change between two documents, collected the same way for
+/// publication and for evaluation preparation.
+fn projection_changes(before: &Document, after: &Document) -> ProjectionChanges {
+    let entity_ids = before
+        .entities
+        .keys()
+        .chain(after.entities.keys())
+        .collect::<BTreeSet<_>>();
+    let mut changes = ProjectionChanges::default();
+    collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
+    collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
+    changes
+}
+
 #[derive(Default)]
 struct ProjectionChanges {
     schemas: BTreeSet<SchemaId>,
@@ -757,6 +777,15 @@ struct ProjectionChanges {
     fields: BTreeSet<FieldRef>,
     calculation_roots: BTreeSet<FieldRef>,
     address_index_changed: bool,
+    /// A structural change that no field root can fully describe: an entity
+    /// added, removed, or moved to another schema, a field's semantic
+    /// definition changed, or a schema added or removed. Roots come from the populated fields an entity holds, but a
+    /// formula may read one of its blank fields, and the retained graph also
+    /// tracks blank column slots and a schema map that no field root expresses;
+    /// updating from roots alone would leave state that differs from a full
+    /// rebuild. These are rare structural edits, so a full rebuild is
+    /// acceptable.
+    unaddressable_calculation_change: bool,
 }
 
 fn collect_entity_projection_changes(
@@ -806,6 +835,11 @@ fn collect_entity_projection_changes(
                             .cloned()
                             .map(|field_id| FieldRef::new(entity_id.clone(), field_id)),
                     );
+                    // The roots above name only the fields the entity holds a
+                    // value for, but another entity's formula may read one of
+                    // its blank fields, and the graph's blank slots and schema
+                    // entry have no root at all.
+                    changes.unaddressable_calculation_change = true;
                 }
 
                 instrumentation::record_publication_fields_inspected(
@@ -831,6 +865,10 @@ fn collect_entity_projection_changes(
                     .cloned()
                     .map(|field_id| FieldRef::new(entity_id.clone(), field_id))
                     .collect::<BTreeSet<_>>();
+                // As above: only the populated fields become roots, while a
+                // formula may read a blank one and the graph's blank slots and
+                // schema entry have no root.
+                changes.unaddressable_calculation_change = true;
                 changes.fields.extend(entity_fields.iter().cloned());
                 changes.calculation_roots.extend(entity_fields);
             }
@@ -854,6 +892,12 @@ fn collect_schema_projection_changes(
     for schema_id in schema_ids {
         let before_schema = before.schemas.get(&schema_id);
         let after_schema = after.schemas.get(&schema_id);
+        // A schema added or removed changes the graph's schema map and its
+        // read columns without any entity field root to name it, even when no
+        // entity holds a field of that schema.
+        if before_schema.is_some() != after_schema.is_some() {
+            changes.unaddressable_calculation_change = true;
+        }
         if before_schema.map(|schema| (&schema.id, &schema.key))
             != after_schema.map(|schema| (&schema.id, &schema.key))
         {
@@ -913,7 +957,6 @@ fn collect_schema_projection_changes(
                 (Some(_), None) | (None, Some(_)) => true,
                 (None, None) => false,
             };
-
             for entity_id in entity_ids {
                 let entity_id = *entity_id;
                 instrumentation::record_publication_fields_inspected(1);
@@ -930,6 +973,14 @@ fn collect_schema_projection_changes(
                         changes.calculation_roots.insert(field);
                     }
                 }
+            }
+            // A definition change reaches every reader of the field, including
+            // readers of entities that leave it blank, which have no field root,
+            // and the retained graph's column slots, schema map and validation
+            // depend on it too. These are rare structural edits, so a full
+            // rebuild is acceptable.
+            if semantic_definition_changed {
+                changes.unaddressable_calculation_change = true;
             }
         }
     }
@@ -1005,6 +1056,10 @@ fn retained_calculation_for(
 #[cfg(test)]
 #[path = "projection_diff_tests.rs"]
 mod projection_diff_tests;
+
+#[cfg(test)]
+#[path = "incremental_preparation_tests.rs"]
+mod incremental_preparation_tests;
 
 #[cfg(test)]
 mod tests {

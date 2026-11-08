@@ -240,15 +240,18 @@ fn apply_specific_check(
 
 fn assert_scripted_measurements(measurements: ResidentRuntimeMeasurements, revisions: usize) {
     assert_eq!(measurements.derived_state_rebuilds, revisions + 1);
+    // The full rebuilds are the initial one, the two address-index fallbacks
+    // and the two definition changes, which rebuild without being fallbacks.
+    let structural_rebuilds = 2;
     assert_eq!(
         measurements.retained_before_state_reuses,
         revisions - measurements.calculation_fallbacks
     );
-    assert_eq!(measurements.full_calculation_rebuilds, 3);
+    assert_eq!(measurements.full_calculation_rebuilds, 5);
     assert_eq!(measurements.calculation_fallbacks, 2);
     assert_eq!(
         measurements.incremental_calculation_updates,
-        revisions - measurements.calculation_fallbacks
+        revisions - measurements.calculation_fallbacks - structural_rebuilds
     );
     assert!(
         measurements.calculation_nodes_reused > measurements.calculation_nodes_recomputed,

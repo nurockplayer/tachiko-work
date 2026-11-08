@@ -716,6 +716,9 @@ pub enum PreparedVerdict<'evaluation> {
 /// One candidate evaluated once, paired with the base occurrence's retained
 /// calculation so a proposal can reuse both instead of recalculating either.
 ///
+/// The candidate's calculation and report are owned here, so this value lends
+/// them instead of borrowing resident state that a later publication replaces.
+///
 /// Only crate-internal callers construct this; its fields are trusted engine
 /// state, not a cache-key, serialization, or transport contract.
 #[derive(Debug)]
@@ -724,7 +727,7 @@ pub struct PreparedEvaluation<'session> {
     base_document: &'session Document,
     candidate: Document,
     report: ValidationReport,
-    calculation: Option<Calculation>,
+    calculation: RetainedCalculationState,
     base_calculation: Option<&'session Calculation>,
     base_report_valid: bool,
     definitions_invalid: bool,
@@ -736,7 +739,7 @@ impl<'session> PreparedEvaluation<'session> {
         base_document: &'session Document,
         candidate: Document,
         report: ValidationReport,
-        calculation: Option<Calculation>,
+        calculation: RetainedCalculationState,
         base_calculation: Option<&'session Calculation>,
         base_report_valid: bool,
     ) -> Self {
@@ -776,7 +779,7 @@ impl<'session> PreparedEvaluation<'session> {
     pub fn verdict(&self) -> PreparedVerdict<'_> {
         if self.definitions_invalid {
             PreparedVerdict::InvalidDefinitions
-        } else if self.calculation.is_none() {
+        } else if self.calculation().is_none() {
             PreparedVerdict::InvalidDocument {
                 report: &self.report,
             }
@@ -789,8 +792,13 @@ impl<'session> PreparedEvaluation<'session> {
         &self.report
     }
 
+    /// The candidate's calculation exactly when [`validate`] would publish
+    /// one: the retained outcome is complete and the report has no
+    /// diagnostics.
     pub(crate) fn calculation(&self) -> Option<&Calculation> {
-        self.calculation.as_ref()
+        self.calculation
+            .complete()
+            .filter(|_| self.report.is_valid())
     }
 
     pub(crate) fn base_calculation(&self) -> Option<&Calculation> {
