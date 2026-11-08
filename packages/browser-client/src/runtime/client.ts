@@ -1,5 +1,5 @@
 import type { A1Translation, TranslateA1FormulaInput } from "./protocol.ts";
-import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportedWindowProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat } from "./interop-protocol.ts";
 import type {
   FormulaCopy,
   TrackerCommand,
@@ -12,6 +12,7 @@ import type {
   CanonicalProjectFile,
   OccurrenceProjection,
   OpenedProjection,
+  OpenedWindowProjection,
   ProjectExport,
   PublicationProjection,
   DuplicateCollectionProjection,
@@ -39,8 +40,12 @@ import type {
 export interface DesignerClient {
   inspectSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions): Promise<SourceWorkbook>;
   importSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedProjection) => void): Promise<ImportedProjection>;
+  /** Import with the working-size profile: the reply carries one bounded window, not the whole table. */
+  importSpreadsheetWorkingSize?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedWindowProjection) => void): Promise<ImportedWindowProjection>;
   inspectImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
+  inspectImportedProjectWorkingSize?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   openImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
+  openImportedProjectWorkingSize?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   exportSpreadsheet?(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport>;
   /** Rust-derived native tables; CSV selects collection, XLSX exports all scalar tables. */
   exportNativeTablesSpreadsheet?(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
@@ -53,6 +58,8 @@ export interface DesignerClient {
   newTracker?(): Promise<OpenedProjection>;
   newBudget?(): Promise<OpenedProjection>;
   newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
+  /** Create a table whose session profile is the working-size one. */
+  newTableWorkingSize?(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
   duplicateCollection?(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   clearField?(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
@@ -68,15 +75,20 @@ export interface DesignerClient {
   bootstrap(): Promise<BootstrapProjection>;
   queryCapacity?(expectedRevision?: string): Promise<CapacityProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  inspectProjectWorkingSize?(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  openProjectWorkingSize?(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   openCanonicalTree?(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
+  openCanonicalTreeWorkingSize?(files: readonly CanonicalProjectFile[]): Promise<OpenedWindowProjection>;
   openLocalDocument?(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  openLocalDocumentWorkingSize?(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
   exportProjectV3?(expectedRevision: string): Promise<ProjectExport>;
   exportCanonicalTree?(expectedRevision: string): Promise<CanonicalTreeExport>;
   exportPortableRo?(expectedRevision: string): Promise<ProjectExport>;
   verifyPortableRo?(bytes: ArrayBuffer): Promise<void>;
   openPortableRo?(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  openPortableRoWorkingSize?(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   observeOccurrence?(): Promise<OccurrenceProjection>;
   closeProject(): Promise<void>;
   /** Complete table; collections above 1,000 rows refuse with `use_window_query`. */

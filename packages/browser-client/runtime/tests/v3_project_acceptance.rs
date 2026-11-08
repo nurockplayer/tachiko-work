@@ -2006,6 +2006,7 @@ fn version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic() 
                             name: "value".into(),
                             field_type: "not-a-type".into(),
                         }],
+                        profile: None,
                     })
                     .expect_err("unsupported New field type must fail before replacement")
             } else {
@@ -2203,6 +2204,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 name: "value".into(),
                 field_type: "text".into(),
             }],
+            profile: None,
         })
         .unwrap()
     else {

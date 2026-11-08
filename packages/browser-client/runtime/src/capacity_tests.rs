@@ -5,9 +5,9 @@ use super::capacity_fixtures::{FixtureSpec, capacity_document};
 use super::{
     CapacityProjection, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
     DesignerWireReply, Expression, FieldId, ImportFieldType, ImportSelection, NewTableColumnInput,
-    PasteCellInput, RowInitializer, ScalarEditInput, Value, encode_roproj_v3, import_workbook,
-    open_project,
+    PasteCellInput, RowInitializer, ScalarEditInput, Value, import_workbook, open_project,
 };
+use tachiko_storage::encode_roproj_v3;
 
 fn assert_capacity_boundary(
     document: &super::Document,
@@ -411,6 +411,7 @@ fn csv_import_admits_8406_rows_and_refuses_8407_atomically() {
                 name: "value".into(),
                 field_type: "text".into(),
             }],
+            profile: None,
         },
     ) {
         DesignerWireReply::Ok {

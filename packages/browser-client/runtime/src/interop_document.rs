@@ -102,7 +102,9 @@ impl DesignerRuntime {
                     "capacity Text projects cannot deduplicate rows",
                 ));
             }
-            SessionProfile::TextCapacity | SessionProfile::Ordinary => {}
+            SessionProfile::TextCapacity
+            | SessionProfile::Ordinary
+            | SessionProfile::WorkingSize => {}
         }
         self.prepare_cleanup(expected_revision, operation)
     }
@@ -152,7 +154,16 @@ impl DesignerRuntime {
             }
         }
         // Preview must prove that the exact final candidate remains reopenable.
-        Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+        // Working size re-proves only its own document bounds; it never rebuilds
+        // the occurrence.
+        match self.profile {
+            SessionProfile::WorkingSize => {
+                super::ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+            }
+        }
         let mut lifecycle = designer_lifecycle(
             snapshot.document_scope(),
             snapshot.document(),
@@ -216,10 +227,10 @@ impl DesignerRuntime {
         let inverse = pending.inverse.clone();
         let publication = self.publish_commands(expected_revision, commands.clone())?;
         self.pending_cleanup = None;
-        self.record_history_entry(HistoryEntry {
-            forward: HistoryAction::Commands(commands),
-            inverse: HistoryAction::Commands(inverse),
-        });
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::Commands(commands),
+            HistoryAction::Commands(inverse),
+        ));
         Ok(publication)
     }
 }
@@ -784,14 +795,36 @@ pub struct ImportedProjection {
     pub ledger: Vec<FidelityFinding>,
 }
 
+/// The reply a working-size import produces: its first bounded window in place
+/// of the whole table, plus the same source mapping and fidelity ledger.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ImportedWindowProjection {
+    pub opened: super::OpenedWindowProjection,
+    pub metadata: InteropMetadata,
+    pub ledger: Vec<FidelityFinding>,
+}
+
 struct ImportIds<'a> {
     namespace: &'a str,
     serial: usize,
+    width: usize,
 }
+
+/// The pad that keeps every ID of one import in serial order. Tables list their
+/// rows in ID order, and past `9999` a fixed pad would sort `10000` beside `1000`.
+fn import_id_width(total_ids: usize) -> usize {
+    total_ids.to_string().len().max(4)
+}
+
 impl IdGenerator for ImportIds<'_> {
     fn generate(&mut self, _kind: SemanticIdKind) -> String {
         self.serial += 1;
-        format!("import_{}_{:04}", self.namespace, self.serial)
+        format!(
+            "import_{}_{:0width$}",
+            self.namespace,
+            self.serial,
+            width = self.width
+        )
     }
 }
 
@@ -834,10 +867,103 @@ fn import_workbook_candidate(
     selection: &ImportSelection,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, ImportedProjection), DesignerError> {
+    let (runtime, mut metadata, ledger) = import_workbook_document(
+        workbook,
+        selection,
+        occurrence_id,
+        DesignerRuntime::from_document,
+    )?;
+    match runtime.profile {
+        SessionProfile::TextCapacity if !super::interop_adapter::text_capacity_shape(workbook) => {
+            return Err(tracker_error(
+                "Text capacity requires the complete original source profile",
+            ));
+        }
+        SessionProfile::TextCapacity | SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
+    }
+    normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
+    validate_import_metadata_for_profile(
+        runtime.session.export_snapshot().document(),
+        &metadata,
+        runtime.profile,
+    )?;
+    finish_import(runtime, workbook, metadata, ledger, occurrence_id)
+}
+
+/// Build one fully admitted working-size candidate without installing a
+/// resident occurrence.
+///
+/// # Errors
+/// Rejects the same fidelity, selection, scalar, and formula failures as
+/// [`import_workbook`], plus a window that cannot fit even one row.
+pub fn import_workbook_working_size(
+    workbook: &SourceWorkbook,
+    selection: &ImportSelection,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
+    import_workbook_working_size_candidate(workbook, selection, occurrence_id)
+        .map_err(import_capacity_refusal)
+}
+
+fn import_workbook_working_size_candidate(
+    workbook: &SourceWorkbook,
+    selection: &ImportSelection,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
+    let (mut runtime, mut metadata, mut ledger) = import_workbook_document(
+        workbook,
+        selection,
+        occurrence_id,
+        DesignerRuntime::from_document_working_size,
+    )?;
+    normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
+    validate_import_metadata_for_profile(
+        runtime.session.export_snapshot().document(),
+        &metadata,
+        runtime.profile,
+    )?;
+    // The same representation proof as an ordinary import, without promotion.
+    drop(runtime.export_workbook(runtime.current_revision(), &metadata)?);
+    ledger.push(stable_reference_binding());
+    // The reply also carries the metadata and ledger, so the window gets what
+    // is left of the one reply budget.
+    let overhead =
+        super::serialized_projection_bytes(&(&metadata, &ledger))? + super::REPLY_ENVELOPE_RESERVE;
+    let maximum = super::MAX_TEXT_CAPACITY_PROJECTION_BYTES.saturating_sub(overhead);
+    let opened = runtime.opened_window_within(maximum)?;
+    let projection = ImportedWindowProjection {
+        opened,
+        metadata,
+        ledger,
+    };
+    super::ensure_complete_projection_size(
+        "imported",
+        &projection,
+        super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+    )?;
+    Ok((runtime, projection))
+}
+
+/// Build the imported document and bind every source formula, admitting both
+/// the temporary Number-slot document and the final one through `admit`.
+fn import_workbook_document(
+    workbook: &SourceWorkbook,
+    selection: &ImportSelection,
+    occurrence_id: &str,
+    admit: fn(Document, &str) -> Result<DesignerRuntime, DesignerError>,
+) -> Result<(DesignerRuntime, InteropMetadata, Vec<FidelityFinding>), DesignerError> {
     validate_selection(workbook, selection)?;
+    // One for the document, then each sheet's schema, fields and rows.
+    let total_ids = 1 + workbook
+        .sheets
+        .iter()
+        .zip(&selection.extra_columns)
+        .map(|(sheet, extra)| 1 + sheet.columns.len() + extra.len() + sheet.rows.len())
+        .sum::<usize>();
     let mut ids = ImportIds {
         namespace: occurrence_id,
         serial: 0,
+        width: import_id_width(total_ids),
     };
     let mut document = Document::empty(ids.generate(SemanticIdKind::Document), "Imported workbook");
     let mut metadata = InteropMetadata {
@@ -862,7 +988,7 @@ fn import_workbook_candidate(
     // exposed until all source formulas bind and calculate through Rust.
     // The first occurrence admits the Number-slot document; its detached
     // snapshot then owns the only copy every formula binds into.
-    let runtime = DesignerRuntime::from_document(document, PREFLIGHT_OCCURRENCE)?;
+    let runtime = admit(document, PREFLIGHT_OCCURRENCE)?;
     let mut document = runtime.session.export_snapshot().into_document();
     drop(runtime);
     let mut pending = BTreeMap::new();
@@ -904,22 +1030,8 @@ fn import_workbook_candidate(
             &mut ledger,
         )?;
     }
-    let runtime = DesignerRuntime::from_document(document, occurrence_id)?;
-    match runtime.profile {
-        SessionProfile::TextCapacity if !super::interop_adapter::text_capacity_shape(workbook) => {
-            return Err(tracker_error(
-                "Text capacity requires the complete original source profile",
-            ));
-        }
-        SessionProfile::TextCapacity | SessionProfile::Ordinary => {}
-    }
-    normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
-    validate_import_metadata_for_profile(
-        runtime.session.export_snapshot().document(),
-        &metadata,
-        runtime.profile,
-    )?;
-    finish_import(runtime, workbook, metadata, ledger, occurrence_id)
+    let runtime = admit(document, occurrence_id)?;
+    Ok((runtime, metadata, ledger))
 }
 
 fn finish_import(
@@ -933,7 +1045,9 @@ fn finish_import(
     // and bound formulas. Reuse the same representation proof as saved-project
     // inspection and export before exposing or installing this occurrence.
     let promote = match runtime.profile {
-        SessionProfile::Ordinary => super::interop_adapter::text_capacity_shape(workbook),
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {
+            super::interop_adapter::text_capacity_shape(workbook)
+        }
         SessionProfile::TextCapacity => false,
     };
     let exported = match runtime.export_workbook(runtime.current_revision(), &metadata) {
@@ -962,15 +1076,12 @@ fn finish_import(
             super::interop_adapter::export_csv_for_profile(&exported.sheets[0], profile)
                 .map_err(interop_admission_error)?;
         }
-        SessionProfile::Ordinary => {}
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
     }
     drop(exported);
     let bootstrap = runtime.bootstrap_projection();
     let table = runtime.query_table(&bootstrap.default_collection)?;
-    ledger.push(FidelityFinding {
-        category: FidelityCategory::Converted, code: "stable_reference_binding".into(), location: "workbook".into(),
-        message: "Worksheet coordinates and selected types were accepted as stable semantic identities; same-row references export as relative A1 so a spreadsheet fill-down follows the row, and other references as absolute coordinates to those identities.".into(), blocking: false,
-    });
+    ledger.push(stable_reference_binding());
     let mut projection = ImportedProjection {
         opened: OpenedProjection { bootstrap, table },
         metadata,
@@ -984,7 +1095,7 @@ fn finish_import(
                 super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
             )?;
         }
-        SessionProfile::Ordinary => {
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {
             if let Err(original_error) = super::ensure_complete_projection_size(
                 "imported",
                 &projection,
@@ -1023,6 +1134,16 @@ fn finish_import(
         }
     }
     Ok((runtime, projection))
+}
+
+fn stable_reference_binding() -> FidelityFinding {
+    FidelityFinding {
+        category: FidelityCategory::Converted,
+        code: "stable_reference_binding".into(),
+        location: "workbook".into(),
+        message: "Worksheet coordinates and selected types were accepted as stable semantic identities; same-row references export as relative A1 so a spreadsheet fill-down follows the row, and other references as absolute coordinates to those identities.".into(),
+        blocking: false,
+    }
 }
 
 fn validate_selection(
@@ -1264,7 +1385,7 @@ fn normalize_import_date_styles(
     profile: SessionProfile,
 ) {
     match profile {
-        SessionProfile::Ordinary => return,
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => return,
         SessionProfile::TextCapacity => {}
     }
     // The capacity writer supplies this Date format; only the admitted
@@ -1698,6 +1819,38 @@ pub(super) fn excel_extremum(
     )?;
     validate_expression_structure(&expression)?;
     Ok(expression)
+}
+
+#[cfg(test)]
+mod import_id_tests {
+    use super::{IdGenerator, ImportIds, SemanticIdKind, import_id_width};
+
+    #[test]
+    fn ids_sort_in_serial_order_past_four_digits() {
+        let mut ids = ImportIds {
+            namespace: "n",
+            serial: 0,
+            width: import_id_width(10_001),
+        };
+        let generated: Vec<String> = (0..10_001)
+            .map(|_| ids.generate(SemanticIdKind::Entity))
+            .collect();
+        assert!(generated.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(generated[0], "import_n_00001");
+    }
+
+    #[test]
+    fn a_small_import_keeps_its_four_digit_ids() {
+        assert_eq!(import_id_width(1), 4);
+        assert_eq!(import_id_width(9_999), 4);
+        assert_eq!(import_id_width(10_000), 5);
+        let mut ids = ImportIds {
+            namespace: "n",
+            serial: 0,
+            width: import_id_width(9_999),
+        };
+        assert_eq!(ids.generate(SemanticIdKind::Entity), "import_n_0001");
+    }
 }
 
 #[cfg(test)]
@@ -2451,7 +2604,7 @@ fn current_import_metadata(
             || sheet.columns.len()
                 > match profile {
                     SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_COLUMNS,
-                    SessionProfile::Ordinary => MAX_COLUMNS,
+                    SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_COLUMNS,
                 }
         {
             return Err(refuse(
@@ -2609,7 +2762,7 @@ fn validate_historical_envelope(
         metadata,
         match profile {
             SessionProfile::TextCapacity => 3 * 1024 * 1024,
-            SessionProfile::Ordinary => super::MAX_PROJECTION_BYTES,
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
         },
     )
     .map_err(|error| refuse("workbook", &error.to_string()))?;
@@ -2655,12 +2808,12 @@ fn reconcile_import_rows(
         || sheet.columns.len()
             > match profile {
                 SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_COLUMNS,
-                SessionProfile::Ordinary => MAX_COLUMNS,
+                SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_COLUMNS,
             }
         || sheet.rows.len()
             > match profile {
                 SessionProfile::TextCapacity => super::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-                SessionProfile::Ordinary => MAX_DATA_ROWS,
+                SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_DATA_ROWS,
             }
     {
         return Err(refuse(
@@ -2832,13 +2985,13 @@ fn validate_exact_import_metadata(
             || sheet.columns.len()
                 > match profile {
                     SessionProfile::TextCapacity => MAX_TEXT_CAPACITY_COLUMNS,
-                    SessionProfile::Ordinary => MAX_COLUMNS,
+                    SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_COLUMNS,
                 }
             || sheet.columns.len() != schema.fields.len()
             || sheet.rows.len()
                 > match profile {
                     SessionProfile::TextCapacity => super::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-                    SessionProfile::Ordinary => MAX_DATA_ROWS,
+                    SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_DATA_ROWS,
                 }
         {
             return Err(tracker_error(
@@ -2921,12 +3074,12 @@ fn validate_metadata_envelope(
         metadata,
         match profile {
             SessionProfile::TextCapacity => 3 * 1024 * 1024,
-            SessionProfile::Ordinary => super::MAX_PROJECTION_BYTES,
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
         },
     )?;
     match profile {
         SessionProfile::TextCapacity => validate_capacity_metadata(document, metadata)?,
-        SessionProfile::Ordinary => {}
+        SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
     }
     Ok(())
 }
@@ -3018,7 +3171,7 @@ impl DesignerRuntime {
     pub(crate) fn imported_output_profile(&self) -> OutputProfile {
         match self.profile {
             SessionProfile::TextCapacity => OutputProfile::TextCapacity,
-            SessionProfile::Ordinary => OutputProfile::Shared,
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => OutputProfile::Shared,
         }
     }
 
@@ -3039,7 +3192,7 @@ impl DesignerRuntime {
                 validate_capacity_metadata(snapshot.document(), &metadata)
                     .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
             }
-            SessionProfile::Ordinary => {}
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
         }
         let profile = self.imported_output_profile();
         let mut workbook = self
@@ -3837,6 +3990,15 @@ pub(crate) fn inspect_imported_project_with_profile(
     metadata: &InteropMetadata,
 ) -> Result<(OpenedProjection, SessionProfile), DesignerError> {
     let (candidate, opened) = super::admit_imported_project(input, PREFLIGHT_OCCURRENCE, metadata)?;
+    Ok((opened, candidate.profile))
+}
+
+pub(crate) fn inspect_imported_project_working_size(
+    input: &[u8],
+    metadata: &InteropMetadata,
+) -> Result<(super::OpenedWindowProjection, SessionProfile), DesignerError> {
+    let (candidate, opened) =
+        super::admit_imported_project_working_size(input, PREFLIGHT_OCCURRENCE, metadata)?;
     Ok((opened, candidate.profile))
 }
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createExperimentalDesignerClient } from "../src/experimental-client.ts";
 import { freshOccurrenceId } from "../src/runtime/worker-client.ts";
 
 afterEach(() => {
@@ -84,6 +85,16 @@ describe("capacity refusal wire validation", () => {
     });
     await expect(rejected).rejects.toMatchObject({
       failure: {code: "capacity_exceeded", limit: "projection_bytes", maximum: 65_536, attempted: 65_537},
+    });
+  });
+
+  it("accepts a working-size saved-bytes refusal", async () => {
+    const {rejected} = await rejectWithFailure({
+      ...failureBase, limit: "saved_bytes", maximum: 66_060_288, attempted: 66_257_664,
+      message: "The edit would make the project too large to save.",
+    });
+    await expect(rejected).rejects.toMatchObject({
+      failure: {code: "capacity_exceeded", limit: "saved_bytes", maximum: 66_060_288, attempted: 66_257_664},
     });
   });
 
@@ -332,5 +343,224 @@ describe("A1 translation transport", () => {
       geometry: {headerRow: 1, rows: ["r1", "r2", "r3"], columns: ["name", "qty", "price", "total"]}};
     await expect(client.translateA1Formula({...input, text: "B3*C3"})).resolves.toEqual({revision: "resident/0", source: "[.qty]*[.price]", notes: []});
     await expect(client.translateA1Formula({...input, text: "SUM(B2:B3)"})).rejects.toMatchObject({failure: {code: "unsupported_range", span: {start: 0, end: 10}}});
+  });
+});
+
+describe("working-size Worker transport", () => {
+  const openedWindow = {
+    profile: "working_size",
+    bootstrap: { title: "Working", revision: "resident/0", default_collection: "items", collections: [] },
+    window: {
+      revision: "resident/0",
+      collection: { id: "items", key: "items", entity_count: 0 },
+      columns: [], rows: [], total_rows: 0, unfiltered_rows: 0, start: 0,
+    },
+  };
+  const opened = {
+    bootstrap: openedWindow.bootstrap,
+    table: { revision: "resident/0", collection: { id: "items", key: "items", entity_count: 0 }, columns: [], rows: [] },
+  };
+  type Sent = { id: number; kind: string; [key: string]: unknown };
+
+  async function transport(response: Record<string, unknown>) {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    vi.stubGlobal("crypto", { randomUUID: () => "123e4567-e89b-42d3-a456-426614174000" });
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const sent: Sent[] = [];
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: Sent) => {
+        sent.push(request);
+        receive?.({ data: { id: request.id, ...response } } as MessageEvent);
+      },
+    } as unknown as Worker;
+    return { client: new WorkerDesignerClient(() => worker), sent };
+  }
+
+  const windowReply = { status: "ok", response: { type: "opened_window", payload: openedWindow } };
+  const openedReply = { status: "ok", response: { type: "opened", payload: opened } };
+
+  it("sends the profile on every working-size route and returns the window", async () => {
+    const { client, sent } = await transport(windowReply);
+    await expect(client.newTableWorkingSize("Working", [])).resolves.toEqual(openedWindow);
+    await expect(client.inspectProjectWorkingSize(new Uint8Array([1]).buffer)).resolves.toEqual(openedWindow);
+    await expect(client.openProjectWorkingSize(new Uint8Array([1]).buffer)).resolves.toEqual(openedWindow);
+    await expect(client.openCanonicalTreeWorkingSize([
+      { path: "manifest.json", bytes: new Uint8Array([1]).buffer },
+    ])).resolves.toEqual(openedWindow);
+    await expect(client.openLocalDocumentWorkingSize(new Uint8Array([1]).buffer)).resolves.toEqual(openedWindow);
+    await expect(client.openPortableRoWorkingSize(new Uint8Array([1]).buffer)).resolves.toEqual(openedWindow);
+    expect(sent).toHaveLength(6);
+    expect(sent[0]).toMatchObject({ kind: "command", request: { type: "new_table", profile: "working_size" } });
+    expect(sent[1]).toMatchObject({ kind: "inspect_project", profile: "working_size" });
+    expect(sent[2]).toMatchObject({ kind: "open_project", profile: "working_size" });
+    expect(sent[3]).toMatchObject({ kind: "open_project", profile: "working_size" });
+    expect(sent[4]).toMatchObject({ kind: "open_local_document", profile: "working_size" });
+    expect(sent[5]).toMatchObject({ kind: "open_portable_ro", profile: "working_size" });
+  });
+
+  it("leaves every ordinary route without a profile field", async () => {
+    const { client, sent } = await transport(openedReply);
+    await client.newTable("Ordinary", []);
+    await client.inspectProject(new Uint8Array([1]).buffer);
+    await client.openProject(new Uint8Array([1]).buffer);
+    await client.openCanonicalTree([{ path: "manifest.json", bytes: new Uint8Array([1]).buffer }]);
+    await client.openLocalDocument(new Uint8Array([1]).buffer);
+    await client.openPortableRo(new Uint8Array([1]).buffer);
+    expect(sent).toHaveLength(6);
+    expect(sent[0]!.request).not.toHaveProperty("profile");
+    for (const request of sent.slice(1)) expect(request).not.toHaveProperty("profile");
+  });
+
+  it("refuses a reply of another type", async () => {
+    const { client } = await transport(openedReply);
+    await expect(client.newTableWorkingSize("Working", [])).rejects.toThrow("Expected 'opened_window' response, received 'opened'.");
+  });
+
+  it("sends the profile on the imported working-size spreadsheet routes", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    vi.stubGlobal("crypto", { randomUUID: () => "123e4567-e89b-42d3-a456-426614174000" });
+    const importedWindow = { opened: openedWindow, metadata: { version: 1, sheets: [] }, ledger: [] };
+    const imported = { opened, metadata: { version: 1, sheets: [] }, ledger: [] };
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const sent: Sent[] = [];
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
+        if (type === "message") receive = callback;
+      },
+      postMessage: (request: Sent) => {
+        sent.push(request);
+        const profile = (request.operation as {profile?: string}).profile;
+        const base = (request.operation as {type: string}).type;
+        const response = profile === "working_size"
+          ? base === "import"
+            ? { type: "imported_window", payload: importedWindow }
+            : { type: "opened_window", payload: openedWindow }
+          : base === "import"
+            ? { type: "imported", payload: imported }
+            : { type: "opened", payload: opened };
+        receive?.({ data: { id: request.id, status: "ok", response } } as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    const validate = vi.fn();
+    const options = { delimiter: "," as const, header: true };
+    const selection = { column_types: [], extra_columns: [] };
+    const metadata = { version: 1, sheets: [] };
+
+    await expect(client.importSpreadsheetWorkingSize(new Uint8Array([1]).buffer, "csv", options, selection, validate))
+      .resolves.toEqual(importedWindow);
+    expect(validate).toHaveBeenCalledWith(importedWindow);
+    expect(sent[0]).toMatchObject({ kind: "spreadsheet", operation: { type: "import", install: false, profile: "working_size" } });
+    expect(sent[1]).toMatchObject({ kind: "spreadsheet", operation: { type: "import", install: true, profile: "working_size" } });
+
+    await expect(client.inspectImportedProjectWorkingSize(new Uint8Array([1]).buffer, metadata)).resolves.toEqual(openedWindow);
+    await expect(client.openImportedProjectWorkingSize(new Uint8Array([1]).buffer, metadata)).resolves.toEqual(openedWindow);
+    expect(sent[2]).toMatchObject({ kind: "spreadsheet", operation: { type: "inspect_project", metadata, profile: "working_size" } });
+    expect(sent[3]).toMatchObject({ kind: "spreadsheet", operation: { type: "open_project", metadata, profile: "working_size" } });
+
+    // An existing method still sends no profile key.
+    await client.importSpreadsheet(new Uint8Array([1]).buffer, "csv", options, selection);
+    expect(sent[4]!.operation).not.toHaveProperty("profile");
+  });
+
+  it("refuses an imported working-size reply of another type", async () => {
+    const { client } = await transport(openedReply);
+    const options = { delimiter: "," as const, header: true };
+    await expect(client.importSpreadsheetWorkingSize(
+      new Uint8Array([1]).buffer, "csv", options, { column_types: [], extra_columns: [] },
+    )).rejects.toThrow("Expected 'imported_window' response, received 'opened'.");
+    await expect(client.inspectImportedProjectWorkingSize(new Uint8Array([1]).buffer, { version: 1, sheets: [] }))
+      .rejects.toThrow("Expected 'opened_window' response, received 'opened'.");
+  });
+
+  it("refuses a window with broken row presence", async () => {
+    const column = { id: "c1", key: "c1", display_name: "c1", field_type: "text", required: false };
+    const { client } = await transport({ status: "ok", response: {
+      type: "opened_window",
+      payload: { ...openedWindow, window: { ...openedWindow.window, columns: [column], rows: [{ id: "r1", fields: [] }] } },
+    } });
+    await expect(client.openProjectWorkingSize(new Uint8Array([1]).buffer)).rejects.toThrow("Invalid Worker sparse row presence.");
+  });
+});
+
+describe("Published changed-cell wire validation", () => {
+  it("refuses a changed cell with bad presence", async () => {
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const requests: { id: number }[] = [];
+    vi.stubGlobal("Worker", class {
+      addEventListener(type: string, callback: (event: MessageEvent) => void) {
+        if (type === "message") receive = callback;
+      }
+      postMessage(request: { id: number }) { requests.push(structuredClone(request)); }
+      terminate() {}
+    });
+    const client = createExperimentalDesignerClient();
+    const target = {entity: "row", field: "note"};
+    const pending = client.clearField("resident/0", target);
+    const publication = {
+      base_revision: "resident/0",
+      resulting_revision: "resident/1",
+      schemas: [],
+      schema_fields: [],
+      entities: [],
+      fields: [target],
+      affected_calculations: [],
+      changed: [{
+        target,
+        address: "items.row.note",
+        stored: null,
+        formula: null,
+        calculated: null,
+        diagnostics: [],
+        editable_scalar: null,
+      }],
+    };
+    receive!(new MessageEvent("message", {
+      data: {id: requests.at(-1)!.id, status: "ok", response: {type: "published", payload: publication}},
+    }));
+    await expect(pending).rejects.toThrow("non-blank field payload");
+    client.close();
+  });
+
+  it("refuses a duplicated collection's changed cell with bad presence", async () => {
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const requests: { id: number }[] = [];
+    vi.stubGlobal("Worker", class {
+      addEventListener(type: string, callback: (event: MessageEvent) => void) {
+        if (type === "message") receive = callback;
+      }
+      postMessage(request: { id: number }) { requests.push(structuredClone(request)); }
+      terminate() {}
+    });
+    const client = createExperimentalDesignerClient();
+    const target = {entity: "row", field: "note"};
+    const pending = client.duplicateCollection!("resident/0", "items", "Copy");
+    const publication = {
+      base_revision: "resident/0",
+      resulting_revision: "resident/1",
+      schemas: [],
+      schema_fields: [],
+      entities: [],
+      fields: [target],
+      affected_calculations: [],
+      changed: [{
+        target,
+        address: "items.row.note",
+        stored: null,
+        formula: null,
+        calculated: null,
+        diagnostics: [],
+        editable_scalar: null,
+      }],
+    };
+    const collection = {id: "copy", key: "copy", display_name: "Copy"};
+    receive!(new MessageEvent("message", {
+      data: {id: requests.at(-1)!.id, status: "ok", response: {type: "duplicated", payload: {publication, collection}}},
+    }));
+    await expect(pending).rejects.toThrow("non-blank field payload");
+    client.close();
   });
 });

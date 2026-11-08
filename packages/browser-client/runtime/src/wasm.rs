@@ -11,15 +11,17 @@ use crate::interop_adapter::{
     import_xlsx_with, validate_text_capacity_inspection,
 };
 use crate::{
-    DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
+    DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_SPREADSHEET_METADATA_REQUEST_BYTES, MAX_WIRE_REQUEST_BYTES,
     ProjectExportProjection, encode_reply, ensure_wire_reply_size, inspect_project,
-    open_local_document, open_portable_ro, open_project, process_wire_request,
-    request_too_large_reply, verify_portable_ro,
+    inspect_project_working_size, open_local_document, open_local_document_working_size,
+    open_portable_ro, open_portable_ro_working_size, open_project, open_project_working_size,
+    process_wire_request, request_too_large_reply, verify_portable_ro, wire_request_limit,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
     NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
+    import_workbook_working_size,
 };
 
 #[derive(Clone, Copy, Deserialize)]
@@ -42,13 +44,19 @@ enum SpreadsheetOperation {
         selection: ImportSelection,
         occurrence_id: String,
         install: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     InspectProject {
         metadata: InteropMetadata,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     OpenProject {
         occurrence_id: String,
         metadata: InteropMetadata,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     Export {
         expected_revision: String,
@@ -117,7 +125,10 @@ thread_local! {
 /// Resize the private request arena and return its linear-memory offset.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_request_reserve(length: u32) -> u32 {
-    if length as usize > MAX_SPREADSHEET_METADATA_REQUEST_BYTES {
+    let limit = RUNTIME.with(|runtime| {
+        wire_request_limit(runtime.borrow().as_ref()).max(MAX_SPREADSHEET_METADATA_REQUEST_BYTES)
+    });
+    if length as usize > limit {
         REQUEST_TOO_LARGE.set(true);
         REQUEST.with(|request| request.borrow_mut().clear());
         return 0;
@@ -143,7 +154,17 @@ pub extern "C" fn tachiko_designer_request_run() {
             };
             RESPONSE.with(|slot| *slot.borrow_mut() = response);
         });
+        let mut request = request.borrow_mut();
+        if request.capacity() > MAX_SPREADSHEET_METADATA_REQUEST_BYTES {
+            *request = Vec::new();
+        }
     });
+}
+
+/// The largest request the current session reads.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_request_limit() -> u32 {
+    RUNTIME.with(|runtime| wire_request_limit(runtime.borrow().as_ref()) as u32)
 }
 
 /// Return the linear-memory offset of the current response arena.
@@ -177,59 +198,39 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
 /// Fully admit and install one project candidate from the project arena.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_open() {
-    process_project_candidate(true, false);
+    process_project_candidate(ProjectCandidateRoute::OpenProject);
+}
+
+/// Fully admit and install one project candidate as a working-size occurrence.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_project_open_working_size() {
+    process_project_candidate(ProjectCandidateRoute::OpenProjectWorkingSize);
 }
 
 /// Fully admit and install one raw local `.ro` document from the project arena.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_open_local_document() {
-    process_project_candidate(true, true);
+    process_project_candidate(ProjectCandidateRoute::OpenLocalDocument);
+}
+
+/// Fully admit and install one raw local `.ro` document as a working-size
+/// occurrence from the project arena.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_project_open_local_document_working_size() {
+    process_project_candidate(ProjectCandidateRoute::OpenLocalDocumentWorkingSize);
 }
 
 /// Fully verify and admit a genuine portable-package/v1 `.ro` candidate.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_portable_ro_open() {
-    let project = PROJECT.with(|project| std::mem::take(&mut *project.borrow_mut()));
-    RUNTIME.with(|runtime| {
-        let mut runtime = runtime.borrow_mut();
-        let reply = if PROJECT_TOO_LARGE.replace(false) {
-            DesignerWireReply::Error {
-                error: DesignerError::ProjectTransferTooLarge {
-                    actual: MAX_PROJECT_TRANSFER_BYTES.saturating_add(1),
-                    maximum: MAX_PROJECT_TRANSFER_BYTES,
-                }
-                .failure_projection(current_revision(runtime.as_ref())),
-            }
-        } else if REQUEST_TOO_LARGE.replace(false) {
-            DesignerWireReply::Error {
-                error: DesignerError::InvalidOccurrenceIdentity
-                    .failure_projection(current_revision(runtime.as_ref())),
-            }
-        } else {
-            REQUEST.with(|request| {
-                let request = request.borrow();
-                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
-                    return serde_json::from_slice(&request_too_large_reply(runtime.as_ref()))
-                        .expect("bounded refusal is JSON");
-                }
-                let Ok(occurrence_id) = std::str::from_utf8(&request) else {
-                    return DesignerWireReply::Error {
-                        error: DesignerError::InvalidOccurrenceIdentity
-                            .failure_projection(current_revision(runtime.as_ref())),
-                    };
-                };
-                match open_portable_ro(&mut runtime, &project, occurrence_id) {
-                    Ok(opened) => DesignerWireReply::Ok {
-                        response: DesignerResponse::Opened(Box::new(opened)),
-                    },
-                    Err(error) => DesignerWireReply::Error {
-                        error: error.failure_projection(current_revision(runtime.as_ref())),
-                    },
-                }
-            })
-        };
-        set_response(&reply);
-    });
+    process_portable_ro_candidate(false);
+}
+
+/// Fully verify and admit a genuine portable-package/v1 `.ro` candidate as a
+/// working-size occurrence.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_portable_ro_open_working_size() {
+    process_portable_ro_candidate(true);
 }
 
 /// Verify a genuine portable-package/v1 `.ro` artifact without replacing the
@@ -266,7 +267,14 @@ pub extern "C" fn tachiko_designer_portable_ro_verify() {
 /// Inspect a fully admitted candidate without replacing resident state.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_inspect() {
-    process_project_candidate(false, false);
+    process_project_candidate(ProjectCandidateRoute::InspectProject);
+}
+
+/// Inspect a fully admitted candidate as a working-size occurrence without
+/// replacing resident state.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_project_inspect_working_size() {
+    process_project_candidate(ProjectCandidateRoute::InspectWorkingSize);
 }
 
 /// Run one private JSON spreadsheet operation with source bytes in PROJECT.
@@ -404,37 +412,19 @@ fn spreadsheet_operation(
             selection,
             occurrence_id,
             install,
+            profile,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            let (candidate, imported) = import_workbook(&workbook, &selection, &occurrence_id)?;
-            Ok(SpreadsheetResult {
-                profile: candidate.profile,
-                response: DesignerResponse::Imported(Box::new(imported)),
-                candidate: install.then_some(candidate),
-                export: None,
-            })
+            import_spreadsheet(&workbook, &selection, &occurrence_id, install, profile)
         }
-        SpreadsheetOperation::InspectProject { metadata } => {
-            let (opened, profile) =
-                crate::interop_document::inspect_imported_project_with_profile(project, &metadata)?;
-            let mut result =
-                SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
-            result.profile = profile;
-            Ok(result)
+        SpreadsheetOperation::InspectProject { metadata, profile } => {
+            inspect_imported_project_spreadsheet(project, &metadata, profile)
         }
         SpreadsheetOperation::OpenProject {
             occurrence_id,
             metadata,
-        } => {
-            let (candidate, opened) =
-                crate::admit_imported_project(project, &occurrence_id, &metadata)?;
-            Ok(SpreadsheetResult {
-                profile: candidate.profile,
-                response: DesignerResponse::Opened(Box::new(opened)),
-                candidate: Some(candidate),
-                export: None,
-            })
-        }
+            profile,
+        } => open_imported_project_spreadsheet(project, &occurrence_id, &metadata, profile),
         SpreadsheetOperation::Export {
             expected_revision,
             metadata,
@@ -477,6 +467,91 @@ fn spreadsheet_operation(
             &presentation,
             format,
         ),
+    }
+}
+
+fn import_spreadsheet(
+    workbook: &SourceWorkbook,
+    selection: &ImportSelection,
+    occurrence_id: &str,
+    install: bool,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (candidate, imported) = import_workbook(workbook, selection, occurrence_id)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::Imported(Box::new(imported)),
+                candidate: install.then_some(candidate),
+                export: None,
+            })
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (candidate, imported) =
+                import_workbook_working_size(workbook, selection, occurrence_id)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::ImportedWindow(Box::new(imported)),
+                candidate: install.then_some(candidate),
+                export: None,
+            })
+        }
+    }
+}
+
+fn inspect_imported_project_spreadsheet(
+    project: &[u8],
+    metadata: &InteropMetadata,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (opened, profile) =
+                crate::interop_document::inspect_imported_project_with_profile(project, metadata)?;
+            let mut result =
+                SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
+            result.profile = profile;
+            Ok(result)
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (opened, profile) =
+                crate::interop_document::inspect_imported_project_working_size(project, metadata)?;
+            let mut result =
+                SpreadsheetResult::read_only(DesignerResponse::OpenedWindow(Box::new(opened)));
+            result.profile = profile;
+            Ok(result)
+        }
+    }
+}
+
+fn open_imported_project_spreadsheet(
+    project: &[u8],
+    occurrence_id: &str,
+    metadata: &InteropMetadata,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (candidate, opened) =
+                crate::admit_imported_project(project, occurrence_id, metadata)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::Opened(Box::new(opened)),
+                candidate: Some(candidate),
+                export: None,
+            })
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (candidate, opened) =
+                crate::admit_imported_project_working_size(project, occurrence_id, metadata)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::OpenedWindow(Box::new(opened)),
+                candidate: Some(candidate),
+                export: None,
+            })
+        }
     }
 }
 
@@ -639,7 +714,7 @@ fn export_spreadsheet(
     let mut inserted_headers = Vec::new();
     if matches!(format, SpreadsheetFormat::Xlsx) {
         match runtime.profile {
-            SessionProfile::Ordinary => {
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {
                 for sheet in &mut export_metadata.sheets {
                     if !sheet.has_header {
                         sheet.has_header = true;
@@ -702,7 +777,58 @@ fn export_spreadsheet(
     })
 }
 
-fn process_project_candidate(install: bool, local_document: bool) {
+/// The six project-arena routes share one request/reply protocol; only the
+/// admission function and the success reply differ.
+#[derive(Clone, Copy)]
+enum ProjectCandidateRoute {
+    InspectProject,
+    InspectWorkingSize,
+    OpenProject,
+    OpenLocalDocument,
+    OpenProjectWorkingSize,
+    OpenLocalDocumentWorkingSize,
+}
+
+impl ProjectCandidateRoute {
+    const fn installs(self) -> bool {
+        matches!(
+            self,
+            Self::OpenProject
+                | Self::OpenLocalDocument
+                | Self::OpenProjectWorkingSize
+                | Self::OpenLocalDocumentWorkingSize
+        )
+    }
+
+    fn evaluate(
+        self,
+        runtime: &mut Option<DesignerRuntime>,
+        project: &[u8],
+        occurrence_id: &str,
+    ) -> Result<DesignerResponse, DesignerError> {
+        match self {
+            Self::InspectProject => {
+                inspect_project(project).map(|opened| DesignerResponse::Opened(Box::new(opened)))
+            }
+            Self::InspectWorkingSize => inspect_project_working_size(project)
+                .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened))),
+            Self::OpenProject => open_project(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::Opened(Box::new(opened))),
+            Self::OpenLocalDocument => open_local_document(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::Opened(Box::new(opened))),
+            Self::OpenProjectWorkingSize => {
+                open_project_working_size(runtime, project, occurrence_id)
+                    .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
+            }
+            Self::OpenLocalDocumentWorkingSize => {
+                open_local_document_working_size(runtime, project, occurrence_id)
+                    .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
+            }
+        }
+    }
+}
+
+fn process_project_candidate(route: ProjectCandidateRoute) {
     let project = PROJECT.with(|project| std::mem::take(&mut *project.borrow_mut()));
     RUNTIME.with(|runtime| {
         let mut runtime = runtime.borrow_mut();
@@ -714,11 +840,9 @@ fn process_project_candidate(install: bool, local_document: bool) {
                 }
                 .failure_projection(current_revision(runtime.as_ref())),
             }
-        } else if !install {
-            match inspect_project(&project) {
-                Ok(opened) => DesignerWireReply::Ok {
-                    response: DesignerResponse::Opened(Box::new(opened)),
-                },
+        } else if !route.installs() {
+            match route.evaluate(&mut runtime, &project, "") {
+                Ok(response) => DesignerWireReply::Ok { response },
                 Err(error) => DesignerWireReply::Error {
                     error: error.failure_projection(current_revision(runtime.as_ref())),
                 },
@@ -741,15 +865,59 @@ fn process_project_candidate(install: bool, local_document: bool) {
                             .failure_projection(current_revision(runtime.as_ref())),
                     };
                 };
-                let opened = if local_document {
-                    open_local_document(&mut runtime, &project, occurrence_id)
+                match route.evaluate(&mut runtime, &project, occurrence_id) {
+                    Ok(response) => DesignerWireReply::Ok { response },
+                    Err(error) => DesignerWireReply::Error {
+                        error: error.failure_projection(current_revision(runtime.as_ref())),
+                    },
+                }
+            })
+        };
+        set_response(&reply);
+    });
+}
+
+/// The portable `.ro` routes keep their own shared body because both admit
+/// through the storage codec rather than the project-arena routes above.
+fn process_portable_ro_candidate(working_size: bool) {
+    let project = PROJECT.with(|project| std::mem::take(&mut *project.borrow_mut()));
+    RUNTIME.with(|runtime| {
+        let mut runtime = runtime.borrow_mut();
+        let reply = if PROJECT_TOO_LARGE.replace(false) {
+            DesignerWireReply::Error {
+                error: DesignerError::ProjectTransferTooLarge {
+                    actual: MAX_PROJECT_TRANSFER_BYTES.saturating_add(1),
+                    maximum: MAX_PROJECT_TRANSFER_BYTES,
+                }
+                .failure_projection(current_revision(runtime.as_ref())),
+            }
+        } else if REQUEST_TOO_LARGE.replace(false) {
+            DesignerWireReply::Error {
+                error: DesignerError::InvalidOccurrenceIdentity
+                    .failure_projection(current_revision(runtime.as_ref())),
+            }
+        } else {
+            REQUEST.with(|request| {
+                let request = request.borrow();
+                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
+                    return serde_json::from_slice(&request_too_large_reply(runtime.as_ref()))
+                        .expect("bounded refusal is JSON");
+                }
+                let Ok(occurrence_id) = std::str::from_utf8(&request) else {
+                    return DesignerWireReply::Error {
+                        error: DesignerError::InvalidOccurrenceIdentity
+                            .failure_projection(current_revision(runtime.as_ref())),
+                    };
+                };
+                let opened = if working_size {
+                    open_portable_ro_working_size(&mut runtime, &project, occurrence_id)
+                        .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
                 } else {
-                    open_project(&mut runtime, &project, occurrence_id)
+                    open_portable_ro(&mut runtime, &project, occurrence_id)
+                        .map(|opened| DesignerResponse::Opened(Box::new(opened)))
                 };
                 match opened {
-                    Ok(opened) => DesignerWireReply::Ok {
-                        response: DesignerResponse::Opened(Box::new(opened)),
-                    },
+                    Ok(response) => DesignerWireReply::Ok { response },
                     Err(error) => DesignerWireReply::Error {
                         error: error.failure_projection(current_revision(runtime.as_ref())),
                     },

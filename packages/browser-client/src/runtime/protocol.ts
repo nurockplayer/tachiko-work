@@ -1,4 +1,4 @@
-import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportedWindowProjection, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
 
 export type FieldTarget = {
   entity: string;
@@ -20,8 +20,11 @@ export type BootstrapProjection = {
   keyed_grouped_sum_definition_ids?: string[];
 };
 
-/** `projection_bytes` refuses an import; it is not a counted resource. */
-export type CapacityLimits = Record<Exclude<CapacityLimitName, "projection_bytes">, number>;
+/** `projection_bytes` refuses an import and `saved_bytes` a whole-session save; neither is a counted resource. */
+export type CapacityLimits = Record<
+  Exclude<CapacityLimitName, "projection_bytes" | "saved_bytes">,
+  number
+>;
 
 export type CapacityUsage = {
   collections: number;
@@ -38,6 +41,17 @@ export type CapacityProjection = {revision: string; usage: CapacityUsage; limits
 export type OpenedProjection = {
   bootstrap: BootstrapProjection;
   table: TableProjection;
+};
+
+/**
+ * The reply a working-size open produces: the bootstrap plus one bounded
+ * window, never the whole table. `window.total_rows` may exceed the rows the
+ * window carries, so page with the window query.
+ */
+export type OpenedWindowProjection = {
+  profile: "working_size";
+  bootstrap: BootstrapProjection;
+  window: TableWindowProjection;
 };
 
 export type StoredValueProjection =
@@ -214,6 +228,11 @@ export type TableWindowProjection = {
   start: number;
   rows: TableRowProjection[];
   /**
+   * Set when the reply's bytes ended this window before its count. Continue at
+   * `start + rows.length`; `total_rows` says where the view ends.
+   */
+  byte_limited?: true;
+  /**
    * One total per Number column, keyed by column id and observed at the same
    * revision as rows. Null means a contributing value is unavailable; blank
    * cells are skipped.
@@ -351,6 +370,17 @@ export type PublicationProjection = {
   entities: string[];
   fields: FieldTarget[];
   affected_calculations: FieldTarget[];
+  /**
+   * Set when this publication reached more targets than a reply lists.
+   * `entities`, `fields` and `affected_calculations` are then empty: re-query
+   * the visible window and totals.
+   */
+  many?: true;
+  /**
+   * Every changed cell, shaped as a window's field with its display text. Only
+   * a working-size session sets it, and not when `many` is set.
+   */
+  changed?: FieldProjection[];
 };
 
 export type ProjectExportProjection = {
@@ -442,7 +472,8 @@ export type CapacityLimitName =
   | "formulas"
   | "formula_ast_nodes"
   | "dependency_edges"
-  | "projection_bytes";
+  | "projection_bytes"
+  | "saved_bytes";
 
 export type CapacityFailureProjection = FailureProjection & {
   code: "capacity_exceeded";
@@ -464,6 +495,7 @@ const CAPACITY_LIMIT_NAMES: readonly CapacityLimitName[] = [
   "formula_ast_nodes",
   "dependency_edges",
   "projection_bytes",
+  "saved_bytes",
 ];
 
 /** Validate the detailed wire payload for a capacity refusal. */
@@ -571,7 +603,7 @@ export type DesignerRequest =
   | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
   | { type: "new_tracker"; occurrence_id: string }
   | { type: "new_budget"; occurrence_id: string }
-  | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[] }
+  | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_capacity"; expected_revision?: string }
@@ -661,10 +693,12 @@ export type DesignerResponse =
   | {type: "cleanup_preview"; payload: CleanupPreview}
   | {type: "import_preview"; payload: SourceWorkbook}
   | {type: "imported"; payload: ImportedProjection}
+  | {type: "imported_window"; payload: ImportedWindowProjection}
   | {type: "spreadsheet_exported"; payload: {revision: string; byte_length: number; ledger: FidelityFinding[]}}
   | { type: "bootstrap"; payload: BootstrapProjection }
   | { type: "capacity"; payload: CapacityProjection }
   | { type: "opened"; payload: OpenedProjection }
+  | { type: "opened_window"; payload: OpenedWindowProjection }
   | { type: "table"; payload: TableProjection }
   | { type: "table_window"; payload: TableWindowProjection }
   | { type: "located_in_view"; payload: LocatedInViewProjection }
@@ -696,20 +730,22 @@ export type WorkerRequest =
       kind: "open_project";
       occurrence_id: string;
       bytes: ArrayBuffer;
+      profile?: "working_size";
     }
   | {
       id: number;
       kind: "open_local_document";
       occurrence_id: string;
       bytes: ArrayBuffer;
+      profile?: "working_size";
     }
-  | { id: number; kind: "inspect_project"; bytes: ArrayBuffer }
+  | { id: number; kind: "inspect_project"; bytes: ArrayBuffer; profile?: "working_size" }
   | { id: number; kind: "export_project"; expected_revision: string }
   | { id: number; kind: "export_project_v3"; expected_revision: string }
   | { id: number; kind: "export_canonical_tree"; expected_revision: string }
   | { id: number; kind: "export_portable_ro"; expected_revision: string }
   | { id: number; kind: "verify_portable_ro"; bytes: ArrayBuffer }
-  | { id: number; kind: "open_portable_ro"; occurrence_id: string; bytes: ArrayBuffer }
+  | { id: number; kind: "open_portable_ro"; occurrence_id: string; bytes: ArrayBuffer; profile?: "working_size" }
   | { id: number; kind: "observe_occurrence" }
   | { id: number; kind: "close_project" };
 

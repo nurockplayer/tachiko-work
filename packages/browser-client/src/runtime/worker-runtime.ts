@@ -24,23 +24,26 @@ export function startDesignerWorker(wasmUrl: string): void {
             break;
           }
           case "inspect_project": {
-            const reply = runtime.inspectProject(new Uint8Array(event.data.bytes));
+            const bytes = new Uint8Array(event.data.bytes);
+            const reply = event.data.profile === "working_size"
+              ? runtime.inspectProjectWorkingSize(bytes)
+              : runtime.inspectProject(bytes);
             scope.postMessage({ id: event.data.id, ...reply });
             break;
           }
           case "open_project": {
-            const reply = runtime.openProject(
-              new Uint8Array(event.data.bytes),
-              event.data.occurrence_id,
-            );
+            const bytes = new Uint8Array(event.data.bytes);
+            const reply = event.data.profile === "working_size"
+              ? runtime.openProjectWorkingSize(bytes, event.data.occurrence_id)
+              : runtime.openProject(bytes, event.data.occurrence_id);
             scope.postMessage({ id: event.data.id, ...reply });
             break;
           }
           case "open_local_document": {
-            const reply = runtime.openLocalDocument(
-              new Uint8Array(event.data.bytes),
-              event.data.occurrence_id,
-            );
+            const bytes = new Uint8Array(event.data.bytes);
+            const reply = event.data.profile === "working_size"
+              ? runtime.openLocalDocumentWorkingSize(bytes, event.data.occurrence_id)
+              : runtime.openLocalDocument(bytes, event.data.occurrence_id);
             scope.postMessage({ id: event.data.id, ...reply });
             break;
           }
@@ -89,10 +92,10 @@ export function startDesignerWorker(wasmUrl: string): void {
             break;
           }
           case "open_portable_ro": {
-            const reply = runtime.openPortableRo(
-              new Uint8Array(event.data.bytes),
-              event.data.occurrence_id,
-            );
+            const bytes = new Uint8Array(event.data.bytes);
+            const reply = event.data.profile === "working_size"
+              ? runtime.openPortableRoWorkingSize(bytes, event.data.occurrence_id)
+              : runtime.openPortableRo(bytes, event.data.occurrence_id);
             scope.postMessage({ id: event.data.id, ...reply });
             break;
           }

@@ -1704,7 +1704,14 @@ fn full_calculation_parts(document: &Document) -> FullCalculationParts {
     let t4 = std::time::Instant::now();
     evaluate_remaining_formulas(document, &formulas, &graph, &mut failures, &mut values);
     let t5 = std::time::Instant::now();
-    eprintln!("W1T|collect {:?} pregraph {:?} cycles {:?} initial {:?} evaluate {:?}", t1-t0, t2-t1, t3-t2, t4-t3, t5-t4);
+    eprintln!(
+        "W1T|collect {:?} pregraph {:?} cycles {:?} initial {:?} evaluate {:?}",
+        t1 - t0,
+        t2 - t1,
+        t3 - t2,
+        t4 - t3,
+        t5 - t4
+    );
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
         values,

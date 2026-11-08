@@ -4,7 +4,7 @@ import {
   projectTransferFromFiles,
   type CanonicalProjectTransferEntry,
 } from "./host/project-transfer.ts";
-import type { SpreadsheetExport, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
+import type { ImportOptions, ImportSelection, ImportedWindowProjection, InteropMetadata, SpreadsheetExport, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
 import { DesignerRuntimeError, type DesignerClient } from "./runtime/client.ts";
 import { WorkerDesignerClient } from "./runtime/worker-client.ts";
 import { isCapacityFailure, isFormulaFailure } from "./runtime/protocol.ts";
@@ -13,6 +13,8 @@ import type {
   CanonicalTreeExport,
   OccurrenceProjection,
   OpenedProjection,
+  OpenedWindowProjection,
+  NewTableColumnInput,
   ProjectExport,
   FieldConstraintInput,
   NumberFormat,
@@ -23,7 +25,7 @@ import type {
 
 export const EXPERIMENTAL_CLIENT_KIT_ID = "tachiko-designer-client-kit/v0-experimental";
 
-const MAX_CANONICAL_PROJECT_FILE_COUNT = 19;
+const MAX_CANONICAL_PROJECT_FILE_COUNT = 20;
 const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
 
 /**
@@ -51,11 +53,21 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;
   exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
+  /** Create a table whose session profile is the working-size one. */
+  newTableWorkingSize(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
+  importSpreadsheetWorkingSize(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedWindowProjection) => void): Promise<ImportedWindowProjection>;
+  inspectImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
+  openImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
+  inspectProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
+  openProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
+  openCanonicalTreeWorkingSize(files: readonly CanonicalProjectFile[]): Promise<OpenedWindowProjection>;
+  openLocalDocumentWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   exportCanonicalTree(expectedRevision: string): Promise<CanonicalTreeExport>;
   exportPortableRo(expectedRevision: string): Promise<ProjectExport>;
   verifyPortableRo(bytes: ArrayBuffer): Promise<void>;
   openPortableRo(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  openPortableRoWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   observeOccurrence(): Promise<OccurrenceProjection>;
 }
 
@@ -68,7 +80,7 @@ export function preflightCanonicalProjectEntries(
   entries: readonly CanonicalProjectTransferEntry[],
 ): void {
   if (entries.length > MAX_CANONICAL_PROJECT_FILE_COUNT) {
-    throw new Error("A canonical .roproj directory cannot contain more than 19 files.");
+    throw new Error("A canonical .roproj directory cannot contain more than 20 files.");
   }
   const paths = new Set<string>();
   let total = 8 + 4;
@@ -112,6 +124,13 @@ class PublicExperimentalDesignerClient extends WorkerDesignerClient {
   ): Promise<OpenedProjection> {
     return openCanonicalTreeFromEntries(this, files);
   }
+
+  override async openCanonicalTreeWorkingSize(
+    files: readonly CanonicalProjectFile[],
+  ): Promise<OpenedWindowProjection> {
+    preflightCanonicalProjectEntries(files);
+    return this.openProjectWorkingSize(projectTransferFromEntries(files));
+  }
 }
 
 export function createExperimentalDesignerClient(): ExperimentalDesignerClient {
@@ -133,6 +152,7 @@ export {
 };
 export type { DesignerClient };
 export type { CanonicalProjectTransferEntry } from "./host/project-transfer.ts";
+export type { ImportedWindowProjection } from "./runtime/interop-protocol.ts";
 export type {
   BootstrapProjection,
   CapacityFailureProjection,
@@ -165,6 +185,7 @@ export type {
   ScalarEditInput,
   TrackerCommand,
   OpenedProjection,
+  OpenedWindowProjection,
   OccurrenceProjection,
   ProjectExport,
   PublicationProjection,

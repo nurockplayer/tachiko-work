@@ -40,14 +40,19 @@ use tachiko_semantic_core::{
     validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
+    BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate, RuleId,
+    StyleId, TablePresentation,
+};
+pub use tachiko_semantic_core::{
     ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
     Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity, EntityId, EntityKey,
     Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
     FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
-    NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey,
-    SemanticSubject, StableDiagnosticObservation, Value, display_name_failures, trim_display_name,
+    NumberFormat, NumberFormatError, NumberFormatKind, PresentationStore, Schema, SchemaId,
+    SchemaKey, SemanticSubject, StableDiagnosticObservation, Value, display_name_failures,
+    prune_presentation, trim_display_name,
 };
 pub use tachiko_semantic_core::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use thiserror::Error;
@@ -1866,6 +1871,25 @@ fn validate_new_entity_key(document: &Document, target: &EntityKey) -> Result<()
     Ok(())
 }
 
+/// Check one append against the keys a batch run has already proved, without
+/// rebuilding the address index the run's first append validated.
+fn validate_appended_entity_key(
+    keys: &BTreeSet<EntityKey>,
+    target: &EntityKey,
+) -> Result<(), WorkspaceError> {
+    if !is_valid_identifier(target.as_str()) {
+        return Err(WorkspaceError::InvalidEntityKey {
+            entity: target.clone(),
+        });
+    }
+    if keys.contains(target) {
+        return Err(WorkspaceError::EntityKeyAlreadyExists {
+            entity: target.clone(),
+        });
+    }
+    Ok(())
+}
+
 fn validate_key(key: &str) -> Result<(), ()> {
     is_valid_identifier(key).then_some(()).ok_or(())
 }
@@ -3058,15 +3082,22 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
 
 fn preflight_formula_structures(document: &Document) -> Result<(), WorkspaceError> {
     for (entity_id, entity) in &document.entities {
-        for (field_id, value) in &entity.fields {
-            if let Value::Formula(expression) = value {
-                validate_expression_structure(expression).map_err(|source| {
-                    WorkspaceError::ExpressionComplexity {
-                        field: FieldRef::new(entity_id.clone(), field_id.clone()),
-                        source,
-                    }
-                })?;
-            }
+        preflight_entity_formulas(entity_id, entity)?;
+    }
+    Ok(())
+}
+
+/// Bound formula structure for one entity: the per-entity half of
+/// [`preflight_formula_structures`].
+fn preflight_entity_formulas(entity_id: &EntityId, entity: &Entity) -> Result<(), WorkspaceError> {
+    for (field_id, value) in &entity.fields {
+        if let Value::Formula(expression) = value {
+            validate_expression_structure(expression).map_err(|source| {
+                WorkspaceError::ExpressionComplexity {
+                    field: FieldRef::new(entity_id.clone(), field_id.clone()),
+                    source,
+                }
+            })?;
         }
     }
     Ok(())

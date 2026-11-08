@@ -19,14 +19,18 @@ use crate::interop_adapter::{
     import_xlsx_with,
 };
 use crate::{
-    DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply, FailureProjection,
-    MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply,
-    ensure_wire_reply_size, inspect_project, open_local_document, open_portable_ro, open_project,
-    process_wire_request, request_too_large_reply, verify_portable_ro,
+    DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
+    FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES,
+    MAX_WORKING_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply, ensure_wire_reply_size,
+    inspect_project, inspect_project_working_size, open_local_document,
+    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
+    open_project, open_project_working_size, process_wire_request, request_too_large_reply,
+    verify_portable_ro,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
     NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
+    import_workbook_working_size,
 };
 
 /// The browser request arena's spreadsheet metadata limit. The crate constant
@@ -37,11 +41,13 @@ const MAX_SPREADSHEET_METADATA_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_HOST_SPREADSHEET_REQUEST_BYTES: usize = MAX_SPREADSHEET_METADATA_REQUEST_BYTES;
 /// Largest ordinary request, occurrence identity or expected revision.
 pub const MAX_HOST_WIRE_REQUEST_BYTES: usize = MAX_WIRE_REQUEST_BYTES;
+/// Largest request a working-size session reads.
+pub const MAX_HOST_WORKING_WIRE_REQUEST_BYTES: usize = MAX_WORKING_WIRE_REQUEST_BYTES;
 /// Largest project, spreadsheet source or export transfer.
 pub const MAX_HOST_PROJECT_TRANSFER_BYTES: usize = MAX_PROJECT_TRANSFER_BYTES;
 
 type OpenCandidate =
-    fn(&mut Option<DesignerRuntime>, &[u8], &str) -> Result<crate::OpenedProjection, DesignerError>;
+    fn(&mut Option<DesignerRuntime>, &[u8], &str) -> Result<DesignerResponse, DesignerError>;
 
 /// One encoded wire reply plus the opaque bytes a successful export produced.
 ///
@@ -170,22 +176,88 @@ impl DesignerHost {
         encode_reply(&reply)
     }
 
+    /// Inspect a fully admitted candidate as a working-size occurrence without
+    /// replacing resident state.
+    #[must_use]
+    pub fn inspect_project_working_size(&self, project: &[u8]) -> Vec<u8> {
+        let reply = if project.len() > MAX_PROJECT_TRANSFER_BYTES {
+            too_large_project(self.runtime.as_ref())
+        } else {
+            match inspect_project_working_size(project) {
+                Ok(opened) => DesignerWireReply::Ok {
+                    response: DesignerResponse::OpenedWindow(Box::new(opened)),
+                },
+                Err(error) => DesignerWireReply::Error {
+                    error: error.failure_projection(current_revision(self.runtime.as_ref())),
+                },
+            }
+        };
+        encode_reply(&reply)
+    }
+
     /// Fully admit and install one project candidate.
     #[must_use]
     pub fn open_project(&mut self, project: &[u8], occurrence_id: &[u8]) -> Vec<u8> {
-        self.open_candidate(project, occurrence_id, open_project)
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_project(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::Opened(Box::new(opened)))
+        })
+    }
+
+    /// Fully admit and install one project candidate as a working-size
+    /// occurrence.
+    #[must_use]
+    pub fn open_project_working_size(&mut self, project: &[u8], occurrence_id: &[u8]) -> Vec<u8> {
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_project_working_size(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
+        })
     }
 
     /// Fully admit and install one raw local `.ro` document.
     #[must_use]
     pub fn open_local_document(&mut self, project: &[u8], occurrence_id: &[u8]) -> Vec<u8> {
-        self.open_candidate(project, occurrence_id, open_local_document)
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_local_document(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::Opened(Box::new(opened)))
+        })
+    }
+
+    /// Fully admit and install one raw local `.ro` document as a working-size
+    /// occurrence.
+    #[must_use]
+    pub fn open_local_document_working_size(
+        &mut self,
+        project: &[u8],
+        occurrence_id: &[u8],
+    ) -> Vec<u8> {
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_local_document_working_size(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
+        })
     }
 
     /// Fully verify and admit a genuine portable-package/v1 `.ro` candidate.
     #[must_use]
     pub fn open_portable_ro(&mut self, project: &[u8], occurrence_id: &[u8]) -> Vec<u8> {
-        self.open_candidate(project, occurrence_id, open_portable_ro)
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_portable_ro(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::Opened(Box::new(opened)))
+        })
+    }
+
+    /// Fully verify and admit a genuine portable-package/v1 `.ro` candidate as
+    /// a working-size occurrence.
+    #[must_use]
+    pub fn open_portable_ro_working_size(
+        &mut self,
+        project: &[u8],
+        occurrence_id: &[u8],
+    ) -> Vec<u8> {
+        self.open_candidate(project, occurrence_id, |runtime, project, occurrence_id| {
+            open_portable_ro_working_size(runtime, project, occurrence_id)
+                .map(|opened| DesignerResponse::OpenedWindow(Box::new(opened)))
+        })
     }
 
     /// Verify a genuine portable-package/v1 `.ro` artifact without replacing
@@ -285,9 +357,7 @@ impl DesignerHost {
             return request_too_large_reply(runtime.as_ref());
         } else if let Ok(occurrence_id) = std::str::from_utf8(occurrence_id) {
             match open(runtime, project, occurrence_id) {
-                Ok(opened) => DesignerWireReply::Ok {
-                    response: DesignerResponse::Opened(Box::new(opened)),
-                },
+                Ok(response) => DesignerWireReply::Ok { response },
                 Err(error) => DesignerWireReply::Error {
                     error: error.failure_projection(current_revision(runtime.as_ref())),
                 },
@@ -368,13 +438,19 @@ enum SpreadsheetOperation {
         selection: ImportSelection,
         occurrence_id: String,
         install: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     InspectProject {
         metadata: InteropMetadata,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     OpenProject {
         occurrence_id: String,
         metadata: InteropMetadata,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     Export {
         expected_revision: String,
@@ -492,37 +568,19 @@ fn spreadsheet_operation(
             selection,
             occurrence_id,
             install,
+            profile,
         } => {
             let workbook = import_source(project, format, &csv_options)?;
-            let (candidate, imported) = import_workbook(&workbook, &selection, &occurrence_id)?;
-            Ok(SpreadsheetResult {
-                profile: candidate.profile,
-                response: DesignerResponse::Imported(Box::new(imported)),
-                candidate: install.then_some(candidate),
-                export: None,
-            })
+            import_spreadsheet(&workbook, &selection, &occurrence_id, install, profile)
         }
-        SpreadsheetOperation::InspectProject { metadata } => {
-            let (opened, profile) =
-                crate::interop_document::inspect_imported_project_with_profile(project, &metadata)?;
-            let mut result =
-                SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
-            result.profile = profile;
-            Ok(result)
+        SpreadsheetOperation::InspectProject { metadata, profile } => {
+            inspect_imported_project_spreadsheet(project, &metadata, profile)
         }
         SpreadsheetOperation::OpenProject {
             occurrence_id,
             metadata,
-        } => {
-            let (candidate, opened) =
-                crate::admit_imported_project(project, &occurrence_id, &metadata)?;
-            Ok(SpreadsheetResult {
-                profile: candidate.profile,
-                response: DesignerResponse::Opened(Box::new(opened)),
-                candidate: Some(candidate),
-                export: None,
-            })
-        }
+            profile,
+        } => open_imported_project_spreadsheet(project, &occurrence_id, &metadata, profile),
         SpreadsheetOperation::Export {
             expected_revision,
             metadata,
@@ -565,6 +623,91 @@ fn spreadsheet_operation(
             &presentation,
             format,
         ),
+    }
+}
+
+fn import_spreadsheet(
+    workbook: &SourceWorkbook,
+    selection: &ImportSelection,
+    occurrence_id: &str,
+    install: bool,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (candidate, imported) = import_workbook(workbook, selection, occurrence_id)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::Imported(Box::new(imported)),
+                candidate: install.then_some(candidate),
+                export: None,
+            })
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (candidate, imported) =
+                import_workbook_working_size(workbook, selection, occurrence_id)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::ImportedWindow(Box::new(imported)),
+                candidate: install.then_some(candidate),
+                export: None,
+            })
+        }
+    }
+}
+
+fn inspect_imported_project_spreadsheet(
+    project: &[u8],
+    metadata: &InteropMetadata,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (opened, profile) =
+                crate::interop_document::inspect_imported_project_with_profile(project, metadata)?;
+            let mut result =
+                SpreadsheetResult::read_only(DesignerResponse::Opened(Box::new(opened)));
+            result.profile = profile;
+            Ok(result)
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (opened, profile) =
+                crate::interop_document::inspect_imported_project_working_size(project, metadata)?;
+            let mut result =
+                SpreadsheetResult::read_only(DesignerResponse::OpenedWindow(Box::new(opened)));
+            result.profile = profile;
+            Ok(result)
+        }
+    }
+}
+
+fn open_imported_project_spreadsheet(
+    project: &[u8],
+    occurrence_id: &str,
+    metadata: &InteropMetadata,
+    profile: Option<DesignerProfile>,
+) -> Result<SpreadsheetResult, DesignerError> {
+    match profile {
+        None => {
+            let (candidate, opened) =
+                crate::admit_imported_project(project, occurrence_id, metadata)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::Opened(Box::new(opened)),
+                candidate: Some(candidate),
+                export: None,
+            })
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (candidate, opened) =
+                crate::admit_imported_project_working_size(project, occurrence_id, metadata)?;
+            Ok(SpreadsheetResult {
+                profile: candidate.profile,
+                response: DesignerResponse::OpenedWindow(Box::new(opened)),
+                candidate: Some(candidate),
+                export: None,
+            })
+        }
     }
 }
 
@@ -727,7 +870,7 @@ fn export_spreadsheet(
     let mut inserted_headers = Vec::new();
     if matches!(format, SpreadsheetFormat::Xlsx) {
         match runtime.profile {
-            SessionProfile::Ordinary => {
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => {
                 for sheet in &mut export_metadata.sheets {
                     if !sheet.has_header {
                         sheet.has_header = true;
