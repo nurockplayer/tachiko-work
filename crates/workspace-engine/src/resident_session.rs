@@ -1034,13 +1034,16 @@ where
             Some(installation) if installs_prepared => {
                 let _phase =
                     instrumentation::PhaseTimer::new("publish_if_current/install_prepared");
-                let (invalidation, transition_work) = invalidation_from_transition(
-                    installation.changes,
-                    installation.transition,
-                    self.session.document_scope.clone(),
-                    expected_revision.clone(),
-                    resulting_revision.clone(),
-                );
+                let (invalidation, transition_work) = {
+                    let _phase = instrumentation::PhaseTimer::new("install_prepared/invalidation");
+                    invalidation_from_transition(
+                        installation.changes,
+                        installation.transition,
+                        self.session.document_scope.clone(),
+                        expected_revision.clone(),
+                        resulting_revision.clone(),
+                    )
+                };
                 self.session.retained = installation.retained;
                 self.session.document = installation.candidate;
                 self.session.preflight_succeeded = installation.candidate_preflight_succeeded;
@@ -1187,11 +1190,14 @@ fn invalidation_from_transition(
     base_revision: SemanticRevision,
     resulting_revision: SemanticRevision,
 ) -> (ResidentProjectionInvalidation, DerivedStateTransitionWork) {
-    let affected_calculations = transition
-        .affected_calculations
-        .into_iter()
-        .chain(transition.changed_calculation_projections)
-        .collect::<BTreeSet<_>>();
+    let affected_calculations = {
+        let _phase = instrumentation::PhaseTimer::new("invalidation/affected_calculations");
+        transition
+            .affected_calculations
+            .into_iter()
+            .chain(transition.changed_calculation_projections)
+            .collect::<BTreeSet<_>>()
+    };
 
     (
         ResidentProjectionInvalidation {

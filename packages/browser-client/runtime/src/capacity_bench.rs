@@ -35,8 +35,8 @@ use tachiko_workspace_engine::{
 use super::{
     CellEdit, ComparisonOperator, DESIGNER_PRINCIPAL, DesignerClock, DesignerRequest,
     DesignerResponse, DesignerRuntime, Entity, EntityId, EntityKey, FieldDefinition, FieldKey,
-    FieldTarget, FieldType, PrincipalId, RowInitializer, ScalarEditInput, Schema, SchemaId,
-    SchemaKey, SortDirection, TableView, ViewFilter, ViewIndexCache, ViewSortKey,
+    FieldRef, FieldTarget, FieldType, PrincipalId, RowInitializer, ScalarEditInput, Schema,
+    SchemaId, SchemaKey, SortDirection, TableView, ViewFilter, ViewIndexCache, ViewSortKey,
     collection_specs, decode_project_bundle, designer_lifecycle, document_requires_v2_evidence,
     document_scope, encode_project_bundle, ensure_projection_size_with_limit, formula_sources,
     open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
@@ -922,8 +922,8 @@ fn capacity_formula_count_sweep() {
 
 /// One working-size qualification shape: 10,000 rows by 30 declared columns.
 ///
-/// Every field carries a display name, so both shapes take the v2 evidence
-/// path Sheet's blank workbook takes.
+/// Every field carries a display name, so every shape takes the v2 evidence
+/// path.
 #[derive(Clone, Copy, Debug)]
 enum WqShape {
     /// Ten populated Number columns (100,000 cells) and twenty empty ones.
@@ -931,22 +931,30 @@ enum WqShape {
     /// Nine populated Number columns and one same-row formula column
     /// (10,000 formulas, 100,000 cells).
     Formulas,
+    /// Nine populated Number columns and one formula column; every row's `c9`
+    /// reads `r00000.c1`, so one edit reaches all 10,000 rows.
+    Fanout,
+    /// The first 101 rows' `c9` reads `r00000.c1`; the rest read their own
+    /// `c1`. One edit reaches 101 dependents.
+    Fanout101,
 }
 
 impl WqShape {
-    const ALL: [Self; 2] = [Self::Values, Self::Formulas];
+    const ALL: [Self; 4] = [Self::Values, Self::Formulas, Self::Fanout, Self::Fanout101];
 
     const fn name(self) -> &'static str {
         match self {
             Self::Values => "values",
             Self::Formulas => "formulas",
+            Self::Fanout => "fanout",
+            Self::Fanout101 => "fanout101",
         }
     }
 
     const fn populated_columns(self) -> usize {
         match self {
             Self::Values => 10,
-            Self::Formulas => 9,
+            Self::Formulas | Self::Fanout | Self::Fanout101 => 9,
         }
     }
 }
@@ -955,6 +963,8 @@ const WQ_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
 const WQ_ROWS: usize = 10_000;
 const WQ_COLUMNS: usize = 30;
 const WQ_EDIT_COUNT: usize = 20;
+/// How many rows of the `fanout101` shape read `r00000.c1`.
+const WQ_FANOUT_DEPENDENTS: usize = 101;
 
 fn wq_document(shape: WqShape) -> Document {
     let mut document = Document::empty("working-size-qualification", "Working Size Qualification");
@@ -992,14 +1002,36 @@ fn wq_document(shape: WqShape) -> Document {
                 number(f64::from(value)),
             );
         }
-        if matches!(shape, WqShape::Formulas) {
-            fields.insert(
-                FieldId::from("c9"),
-                Value::Formula(Expression::Add {
-                    left: Box::new(Expression::SameRowReference(FieldId::from("c0"))),
-                    right: Box::new(Expression::SameRowReference(FieldId::from("c1"))),
-                }),
-            );
+        match shape {
+            WqShape::Values => {}
+            WqShape::Formulas => {
+                fields.insert(
+                    FieldId::from("c9"),
+                    Value::Formula(Expression::Add {
+                        left: Box::new(Expression::SameRowReference(FieldId::from("c0"))),
+                        right: Box::new(Expression::SameRowReference(FieldId::from("c1"))),
+                    }),
+                );
+            }
+            WqShape::Fanout | WqShape::Fanout101 => {
+                let dependents = if matches!(shape, WqShape::Fanout101) {
+                    WQ_FANOUT_DEPENDENTS
+                } else {
+                    WQ_ROWS
+                };
+                let right = if row < dependents {
+                    Expression::Reference(FieldRef::new("r00000", "c1"))
+                } else {
+                    Expression::SameRowReference(FieldId::from("c1"))
+                };
+                fields.insert(
+                    FieldId::from("c9"),
+                    Value::Formula(Expression::Add {
+                        left: Box::new(Expression::SameRowReference(FieldId::from("c0"))),
+                        right: Box::new(right),
+                    }),
+                );
+            }
         }
         document.entities.insert(
             id.clone(),
@@ -1049,6 +1081,21 @@ fn qualify_working_size_shape(shape: WqShape) {
         "{name} must take the v2 evidence path"
     );
     validate(&document).expect("qualification fixture validates");
+
+    // The fan-out shapes measure one edit and the re-query it forces, so they
+    // skip the save, reopen and structural steps their shapes don't need.
+    if matches!(shape, WqShape::Fanout | WqShape::Fanout101) {
+        let mut runtime = match DesignerRuntime::from_document_working_size(document, WQ_OCCURRENCE)
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                wq_refused(name, "open_document", &error);
+                return;
+            }
+        };
+        qualify_working_size_fanout(shape, &mut runtime);
+        return;
+    }
 
     // These fixtures carry no presentation, so the document bound is the whole
     // saved-size bound the working-size session checks.
@@ -1284,6 +1331,194 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     match inserted {
         Ok(_) => wq_print(name, "insert_row_ms", wq_millis(&sample)),
         Err(error) => wq_refused(name, "insert_row", &error),
+    }
+}
+
+/// Print the median and p95 of one latency group.
+fn wq_print_latency(name: &str, prefix: &str, samples: &[Sample]) {
+    let mut ordered = samples
+        .iter()
+        .map(|sample| sample.millis)
+        .collect::<Vec<_>>();
+    ordered.sort_by(f64::total_cmp);
+    let median = ordered[ordered.len() / 2];
+    let p95_index = ordered
+        .len()
+        .saturating_mul(95)
+        .div_ceil(100)
+        .saturating_sub(1);
+    wq_print(name, &format!("{prefix}_median_ms"), format!("{median:.3}"));
+    wq_print(
+        name,
+        &format!("{prefix}_p95_ms"),
+        format!("{:.3}", ordered[p95_index]),
+    );
+}
+
+/// One edit of `r00000.c1` through `edit_cells` and the host's re-query, the
+/// window and the column totals a `many` reply forces, measured
+/// `WQ_EDIT_COUNT` times.
+fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
+    let name = shape.name();
+    let entities = (0..WQ_ROWS)
+        .map(|row| format!("r{row:05}"))
+        .collect::<Vec<_>>();
+    let mut edit_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut edit_requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut window_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut column_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut view_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut edit_view_requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut edit_phases = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut window_phases = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut column_totals_phases = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut view_totals_phases = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut requery_phases = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut many = false;
+    for row in 0..WQ_EDIT_COUNT {
+        let revision = runtime.observe_occurrence().revision;
+        let target = FieldTarget {
+            entity: "r00000".to_owned(),
+            field: "c1".to_owned(),
+        };
+        let input = ScalarEditInput::Number {
+            input: format!("{}", 100 + row),
+        };
+        let (edited, edit_sample, phases) = {
+            instrumentation::reset_phases();
+            let (edited, sample) =
+                observe(|| runtime.edit_cells(&revision, &[CellEdit { target, input }]));
+            (edited, sample, phase_millis(&instrumentation::take_phases()))
+        };
+        edit_phases.push(phases);
+        let publication = match edited {
+            Ok(publication) => publication,
+            Err(error) => {
+                wq_refused(name, "edit", &error);
+                return;
+            }
+        };
+        many = publication.many;
+
+        // The re-query a host runs after a `many` reply: the first 100 rows of
+        // every column, then the totals over every row of every column.
+        let revision = runtime.observe_occurrence().revision;
+        let window = DesignerRequest::QueryTableWindow {
+            expected_revision: revision.clone(),
+            collection: "grid".to_owned(),
+            view: TableView::default(),
+            start: 0,
+            count: 100,
+            display: true,
+        };
+        let totals = DesignerRequest::QueryColumnTotals {
+            expected_revision: revision.clone(),
+            collection: "grid".to_owned(),
+            entities: entities.clone(),
+        };
+        // Sheet's own totals query lists the shown rows, which its 60 KB
+        // request bound keeps well under 10,000, so a view's totals are
+        // measured too, and each part on its own.
+        let view_totals = DesignerRequest::QueryViewTotals {
+            expected_revision: revision,
+            collection: "grid".to_owned(),
+            view: TableView::default(),
+        };
+        let (windowed, window_sample, phases) = {
+            instrumentation::reset_phases();
+            let (outcome, sample) = observe(|| runtime.handle(window.clone()));
+            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+        };
+        window_phases.push(phases);
+        let (totalled, column_totals_sample, phases) = {
+            instrumentation::reset_phases();
+            let (outcome, sample) = observe(|| runtime.handle(totals.clone()));
+            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+        };
+        column_totals_phases.push(phases);
+        let (viewed, view_totals_sample, phases) = {
+            instrumentation::reset_phases();
+            let (outcome, sample) = observe(|| runtime.handle(view_totals));
+            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+        };
+        view_totals_phases.push(phases);
+        for (step, outcome) in [
+            ("requery_window", windowed),
+            ("requery_column_totals", totalled),
+            ("requery_view_totals", viewed),
+        ] {
+            if let Err(error) = outcome {
+                wq_refused(name, step, &error);
+                return;
+            }
+        }
+        let (requeried, requery_sample, phases) = {
+            instrumentation::reset_phases();
+            let (outcome, sample) = observe(|| {
+                runtime.handle(window)?;
+                runtime.handle(totals)?;
+                Ok::<(), super::DesignerError>(())
+            });
+            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+        };
+        requery_phases.push(phases);
+        if let Err(error) = requeried {
+            wq_refused(name, "requery", &error);
+            return;
+        }
+        edit_requery_samples.push(Sample {
+            millis: edit_sample.millis + requery_sample.millis,
+            ..edit_sample
+        });
+        edit_view_requery_samples.push(Sample {
+            millis: edit_sample.millis + window_sample.millis + view_totals_sample.millis,
+            ..edit_sample
+        });
+        edit_samples.push(edit_sample);
+        requery_samples.push(requery_sample);
+        window_samples.push(window_sample);
+        column_totals_samples.push(column_totals_sample);
+        view_totals_samples.push(view_totals_sample);
+    }
+    wq_print(name, "edit_n", edit_samples.len());
+    wq_print(name, "edit_many", many);
+    wq_print_latency(name, "edit", &edit_samples);
+    wq_print_latency(name, "requery", &requery_samples);
+    wq_print_latency(name, "edit_requery", &edit_requery_samples);
+    wq_print_latency(name, "requery_window", &window_samples);
+    wq_print_latency(name, "requery_column_totals", &column_totals_samples);
+    wq_print_latency(name, "requery_view_totals", &view_totals_samples);
+    wq_print_latency(name, "edit_view_requery", &edit_view_requery_samples);
+    wq_phase_latency(name, "edit", &edit_phases);
+    wq_phase_latency(name, "window", &window_phases);
+    wq_phase_latency(name, "column_totals", &column_totals_phases);
+    wq_phase_latency(name, "view_totals", &view_totals_phases);
+    wq_phase_latency(name, "requery", &requery_phases);
+}
+
+/// Print the median and p95 of every phase recorded by the given samples.
+fn wq_phase_latency(name: &str, prefix: &str, samples: &[BTreeMap<&'static str, f64>]) {
+    let phase_names = samples
+        .iter()
+        .flat_map(|phases| phases.keys().copied())
+        .collect::<BTreeSet<_>>();
+    for phase in phase_names {
+        let mut values = samples
+            .iter()
+            .map(|phases| phases.get(phase).copied().unwrap_or(0.0))
+            .collect::<Vec<_>>();
+        values.sort_by(f64::total_cmp);
+        wq_print(
+            name,
+            &format!("{prefix}_phase_{phase}_median_ms"),
+            format!("{:.3}", values[values.len() / 2]),
+        );
+        wq_print(
+            name,
+            &format!("{prefix}_phase_{phase}_p95_ms"),
+            format!("{:.3}", w1_percentile(&values, 95.0)),
+        );
     }
 }
 
@@ -1693,6 +1928,42 @@ const PHASE_ORDER: &[(&str, usize)] = &[
     ("refresh_structure/capacity_measure", 3),
     ("refresh_structure/collection_specs", 3),
     ("validate/semantic/calculate", 3),
+    ("query/table_window", 0),
+    ("query/table_window/revision_check", 1),
+    ("query/table_window/spec", 1),
+    ("query/table_window/rows", 1),
+    ("query/table_window/response", 1),
+    ("query/window_column_totals", 1),
+    ("query/window_column_totals/cache", 2),
+    ("query/window_column_totals/compute", 2),
+    ("query/column_totals", 0),
+    ("query/column_totals/revision_check", 1),
+    ("query/column_totals/spec", 1),
+    ("query/column_totals/validation", 1),
+    ("query/column_totals/response", 1),
+    ("query/view_totals", 0),
+    ("query/view_totals/revision_check", 1),
+    ("query/view_totals/members", 1),
+    ("query/view_totals/response", 1),
+    ("query/view_order", 1),
+    ("query/view_order/cache", 2),
+    ("query/view_order/build", 2),
+    ("query/view_order/insert", 2),
+    ("query/totals", 1),
+    ("query/totals/query_entities", 2),
+    ("query/totals/targets", 2),
+    ("query/totals/query_fields", 2),
+    ("query/totals/project", 2),
+    ("query/totals/sum", 2),
+    ("edit_cells/specs", 1),
+    ("publish_commands/published_projection", 2),
+    ("published_projection/from", 3),
+    ("published_projection/bound", 3),
+    ("handle/changed_cells/many", 2),
+    ("handle/changed_cells/build", 2),
+    ("install_prepared/invalidation", 7),
+    ("invalidation/affected_calculations", 8),
+    ("execute_profile/current_witness", 4),
     ("validate/semantic/report", 3),
 ];
 

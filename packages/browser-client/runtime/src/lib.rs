@@ -3370,8 +3370,10 @@ impl DesignerRuntime {
 
     fn attach_changed_cells(&self, publication: &mut PublicationProjection) {
         if publication.many {
+            let _phase = instrumentation::PhaseTimer::new("handle/changed_cells/many");
             return;
         }
+        let _phase = instrumentation::PhaseTimer::new("handle/changed_cells/build");
         match self.changed_cells(publication) {
             Some(changed) => publication.changed = changed,
             None => mark_publication_many(publication),
@@ -3675,14 +3677,18 @@ impl DesignerRuntime {
                 start,
                 count,
                 display,
-            } => Ok(DesignerResponse::TableWindow(self.query_table_window(
-                &expected_revision,
-                &collection,
-                &view,
-                start,
-                count,
-                display,
-            )?)),
+            } => {
+                let projection = self.query_table_window(
+                    &expected_revision,
+                    &collection,
+                    &view,
+                    start,
+                    count,
+                    display,
+                )?;
+                let _phase = instrumentation::PhaseTimer::new("query/table_window/response");
+                Ok(DesignerResponse::TableWindow(projection))
+            }
             DesignerRequest::LocateInView {
                 expected_revision,
                 collection,
@@ -3726,20 +3732,22 @@ impl DesignerRuntime {
                 expected_revision,
                 collection,
                 entities,
-            } => Ok(DesignerResponse::ColumnTotals(self.query_column_totals(
-                &expected_revision,
-                &collection,
-                &entities,
-            )?)),
+            } => {
+                let projection =
+                    self.query_column_totals(&expected_revision, &collection, &entities)?;
+                let _phase = instrumentation::PhaseTimer::new("query/column_totals/response");
+                Ok(DesignerResponse::ColumnTotals(projection))
+            }
             DesignerRequest::QueryViewTotals {
                 expected_revision,
                 collection,
                 view,
-            } => Ok(DesignerResponse::ColumnTotals(self.query_view_totals(
-                &expected_revision,
-                &collection,
-                &view,
-            )?)),
+            } => {
+                let projection =
+                    self.query_view_totals(&expected_revision, &collection, &view)?;
+                let _phase = instrumentation::PhaseTimer::new("query/view_totals/response");
+                Ok(DesignerResponse::ColumnTotals(projection))
+            }
             DesignerRequest::QueryGroupTotals {
                 expected_revision,
                 collection,
@@ -4370,6 +4378,7 @@ impl DesignerRuntime {
         count: usize,
         display: bool,
     ) -> Result<TableWindowProjection, DesignerError> {
+        let _phase = instrumentation::PhaseTimer::new("query/table_window");
         if count > MAX_TABLE_WINDOW_ROWS {
             return Err(DesignerError::InvalidView {
                 message: format!(
@@ -4378,11 +4387,17 @@ impl DesignerRuntime {
             });
         }
         validate_view_bounds(view)?;
-        self.check_revision(expected_revision)?;
+        {
+            let _phase = instrumentation::PhaseTimer::new("query/table_window/revision_check");
+            self.check_revision(expected_revision)?;
+        }
         let revision = self.current_revision().to_owned();
         let order = self.view_order(collection, view)?;
         let column_totals = self.window_column_totals(collection)?;
-        let spec = self.collection_spec(collection)?;
+        let spec = {
+            let _phase = instrumentation::PhaseTimer::new("query/table_window/spec");
+            self.collection_spec(collection)?
+        };
         let total_rows = order.len();
         let start = start.min(total_rows);
         let end = start.saturating_add(count).min(total_rows);
@@ -4404,8 +4419,10 @@ impl DesignerRuntime {
                 .map_err(|error| view_encoding_failure("column_totals", &error))?
                 .len(),
         );
-        let (rows, byte_limited) =
-            self.build_window_rows(spec, &order[start..end], &entities, &mut used, display)?;
+        let (rows, byte_limited) = {
+            let _phase = instrumentation::PhaseTimer::new("query/table_window/rows");
+            self.build_window_rows(spec, &order[start..end], &entities, &mut used, display)?
+        };
         Ok(TableWindowProjection {
             revision,
             tracker_profile: is_tracker_spec(spec).then_some(true),
@@ -4657,19 +4674,29 @@ impl DesignerRuntime {
         collection: &str,
         view: &TableView,
     ) -> Result<Arc<[usize]>, DesignerError> {
+        let _phase = instrumentation::PhaseTimer::new("query/view_order");
         let revision = self.current_revision().to_owned();
         let key = view_cache_key(view)?;
-        self.view_index.retain_revision(&revision);
-        if let Some(order) = self.view_index.get(&revision, collection, &key) {
-            return Ok(order);
+        {
+            let _phase = instrumentation::PhaseTimer::new("query/view_order/cache");
+            self.view_index.retain_revision(&revision);
+            if let Some(order) = self.view_index.get(&revision, collection, &key) {
+                return Ok(order);
+            }
         }
-        let order = Arc::from(self.build_view_order(collection, view)?);
-        self.view_index.insert(ViewIndexEntry {
-            revision,
-            collection: collection.to_owned(),
-            view: key,
-            order: Arc::clone(&order),
+        let order = Arc::from({
+            let _phase = instrumentation::PhaseTimer::new("query/view_order/build");
+            self.build_view_order(collection, view)?
         });
+        {
+            let _phase = instrumentation::PhaseTimer::new("query/view_order/insert");
+            self.view_index.insert(ViewIndexEntry {
+                revision,
+                collection: collection.to_owned(),
+                view: key,
+                order: Arc::clone(&order),
+            });
+        }
         Ok(order)
     }
 
@@ -4747,13 +4774,18 @@ impl DesignerRuntime {
         &mut self,
         collection: &str,
     ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        let _phase = instrumentation::PhaseTimer::new("query/window_column_totals");
         let revision = self.current_revision().to_owned();
-        if let Some((cached_revision, cached_collection, totals)) = &self.totals_cache {
-            if *cached_revision == revision && cached_collection == collection {
-                return Ok(totals.clone());
+        {
+            let _phase = instrumentation::PhaseTimer::new("query/window_column_totals/cache");
+            if let Some((cached_revision, cached_collection, totals)) = &self.totals_cache {
+                if *cached_revision == revision && cached_collection == collection {
+                    return Ok(totals.clone());
+                }
             }
         }
         let totals = {
+            let _phase = instrumentation::PhaseTimer::new("query/window_column_totals/compute");
             let spec = self.collection_spec(collection)?;
             self.totals_for_entities(spec, &spec.entities)?
         };
@@ -4769,26 +4801,40 @@ impl DesignerRuntime {
         spec: &CollectionSpec,
         members: &[EntityId],
     ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
-        let entities = self.session.query_entities(members)?;
-        let targets = entities
-            .value()
-            .iter()
-            .flat_map(|entity| {
-                spec.columns
-                    .iter()
-                    .filter(|column| {
-                        column.field_type == FieldType::Number && entity.fields.contains(&column.id)
-                    })
-                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
-            })
-            .collect::<Vec<_>>();
-        let projected = self
-            .session
-            .query_fields(&targets)?
-            .value()
-            .iter()
-            .map(|field| self.project_field(field))
-            .collect::<Vec<_>>();
+        let _phase = instrumentation::PhaseTimer::new("query/totals");
+        let entities = {
+            let _phase = instrumentation::PhaseTimer::new("query/totals/query_entities");
+            self.session.query_entities(members)?
+        };
+        let targets = {
+            let _phase = instrumentation::PhaseTimer::new("query/totals/targets");
+            entities
+                .value()
+                .iter()
+                .flat_map(|entity| {
+                    spec.columns
+                        .iter()
+                        .filter(|column| {
+                            column.field_type == FieldType::Number
+                                && entity.fields.contains(&column.id)
+                        })
+                        .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
+                })
+                .collect::<Vec<_>>()
+        };
+        let projected = {
+            let _phase = instrumentation::PhaseTimer::new("query/totals/query_fields");
+            self.session.query_fields(&targets)?
+        };
+        let projected = {
+            let _phase = instrumentation::PhaseTimer::new("query/totals/project");
+            projected
+                .value()
+                .iter()
+                .map(|field| self.project_field(field))
+                .collect::<Vec<_>>()
+        };
+        let _phase = instrumentation::PhaseTimer::new("query/totals/sum");
         Ok(column_totals_from_fields(
             spec,
             &projected.iter().collect::<Vec<_>>(),
@@ -4804,9 +4850,16 @@ impl DesignerRuntime {
         collection: &str,
         entities: &[String],
     ) -> Result<ColumnTotalsProjection, DesignerError> {
-        self.check_revision(expected_revision)?;
+        let _phase = instrumentation::PhaseTimer::new("query/column_totals");
+        {
+            let _phase = instrumentation::PhaseTimer::new("query/column_totals/revision_check");
+            self.check_revision(expected_revision)?;
+        }
         let revision = self.current_revision().to_owned();
-        let spec = self.collection_spec(collection)?;
+        let spec = {
+            let _phase = instrumentation::PhaseTimer::new("query/column_totals/spec");
+            self.collection_spec(collection)?
+        };
         // Every id must be a distinct entity of the collection, so the
         // collection size bounds the set before any lookup.
         if entities.len() > spec.entities.len() {
@@ -4818,27 +4871,29 @@ impl DesignerRuntime {
                 ),
             });
         }
-        let known = spec.entities.iter().collect::<BTreeSet<_>>();
-        let mut requested = BTreeSet::new();
-        for entity in entities {
-            let id = EntityId::from(entity.as_str());
-            if !known.contains(&id) {
-                return Err(DesignerError::InvalidView {
-                    message: format!("entity {entity} is not in collection {collection}"),
-                });
+        let members = {
+            let _phase = instrumentation::PhaseTimer::new("query/column_totals/validation");
+            let known = spec.entities.iter().collect::<BTreeSet<_>>();
+            let mut requested = BTreeSet::new();
+            for entity in entities {
+                let id = EntityId::from(entity.as_str());
+                if !known.contains(&id) {
+                    return Err(DesignerError::InvalidView {
+                        message: format!("entity {entity} is not in collection {collection}"),
+                    });
+                }
+                if !requested.insert(id) {
+                    return Err(DesignerError::InvalidView {
+                        message: format!("entity {entity} is listed more than once"),
+                    });
+                }
             }
-            if !requested.insert(id) {
-                return Err(DesignerError::InvalidView {
-                    message: format!("entity {entity} is listed more than once"),
-                });
-            }
-        }
-        let members = spec
-            .entities
-            .iter()
-            .filter(|id| requested.contains(*id))
-            .cloned()
-            .collect::<Vec<_>>();
+            spec.entities
+                .iter()
+                .filter(|id| requested.contains(*id))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         let column_totals = self.totals_for_entities(spec, &members)?;
         Ok(ColumnTotalsProjection {
             revision,
@@ -4858,17 +4913,23 @@ impl DesignerRuntime {
         collection: &str,
         view: &TableView,
     ) -> Result<ColumnTotalsProjection, DesignerError> {
+        let _phase = instrumentation::PhaseTimer::new("query/view_totals");
         validate_view_bounds(view)?;
-        self.check_revision(expected_revision)?;
+        {
+            let _phase = instrumentation::PhaseTimer::new("query/view_totals/revision_check");
+            self.check_revision(expected_revision)?;
+        }
         let revision = self.current_revision().to_owned();
         let order = self.view_order(collection, view)?;
         let spec = self.collection_spec(collection)?;
-        let mut rows = order.to_vec();
-        rows.sort_unstable();
-        let members = rows
-            .iter()
-            .map(|row| spec.entities[*row].clone())
-            .collect::<Vec<_>>();
+        let members = {
+            let _phase = instrumentation::PhaseTimer::new("query/view_totals/members");
+            let mut rows = order.to_vec();
+            rows.sort_unstable();
+            rows.iter()
+                .map(|row| spec.entities[*row].clone())
+                .collect::<Vec<_>>()
+        };
         let column_totals = self.totals_for_entities(spec, &members)?;
         Ok(ColumnTotalsProjection {
             revision,
@@ -6455,9 +6516,16 @@ impl DesignerRuntime {
         &self,
         invalidation: &ResidentProjectionInvalidation,
     ) -> PublicationProjection {
-        let publication = PublicationProjection::from(invalidation);
+        let _phase = instrumentation::PhaseTimer::new("publish_commands/published_projection");
+        let publication = {
+            let _phase = instrumentation::PhaseTimer::new("published_projection/from");
+            PublicationProjection::from(invalidation)
+        };
         match self.profile {
-            SessionProfile::WorkingSize => bound_publication_targets(publication),
+            SessionProfile::WorkingSize => {
+                let _phase = instrumentation::PhaseTimer::new("published_projection/bound");
+                bound_publication_targets(publication)
+            }
             SessionProfile::Ordinary | SessionProfile::TextCapacity => publication,
         }
     }
@@ -7366,9 +7434,12 @@ impl DesignerRuntime {
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
         let mut specs: BTreeMap<&EntityId, &CollectionSpec> = BTreeMap::new();
-        for spec in self.collection_specs.values() {
-            for entity in &spec.entities {
-                specs.entry(entity).or_insert(spec);
+        {
+            let _phase = instrumentation::PhaseTimer::new("edit_cells/specs");
+            for spec in self.collection_specs.values() {
+                for entity in &spec.entities {
+                    specs.entry(entity).or_insert(spec);
+                }
             }
         }
         for edit in edits {
