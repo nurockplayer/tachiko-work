@@ -35,7 +35,7 @@ use super::{
     ValidationReport, Value, WorkspaceError, apply_field_value_candidate_with_planning,
     finalize_edit_with_validation, formula_inverse_restore_candidate_in_place,
     formula_restore_candidate_in_place, formula_update_candidate_in_place,
-    unset_field_candidate_in_place,
+    resident_session::DocumentWitness, unset_field_candidate_in_place,
 };
 
 /// What a run of `AppendEntity` commands has already proved about the candidate:
@@ -1231,6 +1231,17 @@ pub trait SemanticPublicationAuthority {
     /// occurrence must not copy it.
     fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision);
 
+    /// Identity of the resident occurrence and revision this authority
+    /// currently protects, when it is a resident session.
+    ///
+    /// A memo whose base was witnessed by that same occurrence and revision
+    /// names this exact document, so the lifecycle reuses it without comparing
+    /// whole documents. Authorities without a resident occurrence return
+    /// `None`, and every witnessed memo then misses as before.
+    fn current_snapshot_witness(&self) -> Option<DocumentWitness<'_>> {
+        None
+    }
+
     /// Resolve one publication attempt under an exclusive guard. First compare
     /// `expected_document_scope`; an occurrence change returns
     /// [`SemanticPublicationError::DocumentScopeMismatch`] without invoking
@@ -1419,9 +1430,45 @@ struct EvaluatedPatch {
     footprint: AuthorizationFootprint,
 }
 
+/// The base an [`EvaluationMemo`] is pinned to.
+///
+/// A resident session proves its current document by occurrence and revision,
+/// so its memo holds no copy. A non-resident caller supplies only a document,
+/// so its memo keeps the copy equality has always compared.
+enum MemoBase {
+    /// The resident occurrence and revision that supplied the base. A session
+    /// changes its document only together with its revision, so this pair
+    /// names exactly one document.
+    Witnessed {
+        occurrence: u64,
+        revision: SemanticRevision,
+    },
+    /// The non-resident caller's base document, compared by value.
+    Copied(Document),
+}
+
+impl MemoBase {
+    /// Whether this base is the document the witness names, or an equal copy.
+    fn matches(&self, witness: Option<&DocumentWitness<'_>>, document: &Document) -> bool {
+        match self {
+            Self::Witnessed {
+                occurrence,
+                revision,
+            } => witness.is_some_and(|witness| {
+                witness.occurrence_id() == *occurrence && witness.revision() == revision
+            }),
+            Self::Copied(copied) => {
+                #[cfg(test)]
+                super::evaluation_counters::record_memo_equality();
+                copied == document
+            }
+        }
+    }
+}
+
 /// The last successful evaluation, reused only for an identical base document and patch.
 struct EvaluationMemo {
-    base: Document,
+    base: MemoBase,
     patch: SemanticPatch,
     evaluated: EvaluatedPatch,
 }
@@ -1783,6 +1830,7 @@ impl PatchLifecycle {
             request,
             now,
             None,
+            None,
         )
     }
 
@@ -1812,9 +1860,39 @@ impl PatchLifecycle {
             request,
             now,
             prepared,
+            None,
         )
     }
 
+    /// Issue one proposal whose base the resident session witnesses.
+    ///
+    /// The witness proves the base document by occurrence and revision, so the
+    /// memo keeps no copy and a prepared evaluation of that same occurrence and
+    /// revision is reused without comparing whole documents.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::propose_prepared`].
+    pub fn propose_prepared_witnessed(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        witness: &DocumentWitness<'_>,
+        request: ProposalRequest,
+        now: TrustedInstant,
+        prepared: Option<&PreparedEvaluation<'_>>,
+    ) -> Result<SemanticPatch, PatchLifecycleError> {
+        self.propose_inner(
+            document_scope,
+            witness.document(),
+            witness.revision(),
+            request,
+            now,
+            prepared,
+            Some(witness),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // Mirrors the public proposal context plus its optional witness.
     #[allow(clippy::too_many_lines)] // Proposal checks stay ordered at one admission boundary.
     fn propose_inner(
         &mut self,
@@ -1824,9 +1902,18 @@ impl PatchLifecycle {
         request: ProposalRequest,
         now: TrustedInstant,
         prepared: Option<&PreparedEvaluation<'_>>,
+        witness: Option<&DocumentWitness<'_>>,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
-        let prepared = prepared.filter(|prepared| {
-            prepared.base_revision() == current_revision && prepared.base_document() == document
+        let prepared = prepared.filter(|prepared| match witness {
+            // The witness names the occurrence and revision this evaluation was
+            // prepared against, so its base document is this exact document.
+            Some(witness) => {
+                prepared.base_occurrence() == witness.occurrence_id()
+                    && prepared.base_revision() == witness.revision()
+            }
+            None => {
+                prepared.base_revision() == current_revision && prepared.base_document() == document
+            }
         });
         self.require_document(document_scope, document)?;
         if self.proposals.contains_key(&request.id) {
@@ -1946,8 +2033,18 @@ impl PatchLifecycle {
         };
         record.footprint = Some(evaluated.footprint.clone());
         self.proposals.insert(patch.id.clone(), record);
+        let base = if let Some(witness) = witness {
+            MemoBase::Witnessed {
+                occurrence: witness.occurrence_id(),
+                revision: witness.revision().clone(),
+            }
+        } else {
+            #[cfg(test)]
+            super::evaluation_counters::record_memo_base_copy();
+            MemoBase::Copied(document.clone())
+        };
         self.evaluation_memo = Some(EvaluationMemo {
-            base: document.clone(),
+            base,
             patch: patch.clone(),
             evaluated,
         });
@@ -1980,6 +2077,36 @@ impl PatchLifecycle {
             viewer,
             now,
             EvidenceProfile::V1,
+            None,
+        )? {
+            ProfiledPreview::V1(preview) => Ok(preview),
+            ProfiledPreview::V2(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+        }
+    }
+
+    /// Return disclosure-authorized review evidence for a proposal issued at
+    /// the resident occurrence and revision the witness names.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::preview`].
+    pub fn preview_witnessed(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        witness: &DocumentWitness<'_>,
+        proposal_id: &ProposalId,
+        viewer: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<PatchPreview, PatchLifecycleError> {
+        match self.preview_profile(
+            document_scope,
+            witness.document(),
+            witness.revision(),
+            proposal_id,
+            viewer,
+            now,
+            EvidenceProfile::V1,
+            Some(witness),
         )? {
             ProfiledPreview::V1(preview) => Ok(preview),
             ProfiledPreview::V2(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
@@ -2009,6 +2136,36 @@ impl PatchLifecycle {
             viewer,
             now,
             EvidenceProfile::V2,
+            None,
+        )? {
+            ProfiledPreview::V2(preview) => Ok(preview),
+            ProfiledPreview::V1(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
+        }
+    }
+
+    /// Return a disclosure-authorized v2 preview for a proposal issued at the
+    /// resident occurrence and revision the witness names.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::preview_v2`].
+    pub fn preview_v2_witnessed(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        witness: &DocumentWitness<'_>,
+        proposal_id: &ProposalId,
+        viewer: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<PatchPreviewV2, PatchLifecycleError> {
+        match self.preview_profile(
+            document_scope,
+            witness.document(),
+            witness.revision(),
+            proposal_id,
+            viewer,
+            now,
+            EvidenceProfile::V2,
+            Some(witness),
         )? {
             ProfiledPreview::V2(preview) => Ok(preview),
             ProfiledPreview::V1(_) => Err(PatchLifecycleError::EvidenceProfileMismatch),
@@ -2025,6 +2182,7 @@ impl PatchLifecycle {
         viewer: &PrincipalId,
         now: TrustedInstant,
         expected_profile: EvidenceProfile,
+        witness: Option<&DocumentWitness<'_>>,
     ) -> Result<ProfiledPreview, PatchLifecycleError> {
         self.require_document(document_scope, document)?;
         let record = self.select_disclosable_proposal(proposal_id, viewer, now)?;
@@ -2041,7 +2199,7 @@ impl PatchLifecycle {
             return Err(PatchLifecycleError::Stale);
         }
         let patch = record.patch;
-        self.with_evaluated(document, &patch, |lifecycle, evaluated| {
+        self.with_evaluated(document, &patch, witness, |lifecycle, evaluated| {
             if evaluated.footprint != stored_footprint {
                 lifecycle.append_state(proposal_id, PatchLifecycleState::Conflict);
                 return Err(PatchLifecycleError::ApprovalBindingMismatch);
@@ -2141,7 +2299,7 @@ impl PatchLifecycle {
             return Err(PatchLifecycleError::Stale);
         }
         let associated_write_requirements =
-            self.with_evaluated(document, &proposal.patch, |_, evaluated| {
+            self.with_evaluated(document, &proposal.patch, None, |_, evaluated| {
                 if evaluated.footprint != footprint {
                     return Err(PatchLifecycleError::ApprovalBindingMismatch);
                 }
@@ -2266,6 +2424,7 @@ impl PatchLifecycle {
         // a retried execute evaluates again.
         let retained = self.evaluation_memo.take();
         let (current_document_scope, document, current_revision) = publication.current_snapshot();
+        let witness = publication.current_snapshot_witness();
         if self
             .require_document(&current_document_scope, document)
             .is_err()
@@ -2304,7 +2463,12 @@ impl PatchLifecycle {
         )?;
 
         let evaluated = match retained {
-            Some(memo) if memo.base == *document && memo.patch == proposal.patch => memo.evaluated,
+            Some(memo)
+                if memo.patch == proposal.patch
+                    && memo.base.matches(witness.as_ref(), document) =>
+            {
+                memo.evaluated
+            }
             _ => self.evaluate_patch(document, &proposal.patch)?,
         };
         if evaluated.footprint != footprint {
@@ -4308,12 +4472,13 @@ impl PatchLifecycle {
         &mut self,
         document: &Document,
         patch: &SemanticPatch,
+        witness: Option<&DocumentWitness<'_>>,
         read: impl FnOnce(&mut Self, &EvaluatedPatch) -> Result<R, PatchLifecycleError>,
     ) -> Result<R, PatchLifecycleError> {
         let memo = self.evaluation_memo.take();
         let retained = memo
             .as_ref()
-            .filter(|memo| memo.base == *document && memo.patch == *patch);
+            .filter(|memo| memo.patch == *patch && memo.base.matches(witness, document));
         let result = match retained {
             Some(memo) => read(self, &memo.evaluated),
             None => match self.evaluate_patch(document, patch) {
