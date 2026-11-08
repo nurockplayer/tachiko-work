@@ -2,13 +2,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    AssociatedWriteRequirement, AuthorizationAction, Document, DocumentScopeId, Entity,
-    FieldConstraint, FieldDefinition, FieldId, FieldRef, FieldType, FormulaUpdateCommand, Grant,
-    GrantRequirement, KeyedGroupedSumDefinition, MutationClass, OperationFamily, PatchLifecycle,
-    PatchLifecycleError, PatchLifecycleState, PrincipalKind, ProposalId, ScopedSemanticSubject,
-    SemanticCommand, SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority,
-    SemanticPublicationError, SemanticRevision, SemanticScope, TrustedInstant, V2ReceiptEvidence,
-    Value,
+    AssociatedWriteRequirement, AuthorizationAction, Document, DocumentScopeId, DocumentWitness,
+    Entity, FieldConstraint, FieldDefinition, FieldId, FieldRef, FieldType, FormulaUpdateCommand,
+    Grant, GrantRequirement, KeyedGroupedSumDefinition, MutationClass, OperationFamily,
+    PatchLifecycle, PatchLifecycleError, PatchLifecycleState, PrincipalId, PrincipalKind,
+    ProposalId, ScopedSemanticSubject, SemanticCommand, SemanticPatch, SemanticPatchBody,
+    SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
+    TrustedInstant, V2ReceiptEvidence, Value,
 };
 use crate::{
     ColumnRef, EntityId, Expression, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
@@ -3631,4 +3631,326 @@ fn a_non_resident_proposal_copies_and_compares_its_memo_base() {
         .unwrap();
     assert_eq!(evaluation_counters::memo_counts(), (1, 2));
     assert_eq!(lifecycle.evaluations.get(), 1);
+}
+
+// --- Proposal-only previews skip only the evidence they discard (#678) ---
+
+/// The revision token every fresh resident session starts at.
+fn initial_revision(document: &Document) -> SemanticRevision {
+    ResidentWorkspaceSession::new("scope".into(), document.clone())
+        .revision()
+        .clone()
+}
+
+fn propose_witnessed_base(
+    lifecycle: &mut PatchLifecycle,
+    document: &Document,
+    revision: &SemanticRevision,
+    body: SemanticPatchBody,
+) -> ProposalId {
+    lifecycle
+        .propose(
+            &"scope".into(),
+            document,
+            revision,
+            super::ProposalRequest::new("proposal".into(), revision.clone(), body, "human".into()),
+            TrustedInstant::new(1),
+        )
+        .expect("the proposal is authorized")
+        .id()
+        .clone()
+}
+
+fn full_preview_proposal(
+    lifecycle: &mut PatchLifecycle,
+    v2: bool,
+    witness: &DocumentWitness<'_>,
+    proposal: &ProposalId,
+    viewer: &PrincipalId,
+) -> Result<SemanticPatch, PatchLifecycleError> {
+    if v2 {
+        lifecycle
+            .preview_v2_witnessed(
+                &"scope".into(),
+                witness,
+                proposal,
+                viewer,
+                TrustedInstant::new(2),
+            )
+            .map(|preview| preview.proposal)
+    } else {
+        lifecycle
+            .preview_witnessed(
+                &"scope".into(),
+                witness,
+                proposal,
+                viewer,
+                TrustedInstant::new(2),
+            )
+            .map(|preview| preview.proposal)
+    }
+}
+
+fn proposal_only_preview(
+    lifecycle: &mut PatchLifecycle,
+    v2: bool,
+    witness: &DocumentWitness<'_>,
+    proposal: &ProposalId,
+    viewer: &PrincipalId,
+) -> Result<SemanticPatch, PatchLifecycleError> {
+    if v2 {
+        lifecycle.preview_v2_proposal_witnessed(
+            &"scope".into(),
+            witness,
+            proposal,
+            viewer,
+            TrustedInstant::new(2),
+        )
+    } else {
+        lifecycle.preview_proposal_witnessed(
+            &"scope".into(),
+            witness,
+            proposal,
+            viewer,
+            TrustedInstant::new(2),
+        )
+    }
+}
+
+fn assert_same_retained_state(
+    full: &PatchLifecycle,
+    full_proposal: &ProposalId,
+    proposal_only: &PatchLifecycle,
+    proposal_only_proposal: &ProposalId,
+) {
+    assert_eq!(
+        full.retained_proposal_state(full_proposal).unwrap(),
+        proposal_only
+            .retained_proposal_state(proposal_only_proposal)
+            .unwrap(),
+    );
+}
+
+/// The formula document with `h = g + k`, so an edit to `g` derives one more
+/// disclosure than the same edit on [`formula_document`].
+fn formula_document_with_extra_dependency() -> Document {
+    let mut document = formula_document();
+    document
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .insert("k".into(), number_field("k"));
+    let entity = document.entities.get_mut("e1").unwrap();
+    entity
+        .fields
+        .insert("k".into(), Value::Number(Number::new(2.0).unwrap()));
+    entity.fields.insert(
+        "h".into(),
+        Value::Formula(Expression::Add {
+            left: Box::new(Expression::Reference(FieldRef::new("e1", "g"))),
+            right: Box::new(Expression::Reference(FieldRef::new("e1", "k"))),
+        }),
+    );
+    document
+}
+
+/// Acceptance: for the same proposal, a proposal-only preview returns the
+/// same proposal and leaves the same retained lifecycle state as the full
+/// preview it stands in for.
+#[test]
+fn a_proposal_only_preview_matches_the_full_preview() {
+    for v2 in [false, true] {
+        let document = document();
+        let revision = initial_revision(&document);
+        let mut full = lifecycle(v2);
+        let mut proposal_only = lifecycle(v2);
+        let full_proposal = propose_witnessed_base(&mut full, &document, &revision, set_f("new"));
+        let proposal_only_proposal =
+            propose_witnessed_base(&mut proposal_only, &document, &revision, set_f("new"));
+
+        let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+        let witness = session.witness();
+        let full_patch =
+            full_preview_proposal(&mut full, v2, &witness, &full_proposal, &"human".into())
+                .expect("the full preview is authorized");
+        let proposal = proposal_only_preview(
+            &mut proposal_only,
+            v2,
+            &witness,
+            &proposal_only_proposal,
+            &"human".into(),
+        )
+        .expect("the proposal-only preview is authorized");
+
+        assert_eq!(full_patch, proposal, "v2 = {v2}");
+        assert_same_retained_state(
+            &full,
+            &full_proposal,
+            &proposal_only,
+            &proposal_only_proposal,
+        );
+    }
+}
+
+/// Acceptance: a stale base is refused with the same error and state by the
+/// full and the proposal-only preview.
+#[test]
+fn a_proposal_only_preview_refuses_a_stale_base_like_the_full_preview() {
+    for v2 in [false, true] {
+        let document = document();
+        let revision = initial_revision(&document);
+        let mut full = lifecycle(v2);
+        let mut proposal_only = lifecycle(v2);
+        let full_proposal = propose_witnessed_base(&mut full, &document, &revision, set_f("new"));
+        let proposal_only_proposal =
+            propose_witnessed_base(&mut proposal_only, &document, &revision, set_f("new"));
+
+        let stale_revision = SemanticRevision::from("resident/9");
+        let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+        let witness =
+            DocumentWitness::for_test(session.occurrence(), &stale_revision, session.document());
+
+        let full_error =
+            full_preview_proposal(&mut full, v2, &witness, &full_proposal, &"human".into())
+                .unwrap_err();
+        let proposal_error = proposal_only_preview(
+            &mut proposal_only,
+            v2,
+            &witness,
+            &proposal_only_proposal,
+            &"human".into(),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(full_error, PatchLifecycleError::Stale),
+            "v2 = {v2}: {full_error:?}"
+        );
+        assert!(
+            matches!(proposal_error, PatchLifecycleError::Stale),
+            "v2 = {v2}: {proposal_error:?}"
+        );
+        assert_eq!(
+            full.proposal_history(&full_proposal).unwrap().last(),
+            Some(&PatchLifecycleState::Stale)
+        );
+        assert_same_retained_state(
+            &full,
+            &full_proposal,
+            &proposal_only,
+            &proposal_only_proposal,
+        );
+    }
+}
+
+/// Acceptance: a base whose fresh evaluation derives a different footprint is
+/// refused as a conflict with the same error and state by both previews.
+#[test]
+fn a_proposal_only_preview_refuses_a_changed_footprint_like_the_full_preview() {
+    for v2 in [false, true] {
+        let base = formula_document();
+        let revision = initial_revision(&base);
+        let mut full = if v2 {
+            v2_lifecycle()
+        } else {
+            formula_lifecycle()
+        };
+        let mut proposal_only = if v2 {
+            v2_lifecycle()
+        } else {
+            formula_lifecycle()
+        };
+        let full_proposal = propose_witnessed_base(&mut full, &base, &revision, set_g_number(2.0));
+        let proposal_only_proposal =
+            propose_witnessed_base(&mut proposal_only, &base, &revision, set_g_number(2.0));
+
+        // Another document at the same revision token whose formula reads one
+        // more field derives a wider disclosure footprint than the proposal
+        // retained.
+        let session =
+            ResidentWorkspaceSession::new("scope".into(), formula_document_with_extra_dependency());
+        let witness = session.witness();
+
+        let full_error =
+            full_preview_proposal(&mut full, v2, &witness, &full_proposal, &"human".into())
+                .unwrap_err();
+        let proposal_error = proposal_only_preview(
+            &mut proposal_only,
+            v2,
+            &witness,
+            &proposal_only_proposal,
+            &"human".into(),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(full_error, PatchLifecycleError::ApprovalBindingMismatch),
+            "v2 = {v2}: {full_error:?}"
+        );
+        assert!(
+            matches!(proposal_error, PatchLifecycleError::ApprovalBindingMismatch),
+            "v2 = {v2}: {proposal_error:?}"
+        );
+        assert!(
+            full.proposal_history(&full_proposal)
+                .unwrap()
+                .contains(&PatchLifecycleState::Conflict)
+        );
+        assert_same_retained_state(
+            &full,
+            &full_proposal,
+            &proposal_only,
+            &proposal_only_proposal,
+        );
+    }
+}
+
+/// Acceptance: an undisclosed proposal is refused with the same error and
+/// leaves the same state under both previews.
+#[test]
+fn a_proposal_only_preview_refuses_an_unauthorized_viewer_like_the_full_preview() {
+    for v2 in [false, true] {
+        let document = document();
+        let revision = initial_revision(&document);
+        let mut full = lifecycle(v2);
+        let mut proposal_only = lifecycle(v2);
+        let full_proposal = propose_witnessed_base(&mut full, &document, &revision, set_f("new"));
+        let proposal_only_proposal =
+            propose_witnessed_base(&mut proposal_only, &document, &revision, set_f("new"));
+        for lifecycle in [&mut full, &mut proposal_only] {
+            lifecycle
+                .register_principal("outsider".into(), PrincipalKind::Human)
+                .unwrap();
+        }
+
+        let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+        let witness = session.witness();
+        let full_error =
+            full_preview_proposal(&mut full, v2, &witness, &full_proposal, &"outsider".into())
+                .unwrap_err();
+        let proposal_error = proposal_only_preview(
+            &mut proposal_only,
+            v2,
+            &witness,
+            &proposal_only_proposal,
+            &"outsider".into(),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(full_error, PatchLifecycleError::DisclosureDenied),
+            "v2 = {v2}: {full_error:?}"
+        );
+        assert!(
+            matches!(proposal_error, PatchLifecycleError::DisclosureDenied),
+            "v2 = {v2}: {proposal_error:?}"
+        );
+        assert_same_retained_state(
+            &full,
+            &full_proposal,
+            &proposal_only,
+            &proposal_only_proposal,
+        );
+    }
 }
