@@ -12,6 +12,8 @@ use tachiko_semantic_core::{
 };
 use thiserror::Error;
 
+use crate::DiffScope;
+
 /// The only canonical delta contract admitted by this implementation slice.
 pub const CANONICAL_SEMANTIC_DELTA_V2: &str = "tachiko.semantic-delta/v2";
 
@@ -351,8 +353,77 @@ pub fn canonical_delta_with_calculations(
     compare_admitted_documents(before, after, before_calculation, after_calculation)
 }
 
+/// Compare only the schemas and entities the caller says may differ.
+///
+/// Returns the value [`canonical_delta_with_calculations`] produces for the
+/// same pair when `scope` names every schema and entity that differs between
+/// the two documents.
+///
+/// The caller must have admitted both documents. This entry keeps only the
+/// contract and document-id refusals, so it skips the whole-document checks of
+/// [`canonical_delta_with_calculations`]: schema and entity validation,
+/// complete formula constraints, and saved-definition bindings. Those checks
+/// refuse an unadmitted pair rather than change the facts of an admitted one,
+/// and they produce no direct fact, so skipping them costs an unadmitted caller
+/// a missing refusal, never a different delta. The supplied calculations are
+/// therefore not read; they keep the call shape of the full entry.
+///
+/// The document title and every saved keyed grouped-sum definition are compared
+/// in full because [`DiffScope`] names neither. A scoped id that neither
+/// document has is not a change.
+///
+/// # Errors
+/// Returns [`CanonicalDeltaError::UnsupportedContract`] and
+/// [`CanonicalDeltaError::DocumentIdMismatch`] for the same selectors and pairs
+/// as [`canonical_delta_with_calculations`].
+pub fn canonical_delta_scoped(
+    contract: &str,
+    before: &Document,
+    after: &Document,
+    _before_calculation: &Calculation,
+    _after_calculation: &Calculation,
+    scope: &DiffScope,
+) -> Result<CanonicalSemanticDelta, CanonicalDeltaError> {
+    admit_delta_selector(contract, before, after)?;
+    let mut facts = Vec::new();
+    compare_title(before, after, &mut facts);
+    for schema_id in &scope.schemas {
+        compare_schema_pair(
+            schema_id,
+            before.schemas.get(schema_id),
+            after.schemas.get(schema_id),
+            &mut facts,
+        );
+    }
+    for entity_id in &scope.entities {
+        compare_entity_pair(
+            entity_id,
+            before.entities.get(entity_id),
+            after.entities.get(entity_id),
+            &mut facts,
+        );
+    }
+    compare_saved_definitions(before, after, &mut facts);
+    facts.sort_by(|left, right| left.ordering_key().cmp(&right.ordering_key()));
+    Ok(CanonicalSemanticDelta {
+        document_id: before.id.clone(),
+        facts,
+    })
+}
+
 /// Refuse a selector, document pair, or input state before any comparison.
 fn admit_delta_inputs(
+    contract: &str,
+    before: &Document,
+    after: &Document,
+) -> Result<(), CanonicalDeltaError> {
+    admit_delta_selector(contract, before, after)?;
+    admit_input(before, DeltaInputSide::Before)?;
+    admit_input(after, DeltaInputSide::After)
+}
+
+/// Refuse a selector or an unequal document pair without validating either state.
+fn admit_delta_selector(
     contract: &str,
     before: &Document,
     after: &Document,
@@ -368,8 +439,7 @@ fn admit_delta_inputs(
             after: after.id.clone(),
         });
     }
-    admit_input(before, DeltaInputSide::Before)?;
-    admit_input(after, DeltaInputSide::After)
+    Ok(())
 }
 
 /// Validate admitted inputs against their calculations and compare them.
@@ -452,32 +522,19 @@ fn entity_payload(entity: &tachiko_semantic_core::Entity) -> EntityDefinitionPay
 }
 
 fn compare_direct_state(before: &Document, after: &Document, facts: &mut Vec<CanonicalDirectFact>) {
-    use CanonicalDirectFact as F;
-    if before.title != after.title {
-        facts.push(F::DocumentTitleChanged {
-            document: before.id.clone(),
-            before: before.title.clone(),
-            after: after.title.clone(),
-        });
-    }
+    compare_title(before, after, facts);
     let schemas = before
         .schemas
         .keys()
         .chain(after.schemas.keys())
         .collect::<std::collections::BTreeSet<_>>();
     for schema_id in schemas {
-        match (before.schemas.get(schema_id), after.schemas.get(schema_id)) {
-            (None, Some(schema)) => facts.push(F::SchemaCreated {
-                schema: schema_id.clone(),
-                definition: schema_payload(schema),
-            }),
-            (Some(schema), None) => facts.push(F::SchemaDeleted {
-                schema: schema_id.clone(),
-                definition: schema_payload(schema),
-            }),
-            (Some(old), Some(new)) => compare_schema(schema_id, old, new, facts),
-            (None, None) => unreachable!(),
-        }
+        compare_schema_pair(
+            schema_id,
+            before.schemas.get(schema_id),
+            after.schemas.get(schema_id),
+            facts,
+        );
     }
     let entities = before
         .entities
@@ -485,21 +542,68 @@ fn compare_direct_state(before: &Document, after: &Document, facts: &mut Vec<Can
         .chain(after.entities.keys())
         .collect::<std::collections::BTreeSet<_>>();
     for entity_id in entities {
-        match (
+        compare_entity_pair(
+            entity_id,
             before.entities.get(entity_id),
             after.entities.get(entity_id),
-        ) {
-            (None, Some(entity)) => facts.push(F::EntityCreated {
-                entity: entity_id.clone(),
-                definition: entity_payload(entity),
-            }),
-            (Some(entity), None) => facts.push(F::EntityDeleted {
-                entity: entity_id.clone(),
-                definition: entity_payload(entity),
-            }),
-            (Some(old), Some(new)) => compare_entity(entity_id, old, new, facts),
-            (None, None) => unreachable!(),
-        }
+            facts,
+        );
+    }
+}
+
+fn compare_title(before: &Document, after: &Document, facts: &mut Vec<CanonicalDirectFact>) {
+    if before.title != after.title {
+        facts.push(CanonicalDirectFact::DocumentTitleChanged {
+            document: before.id.clone(),
+            before: before.title.clone(),
+            after: after.title.clone(),
+        });
+    }
+}
+
+/// Compare one schema id, present on neither side when a scope names it and
+/// both documents lack it.
+fn compare_schema_pair(
+    id: &SchemaId,
+    before: Option<&tachiko_semantic_core::Schema>,
+    after: Option<&tachiko_semantic_core::Schema>,
+    facts: &mut Vec<CanonicalDirectFact>,
+) {
+    use CanonicalDirectFact as F;
+    match (before, after) {
+        (None, Some(schema)) => facts.push(F::SchemaCreated {
+            schema: id.clone(),
+            definition: schema_payload(schema),
+        }),
+        (Some(schema), None) => facts.push(F::SchemaDeleted {
+            schema: id.clone(),
+            definition: schema_payload(schema),
+        }),
+        (Some(old), Some(new)) => compare_schema(id, old, new, facts),
+        (None, None) => {}
+    }
+}
+
+/// Compare one entity id, present on neither side when a scope names it and
+/// both documents lack it.
+fn compare_entity_pair(
+    id: &EntityId,
+    before: Option<&tachiko_semantic_core::Entity>,
+    after: Option<&tachiko_semantic_core::Entity>,
+    facts: &mut Vec<CanonicalDirectFact>,
+) {
+    use CanonicalDirectFact as F;
+    match (before, after) {
+        (None, Some(entity)) => facts.push(F::EntityCreated {
+            entity: id.clone(),
+            definition: entity_payload(entity),
+        }),
+        (Some(entity), None) => facts.push(F::EntityDeleted {
+            entity: id.clone(),
+            definition: entity_payload(entity),
+        }),
+        (Some(old), Some(new)) => compare_entity(id, old, new, facts),
+        (None, None) => {}
     }
 }
 
