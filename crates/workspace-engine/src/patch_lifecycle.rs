@@ -19,8 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use tachiko_diff_engine::{
-    CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta,
-    canonical_delta_with_calculations,
+    CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta, canonical_delta_scoped,
 };
 use tachiko_formula_engine::Calculation;
 use tachiko_semantic_core::{
@@ -4213,12 +4212,16 @@ impl PatchLifecycle {
                         source: Box::new(source),
                     }
                 })?;
-                let delta = canonical_delta_with_calculations(
+                // Both documents are admitted above and the prepared evaluation
+                // found every differing schema and entity, so the delta only
+                // has to compare those, the title and the saved definitions.
+                let delta = canonical_delta_scoped(
                     CANONICAL_SEMANTIC_DELTA_V2,
                     base,
                     &candidate,
                     base_calculation,
                     candidate_calculation,
+                    &changes.diff_scope(),
                 )
                 .map_err(|source| PatchLifecycleError::CommandRejected {
                     source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),

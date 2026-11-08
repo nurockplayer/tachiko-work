@@ -17,7 +17,7 @@ pub use canonical_delta::{
     CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact, CanonicalSemanticDelta,
     DeltaInputSide, EntityDefinitionPayload, FieldDefinitionPayload,
     KeyedGroupedSumDefinitionPayload, SchemaDefinitionPayload, canonical_delta,
-    canonical_delta_with_calculations,
+    canonical_delta_scoped, canonical_delta_with_calculations,
 };
 
 #[derive(Clone, Debug, PartialEq)]

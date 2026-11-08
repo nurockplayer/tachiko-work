@@ -8,9 +8,12 @@ use tachiko_semantic_core::{
     Number, Schema, SchemaId, Value,
 };
 
+use crate::DiffScope;
+
 use super::{
     CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact as Fact,
-    CanonicalSemanticDelta, DeltaInputSide, canonical_delta, canonical_delta_with_calculations,
+    CanonicalSemanticDelta, DeltaInputSide, canonical_delta, canonical_delta_scoped,
+    canonical_delta_with_calculations,
 };
 
 fn number(value: f64) -> Number {
@@ -549,4 +552,108 @@ fn canonical_delta_with_calculations_keeps_second_half_refusals() {
     ] {
         assert_same_delta_outcome(CANONICAL_SEMANTIC_DELTA_V2, before, after);
     }
+}
+
+// --- Scoped input (#678) ---
+
+fn compare_scoped(
+    before: &Document,
+    after: &Document,
+    scope: &DiffScope,
+) -> CanonicalSemanticDelta {
+    let before_calculation = calculate(before).unwrap();
+    let after_calculation = calculate(after).unwrap();
+    canonical_delta_scoped(
+        CANONICAL_SEMANTIC_DELTA_V2,
+        before,
+        after,
+        &before_calculation,
+        &after_calculation,
+        scope,
+    )
+    .unwrap()
+}
+
+fn orders_entity(value: &str) -> Entity {
+    Entity {
+        id: "e".into(),
+        key: "e".into(),
+        schema: "orders".into(),
+        fields: BTreeMap::from([("lookup".into(), Value::Text(value.into()))]),
+    }
+}
+
+/// A scope naming ids neither document has changes nothing, and both scopes
+/// still equal the full delta, including the title and saved definitions the
+/// scope does not name.
+#[test]
+fn canonical_delta_scoped_ignores_absent_ids() {
+    let (mut before, mut after) = keyed_definition_documents();
+    before.entities.insert("e".into(), orders_entity("old"));
+    after.entities.insert("e".into(), orders_entity("new"));
+    after.title = "renamed".into();
+    after.schemas.get_mut("orders").unwrap().display_name = Some("Orders".into());
+
+    let exact = compare_scoped(
+        &before,
+        &after,
+        &DiffScope {
+            schemas: ["orders".into()].into(),
+            entities: ["e".into()].into(),
+        },
+    );
+    let loose = compare_scoped(
+        &before,
+        &after,
+        &DiffScope {
+            schemas: ["orders".into(), "absent".into()].into(),
+            entities: ["e".into(), "absent".into()].into(),
+        },
+    );
+    assert_eq!(loose, exact);
+    assert_eq!(
+        exact,
+        compare_with_calculations(CANONICAL_SEMANTIC_DELTA_V2, &before, &after).unwrap()
+    );
+    assert_eq!(
+        exact.facts(),
+        [
+            Fact::DocumentTitleChanged {
+                document: "doc".into(),
+                before: "title".into(),
+                after: "renamed".into(),
+            },
+            Fact::SchemaDisplayNameChanged {
+                schema: "orders".into(),
+                before: None,
+                after: Some("Orders".into()),
+            },
+            Fact::EntityFieldValueChanged {
+                entity: "e".into(),
+                schema: "orders".into(),
+                field: "lookup".into(),
+                before: Value::Text("old".into()),
+                after: Value::Text("new".into()),
+            },
+            Fact::KeyedGroupedSumDefinitionCreated {
+                definition: "summary".into(),
+                after: (&keyed_definition()).into(),
+            },
+        ]
+    );
+
+    // The reverse pair reports the deletion, so an absent id stays silent in
+    // both directions.
+    let reverse = compare_scoped(
+        &after,
+        &before,
+        &DiffScope {
+            schemas: ["orders".into(), "absent".into()].into(),
+            entities: ["e".into(), "absent".into()].into(),
+        },
+    );
+    assert_eq!(
+        reverse,
+        compare_with_calculations(CANONICAL_SEMANTIC_DELTA_V2, &after, &before).unwrap()
+    );
 }

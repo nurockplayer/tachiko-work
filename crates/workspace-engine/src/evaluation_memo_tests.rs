@@ -15,7 +15,10 @@ use crate::{
     NumberFormat, NumberFormatKind, Schema, WorkspaceError, evaluation_counters, planning_counters,
     resident_session::ResidentWorkspaceSession,
 };
-use tachiko_diff_engine::{diff_changes_scoped, diff_with_calculations};
+use tachiko_diff_engine::{
+    CANONICAL_SEMANTIC_DELTA_V2, canonical_delta_scoped, canonical_delta_with_calculations,
+    diff_changes_scoped, diff_with_calculations,
+};
 use tachiko_formula_engine::calculate;
 
 fn text_field(id: &str) -> FieldDefinition {
@@ -2744,10 +2747,11 @@ fn apply_random_edit(document: &mut Document, rng: &mut SeededRng) {
         }
         3 => {
             let entity_id = format!("x{}", rng.next());
-            document.entities.insert(
-                entity_id.clone().into(),
-                mid_sized_entity(&entity_id, rng.below(100)),
-            );
+            let mut entity = mid_sized_entity(&entity_id, rng.below(100));
+            // The added row's key must not repeat an existing row's key, which
+            // document admission requires to be unique.
+            entity.key = format!("added{entity_id}").into();
+            document.entities.insert(entity_id.into(), entity);
         }
         4 => {
             if entity_ids.len() > 8 {
@@ -2800,4 +2804,144 @@ fn scoped_formula_diff_matches_full_diff_for_random_edits() {
         }
         assert_scoped_diff_matches_full(&base, &candidate, &format!("random edit {case}"));
     }
+}
+
+// --- The scoped canonical delta reports exactly the full delta (#678) ---
+
+/// Assert the scoped canonical delta equals the full one for one pair.
+///
+/// The scope comes from the prepared evaluation's projection changes, exactly
+/// as `finalize_evaluation_v2` reads it, and both sides calculate the same two
+/// documents, so any difference is a lost or invented fact.
+fn assert_scoped_delta_matches_full(base: &Document, candidate: &Document, label: &str) {
+    let session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let prepared = session.prepare_evaluation(candidate.clone());
+    let scope = prepared.projection_changes().diff_scope();
+
+    let before_calculation = calculate(base)
+        .unwrap_or_else(|error| panic!("{label}: base calculation refused: {error:?}"));
+    let after_calculation = calculate(candidate)
+        .unwrap_or_else(|error| panic!("{label}: candidate calculation refused: {error:?}"));
+    let full = canonical_delta_with_calculations(
+        CANONICAL_SEMANTIC_DELTA_V2,
+        base,
+        candidate,
+        &before_calculation,
+        &after_calculation,
+    )
+    .unwrap_or_else(|error| panic!("{label}: full delta refused: {error:?}"));
+    let scoped = canonical_delta_scoped(
+        CANONICAL_SEMANTIC_DELTA_V2,
+        base,
+        candidate,
+        &before_calculation,
+        &after_calculation,
+        &scope,
+    )
+    .unwrap_or_else(|error| panic!("{label}: scoped delta refused: {error:?}"));
+    assert_eq!(
+        scoped, full,
+        "{label}: scoped canonical delta differs from the full delta"
+    );
+}
+
+/// Acceptance 1: the scoped delta equals the full delta for every v2 evidence
+/// case the prepared path accepts. The constraint-set case carries the field
+/// constraint change; no command changes the title, so the direct title
+/// comparison is covered by the diff-engine scoped test instead.
+#[test]
+fn scoped_canonical_delta_matches_full_delta_for_every_acceptance_case() {
+    for (label, document, body) in acceptance_cases() {
+        let candidate = v2_lifecycle()
+            .plan_commands(&document, &body)
+            .unwrap_or_else(|error| panic!("{label}: planning refused: {error:?}"))
+            .0;
+        assert_scoped_delta_matches_full(&document, &candidate, label);
+    }
+}
+
+/// Acceptance 1: 50 seeded random edits keep the scoped delta equal to the full
+/// delta on a mid-sized document.
+#[test]
+fn scoped_canonical_delta_matches_full_delta_for_random_edits() {
+    let base = mid_sized_document();
+    let mut rng = SeededRng(0x0678_0026);
+    for case in 0..50 {
+        let mut candidate = base.clone();
+        for _ in 0..=rng.below(3) {
+            apply_random_edit(&mut candidate, &mut rng);
+        }
+        assert_scoped_delta_matches_full(&base, &candidate, &format!("random edit {case}"));
+    }
+}
+
+/// `keyed_document` plus a second schema a changed definition can bind.
+fn alternate_keyed_document() -> Document {
+    let mut document = keyed_document();
+    document.schemas.insert(
+        "orders2".into(),
+        multi_field_schema(
+            "orders2",
+            "orders2",
+            &[("lookup", FieldType::Text), ("quantity", FieldType::Number)],
+        ),
+    );
+    document
+}
+
+/// `keyed_definition` bound to the second orders schema, so it differs without
+/// needing a new field.
+fn changed_keyed_definition() -> KeyedGroupedSumDefinition {
+    let mut definition = keyed_definition();
+    definition.orders.schema = "orders2".into();
+    definition
+}
+
+/// Acceptance 1: a saved keyed grouped-sum definition added, changed and
+/// removed all keep the scoped delta equal to the full delta. Definitions are
+/// not part of `DiffScope`, so this is the part the scoped delta compares in
+/// full.
+#[test]
+fn scoped_canonical_delta_matches_full_delta_for_definition_edits() {
+    let added_base = keyed_document();
+    let added = v2_lifecycle()
+        .plan_commands(
+            &added_base,
+            &SemanticPatchBody::command(SemanticCommand::UpsertKeyedGroupedSumDefinition {
+                definition: keyed_definition(),
+            }),
+        )
+        .expect("adding a definition plans")
+        .0;
+    assert_scoped_delta_matches_full(&added_base, &added, "a definition added");
+
+    let mut changed_base = alternate_keyed_document();
+    changed_base
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), keyed_definition());
+    let changed = v2_lifecycle()
+        .plan_commands(
+            &changed_base,
+            &SemanticPatchBody::command(SemanticCommand::UpsertKeyedGroupedSumDefinition {
+                definition: changed_keyed_definition(),
+            }),
+        )
+        .expect("changing a definition plans")
+        .0;
+    assert_scoped_delta_matches_full(&changed_base, &changed, "a definition changed");
+
+    let mut removed_base = keyed_document();
+    removed_base
+        .keyed_grouped_sum_definitions
+        .insert("summary".into(), keyed_definition());
+    let removed = v2_lifecycle()
+        .plan_commands(
+            &removed_base,
+            &SemanticPatchBody::command(SemanticCommand::RemoveKeyedGroupedSumDefinition {
+                definition: "summary".into(),
+            }),
+        )
+        .expect("removing a definition plans")
+        .0;
+    assert_scoped_delta_matches_full(&removed_base, &removed, "a definition removed");
 }
