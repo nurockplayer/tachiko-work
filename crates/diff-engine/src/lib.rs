@@ -529,7 +529,8 @@ fn compare_schema_ids<'a>(
             (Some(before_schema), Some(after_schema)) => {
                 compare_schema(schema_id, before_schema, after_schema, changes);
             }
-            (None, None) => unreachable!("schema id came from the caller's id set"),
+            // A scope may name an id neither document has; nothing changed.
+            (None, None) => {}
         }
     }
 }
@@ -639,7 +640,8 @@ fn compare_entities(
                     changed_fields,
                 );
             }
-            (None, None) => unreachable!("entity id came from the caller's id set"),
+            // A scope may name an id neither document has; nothing changed.
+            (None, None) => {}
         }
     }
 }
