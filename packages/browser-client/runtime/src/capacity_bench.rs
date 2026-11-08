@@ -241,6 +241,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
     DesignerRuntime {
         profile: SessionProfile::Ordinary,
         capacity_usage,
+        working_admission: None,
         title,
         document_scope,
         default_collection,
