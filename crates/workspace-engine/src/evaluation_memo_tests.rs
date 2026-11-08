@@ -3107,6 +3107,19 @@ fn assert_scoped_diff_matches_full(base: &Document, candidate: &Document, label:
         full.changes(),
         "{label}: scoped formula diff differs from the full diff"
     );
+    // The reuse gate projects only the scope, so that diff must match too.
+    let scoped_on_scoped_projection = diff_changes_scoped(
+        &super::scoped_formula_projection_document(base, &scope),
+        &super::scoped_formula_projection_document(candidate, &scope),
+        &before_calculation,
+        &after_calculation,
+        &scope,
+    );
+    assert_eq!(
+        scoped_on_scoped_projection.as_slice(),
+        full.changes(),
+        "{label}: the diff on the scoped projection differs from the full diff"
+    );
 }
 
 /// Acceptance 1: the scoped diff equals the full diff for every v2 evidence
@@ -3443,4 +3456,179 @@ fn scoped_canonical_delta_matches_full_delta_for_definition_edits() {
         .expect("removing a definition plans")
         .0;
     assert_scoped_delta_matches_full(&removed_base, &removed, "a definition removed");
+}
+
+/// Acceptance: a resident edit proves its base by occurrence and revision, so
+/// its memo keeps no whole-document copy and preview and execution reuse one
+/// evaluation without comparing documents.
+#[test]
+fn a_resident_value_edit_copies_no_memo_base_and_compares_no_document() {
+    let document = document();
+    let mut session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let mut lifecycle = lifecycle(false);
+    let body = set_f("new");
+    let candidate = lifecycle.plan_commands(&document, &body).unwrap().0;
+    let revision = session.revision().clone();
+
+    let prepared = session.prepare_evaluation(candidate);
+    evaluation_counters::reset();
+    let witness = session.witness();
+    let proposal = lifecycle
+        .propose_prepared_witnessed(
+            &"scope".into(),
+            &witness,
+            super::ProposalRequest::new("proposal".into(), revision.clone(), body, "human".into()),
+            TrustedInstant::new(1),
+            Some(&prepared),
+        )
+        .unwrap();
+    lifecycle
+        .preview_witnessed(
+            &"scope".into(),
+            &witness,
+            proposal.id(),
+            &"human".into(),
+            TrustedInstant::new(2),
+        )
+        .unwrap();
+    let installation = prepared.into_installable();
+    let mut time = FixedPublicationTime;
+    let mut publication = session
+        .publication_authority(&mut time)
+        .with_prepared(installation);
+    let receipt = lifecycle
+        .execute(
+            proposal.id(),
+            None,
+            &"human".into(),
+            &mut publication,
+            TrustedInstant::new(3),
+        )
+        .unwrap();
+
+    assert_eq!(evaluation_counters::memo_counts(), (0, 0));
+    assert_eq!(lifecycle.evaluations.get(), 1);
+    assert!(receipt.verified);
+    assert_eq!(*session.document(), with_f_set(document, "new"));
+}
+
+/// Acceptance: one occurrence's witness never authorizes another occurrence's
+/// memo, even when both hold an equal document at the same revision token.
+#[test]
+fn a_witnessed_memo_is_never_used_by_another_session() {
+    let document = document();
+    let session_a = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let mut lifecycle = lifecycle(false);
+    let body = set_f("new");
+    let candidate = lifecycle.plan_commands(&document, &body).unwrap().0;
+    let revision = session_a.revision().clone();
+
+    let prepared = session_a.prepare_evaluation(candidate);
+    let witness = session_a.witness();
+    let proposal = lifecycle
+        .propose_prepared_witnessed(
+            &"scope".into(),
+            &witness,
+            super::ProposalRequest::new("proposal".into(), revision.clone(), body, "human".into()),
+            TrustedInstant::new(1),
+            Some(&prepared),
+        )
+        .unwrap();
+    lifecycle
+        .preview_witnessed(
+            &"scope".into(),
+            &witness,
+            proposal.id(),
+            &"human".into(),
+            TrustedInstant::new(2),
+        )
+        .unwrap();
+    assert_eq!(lifecycle.evaluations.get(), 1);
+
+    // Session B holds the same document and the same revision token, but it is
+    // a different occurrence, so the memo is not its base.
+    let mut session_b = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    assert_eq!(session_b.revision(), &revision);
+    let mut time = FixedPublicationTime;
+    let mut publication = session_b.publication_authority(&mut time);
+    lifecycle
+        .execute(
+            proposal.id(),
+            None,
+            &"human".into(),
+            &mut publication,
+            TrustedInstant::new(3),
+        )
+        .unwrap();
+
+    assert_eq!(
+        lifecycle.evaluations.get(),
+        2,
+        "session B evaluates because the memo belongs to session A"
+    );
+    assert_eq!(*session_b.document(), with_f_set(document, "new"));
+}
+
+/// Acceptance: a witnessed base names one revision, so equal content at the
+/// next revision is not that base.
+#[test]
+fn a_witnessed_memo_base_never_matches_another_revision_of_equal_content() {
+    let document = document();
+    let session = ResidentWorkspaceSession::new("scope".into(), document);
+    let same_revision = session.revision().clone();
+    let later_revision = SemanticRevision::from("resident/1");
+    let base = super::MemoBase::Witnessed {
+        occurrence: session.witness().occurrence_id(),
+        revision: same_revision.clone(),
+    };
+
+    let current = crate::resident_session::DocumentWitness::for_test(
+        session.occurrence(),
+        &same_revision,
+        session.document(),
+    );
+    assert!(base.matches(Some(&current), session.document()));
+
+    let later = crate::resident_session::DocumentWitness::for_test(
+        session.occurrence(),
+        &later_revision,
+        session.document(),
+    );
+    assert!(
+        !base.matches(Some(&later), session.document()),
+        "the same content at the next revision is not the memo's base"
+    );
+}
+
+/// Acceptance: a non-resident caller keeps the copy-and-compare memo path.
+#[test]
+fn a_non_resident_proposal_copies_and_compares_its_memo_base() {
+    let mut lifecycle = lifecycle(false);
+    let document = document();
+    evaluation_counters::reset();
+    let proposal = propose(&mut lifecycle, &document, "proposal", set_f("new")).unwrap();
+    assert_eq!(evaluation_counters::memo_counts(), (1, 0));
+    lifecycle
+        .preview(
+            &"scope".into(),
+            &document,
+            &"r1".into(),
+            &proposal,
+            &"human".into(),
+            TrustedInstant::new(10),
+        )
+        .unwrap();
+    assert_eq!(evaluation_counters::memo_counts(), (1, 1));
+    let mut host = Host::new(document.clone());
+    lifecycle
+        .execute(
+            &proposal,
+            None,
+            &"human".into(),
+            &mut host,
+            TrustedInstant::new(20),
+        )
+        .unwrap();
+    assert_eq!(evaluation_counters::memo_counts(), (1, 2));
+    assert_eq!(lifecycle.evaluations.get(), 1);
 }

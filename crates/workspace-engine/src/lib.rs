@@ -38,8 +38,8 @@ pub use tachiko_semantic_core::AddressIndex;
 pub use tachiko_semantic_core::instrumentation;
 use tachiko_semantic_core::{
     AddressIndexError, KeyedGroupedSumDefinitionError, is_valid_identifier,
-    validate_complete_formula_constraints, validate_document_core,
-    validate_keyed_grouped_sum_definitions,
+    validate_complete_formula_constraints, validate_document_core, validate_entity_field_core,
+    validate_formula_value_constraint, validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
     BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate, RuleId,
@@ -763,6 +763,12 @@ impl<'session> PreparedEvaluation<'session> {
     /// aren't unique across sessions, so reuse compares this as well.
     pub(crate) fn base_document(&self) -> &Document {
         self.base_document
+    }
+
+    /// The session occurrence that prepared this evaluation. A resident witness
+    /// for the same occurrence and revision proves the same base document.
+    pub(crate) fn base_occurrence(&self) -> u64 {
+        self.installation.base_occurrence
     }
 
     /// The evaluated candidate.
@@ -2566,6 +2572,8 @@ pub(crate) mod evaluation_counters {
         static BASE_CALCULATIONS: Cell<usize> = const { Cell::new(0) };
         static PREFLIGHT_RUNS: Cell<usize> = const { Cell::new(0) };
         static PREFLIGHT_PROJECTIONS: Cell<usize> = const { Cell::new(0) };
+        static MEMO_BASE_COPIES: Cell<usize> = const { Cell::new(0) };
+        static MEMO_EQUALITIES: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(crate) fn reset() {
@@ -2573,6 +2581,8 @@ pub(crate) mod evaluation_counters {
         BASE_CALCULATIONS.with(|count| count.set(0));
         PREFLIGHT_RUNS.with(|count| count.set(0));
         PREFLIGHT_PROJECTIONS.with(|count| count.set(0));
+        MEMO_BASE_COPIES.with(|count| count.set(0));
+        MEMO_EQUALITIES.with(|count| count.set(0));
     }
 
     pub(crate) fn record_candidate_calculation() {
@@ -2603,6 +2613,24 @@ pub(crate) mod evaluation_counters {
         (
             PREFLIGHT_RUNS.with(Cell::get),
             PREFLIGHT_PROJECTIONS.with(Cell::get),
+        )
+    }
+
+    /// Record one memo base stored as a whole-document copy.
+    pub(crate) fn record_memo_base_copy() {
+        MEMO_BASE_COPIES.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Record one memo base compared by whole-document equality.
+    pub(crate) fn record_memo_equality() {
+        MEMO_EQUALITIES.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Return `(memo base copies, memo equalities)` since the last [`reset`].
+    pub(crate) fn memo_counts() -> (usize, usize) {
+        (
+            MEMO_BASE_COPIES.with(Cell::get),
+            MEMO_EQUALITIES.with(Cell::get),
         )
     }
 }
