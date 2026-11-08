@@ -324,6 +324,70 @@ impl ResidentWorkspaceSession {
         })
     }
 
+    /// Fold each Number column over `members`, in the given order.
+    ///
+    /// `members` are collection entities in collection (stable-ID) order and
+    /// `fields` are that collection's Number field ids. Every cell is
+    /// classified exactly as [`Self::query_fields`] projects it: a calculated
+    /// value or a stored Number adds, a failed or unavailable calculation or
+    /// another stored value makes its column `None`, and a field the entity
+    /// does not hold is skipped. Additions follow member order, so each total
+    /// is bit-identical to summing the projected fields in that order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError::MissingEntityId`] for a member absent from
+    /// the resident revision, matching [`Self::query_entities`].
+    pub fn query_column_totals(
+        &self,
+        members: &[EntityId],
+        fields: &[FieldId],
+    ) -> Result<ResidentQueryResult<Vec<ResidentColumnTotal>>, WorkspaceError> {
+        // `(sum, complete)`, folded like the runtime footer: `complete` turns
+        // off on the first cell that is not a usable Number.
+        let mut fold = vec![(0.0_f64, true); fields.len()];
+        for id in members {
+            let entity = self
+                .document
+                .entities
+                .get(id)
+                .ok_or_else(|| WorkspaceError::MissingEntityId { entity: id.clone() })?;
+            for (position, field) in fields.iter().enumerate() {
+                let Some(value) = entity.fields.get(field) else {
+                    continue;
+                };
+                match value {
+                    Value::Formula(_) => match retained_calculation_for(
+                        &self.retained.calculation_state,
+                        &FieldRef::new(id.clone(), field.clone()),
+                    ) {
+                        FormulaCalculationOutcome::Value(value) => {
+                            fold[position].0 += value.get();
+                        }
+                        FormulaCalculationOutcome::Failure(_)
+                        | FormulaCalculationOutcome::Unavailable => fold[position].1 = false,
+                    },
+                    Value::Number(value) => fold[position].0 += value.get(),
+                    Value::Text(_) | Value::Boolean(_) | Value::Date(_) | Value::Reference(_) => {
+                        fold[position].1 = false;
+                    }
+                }
+            }
+        }
+        Ok(ResidentQueryResult {
+            document_scope: self.document_scope.clone(),
+            revision: self.revision.clone(),
+            value: fields
+                .iter()
+                .zip(fold)
+                .map(|(field, (sum, complete))| ResidentColumnTotal {
+                    field: field.clone(),
+                    total: complete.then_some(sum).filter(|sum| sum.is_finite()),
+                })
+                .collect(),
+        })
+    }
+
     /// Clone the full semantic state at an explicit host snapshot boundary.
     #[must_use]
     pub fn export_snapshot(&self) -> ResidentSnapshot {
@@ -492,6 +556,7 @@ impl ResidentDerivedState {
     ) -> DerivedStateTransition {
         let previous_address_index_valid = self.address_index.is_ok();
         if changes.address_index_changed {
+            let _phase = instrumentation::PhaseTimer::new("rebuild/address_index");
             self.address_index = AddressIndex::build(document);
         }
         let address_index_safe = previous_address_index_valid && self.address_index.is_ok();
@@ -505,14 +570,32 @@ impl ResidentDerivedState {
                 self.calculation_state
                     .update(document, &changes.calculation_roots)
             } else {
-                let before = self.calculation_state.outcome();
-                let old_affected = self
-                    .calculation_state
-                    .affected_by_all(&changes.calculation_roots);
-                let (rebuilt, work) = RetainedCalculationState::rebuild(document);
-                let new_affected = rebuilt.affected_by_all(&changes.calculation_roots);
-                let after = rebuilt.outcome();
+                let before = {
+                    let _phase = instrumentation::PhaseTimer::new("rebuild/index_before");
+                    self.calculation_state.outcome()
+                };
+                let old_affected = {
+                    let _phase = instrumentation::PhaseTimer::new("rebuild/index_before");
+                    self.calculation_state
+                        .affected_by_all(&changes.calculation_roots)
+                };
+                let (rebuilt, work) = {
+                    let _phase = instrumentation::PhaseTimer::new("rebuild/state");
+                    RetainedCalculationState::rebuild(document)
+                };
+                let new_affected = {
+                    let _phase = instrumentation::PhaseTimer::new("rebuild/index_after");
+                    rebuilt.affected_by_all(&changes.calculation_roots)
+                };
+                let after = {
+                    let _phase = instrumentation::PhaseTimer::new("rebuild/index_after");
+                    rebuilt.outcome()
+                };
                 self.calculation_state = rebuilt;
+                let changed_calculation_projections = {
+                    let _phase = instrumentation::PhaseTimer::new("rebuild/index_after");
+                    changed_calculation_outcomes(&before, &after)
+                };
                 IncrementalCalculationTransition {
                     work,
                     affected_calculations: old_affected
@@ -521,7 +604,7 @@ impl ResidentDerivedState {
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .collect(),
-                    changed_calculation_projections: changed_calculation_outcomes(&before, &after),
+                    changed_calculation_projections,
                 }
             }
         };
@@ -822,6 +905,17 @@ pub struct ResidentQueryResult<T> {
     document_scope: DocumentScopeId,
     revision: SemanticRevision,
     value: T,
+}
+
+/// One Number column's footer total over a set of members.
+///
+/// `None` means the column cannot be totaled: one of its cells is a failed or
+/// unavailable calculation, another stored value, or the sum is not finite.
+/// A field no member holds totals `Some(0.0)`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResidentColumnTotal {
+    pub field: FieldId,
+    pub total: Option<f64>,
 }
 
 /// Bounded facts for one stable field at one resident revision.

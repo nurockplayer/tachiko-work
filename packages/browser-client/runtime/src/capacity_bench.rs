@@ -1314,9 +1314,13 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     // A full table refuses another row, so removal comes first.
     let revision = runtime.observe_occurrence().revision;
     let rows = (0..100).map(|row| format!("r{row:05}")).collect::<Vec<_>>();
-    let (removed, sample) = observe(|| runtime.remove_table_rows(&revision, "grid", &rows));
+    let (removed, remove_sample, remove_phases) = {
+        instrumentation::reset_phases();
+        let (outcome, sample) = observe(|| runtime.remove_table_rows(&revision, "grid", &rows));
+        (outcome, sample, phase_millis(&instrumentation::take_phases()))
+    };
     match removed {
-        Ok(_) => wq_print(name, "remove_100_rows_ms", wq_millis(&sample)),
+        Ok(_) => wq_print(name, "remove_100_rows_ms", wq_millis(&remove_sample)),
         Err(error) => wq_refused(name, "remove_100_rows", &error),
     }
 
@@ -1327,11 +1331,21 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
             input: "7".to_owned(),
         },
     }];
-    let (inserted, sample) = observe(|| runtime.insert_row(&revision, "grid", &initializers));
+    let (inserted, insert_sample, insert_phases) = {
+        instrumentation::reset_phases();
+        let (outcome, sample) = observe(|| runtime.insert_row(&revision, "grid", &initializers));
+        (outcome, sample, phase_millis(&instrumentation::take_phases()))
+    };
     match inserted {
-        Ok(_) => wq_print(name, "insert_row_ms", wq_millis(&sample)),
+        Ok(_) => wq_print(name, "insert_row_ms", wq_millis(&insert_sample)),
         Err(error) => wq_refused(name, "insert_row", &error),
     }
+    wq_phase_latency(
+        name,
+        "remove_100_rows",
+        std::slice::from_ref(&remove_phases),
+    );
+    wq_phase_latency(name, "insert_row", std::slice::from_ref(&insert_phases));
 }
 
 /// Print the median and p95 of one latency group.
@@ -1360,49 +1374,57 @@ fn wq_print_latency(name: &str, prefix: &str, samples: &[Sample]) {
 /// `WQ_EDIT_COUNT` times.
 fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
     let name = shape.name();
-    let entities = (0..WQ_ROWS)
+    // Sheet's filtered footer names the shown rows, under its 60 KB request
+    // bound; half the rows stays under it.
+    let shown = (0..WQ_ROWS / 2)
         .map(|row| format!("r{row:05}"))
         .collect::<Vec<_>>();
     let mut edit_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut edit_requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
-    let mut window_samples = Vec::with_capacity(WQ_EDIT_COUNT);
-    let mut column_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut shown_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut view_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
-    let mut edit_view_requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut edit_phases = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut window_phases = Vec::with_capacity(WQ_EDIT_COUNT);
-    let mut column_totals_phases = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut shown_totals_phases = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut view_totals_phases = Vec::with_capacity(WQ_EDIT_COUNT);
-    let mut requery_phases = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut many = false;
     for row in 0..WQ_EDIT_COUNT {
-        let revision = runtime.observe_occurrence().revision;
-        let target = FieldTarget {
-            entity: "r00000".to_owned(),
-            field: "c1".to_owned(),
-        };
-        let input = ScalarEditInput::Number {
-            input: format!("{}", 100 + row),
+        // The edit goes through the reply boundary, as a host sends it.
+        let request = DesignerRequest::EditCells {
+            expected_revision: runtime.observe_occurrence().revision,
+            edits: vec![CellEdit {
+                target: FieldTarget {
+                    entity: "r00000".to_owned(),
+                    field: "c1".to_owned(),
+                },
+                input: ScalarEditInput::Number {
+                    input: format!("{}", 100 + row),
+                },
+            }],
         };
         let (edited, edit_sample, phases) = {
             instrumentation::reset_phases();
-            let (edited, sample) =
-                observe(|| runtime.edit_cells(&revision, &[CellEdit { target, input }]));
-            (edited, sample, phase_millis(&instrumentation::take_phases()))
+            let (outcome, sample) = observe(|| runtime.handle(request));
+            (outcome, sample, phase_millis(&instrumentation::take_phases()))
         };
         edit_phases.push(phases);
-        let publication = match edited {
-            Ok(publication) => publication,
+        match edited {
+            Ok(DesignerResponse::Published(publication)) => many = publication.many,
+            Ok(_) => {
+                wq_print(name, "edit", "unexpected_reply");
+                return;
+            }
             Err(error) => {
                 wq_refused(name, "edit", &error);
                 return;
             }
-        };
-        many = publication.many;
+        }
 
-        // The re-query a host runs after a `many` reply: the first 100 rows of
-        // every column, then the totals over every row of every column.
+        // The re-query a host runs after a `many` reply on an unfiltered
+        // view: the first 100 rows, whose reply carries the whole-table
+        // footer totals. It runs first at the new revision, so nothing is
+        // cached yet.
         let revision = runtime.observe_occurrence().revision;
         let window = DesignerRequest::QueryTableWindow {
             expected_revision: revision.clone(),
@@ -1412,31 +1434,34 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
             count: 100,
             display: true,
         };
-        let totals = DesignerRequest::QueryColumnTotals {
+        let (windowed, requery_sample, phases) = {
+            instrumentation::reset_phases();
+            let (outcome, sample) = observe(|| runtime.handle(window));
+            (outcome, sample, phase_millis(&instrumentation::take_phases()))
+        };
+        window_phases.push(phases);
+        if let Err(error) = windowed {
+            wq_refused(name, "requery", &error);
+            return;
+        }
+        // A filtered view's footer, and a view's totals, each on their own.
+        // Neither reads the window's totals cache.
+        let shown_totals = DesignerRequest::QueryColumnTotals {
             expected_revision: revision.clone(),
             collection: "grid".to_owned(),
-            entities: entities.clone(),
+            entities: shown.clone(),
         };
-        // Sheet's own totals query lists the shown rows, which its 60 KB
-        // request bound keeps well under 10,000, so a view's totals are
-        // measured too, and each part on its own.
         let view_totals = DesignerRequest::QueryViewTotals {
             expected_revision: revision,
             collection: "grid".to_owned(),
             view: TableView::default(),
         };
-        let (windowed, window_sample, phases) = {
+        let (totalled, shown_totals_sample, phases) = {
             instrumentation::reset_phases();
-            let (outcome, sample) = observe(|| runtime.handle(window.clone()));
+            let (outcome, sample) = observe(|| runtime.handle(shown_totals));
             (outcome, sample, phase_millis(&instrumentation::take_phases()))
         };
-        window_phases.push(phases);
-        let (totalled, column_totals_sample, phases) = {
-            instrumentation::reset_phases();
-            let (outcome, sample) = observe(|| runtime.handle(totals.clone()));
-            (outcome, sample, phase_millis(&instrumentation::take_phases()))
-        };
-        column_totals_phases.push(phases);
+        shown_totals_phases.push(phases);
         let (viewed, view_totals_sample, phases) = {
             instrumentation::reset_phases();
             let (outcome, sample) = observe(|| runtime.handle(view_totals));
@@ -1444,8 +1469,7 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
         };
         view_totals_phases.push(phases);
         for (step, outcome) in [
-            ("requery_window", windowed),
-            ("requery_column_totals", totalled),
+            ("requery_shown_totals", totalled),
             ("requery_view_totals", viewed),
         ] {
             if let Err(error) = outcome {
@@ -1453,32 +1477,13 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
                 return;
             }
         }
-        let (requeried, requery_sample, phases) = {
-            instrumentation::reset_phases();
-            let (outcome, sample) = observe(|| {
-                runtime.handle(window)?;
-                runtime.handle(totals)?;
-                Ok::<(), super::DesignerError>(())
-            });
-            (outcome, sample, phase_millis(&instrumentation::take_phases()))
-        };
-        requery_phases.push(phases);
-        if let Err(error) = requeried {
-            wq_refused(name, "requery", &error);
-            return;
-        }
         edit_requery_samples.push(Sample {
             millis: edit_sample.millis + requery_sample.millis,
             ..edit_sample
         });
-        edit_view_requery_samples.push(Sample {
-            millis: edit_sample.millis + window_sample.millis + view_totals_sample.millis,
-            ..edit_sample
-        });
         edit_samples.push(edit_sample);
         requery_samples.push(requery_sample);
-        window_samples.push(window_sample);
-        column_totals_samples.push(column_totals_sample);
+        shown_totals_samples.push(shown_totals_sample);
         view_totals_samples.push(view_totals_sample);
     }
     wq_print(name, "edit_n", edit_samples.len());
@@ -1486,40 +1491,13 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
     wq_print_latency(name, "edit", &edit_samples);
     wq_print_latency(name, "requery", &requery_samples);
     wq_print_latency(name, "edit_requery", &edit_requery_samples);
-    wq_print_latency(name, "requery_window", &window_samples);
-    wq_print_latency(name, "requery_column_totals", &column_totals_samples);
+    wq_print_latency(name, "requery_shown_totals", &shown_totals_samples);
     wq_print_latency(name, "requery_view_totals", &view_totals_samples);
-    wq_print_latency(name, "edit_view_requery", &edit_view_requery_samples);
     wq_phase_latency(name, "edit", &edit_phases);
     wq_phase_latency(name, "window", &window_phases);
-    wq_phase_latency(name, "column_totals", &column_totals_phases);
+    wq_phase_latency(name, "shown_totals", &shown_totals_phases);
     wq_phase_latency(name, "view_totals", &view_totals_phases);
-    wq_phase_latency(name, "requery", &requery_phases);
 }
-
-/// Print the median and p95 of every phase recorded by the given samples.
-fn wq_phase_latency(name: &str, prefix: &str, samples: &[BTreeMap<&'static str, f64>]) {
-    let phase_names = samples
-        .iter()
-        .flat_map(|phases| phases.keys().copied())
-        .collect::<BTreeSet<_>>();
-    for phase in phase_names {
-        let mut values = samples
-            .iter()
-            .map(|phases| phases.get(phase).copied().unwrap_or(0.0))
-            .collect::<Vec<_>>();
-        values.sort_by(f64::total_cmp);
-        wq_print(
-            name,
-            &format!("{prefix}_phase_{phase}_median_ms"),
-            format!("{:.3}", values[values.len() / 2]),
-        );
-        wq_print(
-            name,
-            &format!("{prefix}_phase_{phase}_p95_ms"),
-            format!("{:.3}", w1_percentile(&values, 95.0)),
-        );
-    }
 }
 
 fn qualify_working_size_saves(shape: WqShape, runtime: &DesignerRuntime) {
@@ -1969,6 +1947,27 @@ const PHASE_ORDER: &[(&str, usize)] = &[
     ("invalidation/affected_calculations", 8),
     ("execute_profile/current_witness", 4),
     ("validate/semantic/report", 3),
+    ("row/insert", 0),
+    ("row/insert/spec", 1),
+    ("row/insert/snapshot", 1),
+    ("row/insert/columns", 1),
+    ("row/insert/row_build", 1),
+    ("row/insert/publish", 1),
+    ("row/remove", 0),
+    ("row/remove/spec", 1),
+    ("row/remove/snapshot", 1),
+    ("row/remove/commands", 1),
+    ("row/remove/dependents", 1),
+    ("row/remove/publish", 1),
+    ("rebuild/address_index", 3),
+    ("rebuild/index_before", 5),
+    ("rebuild/state", 5),
+    ("rebuild/formula/collect", 6),
+    ("rebuild/formula/pregraph", 6),
+    ("rebuild/formula/cycles", 6),
+    ("rebuild/formula/initial", 6),
+    ("rebuild/formula/evaluate", 6),
+    ("rebuild/index_after", 5),
 ];
 
 fn median(mut values: Vec<f64>) -> f64 {

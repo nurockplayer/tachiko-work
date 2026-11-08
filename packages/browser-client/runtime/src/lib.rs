@@ -36,6 +36,8 @@ mod number_format_tests;
 #[cfg(test)]
 mod optional_date_boolean_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod totals_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod working_size_tests;
 
 mod name_admission;
@@ -4775,13 +4777,10 @@ impl DesignerRuntime {
         collection: &str,
     ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
         let _phase = instrumentation::PhaseTimer::new("query/window_column_totals");
-        let revision = self.current_revision().to_owned();
         {
             let _phase = instrumentation::PhaseTimer::new("query/window_column_totals/cache");
-            if let Some((cached_revision, cached_collection, totals)) = &self.totals_cache {
-                if *cached_revision == revision && cached_collection == collection {
-                    return Ok(totals.clone());
-                }
+            if let Some(totals) = self.cached_totals(collection) {
+                return Ok(totals);
             }
         }
         let totals = {
@@ -4789,8 +4788,49 @@ impl DesignerRuntime {
             let spec = self.collection_spec(collection)?;
             self.totals_for_entities(spec, &spec.entities)?
         };
-        self.totals_cache = Some((revision, collection.to_owned(), totals.clone()));
+        self.store_totals(collection, &totals);
         Ok(totals)
+    }
+
+    /// Whole-collection totals from the revision cache, otherwise summed over
+    /// `members` (every entity, in collection order) and stored.
+    fn whole_collection_totals(
+        &mut self,
+        collection: &str,
+        members: &[EntityId],
+    ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        if let Some(totals) = self.cached_totals(collection) {
+            return Ok(totals);
+        }
+        let totals = {
+            let spec = self.collection_spec(collection)?;
+            self.totals_for_entities(spec, members)?
+        };
+        self.store_totals(collection, &totals);
+        Ok(totals)
+    }
+
+    /// Totals cached for this revision and collection, if any.
+    fn cached_totals(&self, collection: &str) -> Option<BTreeMap<String, Option<f64>>> {
+        let revision = self.current_revision();
+        let (cached_revision, cached_collection, totals) = self.totals_cache.as_ref()?;
+        if cached_revision == revision && cached_collection == collection {
+            #[cfg(test)]
+            totals_cache_counters::record_hit();
+            return Some(totals.clone());
+        }
+        None
+    }
+
+    /// Retain `totals` as this revision's whole-collection footer.
+    fn store_totals(&mut self, collection: &str, totals: &BTreeMap<String, Option<f64>>) {
+        #[cfg(test)]
+        totals_cache_counters::record_fill();
+        self.totals_cache = Some((
+            self.current_revision().to_owned(),
+            collection.to_owned(),
+            totals.clone(),
+        ));
     }
 
     /// Sums each Number column over `members`, which are collection entities
@@ -4802,39 +4842,48 @@ impl DesignerRuntime {
         members: &[EntityId],
     ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
         let _phase = instrumentation::PhaseTimer::new("query/totals");
-        let entities = {
-            let _phase = instrumentation::PhaseTimer::new("query/totals/query_entities");
-            self.session.query_entities(members)?
-        };
-        let targets = {
-            let _phase = instrumentation::PhaseTimer::new("query/totals/targets");
-            entities
-                .value()
-                .iter()
-                .flat_map(|entity| {
-                    spec.columns
-                        .iter()
-                        .filter(|column| {
-                            column.field_type == FieldType::Number
-                                && entity.fields.contains(&column.id)
-                        })
-                        .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
-                })
-                .collect::<Vec<_>>()
-        };
-        let projected = {
-            let _phase = instrumentation::PhaseTimer::new("query/totals/query_fields");
-            self.session.query_fields(&targets)?
-        };
-        let projected = {
-            let _phase = instrumentation::PhaseTimer::new("query/totals/project");
-            projected
-                .value()
-                .iter()
-                .map(|field| self.project_field(field))
-                .collect::<Vec<_>>()
-        };
-        let _phase = instrumentation::PhaseTimer::new("query/totals/sum");
+        let fields = spec
+            .columns
+            .iter()
+            .filter(|column| column.field_type == FieldType::Number)
+            .map(|column| column.id.clone())
+            .collect::<Vec<_>>();
+        let totals = self.session.query_column_totals(members, &fields)?;
+        Ok(totals
+            .value()
+            .iter()
+            .map(|total| (total.field.to_string(), total.total))
+            .collect())
+    }
+
+    /// The pre-#678 totals path, kept as the differential oracle: project
+    /// every present Number cell, then sum the projections.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    fn reference_totals_for_entities(
+        &self,
+        spec: &CollectionSpec,
+        members: &[EntityId],
+    ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        let entities = self.session.query_entities(members)?;
+        let targets = entities
+            .value()
+            .iter()
+            .flat_map(|entity| {
+                spec.columns
+                    .iter()
+                    .filter(|column| {
+                        column.field_type == FieldType::Number && entity.fields.contains(&column.id)
+                    })
+                    .map(|column| FieldRef::new(entity.id.clone(), column.id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let projected = self
+            .session
+            .query_fields(&targets)?
+            .value()
+            .iter()
+            .map(|field| self.project_field(field))
+            .collect::<Vec<_>>();
         Ok(column_totals_from_fields(
             spec,
             &projected.iter().collect::<Vec<_>>(),
@@ -4845,7 +4894,7 @@ impl DesignerRuntime {
     /// or oversized sets before any sum is taken. Members are summed in
     /// collection order, so naming every entity matches the window footer.
     fn query_column_totals(
-        &self,
+        &mut self,
         expected_revision: &str,
         collection: &str,
         entities: &[String],
@@ -4894,7 +4943,13 @@ impl DesignerRuntime {
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        let column_totals = self.totals_for_entities(spec, &members)?;
+        // Naming every entity is the window footer, so it may share its cache.
+        let column_totals = if members.len() == spec.entities.len() {
+            self.whole_collection_totals(collection, &members)?
+        } else {
+            let spec = self.collection_spec(collection)?;
+            self.totals_for_entities(spec, &members)?
+        };
         Ok(ColumnTotalsProjection {
             revision,
             rows: members.len(),
@@ -4930,7 +4985,13 @@ impl DesignerRuntime {
                 .map(|row| spec.entities[*row].clone())
                 .collect::<Vec<_>>()
         };
-        let column_totals = self.totals_for_entities(spec, &members)?;
+        // An order over every row is the window footer, so it may share its cache.
+        let column_totals = if members.len() == spec.entities.len() {
+            self.whole_collection_totals(collection, &members)?
+        } else {
+            let spec = self.collection_spec(collection)?;
+            self.totals_for_entities(spec, &members)?
+        };
         Ok(ColumnTotalsProjection {
             revision,
             rows: members.len(),
@@ -7631,39 +7692,51 @@ impl DesignerRuntime {
         collection: &str,
         initializers: &[RowInitializer],
     ) -> Result<PublicationProjection, DesignerError> {
+        let _whole = instrumentation::PhaseTimer::new("row/insert");
         self.check_revision(expected)?;
-        let spec = self.collection_spec(collection)?.clone();
-        if !is_native_table_spec(&spec) {
-            return Err(table_error(
-                "row insertion is available for native scalar tables",
-            ));
-        }
-        capacity::check_limit(
-            CapacityLimit::TableRows,
-            self.max_table_rows(),
-            spec.entities.len().saturating_add(1),
-            Some(collection),
-        )?;
+        let spec = {
+            let _phase = instrumentation::PhaseTimer::new("row/insert/spec");
+            let spec = self.collection_spec(collection)?.clone();
+            if !is_native_table_spec(&spec) {
+                return Err(table_error(
+                    "row insertion is available for native scalar tables",
+                ));
+            }
+            capacity::check_limit(
+                CapacityLimit::TableRows,
+                self.max_table_rows(),
+                spec.entities.len().saturating_add(1),
+                Some(collection),
+            )?;
+            spec
+        };
         if self.row_serial > usize::MAX - self.row_identity_reserve() {
             return Err(tracker_error("row identity allocation is exhausted"));
         }
-        let snapshot = self.session.export_snapshot();
-        let schema = snapshot
-            .document()
-            .schemas
-            .get(&SchemaId::from(spec.summary.id.clone()))
-            .ok_or_else(|| table_error("native table schema is unavailable"))?;
-        if !has_scalar_row_authoring_shape(snapshot.document(), schema, &spec.entities) {
-            return Err(table_error(
-                "native table schema is not a scalar row profile",
-            ));
-        }
-        let fills = column_fill_formulas(snapshot.document(), &spec);
-        let columns = spec
-            .columns
-            .iter()
-            .map(|column| (column.id.clone(), column))
-            .collect::<BTreeMap<_, _>>();
+        let snapshot = {
+            let _phase = instrumentation::PhaseTimer::new("row/insert/snapshot");
+            self.session.export_snapshot()
+        };
+        let (schema, fills, columns) = {
+            let _phase = instrumentation::PhaseTimer::new("row/insert/columns");
+            let schema = snapshot
+                .document()
+                .schemas
+                .get(&SchemaId::from(spec.summary.id.clone()))
+                .ok_or_else(|| table_error("native table schema is unavailable"))?;
+            if !has_scalar_row_authoring_shape(snapshot.document(), schema, &spec.entities) {
+                return Err(table_error(
+                    "native table schema is not a scalar row profile",
+                ));
+            }
+            let fills = column_fill_formulas(snapshot.document(), &spec);
+            let columns = spec
+                .columns
+                .iter()
+                .map(|column| (column.id.clone(), column))
+                .collect::<BTreeMap<_, _>>();
+            (schema, fills, columns)
+        };
         let mut values = BTreeMap::new();
         for initializer in initializers {
             let column = columns
@@ -7690,25 +7763,32 @@ impl DesignerRuntime {
         }
         let mut allocated = BTreeSet::new();
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
-        let mut entity =
-            native_table_row(snapshot.document(), &spec, &mut row_ids, &mut allocated)?;
-        let typed = values.keys().cloned().collect();
-        for (field, value) in values {
-            entity.fields.insert(field, value);
-        }
-        fill_new_rows(
-            snapshot.document(),
-            &[],
-            &fills,
-            std::slice::from_mut(&mut entity),
-            &[typed],
-        );
+        let mut entity = {
+            let _phase = instrumentation::PhaseTimer::new("row/insert/row_build");
+            let mut entity =
+                native_table_row(snapshot.document(), &spec, &mut row_ids, &mut allocated)?;
+            let typed = values.keys().cloned().collect();
+            for (field, value) in values {
+                entity.fields.insert(field, value);
+            }
+            fill_new_rows(
+                snapshot.document(),
+                &[],
+                &fills,
+                std::slice::from_mut(&mut entity),
+                &[typed],
+            );
+            entity
+        };
         let entity_id = entity.id.clone();
-        let publication = self.record_edit(
-            expected,
-            vec![SemanticCommand::AppendEntity { entity }],
-            vec![SemanticCommand::RemoveEntity { entity: entity_id }],
-        )?;
+        let publication = {
+            let _phase = instrumentation::PhaseTimer::new("row/insert/publish");
+            self.record_edit(
+                expected,
+                vec![SemanticCommand::AppendEntity { entity }],
+                vec![SemanticCommand::RemoveEntity { entity: entity_id }],
+            )?
+        };
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
@@ -7719,13 +7799,18 @@ impl DesignerRuntime {
         collection: &str,
         entities: &[String],
     ) -> Result<PublicationProjection, DesignerError> {
+        let _whole = instrumentation::PhaseTimer::new("row/remove");
         self.check_revision(expected)?;
-        let spec = self.collection_spec(collection)?.clone();
-        if !is_native_table_spec(&spec) {
-            return Err(table_error(
-                "row removal is available for native scalar tables",
-            ));
-        }
+        let spec = {
+            let _phase = instrumentation::PhaseTimer::new("row/remove/spec");
+            let spec = self.collection_spec(collection)?.clone();
+            if !is_native_table_spec(&spec) {
+                return Err(table_error(
+                    "row removal is available for native scalar tables",
+                ));
+            }
+            spec
+        };
         let row_limit = match self.profile {
             SessionProfile::WorkingSize => self.max_table_rows(),
             SessionProfile::Ordinary | SessionProfile::TextCapacity => MAX_TABLE_ROWS,
@@ -7733,41 +7818,51 @@ impl DesignerRuntime {
         if entities.is_empty() || entities.len() > row_limit {
             return Err(table_error("the row selection is empty or too large"));
         }
-        let snapshot = self.session.export_snapshot();
+        let snapshot = {
+            let _phase = instrumentation::PhaseTimer::new("row/remove/snapshot");
+            self.session.export_snapshot()
+        };
         let mut seen = BTreeSet::new();
-        let mut forward = Vec::new();
-        let mut inverse = Vec::new();
-        for id in entities {
-            if !seen.insert(id) {
-                return Err(table_error("duplicate row targets are unsupported"));
+        let (forward, mut inverse) = {
+            let _phase = instrumentation::PhaseTimer::new("row/remove/commands");
+            let mut forward = Vec::new();
+            let mut inverse = Vec::new();
+            for id in entities {
+                if !seen.insert(id) {
+                    return Err(table_error("duplicate row targets are unsupported"));
+                }
+                let entity_id = EntityId::from(id.clone());
+                if !spec.entities.contains(&entity_id) {
+                    return Err(table_error("row is unavailable in the selected collection"));
+                }
+                let entity = snapshot
+                    .document()
+                    .entities
+                    .get(&entity_id)
+                    .filter(|entity| entity.schema.as_str() == spec.summary.id)
+                    .ok_or_else(|| table_error("row is unavailable"))?;
+                forward.push(SemanticCommand::RemoveEntity {
+                    entity: entity.id.clone(),
+                });
+                inverse.push(SemanticCommand::AppendEntity {
+                    entity: entity.clone(),
+                });
             }
-            let entity_id = EntityId::from(id.clone());
-            if !spec.entities.contains(&entity_id) {
-                return Err(table_error("row is unavailable in the selected collection"));
-            }
-            let entity = snapshot
-                .document()
-                .entities
-                .get(&entity_id)
-                .filter(|entity| entity.schema.as_str() == spec.summary.id)
-                .ok_or_else(|| table_error("row is unavailable"))?;
-            forward.push(SemanticCommand::RemoveEntity {
-                entity: entity.id.clone(),
-            });
-            inverse.push(SemanticCommand::AppendEntity {
-                entity: entity.clone(),
-            });
-        }
+            (forward, inverse)
+        };
         let removed = seen
             .iter()
             .map(|id| EntityId::from(id.as_str()))
             .collect::<BTreeSet<_>>();
-        let dependent_cells = dependent_formula_cells(
-            snapshot.document(),
-            |reference| removed.contains(&reference.entity),
-            |_| false,
-            |entity, _| removed.contains(entity),
-        );
+        let dependent_cells = {
+            let _phase = instrumentation::PhaseTimer::new("row/remove/dependents");
+            dependent_formula_cells(
+                snapshot.document(),
+                |reference| removed.contains(&reference.entity),
+                |_| false,
+                |entity, _| removed.contains(entity),
+            )
+        };
         if dependent_cells > 0 {
             return Err(DesignerError::FormulaDependencyInUse {
                 dependent_cells,
@@ -7775,6 +7870,7 @@ impl DesignerRuntime {
             });
         }
         inverse.reverse();
+        let _publish = instrumentation::PhaseTimer::new("row/remove/publish");
         self.record_edit(expected, forward, inverse)
     }
 
@@ -10350,6 +10446,34 @@ mod admission_counters {
     }
 }
 
+/// Test-only evidence that a query read the whole-collection totals cache
+/// instead of summing again.
+#[cfg(test)]
+mod totals_cache_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static FILLS: Cell<usize> = const { Cell::new(0) };
+        static HITS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record_fill() {
+        FILLS.with(|count| count.set(count.get().saturating_add(1)));
+    }
+
+    pub(super) fn record_hit() {
+        HITS.with(|count| count.set(count.get().saturating_add(1)));
+    }
+
+    pub(super) fn fills() -> usize {
+        FILLS.with(Cell::get)
+    }
+
+    pub(super) fn hits() -> usize {
+        HITS.with(Cell::get)
+    }
+}
+
 /// The running totals the working-size string walk accumulates, retained so a
 /// value edit can re-derive them from the base's.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -10863,13 +10987,21 @@ fn designer_preview_witnessed(
     now: TrustedInstant,
 ) -> Result<SemanticPatch, DesignerError> {
     if lifecycle.uses_v2_evidence() {
-        Ok(lifecycle
-            .preview_v2_witnessed(document_scope, witness, proposal, principal, now)?
-            .proposal)
+        Ok(lifecycle.preview_v2_proposal_witnessed(
+            document_scope,
+            witness,
+            proposal,
+            principal,
+            now,
+        )?)
     } else {
-        Ok(lifecycle
-            .preview_witnessed(document_scope, witness, proposal, principal, now)?
-            .proposal)
+        Ok(lifecycle.preview_proposal_witnessed(
+            document_scope,
+            witness,
+            proposal,
+            principal,
+            now,
+        )?)
     }
 }
 
