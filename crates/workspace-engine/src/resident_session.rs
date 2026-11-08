@@ -35,7 +35,7 @@ use super::{
 /// the id and could then accept the other copy's prepared installation, so a
 /// clone must issue a new id through [`SessionOccurrence::next`]. Numbers wrap
 /// only after 2^64 sessions, which is not handled.
-struct SessionOccurrence(u64);
+pub(crate) struct SessionOccurrence(u64);
 
 impl SessionOccurrence {
     /// Issue an id no other live occurrence already used.
@@ -44,6 +44,48 @@ impl SessionOccurrence {
         // state, so the relaxed ordering is enough.
         static NEXT: AtomicU64 = AtomicU64::new(0);
         Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// Proof that one occurrence's document at one revision is the base a
+/// lifecycle call names.
+///
+/// The proof borrows the occurrence's current document instead of copying it,
+/// so it cannot outlive the session or describe a document the session has
+/// replaced. Only [`ResidentWorkspaceSession`] issues one. Every replacement of
+/// a session's document also advances its revision, so the occurrence and
+/// revision pair names exactly one document.
+pub struct DocumentWitness<'session> {
+    occurrence: &'session SessionOccurrence,
+    revision: &'session SemanticRevision,
+    document: &'session Document,
+}
+
+impl<'session> DocumentWitness<'session> {
+    pub(crate) const fn occurrence_id(&self) -> u64 {
+        self.occurrence.0
+    }
+
+    pub(crate) const fn revision(&self) -> &'session SemanticRevision {
+        self.revision
+    }
+
+    pub(crate) const fn document(&self) -> &'session Document {
+        self.document
+    }
+
+    /// Build a witness for a test's explicit identity triple.
+    #[cfg(test)]
+    pub(crate) const fn for_test(
+        occurrence: &'session SessionOccurrence,
+        revision: &'session SemanticRevision,
+        document: &'session Document,
+    ) -> Self {
+        Self {
+            occurrence,
+            revision,
+            document,
+        }
     }
 }
 
@@ -99,6 +141,26 @@ impl ResidentWorkspaceSession {
     #[must_use]
     pub fn document(&self) -> &Document {
         &self.document
+    }
+
+    /// Issue the identity proof for this occurrence's current document.
+    ///
+    /// The proof borrows the document and names the occurrence and revision
+    /// that issued it, so a lifecycle call can bind a memo base to this exact
+    /// document without copying it.
+    #[must_use]
+    pub fn witness(&self) -> DocumentWitness<'_> {
+        DocumentWitness {
+            occurrence: &self.occurrence,
+            revision: &self.revision,
+            document: &self.document,
+        }
+    }
+
+    /// Borrow this session's occurrence for a test's explicit witness.
+    #[cfg(test)]
+    pub(crate) const fn occurrence(&self) -> &SessionOccurrence {
+        &self.occurrence
     }
 
     /// Borrow the current core direct-dependency facts in stable-ID order.
@@ -774,6 +836,10 @@ where
             &self.session.document,
             self.session.revision.clone(),
         )
+    }
+
+    fn current_snapshot_witness(&self) -> Option<DocumentWitness<'_>> {
+        Some(self.session.witness())
     }
 
     fn publish_if_current<Authorization>(

@@ -79,8 +79,8 @@ use tachiko_workspace_engine::{
     },
     prune_presentation,
     resident_session::{
-        ResidentProjectionInvalidation, ResidentSnapshot, ResidentWorkspaceSession,
-        TrustedPublicationTimeSource,
+        DocumentWitness, ResidentProjectionInvalidation, ResidentSnapshot,
+        ResidentWorkspaceSession, TrustedPublicationTimeSource,
     },
     validate,
 };
@@ -6822,11 +6822,14 @@ impl DesignerRuntime {
         // `prepared` borrows the resident session until the proposal below.
         let proposal_id = next_proposal_id(&mut self.proposal_serial, &self.row_namespace)?;
         let body = SemanticPatchBody::atomic_batch(commands)?;
+        // The session witnesses its base by occurrence and revision, so the
+        // proposal, preview and execution reuse one evaluation without copying
+        // or comparing the whole document.
+        let witness = self.session.witness();
         let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
-        lifecycle.propose_prepared(
+        lifecycle.propose_prepared_witnessed(
             &document_scope,
-            self.session.document(),
-            self.session.revision(),
+            &witness,
             ProposalRequest::new(
                 proposal_id.clone(),
                 SemanticRevision::from(expected_revision.to_owned()),
@@ -6836,11 +6839,10 @@ impl DesignerRuntime {
             self.clock.tick(),
             Some(&prepared),
         )?;
-        designer_preview(
+        designer_preview_witnessed(
             lifecycle,
             &document_scope,
-            self.session.document(),
-            self.session.revision(),
+            &witness,
             &proposal_id,
             &self.principal,
             self.clock.tick(),
@@ -10714,6 +10716,25 @@ fn designer_preview(
     } else {
         Ok(lifecycle
             .preview(document_scope, document, revision, proposal, principal, now)?
+            .proposal)
+    }
+}
+
+fn designer_preview_witnessed(
+    lifecycle: &mut PatchLifecycle,
+    document_scope: &DocumentScopeId,
+    witness: &DocumentWitness<'_>,
+    proposal: &ProposalId,
+    principal: &PrincipalId,
+    now: TrustedInstant,
+) -> Result<SemanticPatch, DesignerError> {
+    if lifecycle.uses_v2_evidence() {
+        Ok(lifecycle
+            .preview_v2_witnessed(document_scope, witness, proposal, principal, now)?
+            .proposal)
+    } else {
+        Ok(lifecycle
+            .preview_witnessed(document_scope, witness, proposal, principal, now)?
             .proposal)
     }
 }
