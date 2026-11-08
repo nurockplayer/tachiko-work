@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use tachiko_diff_engine::DiffScope;
 use tachiko_formula_engine::{
     Calculation, CalculationOutcome, IncrementalCalculationTransition, IncrementalCalculationWork,
     RetainedCalculationState,
@@ -929,6 +930,19 @@ pub(crate) struct ProjectionChanges {
     /// rebuild. These are rare structural edits, so a full rebuild is
     /// acceptable.
     unaddressable_calculation_change: bool,
+}
+
+impl ProjectionChanges {
+    /// The ids a scoped diff has to compare: every schema whose definition may
+    /// differ, including one a changed field definition names, and every entity
+    /// whose definition or values may differ.
+    pub(crate) fn diff_scope(&self) -> DiffScope {
+        let mut schemas = self.schemas.clone();
+        schemas.extend(self.schema_fields.iter().map(|(schema, _)| schema.clone()));
+        let mut entities = self.entities.clone();
+        entities.extend(self.fields.iter().map(|field| field.entity.clone()));
+        DiffScope { schemas, entities }
+    }
 }
 
 fn collect_entity_projection_changes(

@@ -666,3 +666,23 @@ fn an_edit_reaching_no_formula_reports_no_formula_impact() {
         )));
     }
 }
+
+#[test]
+fn a_scope_naming_ids_neither_document_has_reports_nothing() {
+    let document = balance_document(4.0);
+    let calculation = calculate(&document).expect("document calculates");
+    let scope = tachiko_diff_engine::DiffScope {
+        schemas: BTreeSet::from([tachiko_semantic_core::SchemaId::from("absent")]),
+        entities: BTreeSet::from([tachiko_semantic_core::EntityId::from("absent")]),
+    };
+    assert_eq!(
+        tachiko_diff_engine::diff_changes_scoped(
+            &document,
+            &document,
+            &calculation,
+            &calculation,
+            &scope,
+        ),
+        Vec::<SemanticChange>::new()
+    );
+}
