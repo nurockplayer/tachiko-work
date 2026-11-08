@@ -1317,39 +1317,48 @@ fn wq_print_latency(name: &str, prefix: &str, samples: &[Sample]) {
 /// `WQ_EDIT_COUNT` times.
 fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
     let name = shape.name();
-    let entities = (0..WQ_ROWS)
+    // Sheet's filtered footer names the shown rows, under its 60 KB request
+    // bound; half the rows stays under it.
+    let shown = (0..WQ_ROWS / 2)
         .map(|row| format!("r{row:05}"))
         .collect::<Vec<_>>();
     let mut edit_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut edit_requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
-    let mut window_samples = Vec::with_capacity(WQ_EDIT_COUNT);
-    let mut column_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut shown_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut view_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
-    let mut edit_view_requery_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut many = false;
     for row in 0..WQ_EDIT_COUNT {
-        let revision = runtime.observe_occurrence().revision;
-        let target = FieldTarget {
-            entity: "r00000".to_owned(),
-            field: "c1".to_owned(),
+        // The edit goes through the reply boundary, as a host sends it.
+        let request = DesignerRequest::EditCells {
+            expected_revision: runtime.observe_occurrence().revision,
+            edits: vec![CellEdit {
+                target: FieldTarget {
+                    entity: "r00000".to_owned(),
+                    field: "c1".to_owned(),
+                },
+                input: ScalarEditInput::Number {
+                    input: format!("{}", 100 + row),
+                },
+            }],
         };
-        let input = ScalarEditInput::Number {
-            input: format!("{}", 100 + row),
-        };
-        let (edited, edit_sample) =
-            observe(|| runtime.edit_cells(&revision, &[CellEdit { target, input }]));
-        let publication = match edited {
-            Ok(publication) => publication,
+        let (edited, edit_sample) = observe(|| runtime.handle(request));
+        match edited {
+            Ok(DesignerResponse::Published(publication)) => many = publication.many,
+            Ok(_) => {
+                wq_print(name, "edit", "unexpected_reply");
+                return;
+            }
             Err(error) => {
                 wq_refused(name, "edit", &error);
                 return;
             }
-        };
-        many = publication.many;
+        }
 
-        // The re-query a host runs after a `many` reply: the first 100 rows of
-        // every column, then the totals over every row of every column.
+        // The re-query a host runs after a `many` reply on an unfiltered
+        // view: the first 100 rows, whose reply carries the whole-table
+        // footer totals. It runs first at the new revision, so nothing is
+        // cached yet.
         let revision = runtime.observe_occurrence().revision;
         let window = DesignerRequest::QueryTableWindow {
             expected_revision: revision.clone(),
@@ -1359,25 +1368,27 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
             count: 100,
             display: true,
         };
-        let totals = DesignerRequest::QueryColumnTotals {
+        let (windowed, requery_sample) = observe(|| runtime.handle(window));
+        if let Err(error) = windowed {
+            wq_refused(name, "requery", &error);
+            return;
+        }
+        // A filtered view's footer, and a view's totals, each on their own.
+        // Neither reads the window's totals cache.
+        let shown_totals = DesignerRequest::QueryColumnTotals {
             expected_revision: revision.clone(),
             collection: "grid".to_owned(),
-            entities: entities.clone(),
+            entities: shown.clone(),
         };
-        // Sheet's own totals query lists the shown rows, which its 60 KB
-        // request bound keeps well under 10,000, so a view's totals are
-        // measured too, and each part on its own.
         let view_totals = DesignerRequest::QueryViewTotals {
             expected_revision: revision,
             collection: "grid".to_owned(),
             view: TableView::default(),
         };
-        let (windowed, window_sample) = observe(|| runtime.handle(window.clone()));
-        let (totalled, column_totals_sample) = observe(|| runtime.handle(totals.clone()));
+        let (totalled, shown_totals_sample) = observe(|| runtime.handle(shown_totals));
         let (viewed, view_totals_sample) = observe(|| runtime.handle(view_totals));
         for (step, outcome) in [
-            ("requery_window", windowed),
-            ("requery_column_totals", totalled),
+            ("requery_shown_totals", totalled),
             ("requery_view_totals", viewed),
         ] {
             if let Err(error) = outcome {
@@ -1385,27 +1396,13 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
                 return;
             }
         }
-        let (requeried, requery_sample) = observe(|| {
-            runtime.handle(window)?;
-            runtime.handle(totals)?;
-            Ok::<(), super::DesignerError>(())
-        });
-        if let Err(error) = requeried {
-            wq_refused(name, "requery", &error);
-            return;
-        }
         edit_requery_samples.push(Sample {
             millis: edit_sample.millis + requery_sample.millis,
             ..edit_sample
         });
-        edit_view_requery_samples.push(Sample {
-            millis: edit_sample.millis + window_sample.millis + view_totals_sample.millis,
-            ..edit_sample
-        });
         edit_samples.push(edit_sample);
         requery_samples.push(requery_sample);
-        window_samples.push(window_sample);
-        column_totals_samples.push(column_totals_sample);
+        shown_totals_samples.push(shown_totals_sample);
         view_totals_samples.push(view_totals_sample);
     }
     wq_print(name, "edit_n", edit_samples.len());
@@ -1413,10 +1410,8 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
     wq_print_latency(name, "edit", &edit_samples);
     wq_print_latency(name, "requery", &requery_samples);
     wq_print_latency(name, "edit_requery", &edit_requery_samples);
-    wq_print_latency(name, "requery_window", &window_samples);
-    wq_print_latency(name, "requery_column_totals", &column_totals_samples);
+    wq_print_latency(name, "requery_shown_totals", &shown_totals_samples);
     wq_print_latency(name, "requery_view_totals", &view_totals_samples);
-    wq_print_latency(name, "edit_view_requery", &edit_view_requery_samples);
 }
 
 fn qualify_working_size_saves(shape: WqShape, runtime: &DesignerRuntime) {
