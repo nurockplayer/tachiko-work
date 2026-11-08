@@ -4,11 +4,16 @@
 
 use std::collections::BTreeMap;
 
-use super::{ResidentWorkspaceSession, TrustedPublicationTimeSource};
-use crate::patch_lifecycle::{SemanticPublicationAuthority, TrustedInstant};
+use super::{
+    ResidentProjectionInvalidation, ResidentWorkspaceSession, TrustedPublicationTimeSource,
+    installation_counters,
+};
+use crate::patch_lifecycle::{
+    SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, TrustedInstant,
+};
 use crate::{
     Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition, FieldId,
-    FieldRef, FieldType, Number, Schema, SchemaId, Value,
+    FieldRef, FieldType, Number, PreparedInstallation, Schema, SchemaId, Value,
 };
 
 fn optional_number(id: &str) -> FieldDefinition {
@@ -985,4 +990,307 @@ fn retyping_a_field_some_entity_leaves_blank_rebuilds() {
         .insert("n".into(), optional_text("n"));
     set(&mut candidate, "e1", "n", Value::Text("two".into()));
     assert_before_and_after_publication(&mut session, &candidate, "field retyped with a blank");
+}
+
+type PublishResult = (
+    Result<(), SemanticPublicationError>,
+    Option<ResidentProjectionInvalidation>,
+);
+
+fn publish_against(
+    session: &mut ResidentWorkspaceSession,
+    expected_revision: &SemanticRevision,
+    candidate: &Document,
+    installation: Option<PreparedInstallation>,
+) -> PublishResult {
+    let scope = session.document_scope().clone();
+    let mut time = FixedTime;
+    let mut publication = session.publication_authority(&mut time);
+    if let Some(installation) = installation {
+        publication = publication.with_prepared(installation);
+    }
+    let result = publication
+        .publish_if_current(&scope, expected_revision, candidate, |_| Some(()))
+        .map(|_| ());
+    (result, publication.projection_invalidation.clone())
+}
+
+/// Today's path: publication derives the candidate's state itself.
+fn publish_unassisted(
+    session: &mut ResidentWorkspaceSession,
+    candidate: &Document,
+) -> PublishResult {
+    let revision = session.revision().clone();
+    publish_against(session, &revision, candidate, None)
+}
+
+/// The prepared path: publication installs what `prepare_evaluation` derived.
+fn publish_with_installation(
+    session: &mut ResidentWorkspaceSession,
+    candidate: &Document,
+) -> PublishResult {
+    let installation = session
+        .prepare_evaluation(candidate.clone())
+        .into_installable();
+    let revision = session.revision().clone();
+    publish_against(session, &revision, candidate, Some(installation))
+}
+
+fn assert_sessions_identical(
+    prepared: &ResidentWorkspaceSession,
+    unassisted: &ResidentWorkspaceSession,
+    label: &str,
+) {
+    assert_eq!(
+        prepared.export_snapshot(),
+        unassisted.export_snapshot(),
+        "{label}: document, scope and revision"
+    );
+    assert_eq!(
+        prepared.retained, unassisted.retained,
+        "{label}: calculation and diagnostics state"
+    );
+    assert_eq!(
+        prepared.measurements, unassisted.measurements,
+        "{label}: measurements"
+    );
+}
+
+/// Publish `candidate` from `base` through both paths and require the same
+/// session, invalidation and result. The installation must actually be
+/// installed, so a regression that never takes the prepared branch fails.
+fn assert_installation_publishes_identically(label: &str, base: &Document, candidate: &Document) {
+    let mut unassisted = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut prepared = ResidentWorkspaceSession::new("scope".into(), base.clone());
+
+    let installs_before = installation_counters::prepared_installations();
+    let (unassisted_result, unassisted_invalidation) =
+        publish_unassisted(&mut unassisted, candidate);
+    let (prepared_result, prepared_invalidation) =
+        publish_with_installation(&mut prepared, candidate);
+    let installs = installation_counters::prepared_installations() - installs_before;
+
+    assert_eq!(installs, 1, "{label}: the installation must be installed");
+    assert_eq!(
+        unassisted_result,
+        Ok(()),
+        "{label}: the unassisted publication succeeds"
+    );
+    assert_eq!(
+        prepared_result, unassisted_result,
+        "{label}: publication result"
+    );
+    assert_eq!(
+        prepared_invalidation, unassisted_invalidation,
+        "{label}: ResidentProjectionInvalidation"
+    );
+    assert_sessions_identical(&prepared, &unassisted, label);
+    assert_retained_matches_full(&prepared, label);
+}
+
+/// Acceptance 1: a value edit, a formula edit, a failing formula and a
+/// structural edit publish identically with and without an installation.
+#[test]
+fn prepared_installation_publishes_identically_to_the_unassisted_path() {
+    let base = base_document();
+
+    let mut value_edit = base.clone();
+    set(&mut value_edit, "e1", "g", number(9.0));
+    assert_installation_publishes_identically("value edit", &base, &value_edit);
+
+    let mut formula_edit = base.clone();
+    set(
+        &mut formula_edit,
+        "e1",
+        "h",
+        Value::Formula(multiply(reference("e1", "g"), literal(3.0))),
+    );
+    assert_installation_publishes_identically("formula edit", &base, &formula_edit);
+
+    let mut failing = base.clone();
+    set(
+        &mut failing,
+        "e1",
+        "h",
+        Value::Formula(divide(literal(1.0), literal(0.0))),
+    );
+    assert_installation_publishes_identically("failing formula", &base, &failing);
+
+    let mut structural = base.clone();
+    structural.entities.insert(
+        EntityId::from("e3"),
+        row(
+            "e3",
+            "s",
+            BTreeMap::from([
+                ("f".into(), Value::Text("three".into())),
+                ("g".into(), number(3.0)),
+                (
+                    "h".into(),
+                    Value::Formula(add(reference("e3", "g"), literal(1.0))),
+                ),
+            ]),
+        ),
+    );
+    assert_installation_publishes_identically("structural edit", &base, &structural);
+}
+
+/// Acceptance 1: a sequence of 20 seeded edits stays identical step by step,
+/// so every preparation derives from state publication left behind.
+#[test]
+fn prepared_installation_matches_the_unassisted_path_across_seeded_edits() {
+    let mut unassisted = ResidentWorkspaceSession::new("scope".into(), generated_document());
+    let mut prepared = ResidentWorkspaceSession::new("scope".into(), generated_document());
+    let mut random = SplitMix64 {
+        state: 0x6780_0000_5eed_0001,
+    };
+
+    for step in 0..20 {
+        let mut candidate = prepared.document().clone();
+        random_edit(&mut candidate, &mut random);
+        if &candidate == prepared.document() {
+            set(
+                &mut candidate,
+                "row-000",
+                "c0",
+                number(f64::from(step) + 0.5),
+            );
+        }
+        let installs_before = installation_counters::prepared_installations();
+        let (unassisted_result, unassisted_invalidation) =
+            publish_unassisted(&mut unassisted, &candidate);
+        let (prepared_result, prepared_invalidation) =
+            publish_with_installation(&mut prepared, &candidate);
+        assert_eq!(
+            installation_counters::prepared_installations() - installs_before,
+            1,
+            "step {step}: the installation must be installed"
+        );
+        assert_eq!(prepared_result, unassisted_result, "step {step}: result");
+        assert_eq!(
+            prepared_invalidation, unassisted_invalidation,
+            "step {step}: invalidation"
+        );
+        assert_sessions_identical(&prepared, &unassisted, &format!("step {step}"));
+        assert_retained_matches_full(&prepared, &format!("step {step}"));
+    }
+}
+
+/// Acceptance 1: a refused stale publication drops the installation and
+/// leaves both sessions and invalidations identical to today's path.
+#[test]
+fn a_refused_stale_publication_drops_the_installation() {
+    let base = base_document();
+    let mut unassisted = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut prepared = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let stale_revision = unassisted.revision().clone();
+
+    let mut advance = base.clone();
+    set(&mut advance, "e1", "g", number(4.0));
+    let (unassisted_advance, _) = publish_unassisted(&mut unassisted, &advance);
+    let (prepared_advance, _) = publish_with_installation(&mut prepared, &advance);
+    assert_eq!(unassisted_advance, Ok(()));
+    assert_eq!(prepared_advance, unassisted_advance);
+    assert_sessions_identical(&prepared, &unassisted, "advance");
+
+    let mut candidate = prepared.document().clone();
+    set(&mut candidate, "e1", "f", Value::Text("stale".into()));
+    let installation = prepared
+        .prepare_evaluation(candidate.clone())
+        .into_installable();
+    let installs_before = installation_counters::prepared_installations();
+    let (unassisted_result, unassisted_invalidation) =
+        publish_against(&mut unassisted, &stale_revision, &candidate, None);
+    let (prepared_result, prepared_invalidation) = publish_against(
+        &mut prepared,
+        &stale_revision,
+        &candidate,
+        Some(installation),
+    );
+
+    assert_eq!(unassisted_result, Err(SemanticPublicationError::Stale));
+    assert_eq!(prepared_result, unassisted_result);
+    assert_eq!(prepared_invalidation, unassisted_invalidation);
+    assert_eq!(prepared_invalidation, None);
+    assert_eq!(
+        installation_counters::prepared_installations(),
+        installs_before,
+        "a refused publication must not install the preparation"
+    );
+    assert_sessions_identical(&prepared, &unassisted, "refused stale edit");
+}
+
+/// Acceptance 2: an installation prepared for another candidate falls back
+/// to today's path and still publishes the right result.
+#[test]
+fn an_installation_for_another_candidate_falls_back() {
+    let base = base_document();
+    let mut unassisted = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut prepared = ResidentWorkspaceSession::new("scope".into(), base.clone());
+
+    let mut installed = base.clone();
+    set(&mut installed, "e1", "g", number(5.0));
+    let installation = prepared.prepare_evaluation(installed).into_installable();
+
+    let mut published = base.clone();
+    set(&mut published, "e1", "f", Value::Text("different".into()));
+    let installs_before = installation_counters::prepared_installations();
+    let (unassisted_result, unassisted_invalidation) =
+        publish_unassisted(&mut unassisted, &published);
+    let revision = prepared.revision().clone();
+    let (prepared_result, prepared_invalidation) =
+        publish_against(&mut prepared, &revision, &published, Some(installation));
+
+    assert_eq!(unassisted_result, Ok(()));
+    assert_eq!(prepared_result, unassisted_result);
+    assert_eq!(prepared_invalidation, unassisted_invalidation);
+    assert_eq!(
+        installation_counters::prepared_installations(),
+        installs_before,
+        "a mismatched installation must not be installed"
+    );
+    assert_sessions_identical(&prepared, &unassisted, "mismatched candidate");
+    assert_retained_matches_full(&prepared, "mismatched candidate fallback");
+}
+
+/// Acceptance 2: an installation prepared against an older revision falls
+/// back to today's path and still publishes the right result.
+#[test]
+fn an_installation_for_an_older_revision_falls_back() {
+    let base = base_document();
+    let mut unassisted = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut prepared = ResidentWorkspaceSession::new("scope".into(), base.clone());
+
+    // Prepared at the initial revision, then publication moves on before the
+    // candidate is published.
+    let mut target = base.clone();
+    set(&mut target, "e1", "g", number(8.0));
+    let installation = prepared
+        .prepare_evaluation(target.clone())
+        .into_installable();
+
+    let mut advance = base.clone();
+    set(&mut advance, "e1", "f", Value::Text("advanced".into()));
+    let (unassisted_advance, _) = publish_unassisted(&mut unassisted, &advance);
+    let (prepared_advance, _) = publish_unassisted(&mut prepared, &advance);
+    assert_eq!(unassisted_advance, Ok(()));
+    assert_eq!(prepared_advance, unassisted_advance);
+    assert_sessions_identical(&prepared, &unassisted, "advance");
+
+    let installs_before = installation_counters::prepared_installations();
+    let (unassisted_result, unassisted_invalidation) = publish_unassisted(&mut unassisted, &target);
+    let revision = prepared.revision().clone();
+    let (prepared_result, prepared_invalidation) =
+        publish_against(&mut prepared, &revision, &target, Some(installation));
+
+    assert_eq!(unassisted_result, Ok(()));
+    assert_eq!(prepared_result, unassisted_result);
+    assert_eq!(prepared_invalidation, unassisted_invalidation);
+    assert_eq!(
+        installation_counters::prepared_installations(),
+        installs_before,
+        "a stale installation must not be installed"
+    );
+    assert_sessions_identical(&prepared, &unassisted, "older revision");
+    assert_retained_matches_full(&prepared, "older-revision fallback");
 }
