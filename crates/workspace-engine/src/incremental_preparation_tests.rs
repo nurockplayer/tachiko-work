@@ -1294,3 +1294,100 @@ fn an_installation_for_an_older_revision_falls_back() {
     assert_sessions_identical(&prepared, &unassisted, "older revision");
     assert_retained_matches_full(&prepared, "older-revision fallback");
 }
+
+/// Acceptance 1: revision tokens repeat across sessions, so an installation an
+/// unchanged candidate prepared in a session holding another document must not
+/// be installed into this one. The fallback must publish what the unassisted
+/// path publishes, including the changed field and the formula reading it.
+#[test]
+fn an_installation_from_another_occurrence_falls_back() {
+    let base = base_document();
+    let mut other_base = base.clone();
+    set(&mut other_base, "e1", "g", number(7.0));
+    assert_ne!(other_base, base);
+
+    let source = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut unassisted = ResidentWorkspaceSession::new("scope".into(), other_base.clone());
+    let mut target = ResidentWorkspaceSession::new("scope".into(), other_base.clone());
+    let revision = target.revision().clone();
+    assert_eq!(&revision, source.revision());
+
+    // The unchanged candidate: the source session's own document.
+    let candidate = source.document().clone();
+    let installation = source
+        .prepare_evaluation(candidate.clone())
+        .into_installable();
+
+    let installs_before = installation_counters::prepared_installations();
+    let (unassisted_result, unassisted_invalidation) =
+        publish_against(&mut unassisted, &revision, &candidate, None);
+    let (target_result, target_invalidation) =
+        publish_against(&mut target, &revision, &candidate, Some(installation));
+
+    assert_eq!(unassisted_result, Ok(()));
+    assert_eq!(target_result, unassisted_result);
+    assert_eq!(
+        installation_counters::prepared_installations(),
+        installs_before,
+        "another occurrence's installation must not be installed"
+    );
+    assert_eq!(
+        target_invalidation, unassisted_invalidation,
+        "ResidentProjectionInvalidation"
+    );
+    assert_eq!(
+        target_invalidation
+            .as_ref()
+            .expect("a publication yields its invalidation")
+            .fields,
+        [FieldRef::new("e1", "g")],
+        "the changed numeric field is invalidated"
+    );
+    assert_eq!(
+        target_invalidation
+            .as_ref()
+            .expect("a publication yields its invalidation")
+            .affected_calculations,
+        [FieldRef::new("e1", "h")],
+        "the formula reading the changed field is recalculated"
+    );
+    assert_sessions_identical(&target, &unassisted, "another occurrence");
+    assert_retained_matches_full(&target, "another-occurrence fallback");
+}
+
+/// Acceptance: the occurrence, not the document or revision, is the identity.
+/// A session built separately from the same document at the same revision
+/// still must not install this occurrence's preparation.
+#[test]
+fn an_installation_from_an_identical_but_distinct_occurrence_falls_back() {
+    let base = base_document();
+    let source = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut unassisted = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut target = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let revision = target.revision().clone();
+    assert_eq!(&revision, source.revision());
+    assert_eq!(source.document(), target.document());
+
+    let mut candidate = base.clone();
+    set(&mut candidate, "e1", "g", number(6.0));
+    let installation = source
+        .prepare_evaluation(candidate.clone())
+        .into_installable();
+
+    let installs_before = installation_counters::prepared_installations();
+    let (unassisted_result, unassisted_invalidation) =
+        publish_against(&mut unassisted, &revision, &candidate, None);
+    let (target_result, target_invalidation) =
+        publish_against(&mut target, &revision, &candidate, Some(installation));
+
+    assert_eq!(unassisted_result, Ok(()));
+    assert_eq!(target_result, unassisted_result);
+    assert_eq!(target_invalidation, unassisted_invalidation);
+    assert_eq!(
+        installation_counters::prepared_installations(),
+        installs_before,
+        "an identical but distinct occurrence's installation must not be installed"
+    );
+    assert_sessions_identical(&target, &unassisted, "identical occurrence");
+    assert_retained_matches_full(&target, "identical-occurrence fallback");
+}
