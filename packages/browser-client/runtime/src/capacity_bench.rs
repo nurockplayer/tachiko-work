@@ -18,7 +18,7 @@
 //! retention included — not live heap. Non-Linux targets report "unavailable"
 //! instead of failing the run.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::time::Instant;
 
@@ -1175,6 +1175,7 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
     // The same edit through the reply boundary, where a working-size session
     // builds the changed-cell list. The JSON reply's size is the list's cost.
     let mut handle_samples = Vec::with_capacity(WQ_EDIT_COUNT);
+    let mut handle_phases: Vec<BTreeMap<&'static str, f64>> = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut largest_reply = 0;
     for index in 0..WQ_EDIT_COUNT {
         let revision = runtime.observe_occurrence().revision;
@@ -1190,10 +1191,13 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
                 },
             }],
         };
+        instrumentation::reset_phases();
         let (result, sample) = observe(|| runtime.handle(request));
+        let phases = phase_millis(&instrumentation::take_phases());
         match result {
             Ok(response) => {
                 handle_samples.push(sample);
+                handle_phases.push(phases);
                 let encoded = serde_json::to_vec(&response).expect("the reply encodes");
                 largest_reply = largest_reply.max(encoded.len());
             }
@@ -1221,6 +1225,31 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
         format!("{:.3}", ordered[p95_index]),
     );
     wq_print(name, "edit_reply_bytes", largest_reply);
+
+    // Per-phase cost of the command-to-reply path.
+    let phase_names = handle_phases
+        .iter()
+        .flat_map(|phases| phases.keys().copied())
+        .collect::<BTreeSet<_>>();
+    for phase in phase_names {
+        let mut samples = handle_phases
+            .iter()
+            .map(|phases| phases.get(phase).copied().unwrap_or(0.0))
+            .collect::<Vec<_>>();
+        samples.sort_by(f64::total_cmp);
+        let phase_median = samples[samples.len() / 2];
+        let phase_p95 = w1_percentile(&samples, 95.0);
+        wq_print(
+            name,
+            &format!("phase_{phase}_median_ms"),
+            format!("{phase_median:.3}"),
+        );
+        wq_print(
+            name,
+            &format!("phase_{phase}_p95_ms"),
+            format!("{phase_p95:.3}"),
+        );
+    }
 
     // A full table refuses another row, so removal comes first.
     let revision = runtime.observe_occurrence().revision;
@@ -1574,6 +1603,8 @@ enum PhaseTarget {
 /// Display order and nesting depth of every phase the timers record.
 const PHASE_ORDER: &[(&str, usize)] = &[
     ("handle", 0),
+    ("handle/changed_cells", 1),
+    ("handle/build_response", 1),
     ("edit_cells", 0),
     ("edit_cells/pre_publish", 1),
     ("record_edit/history", 1),
@@ -1581,7 +1612,9 @@ const PHASE_ORDER: &[(&str, usize)] = &[
     ("publish_commands/export_snapshot_clone", 2),
     ("publish_commands/apply_commands", 2),
     ("publish_commands/capacity_check", 2),
+    ("publish_commands/saved_bytes", 2),
     ("publish_commands/validate", 2),
+    ("publish_commands/ensure_document_profile", 2),
     ("publish_commands/preflight", 2),
     ("propose", 2),
     ("propose/plan_commands", 3),
@@ -1608,7 +1641,7 @@ const PHASE_ORDER: &[(&str, usize)] = &[
     ("execute_profile/verify_publication", 4),
     ("publish_commands/refresh_structure", 2),
     ("refresh_structure/capacity_measure", 3),
-    ("handle/build_response", 1),
+    ("refresh_structure/collection_specs", 3),
 ];
 
 fn median(mut values: Vec<f64>) -> f64 {

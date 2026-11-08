@@ -3179,7 +3179,10 @@ impl DesignerRuntime {
         let _phase = instrumentation::PhaseTimer::new("handle");
         let response = self.dispatch(request)?;
         Ok(match self.profile {
-            SessionProfile::WorkingSize => self.with_changed_cells(response),
+            SessionProfile::WorkingSize => {
+                let _phase = instrumentation::PhaseTimer::new("handle/changed_cells");
+                self.with_changed_cells(response)
+            }
             SessionProfile::Ordinary | SessionProfile::TextCapacity => response,
         })
     }
@@ -6471,9 +6474,15 @@ impl DesignerRuntime {
                 }
             }
         }
-        let capacity_usage = capacity::check_document_for(&candidate, self.profile)?;
+        let capacity_usage = {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/capacity_check");
+            capacity::check_document_for(&candidate, self.profile)?
+        };
         // A working-size edit must be saveable before it publishes.
-        self.ensure_working_saved_bytes_for(&candidate)?;
+        {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/saved_bytes");
+            self.ensure_working_saved_bytes_for(&candidate)?;
+        }
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -6498,6 +6507,9 @@ impl DesignerRuntime {
                     // Working size re-proves only its own item bounds; it never
                     // reconstructs the occurrence or its complete projection.
                     (_, SessionProfile::WorkingSize) => {
+                        let _phase = instrumentation::PhaseTimer::new(
+                            "publish_commands/ensure_document_profile",
+                        );
                         ensure_document_profile(prepared.document(), SessionProfile::WorkingSize)?;
                     }
                     (true, SessionProfile::Ordinary) => {
@@ -6728,7 +6740,10 @@ impl DesignerRuntime {
             let _phase = instrumentation::PhaseTimer::new("refresh_structure/capacity_measure");
             CapacityUsage::measure_for(snapshot.document(), self.profile)
         };
-        self.collection_specs = collection_specs(snapshot.document());
+        self.collection_specs = {
+            let _phase = instrumentation::PhaseTimer::new("refresh_structure/collection_specs");
+            collection_specs(snapshot.document())
+        };
         self.collections = self
             .collection_specs
             .values()
