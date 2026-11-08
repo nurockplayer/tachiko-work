@@ -2162,6 +2162,10 @@ const _: () = {
 pub struct DesignerRuntime {
     profile: SessionProfile,
     capacity_usage: CapacityUsage,
+    /// Saved-size and string-budget totals of the current document. Only a
+    /// working-size session retains them; every other profile trusts its full
+    /// admission walk instead.
+    working_admission: Option<WorkingAdmission>,
     title: String,
     document_scope: DocumentScopeId,
     default_collection: String,
@@ -3032,7 +3036,27 @@ impl DesignerRuntime {
         occurrence_id: &str,
         profile: SessionProfile,
     ) -> Result<Self, DesignerError> {
-        ensure_document_profile(&document, profile)?;
+        let (capacity_usage, working_admission) = match profile {
+            // The same three checks `ensure_document_profile` runs for this
+            // profile, in the same order, keeping the totals the first and
+            // third derive so later value edits can start from them.
+            SessionProfile::WorkingSize => {
+                let usage = capacity::check_document_for(&document, profile)?;
+                let strings = ensure_working_size_strings(&document)?;
+                capacity::check_working_saved_bytes(&document, 0)?;
+                (
+                    usage,
+                    Some(WorkingAdmission {
+                        saved_bytes: save_size::saved_bytes_upper_bound(&document),
+                        strings,
+                    }),
+                )
+            }
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => {
+                ensure_document_profile(&document, profile)?;
+                (CapacityUsage::measure_for(&document, profile), None)
+            }
+        };
         match profile {
             SessionProfile::TextCapacity => ensure_capacity_document_encoding(&document)?,
             SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
@@ -3056,11 +3080,11 @@ impl DesignerRuntime {
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
-        let capacity_usage = CapacityUsage::measure_for(&document, profile);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
             profile,
             capacity_usage,
+            working_admission,
             title,
             document_scope,
             default_collection,
@@ -3109,6 +3133,137 @@ impl DesignerRuntime {
             }
             SessionProfile::Ordinary | SessionProfile::TextCapacity => Ok(()),
         }
+    }
+
+    /// Saved-size and string-budget totals of one already-admitted candidate.
+    fn measure_working_admission(document: &Document) -> Result<WorkingAdmission, DesignerError> {
+        Ok(WorkingAdmission {
+            saved_bytes: save_size::saved_bytes_upper_bound(document),
+            strings: ensure_working_size_strings(document)?,
+        })
+    }
+
+    /// The retained totals, compared against a full walk by the differential
+    /// test.
+    #[cfg(test)]
+    pub(crate) fn retained_working_totals(&self) -> (CapacityUsage, u64, usize, usize) {
+        let admission = self
+            .working_admission
+            .as_ref()
+            .expect("a working-size session retains its admission totals");
+        (
+            self.capacity_usage.clone(),
+            admission.saved_bytes,
+            admission.strings.profile_strings,
+            admission.strings.stored_text,
+        )
+    }
+
+    /// Candidate admission totals for a batch whose every command replaces a
+    /// stored value on an entity the base already holds.
+    ///
+    /// `None` means the batch changes more than that, so the caller takes the
+    /// full walk. The candidate's totals start from the retained base totals:
+    /// the base minus each replaced cell's contribution plus the new one.
+    fn working_value_edit_totals(
+        &self,
+        commands: &[SemanticCommand],
+        candidate: &Document,
+    ) -> Option<WorkingEditTotals> {
+        if commands.is_empty() {
+            return None;
+        }
+        let base_document = self.session.document();
+        let base = self.working_admission.as_ref()?;
+        let mut targets = BTreeSet::new();
+        for command in commands {
+            match command {
+                SemanticCommand::SetFieldValue { field, .. } => {
+                    if !base_document.entities.contains_key(&field.entity) {
+                        return None;
+                    }
+                    targets.insert((field.entity.clone(), field.field.clone()));
+                }
+                SemanticCommand::AppendCollection { .. }
+                | SemanticCommand::RemoveCollection { .. }
+                | SemanticCommand::AppendEntity { .. }
+                | SemanticCommand::RemoveEntity { .. }
+                | SemanticCommand::AppendSchemaField { .. }
+                | SemanticCommand::RemoveSchemaField { .. }
+                | SemanticCommand::RenameSchemaField { .. }
+                | SemanticCommand::SetSchemaFieldDisplayName { .. }
+                | SemanticCommand::SetSchemaFieldRequiredness { .. }
+                | SemanticCommand::UnsetField { .. }
+                | SemanticCommand::FormulaInverseRestore(_)
+                | SemanticCommand::SetSchemaFieldOrder { .. }
+                | SemanticCommand::SetFieldNumberFormat { .. }
+                | SemanticCommand::FormulaRestore(_)
+                | SemanticCommand::SetFieldConstraint { .. }
+                | SemanticCommand::FormulaUpdate(_)
+                | SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+                | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => return None,
+            }
+        }
+        let capacity = capacity::value_edit_usage(
+            self.profile,
+            &self.capacity_usage,
+            base_document,
+            candidate,
+            &targets,
+        );
+        let mut saved_bytes = base.saved_bytes;
+        let mut touched = BTreeSet::new();
+        for (entity_id, _) in &targets {
+            touched.insert(entity_id);
+        }
+        for entity_id in touched {
+            let old = base_document.entities.get(entity_id)?;
+            let new = candidate.entities.get(entity_id)?;
+            saved_bytes = saved_bytes
+                .saturating_sub(save_size::entity_fields_bytes(old))
+                .saturating_add(save_size::entity_fields_bytes(new));
+        }
+        let mut strings = base.strings;
+        let mut needs_full_strings = false;
+        for (entity_id, field_id) in &targets {
+            let old = base_document.entities.get(entity_id)?.fields.get(field_id);
+            let new = candidate.entities.get(entity_id)?.fields.get(field_id)?;
+            // The walk adds every stored field's identity; the base already
+            // holds the ones that existed.
+            if old.is_none() {
+                let bytes = field_id.as_str().len();
+                needs_full_strings |= bytes > MAX_PROFILE_STRING_BYTES;
+                strings.profile_strings = strings.profile_strings.saturating_add(bytes);
+            }
+            if let Some(old) = old {
+                // The base was admitted, so its own items never refuse here;
+                // anything unexpected still takes the full walk.
+                let contribution = value_profile_contribution(old).ok()?;
+                strings.profile_strings = strings
+                    .profile_strings
+                    .saturating_sub(contribution.profile_strings);
+                strings.stored_text = strings.stored_text.saturating_sub(contribution.stored_text);
+            }
+            match value_profile_contribution(new) {
+                Ok(contribution) => {
+                    strings.profile_strings = strings
+                        .profile_strings
+                        .saturating_add(contribution.profile_strings);
+                    strings.stored_text =
+                        strings.stored_text.saturating_add(contribution.stored_text);
+                }
+                Err(_) => needs_full_strings = true,
+            }
+        }
+        // A new item can break an aggregate bound; the full walk names the
+        // first error exactly, so only the refusal pays for it.
+        needs_full_strings |= strings.stored_text > MAX_WORKING_STORED_TEXT_BYTES;
+        Some(WorkingEditTotals {
+            capacity,
+            saved_bytes,
+            strings,
+            needs_full_strings,
+        })
     }
 
     /// Project the profile's opening reply: the bootstrap plus the first
@@ -6024,12 +6179,14 @@ impl DesignerRuntime {
             .get(command.target())
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
+        let mut working_admission = None;
         match self.profile {
             // Working size never rebuilds the occurrence; it re-proves only its
             // own document bounds against the exact candidate.
             SessionProfile::WorkingSize => {
                 ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
                 self.ensure_working_saved_bytes_for(&candidate)?;
+                working_admission = Some(Self::measure_working_admission(&candidate)?);
             }
             SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
                 Self::from_document_profile_with_opened(
@@ -6062,6 +6219,9 @@ impl DesignerRuntime {
                 .clone()
         };
         self.refresh_structure();
+        if let Some(admission) = working_admission {
+            self.working_admission = Some(admission);
+        }
         if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
             self.formula_sources = sources;
         }
@@ -6110,12 +6270,14 @@ impl DesignerRuntime {
             .get_mut(&field.entity)
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity.fields.insert(field.field, Value::Number(value));
+        let mut working_admission = None;
         match self.profile {
             // Working size never rebuilds the occurrence; it re-proves only its
             // own document bounds against the exact candidate.
             SessionProfile::WorkingSize => {
                 ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
                 self.ensure_working_saved_bytes_for(&candidate)?;
+                working_admission = Some(Self::measure_working_admission(&candidate)?);
             }
             SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
                 Self::from_document_profile_with_opened(
@@ -6148,6 +6310,9 @@ impl DesignerRuntime {
                 .clone()
         };
         self.refresh_structure();
+        if let Some(admission) = working_admission {
+            self.working_admission = Some(admission);
+        }
         if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
             self.formula_sources = sources;
         }
@@ -6464,9 +6629,44 @@ impl DesignerRuntime {
                 }
             }
         }
-        let capacity_usage = capacity::check_document_for(&candidate, self.profile)?;
+        // A batch that only replaces stored values on entities the base holds
+        // derives the candidate's totals from the base's instead of walking it.
+        let working_edit = match self.profile {
+            SessionProfile::WorkingSize => {
+                let totals = self.working_value_edit_totals(&commands, &candidate);
+                #[cfg(test)]
+                match &totals {
+                    Some(_) => admission_counters::record_value_delta(),
+                    None => admission_counters::record_full_walk(),
+                }
+                totals
+            }
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => None,
+        };
+        let capacity_usage = match &working_edit {
+            Some(totals) => {
+                totals
+                    .capacity
+                    .check(capacity::limits_for_profile(self.profile))?;
+                totals.capacity.clone()
+            }
+            None => capacity::check_document_for(&candidate, self.profile)?,
+        };
         // A working-size edit must be saveable before it publishes.
-        self.ensure_working_saved_bytes_for(&candidate)?;
+        let working_saved_bytes = match self.profile {
+            SessionProfile::WorkingSize => {
+                let document_bytes = working_edit.as_ref().map_or_else(
+                    || save_size::saved_bytes_upper_bound(&candidate),
+                    |totals| totals.saved_bytes,
+                );
+                capacity::check_working_saved_bytes_bound(
+                    document_bytes,
+                    self.presentation_saved_bytes,
+                )?;
+                Some(document_bytes)
+            }
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => None,
+        };
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -6477,6 +6677,7 @@ impl DesignerRuntime {
             })
             .collect::<BTreeSet<_>>();
         let prepared = self.session.prepare_evaluation(candidate);
+        let mut working_strings: Option<WorkingStringBudget> = None;
         match prepared.verdict() {
             PreparedVerdict::Valid => {
                 // A v3-origin text-capacity occurrence edits like any other
@@ -6485,8 +6686,13 @@ impl DesignerRuntime {
                 match (self.opened_from_v3, self.profile) {
                     // Working size re-proves only its own item bounds; it never
                     // reconstructs the occurrence or its complete projection.
+                    // Capacity and saved bytes were already checked above, so
+                    // only the string budget is left.
                     (_, SessionProfile::WorkingSize) => {
-                        ensure_document_profile(prepared.document(), SessionProfile::WorkingSize)?;
+                        working_strings = Some(match &working_edit {
+                            Some(totals) if !totals.needs_full_strings => totals.strings,
+                            _ => ensure_working_size_strings(prepared.document())?,
+                        });
                     }
                     (true, SessionProfile::Ordinary) => {
                         Self::from_document_profile_with_opened(
@@ -6665,8 +6871,32 @@ impl DesignerRuntime {
                 .clone()
         };
         self.capacity_usage = capacity_usage;
+        // The Valid arm above always fills both for a working-size publish;
+        // any other published path measures again on its next full walk.
+        self.working_admission = match (self.profile, working_saved_bytes) {
+            (SessionProfile::WorkingSize, Some(saved_bytes)) => {
+                working_strings.map(|strings| WorkingAdmission {
+                    saved_bytes,
+                    strings,
+                })
+            }
+            (SessionProfile::WorkingSize, None)
+            | (SessionProfile::Ordinary | SessionProfile::TextCapacity, Some(_) | None) => None,
+        };
         if !capacity_text_edit && !value_only {
-            self.refresh_structure();
+            match &working_edit {
+                // The delta above already produced this edit's exact totals,
+                // so only the collection caches can still need rebuilding.
+                Some(_) => {
+                    self.collection_specs = collection_specs(self.session.document());
+                    self.collections = self
+                        .collection_specs
+                        .values()
+                        .map(|spec| spec.summary.clone())
+                        .collect();
+                }
+                None => self.refresh_structure(),
+            }
             if let Ok(sources) = formula_sources(self.session.document()) {
                 self.formula_sources = sources;
             }
@@ -9959,6 +10189,59 @@ fn beyond_both_profiles(strict: DesignerError, capacity: Option<DesignerError>) 
     }
 }
 
+#[cfg(test)]
+mod admission_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static VALUE_DELTA_ADMISSIONS: Cell<usize> = const { Cell::new(0) };
+        static FULL_WALK_ADMISSIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record_value_delta() {
+        VALUE_DELTA_ADMISSIONS.with(|count| count.set(count.get().saturating_add(1)));
+    }
+
+    pub(super) fn record_full_walk() {
+        FULL_WALK_ADMISSIONS.with(|count| count.set(count.get().saturating_add(1)));
+    }
+
+    pub(super) fn value_delta_admissions() -> usize {
+        VALUE_DELTA_ADMISSIONS.with(Cell::get)
+    }
+
+    pub(super) fn full_walk_admissions() -> usize {
+        FULL_WALK_ADMISSIONS.with(Cell::get)
+    }
+}
+
+/// The running totals the working-size string walk accumulates, retained so a
+/// value edit can re-derive them from the base's.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct WorkingStringBudget {
+    profile_strings: usize,
+    stored_text: usize,
+}
+
+/// The working-size totals a session retains for its current document.
+#[derive(Clone, Debug)]
+struct WorkingAdmission {
+    /// `save_size::saved_bytes_upper_bound` of the document, without the
+    /// presentation the session adds at check time.
+    saved_bytes: u64,
+    strings: WorkingStringBudget,
+}
+
+/// Admission totals one value-edit batch derives for its candidate.
+struct WorkingEditTotals {
+    capacity: CapacityUsage,
+    saved_bytes: u64,
+    strings: WorkingStringBudget,
+    /// A new item may break a per-item or aggregate string bound. Only the
+    /// full walk names the error exactly, so the refusal takes it.
+    needs_full_strings: bool,
+}
+
 /// The running aggregate limits of the document profile walk. Every per-item
 /// bound is shared; only these aggregates differ by profile.
 struct ProfileBudget {
@@ -9992,6 +10275,51 @@ impl ProfileBudget {
             stored_text_limit: Some(MAX_WORKING_STORED_TEXT_BYTES),
         }
     }
+
+    /// A budget that only accumulates one value's per-item bounds.
+    const fn contribution() -> Self {
+        Self {
+            profile_strings: 0,
+            profile_strings_limit: None,
+            collection_text_limit: None,
+            stored_text: 0,
+            stored_text_limit: None,
+        }
+    }
+}
+
+/// The working-size string walk, returning the totals it accumulated once the
+/// document passes.
+fn ensure_working_size_strings(document: &Document) -> Result<WorkingStringBudget, DesignerError> {
+    let mut budget = ProfileBudget::working_size();
+    ensure_document_strings(document, &mut budget)?;
+    Ok(WorkingStringBudget {
+        profile_strings: budget.profile_strings,
+        stored_text: budget.stored_text,
+    })
+}
+
+/// The bytes one stored value adds to the working-size string budget, with the
+/// same per-item bounds the document walk applies to it.
+fn value_profile_contribution(value: &Value) -> Result<WorkingStringBudget, DesignerError> {
+    let mut budget = ProfileBudget::contribution();
+    match value {
+        Value::Reference(entity) => {
+            ensure_profile_string(&mut budget, "stored reference identity", entity.as_str())?;
+        }
+        Value::Formula(expression) => {
+            ensure_formula_reference_profile(expression, &mut budget)?;
+        }
+        Value::Text(text) => {
+            ensure_stored_text_profile(text)?;
+            budget.stored_text = budget.stored_text.saturating_add(text.len());
+        }
+        Value::Number(_) | Value::Boolean(_) | Value::Date(_) => {}
+    }
+    Ok(WorkingStringBudget {
+        profile_strings: budget.profile_strings,
+        stored_text: budget.stored_text,
+    })
 }
 
 fn ensure_document_profile(
