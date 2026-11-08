@@ -2197,7 +2197,7 @@ pub struct DesignerRuntime {
     /// working-size saved-size bound. Any future command that changes
     /// presentation must go through [`DesignerRuntime::set_presentation`] so
     /// this stays current.
-    presentation_saved_bytes: usize,
+    presentation_saved_bytes: u64,
 }
 
 /// Most bytes a working-size session's undo and redo history holds together.

@@ -65,17 +65,23 @@ pub(crate) const MAX_WORKING_SAVED_BYTES: usize = crate::MAX_PROJECT_TRANSFER_BY
 /// be saved is refused instead of stranding the session at save time.
 pub(crate) fn check_working_saved_bytes(
     document: &Document,
-    presentation_saved_bytes: usize,
+    presentation_saved_bytes: u64,
 ) -> Result<(), DesignerError> {
+    // Compare in `u64`: on wasm32 `usize` is 32 bits and a working-size
+    // document can legitimately bound above 4 GiB.
     let attempted = crate::save_size::saved_bytes_upper_bound(document)
         .saturating_add(presentation_saved_bytes);
-    check_limit(
-        CapacityLimit::SavedBytes,
-        MAX_WORKING_SAVED_BYTES,
-        attempted,
-        None,
-    )?;
-    Ok(())
+    let maximum = u64::try_from(MAX_WORKING_SAVED_BYTES).unwrap_or(u64::MAX);
+    if attempted <= maximum {
+        return Ok(());
+    }
+    Err(CapacityExceeded {
+        limit: CapacityLimit::SavedBytes,
+        maximum: MAX_WORKING_SAVED_BYTES,
+        attempted: usize::try_from(attempted).unwrap_or(usize::MAX),
+        collection: None,
+    }
+    .into())
 }
 
 /// Preserve the independently admitted Text/Number rectangle. Its content and

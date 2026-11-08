@@ -1076,7 +1076,7 @@ fn qualify_working_size_shape(shape: WqShape) {
     wq_print(
         name,
         "saved_margin_bytes",
-        saved_bound.saturating_sub(saved.bytes.len()),
+        saved_bound.saturating_sub(u64::try_from(saved.bytes.len()).unwrap_or(u64::MAX)),
     );
     drop(runtime);
 

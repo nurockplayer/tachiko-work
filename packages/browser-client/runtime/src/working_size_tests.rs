@@ -2889,9 +2889,14 @@ fn empty_presentation() -> PresentationStore {
     PresentationStore::default()
 }
 
-fn bound_of(document: &Document, presentation: &PresentationStore) -> usize {
+fn bound_of(document: &Document, presentation: &PresentationStore) -> u64 {
     super::save_size::saved_bytes_upper_bound(document)
-        + super::save_size::presentation_saved_bytes(presentation).unwrap()
+        .saturating_add(super::save_size::presentation_saved_bytes(presentation).unwrap())
+}
+
+/// The saved-size refusal payload for one bound.
+fn saved_refusal(bound: u64) -> usize {
+    usize::try_from(bound).unwrap_or(usize::MAX)
 }
 
 fn real_saves(document: &Document, presentation: &PresentationStore) -> (usize, usize) {
@@ -2902,15 +2907,15 @@ fn real_saves(document: &Document, presentation: &PresentationStore) -> (usize, 
     (bundle.len(), portable.len())
 }
 
-fn assert_bound_covers(name: &str, document: &Document, presentation: &PresentationStore) -> usize {
+fn assert_bound_covers(name: &str, document: &Document, presentation: &PresentationStore) -> u64 {
     let bound = bound_of(document, presentation);
     let (bundle, portable) = real_saves(document, presentation);
     assert!(
-        bound >= bundle,
+        bound >= u64::try_from(bundle).unwrap(),
         "{name}: bound {bound} < project save {bundle}"
     );
     assert!(
-        bound >= portable,
+        bound >= u64::try_from(portable).unwrap(),
         "{name}: bound {bound} < portable save {portable}"
     );
     bound
@@ -3429,6 +3434,72 @@ fn scaled_grid() -> Document {
     document
 }
 
+/// The reviewer's wasm32 wrap case: 750 rows whose formula repeats 128
+/// references to the largest admitted (4,096-byte) identity, every byte a
+/// control character so the writer escapes it to six. The bound passes 4 GiB
+/// while rows, cells, formulas and AST nodes stay inside the working limits.
+fn wrap_document() -> Document {
+    let identity = "\u{1}".repeat(super::MAX_PROFILE_STRING_BYTES);
+    let mut document = Document::empty("working-size-wrap", "Working Size Wrap");
+    let mut fields = BTreeMap::new();
+    add_field(
+        &mut fields,
+        "calc",
+        FieldType::Number,
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    add_field(
+        &mut fields,
+        &identity,
+        FieldType::Number,
+        None,
+        FieldConstraint::None,
+        None,
+    );
+    document.schemas.insert(
+        SchemaId::from("grid"),
+        Schema {
+            field_order: None,
+            id: SchemaId::from("grid"),
+            key: SchemaKey::from("grid"),
+            display_name: None,
+            fields,
+        },
+    );
+    let column = ColumnRef {
+        schema: SchemaId::from("grid"),
+        field: FieldId::from(identity.as_str()),
+    };
+    let criteria = (0..128)
+        .map(|_| ColumnCriterion {
+            column: column.clone(),
+            operator: ComparisonOperator::Equal,
+            value: Some(Box::new(Expression::SameRowReference(FieldId::from(
+                identity.as_str(),
+            )))),
+        })
+        .collect();
+    let formula = Expression::ColumnConditional {
+        aggregate: Box::new(ConditionalAggregate::Sum(column)),
+        criteria,
+    };
+    for row in 0..750 {
+        let id = EntityId::from(format!("r{row:05}"));
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields: BTreeMap::from([(FieldId::from("calc"), Value::Formula(formula.clone()))]),
+            },
+        );
+    }
+    document
+}
+
 fn bound_fixtures() -> Vec<(&'static str, Document, PresentationStore)> {
     let (formats, presentation) = formats_fixture();
     vec![
@@ -3454,7 +3525,7 @@ fn the_saved_bound_is_tight_on_realistic_documents() {
     for (name, document, presentation) in bound_fixtures() {
         let bound = assert_bound_covers(name, &document, &presentation);
         let (bundle, portable) = real_saves(&document, &presentation);
-        let real = bundle.max(portable);
+        let real = u64::try_from(bundle.max(portable)).unwrap();
         assert!(
             bound <= real * 102 / 100 + 64 * 1024,
             "{name}: bound {bound} is not tight against real save {real}"
@@ -3506,8 +3577,9 @@ fn an_accepted_working_size_edit_can_always_be_saved() {
     let (before, after, pasted) = crossing_documents();
     let before_bound = bound_of(&before, &empty_presentation());
     let after_bound = bound_of(&after, &empty_presentation());
-    assert!(before_bound <= super::capacity::MAX_WORKING_SAVED_BYTES);
-    assert!(after_bound > super::capacity::MAX_WORKING_SAVED_BYTES);
+    let maximum = u64::try_from(super::capacity::MAX_WORKING_SAVED_BYTES).unwrap();
+    assert!(before_bound <= maximum);
+    assert!(after_bound > maximum);
 
     let mut runtime = DesignerRuntime::from_document_working_size(before, OCCURRENCE).unwrap();
     let current = revision(&runtime);
@@ -3529,7 +3601,7 @@ fn an_accepted_working_size_edit_can_always_be_saved() {
         &error,
         CapacityLimit::SavedBytes,
         super::capacity::MAX_WORKING_SAVED_BYTES,
-        after_bound,
+        saved_refusal(after_bound),
     );
     assert_eq!(revision(&runtime), current);
 
@@ -3546,7 +3618,7 @@ fn an_accepted_working_size_edit_can_always_be_saved() {
         &error,
         CapacityLimit::SavedBytes,
         super::capacity::MAX_WORKING_SAVED_BYTES,
-        after_bound,
+        saved_refusal(after_bound),
     );
     assert!(
         serde_json::to_string(&error)
@@ -3559,7 +3631,7 @@ fn an_accepted_working_size_edit_can_always_be_saved() {
 fn an_over_limit_document_is_refused_at_working_size_only() {
     let (_, after, _) = crossing_documents();
     let after_bound = bound_of(&after, &empty_presentation());
-    assert!(after_bound > super::capacity::MAX_WORKING_SAVED_BYTES);
+    assert!(after_bound > u64::try_from(super::capacity::MAX_WORKING_SAVED_BYTES).unwrap());
 
     let Err(error) = DesignerRuntime::from_document_working_size(after.clone(), OCCURRENCE) else {
         panic!("an over-limit document must not open at working size");
@@ -3568,7 +3640,7 @@ fn an_over_limit_document_is_refused_at_working_size_only() {
         &error,
         CapacityLimit::SavedBytes,
         super::capacity::MAX_WORKING_SAVED_BYTES,
-        after_bound,
+        saved_refusal(after_bound),
     );
 
     // The ordinary profile is unchanged. Its own stored-text projection bound is
@@ -3733,4 +3805,24 @@ fn ordinary_history_still_keeps_sixty_four_entries() {
     }
     assert_eq!(runtime.undo.len(), 64);
     assert!(runtime.redo.is_empty());
+}
+
+#[test]
+fn the_saved_bound_does_not_wrap_past_four_gibibytes() {
+    let document = wrap_document();
+    let bound = bound_of(&document, &empty_presentation());
+    assert!(
+        bound > u64::from(u32::MAX),
+        "the bound {bound} must pass 4 GiB to catch the wasm32 wrap"
+    );
+
+    let Err(error) = DesignerRuntime::from_document_working_size(document, OCCURRENCE) else {
+        panic!("a document bounding past 4 GiB must not open at working size");
+    };
+    assert_capacity_refusal(
+        &error,
+        CapacityLimit::SavedBytes,
+        super::capacity::MAX_WORKING_SAVED_BYTES,
+        saved_refusal(bound),
+    );
 }
