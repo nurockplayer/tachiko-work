@@ -819,15 +819,19 @@ impl<'session> PreparedEvaluation<'session> {
 ///
 /// It owns the evaluated candidate, the derived state and the projection
 /// changes and transition that publication would otherwise derive from the
-/// base. Publication installs it only when it was prepared against the
-/// expected revision for exactly the published candidate; otherwise it takes
-/// its existing path and this value is dropped.
+/// base. Publication installs it only when it was prepared by the publishing
+/// session occurrence, against the expected revision, for exactly the
+/// published candidate; otherwise it takes its existing path and this value is
+/// dropped.
 ///
 /// The value crosses the engine/host boundary owned: it holds no borrow, so it
 /// outlives the session borrow [`PreparedEvaluation`] takes. Only the engine
 /// constructs it, through [`PreparedEvaluation::into_installable`].
 #[derive(Debug)]
 pub struct PreparedInstallation {
+    /// The value of the occurrence that prepared this installation. Revisions
+    /// repeat across sessions, so this binds it to its originating occurrence.
+    base_occurrence: u64,
     base_revision: patch_lifecycle::SemanticRevision,
     candidate: Document,
     retained: resident_session::ResidentDerivedState,

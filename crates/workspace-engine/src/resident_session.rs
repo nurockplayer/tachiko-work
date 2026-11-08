@@ -7,6 +7,7 @@
 //! their observations outside the trusted composition boundary.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tachiko_formula_engine::{
     Calculation, CalculationOutcome, IncrementalCalculationTransition, IncrementalCalculationWork,
@@ -27,9 +28,31 @@ use super::{
     validation_report_for_retained_calculation,
 };
 
+/// One occurrence's identity, unique within this process.
+///
+/// It is deliberately neither `Clone` nor `Copy`: a cloned session would share
+/// the id and could then accept the other copy's prepared installation, so a
+/// clone must issue a new id through [`SessionOccurrence::next`]. Numbers wrap
+/// only after 2^64 sessions, which is not handled.
+struct SessionOccurrence(u64);
+
+impl SessionOccurrence {
+    /// Issue an id no other live occurrence already used.
+    fn next() -> Self {
+        // Only uniqueness matters, never ordering or any relation to other
+        // state, so the relaxed ordering is enough.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 /// One Rust-authoritative semantic document occurrence retained across calls.
 pub struct ResidentWorkspaceSession {
     document_scope: DocumentScopeId,
+    /// The occurrence this session identifies. It is not `Clone`, so deriving
+    /// `Clone` on the session cannot compile: a clone would share the id and
+    /// could accept this occurrence's prepared installation.
+    occurrence: SessionOccurrence,
     document: Document,
     retained: ResidentDerivedState,
     revision: SemanticRevision,
@@ -44,6 +67,7 @@ impl ResidentWorkspaceSession {
         let (retained, calculation_work) = ResidentDerivedState::rebuild(&document);
         Self {
             document_scope,
+            occurrence: SessionOccurrence::next(),
             document,
             retained,
             revision: revision_for(0),
@@ -278,6 +302,7 @@ impl ResidentWorkspaceSession {
         );
         PreparedEvaluation::new(
             PreparedInstallation {
+                base_occurrence: self.occurrence.0,
                 base_revision: self.revision.clone(),
                 candidate,
                 retained,
@@ -657,10 +682,10 @@ impl<Time> ResidentPublicationAuthority<'_, Time> {
     /// Offer an evaluation prepared against a candidate so publication can
     /// install its derived state instead of deriving it a second time.
     ///
-    /// The installation is only used when it was prepared against the expected
-    /// revision and for exactly the candidate being published; otherwise
-    /// publication takes its existing path. A refused or failed publication
-    /// drops it.
+    /// The installation is only used when it was prepared by this session
+    /// occurrence, against the expected revision, and for exactly the candidate
+    /// being published; otherwise publication takes its existing path. A
+    /// refused or failed publication drops it.
     #[must_use]
     pub fn with_prepared(mut self, installation: PreparedInstallation) -> Self {
         self.prepared = Some(installation);
@@ -737,12 +762,14 @@ where
             .ok_or(SemanticPublicationError::Conflict)?;
         let resulting_revision = revision_for(next_generation);
         let (projection_invalidation, transition_work) = match prepared {
-            // The installation is exactly this publication: same base revision
-            // and the same candidate document. Installing its derived state
-            // gives what the unassisted path derives below, without deriving it
-            // twice.
+            // The installation is exactly this publication: prepared by this
+            // occurrence, from the same base revision and for the same candidate
+            // document. Revisions repeat across sessions, so the occurrence is
+            // part of the identity. Installing its derived state gives what the
+            // unassisted path derives below, without deriving it twice.
             Some(installation)
-                if installation.base_revision == *expected_revision
+                if installation.base_occurrence == self.session.occurrence.0
+                    && installation.base_revision == *expected_revision
                     && installation.candidate == *candidate =>
             {
                 let (invalidation, transition_work) = invalidation_from_transition(
