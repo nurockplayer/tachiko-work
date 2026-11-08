@@ -1018,9 +1018,9 @@ impl RetainedCalculationState {
     pub fn sizes(&self) -> RetainedCalculationSizes {
         RetainedCalculationSizes {
             nodes: self.nodes.len(),
-            values: self.values.len(),
-            dependency_keys: self.graph.reference_uses.len(),
-            dependency_edges: self.graph.entry_count(),
+            values: self.calculation.values.len(),
+            dependency_keys: self.calculation.graph.reference_uses.len(),
+            dependency_edges: self.calculation.graph.entry_count(),
             reverse_keys: 0,
             reverse_edges: 0,
         }
