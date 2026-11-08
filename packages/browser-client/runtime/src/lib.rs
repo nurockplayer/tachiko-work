@@ -6318,6 +6318,21 @@ impl DesignerRuntime {
                     SemanticCommand::AppendCollection { schema, entities } => {
                         candidate.schemas.insert(schema.id.clone(), schema.clone());
                         for entity in entities {
+                            candidate.entities.insert(entity.id.clone(), entity.clone());
+                        }
+                    }
+                    SemanticCommand::RemoveCollection { schema, entities } => {
+                        for entity in entities {
+                            candidate.entities.remove(entity);
+                        }
+                        candidate.schemas.remove(schema);
+                    }
+                    SemanticCommand::SetFieldValue { field, value } => {
+                        if let Some(entity) = candidate.entities.get_mut(&field.entity) {
+                            entity.fields.insert(field.field.clone(), value.clone());
+                        }
+                    }
+                    SemanticCommand::AppendEntity { entity } => {
                         candidate.entities.insert(entity.id.clone(), entity.clone());
                     }
                     SemanticCommand::RemoveEntity { entity } => {
