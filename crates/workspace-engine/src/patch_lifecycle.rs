@@ -19,11 +19,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use tachiko_diff_engine::{
-    CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, canonical_delta, canonical_delta_scoped,
+    CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, DiffScope, canonical_delta,
+    canonical_delta_scoped,
 };
 use tachiko_formula_engine::Calculation;
 use tachiko_semantic_core::{
-    FieldConstraint, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    FieldConstraint, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, Schema,
 };
 use thiserror::Error;
 
@@ -4238,13 +4239,15 @@ impl PatchLifecycle {
                     source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
                 })?;
                 // The prepared evaluation found every differing schema and
-                // entity, so the projection only has to compare those.
+                // entity, so the projection only has to compare those, and
+                // only those need projecting.
+                let scope = changes.diff_scope();
                 let formula_changes = super::diff_changes_scoped(
-                    &formula_projection_document(base),
-                    &formula_projection_document(&candidate),
+                    &scoped_formula_projection_document(base, &scope),
+                    &scoped_formula_projection_document(&candidate, &scope),
                     base_calculation,
                     candidate_calculation,
-                    &changes.diff_scope(),
+                    &scope,
                 );
                 (report.clone(), delta, formula_changes)
             } else {
@@ -5692,15 +5695,43 @@ fn formula_projection_document(document: &Document) -> Document {
     let mut document = document.clone();
     document.keyed_grouped_sum_definitions.clear();
     for schema in document.schemas.values_mut() {
-        schema.display_name = None;
-        schema.field_order = None;
-        for field in schema.fields.values_mut() {
-            field.constraint = FieldConstraint::None;
-            field.number_format = None;
-            field.display_name = None;
-        }
+        project_formula_schema(schema);
     }
     document
+}
+
+/// The formula projection of only the schemas and entities `scope` names.
+///
+/// `diff_changes_scoped` reads the document id and title and the scoped schemas
+/// and entities, nothing else, so it reports the same changes on this as on
+/// [`formula_projection_document`] without copying the rest of the document.
+fn scoped_formula_projection_document(document: &Document, scope: &DiffScope) -> Document {
+    let mut projection = Document::empty(document.id.clone(), document.title.clone());
+    for schema_id in &scope.schemas {
+        if let Some(schema) = document.schemas.get(schema_id) {
+            let mut schema = schema.clone();
+            project_formula_schema(&mut schema);
+            projection.schemas.insert(schema_id.clone(), schema);
+        }
+    }
+    for entity_id in &scope.entities {
+        if let Some(entity) = document.entities.get(entity_id) {
+            projection
+                .entities
+                .insert(entity_id.clone(), entity.clone());
+        }
+    }
+    projection
+}
+
+fn project_formula_schema(schema: &mut Schema) {
+    schema.display_name = None;
+    schema.field_order = None;
+    for field in schema.fields.values_mut() {
+        field.constraint = FieldConstraint::None;
+        field.number_format = None;
+        field.display_name = None;
+    }
 }
 
 // Fail closed when a stable binding cannot be resolved to a current schema

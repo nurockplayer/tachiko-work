@@ -3107,6 +3107,19 @@ fn assert_scoped_diff_matches_full(base: &Document, candidate: &Document, label:
         full.changes(),
         "{label}: scoped formula diff differs from the full diff"
     );
+    // The reuse gate projects only the scope, so that diff must match too.
+    let scoped_on_scoped_projection = diff_changes_scoped(
+        &super::scoped_formula_projection_document(base, &scope),
+        &super::scoped_formula_projection_document(candidate, &scope),
+        &before_calculation,
+        &after_calculation,
+        &scope,
+    );
+    assert_eq!(
+        scoped_on_scoped_projection.as_slice(),
+        full.changes(),
+        "{label}: the diff on the scoped projection differs from the full diff"
+    );
 }
 
 /// Acceptance 1: the scoped diff equals the full diff for every v2 evidence
