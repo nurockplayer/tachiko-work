@@ -26,6 +26,7 @@ use super::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
     },
+    validate_entity_field_core, validate_formula_value_constraint,
     validation_report_for_retained_calculation,
 };
 
@@ -297,7 +298,7 @@ impl ResidentWorkspaceSession {
         super::evaluation_counters::record_candidate_calculation();
         let mut retained = self.retained.clone();
         let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
-        let transition = retained.update(&candidate, &changes);
+        let transition = retained.update(&self.document, &candidate, &changes);
         // Publication folds the diagnostics projection changes into the same
         // changes; prepare has the same before and after state, so it does too.
         collect_diagnostic_projection_changes(
@@ -405,6 +406,7 @@ impl ResidentDerivedState {
 
     fn update(
         &mut self,
+        before: &Document,
         document: &Document,
         changes: &ProjectionChanges,
     ) -> DerivedStateTransition {
@@ -440,8 +442,13 @@ impl ResidentDerivedState {
                 changed_calculation_projections: changed_calculation_outcomes(&before, &after),
             }
         };
-        self.validation_report =
-            validation_report_for_retained_calculation(document, &self.calculation_state);
+        self.validation_report = self.validation_report_for_update(
+            before,
+            document,
+            changes,
+            incremental_safe,
+            &calculation,
+        );
         self.diagnostics_by_field = index_field_diagnostics(&self.validation_report);
         DerivedStateTransition {
             work: DerivedStateTransitionWork {
@@ -451,6 +458,36 @@ impl ResidentDerivedState {
             },
             affected_calculations: calculation.affected_calculations,
             changed_calculation_projections: calculation.changed_calculation_projections,
+        }
+    }
+
+    /// Decide the candidate's report, validating only the fields the update
+    /// touched when no whole-document check can have moved.
+    fn validation_report_for_update(
+        &self,
+        before: &Document,
+        document: &Document,
+        changes: &ProjectionChanges,
+        incremental_safe: bool,
+        calculation: &IncrementalCalculationTransition,
+    ) -> ValidationReport {
+        let local = locally_validated_report(
+            self.validation_report.is_valid(),
+            before,
+            document,
+            changes,
+            incremental_safe,
+            &self.calculation_state,
+            calculation,
+        );
+        if let Some(report) = local {
+            #[cfg(test)]
+            local_validation_counters::record_local();
+            report
+        } else {
+            #[cfg(test)]
+            local_validation_counters::record_full();
+            validation_report_for_retained_calculation(document, &self.calculation_state)
         }
     }
 
@@ -519,6 +556,81 @@ impl ResidentDerivedState {
             .get(field)
             .cloned()
             .unwrap_or_default()
+    }
+}
+
+/// The candidate's report built from the changed fields alone, or `None` when
+/// any check that could change is not local.
+///
+/// Whole-document validation splits into checks a value edit cannot move and
+/// checks local to one field or formula. Stable ids, human keys, duplicate
+/// keys, display names, field order and schema declarations read schema and
+/// entity identity, and [`ProjectionChanges`] names every structural edit that
+/// could touch them: an entity added, removed, moved, re-keyed or renamed sets
+/// `address_index_changed`, and a schema or field definition edit sets
+/// `unaddressable_calculation_change`, `schemas` or `schema_fields`. An edit
+/// that leaves all of those alone cannot change any of those checks.
+///
+/// What remains is decided by one field alone: its declared type, stored value
+/// constraint, reference target, declaration and a required field's presence.
+/// Formula failures are not local — their diagnostics depend on the whole
+/// failure graph — so a candidate whose calculation failed falls back. Formula
+/// value constraints are local to formulas whose calculated value can change,
+/// which the calculation transition names.
+///
+/// The fast path returns only the empty report: a local diagnostic falls back
+/// to whole-document validation, which reports it with the rest.
+fn locally_validated_report(
+    base_report_valid: bool,
+    before: &Document,
+    after: &Document,
+    changes: &ProjectionChanges,
+    incremental_safe: bool,
+    calculation: &RetainedCalculationState,
+    transition: &IncrementalCalculationTransition,
+) -> Option<ValidationReport> {
+    if !base_report_valid
+        || !incremental_safe
+        || changes.address_index_changed
+        || !changes.schemas.is_empty()
+        || !changes.schema_fields.is_empty()
+        || before.id != after.id
+        || before.title != after.title
+    {
+        return None;
+    }
+    if changes
+        .fields
+        .iter()
+        .any(|field| !entity_keeps_its_schema(before, after, &field.entity))
+    {
+        return None;
+    }
+    // A failed candidate's formula diagnostics span the failure graph, which
+    // whole-document validation alone resolves, so fall back to it.
+    let values = calculation.complete_values()?;
+    let mut local = Vec::new();
+    for field in &changes.fields {
+        local.extend(validate_entity_field_core(after, field));
+    }
+    for field in changes
+        .fields
+        .iter()
+        .chain(&transition.affected_calculations)
+        .chain(&transition.changed_calculation_projections)
+    {
+        local.extend(validate_formula_value_constraint(after, field, values));
+    }
+    local.is_empty().then(|| ValidationReport::new(Vec::new()))
+}
+
+/// Whether a changed field's entity keeps its schema across the edit. Every
+/// changed field must, or its values and its whole-document checks may not be
+/// comparable to the base's.
+fn entity_keeps_its_schema(before: &Document, after: &Document, entity: &EntityId) -> bool {
+    match (before.entities.get(entity), after.entities.get(entity)) {
+        (Some(before), Some(after)) => before.schema == after.schema,
+        _ => false,
     }
 }
 
@@ -891,6 +1003,37 @@ pub(crate) mod installation_counters {
     }
 }
 
+/// Test-only counts of updates that built their report from the changed fields
+/// and of those that fell back to whole-document validation. They prove the
+/// differential tests exercise both paths.
+#[cfg(test)]
+pub(crate) mod local_validation_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static LOCAL_REPORTS: Cell<usize> = const { Cell::new(0) };
+        static FULL_REPORTS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        LOCAL_REPORTS.with(|count| count.set(0));
+        FULL_REPORTS.with(|count| count.set(0));
+    }
+
+    pub(crate) fn record_local() {
+        LOCAL_REPORTS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn record_full() {
+        FULL_REPORTS.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Return `(local reports, full reports)` since the last [`reset`].
+    pub(crate) fn counts() -> (usize, usize) {
+        (LOCAL_REPORTS.with(Cell::get), FULL_REPORTS.with(Cell::get))
+    }
+}
+
 fn projection_invalidation(
     before: &Document,
     retained: &mut ResidentDerivedState,
@@ -901,7 +1044,7 @@ fn projection_invalidation(
 ) -> (ResidentProjectionInvalidation, DerivedStateTransitionWork) {
     let mut changes = projection_changes(before, after);
     let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
-    let transition = retained.update(after, &changes);
+    let transition = retained.update(before, after, &changes);
     collect_diagnostic_projection_changes(
         before,
         &before_diagnostics,
@@ -1270,6 +1413,10 @@ mod projection_diff_tests;
 #[cfg(test)]
 #[path = "incremental_preparation_tests.rs"]
 mod incremental_preparation_tests;
+
+#[cfg(test)]
+#[path = "local_validation_tests.rs"]
+mod local_validation_tests;
 
 #[cfg(test)]
 mod tests {
