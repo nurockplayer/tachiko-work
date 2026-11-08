@@ -9,21 +9,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{
-    CalculationOutcome, IncrementalCalculationTransition, IncrementalCalculationWork,
+    Calculation, CalculationOutcome, IncrementalCalculationTransition, IncrementalCalculationWork,
     RetainedCalculationState,
 };
 
 use super::{
     AddressIndex, AddressIndexError, CalculatedField, Diagnostic, Document, EntityId,
-    EntityInspection, Expression, FieldAddress, FieldId, FieldRef, PreparedEvaluation, SchemaId,
-    SemanticSubject, ValidationReport, ValidationRole, Value, WorkspaceError,
+    EntityInspection, Expression, FieldAddress, FieldId, FieldRef, PreparedEvaluation,
+    PreparedInstallation, SchemaId, SemanticSubject, ValidationReport, ValidationRole, Value,
+    WorkspaceError,
     formula_operations::{FormulaCalculationOutcome, calculation_for, calculation_formula_keys},
     instrumentation, invalid_document,
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
     },
-    semantic_validation, validation_report_for_retained_calculation,
+    validation_report_for_retained_calculation,
 };
 
 /// One Rust-authoritative semantic document occurrence retained across calls.
@@ -55,6 +56,18 @@ impl ResidentWorkspaceSession {
     #[must_use]
     pub fn revision(&self) -> &SemanticRevision {
         &self.revision
+    }
+
+    /// Borrow this occurrence's protected document scope.
+    #[must_use]
+    pub fn document_scope(&self) -> &DocumentScopeId {
+        &self.document_scope
+    }
+
+    /// Borrow the installed document without detaching a snapshot.
+    #[must_use]
+    pub fn document(&self) -> &Document {
+        &self.document
     }
 
     /// Borrow the current core direct-dependency facts in stable-ID order.
@@ -227,33 +240,66 @@ impl ResidentWorkspaceSession {
         }
     }
 
-    /// Evaluate one candidate against this revision for later proposal reuse.
+    /// Evaluate one candidate against this revision for later proposal reuse
+    /// and publication.
     ///
-    /// The candidate is validated and calculated once here, and this
-    /// revision's complete calculation is cloned out of retained state once, so
+    /// The candidate's report and calculation are derived from this revision's
+    /// retained state through the same projection changes publication uses, so
     /// a lifecycle proposal can reuse both instead of recalculating either
-    /// document. A failed retained outcome contributes no base calculation and
+    /// document. This revision's complete calculation is lent to the result as
+    /// the base. A failed retained outcome contributes no base calculation and
     /// leaves the proposal on its existing recalculation path.
+    ///
+    /// The prepared derived state, the projection changes and the derived-state
+    /// transition are kept instead of discarded; [`PreparedEvaluation`] can hand
+    /// them to publication as a [`PreparedInstallation`].
     #[must_use]
     pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
         let base_calculation = {
             let _phase = instrumentation::PhaseTimer::new("validate/prepare/base_outcome");
-            match self.retained.calculation_state.outcome() {
-                CalculationOutcome::Complete(calculation) => Some(calculation),
-                CalculationOutcome::Failed(_) => None,
-            }
+            self.retained.calculation_state.complete()
         };
         let base_report_valid = self.retained.validation_report.is_valid();
-        let (report, calculation) = {
-            let _phase = instrumentation::PhaseTimer::new("validate/prepare/semantic_validation");
-            semantic_validation(&candidate)
+        let mut changes = {
+            let _phase = instrumentation::PhaseTimer::new("validate/prepare/projection_changes");
+            projection_changes(&self.document, &candidate)
         };
+        // The prepared path evaluates the candidate exactly once, as it did
+        // through `semantic_validation`; the update is that one evaluation. It
+        // rebuilds on its own whenever an incremental update cannot express the
+        // change.
+        #[cfg(test)]
+        super::evaluation_counters::record_candidate_calculation();
+        let mut retained = {
+            let _phase = instrumentation::PhaseTimer::new("validate/prepare/retained_clone");
+            self.retained.clone()
+        };
+        let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
+        let transition = {
+            let _phase = instrumentation::PhaseTimer::new("validate/prepare/retained_update");
+            retained.update(&candidate, &changes)
+        };
+        // Publication folds the diagnostics projection changes into the same
+        // changes; prepare has the same before and after state, so it does too.
+        {
+            let _phase = instrumentation::PhaseTimer::new("validate/prepare/diagnostics_changes");
+            collect_diagnostic_projection_changes(
+                &self.document,
+                &before_diagnostics,
+                &candidate,
+                &retained.diagnostics_by_field,
+                &mut changes,
+            );
+        }
         PreparedEvaluation::new(
-            self.revision.clone(),
+            PreparedInstallation {
+                base_revision: self.revision.clone(),
+                candidate,
+                retained,
+                changes,
+                transition,
+            },
             &self.document,
-            candidate,
-            report,
-            calculation,
             base_calculation,
             base_report_valid,
         )
@@ -274,13 +320,14 @@ impl ResidentWorkspaceSession {
         ResidentPublicationAuthority {
             session: self,
             time,
+            prepared: None,
             projection_invalidation: None,
         }
     }
 }
 
-#[derive(Clone, Debug)]
-struct ResidentDerivedState {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ResidentDerivedState {
     calculation_state: RetainedCalculationState,
     validation_report: ValidationReport,
     address_index: Result<AddressIndex, AddressIndexError>,
@@ -305,7 +352,11 @@ impl ResidentDerivedState {
         if changes.address_index_changed {
             self.address_index = AddressIndex::build(document);
         }
-        let incremental_safe = previous_address_index_valid && self.address_index.is_ok();
+        let address_index_safe = previous_address_index_valid && self.address_index.is_ok();
+        // A structural change no field root can describe keeps the retained
+        // state equal to a full rebuild by taking that branch. It isn't an
+        // address-index fallback, so it isn't counted as one.
+        let incremental_safe = address_index_safe && !changes.unaddressable_calculation_change;
         let calculation = {
             let _phase = instrumentation::PhaseTimer::new("retained_update/calculation_update");
             if incremental_safe {
@@ -341,7 +392,7 @@ impl ResidentDerivedState {
             work: DerivedStateTransitionWork {
                 calculation: calculation.work,
                 address_index_rebuilt: changes.address_index_changed,
-                fell_back_to_full_calculation: !incremental_safe,
+                fell_back_to_full_calculation: !address_index_safe,
             },
             affected_calculations: calculation.affected_calculations,
             changed_calculation_projections: calculation.changed_calculation_projections,
@@ -396,6 +447,18 @@ impl ResidentDerivedState {
         Ok(fields)
     }
 
+    /// The candidate's validation report, as full semantic validation gives it.
+    pub(crate) fn report(&self) -> &ValidationReport {
+        &self.validation_report
+    }
+
+    /// The candidate's complete calculation, exactly when the report is valid.
+    pub(crate) fn calculation(&self) -> Option<&Calculation> {
+        self.calculation_state
+            .complete()
+            .filter(|_| self.report().is_valid())
+    }
+
     fn diagnostics_for_field(&self, field: &FieldRef) -> Vec<Diagnostic> {
         self.diagnostics_by_field
             .get(field)
@@ -412,7 +475,7 @@ struct DerivedStateTransitionWork {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct DerivedStateTransition {
+pub(crate) struct DerivedStateTransition {
     work: DerivedStateTransitionWork,
     affected_calculations: Vec<FieldRef>,
     changed_calculation_projections: Vec<FieldRef>,
@@ -606,10 +669,24 @@ pub trait TrustedPublicationTimeSource {
 pub struct ResidentPublicationAuthority<'session, Time> {
     session: &'session mut ResidentWorkspaceSession,
     time: &'session mut Time,
+    prepared: Option<PreparedInstallation>,
     projection_invalidation: Option<ResidentProjectionInvalidation>,
 }
 
 impl<Time> ResidentPublicationAuthority<'_, Time> {
+    /// Offer an evaluation prepared against a candidate so publication can
+    /// install its derived state instead of deriving it a second time.
+    ///
+    /// The installation is only used when it was prepared against the expected
+    /// revision and for exactly the candidate being published; otherwise
+    /// publication takes its existing path. A refused or failed publication
+    /// drops it.
+    #[must_use]
+    pub fn with_prepared(mut self, installation: PreparedInstallation) -> Self {
+        self.prepared = Some(installation);
+        self
+    }
+
     /// Return invalidation derived from this authority's exact successful
     /// publication when both revision tokens match that publication.
     ///
@@ -636,10 +713,10 @@ impl<Time> SemanticPublicationAuthority for ResidentPublicationAuthority<'_, Tim
 where
     Time: TrustedPublicationTimeSource,
 {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
         (
             self.session.document_scope.clone(),
-            self.session.document.clone(),
+            &self.session.document,
             self.session.revision.clone(),
         )
     }
@@ -648,13 +725,16 @@ where
         &mut self,
         expected_document_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
     ) -> Result<
-        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
         let _phase = instrumentation::PhaseTimer::new("publish_if_current");
+        // Any installation belongs to this one attempt: it is used or dropped,
+        // and never carried into a later compare-and-publish call.
+        let prepared = self.prepared.take();
         self.projection_invalidation = None;
         if expected_document_scope != &self.session.document_scope {
             return Err(SemanticPublicationError::DocumentScopeMismatch);
@@ -670,7 +750,7 @@ where
         let unchanged = {
             let _phase = instrumentation::PhaseTimer::new("publish_if_current/equality");
             instrumentation::record_publication_document_comparison();
-            candidate == self.session.document
+            candidate == &self.session.document
         };
         if unchanged {
             return Err(SemanticPublicationError::NoChange);
@@ -681,32 +761,64 @@ where
             .checked_add(1)
             .ok_or(SemanticPublicationError::Conflict)?;
         let resulting_revision = revision_for(next_generation);
-        let (projection_invalidation, transition_work) = {
+        let installs_prepared = prepared.as_ref().is_some_and(|installation| {
             let _phase =
-                instrumentation::PhaseTimer::new("publish_if_current/projection_invalidation");
-            projection_invalidation(
-                &self.session.document,
-                &mut self.session.retained,
-                &candidate,
-                self.session.document_scope.clone(),
-                expected_revision.clone(),
-                resulting_revision.clone(),
-            )
+                instrumentation::PhaseTimer::new("publish_if_current/installation_equality");
+            installation.base_revision == *expected_revision && installation.candidate == *candidate
+        });
+        let (projection_invalidation, transition_work) = match prepared {
+            // The installation is exactly this publication: same base revision
+            // and the same candidate document. Installing its derived state
+            // gives what the unassisted path derives below, without deriving it
+            // twice.
+            Some(installation) if installs_prepared => {
+                let _phase =
+                    instrumentation::PhaseTimer::new("publish_if_current/install_prepared");
+                let (invalidation, transition_work) = invalidation_from_transition(
+                    installation.changes,
+                    installation.transition,
+                    self.session.document_scope.clone(),
+                    expected_revision.clone(),
+                    resulting_revision.clone(),
+                );
+                self.session.retained = installation.retained;
+                self.session.document = installation.candidate;
+                #[cfg(test)]
+                installation_counters::record_prepared_installation();
+                (invalidation, transition_work)
+            }
+            _ => {
+                let (invalidation, transition_work) = {
+                    let _phase = instrumentation::PhaseTimer::new(
+                        "publish_if_current/projection_invalidation",
+                    );
+                    projection_invalidation(
+                        &self.session.document,
+                        &mut self.session.retained,
+                        candidate,
+                        self.session.document_scope.clone(),
+                        expected_revision.clone(),
+                        resulting_revision.clone(),
+                    )
+                };
+                self.session.document = {
+                    let _phase = instrumentation::PhaseTimer::new(
+                        "publish_if_current/fallback_install_clone",
+                    );
+                    candidate.clone()
+                };
+                (invalidation, transition_work)
+            }
         };
 
-        self.session.document = candidate;
         self.session.generation = next_generation;
         self.session.revision = resulting_revision.clone();
         self.session.measurements.record_transition(transition_work);
         self.projection_invalidation = Some(projection_invalidation);
 
-        let returned_document = {
-            let _phase = instrumentation::PhaseTimer::new("publish_if_current/return_clone");
-            self.session.document.clone()
-        };
         Ok((
             self.session.document_scope.clone(),
-            returned_document,
+            &self.session.document,
             resulting_revision,
             authorization,
         ))
@@ -717,6 +829,26 @@ fn revision_for(generation: u64) -> SemanticRevision {
     SemanticRevision::from(format!("resident/{generation}"))
 }
 
+/// Test-only count of publications that installed a prepared installation.
+/// It proves the differential publication tests exercise both paths, not just
+/// the fallback.
+#[cfg(test)]
+pub(crate) mod installation_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static PREPARED_INSTALLATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn record_prepared_installation() {
+        PREPARED_INSTALLATIONS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn prepared_installations() -> usize {
+        PREPARED_INSTALLATIONS.with(Cell::get)
+    }
+}
+
 fn projection_invalidation(
     before: &Document,
     retained: &mut ResidentDerivedState,
@@ -725,14 +857,7 @@ fn projection_invalidation(
     base_revision: SemanticRevision,
     resulting_revision: SemanticRevision,
 ) -> (ResidentProjectionInvalidation, DerivedStateTransitionWork) {
-    let entity_ids = before
-        .entities
-        .keys()
-        .chain(after.entities.keys())
-        .collect::<BTreeSet<_>>();
-    let mut changes = ProjectionChanges::default();
-    collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
-    collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
+    let mut changes = projection_changes(before, after);
     let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
     let transition = {
         let _phase = instrumentation::PhaseTimer::new("projection_invalidation/retained_update");
@@ -746,6 +871,27 @@ fn projection_invalidation(
         &mut changes,
     );
 
+    invalidation_from_transition(
+        changes,
+        transition,
+        document_scope,
+        base_revision,
+        resulting_revision,
+    )
+}
+
+/// Build one projection invalidation from already-computed projection changes
+/// and a derived-state transition.
+///
+/// Publication and a prepared installation share this construction so the two
+/// paths cannot drift.
+fn invalidation_from_transition(
+    changes: ProjectionChanges,
+    transition: DerivedStateTransition,
+    document_scope: DocumentScopeId,
+    base_revision: SemanticRevision,
+    resulting_revision: SemanticRevision,
+) -> (ResidentProjectionInvalidation, DerivedStateTransitionWork) {
     let affected_calculations = transition
         .affected_calculations
         .into_iter()
@@ -767,14 +913,37 @@ fn projection_invalidation(
     )
 }
 
-#[derive(Default)]
-struct ProjectionChanges {
+/// Every projection change between two documents, collected the same way for
+/// publication and for evaluation preparation.
+fn projection_changes(before: &Document, after: &Document) -> ProjectionChanges {
+    let entity_ids = before
+        .entities
+        .keys()
+        .chain(after.entities.keys())
+        .collect::<BTreeSet<_>>();
+    let mut changes = ProjectionChanges::default();
+    collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
+    collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
+    changes
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ProjectionChanges {
     schemas: BTreeSet<SchemaId>,
     schema_fields: BTreeSet<(SchemaId, FieldId)>,
     entities: BTreeSet<EntityId>,
     fields: BTreeSet<FieldRef>,
     calculation_roots: BTreeSet<FieldRef>,
     address_index_changed: bool,
+    /// A structural change that no field root can fully describe: an entity
+    /// added, removed, or moved to another schema, a field's semantic
+    /// definition changed, or a schema added or removed. Roots come from the populated fields an entity holds, but a
+    /// formula may read one of its blank fields, and the retained graph also
+    /// tracks blank column slots and a schema map that no field root expresses;
+    /// updating from roots alone would leave state that differs from a full
+    /// rebuild. These are rare structural edits, so a full rebuild is
+    /// acceptable.
+    unaddressable_calculation_change: bool,
 }
 
 fn collect_entity_projection_changes(
@@ -824,6 +993,11 @@ fn collect_entity_projection_changes(
                             .cloned()
                             .map(|field_id| FieldRef::new(entity_id.clone(), field_id)),
                     );
+                    // The roots above name only the fields the entity holds a
+                    // value for, but another entity's formula may read one of
+                    // its blank fields, and the graph's blank slots and schema
+                    // entry have no root at all.
+                    changes.unaddressable_calculation_change = true;
                 }
 
                 instrumentation::record_publication_fields_inspected(
@@ -849,6 +1023,10 @@ fn collect_entity_projection_changes(
                     .cloned()
                     .map(|field_id| FieldRef::new(entity_id.clone(), field_id))
                     .collect::<BTreeSet<_>>();
+                // As above: only the populated fields become roots, while a
+                // formula may read a blank one and the graph's blank slots and
+                // schema entry have no root.
+                changes.unaddressable_calculation_change = true;
                 changes.fields.extend(entity_fields.iter().cloned());
                 changes.calculation_roots.extend(entity_fields);
             }
@@ -872,6 +1050,12 @@ fn collect_schema_projection_changes(
     for schema_id in schema_ids {
         let before_schema = before.schemas.get(&schema_id);
         let after_schema = after.schemas.get(&schema_id);
+        // A schema added or removed changes the graph's schema map and its
+        // read columns without any entity field root to name it, even when no
+        // entity holds a field of that schema.
+        if before_schema.is_some() != after_schema.is_some() {
+            changes.unaddressable_calculation_change = true;
+        }
         if before_schema.map(|schema| (&schema.id, &schema.key))
             != after_schema.map(|schema| (&schema.id, &schema.key))
         {
@@ -931,7 +1115,6 @@ fn collect_schema_projection_changes(
                 (Some(_), None) | (None, Some(_)) => true,
                 (None, None) => false,
             };
-
             for entity_id in entity_ids {
                 let entity_id = *entity_id;
                 instrumentation::record_publication_fields_inspected(1);
@@ -948,6 +1131,14 @@ fn collect_schema_projection_changes(
                         changes.calculation_roots.insert(field);
                     }
                 }
+            }
+            // A definition change reaches every reader of the field, including
+            // readers of entities that leave it blank, which have no field root,
+            // and the retained graph's column slots, schema map and validation
+            // depend on it too. These are rare structural edits, so a full
+            // rebuild is acceptable.
+            if semantic_definition_changed {
+                changes.unaddressable_calculation_change = true;
             }
         }
     }
@@ -1025,6 +1216,10 @@ fn retained_calculation_for(
 mod projection_diff_tests;
 
 #[cfg(test)]
+#[path = "incremental_preparation_tests.rs"]
+mod incremental_preparation_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1070,7 +1265,7 @@ mod tests {
             .publish_if_current(
                 snapshot.document_scope(),
                 snapshot.revision(),
-                after,
+                &after,
                 |_| Some(()),
             )
             .unwrap();
@@ -1136,14 +1331,14 @@ mod tests {
             .publish_if_current(
                 before.document_scope(),
                 before.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap();
+        let installed = Document::clone(installed);
         assert!(publication.projection_invalidation.is_some());
         let measurements = publication.session.measurements;
-        let result =
-            publication.publish_if_current(&scope, &revision, installed.clone(), |_| Some(()));
+        let result = publication.publish_if_current(&scope, &revision, &installed, |_| Some(()));
         assert_eq!(result, Err(SemanticPublicationError::NoChange));
         assert!(publication.projection_invalidation.is_none());
         assert_eq!(publication.session.document, installed);
@@ -1169,7 +1364,7 @@ mod tests {
             .publish_if_current(
                 before.document_scope(),
                 before.revision(),
-                candidate,
+                &candidate,
                 |_| Some(()),
             )
             .unwrap_err();

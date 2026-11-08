@@ -926,9 +926,8 @@ pub enum CalculationOutcome {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RetainedCalculationState {
     nodes: BTreeSet<FieldRef>,
-    values: BTreeMap<FieldRef, Number>,
+    calculation: Calculation,
     failures: FailureMap,
-    graph: DependencyGraph,
 }
 
 /// Scratch measurement (Plan W1): the retained map sizes behind one
@@ -1007,9 +1006,8 @@ impl RetainedCalculationState {
         (
             Self {
                 nodes,
-                values,
+                calculation: Calculation { values, graph },
                 failures,
-                graph,
             },
             work,
         )
@@ -1053,8 +1051,14 @@ impl RetainedCalculationState {
         }
 
         let before_failed = self.is_failed();
-        let before_formulas = self.graph.formulas().cloned().collect::<BTreeSet<_>>();
-        let dirty_roots = &Self::with_column_total_roots(document, &self.graph, dirty_roots);
+        let before_formulas = self
+            .calculation
+            .graph
+            .formulas()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let dirty_roots =
+            &Self::with_column_total_roots(document, &self.calculation.graph, dirty_roots);
         let impact = self.update_dependency_impact(document, dirty_roots);
         let before_projections = impact
             .dirty
@@ -1078,7 +1082,7 @@ impl RetainedCalculationState {
         let after_failed = self.is_failed();
         let formula_fields = before_formulas
             .into_iter()
-            .chain(self.graph.formulas().cloned())
+            .chain(self.calculation.graph.formulas().cloned())
             .collect::<BTreeSet<_>>();
         let changed_calculation_projections = if before_failed == after_failed {
             formula_fields
@@ -1138,28 +1142,35 @@ impl RetainedCalculationState {
         document: &Document,
         dirty_roots: &BTreeSet<FieldRef>,
     ) -> DirtyCalculationImpact {
-        let (old_dependents, old_edges) = self.graph.reverse_closure(dirty_roots, false);
+        let (old_dependents, old_edges) =
+            self.calculation.graph.reverse_closure(dirty_roots, false);
         let mut touched_schemas = BTreeSet::new();
         for root in dirty_roots {
-            touched_schemas.extend(self.graph.schemas_of(document, &root.entity));
-            self.graph.remember_entity(document, &root.entity);
-            self.graph.replace_formula(document, root);
+            touched_schemas.extend(self.calculation.graph.schemas_of(document, &root.entity));
+            self.calculation
+                .graph
+                .remember_entity(document, &root.entity);
+            self.calculation.graph.replace_formula(document, root);
         }
         // Inserting or removing a row changes the member slots of every read
         // column of that row's schema, whether or not the row was blank.
         let touched_columns = self
+            .calculation
             .graph
             .tracked_columns()
             .filter(|column| touched_schemas.contains(&column.schema))
             .cloned()
             .collect::<BTreeSet<_>>();
-        self.graph.refresh_column_slots(document, &touched_columns);
+        self.calculation
+            .graph
+            .refresh_column_slots(document, &touched_columns);
         for root in dirty_roots {
             if !document.entities.contains_key(&root.entity) {
-                self.graph.forget_entity(&root.entity);
+                self.calculation.graph.forget_entity(&root.entity);
             }
         }
-        let (new_dependents, new_edges) = self.graph.reverse_closure(dirty_roots, false);
+        let (new_dependents, new_edges) =
+            self.calculation.graph.reverse_closure(dirty_roots, false);
         let dirty = dirty_roots
             .iter()
             .chain(old_dependents.iter())
@@ -1207,34 +1218,41 @@ impl RetainedCalculationState {
 
         for field in dirty {
             self.failures.remove(field);
-            self.values.remove(field);
+            self.calculation.values.remove(field);
         }
         self.failures
             .extend(pregraph_failures(document, &dirty_nodes, &dirty_formulas));
-        assign_cycle_failures(&dirty_formulas, &self.graph, &mut self.failures);
-        self.values
+        assign_cycle_failures(&dirty_formulas, &self.calculation.graph, &mut self.failures);
+        self.calculation
+            .values
             .extend(initial_values(&dirty_nodes, &self.failures));
         evaluate_remaining_formulas(
             document,
             &dirty_formulas,
-            &self.graph,
+            &self.calculation.graph,
             &mut self.failures,
-            &mut self.values,
+            &mut self.calculation.values,
         );
+    }
+
+    /// Borrow the complete atomic calculation without copying it.
+    ///
+    /// Returns `None` while any independent failure exists, matching
+    /// [`Self::outcome`]'s refusal to publish partial values.
+    #[must_use]
+    pub fn complete(&self) -> Option<&Calculation> {
+        self.failures.is_empty().then_some(&self.calculation)
     }
 
     /// Project the Accepted atomic calculation outcome for this revision.
     #[must_use]
     pub fn outcome(&self) -> CalculationOutcome {
         if self.failures.is_empty() {
-            CalculationOutcome::Complete(Calculation {
-                values: self.values.clone(),
-                graph: self.graph.clone(),
-            })
+            CalculationOutcome::Complete(self.calculation.clone())
         } else {
             CalculationOutcome::Failed(CalculationFailures {
                 failures: self.failures.clone(),
-                graph: self.graph.clone(),
+                graph: self.calculation.graph.clone(),
             })
         }
     }
@@ -1250,7 +1268,7 @@ impl RetainedCalculationState {
     pub fn value(&self, field: &FieldRef) -> Option<Number> {
         self.failures
             .is_empty()
-            .then(|| self.values.get(field).copied())
+            .then(|| self.calculation.values.get(field).copied())
             .flatten()
     }
 
@@ -1258,7 +1276,7 @@ impl RetainedCalculationState {
     /// outcome.
     #[must_use]
     pub fn complete_values(&self) -> Option<&BTreeMap<FieldRef, Number>> {
-        self.failures.is_empty().then_some(&self.values)
+        self.failures.is_empty().then_some(&self.calculation.values)
     }
 
     /// Return one primary failure only while the atomic outcome is failed.
@@ -1279,30 +1297,30 @@ impl RetainedCalculationState {
     /// and [`Self::formulas`] on edit paths.
     #[must_use]
     pub fn dependencies(&self) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
-        self.graph.expanded_dependencies()
+        self.calculation.graph.expanded_dependencies()
     }
 
     /// Return the expanded static dependency set of one formula.
     #[must_use]
     pub fn dependencies_of(&self, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
-        self.graph.dependencies_of(field)
+        self.calculation.graph.dependencies_of(field)
     }
 
     /// Return the formulas whose expanded dependencies contain `field`.
     #[must_use]
     pub fn direct_dependents(&self, field: &FieldRef) -> BTreeSet<FieldRef> {
-        self.graph.direct_dependents(field)
+        self.calculation.graph.direct_dependents(field)
     }
 
     /// Iterate the formula keys of the current dependency graph.
     pub fn formulas(&self) -> impl Iterator<Item = &FieldRef> {
-        self.graph.formulas()
+        self.calculation.graph.formulas()
     }
 
     /// Total entry count of the dependency graph, for memory-size assertions.
     #[must_use]
     pub fn graph_entry_count(&self) -> usize {
-        self.graph.entry_count()
+        self.calculation.graph.entry_count()
     }
 
     fn node_projection(&self, field: &FieldRef) -> RetainedNodeProjection {
@@ -1313,7 +1331,8 @@ impl RetainedCalculationState {
                     RetainedNodeProjection::Failure(failure.clone())
                 })
         } else {
-            self.values
+            self.calculation
+                .values
                 .get(field)
                 .map_or(RetainedNodeProjection::Unavailable, |value| {
                     RetainedNodeProjection::Value(*value)
@@ -1325,7 +1344,8 @@ impl RetainedCalculationState {
     /// supplied dirty roots themselves.
     #[must_use]
     pub fn affected_by_all(&self, dirty_roots: &BTreeSet<FieldRef>) -> Vec<FieldRef> {
-        self.graph
+        self.calculation
+            .graph
             .reverse_closure(dirty_roots, false)
             .0
             .into_iter()

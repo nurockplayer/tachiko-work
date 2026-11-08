@@ -824,6 +824,183 @@ fn a_column_total_adds_in_entity_order_bit_for_bit() {
     );
 }
 
+/// The aggregates one number column answers, folded here over the cells in
+/// entity order with no engine code: the differential's independent arithmetic
+/// reference for SUM, AVERAGE, COUNT, MIN, MAX and a conditional SUM (#716).
+struct ReferenceAggregates {
+    sum: f64,
+    average: f64,
+    count: f64,
+    minimum: f64,
+    maximum: f64,
+    conditional_sum: f64,
+}
+
+/// Fold `value_column`'s present cells in entity order, counting the rows whose
+/// `criterion_column` equals `criterion` exactly.
+fn reference_aggregates(
+    document: &Document,
+    value_column: &ColumnRef,
+    criterion_column: &ColumnRef,
+    criterion: f64,
+) -> ReferenceAggregates {
+    let mut count = 0_usize;
+    let mut sum = 0.0_f64;
+    let mut minimum = f64::INFINITY;
+    let mut maximum = f64::NEG_INFINITY;
+    let mut conditional_sum = 0.0_f64;
+    for entity in document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == value_column.schema)
+    {
+        let Some(Value::Number(value)) = entity.fields.get(&value_column.field) else {
+            continue;
+        };
+        let value = value.get();
+        count += 1;
+        sum += value;
+        minimum = minimum.min(value);
+        maximum = maximum.max(value);
+        let matches = entity
+            .fields
+            .get(&criterion_column.field)
+            .is_some_and(|cell| match cell {
+                Value::Number(number) => number.get().to_bits() == criterion.to_bits(),
+                _ => false,
+            });
+        if matches {
+            conditional_sum += value;
+        }
+    }
+    let count = f64::from(u32::try_from(count).expect("small reference column"));
+    ReferenceAggregates {
+        sum,
+        average: sum / count,
+        count,
+        minimum,
+        maximum,
+        conditional_sum,
+    }
+}
+
+/// Halves and small integers: each running sum is exact, so a plain fold and
+/// the engine's exactly rounded sum must agree bit for bit.
+fn reference_aggregate_document() -> Document {
+    fixed_document(
+        vec![
+            fixed_schema(
+                "calc",
+                &[("v", FieldType::Number), ("k", FieldType::Number)],
+            ),
+            fixed_schema(
+                "readers",
+                &[
+                    ("total", FieldType::Number),
+                    ("average", FieldType::Number),
+                    ("count", FieldType::Number),
+                    ("minimum", FieldType::Number),
+                    ("maximum", FieldType::Number),
+                    ("conditional", FieldType::Number),
+                ],
+            ),
+        ],
+        vec![
+            fixed_row(
+                "calc-0",
+                "calc",
+                &[("v", fixed_number(0.5)), ("k", fixed_number(1.0))],
+            ),
+            fixed_row(
+                "calc-1",
+                "calc",
+                &[("v", fixed_number(1.5)), ("k", fixed_number(2.0))],
+            ),
+            fixed_row(
+                "calc-2",
+                "calc",
+                &[("v", fixed_number(2.0)), ("k", fixed_number(2.0))],
+            ),
+            fixed_row(
+                "calc-3",
+                "calc",
+                &[("v", fixed_number(4.0)), ("k", fixed_number(3.0))],
+            ),
+            // A blank value in a row the criterion still matches.
+            fixed_row("calc-4", "calc", &[("k", fixed_number(2.0))]),
+            fixed_row(
+                "reader",
+                "readers",
+                &[
+                    ("total", Value::Formula(total("calc", "v"))),
+                    (
+                        "average",
+                        Value::Formula(aggregate(ColumnAggregateFunction::Average, "calc", "v")),
+                    ),
+                    (
+                        "count",
+                        Value::Formula(aggregate(ColumnAggregateFunction::Count, "calc", "v")),
+                    ),
+                    (
+                        "minimum",
+                        Value::Formula(aggregate(ColumnAggregateFunction::Minimum, "calc", "v")),
+                    ),
+                    (
+                        "maximum",
+                        Value::Formula(aggregate(ColumnAggregateFunction::Maximum, "calc", "v")),
+                    ),
+                    (
+                        "conditional",
+                        Value::Formula(conditional_sum("calc", "v", "k", literal(2.0))),
+                    ),
+                ],
+            ),
+        ],
+    )
+}
+
+#[test]
+fn the_reference_fold_agrees_with_every_column_aggregate_bit_for_bit() {
+    let document = reference_aggregate_document();
+    let reference =
+        reference_aggregates(&document, &column("calc", "v"), &column("calc", "k"), 2.0);
+    let values = fixed_values(&document);
+    let reader = |name: &str| values[&field_ref("reader", name)].get();
+    assert_eq!(
+        reader("total").to_bits(),
+        reference.sum.to_bits(),
+        "SUM folds the cells in entity order"
+    );
+    assert_eq!(
+        reader("average").to_bits(),
+        reference.average.to_bits(),
+        "AVERAGE is the exact sum over the count"
+    );
+    assert_eq!(
+        reader("count").to_bits(),
+        reference.count.to_bits(),
+        "COUNT counts the present cells"
+    );
+    assert_eq!(
+        reader("minimum").to_bits(),
+        reference.minimum.to_bits(),
+        "MIN folds the present cells"
+    );
+    assert_eq!(
+        reader("maximum").to_bits(),
+        reference.maximum.to_bits(),
+        "MAX folds the present cells"
+    );
+    assert_eq!(
+        reader("conditional").to_bits(),
+        reference.conditional_sum.to_bits(),
+        "the conditional SUM adds the matching rows in entity order"
+    );
+    assert_eq!(reference.count.to_bits(), 4.0_f64.to_bits());
+    assert_eq!(reference.conditional_sum.to_bits(), 3.5_f64.to_bits());
+    assert_matches_reference(&document, "the reference aggregates");
+}
+
 fn field_ref(entity: &str, name: &str) -> FieldRef {
     FieldRef::new(EntityId::from(entity), FieldId::from(name))
 }
@@ -1696,27 +1873,25 @@ fn a_retained_edit_unfailing_the_first_cell_names_the_next_one() {
     let expected = reference::calculate(&document);
     assert_eq!(retained.dependencies(), expected.dependencies);
     let next = field_ref("calc-1", "c9");
-    match retained.outcome() {
-        CalculationOutcome::Complete(calculation) => {
-            assert_eq!(calculation.values(), &expected.values);
-        }
-        CalculationOutcome::Failed(failures) => {
-            assert_eq!(failures.failures(), &expected.failures);
-            for index in 0..3 {
-                assert_eq!(
-                    failures
-                        .failures()
-                        .get(&field_ref(&format!("calc-{index}"), "out")),
-                    Some(&CalculationFailure::FailedDependencies {
-                        dependencies: BTreeSet::from([
-                            field_ref(&format!("calc-{index}"), "c7"),
-                            next.clone(),
-                        ]),
-                    }),
-                    "row {index} names the next failed cell after the edit"
-                );
-            }
-        }
+    // Repairing one cell leaves every c7 failing, so the retained outcome must
+    // stay `Failed`; accepting `Complete` would skip every assertion below.
+    let CalculationOutcome::Failed(failures) = retained.outcome() else {
+        panic!("the retained edit still has failing cells");
+    };
+    assert_eq!(failures.failures(), &expected.failures);
+    for index in 0..3 {
+        assert_eq!(
+            failures
+                .failures()
+                .get(&field_ref(&format!("calc-{index}"), "out")),
+            Some(&CalculationFailure::FailedDependencies {
+                dependencies: BTreeSet::from([
+                    field_ref(&format!("calc-{index}"), "c7"),
+                    next.clone(),
+                ]),
+            }),
+            "row {index} names the next failed cell after the edit"
+        );
     }
     assert_matches_reference(&document, "the next failed cell after a retained edit");
 }

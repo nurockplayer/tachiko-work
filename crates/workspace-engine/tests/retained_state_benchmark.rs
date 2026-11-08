@@ -81,7 +81,7 @@ fn run_case(entity_count: usize) -> (u128, u128, ResidentRuntimeMeasurements) {
                 .publish_if_current(
                     &DocumentScopeId::from(format!("benchmark-{entity_count}")),
                     &expected_revision,
-                    document.clone(),
+                    &document,
                     |_| Some(()),
                 )
                 .unwrap();

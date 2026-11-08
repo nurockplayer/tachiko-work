@@ -716,37 +716,32 @@ pub enum PreparedVerdict<'evaluation> {
 /// One candidate evaluated once, paired with the base occurrence's retained
 /// calculation so a proposal can reuse both instead of recalculating either.
 ///
+/// The candidate's calculation and report are owned here, so this value lends
+/// them instead of borrowing resident state that a later publication replaces.
+///
 /// Only crate-internal callers construct this; its fields are trusted engine
 /// state, not a cache-key, serialization, or transport contract.
 #[derive(Debug)]
 pub struct PreparedEvaluation<'session> {
-    base_revision: patch_lifecycle::SemanticRevision,
+    installation: PreparedInstallation,
     base_document: &'session Document,
-    candidate: Document,
-    report: ValidationReport,
-    calculation: Option<Calculation>,
-    base_calculation: Option<Calculation>,
+    base_calculation: Option<&'session Calculation>,
     base_report_valid: bool,
     definitions_invalid: bool,
 }
 
 impl<'session> PreparedEvaluation<'session> {
     pub(crate) fn new(
-        base_revision: patch_lifecycle::SemanticRevision,
+        installation: PreparedInstallation,
         base_document: &'session Document,
-        candidate: Document,
-        report: ValidationReport,
-        calculation: Option<Calculation>,
-        base_calculation: Option<Calculation>,
+        base_calculation: Option<&'session Calculation>,
         base_report_valid: bool,
     ) -> Self {
-        let definitions_invalid = validate_keyed_grouped_sum_definitions(&candidate).is_err();
+        let definitions_invalid =
+            validate_keyed_grouped_sum_definitions(&installation.candidate).is_err();
         Self {
-            base_revision,
+            installation,
             base_document,
-            candidate,
-            report,
-            calculation,
             base_calculation,
             base_report_valid,
             definitions_invalid,
@@ -756,7 +751,7 @@ impl<'session> PreparedEvaluation<'session> {
     /// The base revision this evaluation was prepared against.
     #[must_use]
     pub fn base_revision(&self) -> &patch_lifecycle::SemanticRevision {
-        &self.base_revision
+        &self.installation.base_revision
     }
 
     /// The document this evaluation's base results belong to. Revision tokens
@@ -768,7 +763,7 @@ impl<'session> PreparedEvaluation<'session> {
     /// The evaluated candidate.
     #[must_use]
     pub fn document(&self) -> &Document {
-        &self.candidate
+        &self.installation.candidate
     }
 
     /// The verdict [`validate`] would give for this candidate.
@@ -776,9 +771,9 @@ impl<'session> PreparedEvaluation<'session> {
     pub fn verdict(&self) -> PreparedVerdict<'_> {
         if self.definitions_invalid {
             PreparedVerdict::InvalidDefinitions
-        } else if self.calculation.is_none() {
+        } else if self.calculation().is_none() {
             PreparedVerdict::InvalidDocument {
-                report: &self.report,
+                report: self.installation.retained.report(),
             }
         } else {
             PreparedVerdict::Valid
@@ -786,15 +781,28 @@ impl<'session> PreparedEvaluation<'session> {
     }
 
     pub(crate) fn report(&self) -> &ValidationReport {
-        &self.report
+        self.installation.retained.report()
     }
 
+    /// The candidate's calculation exactly when [`validate`] would publish
+    /// one: the retained outcome is complete and the report has no
+    /// diagnostics.
     pub(crate) fn calculation(&self) -> Option<&Calculation> {
-        self.calculation.as_ref()
+        self.installation.retained.calculation()
+    }
+
+    /// Turn this evaluation into the value publication installs.
+    ///
+    /// The result owns everything it needs, so consuming the evaluation ends
+    /// its borrow of the session and the host can take the exclusive
+    /// publication authority.
+    #[must_use]
+    pub fn into_installable(self) -> PreparedInstallation {
+        self.installation
     }
 
     pub(crate) fn base_calculation(&self) -> Option<&Calculation> {
-        self.base_calculation.as_ref()
+        self.base_calculation
     }
 
     /// Whether the base revision's retained semantic report was valid.
@@ -804,6 +812,27 @@ impl<'session> PreparedEvaluation<'session> {
     pub(crate) fn base_report_valid(&self) -> bool {
         self.base_report_valid
     }
+}
+
+/// One evaluation's installable state, prepared before publication and handed
+/// to [`resident_session::ResidentPublicationAuthority::with_prepared`].
+///
+/// It owns the evaluated candidate, the derived state and the projection
+/// changes and transition that publication would otherwise derive from the
+/// base. Publication installs it only when it was prepared against the
+/// expected revision for exactly the published candidate; otherwise it takes
+/// its existing path and this value is dropped.
+///
+/// The value crosses the engine/host boundary owned: it holds no borrow, so it
+/// outlives the session borrow [`PreparedEvaluation`] takes. Only the engine
+/// constructs it, through [`PreparedEvaluation::into_installable`].
+#[derive(Debug)]
+pub struct PreparedInstallation {
+    base_revision: patch_lifecycle::SemanticRevision,
+    candidate: Document,
+    retained: resident_session::ResidentDerivedState,
+    changes: resident_session::ProjectionChanges,
+    transition: resident_session::DerivedStateTransition,
 }
 
 /// Calculate every numeric field and project it through current human keys.
@@ -1992,9 +2021,12 @@ impl FieldEditPlanning {
         field: &FieldRef,
         expression: &Expression,
     ) -> Result<(), WorkspaceError> {
-        let projected = match self.index.as_ref() {
-            Some(index) => project_expression_with_index(document, index, field, expression),
-            None => match AddressIndex::build(document) {
+        let projected = if let Some(index) = self.index.as_ref() {
+            project_expression_with_index(document, index, field, expression)
+        } else {
+            #[cfg(test)]
+            planning_counters::record_address_index_build();
+            match AddressIndex::build(document) {
                 Ok(index) => {
                     let projected =
                         project_expression_with_index(document, &index, field, expression);
@@ -2002,7 +2034,7 @@ impl FieldEditPlanning {
                     projected
                 }
                 Err(_) => project_expression(document, field, expression),
-            },
+            }
         };
         projected
             .map_err(|source| match source {
@@ -2513,6 +2545,48 @@ pub(crate) mod evaluation_counters {
         (
             CANDIDATE_CALCULATIONS.with(Cell::get),
             BASE_CALCULATIONS.with(Cell::get),
+        )
+    }
+}
+
+/// Test-only counts of the whole-document work one batch plan performs. They
+/// are acceptance instruments for "a batch plans each command without
+/// rewalking the document" (Issue #712), not a runtime measurement surface.
+#[cfg(test)]
+pub(crate) mod planning_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static DOCUMENT_CLONES: Cell<usize> = const { Cell::new(0) };
+        static STRUCTURE_PREFLIGHTS: Cell<usize> = const { Cell::new(0) };
+        static ADDRESS_INDEX_BUILDS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        DOCUMENT_CLONES.with(|count| count.set(0));
+        STRUCTURE_PREFLIGHTS.with(|count| count.set(0));
+        ADDRESS_INDEX_BUILDS.with(|count| count.set(0));
+    }
+
+    pub(crate) fn record_document_clone() {
+        DOCUMENT_CLONES.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn record_structure_preflight() {
+        STRUCTURE_PREFLIGHTS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn record_address_index_build() {
+        ADDRESS_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Return `(document clones, structure preflights, address-index builds)`
+    /// since the last [`reset`].
+    pub(crate) fn counts() -> (usize, usize, usize) {
+        (
+            DOCUMENT_CLONES.with(Cell::get),
+            STRUCTURE_PREFLIGHTS.with(Cell::get),
+            ADDRESS_INDEX_BUILDS.with(Cell::get),
         )
     }
 }
@@ -3087,6 +3161,8 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
 }
 
 fn preflight_formula_structures(document: &Document) -> Result<(), WorkspaceError> {
+    #[cfg(test)]
+    planning_counters::record_structure_preflight();
     for (entity_id, entity) in &document.entities {
         preflight_entity_formulas(entity_id, entity)?;
     }

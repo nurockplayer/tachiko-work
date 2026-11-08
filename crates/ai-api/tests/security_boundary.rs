@@ -209,10 +209,10 @@ impl TestPublication {
 }
 
 impl SemanticPublicationAuthority for TestPublication {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
         (
             self.document_scope.clone(),
-            self.document.clone(),
+            &self.document,
             self.revision.clone(),
         )
     }
@@ -221,10 +221,10 @@ impl SemanticPublicationAuthority for TestPublication {
         &mut self,
         expected_document_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
     ) -> Result<
-        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
         if &self.document_scope != expected_document_scope {
@@ -235,14 +235,14 @@ impl SemanticPublicationAuthority for TestPublication {
         if &self.revision != expected_revision {
             return Err(SemanticPublicationError::Stale);
         }
-        if candidate == self.document {
+        if candidate == &self.document {
             return Err(SemanticPublicationError::NoChange);
         }
-        self.document = candidate;
+        self.document = candidate.clone();
         self.revision = self.next_revision.clone();
         Ok((
             self.document_scope.clone(),
-            self.document.clone(),
+            &self.document,
             self.revision.clone(),
             authorization,
         ))

@@ -305,7 +305,7 @@ fn measure_scalar_edits(
             let mut time = FixedTime;
             session
                 .publication_authority(&mut time)
-                .publish_if_current(&scope, &revision, candidate, |_| Some(()))
+                .publish_if_current(&scope, &revision, &candidate, |_| Some(()))
                 .expect("scalar publication succeeds");
         });
         samples.push(sample);
@@ -350,7 +350,7 @@ fn measure_formula_edits(size: (usize, usize), rows: &mut Vec<Row>) {
             let mut time = FixedTime;
             session
                 .publication_authority(&mut time)
-                .publish_if_current(&scope, &revision, candidate, |_| Some(()))
+                .publish_if_current(&scope, &revision, &candidate, |_| Some(()))
                 .expect("formula publication succeeds");
         });
         let after = session.runtime_measurements().calculation_nodes_recomputed;
@@ -1606,42 +1606,58 @@ const PHASE_ORDER: &[(&str, usize)] = &[
     ("handle/changed_cells", 1),
     ("handle/build_response", 1),
     ("edit_cells", 0),
-    ("edit_cells/pre_publish", 1),
     ("record_edit/history", 1),
     ("publish_commands", 1),
-    ("publish_commands/export_snapshot_clone", 2),
+    ("publish_commands/candidate_clone", 2),
     ("publish_commands/apply_commands", 2),
     ("publish_commands/capacity_check", 2),
     ("publish_commands/saved_bytes", 2),
     ("publish_commands/validate", 2),
+    ("validate/prepare/base_outcome", 3),
+    ("validate/prepare/projection_changes", 3),
+    ("validate/prepare/retained_clone", 3),
+    ("validate/prepare/retained_update", 3),
+    ("retained_update/calculation_update", 4),
+    ("retained_update/validation_report", 4),
+    ("validate/prepare/diagnostics_changes", 3),
     ("publish_commands/ensure_document_profile", 2),
-    ("publish_commands/preflight", 2),
     ("propose", 2),
     ("propose/plan_commands", 3),
+    ("propose/plan_commands/document_clone", 4),
+    ("propose/memo_base_clone", 3),
     ("propose/finalize_evaluation", 3),
     ("finalize_evaluation/validate", 4),
     ("finalize_evaluation/preflight_formula_projections", 4),
+    ("finalize_evaluation/reuse_equality", 4),
+    ("finalize_evaluation/preflight_base", 4),
+    ("finalize_evaluation/preflight_candidate", 4),
     ("finalize_evaluation/canonical_delta", 4),
-    ("finalize_evaluation/diff", 4),
+    ("finalize_evaluation/formula_diff", 4),
     ("finalize_evaluation/derive_disclosures", 4),
-    ("finalize_evaluation/validation_report", 4),
+    ("finalize_evaluation/base_calculate", 4),
+    ("finalize_evaluation/diff", 4),
+    ("review/memo_equality", 2),
     ("publish_commands/preview", 2),
     ("publish_commands/execute", 2),
     ("publish_commands/execute/execute_profile", 3),
     ("execute_profile/current_snapshot", 4),
-    ("execute_profile/candidate_clone", 4),
+    ("execute_profile/memo_equality", 4),
     ("execute_profile/publish_candidate", 4),
     ("publish_if_current", 5),
     ("publish_if_current/equality", 6),
+    ("publish_if_current/installation_equality", 6),
+    ("publish_if_current/install_prepared", 6),
     ("publish_if_current/projection_invalidation", 6),
     ("projection_invalidation/retained_update", 7),
     ("retained_update/calculation_update", 8),
     ("retained_update/validation_report", 8),
-    ("publish_if_current/return_clone", 6),
+    ("publish_if_current/fallback_install_clone", 6),
     ("execute_profile/verify_publication", 4),
     ("publish_commands/refresh_structure", 2),
     ("refresh_structure/capacity_measure", 3),
     ("refresh_structure/collection_specs", 3),
+    ("validate/semantic/calculate", 3),
+    ("validate/semantic/report", 3),
 ];
 
 fn median(mut values: Vec<f64>) -> f64 {

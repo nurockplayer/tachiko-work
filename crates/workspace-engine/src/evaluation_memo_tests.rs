@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     Expression, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat,
-    NumberFormatKind, Schema, WorkspaceError, evaluation_counters,
+    NumberFormatKind, Schema, WorkspaceError, evaluation_counters, planning_counters,
     resident_session::ResidentWorkspaceSession,
 };
 
@@ -165,17 +165,17 @@ impl Host {
 }
 
 impl SemanticPublicationAuthority for Host {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        ("scope".into(), self.snapshot.clone(), self.revision.clone())
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        ("scope".into(), &self.snapshot, self.revision.clone())
     }
 
     fn publish_if_current<A>(
         &mut self,
         expected_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
-    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+    ) -> Result<(DocumentScopeId, &Document, SemanticRevision, A), SemanticPublicationError> {
         if expected_scope != &DocumentScopeId::from("scope") || expected_revision != &self.revision
         {
             return Err(SemanticPublicationError::Stale);
@@ -184,7 +184,14 @@ impl SemanticPublicationAuthority for Host {
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         self.publications += 1;
         self.published = Some(candidate.clone());
-        Ok(("scope".into(), candidate, "r2".into(), authorization))
+        Ok((
+            "scope".into(),
+            self.published
+                .as_ref()
+                .expect("successful publication installs a document"),
+            "r2".into(),
+            authorization,
+        ))
     }
 }
 
@@ -434,29 +441,24 @@ struct InstallingHost {
 }
 
 impl SemanticPublicationAuthority for InstallingHost {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        ("scope".into(), self.snapshot.clone(), self.revision.clone())
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        ("scope".into(), &self.snapshot, self.revision.clone())
     }
 
     fn publish_if_current<A>(
         &mut self,
         expected_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        _candidate: Document,
+        _candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
-    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+    ) -> Result<(DocumentScopeId, &Document, SemanticRevision, A), SemanticPublicationError> {
         if expected_scope != &DocumentScopeId::from("scope") || expected_revision != &self.revision
         {
             return Err(SemanticPublicationError::Stale);
         }
         let authorization = authorize(TrustedInstant::new(30))
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
-        Ok((
-            "scope".into(),
-            self.installed.clone(),
-            "r2".into(),
-            authorization,
-        ))
+        Ok(("scope".into(), &self.installed, "r2".into(), authorization))
     }
 }
 
@@ -1239,6 +1241,115 @@ fn unset_keeps_todays_absent_and_required_behaviour() {
         lifecycle.plan_commands(&document, &body).unwrap_err(),
         WorkspaceError::MissingField { .. }
     ));
+}
+
+// --- One batch walks each document-wide structure once (#712) ---
+
+/// The most whole-document work one batch may repeat. Equation of the counts
+/// across two batch sizes, not this number, is what proves the work does not
+/// grow with the batch.
+const MAX_PLANNING_WHOLE_DOCUMENT_WORK: usize = 2;
+
+/// Plan one batch and return `(document clones, structure preflights,
+/// address-index builds)` as the test-only counters observed them.
+fn plan_counts(document: &Document, commands: Vec<SemanticCommand>) -> (usize, usize, usize) {
+    let lifecycle = planning_lifecycle();
+    let body = SemanticPatchBody::atomic_batch(commands).expect("a batch of commands");
+    planning_counters::reset();
+    lifecycle
+        .plan_commands(document, &body)
+        .expect("the batch plans");
+    planning_counters::counts()
+}
+
+/// Assert one kind of command plans with the same small counts at 10 and 50
+/// commands: no whole-document walk runs once per command.
+fn assert_bounded_planning(label: &str, build: impl Fn(usize) -> Vec<SemanticCommand>) {
+    let document = batch_document();
+    let small = plan_counts(&document, build(10));
+    let large = plan_counts(&document, build(50));
+    assert_eq!(
+        small, large,
+        "{label}: whole-document work grew with the batch"
+    );
+    let (clones, preflights, builds) = large;
+    assert!(
+        clones <= MAX_PLANNING_WHOLE_DOCUMENT_WORK,
+        "{label}: {clones} whole-document clones in one batch"
+    );
+    assert!(
+        preflights <= MAX_PLANNING_WHOLE_DOCUMENT_WORK,
+        "{label}: {preflights} formula-structure preflights in one batch"
+    );
+    assert!(
+        builds <= MAX_PLANNING_WHOLE_DOCUMENT_WORK,
+        "{label}: {builds} address-index builds in one batch"
+    );
+}
+
+/// One entity an append batch can add, named after its index.
+fn batch_appended_entity(index: usize) -> Entity {
+    appended_entity(
+        &format!("e{}", index + 2),
+        &format!("row{}", index + 2),
+        None,
+    )
+}
+
+#[test]
+fn a_value_edit_batch_plans_without_whole_document_work_per_command() {
+    assert_bounded_planning("SetFieldValue", |count| {
+        (0..count)
+            .map(|index| set_value("f", Value::Text(format!("value-{index}"))))
+            .collect()
+    });
+}
+
+#[test]
+fn a_formula_set_batch_plans_without_whole_document_work_per_command() {
+    assert_bounded_planning("formula sets", |count| {
+        (0..count)
+            .map(|index| {
+                let value = f64::from(u32::try_from(index).expect("small batch"));
+                set_formula(
+                    "h",
+                    Expression::Number(Number::new(value).expect("finite literal")),
+                )
+            })
+            .collect()
+    });
+}
+
+#[test]
+fn an_append_run_plans_without_whole_document_work_per_command() {
+    assert_bounded_planning("AppendEntity", |count| {
+        (0..count)
+            .map(|index| SemanticCommand::AppendEntity {
+                entity: batch_appended_entity(index),
+            })
+            .collect()
+    });
+}
+
+#[test]
+fn a_mixed_batch_plans_without_whole_document_work_per_command() {
+    assert_bounded_planning("mixed", |count| {
+        let half = count / 2;
+        (0..half)
+            .map(|index| {
+                let value = f64::from(u32::try_from(index).expect("small batch"));
+                set_formula(
+                    "h",
+                    Expression::Number(Number::new(value + 1.0).expect("finite literal")),
+                )
+            })
+            .chain(
+                (0..count - half).map(|index| SemanticCommand::AppendEntity {
+                    entity: batch_appended_entity(index),
+                }),
+            )
+            .collect()
+    });
 }
 
 // --- Formula updates keep the batch state too (#678 stage 4) ---
@@ -2353,17 +2464,17 @@ impl AdvancingHost {
 }
 
 impl SemanticPublicationAuthority for AdvancingHost {
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
-        ("scope".into(), self.snapshot.clone(), self.revision.clone())
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision) {
+        ("scope".into(), &self.snapshot, self.revision.clone())
     }
 
     fn publish_if_current<A>(
         &mut self,
         expected_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<A>,
-    ) -> Result<(DocumentScopeId, Document, SemanticRevision, A), SemanticPublicationError> {
+    ) -> Result<(DocumentScopeId, &Document, SemanticRevision, A), SemanticPublicationError> {
         if expected_scope != &DocumentScopeId::from("scope") || expected_revision != &self.revision
         {
             return Err(SemanticPublicationError::Stale);
@@ -2375,7 +2486,7 @@ impl SemanticPublicationAuthority for AdvancingHost {
         self.revision = SemanticRevision::from(format!("r{}", self.publications + 1));
         Ok((
             "scope".into(),
-            candidate,
+            &self.snapshot,
             self.revision.clone(),
             authorization,
         ))

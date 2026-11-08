@@ -5998,7 +5998,9 @@ impl DesignerRuntime {
         )?;
         let proposal = designer_preview(
             &mut lifecycle,
-            &snapshot,
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
             &proposal_id,
             &self.principal,
             self.clock.tick(),
@@ -6101,7 +6103,9 @@ impl DesignerRuntime {
         )?;
         designer_preview(
             &mut lifecycle,
-            &snapshot,
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
             &proposal_id,
             &self.principal,
             self.clock.tick(),
@@ -6300,11 +6304,12 @@ impl DesignerRuntime {
         commands: Vec<SemanticCommand>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
-        let (snapshot, mut candidate) = {
-            let _phase = instrumentation::PhaseTimer::new("publish_commands/export_snapshot_clone");
-            let snapshot = self.session.export_snapshot();
-            let candidate = snapshot.document().clone();
-            (snapshot, candidate)
+        let (document_scope, mut candidate) = {
+            let _phase = instrumentation::PhaseTimer::new("publish_commands/candidate_clone");
+            (
+                self.session.document_scope().clone(),
+                self.session.document().clone(),
+            )
         };
         {
             let _phase = instrumentation::PhaseTimer::new("publish_commands/apply_commands");
@@ -6313,21 +6318,6 @@ impl DesignerRuntime {
                     SemanticCommand::AppendCollection { schema, entities } => {
                         candidate.schemas.insert(schema.id.clone(), schema.clone());
                         for entity in entities {
-                            candidate.entities.insert(entity.id.clone(), entity.clone());
-                        }
-                    }
-                    SemanticCommand::RemoveCollection { schema, entities } => {
-                        for entity in entities {
-                            candidate.entities.remove(entity);
-                        }
-                        candidate.schemas.remove(schema);
-                    }
-                    SemanticCommand::SetFieldValue { field, value } => {
-                        if let Some(entity) = candidate.entities.get_mut(&field.entity) {
-                            entity.fields.insert(field.field.clone(), value.clone());
-                        }
-                    }
-                    SemanticCommand::AppendEntity { entity } => {
                         candidate.entities.insert(entity.id.clone(), entity.clone());
                     }
                     SemanticCommand::RemoveEntity { entity } => {
@@ -6526,7 +6516,7 @@ impl DesignerRuntime {
                                 value: Value::Text(value),
                             },
                         ] if matches!(
-                            snapshot
+                            self.session
                                 .document()
                                 .entities
                                 .get(&field.entity)
@@ -6587,7 +6577,8 @@ impl DesignerRuntime {
         // unchanged, so the structural caches stay valid.
         let value_only = !commands.is_empty()
             && commands.iter().all(|command| match command {
-                SemanticCommand::SetFieldValue { field, value } => snapshot
+                SemanticCommand::SetFieldValue { field, value } => self
+                    .session
                     .document()
                     .entities
                     .get(&field.entity)
@@ -6605,7 +6596,7 @@ impl DesignerRuntime {
             });
         // Capacity Text human requests own their proposal evidence for this
         // one call. Other command families retain the existing lifecycle.
-        let v2_evidence_transition = document_requires_v2_evidence(snapshot.document())
+        let v2_evidence_transition = document_requires_v2_evidence(self.session.document())
             || commands.iter().any(|command| match command {
                 SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -6629,8 +6620,8 @@ impl DesignerRuntime {
             Some(self.lifecycle.fork_for_v2_request())
         } else if capacity_text_edit {
             Some(designer_lifecycle_profile(
-                snapshot.document_scope(),
-                snapshot.document(),
+                &document_scope,
+                self.session.document(),
                 &self.principal,
                 v2_evidence_transition,
             )?)
@@ -6642,9 +6633,9 @@ impl DesignerRuntime {
         let body = SemanticPatchBody::atomic_batch(commands)?;
         let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
         lifecycle.propose_prepared(
-            snapshot.document_scope(),
-            snapshot.document(),
-            snapshot.revision(),
+            &document_scope,
+            self.session.document(),
+            self.session.revision(),
             ProposalRequest::new(
                 proposal_id.clone(),
                 SemanticRevision::from(expected_revision.to_owned()),
@@ -6656,14 +6647,22 @@ impl DesignerRuntime {
         )?;
         designer_preview(
             lifecycle,
-            &snapshot,
+            &document_scope,
+            self.session.document(),
+            self.session.revision(),
             &proposal_id,
             &self.principal,
             self.clock.tick(),
         )?;
         let execute_now = self.clock.tick();
+        // Hand publication the state this request already derived, so an
+        // accepted edit doesn't derive it a second time.
+        let installation = prepared.into_installable();
         let invalidation = {
-            let mut publication = self.session.publication_authority(&mut self.clock);
+            let mut publication = self
+                .session
+                .publication_authority(&mut self.clock)
+                .with_prepared(installation);
             let receipt = designer_execute(
                 lifecycle,
                 &proposal_id,
@@ -6673,7 +6672,7 @@ impl DesignerRuntime {
             )?;
             publication
                 .projection_invalidation_for(
-                    snapshot.document_scope(),
+                    &document_scope,
                     &receipt.base_revision,
                     &receipt.resulting_revision,
                 )
@@ -6684,7 +6683,7 @@ impl DesignerRuntime {
         if !capacity_text_edit && !value_only {
             let _phase = instrumentation::PhaseTimer::new("publish_commands/refresh_structure");
             self.refresh_structure();
-            if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
+            if let Ok(sources) = formula_sources(self.session.document()) {
                 self.formula_sources = sources;
             }
         }
@@ -6735,14 +6734,13 @@ impl DesignerRuntime {
     }
 
     fn refresh_structure(&mut self) {
-        let snapshot = self.session.export_snapshot();
         self.capacity_usage = {
             let _phase = instrumentation::PhaseTimer::new("refresh_structure/capacity_measure");
-            CapacityUsage::measure_for(snapshot.document(), self.profile)
+            CapacityUsage::measure_for(self.session.document(), self.profile)
         };
         self.collection_specs = {
             let _phase = instrumentation::PhaseTimer::new("refresh_structure/collection_specs");
-            collection_specs(snapshot.document())
+            collection_specs(self.session.document())
         };
         self.collections = self
             .collection_specs
@@ -7105,10 +7103,8 @@ impl DesignerRuntime {
         if edits.is_empty() || edits.len() > self.max_batch_targets() {
             return Err(tracker_error("the edit range is empty or too large"));
         }
-        let snapshot = match self.profile {
-            SessionProfile::Ordinary | SessionProfile::WorkingSize => {
-                Some(self.session.export_snapshot())
-            }
+        let document = match self.profile {
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => Some(self.session.document()),
             SessionProfile::TextCapacity => None,
         };
         let mut seen = BTreeSet::new();
@@ -7138,8 +7134,8 @@ impl DesignerRuntime {
                 .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
                     field: field.clone(),
                 })?;
-            let present = if let Some(snapshot) = &snapshot {
-                snapshot.document().entities[&field.entity]
+            let present = if let Some(document) = document {
+                document.entities[&field.entity]
                     .fields
                     .contains_key(&field.field)
             } else {
@@ -7166,9 +7162,8 @@ impl DesignerRuntime {
                     .as_ref()
                     .and_then(|query| query.value().first())
                     .and_then(|value| value.stored_value.as_ref()),
-                SessionProfile::Ordinary | SessionProfile::WorkingSize => snapshot
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.document().entities.get(&field.entity))
+                SessionProfile::Ordinary | SessionProfile::WorkingSize => document
+                    .and_then(|document| document.entities.get(&field.entity))
                     .and_then(|entity| entity.fields.get(&field.field)),
             };
             // A formula is not a blank scalar slot.
@@ -10403,7 +10398,9 @@ fn formula_sources(document: &Document) -> Result<BTreeMap<FieldRef, String>, De
 
 fn designer_preview(
     lifecycle: &mut PatchLifecycle,
-    snapshot: &ResidentSnapshot,
+    document_scope: &DocumentScopeId,
+    document: &Document,
+    revision: &SemanticRevision,
     proposal: &ProposalId,
     principal: &PrincipalId,
     now: TrustedInstant,
@@ -10411,25 +10408,11 @@ fn designer_preview(
     let _phase = instrumentation::PhaseTimer::new("publish_commands/preview");
     if lifecycle.uses_v2_evidence() {
         Ok(lifecycle
-            .preview_v2(
-                snapshot.document_scope(),
-                snapshot.document(),
-                snapshot.revision(),
-                proposal,
-                principal,
-                now,
-            )?
+            .preview_v2(document_scope, document, revision, proposal, principal, now)?
             .proposal)
     } else {
         Ok(lifecycle
-            .preview(
-                snapshot.document_scope(),
-                snapshot.document(),
-                snapshot.revision(),
-                proposal,
-                principal,
-                now,
-            )?
+            .preview(document_scope, document, revision, proposal, principal, now)?
             .proposal)
     }
 }
@@ -12522,7 +12505,9 @@ mod tests {
             .unwrap();
         super::designer_preview(
             &mut replay.lifecycle,
-            &snapshot,
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
             &proposal,
             &replay.principal,
             replay.clock.tick(),

@@ -553,7 +553,9 @@ impl DesignerRuntime {
             .and_then(|_| {
                 designer_preview(
                     &mut lifecycle,
-                    &snapshot,
+                    snapshot.document_scope(),
+                    snapshot.document(),
+                    snapshot.revision(),
                     &proposal,
                     &self.principal,
                     TrustedInstant::new(2),

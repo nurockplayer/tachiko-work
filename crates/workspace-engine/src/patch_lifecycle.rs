@@ -1226,7 +1226,10 @@ impl ExecutionReceiptV2 {
 /// method runs and consumes Approval immediately after a successful return.
 pub trait SemanticPublicationAuthority {
     /// Capture one coherent protected-occurrence/document/revision tuple.
-    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision);
+    ///
+    /// The document is borrowed: a reader that only inspects the current
+    /// occurrence must not copy it.
+    fn current_snapshot(&self) -> (DocumentScopeId, &Document, SemanticRevision);
 
     /// Resolve one publication attempt under an exclusive guard. First compare
     /// `expected_document_scope`; an occurrence change returns
@@ -1240,6 +1243,10 @@ pub trait SemanticPublicationAuthority {
     /// revision, and the callback's authorization evidence before releasing
     /// the guard. A later publication may advance [`Self::current_snapshot`]
     /// without changing this successful result.
+    ///
+    /// The candidate is borrowed so the lifecycle keeps the exact evaluated
+    /// occurrence for post-publication verification; the authority installs
+    /// its own copy only on success.
     ///
     /// After authorization and exact-base checks, compare the complete typed
     /// candidate with the protected current Document using stored semantic
@@ -1258,10 +1265,10 @@ pub trait SemanticPublicationAuthority {
         &mut self,
         expected_document_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
-        candidate: Document,
+        candidate: &Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
     ) -> Result<
-        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     >;
 }
@@ -1450,12 +1457,12 @@ struct PublicationAttempt<'a> {
     footprint: &'a AuthorizationFootprint,
     current_document_scope: &'a DocumentScopeId,
     current_revision: &'a SemanticRevision,
-    candidate: Document,
+    candidate: &'a Document,
 }
 
-struct PublishedCandidate {
+struct PublishedCandidate<'authority> {
     document_scope: DocumentScopeId,
-    document: Document,
+    document: &'authority Document,
     revision: SemanticRevision,
     approval: Option<ApprovalExecutionEvidence>,
     authorization: PublicationAuthorization,
@@ -1798,6 +1805,7 @@ impl PatchLifecycle {
         now: TrustedInstant,
         prepared: Option<&PreparedEvaluation<'_>>,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
+        let _phase = instrumentation::PhaseTimer::new("propose");
         self.propose_inner(
             document_scope,
             document,
@@ -1939,6 +1947,7 @@ impl PatchLifecycle {
         };
         record.footprint = Some(evaluated.footprint.clone());
         self.proposals.insert(patch.id.clone(), record);
+        let _memo_clone = instrumentation::PhaseTimer::new("propose/memo_base_clone");
         self.evaluation_memo = Some(EvaluationMemo {
             base: document.clone(),
             patch: patch.clone(),
@@ -2033,56 +2042,56 @@ impl PatchLifecycle {
             self.append_state(proposal_id, PatchLifecycleState::Stale);
             return Err(PatchLifecycleError::Stale);
         }
-        let evaluated = self.evaluate_retained(document, &record.patch)?;
-        if evaluated.footprint != stored_footprint {
-            self.append_state(proposal_id, PatchLifecycleState::Conflict);
-            return Err(PatchLifecycleError::ApprovalBindingMismatch);
-        }
-        let constraint_reviews = if matches!(&evaluated.evidence, PatchEvidence::V2(_)) {
-            constraint_review_evidence(
-                document,
-                &evaluated.document,
-                record.patch.exact_change.body(),
-            )?
-        } else {
-            Vec::new()
-        };
-
-        let proposal = record.patch;
-        let risk = PatchRisk {
-            mutation_classes: evaluated.footprint.mutation_classes(),
-        };
-        let proposal_record = self
-            .proposals
-            .get_mut(proposal_id)
-            .ok_or(PatchLifecycleError::ProposalNotFound)?;
-        proposal_record.reviewed_by.insert(viewer.clone());
-        for state in [
-            PatchLifecycleState::Previewed,
-            PatchLifecycleState::Validated,
-            PatchLifecycleState::AwaitingApproval,
-        ] {
-            push_once(&mut proposal_record.history, state);
-        }
-        match evaluated.evidence {
-            PatchEvidence::V1(semantic_changes) => Ok(ProfiledPreview::V1(PatchPreview {
-                proposal,
-                semantic_changes,
-                formula_impacts: evaluated.formula_impacts,
-                validation_report: evaluated.validation_report,
-                authorization_footprint: evaluated.footprint,
-                risk,
-            })),
-            PatchEvidence::V2(delta) => Ok(ProfiledPreview::V2(PatchPreviewV2 {
-                proposal,
-                delta,
-                constraint_reviews,
-                formula_impacts: evaluated.formula_impacts,
-                validation_report: evaluated.validation_report,
-                authorization_footprint: evaluated.footprint,
-                risk,
-            })),
-        }
+        let patch = record.patch;
+        self.with_evaluated(document, &patch, |lifecycle, evaluated| {
+            if evaluated.footprint != stored_footprint {
+                lifecycle.append_state(proposal_id, PatchLifecycleState::Conflict);
+                return Err(PatchLifecycleError::ApprovalBindingMismatch);
+            }
+            let constraint_reviews = if matches!(&evaluated.evidence, PatchEvidence::V2(_)) {
+                constraint_review_evidence(
+                    document,
+                    &evaluated.document,
+                    patch.exact_change.body(),
+                )?
+            } else {
+                Vec::new()
+            };
+            let risk = PatchRisk {
+                mutation_classes: evaluated.footprint.mutation_classes(),
+            };
+            let proposal_record = lifecycle
+                .proposals
+                .get_mut(proposal_id)
+                .ok_or(PatchLifecycleError::ProposalNotFound)?;
+            proposal_record.reviewed_by.insert(viewer.clone());
+            for state in [
+                PatchLifecycleState::Previewed,
+                PatchLifecycleState::Validated,
+                PatchLifecycleState::AwaitingApproval,
+            ] {
+                push_once(&mut proposal_record.history, state);
+            }
+            match &evaluated.evidence {
+                PatchEvidence::V1(semantic_changes) => Ok(ProfiledPreview::V1(PatchPreview {
+                    proposal: patch.clone(),
+                    semantic_changes: semantic_changes.clone(),
+                    formula_impacts: evaluated.formula_impacts.clone(),
+                    validation_report: evaluated.validation_report.clone(),
+                    authorization_footprint: evaluated.footprint.clone(),
+                    risk,
+                })),
+                PatchEvidence::V2(delta) => Ok(ProfiledPreview::V2(PatchPreviewV2 {
+                    proposal: patch.clone(),
+                    delta: delta.clone(),
+                    constraint_reviews,
+                    formula_impacts: evaluated.formula_impacts.clone(),
+                    validation_report: evaluated.validation_report.clone(),
+                    authorization_footprint: evaluated.footprint.clone(),
+                    risk,
+                })),
+            }
+        })
     }
 
     /// Issue one exact finite Human Approval after authorized review.
@@ -2133,10 +2142,13 @@ impl PatchLifecycle {
             self.append_state(&request.proposal_id, PatchLifecycleState::Stale);
             return Err(PatchLifecycleError::Stale);
         }
-        let evaluated = self.evaluate_retained(document, &proposal.patch)?;
-        if evaluated.footprint != footprint {
-            return Err(PatchLifecycleError::ApprovalBindingMismatch);
-        }
+        let associated_write_requirements =
+            self.with_evaluated(document, &proposal.patch, |_, evaluated| {
+                if evaluated.footprint != footprint {
+                    return Err(PatchLifecycleError::ApprovalBindingMismatch);
+                }
+                Ok(evaluated.footprint.associated_write_requirements.clone())
+            })?;
         let approval = Approval {
             id: request.id.clone(),
             binding: ApprovalBinding {
@@ -2145,7 +2157,7 @@ impl PatchLifecycle {
                 exact_change: proposal.patch.exact_change.clone(),
                 originator: proposal.originator,
                 executor: request.executor,
-                associated_write_requirements: evaluated.footprint.associated_write_requirements,
+                associated_write_requirements,
                 policy_version: self.effective_policy.clone(),
             },
             approver: request.approver,
@@ -2261,7 +2273,7 @@ impl PatchLifecycle {
             publication.current_snapshot()
         };
         if self
-            .require_document(&current_document_scope, &document)
+            .require_document(&current_document_scope, document)
             .is_err()
         {
             return Err(PatchLifecycleError::AuthorizationDenied);
@@ -2297,9 +2309,13 @@ impl PatchLifecycle {
             now,
         )?;
 
+        let memo_matches = retained.as_ref().is_some_and(|memo| {
+            let _phase = instrumentation::PhaseTimer::new("execute_profile/memo_equality");
+            memo.base == *document && memo.patch == proposal.patch
+        });
         let evaluated = match retained {
-            Some(memo) if memo.base == document && memo.patch == proposal.patch => memo.evaluated,
-            _ => self.evaluate_patch(&document, &proposal.patch)?,
+            Some(memo) if memo_matches => memo.evaluated,
+            _ => self.evaluate_patch(document, &proposal.patch)?,
         };
         if evaluated.footprint != footprint {
             return Err(PatchLifecycleError::ApprovalBindingMismatch);
@@ -2311,10 +2327,6 @@ impl PatchLifecycle {
             &footprint,
             now,
         )?;
-        let candidate = {
-            let _phase = instrumentation::PhaseTimer::new("execute_profile/candidate_clone");
-            evaluated.document.clone()
-        };
         let evaluated_report = evaluated.validation_report.clone();
         let published = {
             let _phase = instrumentation::PhaseTimer::new("execute_profile/publish_candidate");
@@ -2328,7 +2340,7 @@ impl PatchLifecycle {
                     footprint: &footprint,
                     current_document_scope: &current_document_scope,
                     current_revision: &current_revision,
-                    candidate: evaluated.document,
+                    candidate: &evaluated.document,
                 },
             )?
         };
@@ -2377,18 +2389,17 @@ impl PatchLifecycle {
                 ProfiledReceipt::V2(receipt)
             }
         };
-        let verification = {
+        let verification_report = match {
             let _phase = instrumentation::PhaseTimer::new("execute_profile/verify_publication");
             self.verify_publication(
                 proposal_id,
                 &current_revision,
                 &published.revision,
-                (&candidate, &evaluated_report),
+                (&evaluated.document, &evaluated_report),
                 &published.document_scope,
-                &published.document,
+                published.document,
             )
-        };
-        let verification_report = match verification {
+        } {
             Ok(report) => report,
             Err(error) if can_disclose => return Err(error),
             Err(_) => return Err(PatchLifecycleError::AuthorizationDenied),
@@ -2690,11 +2701,11 @@ impl PatchLifecycle {
         self.authorize_execution(approval, executor, footprint, now)
     }
 
-    fn publish_candidate(
+    fn publish_candidate<'authority>(
         &mut self,
-        publication: &mut impl SemanticPublicationAuthority,
+        publication: &'authority mut impl SemanticPublicationAuthority,
         attempt: PublicationAttempt<'_>,
-    ) -> Result<PublishedCandidate, PatchLifecycleError> {
+    ) -> Result<PublishedCandidate<'authority>, PatchLifecycleError> {
         let PublicationAttempt {
             proposal_id,
             proposal,
@@ -3063,9 +3074,12 @@ impl PatchLifecycle {
         planning: &mut EntityAppendPlanning,
         writes: &mut BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<(), WorkspaceError> {
-        match &planning.keys {
-            Some(keys) => super::validate_appended_entity_key(keys, &entity.key)?,
-            None => super::validate_new_entity_key(candidate, &entity.key)?,
+        if let Some(keys) = &planning.keys {
+            super::validate_appended_entity_key(keys, &entity.key)?;
+        } else {
+            #[cfg(test)]
+            super::planning_counters::record_address_index_build();
+            super::validate_new_entity_key(candidate, &entity.key)?;
         }
         if entity.id.as_str().is_empty() {
             return Err(WorkspaceError::EmptyGeneratedId {
@@ -3152,6 +3166,8 @@ impl PatchLifecycle {
                 schema: schema.key.clone(),
             });
         }
+        #[cfg(test)]
+        super::planning_counters::record_address_index_build();
         let schema_key_exists = super::AddressIndex::build(candidate)
             .is_ok_and(|index| index.schema_id(&schema.key).is_ok());
         if schema_key_exists {
@@ -3159,6 +3175,8 @@ impl PatchLifecycle {
                 schema: schema.key.clone(),
             });
         }
+        #[cfg(test)]
+        super::planning_counters::record_document_clone();
         let mut appended = candidate.clone();
         appended.schemas.insert(schema.id.clone(), schema.clone());
         let mut seen_entities = BTreeSet::new();
@@ -3631,7 +3649,12 @@ impl PatchLifecycle {
     ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
         let _phase = instrumentation::PhaseTimer::new("propose/plan_commands");
         admit_command_names(body)?;
-        let mut candidate = document.clone();
+        #[cfg(test)]
+        super::planning_counters::record_document_clone();
+        let mut candidate = {
+            let _phase = instrumentation::PhaseTimer::new("propose/plan_commands/document_clone");
+            document.clone()
+        };
         let mut writes = BTreeSet::new();
         let mut field_edits = FieldEditPlanning::new();
         let mut append_entities = EntityAppendPlanning::default();
@@ -4312,19 +4335,33 @@ impl PatchLifecycle {
         self.finalize_evaluation(document, candidate, patch.exact_change.body(), writes, None)
     }
 
-    /// Evaluate a patch, reusing the retained result only for the exact same
-    /// base document and patch. A miss leaves the retained slot untouched.
-    fn evaluate_retained(
-        &self,
+    /// Run one read-only step over the retained evaluation for this exact base
+    /// and patch, or over a fresh evaluation when the memo cannot be reused.
+    ///
+    /// The memo is moved out for the duration so the step can borrow it while
+    /// it mutates the lifecycle, and put back unchanged afterwards. A miss
+    /// leaves the retained slot untouched, as before.
+    fn with_evaluated<R>(
+        &mut self,
         document: &Document,
         patch: &SemanticPatch,
-    ) -> Result<EvaluatedPatch, PatchLifecycleError> {
-        if let Some(memo) = &self.evaluation_memo {
-            if memo.base == *document && memo.patch == *patch {
-                return Ok(memo.evaluated.clone());
-            }
-        }
-        self.evaluate_patch(document, patch)
+        read: impl FnOnce(&mut Self, &EvaluatedPatch) -> Result<R, PatchLifecycleError>,
+    ) -> Result<R, PatchLifecycleError> {
+        let memo = self.evaluation_memo.take();
+        let retained = {
+            let _phase = instrumentation::PhaseTimer::new("review/memo_equality");
+            memo.as_ref()
+                .filter(|memo| memo.base == *document && memo.patch == *patch)
+        };
+        let result = match retained {
+            Some(memo) => read(self, &memo.evaluated),
+            None => match self.evaluate_patch(document, patch) {
+                Ok(evaluated) => read(self, &evaluated),
+                Err(error) => Err(error),
+            },
+        };
+        self.evaluation_memo = memo;
+        result
     }
 
     pub(crate) fn field_scope(
