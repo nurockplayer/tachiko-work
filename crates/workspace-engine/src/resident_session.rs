@@ -59,6 +59,11 @@ pub struct ResidentWorkspaceSession {
     revision: SemanticRevision,
     generation: u64,
     measurements: ResidentRuntimeMeasurements,
+    /// Whether `document` is known to pass the formula projection preflight.
+    /// A publication that establishes it sets the flag; any other publication
+    /// or a fresh session leaves it unknown, so the base preflight still runs
+    /// and keeps its exact error.
+    preflight_succeeded: bool,
 }
 
 impl ResidentWorkspaceSession {
@@ -74,6 +79,7 @@ impl ResidentWorkspaceSession {
             revision: revision_for(0),
             generation: 0,
             measurements: ResidentRuntimeMeasurements::initial(calculation_work),
+            preflight_succeeded: false,
         }
     }
 
@@ -301,6 +307,12 @@ impl ResidentWorkspaceSession {
             &retained.diagnostics_by_field,
             &mut changes,
         );
+        let candidate_preflight_succeeded = candidate_preflight_succeeded(
+            &self.document,
+            &candidate,
+            &changes,
+            self.preflight_succeeded,
+        );
         PreparedEvaluation::new(
             PreparedInstallation {
                 base_occurrence: self.occurrence.0,
@@ -309,10 +321,12 @@ impl ResidentWorkspaceSession {
                 retained,
                 changes,
                 transition,
+                candidate_preflight_succeeded,
             },
             &self.document,
             base_calculation,
             base_report_valid,
+            self.preflight_succeeded,
         )
     }
 
@@ -334,6 +348,41 @@ impl ResidentWorkspaceSession {
             prepared: None,
             projection_invalidation: None,
         }
+    }
+}
+
+/// Decide whether `candidate` passes the formula projection preflight without
+/// re-projecting what the base already proved.
+///
+/// Preflight reads keys, schema definitions and formula expressions, never
+/// values. An edit that leaves the address index and every schema definition
+/// alone can therefore change the outcome only through a changed formula:
+/// when there is none, the base's known-success outcome is the candidate's;
+/// when there is one, only those formulas need projecting. Every other change,
+/// and an unknown base, runs the full preflight so the outcome is exact.
+fn candidate_preflight_succeeded(
+    base: &Document,
+    candidate: &Document,
+    changes: &ProjectionChanges,
+    base_preflight_succeeded: bool,
+) -> bool {
+    if !base_preflight_succeeded
+        || changes.address_index_changed
+        || changes.unaddressable_calculation_change
+    {
+        return super::preflight_formula_projections(candidate).is_ok();
+    }
+    let changed_formula = changes.fields.iter().any(|field| {
+        super::field_holds_formula(base, field) || super::field_holds_formula(candidate, field)
+    });
+    if !changed_formula {
+        return true;
+    }
+    match super::preflight_changed_formula_projections(candidate, &changes.fields) {
+        Ok(()) => true,
+        // A partial failure cannot prove it is the full run's first error, so
+        // the full preflight decides the outcome and keeps that error.
+        Err(_) => super::preflight_formula_projections(candidate).is_ok(),
     }
 }
 
@@ -782,6 +831,7 @@ where
                 );
                 self.session.retained = installation.retained;
                 self.session.document = installation.candidate;
+                self.session.preflight_succeeded = installation.candidate_preflight_succeeded;
                 #[cfg(test)]
                 installation_counters::record_prepared_installation();
                 (invalidation, transition_work)
@@ -796,6 +846,9 @@ where
                     resulting_revision.clone(),
                 );
                 self.session.document = candidate.clone();
+                // This path never ran the candidate's preflight, so its
+                // outcome is unknown and the next base must preflight again.
+                self.session.preflight_succeeded = false;
                 (invalidation, transition_work)
             }
         };

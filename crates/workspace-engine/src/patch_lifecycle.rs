@@ -4187,6 +4187,7 @@ impl PatchLifecycle {
             })
             .and_then(|prepared| {
                 Some((
+                    prepared,
                     prepared.report(),
                     prepared.base_calculation()?,
                     prepared.calculation()?,
@@ -4198,20 +4199,30 @@ impl PatchLifecycle {
         // Formulas cannot read definitions; both real snapshots passed complete
         // validation above. Direct v2 evidence is always produced separately.
         let (validation_report, delta, formula_changes) =
-            if let Some((report, base_calculation, candidate_calculation, changes)) = reusable {
+            if let Some((prepared, report, base_calculation, candidate_calculation, changes)) =
+                reusable
+            {
                 // The prepared candidate is already completely validated and
-                // calculated. Both snapshots still need the formula projection
-                // preflight today's path runs, base first.
-                super::preflight_formula_projections(base).map_err(|source| {
-                    PatchLifecycleError::CommandRejected {
-                        source: Box::new(source),
-                    }
-                })?;
-                super::preflight_formula_projections(&candidate).map_err(|source| {
-                    PatchLifecycleError::CommandRejected {
-                        source: Box::new(source),
-                    }
-                })?;
+                // calculated. The formula projection preflight reads only
+                // keys, schema definitions and expressions: the session knows
+                // whether the base passed it, and preparation already decided
+                // the candidate's outcome, so no run repeats what is known.
+                // A failed candidate still runs in full here to keep the
+                // first failing formula's exact error, base first.
+                if !prepared.base_preflight_succeeded() {
+                    super::preflight_formula_projections(base).map_err(|source| {
+                        PatchLifecycleError::CommandRejected {
+                            source: Box::new(source),
+                        }
+                    })?;
+                }
+                if !prepared.candidate_preflight_succeeded() {
+                    super::preflight_formula_projections(&candidate).map_err(|source| {
+                        PatchLifecycleError::CommandRejected {
+                            source: Box::new(source),
+                        }
+                    })?;
+                }
                 // Both documents are admitted above and the prepared evaluation
                 // found every differing schema and entity, so the delta only
                 // has to compare those, the title and the saved definitions.
