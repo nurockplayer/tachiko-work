@@ -491,8 +491,24 @@ fn entities_bytes(document: &Document) -> u64 {
 }
 
 fn entity_bytes(entity: &Entity) -> u64 {
+    total([
+        1, // "{"
+        compact_string("id", entity.id.as_str(), true),
+        compact_string("key", entity.key.as_str(), true),
+        compact_string("schema", entity.schema.as_str(), true),
+        compact_prefix("fields"),
+        1, // "{"
+        entity_fields_bytes(entity),
+        2, // "}}"
+    ])
+}
+
+/// Bytes one entity's stored `fields` object contributes, without the wrapper
+/// around it. A value edit that only changes stored cells can diff this value
+/// instead of walking the whole document.
+pub(crate) fn entity_fields_bytes(entity: &Entity) -> u64 {
     let field_count = entity.fields.len();
-    let entries = entity
+    entity
         .fields
         .iter()
         .enumerate()
@@ -503,17 +519,7 @@ fn entity_bytes(entity: &Entity) -> u64 {
                 value_bytes(value),
                 flag(index + 1 != field_count),
             ]))
-        });
-    total([
-        1, // "{"
-        compact_string("id", entity.id.as_str(), true),
-        compact_string("key", entity.key.as_str(), true),
-        compact_string("schema", entity.schema.as_str(), true),
-        compact_prefix("fields"),
-        1, // "{"
-        entries,
-        2, // "}}"
-    ])
+        })
 }
 
 fn value_bytes(value: &Value) -> u64 {

@@ -24,10 +24,10 @@ use super::{
     FailureProjection, FieldDefinition, FieldId, FieldKey, FieldProjection, FieldRef, FieldTarget,
     FieldType, NewTableColumnInput, OpenedWindowProjection, PasteCellInput, ProposalId,
     PublicationProjection, RowInitializer, RowProjection, ScalarEditInput, Schema, SchemaId,
-    SchemaKey, StoredValueProjection, TableView, TableWindowProjection, encode_portable_package_v1,
-    encode_project_bundle, open_local_document, open_local_document_working_size, open_portable_ro,
-    open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
-    to_canonical_string,
+    SchemaKey, SemanticCommand, StoredValueProjection, TableView, TableWindowProjection,
+    encode_portable_package_v1, encode_project_bundle, open_local_document,
+    open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
+    open_project, open_project_working_size, process_wire_request, to_canonical_string,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
@@ -3816,16 +3816,22 @@ fn an_ordinary_session_never_computes_the_saved_bound() {
     );
     assert_eq!(super::save_size::saved_bound_calls(), ordinary_baseline);
 
-    let mut working =
-        DesignerRuntime::from_document_working_size(values_grid(), OCCURRENCE).unwrap();
+    let mut working = DesignerRuntime::from_document_working_size(fixture(), OCCURRENCE).unwrap();
     let working_baseline = super::save_size::saved_bound_calls();
     edited(
         &mut working,
-        target("r00000", "t"),
-        ScalarEditInput::Text {
-            value: "edited".to_owned(),
+        target("r00000", "c0"),
+        ScalarEditInput::Number {
+            input: "7".to_owned(),
         },
     );
+    // A value edit re-derives the bound from the retained base totals instead
+    // of walking the candidate.
+    assert_eq!(super::save_size::saved_bound_calls(), working_baseline);
+    let current = revision(&working);
+    working
+        .add_column_with_requiredness(&current, "grid", "Extra", "text", false, &[])
+        .unwrap();
     assert!(super::save_size::saved_bound_calls() > working_baseline);
 }
 
@@ -3963,4 +3969,712 @@ fn the_saved_bound_does_not_wrap_past_four_gibibytes() {
         super::capacity::MAX_WORKING_SAVED_BYTES,
         saved_refusal(bound),
     );
+}
+
+// ---- #678 stage 7: value-edit admission deltas ----
+
+/// A small deterministic generator; the seed is the test, not a dependency.
+struct SeededRandom(u64);
+
+impl SeededRandom {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut value = self.0;
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        value ^ (value >> 31)
+    }
+
+    fn index(&mut self, bound: usize) -> usize {
+        let bound = u64::try_from(bound).expect("a fixture bound fits u64");
+        usize::try_from(self.next() % bound).expect("a remainder fits usize")
+    }
+}
+
+/// A grid of Number columns only, so every cell can hold a formula.
+fn number_grid(rows: usize, columns: usize) -> Document {
+    number_grid_filled(rows, columns, columns)
+}
+
+/// The same grid with only the first `filled` columns carrying stored values;
+/// the remaining columns are declared and blank.
+fn number_grid_filled(rows: usize, columns: usize, filled: usize) -> Document {
+    let mut document = Document::empty("working-size-delta", "Working Size Delta");
+    let mut schema = Schema {
+        field_order: None,
+        id: SchemaId::from("grid"),
+        key: SchemaKey::from("grid"),
+        display_name: None,
+        fields: BTreeMap::new(),
+    };
+    for column in 0..columns {
+        add_field(
+            &mut schema.fields,
+            &format!("c{column}"),
+            FieldType::Number,
+            None,
+            FieldConstraint::None,
+            None,
+        );
+    }
+    document.schemas.insert(schema.id.clone(), schema);
+    for row in 0..rows {
+        let id = EntityId::from(format!("r{row:05}"));
+        let fields = (0..filled)
+            .map(|column| {
+                (
+                    FieldId::from(format!("c{column}")),
+                    Value::Number(Number::new(1.0).unwrap()),
+                )
+            })
+            .collect();
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields,
+            },
+        );
+    }
+    document
+}
+
+/// The retained totals still equal a full walk of the installed document.
+fn assert_totals_match(runtime: &DesignerRuntime) {
+    let document = runtime.session.document();
+    let (usage, saved_bytes, profile_strings, stored_text) = runtime.retained_working_totals();
+    assert_eq!(
+        usage,
+        CapacityUsage::measure_for(document, SessionProfile::WorkingSize)
+    );
+    assert_eq!(
+        saved_bytes,
+        super::save_size::saved_bytes_upper_bound(document)
+    );
+    let strings = super::ensure_working_size_strings(document).unwrap();
+    assert_eq!(profile_strings, strings.profile_strings);
+    assert_eq!(stored_text, strings.stored_text);
+}
+
+/// The refusal a full walk gives this candidate, in publish order.
+fn full_walk_candidate_error(candidate: &Document) -> DesignerError {
+    if let Err(error) = super::capacity::check_document_for(candidate, SessionProfile::WorkingSize)
+    {
+        return error;
+    }
+    if let Err(error) = super::capacity::check_working_saved_bytes(candidate, 0) {
+        return error;
+    }
+    match super::ensure_working_size_strings(candidate) {
+        Ok(_) => panic!("the full walk admits this candidate"),
+        Err(error) => error,
+    }
+}
+
+/// The candidate a `SetFieldValue` batch would build from the installed document.
+fn with_value(
+    document: &Document,
+    entity: &str,
+    field: &FieldId,
+    value: Option<Value>,
+) -> Document {
+    let mut candidate = document.clone();
+    let entity = candidate
+        .entities
+        .get_mut(&EntityId::from(entity.to_owned()))
+        .expect("the refused target exists in the base");
+    match value {
+        Some(value) => {
+            entity.fields.insert(field.clone(), value);
+        }
+        None => {
+            entity.fields.remove(field);
+        }
+    }
+    candidate
+}
+
+/// A refusal must be the full walk's refusal and leave the base untouched.
+fn assert_same_refusal(
+    runtime: &DesignerRuntime,
+    base: &(CapacityUsage, u64, usize, usize),
+    base_revision: &str,
+    candidate: &Document,
+    error: &DesignerError,
+) {
+    let expected = full_walk_candidate_error(candidate);
+    assert_eq!(format!("{error:?}"), format!("{expected:?}"));
+    assert_eq!(revision(runtime), base_revision);
+    assert_eq!(&runtime.retained_working_totals(), base);
+}
+
+fn random_scalar_input(column: usize, random: &mut SeededRandom) -> ScalarEditInput {
+    match column % 3 {
+        0 => ScalarEditInput::Number {
+            input: format!("{}", random.index(1_000)),
+        },
+        1 => ScalarEditInput::Text {
+            value: "e".repeat(1 + random.index(300)),
+        },
+        _ => ScalarEditInput::Date {
+            value: "2026-11-08".to_owned(),
+        },
+    }
+}
+
+/// Apply one batch, tolerating the lifecycle's "nothing changed" refusal when
+/// a seeded value happens to equal the stored one.
+fn apply_edits(runtime: &mut DesignerRuntime, edits: &[CellEdit]) {
+    let current = revision(runtime);
+    match runtime.edit_cells(&current, edits) {
+        Ok(_)
+        | Err(DesignerError::Lifecycle(
+            tachiko_workspace_engine::patch_lifecycle::PatchLifecycleError::NoChange,
+        )) => {}
+        Err(error) => panic!("edit failed: {error:?}"),
+    }
+}
+
+fn edit_one_cell(runtime: &mut DesignerRuntime, random: &mut SeededRandom) {
+    let row = random.index(128);
+    let column = random.index(10);
+    apply_edits(
+        runtime,
+        &[CellEdit {
+            target: FieldTarget {
+                entity: format!("r{row:05}"),
+                field: format!("c{column}"),
+            },
+            input: random_scalar_input(column, random),
+        }],
+    );
+}
+
+fn edit_a_batch(runtime: &mut DesignerRuntime, random: &mut SeededRandom) {
+    let mut targets = BTreeSet::new();
+    let mut edits = Vec::new();
+    let batch = 2 + random.index(3);
+    while edits.len() < batch {
+        let row = random.index(128);
+        let column = random.index(10);
+        if !targets.insert((row, column)) {
+            continue;
+        }
+        edits.push(CellEdit {
+            target: FieldTarget {
+                entity: format!("r{row:05}"),
+                field: format!("c{column}"),
+            },
+            input: random_scalar_input(column, random),
+        });
+    }
+    apply_edits(runtime, &edits);
+}
+
+fn clear_or_fill(runtime: &mut DesignerRuntime, random: &mut SeededRandom) {
+    let row = random.index(128);
+    let column = random.index(10);
+    let field = FieldRef::new(format!("r{row:05}"), format!("c{column}"));
+    let present = runtime
+        .session
+        .document()
+        .entities
+        .get(&field.entity)
+        .is_some_and(|entity| entity.fields.contains_key(&field.field));
+    let input = if present {
+        ScalarEditInput::Clear
+    } else {
+        random_scalar_input(column, random)
+    };
+    apply_edits(
+        runtime,
+        &[CellEdit {
+            target: FieldTarget {
+                entity: format!("r{row:05}"),
+                field: format!("c{column}"),
+            },
+            input,
+        }],
+    );
+}
+
+/// Replace a stored Number or formula with the other kind through the batch
+/// path. The lifecycle admits writing a formula only over a stored value, so
+/// the target is always a cell that already carries one.
+fn edit_a_formula(runtime: &mut DesignerRuntime, random: &mut SeededRandom) {
+    let mut picked = None;
+    for _ in 0..32 {
+        let row = random.index(128);
+        let column = 3 * random.index(4); // c0, c3, c6 or c9: Number columns
+        let field = FieldId::from(format!("c{column}"));
+        let present = runtime
+            .session
+            .document()
+            .entities
+            .get(&entity_id(row))
+            .is_some_and(|entity| entity.fields.contains_key(&field));
+        if present {
+            picked = Some((row, column));
+            break;
+        }
+    }
+    let Some((row, column)) = picked else {
+        return;
+    };
+    // c0 stays populated, so a formula on another column can always read it;
+    // a formula on c0 reads c3, which may be blank and evaluates as zero.
+    let reference = if column == 0 { "c3" } else { "c0" };
+    let value = if random.index(2) == 0 {
+        Value::Number(Number::new(f64::from(u32::try_from(random.index(100)).unwrap())).unwrap())
+    } else {
+        Value::Formula(Expression::Multiply {
+            left: Box::new(Expression::SameRowReference(FieldId::from(reference))),
+            right: Box::new(Expression::Number(Number::new(2.0).unwrap())),
+        })
+    };
+    let current = revision(runtime);
+    match runtime.publish_commands(
+        &current,
+        vec![SemanticCommand::set_field_value(
+            FieldRef::new(format!("r{row:05}"), format!("c{column}")),
+            value,
+        )],
+    ) {
+        Ok(_)
+        | Err(DesignerError::Lifecycle(
+            tachiko_workspace_engine::patch_lifecycle::PatchLifecycleError::NoChange,
+        )) => {}
+        Err(error) => panic!("formula edit failed: {error:?}"),
+    }
+}
+
+/// Rewrite one formula, tolerating a repeat that changes nothing.
+fn apply_formula_update(runtime: &mut DesignerRuntime, source: &str) {
+    let current = revision(runtime);
+    match runtime.update_formula(&current, &FieldTarget::from("r00000.calc"), source) {
+        Ok(_)
+        | Err(DesignerError::Lifecycle(
+            tachiko_workspace_engine::patch_lifecycle::PatchLifecycleError::NoChange,
+        )) => {}
+        Err(error) => panic!("formula update failed: {error:?}"),
+    }
+}
+
+fn remove_a_safe_row(runtime: &mut DesignerRuntime, protected: &BTreeSet<EntityId>) {
+    let current = revision(runtime);
+    let Some(entity) = runtime
+        .session
+        .document()
+        .entities
+        .keys()
+        .rev()
+        .find(|id| !protected.contains(*id))
+        .cloned()
+    else {
+        return;
+    };
+    runtime
+        .remove_table_rows(&current, "grid", std::slice::from_ref(&entity.to_string()))
+        .unwrap();
+}
+
+#[test]
+fn a_value_edit_derives_the_same_totals_as_a_full_walk() {
+    let document = capacity_document(FixtureSpec {
+        rows: 128,
+        columns: 10,
+        formula_cells: 64,
+        seed: 678,
+    });
+    let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    assert_totals_match(&runtime);
+    let mut random = SeededRandom(0x0678_0000_2026_0001);
+    let protected: BTreeSet<EntityId> = (0..64).map(entity_id).collect();
+    let delta_before = super::admission_counters::value_delta_admissions();
+    let full_before = super::admission_counters::full_walk_admissions();
+    let mut columns_added = 0usize;
+    for _ in 0..100 {
+        match random.index(100) {
+            50..=64 => edit_a_batch(&mut runtime, &mut random),
+            65..=74 => clear_or_fill(&mut runtime, &mut random),
+            75..=84 => edit_a_formula(&mut runtime, &mut random),
+            85..=90 => {
+                let source = if random.index(2) == 0 {
+                    "[.rate] * [.c0]"
+                } else {
+                    "[.rate] + [.c0]"
+                };
+                apply_formula_update(&mut runtime, source);
+            }
+            91..=94 => {
+                let current = revision(&runtime);
+                runtime.insert_row(&current, "grid", &[]).unwrap();
+            }
+            95..=97 => remove_a_safe_row(&mut runtime, &protected),
+            98 if columns_added < 3 => {
+                columns_added += 1;
+                let current = revision(&runtime);
+                runtime
+                    .add_column_with_requiredness(
+                        &current,
+                        "grid",
+                        &format!("Extra{columns_added}"),
+                        "text",
+                        false,
+                        &[],
+                    )
+                    .unwrap();
+            }
+            _ => edit_one_cell(&mut runtime, &mut random),
+        }
+        assert_totals_match(&runtime);
+    }
+    assert!(super::admission_counters::value_delta_admissions() > delta_before);
+    assert!(super::admission_counters::full_walk_admissions() > full_before);
+}
+
+/// The one field the added column introduced.
+fn added_field(runtime: &DesignerRuntime, collection: &str) -> FieldId {
+    runtime
+        .session
+        .document()
+        .schemas
+        .values()
+        .find(|schema| schema.key.as_str() == collection)
+        .expect("the fixture collection exists")
+        .fields
+        .keys()
+        .find(|id| !id.as_str().starts_with('c'))
+        .cloned()
+        .expect("the added column is present")
+}
+
+#[test]
+fn a_value_edit_past_the_populated_cell_bound_refuses_like_the_full_walk() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(number_grid(10_000, 10), OCCURRENCE).unwrap();
+    let current = revision(&runtime);
+    runtime
+        .add_column_with_requiredness(&current, "grid", "Extra", "text", false, &[])
+        .unwrap();
+    let field = added_field(&runtime, "grid");
+    let base = runtime.retained_working_totals();
+    let base_revision = revision(&runtime);
+    let error = runtime
+        .edit_cells(
+            &base_revision,
+            &[CellEdit {
+                target: FieldTarget {
+                    entity: "r00000".to_owned(),
+                    field: field.to_string(),
+                },
+                input: ScalarEditInput::Text {
+                    value: "x".to_owned(),
+                },
+            }],
+        )
+        .unwrap_err();
+    assert_capacity_refusal(&error, CapacityLimit::PopulatedCells, 100_000, 100_001);
+    let candidate = with_value(
+        runtime.session.document(),
+        "r00000",
+        &field,
+        Some(Value::Text("x".to_owned())),
+    );
+    assert_same_refusal(&runtime, &base, &base_revision, &candidate, &error);
+}
+
+/// A formula with exactly ten nodes: a nine-node sum of one round.
+fn ten_node_formula() -> Expression {
+    Expression::Round {
+        value: Box::new(add_chain(5)),
+        digits: 0,
+    }
+}
+
+#[test]
+fn a_value_edit_past_the_formula_node_bound_refuses_like_the_full_walk() {
+    let mut document = number_grid(10_000, 10);
+    let formula = ten_node_formula();
+    for row in 0..10_000 {
+        for column in 0..10 {
+            if row == 9_999 && column == 9 {
+                continue;
+            }
+            document
+                .entities
+                .get_mut(&entity_id(row))
+                .unwrap()
+                .fields
+                .insert(
+                    FieldId::from(format!("c{column}")),
+                    Value::Formula(formula.clone()),
+                );
+        }
+    }
+    let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    let base = runtime.retained_working_totals();
+    let base_revision = revision(&runtime);
+    let eleven = Expression::Round {
+        value: Box::new(formula),
+        digits: 0,
+    };
+    let error = runtime
+        .publish_commands(
+            &base_revision,
+            vec![SemanticCommand::set_field_value(
+                FieldRef::new("r09999", "c9"),
+                Value::Formula(eleven.clone()),
+            )],
+        )
+        .unwrap_err();
+    assert_capacity_refusal(&error, CapacityLimit::FormulaAstNodes, 1_000_000, 1_000_001);
+    let candidate = with_value(
+        runtime.session.document(),
+        "r09999",
+        &FieldId::from("c9"),
+        Some(Value::Formula(eleven)),
+    );
+    assert_same_refusal(&runtime, &base, &base_revision, &candidate, &error);
+}
+
+/// One conditional aggregate reading its aggregate column and sixteen criteria
+/// columns: one node and seventeen dependency edges.
+fn wide_conditional() -> Expression {
+    let schema = SchemaId::from("grid");
+    let aggregate = ColumnRef {
+        schema: schema.clone(),
+        field: FieldId::from("c0"),
+    };
+    let criteria = (1..=16)
+        .map(|column| ColumnCriterion {
+            column: ColumnRef {
+                schema: schema.clone(),
+                field: FieldId::from(format!("c{column}")),
+            },
+            operator: ComparisonOperator::Equal,
+            value: None,
+        })
+        .collect();
+    Expression::ColumnConditional {
+        aggregate: Box::new(ConditionalAggregate::Sum(aggregate)),
+        criteria,
+    }
+}
+
+#[test]
+fn a_value_edit_past_the_dependency_edge_bound_refuses_like_the_full_walk() {
+    // One conditional reads its aggregate column c0 and the sixteen criteria
+    // columns c1..c16, so it carries seventeen edges. The formulas live in
+    // c17..c22, which no conditional reads: an aggregate over a column that
+    // held the formula itself would be a cycle. The edit target stays a plain
+    // Number, because the lifecycle admits a formula only over a stored value.
+    let mut document = number_grid_filled(10_000, 23, 0);
+    let formula = wide_conditional();
+    // 58,823 formulas carry 999,991 edges; one more conditional would add
+    // seventeen and cross the 1,000,000 bound.
+    let mut formulas = 0usize;
+    'fill: for row in 0..10_000 {
+        for column in 17..23 {
+            if formulas == 58_823 {
+                break 'fill;
+            }
+            document
+                .entities
+                .get_mut(&entity_id(row))
+                .unwrap()
+                .fields
+                .insert(
+                    FieldId::from(format!("c{column}")),
+                    Value::Formula(formula.clone()),
+                );
+            formulas += 1;
+        }
+    }
+    assert_eq!(formulas, 58_823);
+    document
+        .entities
+        .get_mut(&entity_id(9_999))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("c22"),
+            Value::Number(Number::new(1.0).unwrap()),
+        );
+    let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    let base = runtime.retained_working_totals();
+    let base_revision = revision(&runtime);
+    let error = runtime
+        .publish_commands(
+            &base_revision,
+            vec![SemanticCommand::set_field_value(
+                FieldRef::new("r09999", "c22"),
+                Value::Formula(formula.clone()),
+            )],
+        )
+        .unwrap_err();
+    assert_capacity_refusal(&error, CapacityLimit::DependencyEdges, 1_000_000, 1_000_008);
+    let candidate = with_value(
+        runtime.session.document(),
+        "r09999",
+        &FieldId::from("c22"),
+        Some(Value::Formula(formula)),
+    );
+    assert_same_refusal(&runtime, &base, &base_revision, &candidate, &error);
+}
+
+#[test]
+fn a_value_edit_past_the_saved_byte_bound_refuses_like_the_full_walk() {
+    let (before, after, pasted) = crossing_documents();
+    let after_bound = bound_of(&after, &empty_presentation());
+    let mut runtime = DesignerRuntime::from_document_working_size(before, OCCURRENCE).unwrap();
+    let base = runtime.retained_working_totals();
+    let base_revision = revision(&runtime);
+    let error = runtime
+        .edit_cells(
+            &base_revision,
+            &[CellEdit {
+                target: FieldTarget::from("r00005.c27"),
+                input: ScalarEditInput::Text { value: pasted },
+            }],
+        )
+        .unwrap_err();
+    assert_capacity_refusal(
+        &error,
+        CapacityLimit::SavedBytes,
+        super::capacity::MAX_WORKING_SAVED_BYTES,
+        saved_refusal(after_bound),
+    );
+    assert_same_refusal(&runtime, &base, &base_revision, &after, &error);
+}
+
+#[test]
+fn a_value_edit_past_the_stored_text_bound_refuses_like_the_full_walk() {
+    let mut document = text_grid(20, 28);
+    let text = "x".repeat(STORED_TEXT_ITEM_MAX);
+    let mut filled = 0usize;
+    'fill: for row in 0..20 {
+        for column in 0..28 {
+            if filled == 512 {
+                break 'fill;
+            }
+            document
+                .entities
+                .get_mut(&entity_id(row))
+                .unwrap()
+                .fields
+                .insert(
+                    FieldId::from(format!("c{column}")),
+                    Value::Text(text.clone()),
+                );
+            filled += 1;
+        }
+    }
+    assert_eq!(filled * STORED_TEXT_ITEM_MAX, MAX_WORKING_STORED_TEXT_BYTES);
+    let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    let base = runtime.retained_working_totals();
+    let base_revision = revision(&runtime);
+    let error = runtime
+        .edit_cells(
+            &base_revision,
+            &[CellEdit {
+                target: FieldTarget::from("r00019.c0"),
+                input: ScalarEditInput::Text {
+                    value: "x".to_owned(),
+                },
+            }],
+        )
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("working-size maximum"),
+        "unexpected refusal: {error:?}"
+    );
+    let candidate = with_value(
+        runtime.session.document(),
+        "r00019",
+        &FieldId::from("c0"),
+        Some(Value::Text("x".to_owned())),
+    );
+    assert_same_refusal(&runtime, &base, &base_revision, &candidate, &error);
+}
+
+#[test]
+fn a_value_edit_past_the_stored_text_item_bound_refuses_like_the_full_walk() {
+    let text = "x".repeat(STORED_TEXT_ITEM_MAX + 1);
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(text_grid(1, 2), OCCURRENCE).unwrap();
+    let base = runtime.retained_working_totals();
+    let base_revision = revision(&runtime);
+    let error = runtime
+        .edit_cells(
+            &base_revision,
+            &[CellEdit {
+                target: FieldTarget::from("r00000.c0"),
+                input: ScalarEditInput::Text {
+                    value: text.clone(),
+                },
+            }],
+        )
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("65536-byte projection maximum"),
+        "unexpected refusal: {error:?}"
+    );
+    let candidate = with_value(
+        runtime.session.document(),
+        "r00000",
+        &FieldId::from("c0"),
+        Some(Value::Text(text)),
+    );
+    assert_same_refusal(&runtime, &base, &base_revision, &candidate, &error);
+}
+
+/// A balanced `Add` tree of exactly `nodes` nodes (odd), so depth stays far
+/// under the parser's 64-level bound and only the node bound can refuse it.
+fn balanced_nodes(nodes: usize) -> Expression {
+    if nodes == 1 {
+        return Expression::Number(Number::new(1.0).unwrap());
+    }
+    let half = (nodes - 1) / 2;
+    let left = if half % 2 == 0 { half - 1 } else { half };
+    let right = nodes - 1 - left;
+    Expression::Add {
+        left: Box::new(balanced_nodes(left)),
+        right: Box::new(balanced_nodes(right)),
+    }
+}
+
+#[test]
+fn a_value_edit_that_would_cross_the_formula_node_item_bound_is_refused_earlier() {
+    // The lifecycle's own post-desugaring parser bound also caps an expression
+    // at 256 nodes, so it refuses the same formulas that the profile string
+    // walk's `MAX_FORMULA_PROFILE_NODES` bound would. A value edit therefore
+    // cannot reach the delta's per-item formula check here; the
+    // `needs_full_strings` fallback it would take is exercised by
+    // `a_value_edit_past_the_stored_text_item_bound_refuses_like_the_full_walk`.
+    // What this case must still prove is that the earlier refusal leaves the
+    // retained totals at the base's.
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(number_grid(1, 1), OCCURRENCE).unwrap();
+    let base = runtime.retained_working_totals();
+    let base_revision = revision(&runtime);
+    let wide = balanced_nodes(257); // one past the 256-node parser bound
+    let error = runtime
+        .publish_commands(
+            &base_revision,
+            vec![SemanticCommand::set_field_value(
+                FieldRef::new("r00000", "c0"),
+                Value::Formula(wide),
+            )],
+        )
+        .unwrap_err();
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("ExpressionComplexity") && message.contains("NodeLimit"),
+        "unexpected refusal: {error:?}"
+    );
+    assert_eq!(revision(&runtime), base_revision);
+    assert_eq!(&runtime.retained_working_totals(), &base);
 }
