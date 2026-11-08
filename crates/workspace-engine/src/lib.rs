@@ -38,8 +38,8 @@ pub use tachiko_semantic_core::AddressIndex;
 pub use tachiko_semantic_core::instrumentation;
 use tachiko_semantic_core::{
     AddressIndexError, KeyedGroupedSumDefinitionError, is_valid_identifier,
-    validate_complete_formula_constraints, validate_document_core,
-    validate_keyed_grouped_sum_definitions,
+    validate_complete_formula_constraints, validate_document_core, validate_entity_field_core,
+    validate_formula_value_constraint, validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
     BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate, RuleId,
