@@ -359,6 +359,144 @@ fn working_size_admits_ten_thousand_rows_and_refuses_the_next() {
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
 }
 
+/// A grid holding exactly the working-size populated-cell bound: 10,000 rows
+/// of ten Number columns.
+fn populated_limit_grid() -> Document {
+    let mut document = Document::empty("populated-limit", "Populated Limit");
+    let fields = (0..10)
+        .map(|column| {
+            let id = FieldId::from(format!("c{column}"));
+            (
+                id.clone(),
+                FieldDefinition {
+                    id,
+                    key: FieldKey::from(format!("c{column}")),
+                    display_name: None,
+                    field_type: FieldType::Number,
+                    required: false,
+                    constraint: FieldConstraint::None,
+                    number_format: None,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    document.schemas.insert(
+        SchemaId::from("grid"),
+        Schema {
+            field_order: None,
+            id: SchemaId::from("grid"),
+            key: SchemaKey::from("grid"),
+            display_name: None,
+            fields,
+        },
+    );
+    for row in 0..10_000 {
+        let id = EntityId::from(format!("r{row:05}"));
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(format!("k{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields: (0..10)
+                    .map(|column| {
+                        (
+                            FieldId::from(format!("c{column}")),
+                            Value::Number(Number::new(0.0).unwrap()),
+                        )
+                    })
+                    .collect(),
+            },
+        );
+    }
+    document
+}
+
+#[test]
+fn the_working_size_edit_batch_accepts_exactly_the_populated_cell_bound() {
+    let limit = super::capacity::WORKING_LIMITS.populated_cells;
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(populated_limit_grid(), OCCURRENCE).unwrap();
+    assert_eq!(runtime.max_batch_targets(), limit);
+
+    let edits = (0..10_000)
+        .flat_map(|row| {
+            (0..10).map(move |column| CellEdit {
+                target: target(&format!("r{row:05}"), &format!("c{column}")),
+                input: ScalarEditInput::Number {
+                    input: "1".to_owned(),
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(edits.len(), limit);
+    let current = revision(&runtime);
+    runtime.edit_cells(&current, &edits).unwrap();
+    assert_ne!(revision(&runtime), current);
+}
+
+#[test]
+fn the_working_size_copy_batch_accepts_exactly_the_populated_cell_bound() {
+    let limit = super::capacity::WORKING_LIMITS.populated_cells;
+    let mut document = populated_limit_grid();
+    document
+        .entities
+        .get_mut(&EntityId::from("r00000"))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("c0"),
+            Value::Formula(Expression::Number(Number::new(1.0).unwrap())),
+        );
+    let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    assert_eq!(runtime.max_batch_targets(), limit);
+
+    let source = target("r00000", "c0");
+    let destinations = (0..10_000)
+        .flat_map(|row| {
+            (0..10).map(move |column| target(&format!("r{row:05}"), &format!("c{column}")))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(destinations.len(), limit);
+    let current = revision(&runtime);
+    runtime
+        .copy_formula(&current, &source, &destinations, &[], false, false)
+        .unwrap();
+    assert_ne!(revision(&runtime), current);
+}
+
+#[test]
+fn an_over_limit_batch_is_refused_before_any_per_target_work() {
+    let limit = super::capacity::WORKING_LIMITS.populated_cells;
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(values_grid(), OCCURRENCE).unwrap();
+    assert_eq!(runtime.max_batch_targets(), limit);
+    let current = revision(&runtime);
+
+    // Every target is missing, so reaching per-target work would refuse for
+    // that instead: the tracker message proves the length check ran first.
+    let edits = vec![
+        CellEdit {
+            target: target("missing", "c0"),
+            input: ScalarEditInput::Text {
+                value: "edited".to_owned(),
+            },
+        };
+        limit + 1
+    ];
+    let error = runtime.edit_cells(&current, &edits).unwrap_err();
+    assert_tracker_message(&error, "the edit range is empty or too large");
+    assert_eq!(revision(&runtime), current);
+
+    let source = target("missing", "c0");
+    let destinations = vec![target("missing", "c0"); limit + 1];
+    let error = runtime
+        .copy_formula(&current, &source, &destinations, &[], false, false)
+        .unwrap_err();
+    assert_tracker_message(&error, "formula copy range is empty or too large");
+    assert_eq!(revision(&runtime), current);
+}
+
 #[test]
 fn working_limits_admit_at_the_bound_and_refuse_one_above() {
     let limits = limits_for_profile(SessionProfile::WorkingSize);

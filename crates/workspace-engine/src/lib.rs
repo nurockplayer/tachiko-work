@@ -2000,9 +2000,12 @@ impl FieldEditPlanning {
         field: &FieldRef,
         expression: &Expression,
     ) -> Result<(), WorkspaceError> {
-        let projected = match self.index.as_ref() {
-            Some(index) => project_expression_with_index(document, index, field, expression),
-            None => match AddressIndex::build(document) {
+        let projected = if let Some(index) = self.index.as_ref() {
+            project_expression_with_index(document, index, field, expression)
+        } else {
+            #[cfg(test)]
+            planning_counters::record_address_index_build();
+            match AddressIndex::build(document) {
                 Ok(index) => {
                     let projected =
                         project_expression_with_index(document, &index, field, expression);
@@ -2010,7 +2013,7 @@ impl FieldEditPlanning {
                     projected
                 }
                 Err(_) => project_expression(document, field, expression),
-            },
+            }
         };
         projected
             .map_err(|source| match source {
@@ -2510,6 +2513,48 @@ pub(crate) mod evaluation_counters {
         (
             CANDIDATE_CALCULATIONS.with(Cell::get),
             BASE_CALCULATIONS.with(Cell::get),
+        )
+    }
+}
+
+/// Test-only counts of the whole-document work one batch plan performs. They
+/// are acceptance instruments for "a batch plans each command without
+/// rewalking the document" (Issue #712), not a runtime measurement surface.
+#[cfg(test)]
+pub(crate) mod planning_counters {
+    use std::cell::Cell;
+
+    thread_local! {
+        static DOCUMENT_CLONES: Cell<usize> = const { Cell::new(0) };
+        static STRUCTURE_PREFLIGHTS: Cell<usize> = const { Cell::new(0) };
+        static ADDRESS_INDEX_BUILDS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        DOCUMENT_CLONES.with(|count| count.set(0));
+        STRUCTURE_PREFLIGHTS.with(|count| count.set(0));
+        ADDRESS_INDEX_BUILDS.with(|count| count.set(0));
+    }
+
+    pub(crate) fn record_document_clone() {
+        DOCUMENT_CLONES.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn record_structure_preflight() {
+        STRUCTURE_PREFLIGHTS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn record_address_index_build() {
+        ADDRESS_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Return `(document clones, structure preflights, address-index builds)`
+    /// since the last [`reset`].
+    pub(crate) fn counts() -> (usize, usize, usize) {
+        (
+            DOCUMENT_CLONES.with(Cell::get),
+            STRUCTURE_PREFLIGHTS.with(Cell::get),
+            ADDRESS_INDEX_BUILDS.with(Cell::get),
         )
     }
 }
@@ -3078,6 +3123,8 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
 }
 
 fn preflight_formula_structures(document: &Document) -> Result<(), WorkspaceError> {
+    #[cfg(test)]
+    planning_counters::record_structure_preflight();
     for (entity_id, entity) in &document.entities {
         preflight_entity_formulas(entity_id, entity)?;
     }
