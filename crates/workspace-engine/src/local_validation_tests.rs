@@ -355,6 +355,82 @@ fn full_report(document: &Document) -> ValidationReport {
     validation_report_for_retained_calculation(document, &calculation)
 }
 
+#[test]
+fn retained_formula_sources_match_full_projection_after_publications() {
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base_document());
+    let original_formula = stored(session.document(), "r00", "total");
+    let mut random = SplitMix64 {
+        state: 0x6780_0000_50a7_ce55,
+    };
+    let mut saw_ok = false;
+    let mut saw_error = false;
+
+    for step in 0..70 {
+        let mut candidate = session.document().clone();
+        match step % 10 {
+            0 => plain_value_edit(&mut candidate, "r01", &mut random),
+            1 => set(
+                &mut candidate,
+                "r00",
+                "total",
+                Value::Formula(Expression::SameRowReference(FieldId::from("amount"))),
+            ),
+            2 => set(&mut candidate, "r00", "total", original_formula.clone()),
+            3 => {
+                let mut row = candidate.entities[&EntityId::from("r01")].clone();
+                row.id = EntityId::from("extra");
+                row.key = EntityKey::from("extra");
+                candidate.entities.insert(row.id.clone(), row);
+            }
+            4 => {
+                candidate.entities.remove(&EntityId::from("extra"));
+            }
+            5 => set(&mut candidate, "r00", "ratio", number(0.0)),
+            6 => set(&mut candidate, "r00", "ratio", number(2.0)),
+            7 => set(
+                &mut candidate,
+                "r00",
+                "amount",
+                Value::Text("invalid".into()),
+            ),
+            8 => set(&mut candidate, "r00", "amount", number(500.0)),
+            9 => set(
+                &mut candidate,
+                "r00",
+                "total",
+                Value::Formula(Expression::SameRowReference(FieldId::from("total"))),
+            ),
+            _ => unreachable!(),
+        }
+        // Repair the cycle on the next publication while retaining a value edit.
+        if step % 10 == 0 && step > 0 {
+            set(&mut candidate, "r00", "total", original_formula.clone());
+        }
+        let scope = session.document_scope().clone();
+        let revision = session.revision().clone();
+        let mut time = FixedTime;
+        session
+            .publication_authority(&mut time)
+            .publish_if_current(&scope, &revision, &candidate, |_| Some(()))
+            .expect("each edit publishes");
+        let actual = session
+            .formula_source_projections()
+            .map_err(|error| error.to_string());
+        let expected = crate::formula_source_projections(session.document())
+            .map_err(|error| error.to_string());
+        saw_ok |= expected.is_ok();
+        saw_error |= expected.is_err();
+        assert_eq!(actual, expected, "publication {step}");
+        if matches!(step % 10, 5 | 7 | 9) {
+            assert!(expected.is_err(), "publication {step} must be invalid");
+        }
+        if matches!(step % 10, 6 | 8) {
+            assert!(expected.is_ok(), "publication {step} must recover");
+        }
+    }
+    assert!(saw_ok && saw_error);
+}
+
 /// Acceptance: 104 seeded edits, all published through one resident session.
 /// Every step's report equals a full report of the candidate and of the
 /// document publication installed, and the counter shows the known path.

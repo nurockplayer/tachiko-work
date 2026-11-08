@@ -21,7 +21,7 @@ use super::{
     PreparedInstallation, SchemaId, SemanticSubject, ValidationReport, ValidationRole, Value,
     WorkspaceError,
     formula_operations::{FormulaCalculationOutcome, calculation_for, calculation_formula_keys},
-    instrumentation, invalid_document,
+    formula_source_projections_with_index, instrumentation, invalid_document,
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
@@ -142,6 +142,39 @@ impl ResidentWorkspaceSession {
     #[must_use]
     pub fn document(&self) -> &Document {
         &self.document
+    }
+
+    /// Project stored formula sources using this revision's retained state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation, address, or projection error as the full query.
+    ///
+    /// # Panics
+    ///
+    /// Panics, as the full query does, if a valid retained report comes with an
+    /// incomplete calculation, which the resident session never installs.
+    pub fn formula_source_projections(&self) -> Result<BTreeMap<FieldRef, String>, WorkspaceError> {
+        // require_validated_calculation refuses an invalid report, including
+        // calculation failures; the retained report holds those same diagnostics.
+        // A valid report implies a complete retained calculation, just as in
+        // semantic_validation. Address and projection errors follow that gate.
+        if !self.retained.validation_report.is_valid() {
+            return Err(invalid_document(
+                self.retained.validation_report.clone(),
+                ValidationRole::Current,
+            ));
+        }
+        self.retained
+            .calculation_state
+            .complete_values()
+            .expect("a diagnostic-free formula outcome is complete");
+        let index = self
+            .retained
+            .address_index
+            .as_ref()
+            .map_err(|source| WorkspaceError::from(source.clone()))?;
+        formula_source_projections_with_index(&self.document, index)
     }
 
     /// Issue the identity proof for this occurrence's current document.
