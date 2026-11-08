@@ -1000,6 +1000,13 @@ pub fn formula_source_projections(
 ) -> Result<BTreeMap<FieldRef, String>, WorkspaceError> {
     require_validated_calculation(document)?;
     let index = AddressIndex::build(document)?;
+    formula_source_projections_with_index(document, &index)
+}
+
+fn formula_source_projections_with_index(
+    document: &Document,
+    index: &AddressIndex,
+) -> Result<BTreeMap<FieldRef, String>, WorkspaceError> {
     let mut sources = BTreeMap::new();
     for entity in document.entities.values() {
         for (field_id, value) in &entity.fields {
@@ -1008,7 +1015,7 @@ pub fn formula_source_projections(
             };
             let field = FieldRef::new(entity.id.clone(), field_id.clone());
             index.field_address(document, &field)?;
-            let source = project_expression_with_index(document, &index, &field, expression)
+            let source = project_expression_with_index(document, index, &field, expression)
                 .map_err(|source| WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,

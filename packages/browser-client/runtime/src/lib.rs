@@ -6296,7 +6296,7 @@ impl DesignerRuntime {
         if let Some(admission) = working_admission {
             self.working_admission = Some(admission);
         }
-        if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
+        if let Ok(sources) = self.session.formula_source_projections() {
             self.formula_sources = sources;
         }
         Ok((self.published_projection(&invalidation), forward))
@@ -6387,7 +6387,7 @@ impl DesignerRuntime {
         if let Some(admission) = working_admission {
             self.working_admission = Some(admission);
         }
-        if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
+        if let Ok(sources) = self.session.formula_source_projections() {
             self.formula_sources = sources;
         }
         Ok(self.published_projection(&invalidation))
@@ -6973,7 +6973,7 @@ impl DesignerRuntime {
                 }
                 None => self.refresh_structure(),
             }
-            if let Ok(sources) = formula_sources(self.session.document()) {
+            if let Ok(sources) = self.session.formula_source_projections() {
                 self.formula_sources = sources;
             }
         }
