@@ -7717,7 +7717,7 @@ impl DesignerRuntime {
             let _phase = instrumentation::PhaseTimer::new("row/insert/snapshot");
             self.session.export_snapshot()
         };
-        let (schema, fills, columns) = {
+        let (fills, columns) = {
             let _phase = instrumentation::PhaseTimer::new("row/insert/columns");
             let schema = snapshot
                 .document()
@@ -7735,7 +7735,7 @@ impl DesignerRuntime {
                 .iter()
                 .map(|column| (column.id.clone(), column))
                 .collect::<BTreeMap<_, _>>();
-            (schema, fills, columns)
+            (fills, columns)
         };
         let mut values = BTreeMap::new();
         for initializer in initializers {
@@ -7763,7 +7763,7 @@ impl DesignerRuntime {
         }
         let mut allocated = BTreeSet::new();
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
-        let mut entity = {
+        let entity = {
             let _phase = instrumentation::PhaseTimer::new("row/insert/row_build");
             let mut entity =
                 native_table_row(snapshot.document(), &spec, &mut row_ids, &mut allocated)?;

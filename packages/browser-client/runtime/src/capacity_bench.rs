@@ -1369,6 +1369,31 @@ fn wq_print_latency(name: &str, prefix: &str, samples: &[Sample]) {
     );
 }
 
+/// Print the median and p95 of every phase recorded by the given samples.
+fn wq_phase_latency(name: &str, prefix: &str, samples: &[BTreeMap<&'static str, f64>]) {
+    let phase_names = samples
+        .iter()
+        .flat_map(|phases| phases.keys().copied())
+        .collect::<BTreeSet<_>>();
+    for phase in phase_names {
+        let mut values = samples
+            .iter()
+            .map(|phases| phases.get(phase).copied().unwrap_or(0.0))
+            .collect::<Vec<_>>();
+        values.sort_by(f64::total_cmp);
+        wq_print(
+            name,
+            &format!("{prefix}_phase_{phase}_median_ms"),
+            format!("{:.3}", values[values.len() / 2]),
+        );
+        wq_print(
+            name,
+            &format!("{prefix}_phase_{phase}_p95_ms"),
+            format!("{:.3}", w1_percentile(&values, 95.0)),
+        );
+    }
+}
+
 /// One edit of `r00000.c1` through `edit_cells` and the host's re-query, the
 /// window and the column totals a `many` reply forces, measured
 /// `WQ_EDIT_COUNT` times.
