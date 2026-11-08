@@ -3058,9 +3058,12 @@ impl PatchLifecycle {
         planning: &mut EntityAppendPlanning,
         writes: &mut BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<(), WorkspaceError> {
-        match &planning.keys {
-            Some(keys) => super::validate_appended_entity_key(keys, &entity.key)?,
-            None => super::validate_new_entity_key(candidate, &entity.key)?,
+        if let Some(keys) = &planning.keys {
+            super::validate_appended_entity_key(keys, &entity.key)?;
+        } else {
+            #[cfg(test)]
+            super::planning_counters::record_address_index_build();
+            super::validate_new_entity_key(candidate, &entity.key)?;
         }
         if entity.id.as_str().is_empty() {
             return Err(WorkspaceError::EmptyGeneratedId {
@@ -3147,6 +3150,8 @@ impl PatchLifecycle {
                 schema: schema.key.clone(),
             });
         }
+        #[cfg(test)]
+        super::planning_counters::record_address_index_build();
         let schema_key_exists = super::AddressIndex::build(candidate)
             .is_ok_and(|index| index.schema_id(&schema.key).is_ok());
         if schema_key_exists {
@@ -3154,6 +3159,8 @@ impl PatchLifecycle {
                 schema: schema.key.clone(),
             });
         }
+        #[cfg(test)]
+        super::planning_counters::record_document_clone();
         let mut appended = candidate.clone();
         appended.schemas.insert(schema.id.clone(), schema.clone());
         let mut seen_entities = BTreeSet::new();
@@ -3625,6 +3632,8 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
     ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
         admit_command_names(body)?;
+        #[cfg(test)]
+        super::planning_counters::record_document_clone();
         let mut candidate = document.clone();
         let mut writes = BTreeSet::new();
         let mut field_edits = FieldEditPlanning::new();
