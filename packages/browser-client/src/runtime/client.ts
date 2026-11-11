@@ -63,6 +63,7 @@ export interface DesignerClient {
   duplicateCollection?(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection>;
   deleteTable?(expectedRevision: string, collection: string): Promise<PublicationProjection>;
   addTable?(expectedRevision: string, name: string, columns: NewTableColumnInput[]): Promise<DuplicateCollectionProjection>;
+  renameTable?(expectedRevision: string, collection: string, name: string): Promise<PublicationProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   clearField?(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
   /** Convert every value of one scalar column to another scalar type as one undoable edit. */

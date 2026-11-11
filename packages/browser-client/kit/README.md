@@ -133,6 +133,12 @@ const { total, found } = await client.findInView(
 );
 ```
 
+Rename a table with `renameTable(revision, collection, name)`, or send
+`{type: "rename_table", expected_revision, collection, name}` through
+`trackerCommand` alongside `rename_column`. Names use the same admission rules
+as table creation. Rename is one undoable revision and keeps the table ID and
+formula references stable.
+
 Columns can be reordered with `moveColumn`. `toIndex` is a zero-based position
 after the column is removed from its current place, clamped to the last column.
 The order is durable document state: it is saved, undone, diffed and exported,

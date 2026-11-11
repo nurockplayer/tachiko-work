@@ -969,3 +969,147 @@ fn adding_table_preserves_existing_tables_and_undo_removes_it() {
     assert!(runtime.query_table(&result.collection.key).is_err());
     assert_eq!(runtime.session.document(), &before);
 }
+
+#[test]
+fn rename_table_preserves_cross_table_formula_history_and_v3() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".into(),
+            target: "monthly_summary.remaining".into(),
+            source: "IF(NOT(ISBLANK([utilities.actual])),[utilities.actual],0)".into(),
+        })
+        .unwrap();
+    let before = runtime.query_table("budget_summary").unwrap();
+    let remaining_id = &before
+        .columns
+        .iter()
+        .find(|column| column.key == "remaining")
+        .unwrap()
+        .id;
+    let calculated = before.rows[0]
+        .fields
+        .iter()
+        .find(|field| &field.target.field == remaining_id)
+        .unwrap()
+        .calculated
+        .clone();
+    assert!(calculated.is_some());
+    let original = runtime.query_table("budget_items").unwrap().collection;
+    let publication = runtime
+        .rename_table("resident/1", "budget_items", "  Renamed Utilities  ")
+        .unwrap();
+    assert_eq!(
+        (
+            publication.base_revision.as_str(),
+            publication.resulting_revision.as_str()
+        ),
+        ("resident/1", "resident/2")
+    );
+    let renamed = runtime.query_table("budget_items").unwrap();
+    assert_eq!(renamed.collection.display_name, "Renamed Utilities");
+    assert_eq!(renamed.collection.id, original.id);
+    assert_eq!(renamed.collection.key, original.key);
+    let after = runtime.query_table("budget_summary").unwrap();
+    assert_eq!(
+        after.rows[0]
+            .fields
+            .iter()
+            .find(|field| &field.target.field == remaining_id)
+            .unwrap()
+            .calculated,
+        calculated
+    );
+    let bytes = runtime.export_project_v3("resident/2").unwrap().bytes;
+    let mut reopened = None;
+    open_project(&mut reopened, &bytes, OCCURRENCE).unwrap();
+    assert_eq!(
+        reopened
+            .unwrap()
+            .query_table("budget_items")
+            .unwrap()
+            .collection
+            .display_name,
+        "Renamed Utilities"
+    );
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/2".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.current_revision(), "resident/3");
+    assert_eq!(
+        runtime
+            .query_table("budget_items")
+            .unwrap()
+            .collection
+            .display_name,
+        original.display_name
+    );
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/3".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.current_revision(), "resident/4");
+    assert_eq!(
+        runtime
+            .query_table("budget_items")
+            .unwrap()
+            .collection
+            .display_name,
+        "Renamed Utilities"
+    );
+}
+
+#[test]
+fn rename_table_refusals_preserve_revision_and_match_column_no_change() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let duplicate = runtime
+        .query_table("budget_summary")
+        .unwrap()
+        .collection
+        .display_name;
+    let overlong = "x".repeat(4097);
+    for (revision, name, code) in [
+        ("resident/0", "", "invalid_table_operation"),
+        ("resident/0", "   ", "invalid_table_operation"),
+        ("resident/0", overlong.as_str(), "invalid_table_operation"),
+        ("resident/0", duplicate.as_str(), "invalid_table_operation"),
+        ("resident/1", "Valid", "stale_revision"),
+    ] {
+        let error = runtime
+            .rename_table(revision, "budget_items", name)
+            .unwrap_err();
+        assert_eq!(
+            error.failure_projection(runtime.current_revision()).code,
+            code
+        );
+        assert_eq!(runtime.current_revision(), "resident/0");
+    }
+    runtime
+        .rename_table("resident/0", "budget_items", "Renamed")
+        .unwrap();
+    let error = runtime
+        .rename_table("resident/1", "budget_items", "Renamed")
+        .unwrap_err();
+    assert_eq!(
+        error.failure_projection(runtime.current_revision()).code,
+        "no_change"
+    );
+    assert_eq!(runtime.current_revision(), "resident/1");
+    let column = runtime.query_table("budget_items").unwrap().columns[0]
+        .id
+        .clone();
+    runtime
+        .rename_column("resident/1", "budget_items", &column, "Renamed Column")
+        .unwrap();
+    let error = runtime
+        .rename_column("resident/2", "budget_items", &column, "Renamed Column")
+        .unwrap_err();
+    assert_eq!(
+        error.failure_projection(runtime.current_revision()).code,
+        "no_change"
+    );
+    assert_eq!(runtime.current_revision(), "resident/2");
+}

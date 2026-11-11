@@ -588,3 +588,22 @@ describe("Published changed-cell wire validation", () => {
     client.close();
   });
 });
+
+
+describe("table rename transport", () => {
+  it("sends renameTable as a tracker command", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const publication = { base_revision: "resident/1", resulting_revision: "resident/2", schemas: [], schema_fields: [], entities: [], fields: [], affected_calculations: [] };
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => { if (type === "message") receive = callback; },
+      postMessage: (request: {id: number; kind: string; request: Record<string, unknown>}) => {
+        expect(request.kind).toBe("command");
+        expect(request.request).toEqual({type: "rename_table", expected_revision: "resident/1", collection: "items", name: "New name"});
+        receive?.({data: {id: request.id, status: "ok", response: {type: "published", payload: publication}}} as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    await expect(client.renameTable("resident/1", "items", "New name")).resolves.toEqual(publication);
+  });
+});

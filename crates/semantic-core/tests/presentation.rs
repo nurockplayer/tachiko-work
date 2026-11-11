@@ -94,6 +94,7 @@ fn valid_store() -> PresentationStore {
                 title: Some("Q3 budget".into()),
                 footer: BTreeMap::from([("amount".into(), FooterAggregate::Sum)]),
                 column_styles: BTreeMap::from([("due".into(), StyleId::from("s1"))]),
+                column_widths: BTreeMap::new(),
             },
         )]),
         rules: BTreeMap::from([("r1".into(), rule(valid_condition()))]),
@@ -160,6 +161,7 @@ fn a_record_naming_a_missing_schema_is_refused() {
             title: Some("Title".into()),
             footer: BTreeMap::new(),
             column_styles: BTreeMap::new(),
+            column_widths: BTreeMap::new(),
         },
     );
     assert_eq!(
@@ -643,6 +645,7 @@ fn a_table_left_with_no_content_is_dropped() {
             title: None,
             footer: BTreeMap::from([("amount".into(), FooterAggregate::Sum)]),
             column_styles: BTreeMap::from([("amount".into(), StyleId::from("s3"))]),
+            column_widths: BTreeMap::new(),
         },
     );
     let mut document = document();
@@ -768,4 +771,44 @@ fn a_style_nothing_uses_is_dropped() {
     assert!(pruned.cells.is_empty());
     assert!(!pruned.styles.contains_key(&StyleId::from("s1")));
     assert_eq!(validate_presentation(&pruned, &document), Ok(()));
+}
+
+#[test]
+fn column_widths_validate_and_prune_with_fields() {
+    let mut store = PresentationStore::default();
+    store.tables.insert(
+        "orders".into(),
+        TablePresentation {
+            column_widths: BTreeMap::from([("amount".into(), 1), ("due".into(), 65280)]),
+            ..TablePresentation::default()
+        },
+    );
+    let mut doc = document();
+    assert_eq!(validate_presentation(&store, &doc), Ok(()));
+    doc.schemas
+        .get_mut(&SchemaId::from("orders"))
+        .unwrap()
+        .fields
+        .remove(&FieldId::from("amount"));
+    let pruned = prune_presentation(&store, &doc);
+    assert_eq!(
+        pruned.tables[&SchemaId::from("orders")].column_widths,
+        BTreeMap::from([("due".into(), 65280)])
+    );
+    doc.schemas
+        .get_mut(&SchemaId::from("orders"))
+        .unwrap()
+        .fields
+        .remove(&FieldId::from("due"));
+    assert!(prune_presentation(&store, &doc).tables.is_empty());
+    assert!(validate_presentation(&store, &doc).is_err());
+    for width in [0, 65281] {
+        store
+            .tables
+            .get_mut(&SchemaId::from("orders"))
+            .unwrap()
+            .column_widths
+            .insert("amount".into(), width);
+        assert!(validate_presentation(&store, &document()).is_err());
+    }
 }

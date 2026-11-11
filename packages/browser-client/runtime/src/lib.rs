@@ -279,6 +279,11 @@ pub enum DesignerRequest {
         field: String,
         constraint: FieldConstraintInput,
     },
+    RenameTable {
+        expected_revision: String,
+        collection: String,
+        name: String,
+    },
     RenameColumn {
         expected_revision: String,
         collection: String,
@@ -3230,6 +3235,7 @@ impl DesignerRuntime {
                 | SemanticCommand::AppendSchemaField { .. }
                 | SemanticCommand::RemoveSchemaField { .. }
                 | SemanticCommand::RenameSchemaField { .. }
+                | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
                 | SemanticCommand::UnsetField { .. }
@@ -3597,6 +3603,15 @@ impl DesignerRuntime {
                 &collection,
                 &field,
                 constraint,
+            )?)),
+            DesignerRequest::RenameTable {
+                expected_revision,
+                collection,
+                name,
+            } => Ok(DesignerResponse::Published(self.rename_table(
+                &expected_revision,
+                &collection,
+                &name,
             )?)),
             DesignerRequest::RenameColumn {
                 expected_revision,
@@ -5689,6 +5704,56 @@ impl DesignerRuntime {
         self.record_edit(expected, forward, inverse)
     }
 
+    fn rename_table(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        name: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let schema_id = SchemaId::from(self.collection_spec(collection)?.summary.id.clone());
+        let snapshot = self.session.export_snapshot();
+        let document = snapshot.document();
+        let schema = document
+            .schemas
+            .get(&schema_id)
+            .ok_or_else(|| table_error("native table schema is unavailable"))?;
+        let mut failures = Vec::new();
+        let name = name_admission::check_name(
+            name,
+            Some(&name_admission::NameInput::Table),
+            &[],
+            &mut failures,
+        );
+        if let Some(name) = name {
+            let subjects = document
+                .schemas
+                .values()
+                .filter(|other| other.id != schema_id && other.effective_name() == name)
+                .map(|other| tachiko_workspace_engine::SemanticSubject::Schema(other.id.clone()))
+                .collect::<Vec<_>>();
+            if !subjects.is_empty() {
+                failures.push(NameFailure {
+                    reason: "duplicate_display_name".into(),
+                    inputs: vec![name_admission::NameInput::Table],
+                    subjects,
+                    effective_name: Some(name.to_owned()),
+                });
+            }
+        }
+        name_admission::refuse(failures)?;
+        let name = name.expect("table name admitted");
+        let forward = vec![SemanticCommand::SetSchemaDisplayName {
+            schema: schema_id.clone(),
+            display_name: Some(name.to_owned()),
+        }];
+        let inverse = vec![SemanticCommand::SetSchemaDisplayName {
+            schema: schema_id,
+            display_name: schema.display_name.clone(),
+        }];
+        self.record_edit(expected, forward, inverse)
+    }
+
     fn rename_column(
         &mut self,
         expected: &str,
@@ -6841,6 +6906,17 @@ impl DesignerRuntime {
                         .ok_or_else(|| table_error("column is unavailable"))?
                         .key = key.clone();
                 }
+                SemanticCommand::SetSchemaDisplayName {
+                    schema,
+                    display_name,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| table_error("native table schema is unavailable"))?
+                        .display_name
+                        .clone_from(display_name);
+                }
                 SemanticCommand::SetSchemaFieldDisplayName {
                     schema,
                     field,
@@ -7094,7 +7170,8 @@ impl DesignerRuntime {
         // one call. Other command families retain the existing lifecycle.
         let v2_evidence_transition = document_requires_v2_evidence(self.session.document())
             || commands.iter().any(|command| match command {
-                SemanticCommand::SetSchemaFieldDisplayName { .. }
+                SemanticCommand::SetSchemaDisplayName { .. }
+                | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
                 | SemanticCommand::SetFieldConstraint { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
