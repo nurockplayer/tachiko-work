@@ -1159,6 +1159,7 @@ fn working_size_open_and_save_carry_the_presentation_store() {
                 title: Some("Styled".into()),
                 footer: BTreeMap::new(),
                 column_styles: BTreeMap::new(),
+                column_widths: BTreeMap::new(),
             },
         )]),
         ..PresentationStore::default()
@@ -3524,6 +3525,7 @@ fn formats_fixture() -> (Document, PresentationStore) {
                 title: Some("Formatted".to_owned()),
                 footer: BTreeMap::from([(FieldId::from("amount"), FooterAggregate::Sum)]),
                 column_styles: BTreeMap::from([(FieldId::from("ratio"), style_id.clone())]),
+                column_widths: BTreeMap::new(),
             },
         )]),
         rules: BTreeMap::new(),

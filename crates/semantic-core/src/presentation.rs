@@ -120,6 +120,7 @@ pub struct TablePresentation {
     pub title: Option<String>,
     pub footer: BTreeMap<FieldId, FooterAggregate>,
     pub column_styles: BTreeMap<FieldId, StyleId>,
+    pub column_widths: BTreeMap<FieldId, u32>,
 }
 
 /// One conditional formatting rule. Its identity is the map key that holds it.
@@ -182,6 +183,11 @@ pub enum PresentationError {
     },
     UnusedStyle {
         style: StyleId,
+    },
+    InvalidColumnWidth {
+        schema: SchemaId,
+        field: FieldId,
+        width: u32,
     },
     EmptyTable {
         schema: SchemaId,
@@ -269,6 +275,14 @@ impl fmt::Display for PresentationError {
             Self::UnusedStyle { style } => {
                 write!(formatter, "presentation style '{style}' is used by nothing")
             }
+            Self::InvalidColumnWidth {
+                schema,
+                field,
+                width,
+            } => write!(
+                formatter,
+                "column width for '{schema}.{field}' is out of range: {width}"
+            ),
             Self::EmptyTable { schema } => {
                 write!(formatter, "table presentation '{schema}' has no content")
             }
@@ -486,7 +500,17 @@ pub fn prune_presentation(store: &PresentationStore, document: &Document) -> Pre
                 .filter(|(field, _)| schema.fields.contains_key(*field))
                 .map(|(field, style)| (field.clone(), style.clone()))
                 .collect::<BTreeMap<_, _>>();
-            if table.title.is_none() && footer.is_empty() && column_styles.is_empty() {
+            let column_widths = table
+                .column_widths
+                .iter()
+                .filter(|(field, _)| schema.fields.contains_key(*field))
+                .map(|(field, width)| (field.clone(), *width))
+                .collect::<BTreeMap<_, _>>();
+            if table.title.is_none()
+                && footer.is_empty()
+                && column_styles.is_empty()
+                && column_widths.is_empty()
+            {
                 return None;
             }
             Some((
@@ -495,6 +519,7 @@ pub fn prune_presentation(store: &PresentationStore, document: &Document) -> Pre
                     title: table.title.clone(),
                     footer,
                     column_styles,
+                    column_widths,
                 },
             ))
         })
@@ -676,7 +701,11 @@ pub fn validate_presentation(
                 .ok_or_else(|| PresentationError::MissingSchema {
                     schema: schema_id.clone(),
                 })?;
-        if table.title.is_none() && table.footer.is_empty() && table.column_styles.is_empty() {
+        if table.title.is_none()
+            && table.footer.is_empty()
+            && table.column_styles.is_empty()
+            && table.column_widths.is_empty()
+        {
             return Err(PresentationError::EmptyTable {
                 schema: schema_id.clone(),
             });
@@ -690,11 +719,25 @@ pub fn validate_presentation(
                 });
             }
         }
-        for field in table.footer.keys().chain(table.column_styles.keys()) {
+        for field in table
+            .footer
+            .keys()
+            .chain(table.column_styles.keys())
+            .chain(table.column_widths.keys())
+        {
             if !schema.fields.contains_key(field) {
                 return Err(PresentationError::MissingField {
                     schema: schema_id.clone(),
                     field: field.clone(),
+                });
+            }
+        }
+        for (field, width) in &table.column_widths {
+            if !(1..=65280).contains(width) {
+                return Err(PresentationError::InvalidColumnWidth {
+                    schema: schema_id.clone(),
+                    field: field.clone(),
+                    width: *width,
                 });
             }
         }
