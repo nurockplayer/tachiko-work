@@ -3664,8 +3664,10 @@ fn date_format_grid() -> Document {
             FieldConstraint::None,
             None,
         );
-        fields.get_mut(&FieldId::from(id.as_str())).unwrap().date_format =
-            Some(DateFormat::MonthDayYear);
+        fields
+            .get_mut(&FieldId::from(id.as_str()))
+            .unwrap()
+            .date_format = Some(DateFormat::MonthDayYear);
     }
     document.schemas.insert(
         SchemaId::from("dates"),
