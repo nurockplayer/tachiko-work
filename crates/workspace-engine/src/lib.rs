@@ -367,6 +367,11 @@ impl Serialize for SchemaInspection {
                         "the frozen schema inspection transport cannot represent number formats",
                     ));
                 }
+                if field.date_format.is_some() {
+                    return Err(S::Error::custom(
+                        "the frozen schema inspection transport cannot represent date formats",
+                    ));
+                }
                 if field.constraint != FieldConstraint::None {
                     return Err(S::Error::custom(
                         "the frozen schema inspection transport cannot represent field constraints",

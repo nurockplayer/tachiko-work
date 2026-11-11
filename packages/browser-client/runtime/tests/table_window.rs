@@ -1613,9 +1613,9 @@ fn display_text_covers_stored_and_calculated_numbers_only() {
     // A formula column carries its calculated Number without a stored value.
     assert_eq!(display_of(&window, "e01", "f06_double"), Some("20"));
     assert_eq!(display_of(&window, "e03", "f06_double"), Some("-4"));
-    // Text, Date, Yes/No and blank cells carry no display text.
+    // Text, Yes/No and blank cells carry no display text.
     assert_eq!(display_of(&window, "e01", "f01_name"), None);
-    assert_eq!(display_of(&window, "e01", "f04_due"), None);
+    assert_eq!(display_of(&window, "e01", "f04_due"), Some("2026-01-01"));
     assert_eq!(display_of(&window, "e01", "f05_done"), None);
     assert_eq!(display_of(&window, "e04", "f03_amount"), None);
     let blank = window
@@ -1660,5 +1660,76 @@ fn replies_without_display_carry_no_display_key() {
         !serde_json::to_string(&plain)
             .expect("the window encodes")
             .contains("\"display\"")
+    );
+}
+
+#[test]
+fn date_formats_are_rendered_in_windows_and_clear_to_iso() {
+    use tachiko_workspace_engine::DateFormat;
+    let mut runtime = small_runtime();
+    for (format, expected) in [
+        (DateFormat::Iso, "2026-01-01"),
+        (DateFormat::Mdy, "1/1/2026"),
+        (DateFormat::Dmy, "1/1/2026"),
+        (DateFormat::YmdSlash, "2026/1/1"),
+        (DateFormat::YmdCjk, "2026年1月1日"),
+        (DateFormat::MonthDayYear, "Jan 1, 2026"),
+        (DateFormat::DayMonthYear, "1 Jan 2026"),
+    ] {
+        let expected_revision = runtime.observe_occurrence().revision;
+        runtime
+            .handle(DesignerRequest::SetColumnDateFormat {
+                expected_revision,
+                collection: "rows".into(),
+                field: "f04_due".into(),
+                date_format: Some(format),
+            })
+            .unwrap();
+        let result = window_with_display(&mut runtime, TableView::default(), 0, 256, true).unwrap();
+        assert_eq!(display_of(&result, "e01", "f04_due"), Some(expected));
+    }
+    let expected_revision = runtime.observe_occurrence().revision;
+    runtime
+        .handle(DesignerRequest::SetColumnDateFormat {
+            expected_revision,
+            collection: "rows".into(),
+            field: "f04_due".into(),
+            date_format: None,
+        })
+        .unwrap();
+    let result = window_with_display(&mut runtime, TableView::default(), 0, 256, true).unwrap();
+    assert_eq!(display_of(&result, "e01", "f04_due"), Some("2026-01-01"));
+}
+
+#[test]
+fn formatted_dates_still_sort_by_date() {
+    use tachiko_workspace_engine::DateFormat;
+    let mut document = small_document();
+    document
+        .entities
+        .get_mut(&EntityId::from("e01"))
+        .unwrap()
+        .fields
+        .insert(FieldId::from("f04_due"), date("2026-11-30"));
+    document
+        .entities
+        .get_mut(&EntityId::from("e02"))
+        .unwrap()
+        .fields
+        .insert(FieldId::from("f04_due"), date("2026-12-01"));
+    let mut runtime = DesignerRuntime::from_document(document, SMALL).unwrap();
+    let expected_revision = runtime.observe_occurrence().revision;
+    runtime
+        .handle(DesignerRequest::SetColumnDateFormat {
+            expected_revision,
+            collection: "rows".into(),
+            field: "f04_due".into(),
+            date_format: Some(DateFormat::Dmy),
+        })
+        .unwrap();
+    let rows = order(&mut runtime, sorted("f04_due", SortDirection::Asc));
+    assert!(
+        rows.iter().position(|id| id == "e01").unwrap()
+            < rows.iter().position(|id| id == "e02").unwrap()
     );
 }

@@ -274,6 +274,14 @@ fn field_bytes(field: &FieldDefinition, indent: u64) -> u64 {
                 number_format_bytes(format, indent + 1),
             ])
         }),
+        field.date_format.map_or(0, |_| {
+            total([
+                2, // ",\n"
+                pretty_prefix(indent + 1, "date_format"),
+                // The longest stored name; one wider name costs a few bytes.
+                string_bytes("month_day_year"),
+            ])
+        }),
         1, // final '\n'
         indent_bytes(indent),
         1, // "}"

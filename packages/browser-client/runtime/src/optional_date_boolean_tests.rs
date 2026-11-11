@@ -434,3 +434,75 @@ fn native_export_writes_empty_cells_for_blank_date_and_boolean_without_refusal()
         assert_eq!(set[2].value, SourceValue::Empty);
     }
 }
+
+#[test]
+fn date_format_lifecycle_refusals_and_v3_roundtrip() {
+    use tachiko_workspace_engine::DateFormat;
+    let (mut runtime, collection, ids) = fixture();
+    insert_named_row(&mut runtime, &collection, &ids[0], "alpha");
+    let row = row_ids(&runtime, &collection)[0].clone();
+    edit(
+        &mut runtime,
+        &row,
+        &ids[1],
+        ScalarEditInput::Date {
+            value: "2026-11-07".into(),
+        },
+    );
+    let set = |runtime: &mut DesignerRuntime, revision: String, field: &str, date_format| {
+        runtime.handle(DesignerRequest::SetColumnDateFormat {
+            expected_revision: revision,
+            collection: collection.clone(),
+            field: field.into(),
+            date_format,
+        })
+    };
+    let revision = runtime.current_revision().to_owned();
+    let wrong_type = set(
+        &mut runtime,
+        revision.clone(),
+        &ids[0],
+        Some(DateFormat::Mdy),
+    )
+    .unwrap_err();
+    assert_eq!(
+        wrong_type.failure_projection(&revision).code,
+        "invalid_number_format"
+    );
+    let no_change = set(&mut runtime, revision.clone(), &ids[1], None).unwrap_err();
+    assert_eq!(no_change.failure_projection(&revision).code, "no_change");
+    let stale = set(
+        &mut runtime,
+        "resident/999".into(),
+        &ids[1],
+        Some(DateFormat::Mdy),
+    )
+    .unwrap_err();
+    assert_eq!(stale.failure_projection(&revision).code, "stale_revision");
+    assert_eq!(runtime.current_revision(), revision);
+    set(&mut runtime, revision, &ids[1], Some(DateFormat::YmdCjk)).unwrap();
+    let projected = |runtime: &DesignerRuntime| table(runtime, &collection).columns[1].date_format;
+    assert_eq!(projected(&runtime), Some(DateFormat::YmdCjk));
+    history(&mut runtime, false);
+    assert_eq!(projected(&runtime), None);
+    history(&mut runtime, true);
+    assert_eq!(projected(&runtime), Some(DateFormat::YmdCjk));
+    let export = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    let mut reopened = None;
+    super::open_project(&mut reopened, &export.bytes, OCCURRENCE).unwrap();
+    let reopened = reopened.unwrap();
+    assert_eq!(projected(&reopened), Some(DateFormat::YmdCjk));
+    let projection = table(&reopened, &collection);
+    let field = projection.rows[0]
+        .fields
+        .iter()
+        .find(|field| field.target.field == ids[1])
+        .unwrap();
+    let column = &reopened.collection_specs[&collection].columns[1];
+    assert_eq!(
+        super::field_display_text(field, column).as_deref(),
+        Some("2026年11月7日")
+    );
+}

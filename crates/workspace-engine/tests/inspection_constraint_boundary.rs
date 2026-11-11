@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use tachiko_workspace_engine::{
-    Document, FieldConstraint, FieldDefinition, FieldType, Schema, inspect_document,
+    DateFormat, Document, FieldConstraint, FieldDefinition, FieldType, Schema, inspect_document,
 };
 
 fn constrained_document() -> Document {
@@ -65,6 +65,30 @@ fn an_explicit_field_order_refuses_the_frozen_json_transport_even_in_id_order() 
     let error = serde_json::to_value(&inspection)
         .expect_err("the legacy transport must not silently omit a field order");
     assert!(error.to_string().contains("cannot represent a field order"));
+}
+
+#[test]
+fn a_date_format_refuses_the_frozen_json_transport() {
+    let mut document = constrained_document();
+    let field = document
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("field")
+        .unwrap();
+    field.constraint = FieldConstraint::None;
+    field.field_type = FieldType::Date;
+    field.date_format = Some(DateFormat::MonthDayYear);
+    let inspection = inspect_document(&document, "fixture");
+
+    assert_eq!(
+        inspection.schemas[0].fields[0].date_format,
+        Some(DateFormat::MonthDayYear)
+    );
+    let error = serde_json::to_value(&inspection)
+        .expect_err("the legacy transport must not silently omit a date format");
+    assert!(error.to_string().contains("cannot represent date formats"));
 }
 
 fn schema_order(document: &Document) -> Option<Vec<tachiko_workspace_engine::FieldId>> {

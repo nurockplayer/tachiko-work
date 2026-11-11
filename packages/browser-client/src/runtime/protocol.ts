@@ -87,7 +87,7 @@ export type FieldProjection = {
   calculated: CalculationProjection | null;
   diagnostics: DiagnosticProjection[];
   editable_scalar: "number" | "text" | "boolean" | "date" | null;
-  /** Sheet's display text for a Number cell, present only when the window asked for it. */
+  /** Sheet's display text for a Number or Date cell, present only when the window asked for it. */
   display?: string;
 };
 
@@ -98,6 +98,8 @@ export type FieldConstraint =
 
 /** One complete constraint replacement; `none` clears the declaration. */
 export type FieldConstraintInput = FieldConstraint | { kind: "none" };
+
+export type DateFormat = "iso" | "mdy" | "dmy" | "ymd_slash" | "ymd_cjk" | "month_day_year" | "day_month_year";
 
 /** Display-only number formatting stored on a Number field. */
 export type NumberFormat = {
@@ -133,6 +135,7 @@ export type ColumnProjection = {
   constraint?: FieldConstraint;
   /** Declared display-only number format; omission means default formatting. */
   number_format?: NumberFormat;
+  date_format?: DateFormat;
 };
 
 export type TableRowProjection = {
@@ -558,6 +561,7 @@ export type TrackerCommand =
   | { type: "set_column_requiredness"; expected_revision: string; collection: string; field: string; required: boolean }
   | { type: "set_column_constraint"; expected_revision: string; collection: string; field: string; constraint: FieldConstraintInput }
   | { type: "set_column_number_format"; expected_revision: string; collection: string; field: string; number_format: NumberFormat | null }
+  | { type: "set_column_date_format"; expected_revision: string; collection: string; field: string; date_format: DateFormat | null }
   | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "rename_table"; expected_revision: string; collection: string; name: string }
   | { type: "rename_column"; expected_revision: string; collection: string; field: string; name: string }
@@ -620,7 +624,7 @@ export type DesignerRequest =
       view: TableView;
       start: number;
       count: number;
-      /** Ask each Number cell to carry its display text. */
+      /** Ask each Number or Date cell to carry its display text. */
       display?: boolean;
     }
   | {

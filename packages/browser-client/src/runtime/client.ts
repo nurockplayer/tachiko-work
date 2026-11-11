@@ -35,6 +35,7 @@ import type {
   FailureProjection,
   FieldConstraintInput,
   NumberFormat,
+  DateFormat,
 } from "./protocol.ts";
 
 export interface DesignerClient {
@@ -73,6 +74,8 @@ export interface DesignerClient {
   setColumnConstraint?(expectedRevision: string, collection: string, field: string, constraint: FieldConstraintInput): Promise<PublicationProjection>;
   /** Replace or clear one Number column's durable display format. */
   setColumnNumberFormat?(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection>;
+  /** Replace or clear one Date column's durable display format. */
+  setColumnDateFormat?(expectedRevision: string, collection: string, field: string, dateFormat: DateFormat | null): Promise<PublicationProjection>;
   /** Move one column to a zero-based index; the order is durable document state. */
   moveColumn?(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
