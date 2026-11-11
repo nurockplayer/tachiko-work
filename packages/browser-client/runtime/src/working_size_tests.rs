@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation, style_id};
 use tachiko_workspace_engine::{
     CellStyle, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
-    ConditionalAggregate, Date, Expression, FieldConstraint, FooterAggregate,
+    ConditionalAggregate, Date, DateFormat, Expression, FieldConstraint, FooterAggregate,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, Number, NumberFormat, NumberFormatKind, PresentationStore,
     TablePresentation, Value,
@@ -3649,6 +3649,37 @@ fn wrap_document() -> Document {
     document
 }
 
+/// Enough formatted Date columns that their format members alone outgrow the
+/// export framing allowance.
+fn date_format_grid() -> Document {
+    let mut document = Document::empty("working-size-dates", "Working Size Dates");
+    let mut fields = BTreeMap::new();
+    for column in 0..200 {
+        let id = format!("d{column:03}");
+        add_field(
+            &mut fields,
+            &id,
+            FieldType::Date,
+            None,
+            FieldConstraint::None,
+            None,
+        );
+        fields.get_mut(&FieldId::from(id.as_str())).unwrap().date_format =
+            Some(DateFormat::MonthDayYear);
+    }
+    document.schemas.insert(
+        SchemaId::from("dates"),
+        Schema {
+            field_order: None,
+            id: SchemaId::from("dates"),
+            key: SchemaKey::from("dates"),
+            display_name: None,
+            fields,
+        },
+    );
+    document
+}
+
 fn bound_fixtures() -> Vec<(&'static str, Document, PresentationStore)> {
     let (formats, presentation) = formats_fixture();
     vec![
@@ -3657,6 +3688,7 @@ fn bound_fixtures() -> Vec<(&'static str, Document, PresentationStore)> {
         ("escapes", escape_text_grid(), empty_presentation()),
         ("identities", long_identity_grid(), empty_presentation()),
         ("formats", formats, presentation),
+        ("date_formats", date_format_grid(), empty_presentation()),
         ("qualification", fixture(), empty_presentation()),
         ("scaled", scaled_grid(), empty_presentation()),
     ]
