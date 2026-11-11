@@ -889,7 +889,29 @@ fn import_workbook_candidate(
         &metadata,
         runtime.profile,
     )?;
-    finish_import(runtime, workbook, metadata, ledger, occurrence_id)
+    let (mut runtime, mut projection) =
+        finish_import(runtime, workbook, metadata, ledger, occurrence_id)?;
+    // TextCapacity requires the original complete source presentation metadata.
+    if runtime.profile != SessionProfile::TextCapacity {
+        runtime = promote_import_presentation(
+            runtime,
+            workbook,
+            &mut projection.metadata,
+            &mut projection.ledger,
+            occurrence_id,
+        )?;
+        drop(runtime.export_workbook(runtime.current_revision(), &projection.metadata)?);
+        projection.opened = OpenedProjection {
+            bootstrap: runtime.bootstrap_projection(),
+            table: runtime.query_table(&runtime.default_collection)?,
+        };
+        super::ensure_complete_projection_size(
+            "imported",
+            &projection,
+            super::MAX_PROJECTION_BYTES,
+        )?;
+    }
+    Ok((runtime, projection))
 }
 
 /// Build one fully admitted working-size candidate without installing a
@@ -924,6 +946,8 @@ fn import_workbook_working_size_candidate(
         &metadata,
         runtime.profile,
     )?;
+    runtime =
+        promote_import_presentation(runtime, workbook, &mut metadata, &mut ledger, occurrence_id)?;
     // The same representation proof as an ordinary import, without promotion.
     drop(runtime.export_workbook(runtime.current_revision(), &metadata)?);
     ledger.push(stable_reference_binding());
@@ -1136,6 +1160,186 @@ fn finish_import(
         }
     }
     Ok((runtime, projection))
+}
+
+// Promote only after profile selection: TextCapacity retains its complete metadata.
+#[allow(clippy::too_many_lines)] // One pass coordinates the three independent style attributes.
+fn promote_import_presentation(
+    runtime: DesignerRuntime,
+    workbook: &SourceWorkbook,
+    metadata: &mut InteropMetadata,
+    ledger: &mut Vec<FidelityFinding>,
+    occurrence_id: &str,
+) -> Result<DesignerRuntime, DesignerError> {
+    use tachiko_workspace_engine::{
+        CellAlignment, CellStyle as StoredStyle, DateFormat, PresentationStore, TablePresentation,
+    };
+    let profile = runtime.profile;
+    let mut document = runtime.session.export_snapshot().into_document();
+    let mut runtime = Some(runtime);
+    let mut store = PresentationStore::default();
+    let mut pending = BTreeMap::new();
+    let mut formats_changed = false;
+    for (sheet, source) in metadata.sheets.iter_mut().zip(&workbook.sheets) {
+        let schema_id = SchemaId::from(sheet.schema_id.clone());
+        let mut table = TablePresentation::default();
+        for (column_index, column) in sheet.columns.iter_mut().enumerate() {
+            let field_id = FieldId::from(column.field_id.clone());
+            if let Some(width) = column.width.take() {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let width = (width * 256.0).round().clamp(1.0, 65280.0) as u32;
+                table.column_widths.insert(field_id.clone(), width);
+            }
+            let is_date =
+                document.schemas[&schema_id].fields[&field_id].field_type == FieldType::Date;
+            let mut alignments = Vec::new();
+            let mut wraps = Vec::new();
+            let mut dates = Vec::new();
+            let mut unsupported = None;
+            for (row_index, row) in sheet.rows.iter_mut().enumerate() {
+                let style = &mut row.styles[column_index];
+                let alignment = match style.alignment.as_deref() {
+                    Some("left") => Some(CellAlignment::Left),
+                    Some("center") => Some(CellAlignment::Center),
+                    Some("right") => Some(CellAlignment::Right),
+                    _ => None,
+                };
+                if alignment.is_some() {
+                    style.alignment = None;
+                }
+                alignments.push(alignment);
+                wraps.push(style.wrap);
+                style.wrap = false;
+                let entity = EntityId::from(row.entity_id.clone());
+                let is_date_value = is_date
+                    && matches!(
+                        document.entities[&entity].fields.get(&field_id),
+                        Some(Value::Date(_))
+                    );
+                let date = if is_date_value {
+                    let pattern = source
+                        .rows
+                        .get(row_index)
+                        .and_then(|cells| cells.get(column_index))
+                        .and_then(|cell| cell.style.number_format.as_deref());
+                    let format = pattern.map_or(
+                        Some(DateFormat::Iso),
+                        crate::interop_date_format::from_excel,
+                    );
+                    if format.is_none() && unsupported.is_none() {
+                        unsupported = pattern.map(str::to_owned);
+                    }
+                    style.number_format = None;
+                    Some(format.unwrap_or(DateFormat::Iso))
+                } else {
+                    None
+                };
+                dates.push(date);
+            }
+            if let Some(pattern) = unsupported {
+                ledger.push(FidelityFinding {
+                    category: FidelityCategory::Converted,
+                    code: "date_format_not_supported".into(),
+                    location: format!("{}:column {}", source.name, column_index + 1),
+                    message: format!("Date format {pattern} is not supported; ISO is used."),
+                    blocking: false,
+                });
+            }
+            let common_alignment = alignments
+                .first()
+                .copied()
+                .flatten()
+                .filter(|first| alignments.iter().all(|value| *value == Some(*first)));
+            let common_wrap = !wraps.is_empty() && wraps.iter().all(|value| *value);
+            let first_date = dates.iter().flatten().next().copied();
+            let uniform_date =
+                first_date.filter(|first| dates.iter().flatten().all(|date| date == first));
+            if let Some(format) = uniform_date.filter(|format| *format != DateFormat::Iso) {
+                document
+                    .schemas
+                    .get_mut(&schema_id)
+                    .expect("import schema")
+                    .fields
+                    .get_mut(&field_id)
+                    .expect("import field")
+                    .date_format = Some(format);
+                formats_changed = true;
+            }
+            let column_style = StoredStyle {
+                alignment: common_alignment,
+                wrap: common_wrap.then_some(true),
+                ..Default::default()
+            };
+            if column_style != StoredStyle::default() {
+                let id = tachiko_storage::style_id(&column_style).expect("bounded style encodes");
+                store.styles.insert(id.clone(), column_style);
+                table.column_styles.insert(field_id.clone(), id);
+            }
+            for (row_index, row) in sheet.rows.iter().enumerate() {
+                let style = StoredStyle {
+                    alignment: if common_alignment.is_some() {
+                        None
+                    } else {
+                        alignments[row_index]
+                    },
+                    wrap: (wraps[row_index] && !common_wrap).then_some(true),
+                    date_format: if uniform_date.is_none() {
+                        dates[row_index].filter(|format| *format != DateFormat::Iso)
+                    } else {
+                        None
+                    },
+                    ..Default::default()
+                };
+                if style != StoredStyle::default() {
+                    pending.insert(
+                        (EntityId::from(row.entity_id.clone()), field_id.clone()),
+                        style,
+                    );
+                }
+            }
+        }
+        if table != TablePresentation::default() {
+            store.tables.insert(schema_id, table);
+        }
+    }
+    let limit = crate::capacity::limits_for_profile(profile).populated_cells;
+    let dropped = pending.len() > limit;
+    for (key, style) in pending.into_iter().take(limit) {
+        let id = tachiko_storage::style_id(&style).expect("bounded style encodes");
+        store.styles.insert(id.clone(), style);
+        store.cells.insert(key, id);
+    }
+    if dropped {
+        ledger.push(FidelityFinding {
+            category: FidelityCategory::LossyOnExport,
+            code: "presentation_bound_dropped".into(),
+            location: "workbook".into(),
+            message: "Some cell presentation exceeded the import bound; values were retained."
+                .into(),
+            blocking: false,
+        });
+    }
+    // Only alignment, wrap and seven date formats are generated: at most 64
+    // combinations, below the 4,096-style palette bound. All bindings use
+    // IDs from the admitted document and widths are clamped above.
+    // A field date format changes the document, so only then is the import
+    // admitted again; otherwise the admitted runtime takes the store as is.
+    let mut runtime = match (formats_changed, profile) {
+        (false, _) => runtime.take().expect("admitted import runtime"),
+        (true, SessionProfile::WorkingSize) => {
+            drop(runtime.take());
+            DesignerRuntime::from_document_working_size(document, occurrence_id)?
+        }
+        (true, SessionProfile::Ordinary) => {
+            drop(runtime.take());
+            DesignerRuntime::from_document(document, occurrence_id)?
+        }
+        (true, SessionProfile::TextCapacity) => {
+            unreachable!("capacity presentation remains in metadata")
+        }
+    };
+    runtime.set_presentation(store)?;
+    Ok(runtime)
 }
 
 fn stable_reference_binding() -> FidelityFinding {

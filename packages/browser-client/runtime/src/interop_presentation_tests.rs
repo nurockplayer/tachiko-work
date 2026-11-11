@@ -246,7 +246,7 @@ fn imported_store_overrides_metadata_and_csv_ignores_presentation() {
         .unwrap();
     assert_eq!(
         exported.sheets[0].rows[0][0].style.number_format.as_deref(),
-        Some("m/d/yyyy")
+        Some("yyyy-mm-dd")
     );
 }
 
@@ -291,4 +291,208 @@ fn cell_wrap_false_overrides_column_and_incoming_style() {
         },
     );
     assert!(!style.wrap);
+}
+
+fn import_presentation_fixture(patterns: &[&str]) -> (SourceWorkbook, ImportSelection) {
+    let rows = patterns
+        .iter()
+        .enumerate()
+        .map(|(index, pattern)| {
+            vec![
+                SourceCell {
+                    value: SourceValue::Date {
+                        value: "2024-02-29".into(),
+                    },
+                    style: CellStyle {
+                        number_format: Some((*pattern).into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                SourceCell {
+                    value: SourceValue::Text {
+                        value: format!("row {index}"),
+                    },
+                    style: CellStyle {
+                        alignment: Some(if index == 1 { "right" } else { "center" }.into()),
+                        wrap: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ]
+        })
+        .collect();
+    (
+        SourceWorkbook {
+            sheets: vec![SourceSheet {
+                name: "Dates".into(),
+                has_header: true,
+                columns: vec![
+                    SourceColumn {
+                        name: "Date".into(),
+                        width: Some(12.5),
+                        number_format: None,
+                    },
+                    SourceColumn {
+                        name: "Text".into(),
+                        width: None,
+                        number_format: None,
+                    },
+                ],
+                rows,
+                layout: SourceLayout::default(),
+            }],
+            ledger: vec![],
+        },
+        ImportSelection {
+            column_types: vec![vec![ImportFieldType::Date, ImportFieldType::Text]],
+            extra_columns: vec![vec![]],
+        },
+    )
+}
+
+fn assert_promoted(runtime: &DesignerRuntime, metadata: &crate::interop_document::InteropMetadata) {
+    let sheet = &metadata.sheets[0];
+    let schema = SchemaId::from(sheet.schema_id.clone());
+    let date = tachiko_workspace_engine::FieldId::from(sheet.columns[0].field_id.clone());
+    let text = tachiko_workspace_engine::FieldId::from(sheet.columns[1].field_id.clone());
+    let snapshot = runtime.session.export_snapshot();
+    assert_eq!(
+        snapshot.document().schemas[&schema].fields[&date].date_format,
+        Some(DateFormat::MonthDayYear)
+    );
+    let table = &runtime.presentation.tables[&schema];
+    assert_eq!(table.column_widths[&date], 3200);
+    let column = &runtime.presentation.styles[&table.column_styles[&text]];
+    assert_eq!(column.alignment, None);
+    assert_eq!(column.wrap, Some(true));
+    for (row, alignment) in sheet
+        .rows
+        .iter()
+        .zip([CellAlignment::Center, CellAlignment::Right])
+    {
+        let key = (EntityId::from(row.entity_id.clone()), text.clone());
+        assert_eq!(
+            runtime.presentation.styles[&runtime.presentation.cells[&key]].alignment,
+            Some(alignment)
+        );
+        assert!(
+            row.styles
+                .iter()
+                .all(|style| style.alignment.is_none() && !style.wrap)
+        );
+        assert_eq!(row.styles[0].number_format, None);
+    }
+    assert_eq!(sheet.columns[0].width, None);
+}
+
+#[test]
+fn import_presentation_round_trip_clear_and_reopen() {
+    let (source, selection) = import_presentation_fixture(&["mmm d, yyyy", "mmm d, yyyy"]);
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert_promoted(&runtime, &imported.metadata);
+    let workbook = runtime
+        .export_workbook(runtime.current_revision(), &imported.metadata)
+        .unwrap();
+    let reread = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+    assert_eq!(reread.sheets[0].columns[0].width, Some(12.5));
+    for (row, alignment) in reread.sheets[0].rows.iter().zip(["center", "right"]) {
+        assert_eq!(row[0].style.number_format.as_deref(), Some("mmm d, yyyy"));
+        assert_eq!(row[1].style.alignment.as_deref(), Some(alignment));
+        assert!(row[1].style.wrap);
+    }
+    let saved = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    let mut reopened = None;
+    crate::open_project(&mut reopened, &saved.bytes, OCCURRENCE).unwrap();
+    assert_promoted(reopened.as_ref().unwrap(), &imported.metadata);
+    let revision = runtime.current_revision().to_owned();
+    let DesignerResponse::Published(cleared) = runtime
+        .handle(DesignerRequest::SetColumnDateFormat {
+            expected_revision: revision,
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            field: imported.metadata.sheets[0].columns[0].field_id.clone(),
+            date_format: None,
+        })
+        .unwrap()
+    else {
+        panic!("clear publishes")
+    };
+    let result = runtime
+        .export_workbook(&cleared.resulting_revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        result.sheets[0].rows[0][0].style.number_format.as_deref(),
+        Some("yyyy-mm-dd")
+    );
+}
+
+#[test]
+fn import_mixed_and_unsupported_date_formats() {
+    let (source, selection) = import_presentation_fixture(&["m/d/yyyy", "d mmm yyyy"]);
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let sheet = &imported.metadata.sheets[0];
+    let schema = SchemaId::from(sheet.schema_id.clone());
+    let field = tachiko_workspace_engine::FieldId::from(sheet.columns[0].field_id.clone());
+    let snapshot = runtime.session.export_snapshot();
+    assert_eq!(
+        snapshot.document().schemas[&schema].fields[&field].date_format,
+        None
+    );
+    for (row, format) in sheet
+        .rows
+        .iter()
+        .zip([DateFormat::Mdy, DateFormat::DayMonthYear])
+    {
+        let key = (EntityId::from(row.entity_id.clone()), field.clone());
+        assert_eq!(
+            runtime.presentation.styles[&runtime.presentation.cells[&key]].date_format,
+            Some(format)
+        );
+    }
+    let exported = runtime
+        .export_workbook(runtime.current_revision(), &imported.metadata)
+        .unwrap();
+    for (row, pattern) in exported.sheets[0]
+        .rows
+        .iter()
+        .zip(["m/d/yyyy", "d mmm yyyy"])
+    {
+        assert_eq!(row[0].style.number_format.as_deref(), Some(pattern));
+    }
+    let (source, selection) = import_presentation_fixture(&["mm/dd/yyyy", "mm/dd/yyyy"]);
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert_eq!(
+        imported
+            .ledger
+            .iter()
+            .filter(|finding| finding.code == "date_format_not_supported")
+            .count(),
+        1
+    );
+    let sheet = &imported.metadata.sheets[0];
+    let snapshot = runtime.session.export_snapshot();
+    assert_eq!(
+        snapshot.document().schemas[&SchemaId::from(sheet.schema_id.clone())].fields
+            [&tachiko_workspace_engine::FieldId::from(sheet.columns[0].field_id.clone())]
+            .date_format,
+        None
+    );
+    let exported = runtime
+        .export_workbook(runtime.current_revision(), &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].style.number_format.as_deref(),
+        Some("yyyy-mm-dd")
+    );
+}
+
+#[test]
+fn working_size_import_promotes_presentation() {
+    let (source, selection) = import_presentation_fixture(&["mmm d, yyyy", "mmm d, yyyy"]);
+    let (runtime, imported) =
+        crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
+    assert_promoted(&runtime, &imported.metadata);
 }

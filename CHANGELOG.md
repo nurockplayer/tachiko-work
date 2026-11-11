@@ -6,6 +6,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- XLSX imports promote supported date formats, alignment, wrapping and column
+  widths into editable presentation while preserving other source styles.
+
 - Conditional aggregates (Work #681): `SUMIFS`, `COUNTIFS` and `AVERAGEIFS`
   sum, count or average one Number column over the rows that satisfy up to
   sixteen column criteria; `SUMIF` and `COUNTIF` are their shorter spellings.
