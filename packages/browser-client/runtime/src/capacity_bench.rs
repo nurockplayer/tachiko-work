@@ -986,6 +986,7 @@ fn wq_document(shape: WqShape) -> Document {
                 required: false,
                 constraint: FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             },
         );
     }
@@ -1498,6 +1499,7 @@ fn wb_blank_document() -> Document {
                 required: false,
                 constraint: FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             },
         );
     }

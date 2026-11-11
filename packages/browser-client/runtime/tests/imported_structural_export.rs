@@ -1263,6 +1263,7 @@ fn imported_xlsx_presentation_surfaces_have_located_shared_policy_checks() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One four-sheet fixture and its refusal stay together.
 fn imported_style_inventory_refuses_before_excel_format_resource_limits() {
     use std::collections::BTreeMap;
     use tachiko_designer_runtime::DesignerRuntime;
@@ -1289,6 +1290,7 @@ fn imported_style_inventory_refuses_before_excel_format_resource_limits() {
                         key: FieldKey::from("value"),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type: FieldType::Text,
                         required: false,
                         constraint: FieldConstraint::None,

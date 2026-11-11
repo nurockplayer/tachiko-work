@@ -447,6 +447,7 @@ fn long_text_document() -> Document {
                 required: false,
                 constraint: FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             },
         );
     }

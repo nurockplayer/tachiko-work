@@ -367,6 +367,7 @@ pub fn encode(document: &Document) -> Result<CanonicalRoProjectV2, FormatError> 
     super::super::reject_display_names(document)?;
     super::super::reject_field_constraints(document)?;
     super::super::reject_number_formats(document)?;
+    super::super::reject_date_formats(document)?;
     super::super::reject_field_orders(document)?;
     super::super::check_document(document)?;
     validate_semantic_expression_limits(document)?;
@@ -838,6 +839,7 @@ impl FieldDefinitionV2 {
             key: FieldKey::from(self.key),
             display_name: None,
             number_format: None,
+            date_format: None,
             field_type: self.field_type.into_semantic()?,
             required: self.required,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -1728,6 +1730,7 @@ mod tests {
                         key: FieldKey::from("name"),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type: FieldType::Text,
                         required: false,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

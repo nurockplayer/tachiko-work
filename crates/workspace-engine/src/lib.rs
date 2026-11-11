@@ -623,6 +623,8 @@ pub enum WorkspaceError {
     UnsupportedFieldOrderMerge,
     #[error("the field order for schema {schema} must name every field exactly once")]
     InvalidFieldOrder { schema: SchemaId },
+    #[error("date format requires a Date field")]
+    InvalidDateFormat,
     #[error("invalid number format: {source}")]
     InvalidNumberFormat {
         #[source]
@@ -3603,6 +3605,7 @@ fn game_balance_schemas(
                     key: FieldKey::from(field_key),
                     display_name: None,
                     number_format: None,
+                    date_format: None,
                     field_type,
                     required: true,
                     constraint: tachiko_semantic_core::FieldConstraint::None,

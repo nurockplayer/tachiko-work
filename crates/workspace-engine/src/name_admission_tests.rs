@@ -23,6 +23,7 @@ fn definition(id: &str, name: Option<&str>) -> FieldDefinition {
         key: id.into(),
         display_name: name.map(str::to_owned),
         number_format: None,
+        date_format: None,
         field_type: FieldType::Text,
         required: true,
         constraint: FieldConstraint::None,

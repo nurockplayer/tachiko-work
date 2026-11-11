@@ -89,6 +89,7 @@ fn conflict_v2_refuses_all_definition_changing_requests_atomically() {
                                 key: field.into(),
                                 display_name: None,
                                 number_format: None,
+                                date_format: None,
                                 field_type: if field == "quantity" || field == "price" {
                                     FieldType::Number
                                 } else {

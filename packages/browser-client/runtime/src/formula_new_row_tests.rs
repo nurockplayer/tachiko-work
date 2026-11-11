@@ -177,6 +177,7 @@ fn document_fixture(
                     key: FieldKey::from(name),
                     display_name: None,
                     number_format: None,
+                    date_format: None,
                     field_type: FieldType::Number,
                     required: required && name == "amount",
                     constraint: tachiko_workspace_engine::FieldConstraint::None,

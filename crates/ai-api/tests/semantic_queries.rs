@@ -89,6 +89,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
         key: FieldKey::from(id),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type,
         required: true,
         constraint: tachiko_workspace_engine::FieldConstraint::None,

@@ -1151,6 +1151,7 @@ fn field(id: &str, key: &str, field_type: FieldType, required: bool) -> FieldDef
         key: FieldKey::from(key),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type,
         required,
         constraint: tachiko_semantic_core::FieldConstraint::None,

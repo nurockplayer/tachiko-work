@@ -339,6 +339,7 @@ pub fn encode(document: &Document) -> Result<CanonicalRoProjectV1, FormatError> 
     super::super::reject_display_names(document)?;
     super::super::reject_field_constraints(document)?;
     super::super::reject_number_formats(document)?;
+    super::super::reject_date_formats(document)?;
     super::super::reject_field_orders(document)?;
     if !document.keyed_grouped_sum_definitions.is_empty() {
         return invalid_representation(
@@ -708,6 +709,7 @@ impl FieldDefinitionV1 {
             key: FieldKey::from(self.key),
             display_name: None,
             number_format: None,
+            date_format: None,
             field_type: self.field_type.into_semantic()?,
             required: self.required,
             constraint: tachiko_semantic_core::FieldConstraint::None,

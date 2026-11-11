@@ -64,6 +64,7 @@ pub fn document() -> Document {
                         required: false,
                         constraint,
                         number_format: None,
+                        date_format: None,
                     },
                 )
             })

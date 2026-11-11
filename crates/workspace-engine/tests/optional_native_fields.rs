@@ -31,6 +31,7 @@ fn document() -> Document {
                 key: id.into(),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type: kind,
                 required: true,
                 constraint: FieldConstraint::None,
@@ -794,6 +795,7 @@ fn a_column_total_blocks_removing_its_column_from_an_empty_table() {
                     required: true,
                     constraint: FieldConstraint::None,
                     number_format: None,
+                    date_format: None,
                 },
             )]),
         },
@@ -828,4 +830,76 @@ fn a_column_total_blocks_removing_its_column_from_an_empty_table() {
         "unexpected refusal: {source:?}"
     );
     assert_eq!(session.export_snapshot().document(), &base);
+}
+
+#[test]
+fn date_format_commands_set_change_clear_and_restore() {
+    use tachiko_workspace_engine::DateFormat;
+    let mut base = document();
+    base.schemas.get_mut("s").unwrap().fields.insert(
+        "date".into(),
+        FieldDefinition {
+            id: "date".into(),
+            key: "date".into(),
+            display_name: None,
+            field_type: FieldType::Date,
+            required: false,
+            constraint: FieldConstraint::None,
+            number_format: None,
+            date_format: None,
+        },
+    );
+    let command = |date_format| SemanticCommand::SetFieldDateFormat {
+        schema: "s".into(),
+        field: "date".into(),
+        date_format,
+    };
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base.clone());
+    let mut editor = lifecycle();
+    for (old, new) in [
+        (None, Some(DateFormat::Mdy)),
+        (Some(DateFormat::Mdy), Some(DateFormat::Dmy)),
+        (Some(DateFormat::Dmy), None),
+    ] {
+        let delta = apply(&mut editor, &mut session, vec![command(new)]).unwrap();
+        assert_eq!(
+            delta.facts(),
+            &[Fact::SchemaFieldDateFormatChanged {
+                schema: "s".into(),
+                field: "date".into(),
+                before: old,
+                after: new,
+            }]
+        );
+        assert_eq!(
+            session.export_snapshot().document().schemas["s"].fields["date"].date_format,
+            new
+        );
+    }
+    assert_eq!(session.export_snapshot().document(), &base);
+    round_trip(
+        &mut editor,
+        &mut session,
+        vec![command(Some(DateFormat::Iso))],
+        vec![command(None)],
+    );
+    assert!(matches!(
+        apply(&mut editor, &mut session, vec![command(None)]),
+        Err(PatchLifecycleError::NoChange)
+    ));
+
+    let mut session = ResidentWorkspaceSession::new("scope".into(), base);
+    let error = apply(
+        &mut lifecycle(),
+        &mut session,
+        vec![SemanticCommand::SetFieldDateFormat {
+            schema: "s".into(),
+            field: "label".into(),
+            date_format: Some(DateFormat::Iso),
+        }],
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, PatchLifecycleError::CommandRejected { source } if matches!(*source, WorkspaceError::InvalidDateFormat))
+    );
 }

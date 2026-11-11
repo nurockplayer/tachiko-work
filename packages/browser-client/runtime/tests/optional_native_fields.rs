@@ -400,6 +400,7 @@ fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_histo
                         key: id.into(),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type,
                         required,
                         constraint: FieldConstraint::None,

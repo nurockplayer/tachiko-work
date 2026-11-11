@@ -1313,6 +1313,7 @@ fn build_import_sheet(
                 required: false,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
                 number_format,
+                date_format: None,
             },
         );
         sheet.columns.push(InteropColumnMetadata {
@@ -1879,6 +1880,7 @@ mod extremum_tests {
                         key: "n".into(),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type: FieldType::Number,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,

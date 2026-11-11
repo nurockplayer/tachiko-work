@@ -86,6 +86,7 @@ pub fn capacity_document(spec: FixtureSpec) -> Document {
                 required: false,
                 constraint: FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             },
         );
     }
@@ -105,6 +106,7 @@ pub fn capacity_document(spec: FixtureSpec) -> Document {
                     required: false,
                     constraint: FieldConstraint::None,
                     number_format: None,
+                    date_format: None,
                 },
             );
         }
@@ -350,6 +352,7 @@ fn number_field(id: FieldId) -> FieldDefinition {
         required: false,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     }
 }
 

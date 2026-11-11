@@ -26,6 +26,7 @@ fn fixture(sole: bool) -> Document {
                 key: id.into(),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type,
                 required,
                 constraint: FieldConstraint::None,

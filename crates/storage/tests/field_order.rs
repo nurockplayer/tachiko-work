@@ -17,6 +17,7 @@ fn field(id: &str) -> FieldDefinition {
         required: false,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     }
 }
 

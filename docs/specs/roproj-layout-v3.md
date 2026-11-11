@@ -56,6 +56,13 @@ member is present only when it has content, so a document using none of them
 keeps the exact nineteen-file tree. None is part of this layout until its own
 Accepted ADR amends this text.
 
+### Field date formats — ADR-0049
+
+A Date field definition may contain `date_format` immediately after `number_format`.
+Its value is one of `iso`, `mdy`, `dmy`, `ymd_slash`, `ymd_cjk`,
+`month_day_year`, or `day_month_year`. Omission means ISO display; null and
+unknown values are invalid. Other field types cannot carry this member.
+
 ### Native display-name amendment — ADR-0043
 
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)

@@ -30,6 +30,7 @@ fn field(id: &str, kind: FieldType, required: bool) -> FieldDefinition {
         key: id.into(),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type: kind,
         required,
         constraint: FieldConstraint::None,

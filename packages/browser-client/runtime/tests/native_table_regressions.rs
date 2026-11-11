@@ -55,6 +55,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
                 key: FieldKey::from(key),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type,
                 required: all_fields_required,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -292,6 +293,7 @@ fn legacy_looking_ids_do_not_grant_scalar_row_authoring_without_the_shape() {
                 key: FieldKey::from("supplier"),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type: FieldType::Reference {
                     schema: schema_id.clone(),
                 },

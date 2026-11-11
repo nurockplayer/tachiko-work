@@ -26,6 +26,7 @@ fn document(field_type: FieldType, constraint: FieldConstraint, value: Option<Va
                     key: "value".into(),
                     display_name: None,
                     number_format: None,
+                    date_format: None,
                     field_type,
                     required: false,
                     constraint,

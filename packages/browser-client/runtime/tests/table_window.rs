@@ -67,6 +67,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> (FieldId, FieldDefi
             required,
             constraint: FieldConstraint::None,
             number_format: None,
+            date_format: None,
         },
     )
 }
@@ -316,6 +317,7 @@ fn grid_document(rows: usize, width: usize, text_length: usize) -> Document {
                     required: true,
                     constraint: FieldConstraint::None,
                     number_format: None,
+                    date_format: None,
                 },
             )
         })

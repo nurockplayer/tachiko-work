@@ -31,6 +31,7 @@ fn date_document(value: &str) -> Document {
                         key: "published".into(),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type: FieldType::Date,
                         required: true,
                         constraint: tachiko_semantic_core::FieldConstraint::None,

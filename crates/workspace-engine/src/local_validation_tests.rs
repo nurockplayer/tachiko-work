@@ -29,6 +29,7 @@ fn number_definition(id: &str, constraint: FieldConstraint) -> FieldDefinition {
         key: id.into(),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type: FieldType::Number,
         required: false,
         constraint,
@@ -41,6 +42,7 @@ fn text_definition(id: &str) -> FieldDefinition {
         key: id.into(),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type: FieldType::Text,
         required: false,
         constraint: FieldConstraint::None,
@@ -53,6 +55,7 @@ fn reference_definition(id: &str, target: &str) -> FieldDefinition {
         key: id.into(),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type: FieldType::Reference {
             schema: SchemaId::from(target),
         },

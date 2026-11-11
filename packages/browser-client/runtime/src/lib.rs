@@ -1002,6 +1002,7 @@ fn document_requires_v2_evidence(document: &Document) -> bool {
     document.has_display_names()
         || document_has_constraints(document)
         || document.has_number_formats()
+        || document.has_date_formats()
         || document.has_field_orders()
 }
 
@@ -3242,6 +3243,7 @@ impl DesignerRuntime {
                 | SemanticCommand::FormulaInverseRestore(_)
                 | SemanticCommand::SetSchemaFieldOrder { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
+                | SemanticCommand::SetFieldDateFormat { .. }
                 | SemanticCommand::FormulaRestore(_)
                 | SemanticCommand::SetFieldConstraint { .. }
                 | SemanticCommand::FormulaUpdate(_)
@@ -4086,7 +4088,7 @@ impl DesignerRuntime {
         // A constrained document has no legacy representation at all, so this
         // answer is more specific than the generic v3-origin prohibition and
         // applies to both origins.
-        if snapshot.document().has_number_formats() {
+        if snapshot.document().has_number_formats() || snapshot.document().has_date_formats() {
             return Err(DesignerError::LegacyExportUnsupported {
                 message: "number formats require exportProjectV3 or exportCanonicalTree".to_owned(),
             });
@@ -5679,6 +5681,7 @@ impl DesignerRuntime {
             key: FieldKey::from(key),
             display_name: Some(name),
             number_format: None,
+            date_format: None,
             field_type: kind,
             required,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -5983,6 +5986,11 @@ impl DesignerRuntime {
         changed.field_type = kind.clone();
         changed.number_format = if kind == FieldType::Number {
             definition.number_format.clone()
+        } else {
+            None
+        };
+        changed.date_format = if kind == FieldType::Date {
+            definition.date_format
         } else {
             None
         };
@@ -6977,6 +6985,18 @@ impl DesignerRuntime {
                         .number_format
                         .clone_from(number_format);
                 }
+                SemanticCommand::SetFieldDateFormat {
+                    schema,
+                    field,
+                    date_format,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
+                        .and_then(|schema| schema.fields.get_mut(field))
+                        .ok_or_else(|| table_error("column is unavailable"))?
+                        .date_format = *date_format;
+                }
                 SemanticCommand::FormulaRestore(command) => {
                     if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
                         entity.fields.insert(
@@ -7176,16 +7196,21 @@ impl DesignerRuntime {
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
                 | SemanticCommand::SetFieldConstraint { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
+                | SemanticCommand::SetFieldDateFormat { .. }
                 | SemanticCommand::SetSchemaFieldOrder { .. }
                 | SemanticCommand::UnsetField { .. } => true,
                 SemanticCommand::AppendSchemaField { field, .. } => {
-                    field.display_name.is_some() || field.number_format.is_some()
+                    field.display_name.is_some()
+                        || field.number_format.is_some()
+                        || field.date_format.is_some()
                 }
                 SemanticCommand::AppendCollection { schema, .. } => {
                     schema.display_name.is_some()
                         || schema.field_order.is_some()
                         || schema.fields.values().any(|field| {
-                            field.display_name.is_some() || field.number_format.is_some()
+                            field.display_name.is_some()
+                                || field.number_format.is_some()
+                                || field.date_format.is_some()
                         })
                 }
                 _ => false,
@@ -7393,6 +7418,7 @@ impl DesignerRuntime {
                         key: FieldKey::from(key),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -7480,6 +7506,7 @@ impl DesignerRuntime {
                     key: FieldKey::from(key),
                     display_name: Some(name.to_owned()),
                     number_format: None,
+                    date_format: None,
                     field_type,
                     required: column.required,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -9348,6 +9375,7 @@ fn budget_schema<const COUNT: usize>(
                         key: FieldKey::from(key),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type,
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -11353,6 +11381,7 @@ fn add_moonfall_boolean_fixture(document: &mut Document) -> Result<(), DesignerE
             key: FieldKey::from("enabled"),
             display_name: None,
             number_format: None,
+            date_format: None,
             field_type: FieldType::Boolean,
             required: true,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -14060,6 +14089,7 @@ mod tests {
             key: "quantity".into(),
             display_name: None,
             number_format: None,
+            date_format: None,
             field_type: FieldType::Number,
             required: true,
             constraint: tachiko_workspace_engine::FieldConstraint::None,
@@ -14131,6 +14161,7 @@ mod tests {
                             key: FieldKey::from(format!("bad_{}", runtime.proposal_serial)),
                             display_name: None,
                             number_format: None,
+                            date_format: None,
                             field_type: FieldType::Number,
                             required: true,
                             constraint: tachiko_workspace_engine::FieldConstraint::None,

@@ -34,6 +34,7 @@ fn fixture() -> Document {
                             key: id.into(),
                             display_name: None,
                             number_format: None,
+                            date_format: None,
                             field_type: if id.starts_with("key") || id.starts_with("category") {
                                 FieldType::Text
                             } else {

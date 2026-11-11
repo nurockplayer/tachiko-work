@@ -1611,6 +1611,7 @@ mod tests {
             key: "item".into(),
             display_name: None,
             number_format: None,
+            date_format: None,
             field_type: tachiko_semantic_core::FieldType::Text,
             required: false,
             constraint: tachiko_semantic_core::FieldConstraint::None,

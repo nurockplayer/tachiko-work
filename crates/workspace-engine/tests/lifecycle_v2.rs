@@ -579,6 +579,7 @@ fn keyed_definition_document() -> Document {
                             key: (*field_id).into(),
                             display_name: None,
                             number_format: None,
+                            date_format: None,
                             field_type: field_type.clone(),
                             required: true,
                             constraint: FieldConstraint::None,
@@ -1267,6 +1268,7 @@ fn constraint_review_requires_transitive_formula_dependency_query() {
                 key: field.into(),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -1417,6 +1419,7 @@ fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
                     key: "label".into(),
                     display_name: None,
                     number_format: None,
+                    date_format: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: FieldConstraint::None,
@@ -1651,6 +1654,7 @@ fn single_item_document() -> Document {
         required: true,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     };
     let mut document = Document::empty("game", "One column");
     document.schemas.insert(
@@ -1784,6 +1788,7 @@ fn v2_batch_removing_one_field_and_appending_another_keeps_its_existing_admissio
         required: true,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     };
     let mut lifecycle = lifecycle(true);
     schema_field_editor(&mut lifecycle);
