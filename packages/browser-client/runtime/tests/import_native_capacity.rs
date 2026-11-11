@@ -825,12 +825,15 @@ fn small_shared_dates_keep_their_nondefault_style() {
         extra_columns: vec![Vec::new()],
     };
     let (runtime, imported) = import_workbook(&parsed, &selected, ORIGINAL).unwrap();
+    // The Date pattern moves to the stored presentation; the rest stays.
+    let mut kept = source.sheets[0].rows[0][0].style.clone();
+    kept.number_format = None;
     assert!(
         imported.metadata.sheets[0]
             .rows
             .iter()
             .flat_map(|row| &row.styles)
-            .all(|style| *style == source.sheets[0].rows[0][0].style)
+            .all(|style| *style == kept)
     );
     let saved = runtime
         .export_project_v3(&runtime.observe_occurrence().revision)

@@ -16,7 +16,6 @@ pub(crate) fn to_excel(format: DateFormat) -> &'static str {
     }
 }
 
-#[allow(dead_code)] // Used by the forthcoming import path.
 pub(crate) fn from_excel(pattern: &str) -> Option<DateFormat> {
     let pattern = if pattern.starts_with("[$-") {
         let end = pattern.find(']')?;
@@ -76,8 +75,12 @@ pub(crate) fn cell_style(
         .and_then(|style| style.date_format)
         .or_else(|| column.and_then(|style| style.date_format))
         .or(field.date_format);
-    if let (SourceValue::Date { .. }, Some(format)) = (value, date_format) {
-        result.number_format = Some(to_excel(format).into());
+    if let SourceValue::Date { .. } = value {
+        if let Some(format) = date_format {
+            result.number_format = Some(to_excel(format).into());
+        } else if result.number_format.is_none() {
+            result.number_format = Some(to_excel(DateFormat::Iso).into());
+        }
     }
     result
 }
