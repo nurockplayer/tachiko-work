@@ -878,6 +878,99 @@ fn appended_field_ids_sort_after_any_existing_id_spelling() {
 }
 
 #[test]
+fn add_and_delete_table_history_restores_default_and_document() {
+    let mut runtime = DesignerRuntime::new_table(OCCURRENCE, "First", &columns(&["Name"])).unwrap();
+    let original = runtime.session.document().clone();
+    let last = runtime.delete_table("resident/0", "first").unwrap_err();
+    assert_eq!(last.failure_projection("resident/0").code, "last_table");
+    let added = runtime
+        .add_table("resident/0", "Second", &columns(&["Value"]))
+        .unwrap();
+    assert_eq!(runtime.session.document().schemas.len(), 2);
+    assert!(
+        runtime
+            .add_table("resident/1", "Second", &columns(&["Value"]))
+            .is_err()
+    );
+    assert!(
+        runtime
+            .add_table("resident/0", "Third", &columns(&["Value"]))
+            .is_err()
+    );
+    let old_default = runtime.default_collection.clone();
+    runtime.delete_table("resident/1", &old_default).unwrap();
+    assert_eq!(runtime.default_collection, added.collection.key);
+    assert!(
+        !runtime
+            .session
+            .document()
+            .schemas
+            .contains_key(original.schemas.keys().next().unwrap())
+    );
+    runtime.history_edit("resident/2", false).unwrap();
+    assert_eq!(runtime.default_collection, old_default);
+    assert_eq!(
+        runtime
+            .session
+            .document()
+            .schemas
+            .get(original.schemas.keys().next().unwrap()),
+        original.schemas.values().next()
+    );
+    runtime.history_edit("resident/3", true).unwrap();
+    assert_eq!(runtime.default_collection, added.collection.key);
+}
+
+#[test]
+fn delete_referenced_table_is_atomic() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let before = runtime.session.document().clone();
+    let error = runtime
+        .delete_table("resident/0", "budget_items")
+        .unwrap_err();
+    let failure = error.failure_projection("resident/0");
+    assert_eq!(failure.code, "table_referenced");
+    assert_ne!(failure.diagnostics.len(), 0);
+    assert_eq!(runtime.session.document(), &before);
+    assert_eq!(runtime.current_revision(), "resident/0");
+}
+
+#[test]
+fn deleting_table_with_rows_and_formulas_round_trips_history_and_save() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let before = runtime.session.document().clone();
+    runtime
+        .delete_table("resident/0", "budget_summary")
+        .unwrap();
+    assert!(runtime.query_table("budget_summary").is_err());
+    let export = runtime.export_project_v3("resident/1").unwrap();
+    let mut reopened = None;
+    open_project(&mut reopened, &export.bytes, OCCURRENCE).unwrap();
+    assert!(reopened.unwrap().query_table("budget_summary").is_err());
+    runtime.history_edit("resident/1", false).unwrap();
+    assert_eq!(runtime.session.document(), &before);
+    runtime.history_edit("resident/2", true).unwrap();
+    assert!(runtime.query_table("budget_summary").is_err());
+}
+
+#[test]
+fn adding_table_preserves_existing_tables_and_undo_removes_it() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let before = runtime.session.document().clone();
+    let result = runtime
+        .add_table("resident/0", "Extra", &columns(&["Name"]))
+        .unwrap();
+    assert_eq!(runtime.session.document().schemas.len(), 3);
+    for (id, schema) in &before.schemas {
+        assert_eq!(runtime.session.document().schemas.get(id), Some(schema));
+    }
+    assert_eq!(runtime.session.document().entities, before.entities);
+    runtime.history_edit("resident/1", false).unwrap();
+    assert!(runtime.query_table(&result.collection.key).is_err());
+    assert_eq!(runtime.session.document(), &before);
+}
+
+#[test]
 fn rename_table_preserves_cross_table_formula_history_and_v3() {
     let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
     runtime

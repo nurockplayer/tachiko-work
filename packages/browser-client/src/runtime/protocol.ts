@@ -514,6 +514,8 @@ export function isCapacityFailure(failure: FailureProjection): failure is Capaci
 
 /** Known runtime failure codes, while allowing forward-compatible additions. */
 export type FailureCode =
+  | "last_table"
+  | "table_referenced"
   | "required_values_missing"
   | "capacity_exceeded"
   | (string & {});
@@ -606,6 +608,8 @@ export type DesignerRequest =
   | { type: "new_budget"; occurrence_id: string }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
+  | { type: "delete_table"; expected_revision: string; collection: string }
+  | { type: "add_table"; expected_revision: string; name: string; columns: NewTableColumnInput[] }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_capacity"; expected_revision?: string }
   | { type: "query_table"; collection: string }

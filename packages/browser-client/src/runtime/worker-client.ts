@@ -215,6 +215,14 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name, ...columns}));
   }
 
+  async deleteTable(expectedRevision: string, collection: string): Promise<PublicationProjection> {
+    return expectResponse("published", await this.#command({type: "delete_table", expected_revision: expectedRevision, collection}));
+  }
+
+  async addTable(expectedRevision: string, name: string, columns: NewTableColumnInput[]): Promise<DuplicateCollectionProjection> {
+    return expectResponse("duplicated", await this.#command({type: "add_table", expected_revision: expectedRevision, name, columns}));
+  }
+
   async renameTable(expectedRevision: string, collection: string, name: string): Promise<PublicationProjection> {
     return this.trackerCommand({type: "rename_table", expected_revision: expectedRevision, collection, name});
   }

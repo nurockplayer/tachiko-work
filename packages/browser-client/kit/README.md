@@ -291,6 +291,8 @@ when both its entity and its field belong to the copied collection, so a
 duplicated plan reads its own rows but keeps reading the original shared
 settings row.
 
+`addTable(revision, name, columns)` appends an empty table and returns its collection and publication. `deleteTable(revision, collection)` removes a table in one undoable edit. Deleting the last table is refused with `last_table`; references from other tables or saved definitions are refused with `table_referenced` and diagnostics identify their owners.
+
 A same-row shorthand names a field on the formula's own row, so one source can
 be copied without per-row rewriting:
 

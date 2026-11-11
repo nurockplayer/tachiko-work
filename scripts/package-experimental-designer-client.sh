@@ -242,6 +242,8 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "openLocalDocumentWorkingSize",
     "openPortableRoWorkingSize",
     "duplicateCollection",
+    "deleteTable",
+    "addTable",
     "renameTable",
     "trackerCommand",
     "openLocalDocument",
