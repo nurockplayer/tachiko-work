@@ -267,6 +267,12 @@ pub enum DesignerRequest {
         field: String,
         number_format: Option<tachiko_workspace_engine::NumberFormat>,
     },
+    SetColumnDateFormat {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        date_format: Option<tachiko_workspace_engine::DateFormat>,
+    },
     MoveColumn {
         expected_revision: String,
         collection: String,
@@ -1188,6 +1194,8 @@ pub struct ColumnProjection {
     pub constraint: Option<FieldConstraintProjection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number_format: Option<tachiko_workspace_engine::NumberFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_format: Option<tachiko_workspace_engine::DateFormat>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1794,6 +1802,8 @@ pub enum DesignerError {
     },
     #[error("this project cannot be saved as an earlier format: {message}")]
     LegacyExportUnsupported { message: String },
+    #[error("date format requires a Date column")]
+    InvalidDateFormat,
     #[error("invalid number format: {source}")]
     InvalidNumberFormat {
         #[source]
@@ -1948,7 +1958,9 @@ impl DesignerError {
                 subject,
             } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
-            Self::InvalidNumberFormat { .. } => ("invalid_number_format", Vec::new()),
+            Self::InvalidNumberFormat { .. } | Self::InvalidDateFormat => {
+                ("invalid_number_format", Vec::new())
+            }
             Self::LegacyExportUnsupported { .. } => ("legacy_export_unsupported", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
@@ -2313,6 +2325,7 @@ struct ColumnSpec {
     required: bool,
     constraint: tachiko_workspace_engine::FieldConstraint,
     number_format: Option<tachiko_workspace_engine::NumberFormat>,
+    date_format: Option<tachiko_workspace_engine::DateFormat>,
 }
 
 /// Small LRU of ordered view indices. An entry is the row positions inside
@@ -2430,6 +2443,7 @@ enum ViewPredicate {
         ordinal: usize,
         /// The column's format, cloned once at plan time.
         format: Option<NumberFormat>,
+        date_format: Option<tachiko_workspace_engine::DateFormat>,
         required: bool,
         /// Trimmed and lowercased once at plan time.
         value: String,
@@ -2437,6 +2451,7 @@ enum ViewPredicate {
     DisplayIn {
         ordinal: usize,
         format: Option<NumberFormat>,
+        date_format: Option<tachiko_workspace_engine::DateFormat>,
         required: bool,
         values: Vec<String>,
     },
@@ -2653,12 +2668,14 @@ fn plan_filter(
         ViewFilter::DisplayContains { value, .. } => ViewPredicate::DisplayContains {
             ordinal,
             format: column.number_format.clone(),
+            date_format: column.date_format,
             required: column.required,
             value: value.trim().to_lowercase(),
         },
         ViewFilter::DisplayIn { values, .. } => ViewPredicate::DisplayIn {
             ordinal,
             format: column.number_format.clone(),
+            date_format: column.date_format,
             required: column.required,
             values: values.clone(),
         },
@@ -2726,12 +2743,14 @@ fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> 
         ViewPredicate::DisplayContains {
             ordinal,
             format,
+            date_format,
             required,
             value,
         } => {
             let text = display_text::cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
                 format.as_ref(),
+                date_format.as_ref(),
                 *required,
             );
             text.trim().to_lowercase().contains(value.as_str())
@@ -2739,12 +2758,14 @@ fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> 
         ViewPredicate::DisplayIn {
             ordinal,
             format,
+            date_format,
             required,
             values,
         } => {
             let text = display_text::cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
                 format.as_ref(),
+                date_format.as_ref(),
                 *required,
             );
             values.contains(&text)
@@ -3583,6 +3604,17 @@ impl DesignerRuntime {
                 &collection,
                 &field,
                 number_format,
+            )?)),
+            DesignerRequest::SetColumnDateFormat {
+                expected_revision,
+                collection,
+                field,
+                date_format,
+            } => Ok(DesignerResponse::Published(self.set_column_date_format(
+                &expected_revision,
+                &collection,
+                &field,
+                date_format,
             )?)),
             DesignerRequest::MoveColumn {
                 expected_revision,
@@ -4575,6 +4607,7 @@ impl DesignerRuntime {
             texts[row] = Some(display_text::cell_text(
                 view_value(value).as_ref(),
                 column.number_format.as_ref(),
+                column.date_format.as_ref(),
                 column.required,
             ));
         }
@@ -4707,6 +4740,7 @@ impl DesignerRuntime {
             texts[ordinal][row] = display_text::cell_text(
                 view_value(value).as_ref(),
                 columns[ordinal].number_format.as_ref(),
+                columns[ordinal].date_format.as_ref(),
                 columns[ordinal].required,
             );
         }
@@ -5470,6 +5504,38 @@ impl DesignerRuntime {
             expected,
             vec![command(required)],
             vec![command(definition.required)],
+        )
+    }
+
+    fn set_column_date_format(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        date_format: Option<tachiko_workspace_engine::DateFormat>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let schema_id = SchemaId::from(self.collection_spec(collection)?.summary.id.clone());
+        let snapshot = self.session.export_snapshot();
+        let definition = snapshot.document().schemas[&schema_id]
+            .fields
+            .get(&FieldId::from(field.to_owned()))
+            .ok_or_else(|| table_error("column is unavailable"))?;
+        if definition.field_type != FieldType::Date {
+            return Err(DesignerError::InvalidDateFormat);
+        }
+        if definition.date_format == date_format {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        let command = |date_format| SemanticCommand::SetFieldDateFormat {
+            schema: schema_id.clone(),
+            field: definition.id.clone(),
+            date_format,
+        };
+        self.record_edit(
+            expected,
+            vec![command(date_format)],
+            vec![command(definition.date_format)],
         )
     }
 
@@ -8265,6 +8331,7 @@ fn column_projections(spec: &CollectionSpec) -> Vec<ColumnProjection> {
             },
             constraint: constraint_projection(&column.constraint),
             number_format: column.number_format.clone(),
+            date_format: column.date_format,
         })
         .collect()
 }
@@ -8606,8 +8673,8 @@ fn group_key(bucket: GroupBucket, stored: Option<&StoredValueProjection>) -> Gro
     }
 }
 
-/// Attach Sheet's display text to every Number cell of one window row. Text,
-/// Date, Yes/No and Reference cells carry none, because their own value is
+/// Attach display text to Number and Date cells of one window row. Text,
+/// Yes/No and Reference cells carry none, because their own value is
 /// already the text and repeating it would double the reply bytes.
 fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
     for field in &mut row.fields {
@@ -8622,8 +8689,15 @@ fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
     }
 }
 
-/// The Number a field shows as display text, in its column's format.
+/// The Number or Date a field shows as display text, in its column's format.
 fn field_display_text(field: &FieldProjection, column: &ColumnSpec) -> Option<String> {
+    if let (Some(StoredValueProjection::Date { value }), None) = (&field.stored, &field.calculated)
+    {
+        return Some(display_text::format_date(
+            *value,
+            column.date_format.as_ref(),
+        ));
+    }
     display_text::displayed_number(field.stored.as_ref(), field.calculated.as_ref())
         .map(|value| display_text::format_number(value, column.number_format.as_ref()))
 }
@@ -10319,6 +10393,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                         required: field.required,
                         constraint: field.constraint.clone(),
                         number_format: field.number_format.clone(),
+                        date_format: field.date_format,
                     })
                     .collect(),
                     entities,
@@ -14838,6 +14913,7 @@ mod tests {
                 required: true,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             }],
             entities: Vec::new(),
         }

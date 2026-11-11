@@ -543,3 +543,29 @@ fn invalid_requests_refuse() {
         .expect_err("the revision is stale");
     assert!(matches!(stale, DesignerError::StaleQuery { .. }));
 }
+
+#[test]
+fn find_uses_the_column_date_format() {
+    use tachiko_workspace_engine::DateFormat;
+    let mut runtime = find_runtime();
+    let expected_revision = runtime.observe_occurrence().revision;
+    runtime
+        .handle(DesignerRequest::SetColumnDateFormat {
+            expected_revision,
+            collection: "rows".into(),
+            field: "f03_due".into(),
+            date_format: Some(DateFormat::YmdCjk),
+        })
+        .unwrap();
+    let result = find(
+        &mut runtime,
+        TableView::default(),
+        "年11月",
+        &["f03_due"],
+        None,
+        FindDirection::Next,
+    )
+    .unwrap();
+    assert_eq!(result.total, 1);
+    assert_eq!(result.found, Some(found("e01", "f03_due", 0, 0)));
+}

@@ -204,6 +204,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "setColumnRequiredness",
     "setColumnConstraint",
     "setColumnNumberFormat",
+    "setColumnDateFormat",
     "moveColumn",
     "columnDisplayNameExplicit",
     "columnConstraintProjection",

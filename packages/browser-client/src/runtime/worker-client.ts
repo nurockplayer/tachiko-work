@@ -20,6 +20,7 @@ import type {
   FieldExplanationProjection,
   FieldConstraintInput,
   NumberFormat,
+  DateFormat,
   FieldTarget,
   FieldProjection,
   OpenedProjection,
@@ -250,6 +251,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async setColumnNumberFormat(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_number_format", expected_revision: expectedRevision, collection, field, number_format: numberFormat});
+  }
+
+  async setColumnDateFormat(expectedRevision: string, collection: string, field: string, dateFormat: DateFormat | null): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_date_format", expected_revision: expectedRevision, collection, field, date_format: dateFormat});
   }
 
   async moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection> {
@@ -1081,6 +1086,9 @@ function validateTablePresence(
     }
     validateColumnConstraint(column);
     validateColumnNumberFormat(column);
+    if (column.date_format !== undefined && (column.field_type !== "date" || !["iso", "mdy", "dmy", "ymd_slash", "ymd_cjk", "month_day_year", "day_month_year"].includes(column.date_format))) {
+      throw new Error("Invalid Worker column date format.");
+    }
     return [column.id, {required: column.required, index}];
   }));
   if (columns.size !== table.columns.length) throw new Error("Invalid Worker duplicate column identity.");

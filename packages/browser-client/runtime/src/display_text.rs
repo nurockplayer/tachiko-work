@@ -10,7 +10,7 @@
 
 use std::cmp::Ordering;
 
-use tachiko_workspace_engine::{NumberFormat, NumberFormatKind};
+use tachiko_workspace_engine::{Date, DateFormat, NumberFormat, NumberFormatKind};
 
 use crate::{CalculationProjection, StoredValueProjection, ViewValue};
 
@@ -46,13 +46,33 @@ const CURRENCY_SYMBOLS: [(&str, &str); 23] = [
 ///
 /// Blank, unavailable, failed and Reference values have no display text; the
 /// display filters treat that as the empty string.
-pub(crate) fn display_text(value: &ViewValue, format: Option<&NumberFormat>) -> Option<String> {
+pub(crate) fn display_text(
+    value: &ViewValue,
+    format: Option<&NumberFormat>,
+    date_format: Option<&DateFormat>,
+) -> Option<String> {
     match value {
         ViewValue::Number(number) => Some(format_number(*number, format)),
         ViewValue::Text(text) => Some(text.clone()),
         ViewValue::Boolean(flag) => Some(if *flag { "true" } else { "false" }.to_owned()),
-        ViewValue::Date(date) => Some(date.to_string()),
+        ViewValue::Date(date) => Some(format_date(*date, date_format)),
         ViewValue::Reference => None,
+    }
+}
+
+pub(crate) fn format_date(date: Date, format: Option<&DateFormat>) -> String {
+    let (year, month, day) = (date.year(), date.month(), date.day());
+    let name = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ][usize::from(month - 1)];
+    match format.unwrap_or(&DateFormat::Iso) {
+        DateFormat::Iso => date.to_string(),
+        DateFormat::Mdy => format!("{month}/{day}/{year}"),
+        DateFormat::Dmy => format!("{day}/{month}/{year}"),
+        DateFormat::YmdSlash => format!("{year}/{month}/{day}"),
+        DateFormat::YmdCjk => format!("{year}年{month}月{day}日"),
+        DateFormat::MonthDayYear => format!("{name} {day}, {year}"),
+        DateFormat::DayMonthYear => format!("{day} {name} {year}"),
     }
 }
 
@@ -118,11 +138,12 @@ fn compare_digit_runs(left: &str, right: &str) -> Ordering {
 pub(crate) fn cell_text(
     cell: Option<&ViewValue>,
     format: Option<&NumberFormat>,
+    date_format: Option<&DateFormat>,
     required: bool,
 ) -> String {
     match cell {
         Some(ViewValue::Text(text)) if text.is_empty() && !required => "\"\"".to_owned(),
-        Some(value) => display_text(value, format).unwrap_or_default(),
+        Some(value) => display_text(value, format, date_format).unwrap_or_default(),
         None => String::new(),
     }
 }
@@ -517,6 +538,23 @@ mod tests {
     }
 
     #[test]
+    fn seven_date_formats_use_civil_components() {
+        use tachiko_workspace_engine::DateFormat;
+        let date = Date::new(2026, 11, 7).unwrap();
+        for (format, expected) in [
+            (DateFormat::Iso, "2026-11-07"),
+            (DateFormat::Mdy, "11/7/2026"),
+            (DateFormat::Dmy, "7/11/2026"),
+            (DateFormat::YmdSlash, "2026/11/7"),
+            (DateFormat::YmdCjk, "2026年11月7日"),
+            (DateFormat::MonthDayYear, "Nov 7, 2026"),
+            (DateFormat::DayMonthYear, "7 Nov 2026"),
+        ] {
+            assert_eq!(super::format_date(date, Some(&format)), expected);
+        }
+    }
+
+    #[test]
     fn a_calculation_decides_over_a_stored_number() {
         let stored = StoredValueProjection::Number { value: 1.0 };
         let value = CalculationProjection::Value { value: 2.0 };
@@ -540,10 +578,13 @@ mod tests {
     #[test]
     fn present_empty_text_is_not_blank_in_an_optional_column() {
         let empty = ViewValue::Text(String::new());
-        assert_eq!(cell_text(Some(&empty), None, false), "\"\"");
-        assert_eq!(cell_text(Some(&empty), None, true), "");
-        assert_eq!(cell_text(None, None, false), "");
-        assert_eq!(cell_text(Some(&ViewValue::Reference), None, false), "");
+        assert_eq!(cell_text(Some(&empty), None, None, false), "\"\"");
+        assert_eq!(cell_text(Some(&empty), None, None, true), "");
+        assert_eq!(cell_text(None, None, None, false), "");
+        assert_eq!(
+            cell_text(Some(&ViewValue::Reference), None, None, false),
+            ""
+        );
     }
 
     #[test]
@@ -554,31 +595,34 @@ mod tests {
             thousands_separator: true,
         };
         assert_eq!(
-            display_text(&ViewValue::Number(1234.5), Some(&plain)),
+            display_text(&ViewValue::Number(1234.5), Some(&plain), None),
             Some("1,234.50".to_owned())
         );
         assert_eq!(
-            display_text(&ViewValue::Number(1234.5), None),
+            display_text(&ViewValue::Number(1234.5), None, None),
             Some("1234.5".to_owned())
         );
         assert_eq!(
-            display_text(&ViewValue::Text("hello".to_owned()), None),
+            display_text(&ViewValue::Text("hello".to_owned()), None, None),
             Some("hello".to_owned())
         );
         assert_eq!(
-            display_text(&ViewValue::Boolean(true), None),
+            display_text(&ViewValue::Boolean(true), None, None),
             Some("true".to_owned())
         );
         assert_eq!(
-            display_text(&ViewValue::Boolean(false), None),
+            display_text(&ViewValue::Boolean(false), None, None),
             Some("false".to_owned())
         );
         let date = Date::parse("2026-01-02").expect("fixed Gregorian date");
         assert_eq!(
-            display_text(&ViewValue::Date(date), Some(&plain)),
+            display_text(&ViewValue::Date(date), Some(&plain), None),
             Some(date.to_string())
         );
-        assert_eq!(display_text(&ViewValue::Reference, Some(&plain)), None);
+        assert_eq!(
+            display_text(&ViewValue::Reference, Some(&plain), None),
+            None
+        );
     }
 
     #[test]

@@ -437,3 +437,30 @@ fn present_empty_text_stays_apart_from_a_blank_cell() {
     assert_eq!(values.values[0], "");
     assert!(values.values.contains(&quotes));
 }
+
+#[test]
+fn date_format_is_shared_by_filters_and_distinct_values() {
+    use tachiko_workspace_engine::DateFormat;
+    let mut runtime = mixed_runtime();
+    let expected_revision = runtime.observe_occurrence().revision;
+    runtime
+        .handle(DesignerRequest::SetColumnDateFormat {
+            expected_revision,
+            collection: "rows".into(),
+            field: "f03_due".into(),
+            date_format: Some(DateFormat::YmdCjk),
+        })
+        .unwrap();
+    assert_eq!(
+        order(
+            &mut runtime,
+            filtered(ViewFilter::DisplayContains {
+                field: "f03_due".into(),
+                value: "年11月".into(),
+            })
+        ),
+        ids(&["e01"])
+    );
+    let values = distinct(&mut runtime, TableView::default(), "f03_due", 10).unwrap();
+    assert!(values.values.contains(&"2026年11月5日".to_owned()));
+}

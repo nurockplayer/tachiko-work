@@ -1200,6 +1200,7 @@ fn independent_opened_projection(
         dropdown_options: None,
         constraint: None,
         number_format: None,
+        date_format: None,
     })
     .collect::<Vec<_>>();
     let quantity_value = quantity.to_string();
@@ -2276,7 +2277,8 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 field_type: "text".into(),
                 dropdown_options: None,
                 constraint: None,
-                number_format: None
+                number_format: None,
+                date_format: None
             }],
             rows: vec![],
             column_totals: BTreeMap::new(),

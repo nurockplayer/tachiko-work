@@ -88,3 +88,14 @@ describe("public number-format requests", () => {
     client.close();
   });
 });
+
+it("encodes date format changes and clears", async () => {
+  const {client, requests, published} = fixture();
+  await published(client.setColumnDateFormat("resident/0", "tasks", "due", "ymd_cjk"));
+  await published(client.setColumnDateFormat("resident/1", "tasks", "due", null));
+  expect(requests).toEqual([
+    {id: 1, kind: "command", request: {type: "set_column_date_format", expected_revision: "resident/0", collection: "tasks", field: "due", date_format: "ymd_cjk"}},
+    {id: 2, kind: "command", request: {type: "set_column_date_format", expected_revision: "resident/1", collection: "tasks", field: "due", date_format: null}},
+  ]);
+  client.close();
+});

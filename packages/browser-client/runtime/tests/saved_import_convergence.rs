@@ -455,6 +455,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 dropdown_options: None,
                 constraint: None,
                 number_format: None,
+                date_format: None,
             })
             .collect(),
         column_totals: std::collections::BTreeMap::new(),
