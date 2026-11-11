@@ -130,6 +130,7 @@ fn store() -> PresentationStore {
                 title: Some("Q3 budget".into()),
                 footer: BTreeMap::from([(FieldId::from("f1"), FooterAggregate::Sum)]),
                 column_styles: BTreeMap::from([(FieldId::from("f2"), StyleId::from(STYLE_FULL))]),
+                column_widths: BTreeMap::new(),
             },
         )]),
         rules: BTreeMap::from([(
@@ -305,4 +306,16 @@ fn an_unknown_extra_root_file_is_refused() {
     publish_roproj_v3(&root, &tree).unwrap();
     fs::write(root.join("notes.jsonl"), b"").unwrap();
     assert!(read_canonical_roproj_v3(&root).is_err());
+}
+
+#[test]
+fn admission_refuses_width_for_unknown_field() {
+    let tree = encode_roproj_v3(&document()).unwrap();
+    let mut entries = files(&tree);
+    entries.push((
+        ROPROJ_V3_PRESENTATION_PATH.to_owned(),
+        b"{\"kind\":\"table\",\"schema\":\"orders\",\"column_widths\":{\"missing\":256}}\n"
+            .to_vec(),
+    ));
+    refused(entries);
 }

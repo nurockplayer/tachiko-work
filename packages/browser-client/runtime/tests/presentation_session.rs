@@ -152,6 +152,7 @@ fn styled_store(
             title: Some("Q3 budget".into()),
             footer: BTreeMap::from([(FieldId::from(rule_field), FooterAggregate::Sum)]),
             column_styles: BTreeMap::from([(FieldId::from(rule_field), cell_style.clone())]),
+            column_widths: BTreeMap::new(),
         },
     );
     PresentationStore {

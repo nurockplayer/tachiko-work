@@ -56,6 +56,7 @@ fn store() -> PresentationStore {
                 title: Some("Q3 budget".into()),
                 footer: BTreeMap::from([(FieldId::from("f1"), FooterAggregate::Sum)]),
                 column_styles: BTreeMap::from([(FieldId::from("f2"), StyleId::from(STYLE_FULL))]),
+                column_widths: BTreeMap::new(),
             },
         )]),
         rules: BTreeMap::from([(
@@ -314,4 +315,18 @@ fn the_deepest_allowed_rule_condition_reads_back() {
     let store = store_with_condition(condition);
     let bytes = encode_presentation(&store).unwrap().unwrap();
     assert_eq!(decode_presentation(&bytes).unwrap(), store);
+}
+
+#[test]
+fn column_widths_are_canonical_and_strict() {
+    let bytes =
+        b"{\"kind\":\"table\",\"schema\":\"orders\",\"column_widths\":{\"f1\":1,\"f2\":65280}}\n";
+    let decoded = decode_presentation(bytes).unwrap();
+    assert_eq!(encode_presentation(&decoded).unwrap().unwrap(), bytes);
+    for width in ["0", "65281", "12.5", "\"12\""] {
+        refuse(&format!(
+            "{{\"kind\":\"table\",\"schema\":\"orders\",\"column_widths\":{{\"f1\":{width}}}}}\n"
+        ));
+    }
+    refuse("{\"kind\":\"table\",\"schema\":\"orders\",\"column_widths\":{}}\n");
 }

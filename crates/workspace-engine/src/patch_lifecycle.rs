@@ -367,6 +367,11 @@ pub enum SemanticCommand {
         field: FieldId,
         key: FieldKey,
     },
+    /// Set or clear only the durable name of a continuing stable schema.
+    SetSchemaDisplayName {
+        schema: SchemaId,
+        display_name: Option<String>,
+    },
     /// Set or clear only the durable name of a continuing stable field.
     SetSchemaFieldDisplayName {
         schema: SchemaId,
@@ -493,6 +498,10 @@ fn command_payload_approx_bytes(command: &SemanticCommand) -> usize {
         SemanticCommand::RenameSchemaField { schema, field, key } => {
             schema.as_str().len() + field.as_str().len() + key.as_str().len()
         }
+        SemanticCommand::SetSchemaDisplayName {
+            schema,
+            display_name,
+        } => schema.as_str().len() + display_name.as_ref().map_or(0, String::len),
         SemanticCommand::SetSchemaFieldDisplayName {
             schema,
             field,
@@ -3294,6 +3303,7 @@ impl PatchLifecycle {
                     SemanticCommand::AppendSchemaField { .. }
                     | SemanticCommand::RemoveSchemaField { .. }
                     | SemanticCommand::RenameSchemaField { .. }
+                    | SemanticCommand::SetSchemaDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldRequiredness { .. }
                     | SemanticCommand::SetFieldNumberFormat { .. }
@@ -4036,6 +4046,22 @@ impl PatchLifecycle {
                 }
                 SemanticCommand::RenameSchemaField { schema, field, key } => {
                     self.plan_rename_schema_field(&mut candidate, schema, field, key, &mut writes)?;
+                }
+                SemanticCommand::SetSchemaDisplayName {
+                    schema,
+                    display_name,
+                } => {
+                    let definition = candidate.schemas.get_mut(schema).ok_or_else(|| {
+                        WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        }
+                    })?;
+                    definition.display_name.clone_from(display_name);
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_scope(schema),
+                    });
                 }
                 SemanticCommand::SetSchemaFieldDisplayName {
                     schema,
@@ -5133,6 +5159,7 @@ impl PatchBodyIndex {
                         .insert(OperationFamily::FormulaInverseRestore);
                 }
                 SemanticCommand::SetFieldConstraint { .. }
+                | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
                 | SemanticCommand::SetFieldDateFormat { .. }
@@ -5240,6 +5267,7 @@ impl<'a> DisclosureDerivation<'a> {
             SemanticCommand::AppendSchemaField { .. }
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetSchemaDisplayName { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }
             | SemanticCommand::SetFieldDateFormat { .. }
@@ -6328,6 +6356,15 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
                     },
                 );
             }
+            SemanticCommand::SetSchemaDisplayName {
+                schema,
+                display_name,
+            } => {
+                check(
+                    display_name.as_deref(),
+                    super::SemanticSubject::Schema(schema.clone()),
+                );
+            }
             SemanticCommand::SetSchemaFieldDisplayName {
                 schema,
                 field,
@@ -6377,6 +6414,50 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn schema_display_name_set_clear_and_no_change_match_field_display_name() {
+        let document = keyed_grouped_sum_document();
+        let (lifecycle, _) = keyed_grouped_sum_lifecycle(&document);
+        let schema = document.schemas.values().next().unwrap();
+        let schema_id = schema.id.clone();
+        let field_id = schema.fields.values().next().unwrap().id.clone();
+        let set = SemanticPatchBody::command(SemanticCommand::SetSchemaDisplayName {
+            schema: schema_id.clone(),
+            display_name: Some("Renamed".into()),
+        });
+        let (named, _) = lifecycle.plan_commands(&document, &set).unwrap();
+        assert_eq!(
+            named.schemas[&schema_id].display_name.as_deref(),
+            Some("Renamed")
+        );
+        let (unchanged, _) = lifecycle.plan_commands(&named, &set).unwrap();
+        assert_eq!(unchanged, named); // Publication authority refuses equal candidates.
+        let clear = SemanticPatchBody::command(SemanticCommand::SetSchemaDisplayName {
+            schema: schema_id.clone(),
+            display_name: None,
+        });
+        let (cleared, _) = lifecycle.plan_commands(&named, &clear).unwrap();
+        assert_eq!(cleared.schemas[&schema_id].display_name, None);
+        let (unchanged, _) = lifecycle.plan_commands(&cleared, &clear).unwrap();
+        assert_eq!(unchanged, cleared);
+        let field = SemanticPatchBody::command(SemanticCommand::SetSchemaFieldDisplayName {
+            schema: schema_id,
+            field: field_id,
+            display_name: Some("Field".into()),
+        });
+        let (field_named, _) = lifecycle.plan_commands(&document, &field).unwrap();
+        let (field_unchanged, _) = lifecycle.plan_commands(&field_named, &field).unwrap();
+        assert_eq!(field_unchanged, field_named);
+        let missing = SemanticPatchBody::command(SemanticCommand::SetSchemaDisplayName {
+            schema: "missing".into(),
+            display_name: Some("Name".into()),
+        });
+        assert!(matches!(
+            lifecycle.plan_commands(&document, &missing),
+            Err(WorkspaceError::MissingSchema { .. })
+        ));
+    }
 
     fn schema_field_command(field: &str, append: bool) -> SemanticCommand {
         let definition = FieldDefinition {

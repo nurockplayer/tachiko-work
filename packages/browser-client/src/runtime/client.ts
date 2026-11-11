@@ -61,6 +61,7 @@ export interface DesignerClient {
   /** Create a table whose session profile is the working-size one. */
   newTableWorkingSize?(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
   duplicateCollection?(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection>;
+  renameTable?(expectedRevision: string, collection: string, name: string): Promise<PublicationProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   clearField?(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
   /** Convert every value of one scalar column to another scalar type as one undoable edit. */

@@ -134,6 +134,7 @@ fn store() -> PresentationStore {
                 title: Some("Q3 budget".into()),
                 footer: BTreeMap::from([(FieldId::from("f1"), FooterAggregate::Sum)]),
                 column_styles: BTreeMap::from([(FieldId::from("f2"), StyleId::from(STYLE_FULL))]),
+                column_widths: BTreeMap::new(),
             },
         )]),
         rules: BTreeMap::from([(
@@ -413,4 +414,20 @@ fn the_member_bytes_reach_the_package_entries() {
         entries[20].1,
         encode_presentation(&store()).unwrap().unwrap()
     );
+}
+
+#[test]
+fn column_widths_survive_package_round_trip() {
+    let mut presentation = PresentationStore::default();
+    presentation.tables.insert(
+        "orders".into(),
+        TablePresentation {
+            column_widths: BTreeMap::from([("f1".into(), 256), ("f2".into(), 65280)]),
+            ..TablePresentation::default()
+        },
+    );
+    let tree = encode_roproj_v3_with_presentation(&document(), &presentation).unwrap();
+    let bytes = encode_portable_package_v1(&tree).unwrap();
+    let verified = decode_portable_package_v1(&bytes).unwrap();
+    assert_eq!(files(verified.tree()), files(&tree));
 }
