@@ -89,8 +89,11 @@ use tachiko_workspace_engine::{
 use thiserror::Error;
 
 pub mod interop_adapter;
+mod interop_date_format;
 mod interop_document;
 mod interop_number_format;
+#[cfg(test)]
+mod interop_presentation_tests;
 mod native_tables_export;
 use interop_document::PendingCleanup;
 pub use interop_document::{

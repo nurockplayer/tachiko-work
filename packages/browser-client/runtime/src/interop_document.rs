@@ -3436,14 +3436,24 @@ impl DesignerRuntime {
                     } else {
                         (export_scalar(value)?, None)
                     };
+                    let style = if values_only {
+                        CellStyle::default()
+                    } else {
+                        let schema = &document.schemas[&SchemaId::from(sheet.schema_id.clone())];
+                        let field = &schema.fields[&FieldId::from(definition.field_id.clone())];
+                        crate::interop_date_format::cell_style(
+                            &self.presentation,
+                            &schema.id,
+                            field,
+                            &entity.id,
+                            &value,
+                            row.styles[column].clone(),
+                        )
+                    };
                     cells.push(SourceCell {
                         value,
                         formula,
-                        style: if values_only {
-                            CellStyle::default()
-                        } else {
-                            row.styles[column].clone()
-                        },
+                        style,
                     });
                 }
                 rows.push(cells);
@@ -3456,7 +3466,16 @@ impl DesignerRuntime {
                     .iter()
                     .map(|column| SourceColumn {
                         name: column.name.clone(),
-                        width: if values_only { None } else { column.width },
+                        width: if values_only {
+                            None
+                        } else {
+                            crate::interop_date_format::column_width(
+                                &self.presentation,
+                                &SchemaId::from(sheet.schema_id.clone()),
+                                &FieldId::from(column.field_id.clone()),
+                                column.width,
+                            )
+                        },
                         number_format: if values_only || profile == OutputProfile::TextCapacity {
                             None
                         } else {
