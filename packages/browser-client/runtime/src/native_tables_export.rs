@@ -1,5 +1,5 @@
-//! Outbound scalar projection for native tables. No import provenance or client
-//! presentation participates: the immutable resident snapshot owns every value.
+//! Outbound scalar projection for native tables. Stored presentation supplies
+//! supported formatting; the resident snapshot owns every value.
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_workspace_engine::{ColumnRef, Document, FieldRef, FieldType, Value};
@@ -121,7 +121,7 @@ fn exclusion_findings(ledger: &mut Vec<FidelityFinding>) {
         ),
         (
             "native_tables_sheet_presentation_excluded",
-            "Sheet presentation, view sorting/filtering and per-cell formatting are excluded; Dates use yyyy-mm-dd.",
+            "Stored date formats, alignment, wrap and column widths are exported; other presentation and view sorting/filtering are excluded.",
         ),
     ] {
         ledger.push(finding(
@@ -356,12 +356,30 @@ fn projected_cell(
     entity: &tachiko_workspace_engine::EntityId,
     column: &crate::ColumnSpec,
     computed: &BTreeMap<FieldRef, crate::CalculationProjection>,
+    presentation: &tachiko_workspace_engine::PresentationStore,
+    csv: bool,
 ) -> Result<SourceCell, DesignerError> {
     let stored = document.entities[entity].fields.get(&column.id);
     if !matches!(stored, Some(Value::Formula(_))) {
-        return crate::interop_document::export_scalar(stored).map(|value| SourceCell {
-            value,
-            ..SourceCell::default()
+        return crate::interop_document::export_scalar(stored).map(|value| {
+            let style = if csv {
+                crate::interop_adapter::CellStyle::default()
+            } else {
+                let schema = &document.schemas[spec.summary.id.as_str()];
+                crate::interop_date_format::cell_style(
+                    presentation,
+                    &schema.id,
+                    &schema.fields[&column.id],
+                    entity,
+                    &value,
+                    crate::interop_adapter::CellStyle::default(),
+                )
+            };
+            SourceCell {
+                value,
+                style,
+                ..SourceCell::default()
+            }
         });
     }
     let target = FieldRef::new(entity.clone(), column.id.clone());
@@ -388,12 +406,28 @@ fn projected_cell(
             ));
         }
     };
+    let value = crate::interop_adapter::SourceValue::Number { value };
+    let style = if csv {
+        crate::interop_adapter::CellStyle::default()
+    } else {
+        let schema = &document.schemas[spec.summary.id.as_str()];
+        crate::interop_date_format::cell_style(
+            presentation,
+            &schema.id,
+            &schema.fields[&column.id],
+            entity,
+            &value,
+            crate::interop_adapter::CellStyle::default(),
+        )
+    };
     Ok(SourceCell {
-        value: crate::interop_adapter::SourceValue::Number { value },
+        value,
+        style,
         ..SourceCell::default()
     })
 }
 
+#[allow(clippy::too_many_lines)] // One sheet: names, columns with stored widths, and styled rows.
 fn project_sheet(
     runtime: &DesignerRuntime,
     revision: &str,
@@ -479,7 +513,16 @@ fn project_sheet(
             }
             Ok(SourceColumn {
                 name,
-                width: None,
+                width: if csv {
+                    None
+                } else {
+                    crate::interop_date_format::column_width(
+                        &runtime.presentation,
+                        &document.schemas[spec.summary.id.as_str()].id,
+                        &column.id,
+                        None,
+                    )
+                },
                 number_format: document.schemas[spec.summary.id.as_str()].fields[&column.id]
                     .number_format
                     .clone(),
@@ -493,7 +536,17 @@ fn project_sheet(
         .map(|id| {
             spec.columns
                 .iter()
-                .map(|column| projected_cell(document, spec, id, column, &computed))
+                .map(|column| {
+                    projected_cell(
+                        document,
+                        spec,
+                        id,
+                        column,
+                        &computed,
+                        &runtime.presentation,
+                        csv,
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()?;
