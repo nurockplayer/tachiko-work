@@ -5872,7 +5872,11 @@ impl DesignerRuntime {
         } else {
             None
         };
-        changed.date_format = if kind == FieldType::Date { definition.date_format } else { None };
+        changed.date_format = if kind == FieldType::Date {
+            definition.date_format
+        } else {
+            None
+        };
         // No existing constraint declaration is defined across types.
         changed.constraint = tachiko_workspace_engine::FieldConstraint::None;
         let previous_order = schema.field_order.clone();
@@ -6673,8 +6677,14 @@ impl DesignerRuntime {
                         .number_format
                         .clone_from(number_format);
                 }
-                SemanticCommand::SetFieldDateFormat { schema, field, date_format } => {
-                    candidate.schemas.get_mut(schema)
+                SemanticCommand::SetFieldDateFormat {
+                    schema,
+                    field,
+                    date_format,
+                } => {
+                    candidate
+                        .schemas
+                        .get_mut(schema)
                         .and_then(|schema| schema.fields.get_mut(field))
                         .ok_or_else(|| table_error("column is unavailable"))?
                         .date_format = *date_format;
@@ -6881,13 +6891,17 @@ impl DesignerRuntime {
                 | SemanticCommand::SetSchemaFieldOrder { .. }
                 | SemanticCommand::UnsetField { .. } => true,
                 SemanticCommand::AppendSchemaField { field, .. } => {
-                    field.display_name.is_some() || field.number_format.is_some() || field.date_format.is_some()
+                    field.display_name.is_some()
+                        || field.number_format.is_some()
+                        || field.date_format.is_some()
                 }
                 SemanticCommand::AppendCollection { schema, .. } => {
                     schema.display_name.is_some()
                         || schema.field_order.is_some()
                         || schema.fields.values().any(|field| {
-                            field.display_name.is_some() || field.number_format.is_some() || field.date_format.is_some()
+                            field.display_name.is_some()
+                                || field.number_format.is_some()
+                                || field.date_format.is_some()
                         })
                 }
                 _ => false,

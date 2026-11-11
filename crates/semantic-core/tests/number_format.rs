@@ -111,21 +111,49 @@ fn date_format_requires_a_date_field() {
         r#"{"id":"d","key":"d","field_type":{"type":"date"},"required":false,"constraint":{"type":"none"}}"#,
     ).unwrap();
     let mut document = Document::empty("d", "Dates");
-    document.schemas.insert("s".into(), Schema {
-        id: "s".into(), key: "s".into(), display_name: None, field_order: None,
-        fields: BTreeMap::from([("d".into(), field.clone())]),
-    });
-    for format in [DateFormat::Iso, DateFormat::Mdy, DateFormat::Dmy, DateFormat::YmdSlash,
-        DateFormat::YmdCjk, DateFormat::MonthDayYear, DateFormat::DayMonthYear] {
-        document.schemas.get_mut("s").unwrap().fields.get_mut("d").unwrap().date_format = Some(format);
+    document.schemas.insert(
+        "s".into(),
+        Schema {
+            id: "s".into(),
+            key: "s".into(),
+            display_name: None,
+            field_order: None,
+            fields: BTreeMap::from([("d".into(), field.clone())]),
+        },
+    );
+    for format in [
+        DateFormat::Iso,
+        DateFormat::Mdy,
+        DateFormat::Dmy,
+        DateFormat::YmdSlash,
+        DateFormat::YmdCjk,
+        DateFormat::MonthDayYear,
+        DateFormat::DayMonthYear,
+    ] {
+        document
+            .schemas
+            .get_mut("s")
+            .unwrap()
+            .fields
+            .get_mut("d")
+            .unwrap()
+            .date_format = Some(format);
         assert!(validate_document(&document).is_empty(), "{format:?}");
     }
     for kind in [FieldType::Number, FieldType::Text] {
         field.field_type = kind;
         field.date_format = Some(DateFormat::Iso);
-        document.schemas.get_mut("s").unwrap().fields.insert("d".into(), field.clone());
+        document
+            .schemas
+            .get_mut("s")
+            .unwrap()
+            .fields
+            .insert("d".into(), field.clone());
         let diagnostics = validate_document(&document);
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].code.as_str(), "core.field_date_format_declaration");
+        assert_eq!(
+            diagnostics[0].code.as_str(),
+            "core.field_date_format_declaration"
+        );
     }
 }

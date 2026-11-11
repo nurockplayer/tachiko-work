@@ -514,7 +514,12 @@ fn check_document(document: &Document) -> Result<(), FormatError> {
 }
 
 pub(crate) fn reject_date_formats(document: &Document) -> Result<(), FormatError> {
-    if document.schemas.values().flat_map(|schema| schema.fields.values()).any(|field| field.date_format.is_some()) {
+    if document
+        .schemas
+        .values()
+        .flat_map(|schema| schema.fields.values())
+        .any(|field| field.date_format.is_some())
+    {
         return Err(FormatError::UnsupportedDateFormat);
     }
     Ok(())

@@ -665,13 +665,52 @@ fn canonical_delta_scoped_ignores_absent_ids() {
 fn date_format_is_a_direct_field_fact_for_set_change_and_clear() {
     use tachiko_semantic_core::DateFormat;
     let mut before = doc_with_schemas(&["s"]);
-    before.schemas.get_mut("s").unwrap().fields.get_mut("f").unwrap().field_type = FieldType::Date;
-    assert!(canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &before).unwrap().facts().is_empty());
-    for (old, new) in [(None, Some(DateFormat::Mdy)), (Some(DateFormat::Mdy), Some(DateFormat::Dmy)), (Some(DateFormat::Dmy), None)] {
-        before.schemas.get_mut("s").unwrap().fields.get_mut("f").unwrap().date_format = old;
+    before
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("f")
+        .unwrap()
+        .field_type = FieldType::Date;
+    assert!(
+        canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &before)
+            .unwrap()
+            .facts()
+            .is_empty()
+    );
+    for (old, new) in [
+        (None, Some(DateFormat::Mdy)),
+        (Some(DateFormat::Mdy), Some(DateFormat::Dmy)),
+        (Some(DateFormat::Dmy), None),
+    ] {
+        before
+            .schemas
+            .get_mut("s")
+            .unwrap()
+            .fields
+            .get_mut("f")
+            .unwrap()
+            .date_format = old;
         let mut after = before.clone();
-        after.schemas.get_mut("s").unwrap().fields.get_mut("f").unwrap().date_format = new;
-        assert_eq!(canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after).unwrap().facts(),
-            &[Fact::SchemaFieldDateFormatChanged { schema: "s".into(), field: "f".into(), before: old, after: new }]);
+        after
+            .schemas
+            .get_mut("s")
+            .unwrap()
+            .fields
+            .get_mut("f")
+            .unwrap()
+            .date_format = new;
+        assert_eq!(
+            canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after)
+                .unwrap()
+                .facts(),
+            &[Fact::SchemaFieldDateFormatChanged {
+                schema: "s".into(),
+                field: "f".into(),
+                before: old,
+                after: new
+            }]
+        );
     }
 }

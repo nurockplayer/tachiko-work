@@ -4145,11 +4145,23 @@ impl PatchLifecycle {
                         scope: self.schema_field_scope(schema, field),
                     });
                 }
-                SemanticCommand::SetFieldDateFormat { schema, field, date_format } => {
-                    let definition = candidate.schemas.get_mut(schema)
-                        .ok_or_else(|| WorkspaceError::MissingSchema { schema: schema.clone() })?
-                        .fields.get_mut(field)
-                        .ok_or_else(|| WorkspaceError::MissingSchemaField { schema: schema.clone(), field: field.clone() })?;
+                SemanticCommand::SetFieldDateFormat {
+                    schema,
+                    field,
+                    date_format,
+                } => {
+                    let definition = candidate
+                        .schemas
+                        .get_mut(schema)
+                        .ok_or_else(|| WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        })?
+                        .fields
+                        .get_mut(field)
+                        .ok_or_else(|| WorkspaceError::MissingSchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        })?;
                     if definition.field_type != FieldType::Date {
                         return Err(WorkspaceError::InvalidDateFormat);
                     }
@@ -5125,7 +5137,7 @@ impl PatchBodyIndex {
                 SemanticCommand::SetFieldConstraint { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
-                    | SemanticCommand::SetFieldDateFormat { .. }
+                | SemanticCommand::SetFieldDateFormat { .. }
                 | SemanticCommand::SetSchemaFieldOrder { .. }
                 | SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
                 | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {}
@@ -5232,7 +5244,7 @@ impl<'a> DisclosureDerivation<'a> {
             | SemanticCommand::RenameSchemaField { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }
-                    | SemanticCommand::SetFieldDateFormat { .. }
+            | SemanticCommand::SetFieldDateFormat { .. }
             | SemanticCommand::SetSchemaFieldOrder { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. } => {
                 self.insert_document_disclosure(OperationFamily::SchemaFieldMutation);
@@ -5900,10 +5912,13 @@ fn reject_legacy_number_formats(
         || candidate.has_number_formats()
         || base.has_date_formats()
         || candidate.has_date_formats()
-        || body
-            .commands()
-            .iter()
-            .any(|command| matches!(command, SemanticCommand::SetFieldNumberFormat { .. } | SemanticCommand::SetFieldDateFormat { .. }))
+        || body.commands().iter().any(|command| {
+            matches!(
+                command,
+                SemanticCommand::SetFieldNumberFormat { .. }
+                    | SemanticCommand::SetFieldDateFormat { .. }
+            )
+        })
     {
         return Err(PatchLifecycleError::CommandRejected {
             source: Box::new(WorkspaceError::Diff(
@@ -6333,7 +6348,7 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
             | SemanticCommand::RemoveEntity { .. }
             | SemanticCommand::RenameSchemaField { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }
-                    | SemanticCommand::SetFieldDateFormat { .. }
+            | SemanticCommand::SetFieldDateFormat { .. }
             | SemanticCommand::SetSchemaFieldOrder { .. }
             | SemanticCommand::SetFieldConstraint { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. }

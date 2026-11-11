@@ -256,7 +256,9 @@ struct FieldDefinitionV3 {
     date_format: Option<tachiko_semantic_core::DateFormat>,
 }
 
-fn optional_date_format<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<tachiko_semantic_core::DateFormat>, D::Error> {
+fn optional_date_format<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<tachiko_semantic_core::DateFormat>, D::Error> {
     tachiko_semantic_core::DateFormat::deserialize(deserializer).map(Some)
 }
 

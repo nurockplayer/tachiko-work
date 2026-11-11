@@ -452,11 +452,17 @@ pub struct FieldDefinition {
     pub constraint: FieldConstraint,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number_format: Option<NumberFormat>,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "optional_date_format")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "optional_date_format"
+    )]
     pub date_format: Option<crate::DateFormat>,
 }
 
-fn optional_date_format<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<crate::DateFormat>, D::Error> {
+fn optional_date_format<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::DateFormat>, D::Error> {
     crate::DateFormat::deserialize(deserializer).map(Some)
 }
 
@@ -520,7 +526,10 @@ impl FieldDefinition {
 impl Document {
     #[must_use]
     pub fn has_date_formats(&self) -> bool {
-        self.schemas.values().flat_map(|schema| schema.fields.values()).any(|field| field.date_format.is_some())
+        self.schemas
+            .values()
+            .flat_map(|schema| schema.fields.values())
+            .any(|field| field.date_format.is_some())
     }
 
     #[must_use]
