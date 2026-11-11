@@ -930,7 +930,7 @@ fn delete_referenced_table_is_atomic() {
         .unwrap_err();
     let failure = error.failure_projection("resident/0");
     assert_eq!(failure.code, "table_referenced");
-    assert!(!failure.diagnostics.is_empty());
+    assert_ne!(failure.diagnostics.len(), 0);
     assert_eq!(runtime.session.document(), &before);
     assert_eq!(runtime.current_revision(), "resident/0");
 }

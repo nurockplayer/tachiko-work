@@ -6034,7 +6034,7 @@ impl DesignerRuntime {
         }];
         let inverse = vec![SemanticCommand::AppendCollection { schema, entities }];
         let publication = self.publish_commands(expected, forward.clone())?;
-        self.default_collection = new_default.clone();
+        self.default_collection.clone_from(&new_default);
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::TableCommands {
                 commands: forward,
@@ -7712,7 +7712,7 @@ impl DesignerRuntime {
                 default_collection,
             } => {
                 let result = self.publish_commands(expected, commands.clone())?;
-                self.default_collection = default_collection.clone();
+                self.default_collection.clone_from(default_collection);
                 Ok(result)
             }
             HistoryAction::FormulaUpdate { target, source } => self
