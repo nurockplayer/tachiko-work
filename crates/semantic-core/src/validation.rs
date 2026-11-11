@@ -699,6 +699,14 @@ fn validate_field_constraint(
             ));
         }
     }
+    if definition.date_format.is_some() && definition.field_type != FieldType::Date {
+        diagnostics.push(core_diagnostic(
+            format!("{field_path}.date_format"),
+            DiagnosticCode::new("core.field_date_format_declaration"),
+            "date format requires a Date field".to_owned(),
+            vec![subject.clone()],
+        ));
+    }
     let invalid = match (&definition.field_type, &definition.constraint) {
         (_, FieldConstraint::None) => false,
         (FieldType::Text, FieldConstraint::TextLiteralSet { values }) => {
@@ -1757,6 +1765,7 @@ mod issue_175_research {
                                 key: "name".into(),
                                 display_name: None,
                                 number_format: None,
+                                date_format: None,
                                 field_type: FieldType::Text,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1769,6 +1778,7 @@ mod issue_175_research {
                                 key: "Invalid Amount Key".into(),
                                 display_name: None,
                                 number_format: None,
+                                date_format: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1781,6 +1791,7 @@ mod issue_175_research {
                                 key: "calc".into(),
                                 display_name: None,
                                 number_format: None,
+                                date_format: None,
                                 field_type: FieldType::Number,
                                 required: true,
                                 constraint: crate::FieldConstraint::None,
@@ -1870,6 +1881,7 @@ mod issue_175_research {
                             key: "name".into(),
                             display_name: None,
                             number_format: None,
+                            date_format: None,
                             field_type: FieldType::Text,
                             required: true,
                             constraint,

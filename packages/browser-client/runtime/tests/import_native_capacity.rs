@@ -659,6 +659,7 @@ fn oversized_post_edit_document() -> Document {
                             required: false,
                             constraint: FieldConstraint::None,
                             number_format: None,
+                            date_format: None,
                         },
                     ),
                     (
@@ -671,6 +672,7 @@ fn oversized_post_edit_document() -> Document {
                             required: false,
                             constraint: FieldConstraint::None,
                             number_format: None,
+                            date_format: None,
                         },
                     ),
                 ]),

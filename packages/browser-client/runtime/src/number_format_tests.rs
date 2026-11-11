@@ -245,3 +245,29 @@ fn number_format_does_not_scale_stored_or_calculated_values() {
     set(&mut runtime, &collection, &field, None).unwrap();
     assert_eq!(runtime.query_table(&collection).unwrap().rows, calculated);
 }
+
+#[test]
+fn changing_date_column_type_clears_format_and_undo_restores_it() {
+    use tachiko_workspace_engine::{DateFormat, FieldType, resident_session::ResidentWorkspaceSession};
+    let columns = [NewTableColumnInput { name: "When".into(), field_type: "date".into(), required: false }];
+    let mut runtime = DesignerRuntime::new_table(OCCURRENCE, "Formats", &columns).unwrap();
+    let collection = runtime.collection_specs.keys().next().unwrap().clone();
+    let field = runtime.query_table(&collection).unwrap().columns[0].id.clone();
+    let snapshot = runtime.session.export_snapshot();
+    let scope = snapshot.document_scope().clone();
+    let mut document = snapshot.into_document();
+    let definition = document.schemas.values_mut().find_map(|schema| schema.fields.get_mut(field.as_str())).unwrap();
+    definition.date_format = Some(DateFormat::YmdCjk);
+    runtime.session = ResidentWorkspaceSession::new(scope, document.clone());
+    let expected_revision = runtime.current_revision().into();
+    runtime.handle(DesignerRequest::ChangeColumnType {
+        expected_revision, collection, field: field.clone(), field_type: "text".into(),
+    }).unwrap();
+    let changed = runtime.session.export_snapshot().into_document();
+    let definition = changed.schemas.values().find_map(|schema| schema.fields.get(field.as_str())).unwrap();
+    assert_eq!(definition.field_type, FieldType::Text);
+    assert_eq!(definition.date_format, None);
+    let expected_revision = runtime.current_revision().into();
+    runtime.handle(DesignerRequest::Undo { expected_revision }).unwrap();
+    assert_eq!(runtime.session.export_snapshot().document(), &document);
+}

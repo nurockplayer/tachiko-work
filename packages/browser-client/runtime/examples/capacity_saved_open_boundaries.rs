@@ -38,6 +38,7 @@ fn document(rows: usize) -> Document {
                         key: FieldKey::from(key),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type: FieldType::Text,
                         required: true,
                         constraint: FieldConstraint::None,

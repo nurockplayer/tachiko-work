@@ -33,6 +33,7 @@ fn text_schema(id: &str) -> Schema {
                 key: "f".into(),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type: FieldType::Text,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -87,6 +88,7 @@ fn numeric_or_text_schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
                         key: (*field_id).into(),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type: field_type.clone(),
                         required: false,
                         constraint: FieldConstraint::None,
@@ -160,6 +162,7 @@ fn calculation_failure_is_reported_for_the_failing_side() {
                 key: "n".into(),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type: FieldType::Number,
                 required: false,
                 constraint: FieldConstraint::None,
@@ -656,4 +659,19 @@ fn canonical_delta_scoped_ignores_absent_ids() {
         reverse,
         compare_with_calculations(CANONICAL_SEMANTIC_DELTA_V2, &after, &before).unwrap()
     );
+}
+
+#[test]
+fn date_format_is_a_direct_field_fact_for_set_change_and_clear() {
+    use tachiko_semantic_core::DateFormat;
+    let mut before = doc_with_schemas(&["s"]);
+    before.schemas.get_mut("s").unwrap().fields.get_mut("f").unwrap().field_type = FieldType::Date;
+    assert!(canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &before).unwrap().facts().is_empty());
+    for (old, new) in [(None, Some(DateFormat::Mdy)), (Some(DateFormat::Mdy), Some(DateFormat::Dmy)), (Some(DateFormat::Dmy), None)] {
+        before.schemas.get_mut("s").unwrap().fields.get_mut("f").unwrap().date_format = old;
+        let mut after = before.clone();
+        after.schemas.get_mut("s").unwrap().fields.get_mut("f").unwrap().date_format = new;
+        assert_eq!(canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after).unwrap().facts(),
+            &[Fact::SchemaFieldDateFormatChanged { schema: "s".into(), field: "f".into(), before: old, after: new }]);
+    }
 }

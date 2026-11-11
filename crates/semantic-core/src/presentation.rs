@@ -93,7 +93,8 @@ pub enum BorderSide {
 }
 
 /// Closed ADR-0049 Date display format set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DateFormat {
     Iso,
     Mdy,

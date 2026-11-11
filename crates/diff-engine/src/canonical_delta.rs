@@ -69,6 +69,7 @@ pub struct FieldDefinitionPayload {
     pub required: bool,
     pub constraint: FieldConstraint,
     pub number_format: Option<tachiko_semantic_core::NumberFormat>,
+    pub date_format: Option<tachiko_semantic_core::DateFormat>,
 }
 
 /// Complete immutable payload for an entity state, excluding its target ID.
@@ -166,6 +167,12 @@ pub enum CanonicalDirectFact {
         field: FieldId,
         before: Option<tachiko_semantic_core::NumberFormat>,
         after: Option<tachiko_semantic_core::NumberFormat>,
+    },
+    SchemaFieldDateFormatChanged {
+        schema: SchemaId,
+        field: FieldId,
+        before: Option<tachiko_semantic_core::DateFormat>,
+        after: Option<tachiko_semantic_core::DateFormat>,
     },
     SchemaFieldConstraintChanged {
         schema: SchemaId,
@@ -267,6 +274,9 @@ impl CanonicalDirectFact {
             }
             F::SchemaFieldNumberFormatChanged { schema, field, .. } => {
                 (2, vec![schema.as_str(), field.as_str()], 7)
+            }
+            F::SchemaFieldDateFormatChanged { schema, field, .. } => {
+                (2, vec![schema.as_str(), field.as_str()], 8)
             }
             F::EntityCreated { entity, .. } => (3, vec![entity.as_str()], 0),
             F::EntityDeleted { entity, .. } => (3, vec![entity.as_str()], 1),
@@ -510,6 +520,7 @@ fn field_payload(field: &FieldDefinition) -> FieldDefinitionPayload {
         required: field.required,
         constraint: field.constraint.clone(),
         number_format: field.number_format.clone(),
+        date_format: field.date_format,
     }
 }
 
@@ -727,6 +738,14 @@ fn compare_schema(
                         field: field_id.clone(),
                         before: old.number_format.clone(),
                         after: new.number_format.clone(),
+                    });
+                }
+                if old.date_format != new.date_format {
+                    facts.push(F::SchemaFieldDateFormatChanged {
+                        schema: id.clone(),
+                        field: field_id.clone(),
+                        before: old.date_format,
+                        after: new.date_format,
                     });
                 }
                 if old.constraint != new.constraint {

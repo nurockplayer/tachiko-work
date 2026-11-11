@@ -269,7 +269,7 @@ pub enum MergeOutcomeV2 {
 pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutcomeV2 {
     if [base, left, right]
         .iter()
-        .any(|document| document.has_number_formats())
+        .any(|document| document.has_number_formats() || document.has_date_formats())
     {
         return MergeOutcomeV2::UnsupportedNumberFormat;
     }

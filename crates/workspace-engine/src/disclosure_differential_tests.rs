@@ -26,6 +26,7 @@ fn number_field(id: &str) -> FieldDefinition {
         key: FieldKey::from(id),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type: FieldType::Number,
         // Optional, or a formula into a blank slot is refused before any
         // disclosure could be compared.

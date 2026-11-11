@@ -252,6 +252,12 @@ struct FieldDefinitionV3 {
     constraint: ConstraintV3,
     #[serde(default, deserialize_with = "crate::number_format::optional")]
     number_format: Option<crate::number_format::NumberFormatDto>,
+    #[serde(default, deserialize_with = "optional_date_format")]
+    date_format: Option<tachiko_semantic_core::DateFormat>,
+}
+
+fn optional_date_format<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<tachiko_semantic_core::DateFormat>, D::Error> {
+    tachiko_semantic_core::DateFormat::deserialize(deserializer).map(Some)
 }
 
 fn optional_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
@@ -955,6 +961,7 @@ impl FieldDefinitionV3 {
             key: FieldKey::from(self.key),
             display_name: self.display_name,
             number_format: self.number_format.map(Into::into),
+            date_format: self.date_format,
             field_type: self.field_type.into_semantic()?,
             required: self.required,
             constraint: self.constraint.into_semantic()?,
@@ -1388,6 +1395,7 @@ impl FieldDefinitionV3 {
             required: field.required,
             constraint: ConstraintV3::from_semantic(&field.constraint)?,
             number_format: field.number_format.as_ref().map(Into::into),
+            date_format: field.date_format,
         })
     }
 }
@@ -1791,6 +1799,11 @@ fn write_field_definition(
         output.push_str(",\n");
         pretty_member_prefix(output, indent + 1, "number_format")?;
         crate::number_format::write(output, format, indent + 1)?;
+    }
+    if let Some(format) = field.date_format {
+        output.push_str(",\n");
+        pretty_member_prefix(output, indent + 1, "date_format")?;
+        output.push_str(&serde_json::to_string(&format)?);
     }
     output.push('\n');
     push_indent(output, indent);

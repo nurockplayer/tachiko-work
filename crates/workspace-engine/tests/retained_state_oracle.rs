@@ -541,6 +541,7 @@ fn number_field_definition(id: &str) -> FieldDefinition {
         key: FieldKey::from(id),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type: FieldType::Number,
         required: false,
         constraint: tachiko_semantic_core::FieldConstraint::None,

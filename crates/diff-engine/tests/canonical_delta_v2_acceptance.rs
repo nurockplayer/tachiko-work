@@ -32,6 +32,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
         key: id.into(),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type,
         required: false,
         constraint: FieldConstraint::None,
@@ -46,6 +47,7 @@ fn field_payload(definition: &FieldDefinition) -> FieldDefinitionPayload {
         required: definition.required,
         constraint: definition.constraint.clone(),
         number_format: definition.number_format.clone(),
+        date_format: definition.date_format,
     }
 }
 

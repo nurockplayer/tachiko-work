@@ -29,6 +29,7 @@ fn human_tracker_key_does_not_claim_stock_profile_or_block_generic_scalar_edit()
                     key: FieldKey::from("description"),
                     display_name: None,
                     number_format: None,
+                    date_format: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,

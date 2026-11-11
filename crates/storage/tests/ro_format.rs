@@ -25,6 +25,7 @@ fn document_with_order(reverse: bool) -> Document {
                 key: FieldKey::from("damage"),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type: FieldType::Number,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -37,6 +38,7 @@ fn document_with_order(reverse: bool) -> Document {
                 key: FieldKey::from("name"),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -245,6 +247,7 @@ fn invalid_v2_relationship_cannot_be_serialized() {
                         key: FieldKey::from("target"),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type: FieldType::Reference {
                             schema: SchemaId::from("missing"),
                         },

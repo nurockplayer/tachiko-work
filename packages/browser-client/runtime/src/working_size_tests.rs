@@ -195,6 +195,7 @@ fn text_grid(rows: usize, columns: usize) -> Document {
                 required: false,
                 constraint: FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             },
         );
     }
@@ -376,6 +377,7 @@ fn populated_limit_grid() -> Document {
                     required: false,
                     constraint: FieldConstraint::None,
                     number_format: None,
+                    date_format: None,
                 },
             )
         })
@@ -736,6 +738,7 @@ fn working_size_never_promotes_and_accepts_what_the_encoding_refuses() {
                 required: false,
                 constraint: FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             },
         );
     let long_text = "x".repeat(4097);
@@ -970,6 +973,7 @@ fn item_bounds_refuse_on_open_and_on_edit() {
                 required: false,
                 constraint: FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             },
         );
     chain
@@ -1467,6 +1471,7 @@ fn shared_reference_grid(rows: usize) -> Document {
                 required: false,
                 constraint: FieldConstraint::None,
                 number_format: None,
+                date_format: None,
             },
         );
     }
@@ -1528,6 +1533,7 @@ fn number_field(id: &str, number_format: Option<NumberFormat>) -> FieldDefinitio
         required: false,
         constraint: FieldConstraint::None,
         number_format,
+        date_format: None,
     }
 }
 
@@ -1540,6 +1546,7 @@ fn text_field(id: &str) -> FieldDefinition {
         required: false,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     }
 }
 
@@ -3078,6 +3085,7 @@ fn add_field(
             required: false,
             constraint,
             number_format,
+            date_format: None,
         },
     );
 }
@@ -3229,6 +3237,7 @@ fn long_identity_grid() -> Document {
             required: false,
             constraint: FieldConstraint::None,
             number_format: None,
+            date_format: None,
         },
     );
     document.schemas.insert(

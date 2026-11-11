@@ -345,6 +345,7 @@ impl FieldDefinitionV2 {
             key: FieldKey::from(self.key),
             display_name: None,
             number_format: self.number_format.map(Into::into),
+            date_format: None,
             field_type: self.field_type.into_semantic(),
             required: self.required,
             constraint: tachiko_semantic_core::FieldConstraint::None,

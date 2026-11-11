@@ -365,6 +365,7 @@ fn native_required_mixed_document(rows: usize, text_width: usize) -> Document {
                         key: FieldKey::from(key),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type,
                         required: true,
                         constraint: FieldConstraint::None,

@@ -2559,6 +2559,7 @@ fn field(id: &FieldId, key: &str, field_type: FieldType) -> FieldDefinition {
         key: FieldKey::from(key),
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type,
         required: true,
         constraint: tachiko_semantic_core::FieldConstraint::None,

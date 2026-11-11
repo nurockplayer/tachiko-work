@@ -62,6 +62,7 @@ fn field(
             required: false,
             constraint: FieldConstraint::None,
             number_format,
+            date_format: None,
         },
     )
 }

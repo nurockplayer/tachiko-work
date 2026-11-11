@@ -33,6 +33,7 @@ fn mixed_document() -> Document {
                     key: FieldKey::from("text"),
                     display_name: None,
                     number_format: None,
+                    date_format: None,
                     field_type: FieldType::Text,
                     required: true,
                     constraint: tachiko_workspace_engine::FieldConstraint::None,

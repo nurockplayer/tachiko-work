@@ -30,6 +30,7 @@ fn document() -> Document {
                         kind: NumberFormatKind::Currency { code: "USD".into() },
                         thousands_separator: true,
                     }),
+                    date_format: None,
                 },
             )]),
         },
@@ -96,6 +97,8 @@ fn absent_format_keeps_existing_direct_and_v3_bytes_exact() {
     .unwrap();
     let document = decode_roproj_v3(&tree).unwrap();
     assert!(!document.has_number_formats());
+    assert!(!document.has_date_formats());
+    assert!(!std::str::from_utf8(tree.file("schemas.json").unwrap()).unwrap().contains("date_format"));
     assert_eq!(encode_roproj_v3(&document).unwrap(), tree);
 }
 
@@ -162,5 +165,42 @@ fn stored_kind_rejects_members_outside_its_variant() {
             from_str(&serde_json::to_string(&json).unwrap()).is_err(),
             "{kind}"
         );
+    }
+}
+
+#[test]
+fn date_formats_roundtrip_and_frozen_writers_refuse_them() {
+    use tachiko_semantic_core::DateFormat;
+    let mut doc = document();
+    let field = doc.schemas.get_mut("s").unwrap().fields.get_mut("n").unwrap();
+    field.field_type = FieldType::Date;
+    field.number_format = None;
+    let absent = encode_roproj_v3(&doc).unwrap();
+    assert!(!std::str::from_utf8(absent.file("schemas.json").unwrap()).unwrap().contains("date_format"));
+    assert_eq!(encode_roproj_v3(&decode_roproj_v3(&absent).unwrap()).unwrap(), absent);
+    for (format, wire) in [
+        (DateFormat::Iso, "iso"), (DateFormat::Mdy, "mdy"), (DateFormat::Dmy, "dmy"),
+        (DateFormat::YmdSlash, "ymd_slash"), (DateFormat::YmdCjk, "ymd_cjk"),
+        (DateFormat::MonthDayYear, "month_day_year"), (DateFormat::DayMonthYear, "day_month_year"),
+    ] {
+        doc.schemas.get_mut("s").unwrap().fields.get_mut("n").unwrap().date_format = Some(format);
+        let tree = encode_roproj_v3(&doc).unwrap();
+        assert!(std::str::from_utf8(tree.file("schemas.json").unwrap()).unwrap().contains(&format!("\"date_format\": \"{wire}\"")));
+        let decoded = decode_roproj_v3(&tree).unwrap();
+        assert_eq!(decoded, doc);
+        assert_eq!(encode_roproj_v3(&decoded).unwrap(), tree);
+        assert!(matches!(to_canonical_string(&doc), Err(FormatError::UnsupportedDateFormat)));
+        assert!(matches!(encode_roproj_v1(&doc), Err(FormatError::UnsupportedDateFormat)));
+        assert!(matches!(encode_roproj_v2(&doc), Err(FormatError::UnsupportedDateFormat)));
+    }
+    for invalid in ["null", "\"ISO\"", "\"yyyy\""] {
+        let files = absent.files().iter().map(|file| {
+            let bytes = if file.path() == "schemas.json" {
+                let text = std::str::from_utf8(file.bytes()).unwrap();
+                text.replacen("\"constraint\": {", &format!("\"date_format\": {invalid},\n      \"constraint\": {{"), 1).into_bytes()
+            } else { file.bytes().to_vec() };
+            (file.path().to_owned(), bytes)
+        }).collect();
+        assert!(CanonicalRoProjectV3::try_from_files(files).is_err(), "{invalid}");
     }
 }

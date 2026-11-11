@@ -26,6 +26,7 @@ fn field(name: &str, field_type: FieldType) -> FieldDefinition {
         required: false,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     }
 }
 

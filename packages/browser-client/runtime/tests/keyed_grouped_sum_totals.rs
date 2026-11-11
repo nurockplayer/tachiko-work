@@ -40,6 +40,7 @@ fn schema(name: &str, fields: &[&str]) -> Schema {
                         key: FieldKey::from(*field),
                         display_name: None,
                         number_format: None,
+                        date_format: None,
                         field_type: field_type(field),
                         required: true,
                         constraint: tachiko_workspace_engine::FieldConstraint::None,

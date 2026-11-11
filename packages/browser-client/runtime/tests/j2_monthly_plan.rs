@@ -34,6 +34,7 @@ fn column(key: &str, name: &str, field_type: FieldType) -> (FieldId, FieldDefini
             key: FieldKey::from(key),
             display_name: Some(name.to_owned()),
             number_format: None,
+            date_format: None,
             field_type,
             required: true,
             constraint: FieldConstraint::None,

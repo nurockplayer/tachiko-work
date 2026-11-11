@@ -20,6 +20,7 @@ fn definition(id: &str, field_type: FieldType, required: bool) -> FieldDefinitio
         required,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     }
 }
 

@@ -499,7 +499,7 @@ impl From<&Entity> for EntitySubject {
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
     if [base, ours, theirs]
         .iter()
-        .any(|document| document.has_number_formats())
+        .any(|document| document.has_number_formats() || document.has_date_formats())
     {
         return MergeOutcome::UnsupportedNumberFormat;
     }
@@ -787,6 +787,7 @@ fn merge_field_definition(
         key: key?,
         display_name: None,
         number_format: None,
+        date_format: None,
         field_type: field_type?,
         required: required?,
         constraint: tachiko_semantic_core::FieldConstraint::None,

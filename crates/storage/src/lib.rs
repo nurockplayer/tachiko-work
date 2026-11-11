@@ -130,6 +130,8 @@ pub enum FormatError {
     UnsupportedDisplayName,
     #[error("this frozen representation does not support durable number formats; use .roproj/v3")]
     UnsupportedNumberFormat,
+    #[error("this frozen representation does not support durable date formats; use .roproj/v3")]
+    UnsupportedDateFormat,
     #[error("this frozen representation does not support durable field order; use .roproj/v3")]
     UnsupportedFieldOrder,
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
@@ -165,6 +167,7 @@ pub enum FormatError {
 /// fails.
 pub fn to_canonical_string(document: &Document) -> Result<String, FormatError> {
     reject_display_names(document)?;
+    reject_date_formats(document)?;
     reject_field_constraints(document)?;
     check_document(document)?;
     let dto = DocumentV2::from_semantic(document).map_err(map_v2_encode_error)?;
@@ -508,6 +511,13 @@ fn check_document(document: &Document) -> Result<(), FormatError> {
     } else {
         Err(FormatError::InvalidDocument { diagnostics })
     }
+}
+
+pub(crate) fn reject_date_formats(document: &Document) -> Result<(), FormatError> {
+    if document.schemas.values().flat_map(|schema| schema.fields.values()).any(|field| field.date_format.is_some()) {
+        return Err(FormatError::UnsupportedDateFormat);
+    }
+    Ok(())
 }
 
 pub(crate) fn reject_number_formats(document: &Document) -> Result<(), FormatError> {

@@ -53,6 +53,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> (FieldId, FieldDefi
             required,
             constraint: FieldConstraint::None,
             number_format: None,
+            date_format: None,
         },
     )
 }

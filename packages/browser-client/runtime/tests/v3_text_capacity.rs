@@ -46,6 +46,7 @@ fn text_table(rows: usize) -> Document {
                             required: true,
                             constraint: FieldConstraint::None,
                             number_format: None,
+                            date_format: None,
                         },
                     )
                 })

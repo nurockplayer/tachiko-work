@@ -73,6 +73,7 @@ fn lifecycle_document() -> tachiko_semantic_core::Document {
             key: FieldKey::from("all_ops"),
             display_name: None,
             number_format: None,
+            date_format: None,
             field_type: FieldType::Number,
             required: true,
             constraint: tachiko_semantic_core::FieldConstraint::None,
@@ -85,6 +86,7 @@ fn lifecycle_document() -> tachiko_semantic_core::Document {
             key: FieldKey::from("peer"),
             display_name: None,
             number_format: None,
+            date_format: None,
             field_type: FieldType::Reference {
                 schema: "weapons".into(),
             },
@@ -252,6 +254,7 @@ fn remove_reports_one_sorted_path_per_dependent_field_across_all_expression_shap
             key: FieldKey::from("all_ops"),
             display_name: None,
             number_format: None,
+            date_format: None,
             field_type: FieldType::Number,
             required: true,
             constraint: tachiko_semantic_core::FieldConstraint::None,

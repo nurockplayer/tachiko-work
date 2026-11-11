@@ -54,6 +54,7 @@ fn large_document() -> Document {
                 key: FieldKey::from("payload"),
                 display_name: None,
                 number_format: None,
+                date_format: None,
                 field_type: FieldType::Text,
                 required: true,
                 constraint: tachiko_workspace_engine::FieldConstraint::None,
