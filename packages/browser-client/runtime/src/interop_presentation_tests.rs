@@ -430,6 +430,42 @@ fn import_presentation_round_trip_clear_and_reopen() {
 }
 
 #[test]
+fn a_blank_cell_with_its_own_date_format_keeps_the_column_mixed() {
+    let (mut source, selection) = import_presentation_fixture(&["mmm d, yyyy", "yyyy-mm-dd"]);
+    source.sheets[0].rows[1][0].value = SourceValue::Empty;
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let sheet = &imported.metadata.sheets[0];
+    let schema = SchemaId::from(sheet.schema_id.clone());
+    let field = tachiko_workspace_engine::FieldId::from(sheet.columns[0].field_id.clone());
+    let snapshot = runtime.session.export_snapshot();
+    // The blank cell's ISO format would be lost under a MonthDayYear field.
+    assert_eq!(
+        snapshot.document().schemas[&schema].fields[&field].date_format,
+        None
+    );
+    let filled = (
+        EntityId::from(sheet.rows[0].entity_id.clone()),
+        field.clone(),
+    );
+    let blank = (
+        EntityId::from(sheet.rows[1].entity_id.clone()),
+        field.clone(),
+    );
+    assert_eq!(
+        runtime.presentation.styles[&runtime.presentation.cells[&filled]].date_format,
+        Some(DateFormat::MonthDayYear)
+    );
+    assert!(
+        runtime
+            .presentation
+            .cells
+            .get(&blank)
+            .is_none_or(|id| runtime.presentation.styles[id].date_format.is_none())
+    );
+    assert_eq!(sheet.rows[1].styles[0].number_format, None);
+}
+
+#[test]
 fn import_mixed_and_unsupported_date_formats() {
     let (source, selection) = import_presentation_fixture(&["m/d/yyyy", "d mmm yyyy"]);
     let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();

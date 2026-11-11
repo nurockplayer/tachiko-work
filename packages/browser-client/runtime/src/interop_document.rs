@@ -1211,17 +1211,23 @@ fn promote_import_presentation(
                 wraps.push(style.wrap);
                 style.wrap = false;
                 let entity = EntityId::from(row.entity_id.clone());
-                let is_date_value = is_date
-                    && matches!(
-                        document.entities[&entity].fields.get(&field_id),
-                        Some(Value::Date(_))
-                    );
-                let date = if is_date_value {
-                    let pattern = source
-                        .rows
-                        .get(row_index)
-                        .and_then(|cells| cells.get(column_index))
-                        .and_then(|cell| cell.style.number_format.as_deref());
+                let pattern = source
+                    .rows
+                    .get(row_index)
+                    .and_then(|cells| cells.get(column_index))
+                    .and_then(|cell| cell.style.number_format.as_deref());
+                // A blank cell formatted as a date is the format a date typed
+                // there later gets, so it takes part like a Date value.
+                let takes_part = is_date
+                    && match document.entities[&entity].fields.get(&field_id) {
+                        Some(Value::Date(_)) => true,
+                        None => pattern.is_some_and(|pattern| {
+                            crate::interop_number_format::classify(Some(pattern))
+                                == Ok(crate::interop_number_format::NumberFormatKind::Date)
+                        }),
+                        Some(_) => false,
+                    };
+                let date = if takes_part {
                     let format = pattern.map_or(
                         Some(DateFormat::Iso),
                         crate::interop_date_format::from_excel,
