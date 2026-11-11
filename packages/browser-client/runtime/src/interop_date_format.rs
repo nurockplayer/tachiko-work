@@ -97,7 +97,7 @@ pub(crate) fn column_width(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{DateFormat, from_excel, to_excel};
     use crate::interop_number_format::{NumberFormatKind, classify};
 
     #[test]
