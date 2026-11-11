@@ -502,7 +502,8 @@ fn command_payload_approx_bytes(command: &SemanticCommand) -> usize {
                 + field.as_str().len()
                 + display_name.as_ref().map_or(0, String::len)
         }
-        SemanticCommand::SetSchemaFieldRequiredness { schema, field, .. } => {
+        SemanticCommand::SetSchemaFieldRequiredness { schema, field, .. }
+        | SemanticCommand::SetFieldDateFormat { schema, field, .. } => {
             schema.as_str().len() + field.as_str().len()
         }
         SemanticCommand::SetFieldNumberFormat {
@@ -513,9 +514,6 @@ fn command_payload_approx_bytes(command: &SemanticCommand) -> usize {
             schema.as_str().len()
                 + field.as_str().len()
                 + number_format.as_ref().map_or(0, number_format_approx_bytes)
-        }
-        SemanticCommand::SetFieldDateFormat { schema, field, .. } => {
-            schema.as_str().len() + field.as_str().len()
         }
         SemanticCommand::SetSchemaFieldOrder { schema, order } => {
             schema.as_str().len() + order.as_deref().map_or(0, field_id_list_approx_bytes)

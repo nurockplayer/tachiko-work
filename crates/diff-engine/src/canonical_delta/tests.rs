@@ -673,11 +673,12 @@ fn date_format_is_a_direct_field_fact_for_set_change_and_clear() {
         .get_mut("f")
         .unwrap()
         .field_type = FieldType::Date;
-    assert!(
+    assert_eq!(
         canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &before)
             .unwrap()
             .facts()
-            .is_empty()
+            .len(),
+        0
     );
     for (old, new) in [
         (None, Some(DateFormat::Mdy)),
