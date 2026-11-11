@@ -182,7 +182,11 @@ fn imported_store_overrides_metadata_and_csv_ignores_presentation() {
     let collection = imported.opened.bootstrap.default_collection.clone();
     let field = sheet.columns[0].field_id.clone();
     let csv_before = runtime
-        .export_imported_workbook("resident/0", metadata, ImportedOutput::Csv(&collection))
+        .export_imported_workbook(
+            "resident/0",
+            metadata,
+            ImportedOutput::Csv(&sheet.schema_id),
+        )
         .unwrap();
     let mut store = PresentationStore::default();
     store.tables.insert(
@@ -216,7 +220,7 @@ fn imported_store_overrides_metadata_and_csv_ignores_presentation() {
         .export_imported_workbook(
             &set.resulting_revision,
             metadata,
-            ImportedOutput::Csv(&collection),
+            ImportedOutput::Csv(&sheet.schema_id),
         )
         .unwrap();
     assert_eq!(

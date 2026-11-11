@@ -363,7 +363,7 @@ fn projected_cell(
     if !matches!(stored, Some(Value::Formula(_))) {
         return crate::interop_document::export_scalar(stored).map(|value| {
             let style = if csv {
-                Default::default()
+                crate::interop_adapter::CellStyle::default()
             } else {
                 let schema = &document.schemas[spec.summary.id.as_str()];
                 crate::interop_date_format::cell_style(
@@ -372,7 +372,7 @@ fn projected_cell(
                     &schema.fields[&column.id],
                     entity,
                     &value,
-                    Default::default(),
+                    crate::interop_adapter::CellStyle::default(),
                 )
             };
             SourceCell {
@@ -408,7 +408,7 @@ fn projected_cell(
     };
     let value = crate::interop_adapter::SourceValue::Number { value };
     let style = if csv {
-        Default::default()
+        crate::interop_adapter::CellStyle::default()
     } else {
         let schema = &document.schemas[spec.summary.id.as_str()];
         crate::interop_date_format::cell_style(
@@ -417,7 +417,7 @@ fn projected_cell(
             &schema.fields[&column.id],
             entity,
             &value,
-            Default::default(),
+            crate::interop_adapter::CellStyle::default(),
         )
     };
     Ok(SourceCell {
@@ -427,6 +427,7 @@ fn projected_cell(
     })
 }
 
+#[allow(clippy::too_many_lines)] // One sheet: names, columns with stored widths, and styled rows.
 fn project_sheet(
     runtime: &DesignerRuntime,
     revision: &str,
