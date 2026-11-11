@@ -143,6 +143,7 @@ fn native_presentation_is_projected_and_survives_xlsx() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Import, store override, clear and CSV in one journey.
 fn imported_store_overrides_metadata_and_csv_ignores_presentation() {
     let source = SourceWorkbook {
         sheets: vec![SourceSheet {
