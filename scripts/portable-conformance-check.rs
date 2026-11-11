@@ -138,6 +138,7 @@ fn field(id: &str) -> FieldDefinition {
         required: true,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     }
 }
 
@@ -234,6 +235,7 @@ fn date_document(value: Date) -> Document {
                         required: true,
                         constraint: FieldConstraint::None,
                         number_format: None,
+                        date_format: None,
                     },
                 )]),
             },
@@ -613,6 +615,7 @@ fn complete_oracle_record() -> Record {
             required: true,
             constraint: FieldConstraint::None,
             number_format: None,
+            date_format: None,
         },
     );
     let values = BTreeMap::from([
@@ -1031,6 +1034,7 @@ fn oracle_document() -> Document {
             required: true,
             constraint: FieldConstraint::None,
             number_format: None,
+            date_format: None,
         },
     );
 
@@ -1155,6 +1159,7 @@ fn validation_accumulation_record() -> Record {
             required: false,
             constraint: FieldConstraint::None,
             number_format: None,
+            date_format: None,
         },
     );
     document
@@ -1539,6 +1544,7 @@ fn analysis_text_field(id: &str, required: bool) -> FieldDefinition {
         required,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     }
 }
 
@@ -1551,6 +1557,7 @@ fn analysis_number_field(id: &str, required: bool) -> FieldDefinition {
         required,
         constraint: FieldConstraint::None,
         number_format: None,
+        date_format: None,
     }
 }
 
@@ -2857,6 +2864,7 @@ fn constraint_text_literal_record() -> Record {
                         values: vec!["é".into()],
                     },
                     number_format: None,
+                    date_format: None,
                 },
             )]),
         },
