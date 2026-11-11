@@ -795,6 +795,7 @@ mod reference {
             | SemanticCommand::RenameSchemaField { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }
+            | SemanticCommand::SetFieldDateFormat { .. }
             | SemanticCommand::SetSchemaFieldOrder { .. }
             | SemanticCommand::SetSchemaFieldRequiredness { .. } => {
                 insert_document_disclosure(
