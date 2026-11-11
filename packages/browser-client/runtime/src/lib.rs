@@ -6082,14 +6082,15 @@ impl DesignerRuntime {
             return Err(DesignerError::TableReferenced { diagnostics });
         }
         let old_default = self.default_collection.clone();
+        // The same policy as open, so a reopened save shows the same table.
         let new_default = if collection == old_default {
-            candidate
-                .schemas
-                .values()
-                .next()
-                .ok_or(DesignerError::LastTable)?
-                .key
-                .to_string()
+            let remaining = self
+                .collection_specs
+                .iter()
+                .filter(|(key, _)| key.as_str() != collection)
+                .map(|(key, spec)| (key.clone(), spec.clone()))
+                .collect::<BTreeMap<_, _>>();
+            select_default_collection(&remaining)?
         } else {
             old_default.clone()
         };
