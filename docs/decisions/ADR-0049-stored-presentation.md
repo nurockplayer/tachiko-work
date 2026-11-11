@@ -4,6 +4,8 @@
 
 Accepted
 
+Amendment: 2026-11-12 JST — column widths enter stored presentation for MVP 1.0.
+
 Decision issue: [#668](https://github.com/nurockplayer/tachiko-work/issues/668)
 
 Authority: [Work lead's design note](https://github.com/nurockplayer/tachiko-work/issues/668#issuecomment-6690046800)
@@ -136,6 +138,15 @@ A `table` record holds both.
 
 Other merged cells stay a disclosed import boundary with a ledger finding.
 
+### Column widths
+
+A table stores an optional width per field in `column_widths`. Each is an integer
+in 1/256 of an Excel character, from 1 through 65280 inclusive; absent means the
+host default. Hosts convert to pixels. The strict reader refuses invalid widths and
+unknown fields. A width is its own merge identity: concurrent unequal widths take
+the larger value and the report lists the choice. Pruning drops widths for removed
+fields or tables. There is no separate capacity bound.
+
 ### 7. Not semantic, still saved
 
 - **Semantic delta and conflict:** these records aren't facts in either, apart from
@@ -169,7 +180,7 @@ Other merged cells stay a disclosed import boundary with a ledger finding.
 - **Older representations:** direct-ro/v2 and roproj/v1 and v2 writers refuse, under
   ADR-0046. CSV carries no styles and keeps its existing disclosure.
 - **Interop metadata:** once import and export use this store, metadata stops carrying
-  cell styles. Sheet names, header state and widths remain until a later ADR moves them.
+  cell styles and widths. Sheet names and header state remain until a later ADR.
 
 ### 8. Fixtures this requires
 

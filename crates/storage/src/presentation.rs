@@ -302,6 +302,8 @@ struct TableRecordV3 {
     footer: Option<BTreeMap<String, String>>,
     #[serde(default)]
     column_styles: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    column_widths: Option<BTreeMap<String, u32>>,
 }
 
 #[derive(Deserialize)]
@@ -406,25 +408,48 @@ fn table_column_styles(
 }
 
 fn table_into_semantic(record: TableRecordV3) -> Result<(String, TablePresentation), FormatError> {
-    if record.title.is_none() && record.footer.is_none() && record.column_styles.is_none() {
+    if record.title.is_none()
+        && record.footer.is_none()
+        && record.column_styles.is_none()
+        && record.column_widths.is_none()
+    {
         return invalid_representation(format!("table '{}' has no content", record.schema));
     }
-    let footer = record
+    let footer: BTreeMap<FieldId, FooterAggregate> = record
         .footer
         .map(table_footer)
         .transpose()?
         .unwrap_or_default();
-    let column_styles = record
+    let column_styles: BTreeMap<FieldId, StyleId> = record
         .column_styles
         .map(table_column_styles)
         .transpose()?
         .unwrap_or_default();
+    let column_widths = record.column_widths.unwrap_or_default();
+    if column_widths.is_empty()
+        && record.title.is_none()
+        && footer.is_empty()
+        && column_styles.is_empty()
+    {
+        return invalid_representation(format!("table '{}' has no content", record.schema));
+    }
+    if column_widths
+        .values()
+        .any(|width| !(1..=65280).contains(width))
+    {
+        return invalid_representation("table column width out of range".to_owned());
+    }
+    let column_widths = column_widths
+        .into_iter()
+        .map(|(field, width)| (FieldId::from(field), width))
+        .collect();
     Ok((
         record.schema,
         TablePresentation {
             title: record.title,
             footer,
             column_styles,
+            column_widths,
         },
     ))
 }
@@ -641,7 +666,11 @@ fn write_table_record(
     schema: &SchemaId,
     table: &TablePresentation,
 ) -> Result<(), FormatError> {
-    if table.title.is_none() && table.footer.is_empty() && table.column_styles.is_empty() {
+    if table.title.is_none()
+        && table.footer.is_empty()
+        && table.column_styles.is_empty()
+        && table.column_widths.is_empty()
+    {
         return invalid_representation(format!("table '{}' has no content", schema.as_str()));
     }
     output.push('{');
@@ -677,6 +706,19 @@ fn write_table_record(
             write_json_string(output, field.as_str())?;
             output.push(':');
             write_json_string(output, style.as_str())?;
+        }
+        output.push('}');
+    }
+    if !table.column_widths.is_empty() {
+        member_head(output, &mut first, "column_widths")?;
+        output.push('{');
+        for (index, (field, width)) in table.column_widths.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            write_json_string(output, field.as_str())?;
+            output.push(':');
+            output.push_str(&width.to_string());
         }
         output.push('}');
     }
