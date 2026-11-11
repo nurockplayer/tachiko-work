@@ -462,7 +462,22 @@ fn a_blank_cell_with_its_own_date_format_keeps_the_column_mixed() {
             .get(&blank)
             .is_none_or(|id| runtime.presentation.styles[id].date_format.is_none())
     );
-    assert_eq!(sheet.rows[1].styles[0].number_format, None);
+    assert_eq!(
+        sheet.rows[1].styles[0].number_format.as_deref(),
+        Some("yyyy-mm-dd")
+    );
+    let exported = runtime
+        .export_workbook(runtime.current_revision(), &imported.metadata)
+        .unwrap();
+    let rows = &exported.sheets[0].rows;
+    assert_eq!(
+        rows[0][0].style.number_format.as_deref(),
+        Some("mmm d, yyyy")
+    );
+    assert_eq!(
+        rows[1][0].style.number_format.as_deref(),
+        Some("yyyy-mm-dd")
+    );
 }
 
 #[test]

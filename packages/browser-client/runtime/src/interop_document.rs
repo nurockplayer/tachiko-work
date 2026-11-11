@@ -1218,8 +1218,10 @@ fn promote_import_presentation(
                     .and_then(|cell| cell.style.number_format.as_deref());
                 // A blank cell formatted as a date is the format a date typed
                 // there later gets, so it takes part like a Date value.
+                let stored = document.entities[&entity].fields.get(&field_id);
+                let is_date_value = is_date && matches!(stored, Some(Value::Date(_)));
                 let takes_part = is_date
-                    && match document.entities[&entity].fields.get(&field_id) {
+                    && match stored {
                         Some(Value::Date(_)) => true,
                         None => pattern.is_some_and(|pattern| {
                             crate::interop_number_format::classify(Some(pattern))
@@ -1235,7 +1237,11 @@ fn promote_import_presentation(
                     if format.is_none() && unsupported.is_none() {
                         unsupported = pattern.map(str::to_owned);
                     }
-                    style.number_format = None;
+                    // Export reads the store only for Date values, so a
+                    // blank cell keeps its own pattern in metadata.
+                    if is_date_value {
+                        style.number_format = None;
+                    }
                     Some(format.unwrap_or(DateFormat::Iso))
                 } else {
                     None
