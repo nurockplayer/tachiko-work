@@ -290,6 +290,15 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
     },
+    DeleteTable {
+        expected_revision: String,
+        collection: String,
+    },
+    AddTable {
+        expected_revision: String,
+        name: String,
+        columns: Vec<NewTableColumnInput>,
+    },
     DuplicateCollection {
         expected_revision: String,
         collection: String,
@@ -1760,6 +1769,12 @@ pub enum DesignerError {
     InvalidTrackerOperation { message: String },
     #[error("table creation rejected: {message}")]
     InvalidTableOperation { message: String },
+    #[error("the last table cannot be deleted")]
+    LastTable,
+    #[error("the table is referenced by other subjects")]
+    TableReferenced {
+        diagnostics: Vec<DiagnosticProjection>,
+    },
     #[error("native name admission rejected: {}", name_admission::failure_message(.failures))]
     NameAdmission { failures: Vec<NameFailure> },
     #[error("{message}")]
@@ -1916,6 +1931,8 @@ impl DesignerError {
                     facts: Vec::new(),
                 }],
             ),
+            Self::LastTable => ("last_table", Vec::new()),
+            Self::TableReferenced { diagnostics } => ("table_referenced", diagnostics.clone()),
             Self::InvalidTrackerOperation { .. } => ("invalid_tracker_operation", Vec::new()),
             Self::InvalidTableOperation { .. } | Self::NameAdmission { .. } => {
                 ("invalid_table_operation", Vec::new())
@@ -2233,14 +2250,34 @@ impl HistoryEntry {
 #[cfg_attr(test, derive(Debug))]
 enum HistoryAction {
     Commands(Vec<SemanticCommand>),
-    FormulaUpdate { target: FieldTarget, source: String },
-    FormulaInverseRestore { target: FieldTarget, value: Number },
+    TableCommands {
+        commands: Vec<SemanticCommand>,
+        default_collection: String,
+    },
+    FormulaUpdate {
+        target: FieldTarget,
+        source: String,
+    },
+    FormulaInverseRestore {
+        target: FieldTarget,
+        value: Number,
+    },
 }
 
 impl HistoryAction {
     fn approx_bytes(&self) -> usize {
         match self {
             Self::Commands(commands) => commands.iter().map(SemanticCommand::approx_bytes).sum(),
+            Self::TableCommands {
+                commands,
+                default_collection,
+            } => {
+                commands
+                    .iter()
+                    .map(SemanticCommand::approx_bytes)
+                    .sum::<usize>()
+                    + default_collection.len()
+            }
             Self::FormulaUpdate { target, source } => {
                 target.entity.len() + target.field.len() + source.len()
             }
@@ -3580,6 +3617,21 @@ impl DesignerRuntime {
                 &expected_revision,
                 &collection,
                 &field,
+            )?)),
+            DesignerRequest::DeleteTable {
+                expected_revision,
+                collection,
+            } => Ok(DesignerResponse::Published(
+                self.delete_table(&expected_revision, &collection)?,
+            )),
+            DesignerRequest::AddTable {
+                expected_revision,
+                name,
+                columns,
+            } => Ok(DesignerResponse::Duplicated(self.add_table(
+                &expected_revision,
+                &name,
+                &columns,
             )?)),
             DesignerRequest::DuplicateCollection {
                 expected_revision,
@@ -5909,6 +5961,185 @@ impl DesignerRuntime {
         self.record_edit(expected, forward, inverse)
     }
 
+    fn delete_table(
+        &mut self,
+        expected: &str,
+        collection: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let document = self.session.document();
+        let spec = self.collection_specs.get(collection).ok_or_else(|| {
+            DesignerError::MissingCollection {
+                collection: collection.to_owned(),
+            }
+        })?;
+        if document.schemas.len() == 1 {
+            return Err(DesignerError::LastTable);
+        }
+        let schema = document
+            .schemas
+            .get(&SchemaId::from(spec.summary.id.clone()))
+            .ok_or_else(|| table_error("table schema is unavailable"))?
+            .clone();
+        let entities = spec
+            .entities
+            .iter()
+            .filter_map(|id| document.entities.get(id).cloned())
+            .collect::<Vec<_>>();
+        let mut candidate = document.clone();
+        candidate.schemas.remove(&schema.id);
+        for entity in &entities {
+            candidate.entities.remove(&entity.id);
+        }
+        let mut diagnostics = Vec::new();
+        let mut validation_candidate = candidate.clone();
+        validation_candidate.keyed_grouped_sum_definitions.clear();
+        if let PreparedVerdict::InvalidDocument { report } = self
+            .session
+            .prepare_evaluation(validation_candidate)
+            .verdict()
+        {
+            diagnostics.extend(report.diagnostics().iter().map(diagnostic_projection));
+        }
+        for definition in document.keyed_grouped_sum_definitions.values() {
+            if definition.orders.schema == schema.id || definition.products.schema == schema.id {
+                diagnostics.push(DiagnosticProjection {
+                    code: "table_referenced".into(),
+                    message: format!("keyed definition '{}' references this table", definition.id),
+                    path: format!("keyed_grouped_sum_definitions.{}", definition.id),
+                    subjects: Vec::new(),
+                    related_subjects: vec![SemanticSubject::Schema(schema.id.clone())],
+                    facts: Vec::new(),
+                });
+            }
+        }
+        if !diagnostics.is_empty() {
+            return Err(DesignerError::TableReferenced { diagnostics });
+        }
+        let old_default = self.default_collection.clone();
+        let new_default = if collection == old_default {
+            candidate
+                .schemas
+                .values()
+                .next()
+                .ok_or(DesignerError::LastTable)?
+                .key
+                .to_string()
+        } else {
+            old_default.clone()
+        };
+        let forward = vec![SemanticCommand::RemoveCollection {
+            schema: schema.id.clone(),
+            entities: entities.iter().map(|entity| entity.id.clone()).collect(),
+        }];
+        let inverse = vec![SemanticCommand::AppendCollection { schema, entities }];
+        let publication = self.publish_commands(expected, forward.clone())?;
+        self.default_collection = new_default.clone();
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::TableCommands {
+                commands: forward,
+                default_collection: new_default,
+            },
+            HistoryAction::TableCommands {
+                commands: inverse,
+                default_collection: old_default,
+            },
+        ));
+        Ok(publication)
+    }
+
+    fn add_table(
+        &mut self,
+        expected: &str,
+        name: &str,
+        columns: &[NewTableColumnInput],
+    ) -> Result<DuplicateCollectionProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let document = self.session.document();
+        capacity::check_limit(
+            CapacityLimit::Collections,
+            MAX_COLLECTIONS,
+            document.schemas.len().saturating_add(1),
+            None,
+        )?;
+        let mut failures = Vec::new();
+        let admitted = name_admission::check_name(
+            name,
+            Some(&name_admission::NameInput::Table),
+            &[],
+            &mut failures,
+        );
+        if let Some(name) = admitted {
+            let subjects = document
+                .schemas
+                .values()
+                .filter(|schema| schema.effective_name() == name)
+                .map(|schema| SemanticSubject::Schema(schema.id.clone()))
+                .collect::<Vec<_>>();
+            if !subjects.is_empty() {
+                failures.push(NameFailure {
+                    reason: "duplicate_display_name".into(),
+                    inputs: vec![name_admission::NameInput::Table],
+                    subjects,
+                    effective_name: Some(name.to_owned()),
+                });
+            }
+        }
+        name_admission::refuse(failures)?;
+        let name = admitted.expect("table name admitted");
+        let mut serial = self.duplicate_serial;
+        let mut schema = loop {
+            serial += 1;
+            let namespace = format!("{}/add/{serial}", self.row_namespace);
+            let candidate = Self::new_table_document(&namespace, name, columns)?;
+            let schema = candidate
+                .schemas
+                .into_values()
+                .next()
+                .expect("new table has one schema");
+            if !document.schemas.contains_key(&schema.id)
+                && schema.fields.keys().all(|id| {
+                    !document
+                        .schemas
+                        .values()
+                        .any(|existing| existing.fields.contains_key(id))
+                })
+            {
+                break schema;
+            }
+        };
+        let occupied = document
+            .schemas
+            .values()
+            .map(|schema| schema.key.to_string())
+            .collect();
+        let key = allocate_key(name, "table", &occupied)?;
+        schema.key = SchemaKey::from(key.clone());
+        let forward = vec![SemanticCommand::AppendCollection {
+            schema: schema.clone(),
+            entities: Vec::new(),
+        }];
+        let inverse = vec![SemanticCommand::RemoveCollection {
+            schema: schema.id,
+            entities: Vec::new(),
+        }];
+        let publication = self.publish_commands(expected, forward.clone())?;
+        self.duplicate_serial = serial;
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::Commands(forward),
+            HistoryAction::Commands(inverse),
+        ));
+        let collection = self
+            .collection_specs
+            .get(&key)
+            .map(|spec| spec.summary.clone())
+            .ok_or_else(|| table_error("added collection projection is unavailable"))?;
+        Ok(DuplicateCollectionProjection {
+            publication,
+            collection,
+        })
+    }
+
     /// Duplicate one semantic collection into a fresh schema/field/entity
     /// identity graph. Formula references are remapped only when both their
     /// entity and field belong to the copied collection; external references
@@ -7476,6 +7707,14 @@ impl DesignerRuntime {
         let action = if redo { &entry.forward } else { &entry.inverse };
         let result = match action {
             HistoryAction::Commands(commands) => self.publish_commands(expected, commands.clone()),
+            HistoryAction::TableCommands {
+                commands,
+                default_collection,
+            } => {
+                let result = self.publish_commands(expected, commands.clone())?;
+                self.default_collection = default_collection.clone();
+                Ok(result)
+            }
             HistoryAction::FormulaUpdate { target, source } => self
                 .publish_formula_update(expected, target, source, None)
                 .map(|(publication, _)| publication),

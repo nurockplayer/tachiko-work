@@ -297,6 +297,30 @@ describe("selected v3 Worker export", () => {
 });
 
 describe("duplicate collection column names", () => {
+  it("sends add and delete table requests", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const requests: Record<string, unknown>[] = [];
+    const publication = { resulting_revision: "resident/1" };
+    const duplicated = { publication, collection: { id: "new", key: "new", entity_count: 0 } };
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => { if (type === "message") receive = callback; },
+      postMessage: (request: { id: number; request: Record<string, unknown> }) => {
+        requests.push(request.request);
+        const response = request.request.type === "add_table" ? { type: "duplicated", payload: duplicated } : { type: "published", payload: publication };
+        receive?.({ data: { id: request.id, status: "ok", response } } as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    const columns = [{name: "Name", field_type: "text", required: true}];
+    await expect(client.addTable("resident/0", "New", columns)).resolves.toEqual(duplicated);
+    await expect(client.deleteTable("resident/1", "new")).resolves.toEqual(publication);
+    expect(requests).toEqual([
+      {type: "add_table", expected_revision: "resident/0", name: "New", columns},
+      {type: "delete_table", expected_revision: "resident/1", collection: "new"},
+    ]);
+  });
+
   it("sends the copy's column names with the duplicate request", async () => {
     const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
     let receive: ((event: MessageEvent) => void) | undefined;
