@@ -5813,9 +5813,7 @@ impl DesignerRuntime {
         width: Option<u32>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
-        // A removed column or table leaves its entries in the live store until
-        // save; drop them so they do not fail validation of this edit.
-        let mut candidate = prune_presentation(&self.presentation, self.session.document());
+        let mut candidate = self.presentation.clone();
         let table = candidate.tables.entry(schema.clone()).or_default();
         let old_style = table.column_styles.remove(field);
         if let Some(style) = style {
@@ -5846,8 +5844,13 @@ impl DesignerRuntime {
                 candidate.styles.remove(&id);
             }
         }
-        validate_presentation(&candidate, self.session.document())
-            .map_err(|error| table_error(&format!("invalid presentation: {error:?}")))?;
+        // A removed column or table keeps its entries in the live store so Undo
+        // can bring them back; validate without them, as save does.
+        validate_presentation(
+            &prune_presentation(&candidate, self.session.document()),
+            self.session.document(),
+        )
+        .map_err(|error| table_error(&format!("invalid presentation: {error:?}")))?;
         let resulting_revision = self.publish_presentation(expected, candidate)?;
         Ok(PublicationProjection {
             base_revision: expected.to_owned(),

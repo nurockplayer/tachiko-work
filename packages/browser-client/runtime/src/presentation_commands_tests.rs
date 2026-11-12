@@ -359,6 +359,7 @@ fn edits_after_a_styled_column_is_removed() {
                 .is_ok()
         })
         .expect("a removable column");
+    let removed_column = removed.clone();
     let removed = FieldId::from(removed);
     let stale = |runtime: &DesignerRuntime| {
         runtime
@@ -372,7 +373,7 @@ fn edits_after_a_styled_column_is_removed() {
     runtime
         .set_column_wrap(&revision, &collection, FIELD, Some(true))
         .unwrap();
-    assert!(!stale(&runtime));
+    assert!(stale(&runtime));
     assert_eq!(
         column(&window(&mut runtime, &TableView::default()))
             .style
@@ -380,4 +381,17 @@ fn edits_after_a_styled_column_is_removed() {
             .and_then(|style| style.wrap),
         Some(true)
     );
+    for _ in 0..2 {
+        let expected_revision = runtime.current_revision().to_owned();
+        runtime
+            .handle(DesignerRequest::Undo { expected_revision })
+            .unwrap();
+    }
+    let restored = window(&mut runtime, &TableView::default());
+    let restored = restored
+        .columns
+        .iter()
+        .find(|column| column.id == removed_column)
+        .expect("the removed column is back");
+    assert_eq!(restored.width, Some(512));
 }
