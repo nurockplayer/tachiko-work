@@ -428,7 +428,7 @@ fn import_presentation_round_trip_clear_and_reopen() {
 fn a_blank_cell_with_its_own_date_format_keeps_the_column_mixed() {
     let (mut source, selection) = import_presentation_fixture(&["mmm d, yyyy", "yyyy-mm-dd"]);
     source.sheets[0].rows[1][0].value = SourceValue::Empty;
-    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
     let sheet = &imported.metadata.sheets[0];
     let schema = SchemaId::from(sheet.schema_id.clone());
     let field = tachiko_workspace_engine::FieldId::from(sheet.columns[0].field_id.clone());
@@ -450,17 +450,11 @@ fn a_blank_cell_with_its_own_date_format_keeps_the_column_mixed() {
         runtime.presentation.styles[&runtime.presentation.cells[&filled]].date_format,
         Some(DateFormat::MonthDayYear)
     );
-    assert!(
-        runtime
-            .presentation
-            .cells
-            .get(&blank)
-            .is_none_or(|id| runtime.presentation.styles[id].date_format.is_none())
-    );
     assert_eq!(
-        sheet.rows[1].styles[0].number_format.as_deref(),
-        Some("yyyy-mm-dd")
+        runtime.presentation.styles[&runtime.presentation.cells[&blank]].date_format,
+        Some(DateFormat::Iso)
     );
+    assert_eq!(sheet.rows[1].styles[0].number_format, None);
     let exported = runtime
         .export_workbook(runtime.current_revision(), &imported.metadata)
         .unwrap();
@@ -471,6 +465,24 @@ fn a_blank_cell_with_its_own_date_format_keeps_the_column_mixed() {
     );
     assert_eq!(
         rows[1][0].style.number_format.as_deref(),
+        Some("yyyy-mm-dd")
+    );
+    let DesignerResponse::Published(changed) = runtime
+        .handle(DesignerRequest::SetColumnDateFormat {
+            expected_revision: runtime.current_revision().to_owned(),
+            collection: imported.opened.bootstrap.default_collection.clone(),
+            field: sheet.columns[0].field_id.clone(),
+            date_format: Some(DateFormat::Mdy),
+        })
+        .unwrap()
+    else {
+        panic!("format change publishes")
+    };
+    let exported = runtime
+        .export_workbook(&changed.resulting_revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[1][0].style.number_format.as_deref(),
         Some("yyyy-mm-dd")
     );
 }

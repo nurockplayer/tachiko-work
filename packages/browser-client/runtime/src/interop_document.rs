@@ -1339,6 +1339,7 @@ fn promote_import_presentation(
             let mut alignments = Vec::new();
             let mut wraps = Vec::new();
             let mut dates = Vec::new();
+            let mut blank_date_formats = Vec::new();
             let field = &document.schemas[&schema_id].fields[&field_id];
             let is_number = field.field_type == FieldType::Number;
             let field_number_format = field.number_format.clone();
@@ -1397,6 +1398,13 @@ fn promote_import_presentation(
                 // there later gets, so it takes part like a Date value.
                 let stored = document.entities[&entity].fields.get(&field_id);
                 let is_date_value = is_date && matches!(stored, Some(Value::Date(_)));
+                blank_date_formats.push(
+                    is_date
+                        && stored.is_none()
+                        && pattern
+                            .and_then(crate::interop_date_format::from_excel)
+                            .is_some(),
+                );
                 let takes_part = is_date
                     && match stored {
                         Some(Value::Date(_)) => true,
@@ -1498,7 +1506,11 @@ fn promote_import_presentation(
                         alignments[row_index]
                     },
                     wrap: (wraps[row_index] && !common_wrap).then_some(true),
-                    date_format: if uniform_date.is_none() {
+                    date_format: if blank_date_formats[row_index] {
+                        dates[row_index].filter(|format| {
+                            Some(*format) != uniform_date.filter(|value| *value != DateFormat::Iso)
+                        })
+                    } else if uniform_date.is_none() {
                         dates[row_index].filter(|format| *format != DateFormat::Iso)
                     } else {
                         None

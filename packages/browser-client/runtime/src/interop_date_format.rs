@@ -103,7 +103,7 @@ pub(crate) fn cell_style(
     {
         if let Some(format) = date_format {
             result.number_format = Some(to_excel(format).into());
-        } else if result.number_format.is_none() {
+        } else if matches!(value, SourceValue::Date { .. }) && result.number_format.is_none() {
             result.number_format = Some(to_excel(DateFormat::Iso).into());
         }
     }
