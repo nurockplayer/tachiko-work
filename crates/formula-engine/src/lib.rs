@@ -349,6 +349,7 @@ fn bind_criterion_value(
     }
 }
 
+#[allow(clippy::too_many_lines)] // One arm per closed-world expression node.
 fn bind_node(
     document: &Document,
     index: &AddressIndex,
@@ -425,6 +426,10 @@ fn bind_node(
             condition: Box::new(bind_node(document, index, owner, condition)?),
             then_value: Box::new(bind_node(document, index, owner, then_value)?),
             else_value: Box::new(bind_node(document, index, owner, else_value)?),
+        },
+        UnboundExpression::IfError { value, fallback } => Expression::IfError {
+            value: Box::new(bind_node(document, index, owner, value)?),
+            fallback: Box::new(bind_node(document, index, owner, fallback)?),
         },
         UnboundExpression::And(arguments) => {
             Expression::And(bind_arguments(document, index, owner, arguments)?)
@@ -698,6 +703,11 @@ fn render_bound(
             render_bound(condition, owner, addresses, columns),
             render_bound(then_value, owner, addresses, columns),
             render_bound(else_value, owner, addresses, columns)
+        ),
+        Expression::IfError { value, fallback } => format!(
+            "IFERROR({}, {})",
+            render_bound(value, owner, addresses, columns),
+            render_bound(fallback, owner, addresses, columns)
         ),
         Expression::And(arguments) => {
             render_bound_function("AND", arguments, owner, addresses, columns)
@@ -2118,7 +2128,8 @@ fn pregraph_failures(
                 .reference_uses(field)
                 .into_iter()
                 .map(|(dependency, numeric)| {
-                    // A value missing only inside an IF branch is decided at
+                    // A value missing only inside an IF branch or IFERROR fallback
+                    // is decided at
                     // evaluation, when the branch is actually selected; the
                     // reference itself must still be well-formed.
                     let failure = if unconditional.contains(&dependency) {

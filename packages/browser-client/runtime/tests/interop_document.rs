@@ -2520,3 +2520,92 @@ fn absolute_and_directed_rounding_round_trip_through_xlsx() {
         );
     }
 }
+
+#[test]
+fn iferror_round_trips_through_xlsx_with_success_and_caught_failure() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: ["Numerator", "Denominator", "Result"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows: vec![
+                vec![
+                    source_cell(SourceValue::Number { value: 8.0 }, None),
+                    source_cell(SourceValue::Number { value: 0.0 }, None),
+                    source_cell(
+                        SourceValue::Number { value: 0.0 },
+                        Some("=IFERROR(A2/B2,0)"),
+                    ),
+                ],
+                vec![
+                    source_cell(SourceValue::Number { value: 8.0 }, None),
+                    source_cell(SourceValue::Number { value: 2.0 }, None),
+                    source_cell(
+                        SourceValue::Number { value: 4.0 },
+                        Some("=IFERROR(A3/B3,0)"),
+                    ),
+                ],
+            ],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 3]],
+        extra_columns: vec![vec![]],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][2].formula.as_deref(),
+        Some("IFERROR((A2/B2),0)")
+    );
+    assert_eq!(
+        exported.sheets[0].rows[0][2].value,
+        SourceValue::Number { value: 0.0 }
+    );
+    assert_eq!(
+        exported.sheets[0].rows[1][2].value,
+        SourceValue::Number { value: 4.0 }
+    );
+    let source = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    assert!(
+        !source.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        source.ledger
+    );
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let reopened = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for index in 0..2 {
+        assert_eq!(
+            reopened.sheets[0].rows[index][2].formula,
+            exported.sheets[0].rows[index][2].formula
+        );
+        assert_eq!(
+            reopened.sheets[0].rows[index][2].value,
+            exported.sheets[0].rows[index][2].value
+        );
+    }
+}

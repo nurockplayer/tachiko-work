@@ -749,3 +749,52 @@ fn abs_and_directed_rounding_have_fixed_bytes_and_strict_reader_refusals() {
         );
     }
 }
+
+#[test]
+fn iferror_has_fixed_bytes_and_strict_reader_refusals() {
+    let mut document = fixture();
+    document
+        .entities
+        .get_mut("entity-a")
+        .unwrap()
+        .fields
+        .insert(
+            "formula".into(),
+            Value::Formula(Expression::IfError {
+                value: Box::new(Expression::Divide {
+                    left: Box::new(Expression::Number(number(1.29))),
+                    right: Box::new(Expression::Number(number(3.0))),
+                }),
+                fallback: Box::new(Expression::Number(number(0.0))),
+            }),
+        );
+    let tree = encode_roproj_v3(&document).unwrap();
+    let entity = std::str::from_utf8(tree.file("entities/6.jsonl").unwrap()).unwrap();
+    let if_error = r#"{"op":"if_error","args":{"value":{"op":"divide","args":{"left":{"op":"number","args":1.29},"right":{"op":"number","args":3}}},"fallback":{"op":"number","args":0}}}"#;
+    assert!(entity.contains(if_error), "{entity}");
+    assert_eq!(decode_roproj_v3(&tree).unwrap(), document);
+
+    let invalid = [
+        (
+            if_error,
+            r#"{"op":"if_error","args":{"value":{"op":"divide","args":{"left":{"op":"number","args":1.29},"right":{"op":"number","args":3}}}}}"#,
+        ),
+        (
+            if_error,
+            r#"{"op":"if_error","args":{"value":{"op":"divide","args":{"left":{"op":"number","args":1.29},"right":{"op":"number","args":3}}},"fallback":{"op":"number","args":0},"extra":0}}"#,
+        ),
+        (
+            if_error,
+            r#"{"op":"if_error","args":[{"op":"number","args":1},{"op":"number","args":0}]}"#,
+        ),
+    ];
+    for (old, new) in invalid {
+        let error =
+            CanonicalRoProjectV3::try_from_files(replace(&tree, "entities/6.jsonl", old, new))
+                .unwrap_err();
+        assert!(
+            matches!(error, FormatError::InvalidRoProjectRepresentation { .. }),
+            "{error:?}"
+        );
+    }
+}

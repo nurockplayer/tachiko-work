@@ -10,6 +10,11 @@ All notable changes to Tachiko Work are documented in this file.
   100,000 populated cells, with typed capacity refusals. Supported date
   formats on blank Date cells survive import and export.
 
+- `IFERROR(value, fallback)` catches own-expression runtime failures with a lazy
+  Number fallback across formula authoring, canonical v3/direct v2 persistence,
+  A1 entry and XLSX import/export. Upstream failures retain existing refusal
+  behavior pending ADR-0047 per-cell publication in 1.1.
+
 - Formula authoring and XLSX interoperability support `ABS`, `ROUNDUP` and
   `ROUNDDOWN`, including decimal-directed rounding and canonical persistence.
 

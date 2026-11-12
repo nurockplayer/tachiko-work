@@ -498,3 +498,27 @@ fn rows_per_schema<'a>(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod iferror_tests {
+    use super::{SessionProfile, formula_usage};
+    use std::collections::BTreeMap;
+    use tachiko_workspace_engine::{EntityId, Expression, FieldId};
+
+    #[test]
+    fn iferror_counts_both_operands_and_their_dependencies() {
+        let expression = Expression::IfError {
+            value: Box::new(Expression::SameRowReference(FieldId::from("value"))),
+            fallback: Box::new(Expression::SameRowReference(FieldId::from("fallback"))),
+        };
+        assert_eq!(
+            formula_usage(
+                SessionProfile::Ordinary,
+                &BTreeMap::new(),
+                &EntityId::from("row"),
+                &expression,
+            ),
+            (3, 2)
+        );
+    }
+}
