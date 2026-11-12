@@ -3738,7 +3738,7 @@ fn fill_control_cells(document: &mut Document, cells: usize) {
     }
 }
 
-fn crossing_documents() -> (Document, Document, String) {
+pub(super) fn crossing_documents() -> (Document, Document, String) {
     let mut before = text_grid(6, 28);
     fill_control_cells(&mut before, 167);
     let mut after = before.clone();

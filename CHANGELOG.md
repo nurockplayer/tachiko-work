@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A column's alignment, wrapping and width are set through the kit
+  (`setColumnAlignment`, `setColumnWrap`, `setColumnWidth`), each undoable on
+  its own, and table windows report them per column.
+
 - Formula authoring and XLSX interoperability support `ABS`, `ROUNDUP` and
   `ROUNDDOWN`, including decimal-directed rounding and canonical persistence.
 

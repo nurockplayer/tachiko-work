@@ -122,6 +122,8 @@ export type ConstraintFailureProjection = {
   offending_rows: number;
 };
 
+export type CellAlignment = "left" | "center" | "right";
+
 export type ColumnProjection = {
   id: string;
   key: string;
@@ -136,6 +138,8 @@ export type ColumnProjection = {
   /** Declared display-only number format; omission means default formatting. */
   number_format?: NumberFormat;
   date_format?: DateFormat;
+  style?: { alignment?: CellAlignment; wrap?: boolean };
+  width?: number;
 };
 
 export type TableRowProjection = {
@@ -517,6 +521,7 @@ export function isCapacityFailure(failure: FailureProjection): failure is Capaci
 
 /** Known runtime failure codes, while allowing forward-compatible additions. */
 export type FailureCode =
+  | "invalid_column_width"
   | "last_table"
   | "table_referenced"
   | "required_values_missing"
@@ -562,6 +567,9 @@ export type TrackerCommand =
   | { type: "set_column_constraint"; expected_revision: string; collection: string; field: string; constraint: FieldConstraintInput }
   | { type: "set_column_number_format"; expected_revision: string; collection: string; field: string; number_format: NumberFormat | null }
   | { type: "set_column_date_format"; expected_revision: string; collection: string; field: string; date_format: DateFormat | null }
+  | { type: "set_column_alignment"; expected_revision: string; collection: string; field: string; alignment: CellAlignment | null }
+  | { type: "set_column_wrap"; expected_revision: string; collection: string; field: string; wrap: boolean | null }
+  | { type: "set_column_width"; expected_revision: string; collection: string; field: string; width: number | null }
   | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "rename_table"; expected_revision: string; collection: string; name: string }
   | { type: "rename_column"; expected_revision: string; collection: string; field: string; name: string }

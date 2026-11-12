@@ -99,3 +99,23 @@ it("encodes date format changes and clears", async () => {
   ]);
   client.close();
 });
+
+
+it("encodes column presentation changes and clears", async () => {
+  const {client, requests, published} = fixture();
+  await published(client.setColumnAlignment("r0", "tasks", "amount", "center"));
+  await published(client.setColumnAlignment("r1", "tasks", "amount", null));
+  await published(client.setColumnWrap("r2", "tasks", "amount", false));
+  await published(client.setColumnWrap("r3", "tasks", "amount", null));
+  await published(client.setColumnWidth("r4", "tasks", "amount", 2560));
+  await published(client.setColumnWidth("r5", "tasks", "amount", null));
+  expect(requests).toEqual([
+    {id: 1, kind: "command", request: {type: "set_column_alignment", expected_revision: "r0", collection: "tasks", field: "amount", alignment: "center"}},
+    {id: 2, kind: "command", request: {type: "set_column_alignment", expected_revision: "r1", collection: "tasks", field: "amount", alignment: null}},
+    {id: 3, kind: "command", request: {type: "set_column_wrap", expected_revision: "r2", collection: "tasks", field: "amount", wrap: false}},
+    {id: 4, kind: "command", request: {type: "set_column_wrap", expected_revision: "r3", collection: "tasks", field: "amount", wrap: null}},
+    {id: 5, kind: "command", request: {type: "set_column_width", expected_revision: "r4", collection: "tasks", field: "amount", width: 2560}},
+    {id: 6, kind: "command", request: {type: "set_column_width", expected_revision: "r5", collection: "tasks", field: "amount", width: null}},
+  ]);
+  client.close();
+});
