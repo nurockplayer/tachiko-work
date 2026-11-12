@@ -3265,7 +3265,7 @@ fn long_identity_grid() -> Document {
 }
 
 fn formula_grid() -> Document {
-    let mut document = text_grid(21, 2);
+    let mut document = text_grid(23, 2);
     {
         let schema = document.schemas.get_mut(&SchemaId::from("grid")).unwrap();
         for field in ["c0", "c1"] {
@@ -3296,6 +3296,18 @@ fn formula_grid() -> Document {
         Expression::Reference(FieldRef::new("r00000", "c0")),
         Expression::SameRowReference(FieldId::from("c0")),
         Expression::ColumnTotal(column()),
+        Expression::Lookup {
+            key: Box::new(number()),
+            key_column: column(),
+            result_column: column(),
+            if_missing: None,
+        },
+        Expression::Lookup {
+            key: Box::new(number()),
+            key_column: column(),
+            result_column: column(),
+            if_missing: Some(Box::new(number())),
+        },
         Expression::ColumnAggregate {
             function: ColumnAggregateFunction::Average,
             column: column(),

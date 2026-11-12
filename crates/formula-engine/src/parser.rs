@@ -42,6 +42,12 @@ pub enum UnboundExpression {
         aggregate: UnboundConditionalAggregate,
         criteria: Vec<UnboundColumnCriterion>,
     },
+    Lookup {
+        key: Box<Self>,
+        key_column: ColumnAddress,
+        result_column: ColumnAddress,
+        if_missing: Option<Box<Self>>,
+    },
     Add {
         left: Box<Self>,
         right: Box<Self>,
@@ -193,6 +199,7 @@ pub fn validate_unbound_expression_structure(
 
 /// Render an unbound expression in deterministic copy/paste-safe syntax.
 #[must_use]
+#[allow(clippy::too_many_lines)] // One arm per closed-world expression node.
 pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
     match expression {
         UnboundExpression::Number(number) => format_number(*number),
@@ -210,6 +217,25 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
             aggregate,
             criteria,
         } => format_conditional(aggregate, criteria),
+        UnboundExpression::Lookup {
+            key,
+            key_column,
+            result_column,
+            if_missing,
+        } => {
+            let fallback = if_missing
+                .as_deref()
+                .map(|value| format!(", {}", format_unbound_expression(value)))
+                .unwrap_or_default();
+            format!(
+                "LOOKUP({}, [{}.{}:column], [{}.{}:column]{fallback})",
+                format_unbound_expression(key),
+                key_column.schema,
+                key_column.field,
+                result_column.schema,
+                result_column.field
+            )
+        }
         UnboundExpression::Add { left, right } => format_binary(left, "+", right),
         UnboundExpression::Subtract { left, right } => format_binary(left, "-", right),
         UnboundExpression::Multiply { left, right } => format_binary(left, "*", right),
@@ -408,6 +434,14 @@ fn push_children<'expression>(
     child_depth: usize,
 ) {
     match expression {
+        UnboundExpression::Lookup {
+            key, if_missing, ..
+        } => {
+            if let Some(value) = if_missing {
+                stack.push((value, child_depth));
+            }
+            stack.push((key, child_depth));
+        }
         UnboundExpression::If {
             condition,
             then_value,
@@ -822,6 +856,33 @@ impl<'input> Parser<'input> {
             "SUMIF" | "SUMIFS" | "AVERAGEIF" | "AVERAGEIFS" | "COUNTIF" | "COUNTIFS"
         ) {
             return self.parse_conditional_function(start, &upper);
+        }
+        if upper == "LOOKUP" {
+            self.skip_whitespace();
+            let open = self.position;
+            self.expect(b'(', "expected '(' after LOOKUP")?;
+            self.record_node(start)?;
+            return self.with_nesting(open, |parser| {
+                let key = Box::new(parser.parse_comparison()?);
+                parser.expect(b',', "expected ',' after lookup key")?;
+                let key_column = parser.parse_column_argument()?;
+                parser.expect(b',', "expected ',' after lookup key column")?;
+                let result_column = parser.parse_column_argument()?;
+                parser.skip_whitespace();
+                let if_missing = if parser.peek() == Some(b',') {
+                    parser.position += 1;
+                    Some(Box::new(parser.parse_comparison()?))
+                } else {
+                    None
+                };
+                parser.expect(b')', "expected ')' after LOOKUP arguments")?;
+                Ok(UnboundExpression::Lookup {
+                    key,
+                    key_column,
+                    result_column,
+                    if_missing,
+                })
+            });
         }
         let is_minimum = match name {
             "min" | "MIN" => true,

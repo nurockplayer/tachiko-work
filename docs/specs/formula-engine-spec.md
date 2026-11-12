@@ -69,6 +69,41 @@ max(0, [attacker.power] - [target.armor])
 [plan.reserve:total] + [plan-copy.reserve:total]
 ```
 
+### Exact lookup
+
+`LOOKUP(key, [table.key:column], [table.result:column][, if_missing])`
+returns the first matching row's effective Number result. Both columns must
+belong to one schema. The result column must be Number, including Number
+formulas; the key column may be Text, Number, Date or Boolean. The key is a
+Number expression or a bare scalar field reference of exactly the key column's
+type. The optional fallback must be Number. Text literals are not expression
+nodes; use a Text field reference for a Text key.
+
+Rows are visited in the same entity order as column totals. Text equality uses
+SUMIF's Unicode lowercase fold, with literal `*`, `?` and operator characters.
+Number matches Number (including `-0 == 0`), Date matches Date, and Boolean
+matches Boolean; Number `1` never matches Text `"1"`. Blank key cells never
+match. A blank key value fails as an unavailable dependency. An optional blank
+Number result reads as zero; formula results use their calculated Number.
+
+No match yields `CalculationFailure::LookupMissingKey`, projected as
+`lookup_missing_key` (`formula.lookup_missing_key` in document diagnostics).
+If `if_missing` is present, it is evaluated only on no match. A failed or
+unavailable selected result fails like reading that cell directly. As with
+SUMIF, any upstream failed cell in either whole column fails the formula,
+including unmatched rows.
+
+Static dependencies include the key, both whole columns and the fallback.
+Value prechecks read the fallback only when no row matches. One typed,
+case-folded first-row index is built lazily per key column per calculation
+pass, shared by every lookup in that pass and discarded with the other column
+caches. Retained edits rebuild the needed index for their new pass.
+
+`LOOKUP` is the Tachiko text spelling. Excel LOOKUP is not an admitted A1/XLSX
+function; Excel lookup spellings and translation belong to the separate
+interoperability change. This node persists only in `.roproj/v3`.
+IFERROR integration remains TODO(#795) until that node lands.
+
 ### Same-row references
 
 `[.field]` means a field on the entity that owns the formula. It is a

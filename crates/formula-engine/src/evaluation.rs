@@ -80,6 +80,7 @@ pub(crate) struct ColumnCache {
     entries: BTreeMap<ColumnRef, ColumnValues>,
     indexes: BTreeMap<ColumnRef, CriterionIndex>,
     conditionals: BTreeMap<ConditionalKey, Result<Number, CalculationFailure>>,
+    lookup_indexes: BTreeMap<ColumnRef, BTreeMap<CriterionKey, EntityId>>,
 }
 
 impl ColumnCache {
@@ -132,6 +133,42 @@ impl ColumnCache {
             }
         }
         self.indexes.insert(column.clone(), index);
+    }
+
+    fn lookup_index(
+        &mut self,
+        document: &Document,
+        values: &BTreeMap<FieldRef, Number>,
+        column: &ColumnRef,
+    ) {
+        if self.lookup_indexes.contains_key(column) {
+            return;
+        }
+        let mut index = BTreeMap::new();
+        for (entity_id, entity) in &document.entities {
+            if entity.schema != column.schema {
+                continue;
+            }
+            let cell = match entity.fields.get(&column.field) {
+                Some(Value::Number(_) | Value::Formula(_)) => {
+                    let reference = FieldRef::new(entity_id.clone(), column.field.clone());
+                    let Some(value) = values.get(&reference) else {
+                        continue;
+                    };
+                    CriterionCell::Number(value.get())
+                }
+                Some(Value::Text(text)) => CriterionCell::Text(text),
+                Some(Value::Boolean(value)) => CriterionCell::Boolean(*value),
+                Some(Value::Date(value)) => CriterionCell::Date(*value),
+                None | Some(Value::Reference(_)) => continue,
+            };
+            index
+                .entry(exact_key(cell))
+                .or_insert_with(|| entity_id.clone());
+        }
+        self.lookup_indexes.insert(column.clone(), index);
+        #[cfg(test)]
+        LOOKUP_INDEX_BUILDS.with(|builds| builds.set(builds.get() + 1));
     }
 
     pub(crate) fn fill(
@@ -246,6 +283,22 @@ impl Evaluation<'_> {
                         }
                     }
                 }
+                Expression::Lookup {
+                    key,
+                    key_column,
+                    result_column,
+                    if_missing,
+                } => {
+                    pending.push(key);
+                    for column in [key_column, result_column] {
+                        references.extend(first_failed_cell(self.document, column, failures));
+                    }
+                    if let Some(value) = if_missing {
+                        if matches!(self.lookup_row(key, key_column), Ok(None)) {
+                            pending.push(value);
+                        }
+                    }
+                }
                 Expression::If {
                     condition,
                     then_value,
@@ -264,6 +317,7 @@ impl Evaluation<'_> {
                             | CalculationFailure::TypeMismatch
                             | CalculationFailure::NonFiniteResult
                             | CalculationFailure::EmptyAggregate
+                            | CalculationFailure::LookupMissingKey
                             | CalculationFailure::FailedDependencies { .. })
                     ) {
                         pending.push(fallback);
@@ -342,6 +396,22 @@ impl Evaluation<'_> {
                         }
                     }
                 }
+                Expression::Lookup {
+                    key,
+                    key_column,
+                    result_column,
+                    if_missing,
+                } => {
+                    pending.push(key);
+                    for column in [key_column, result_column] {
+                        references.extend(self.columns.entry(column).first_failed.iter().cloned());
+                    }
+                    if let Some(value) = if_missing {
+                        if matches!(self.lookup_row(key, key_column), Ok(None)) {
+                            pending.push(value);
+                        }
+                    }
+                }
                 Expression::If {
                     condition,
                     then_value,
@@ -360,6 +430,7 @@ impl Evaluation<'_> {
                             | CalculationFailure::TypeMismatch
                             | CalculationFailure::NonFiniteResult
                             | CalculationFailure::EmptyAggregate
+                            | CalculationFailure::LookupMissingKey
                             | CalculationFailure::FailedDependencies { .. })
                     ) {
                         pending.push(fallback);
@@ -395,6 +466,7 @@ impl Evaluation<'_> {
                     | CalculationFailure::TypeMismatch
                     | CalculationFailure::NonFiniteResult
                     | CalculationFailure::EmptyAggregate
+                    | CalculationFailure::LookupMissingKey
                     | CalculationFailure::FailedDependencies { .. },
                 ) => self.number(fallback),
                 result => result,
@@ -462,6 +534,20 @@ impl Evaluation<'_> {
             Expression::Days { end, start } => number_result(f64::from(
                 days_from_civil(self.date(end)?) - days_from_civil(self.date(start)?),
             )),
+            Expression::Lookup {
+                key,
+                key_column,
+                result_column,
+                if_missing,
+            } => {
+                if let Some(entity) = self.lookup_row(key, key_column)? {
+                    self.reference(&FieldRef::new(entity, result_column.field.clone()))
+                } else if let Some(value) = if_missing {
+                    self.number(value)
+                } else {
+                    Err(CalculationFailure::LookupMissingKey)
+                }
+            }
             Expression::Round { value, digits } => round(self.number(value)?, *digits),
             Expression::Abs(value) => number_result(self.number(value)?.get().abs()),
             Expression::RoundUp { value, digits } => {
@@ -494,6 +580,37 @@ impl Evaluation<'_> {
             }
             _ => Err(CalculationFailure::TypeMismatch),
         }
+    }
+
+    fn lookup_row(
+        &mut self,
+        key: &Expression,
+        column: &ColumnRef,
+    ) -> Result<Option<EntityId>, CalculationFailure> {
+        let key = match key {
+            Expression::Reference(reference) => self.lookup_reference_key(reference)?,
+            Expression::SameRowReference(field) => {
+                self.lookup_reference_key(&FieldRef::new(self.owner.entity.clone(), field.clone()))?
+            }
+            expression => exact_key(CriterionCell::Number(self.number(expression)?.get())),
+        };
+        self.columns
+            .lookup_index(self.document, self.values, column);
+        Ok(self.columns.lookup_indexes[column].get(&key).cloned())
+    }
+
+    fn lookup_reference_key(
+        &self,
+        reference: &FieldRef,
+    ) -> Result<CriterionKey, CalculationFailure> {
+        if let Some(entity) = self.document.entities.get(&reference.entity) {
+            if let Some(cell) = self.criterion_cell(entity, &reference.field)? {
+                return Ok(exact_key(cell));
+            }
+        }
+        Err(CalculationFailure::FailedDependencies {
+            dependencies: BTreeSet::from([reference.clone()]),
+        })
     }
 
     fn conditional(
@@ -1032,6 +1149,15 @@ fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
     high
 }
 
+// The first key is always the cell's own typed key. SUMIF's additional
+// numeric key for numeric text is deliberately excluded from exact lookup.
+fn exact_key(cell: CriterionCell<'_>) -> CriterionKey {
+    cell.keys()
+        .into_iter()
+        .next()
+        .expect("a scalar cell has its own typed key")
+}
+
 fn number_result(value: f64) -> Result<Number, CalculationFailure> {
     Number::new(value).map_err(|_| CalculationFailure::NonFiniteResult)
 }
@@ -1082,3 +1208,11 @@ mod conditional_walks {
         BYPASS.with(|flag| flag.set(bypass));
     }
 }
+
+#[cfg(test)]
+thread_local! {
+    static LOOKUP_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod lookup_tests;

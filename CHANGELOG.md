@@ -17,7 +17,9 @@ All notable changes to Tachiko Work are documented in this file.
 - Formula engine supports `YEAR`, `MONTH`, `DAY`, `WEEKDAY`, and `DAYS` on
   Date field references, with Gregorian day differences and `.roproj/v3`
   persistence. A1 and XLSX support follow separately; `TODAY()` is deferred.
-
+- Add exact Number-result `LOOKUP` formulas with typed case-insensitive keys,
+  first-row selection, lazy missing-key fallback and a shared per-pass index;
+  persist the node in `.roproj/v3` while frozen and direct formats refuse it.
 - `IFERROR(value, fallback)` catches own-expression runtime failures with a lazy
   Number fallback across formula authoring, canonical v3/direct v2 persistence,
   A1 entry and XLSX import/export. Upstream failures retain existing refusal

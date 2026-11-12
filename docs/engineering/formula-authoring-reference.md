@@ -285,3 +285,29 @@ its own owner row.
 The source text limit is 4,096 UTF-8 bytes; an expression has at most 256
 nodes and a post-desugaring depth of 64, and its canonical projection is also
 limited to 4,096 bytes. Exceeding a structural limit refuses the update.
+
+## Exact lookup
+
+```text
+LOOKUP([settings.product], [products.key:column], [products.price:column])
+LOOKUP([settings.product], [products.key:column], [products.price:column], 0)
+```
+
+Lookup returns the first matching row in the table's entity order. Both columns
+must belong to one table, and the result must be Number (a stored value or a
+Number formula). The key is a Number expression or a bare Text/Number/Date/Boolean
+field reference whose type equals the key column's type.
+
+Text matches case-insensitively using the same lowercase fold as SUMIF. `*`,
+`?` and criterion operators in keys are literal characters. Numbers do not
+match numeric Text; signed zeroes compare equal. Blank key cells never match,
+and a blank key value is unavailable. A blank optional Number result reads as
+zero. Any failed contributor in either column fails the lookup, even on an
+unmatched row.
+
+Without a match, the formula reports `lookup_missing_key`. The fourth argument,
+when present, supplies a Number fallback evaluated only on no match. Both whole
+columns remain dependencies, so key/result edits and row membership changes
+update the result. Lookup saves in `.roproj/v3`; frozen project formats and
+direct `.ro/v2` refuse it. `LOOKUP` is Tachiko syntax only; A1/XLSX lookup
+spellings are handled separately. IFERROR support is pending #795.

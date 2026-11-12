@@ -397,6 +397,7 @@ pub(crate) enum ExpressionV3 {
     ColumnTotal(ColumnRefV3),
     ColumnAggregate(ColumnAggregateArgsV3),
     ColumnConditional(ColumnConditionalArgsV3),
+    Lookup(LookupArgumentsV3),
     Add(BinaryArgumentsV3),
     Subtract(BinaryArgumentsV3),
     Multiply(BinaryArgumentsV3),
@@ -440,6 +441,22 @@ pub(crate) struct ColumnConditionalArgsV3 {
     #[serde(default)]
     values: Option<ColumnRefV3>,
     criteria: Vec<ColumnCriterionV3>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LookupArgumentsV3 {
+    key: Box<ExpressionV3>,
+    key_column: ColumnRefV3,
+    result_column: ColumnRefV3,
+    #[serde(default, deserialize_with = "optional_lookup_fallback")]
+    if_missing: Option<Box<ExpressionV3>>,
+}
+
+fn optional_lookup_fallback<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Box<ExpressionV3>>, D::Error> {
+    Box::<ExpressionV3>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Deserialize)]
@@ -1185,6 +1202,16 @@ impl ExpressionV3 {
                     require_id("formula schema id", &column.schema)?;
                     require_id("formula field id", &column.field)?;
                 }
+                Self::Lookup(arguments) => {
+                    for column in [&arguments.key_column, &arguments.result_column] {
+                        require_id("formula schema id", &column.schema)?;
+                        require_id("formula field id", &column.field)?;
+                    }
+                    stack.push((&arguments.key, depth + 1));
+                    if let Some(value) = &arguments.if_missing {
+                        stack.push((value, depth + 1));
+                    }
+                }
                 Self::ColumnConditional(arguments) => {
                     validate_conditional(arguments, depth, &mut stack)?;
                 }
@@ -1277,6 +1304,15 @@ impl ExpressionV3 {
                     SchemaId::from(args.column.schema),
                     FieldId::from(args.column.field),
                 ),
+            },
+            Self::Lookup(args) => Expression::Lookup {
+                key: Box::new(args.key.into_semantic()?),
+                key_column: ColumnRef::new(args.key_column.schema, args.key_column.field),
+                result_column: ColumnRef::new(args.result_column.schema, args.result_column.field),
+                if_missing: args
+                    .if_missing
+                    .map(|value| value.into_semantic().map(Box::new))
+                    .transpose()?,
             },
             Self::ColumnConditional(args) => column_conditional_into_semantic(args)?,
             Self::Add(arguments) => {
@@ -1618,6 +1654,19 @@ impl ExpressionV3 {
                         .collect(),
                 })
             }
+            Expression::Lookup {
+                key,
+                key_column,
+                result_column,
+                if_missing,
+            } => Self::Lookup(LookupArgumentsV3 {
+                key: Box::new(Self::from_semantic(key)),
+                key_column: wire_column(key_column),
+                result_column: wire_column(result_column),
+                if_missing: if_missing
+                    .as_deref()
+                    .map(|value| Box::new(Self::from_semantic(value))),
+            }),
             Expression::Add { left, right } => {
                 Self::Add(BinaryArgumentsV3::from_semantic(left, right))
             }
@@ -2128,6 +2177,30 @@ pub(crate) fn write_expression(
             compact_member_string(output, "field", &args.column.field, false)?;
             output.push_str("}}");
         }
+        ExpressionV3::Lookup(args) => {
+            compact_member_string(output, "op", "lookup", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_prefix(output, "key")?;
+            write_expression(output, &args.key)?;
+            for (name, column) in [
+                ("key_column", &args.key_column),
+                ("result_column", &args.result_column),
+            ] {
+                output.push(',');
+                compact_member_prefix(output, name)?;
+                output.push('{');
+                compact_member_string(output, "schema", &column.schema, true)?;
+                compact_member_string(output, "field", &column.field, false)?;
+                output.push('}');
+            }
+            if let Some(value) = &args.if_missing {
+                output.push(',');
+                compact_member_prefix(output, "if_missing")?;
+                write_expression(output, value)?;
+            }
+            output.push('}');
+        }
         ExpressionV3::ColumnConditional(args) => {
             compact_member_string(output, "op", "column_conditional", true)?;
             compact_member_prefix(output, "args")?;
@@ -2539,6 +2612,14 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                             );
                         }
                         stack.push((expression, depth + 1));
+                    }
+                    Expression::Lookup {
+                        key, if_missing, ..
+                    } => {
+                        stack.push((key, depth + 1));
+                        if let Some(value) = if_missing {
+                            stack.push((value, depth + 1));
+                        }
                     }
                     Expression::ColumnConditional { criteria, .. } => {
                         stack.extend(

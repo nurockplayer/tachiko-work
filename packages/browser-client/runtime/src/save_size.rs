@@ -653,6 +653,29 @@ fn expression_bytes(expression: &Expression) -> u64 {
             column_bytes(column),
             2, // "}}"
         ]),
+        Expression::Lookup {
+            key,
+            key_column,
+            result_column,
+            if_missing,
+        } => total([
+            1,
+            compact_string("op", "lookup", true),
+            compact_prefix("args"),
+            1,
+            compact_prefix("key"),
+            expression_bytes(key),
+            1,
+            compact_prefix("key_column"),
+            column_bytes(key_column),
+            1,
+            compact_prefix("result_column"),
+            column_bytes(result_column),
+            if_missing.as_deref().map_or(0, |value| {
+                total([1, compact_prefix("if_missing"), expression_bytes(value)])
+            }),
+            2,
+        ]),
         Expression::ColumnConditional {
             aggregate,
             criteria,

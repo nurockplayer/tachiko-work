@@ -345,6 +345,15 @@ fn formula_usage<'a>(
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 columns.insert((&column.schema, &column.field));
             }
+            Expression::Lookup {
+                key_column,
+                result_column,
+                ..
+            } => {
+                columns.insert((&key_column.schema, &key_column.field));
+                columns.insert((&result_column.schema, &result_column.field));
+                pending.extend(expression.children());
+            }
             Expression::ColumnConditional {
                 aggregate,
                 criteria,

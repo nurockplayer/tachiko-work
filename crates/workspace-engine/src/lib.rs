@@ -92,6 +92,8 @@ pub mod diagnostic_codes {
         DiagnosticCode::new("formula.division_by_zero");
     pub const FORMULA_AGGREGATE_EMPTY: DiagnosticCode =
         DiagnosticCode::new("formula.aggregate_empty");
+    pub const FORMULA_LOOKUP_MISSING_KEY: DiagnosticCode =
+        DiagnosticCode::new("formula.lookup_missing_key");
     pub const FORMULA_NON_FINITE_RESULT: DiagnosticCode =
         DiagnosticCode::new("formula.non_finite_result");
     pub const MERGE_UNMATERIALIZED_QUALIFIED_FIELD: DiagnosticCode =
@@ -2808,6 +2810,7 @@ fn unmaterialized_qualified_field_diagnostic(fact: &UnmaterializedStoredFact) ->
 
 const FORMULA_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.formula-engine");
 
+#[allow(clippy::too_many_lines)] // One arm per closed-world calculation failure.
 fn formula_diagnostics(
     document: &Document,
     failures: &BTreeMap<FieldRef, CalculationFailure>,
@@ -2876,6 +2879,12 @@ fn formula_diagnostics(
             CalculationFailure::FailedDependencies { .. } => {
                 unreachable!("failed dependencies are projected after primary failures")
             }
+            CalculationFailure::LookupMissingKey => formula_diagnostic(
+                diagnostic_codes::FORMULA_LOOKUP_MISSING_KEY,
+                vec![subject],
+                path,
+                format!("formula '{formula}' has no matching lookup key"),
+            ),
             CalculationFailure::EmptyAggregate => formula_diagnostic(
                 diagnostic_codes::FORMULA_AGGREGATE_EMPTY,
                 vec![subject],
@@ -3098,6 +3107,7 @@ fn formula_prerequisites_available(
         | CalculationFailure::InvalidReferences { .. }
         | CalculationFailure::FailedDependencies { .. }
         | CalculationFailure::DivisionByZero
+        | CalculationFailure::LookupMissingKey
         | CalculationFailure::EmptyAggregate
         | CalculationFailure::NonFiniteResult
         | CalculationFailure::InvalidColumn { .. } => true,
@@ -3354,6 +3364,12 @@ fn drop_expression_iteratively(expression: Expression) {
             | Expression::DatePart { operand: value, .. }
             | Expression::Weekday { operand: value, .. }
             | Expression::IsBlank(value) => stack.push(*value),
+            Expression::Lookup {
+                key, if_missing, ..
+            } => {
+                stack.push(*key);
+                stack.extend(if_missing.map(|value| *value));
+            }
             Expression::ColumnConditional { criteria, .. } => {
                 stack.extend(
                     criteria

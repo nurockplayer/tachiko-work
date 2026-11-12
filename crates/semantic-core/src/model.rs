@@ -765,6 +765,12 @@ pub enum Expression {
         aggregate: Box<ConditionalAggregate>,
         criteria: Vec<ColumnCriterion>,
     },
+    Lookup {
+        key: Box<Expression>,
+        key_column: ColumnRef,
+        result_column: ColumnRef,
+        if_missing: Option<Box<Expression>>,
+    },
     Add {
         left: Box<Self>,
         right: Box<Self>,
@@ -895,6 +901,13 @@ impl Expression {
             | Self::SameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Vec::new(),
+            Self::Lookup {
+                key, if_missing, ..
+            } => {
+                let mut children = vec![key.as_ref()];
+                children.extend(if_missing.as_deref());
+                children
+            }
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter()
                 .filter_map(|criterion| criterion.value.as_deref())
@@ -933,6 +946,13 @@ impl Expression {
             | Self::SameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Vec::new(),
+            Self::Lookup {
+                key, if_missing, ..
+            } => {
+                let mut children = vec![key.as_mut()];
+                children.extend(if_missing.as_deref_mut());
+                children
+            }
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter_mut()
                 .filter_map(|criterion| criterion.value.as_deref_mut())
@@ -973,6 +993,13 @@ impl Expression {
             | Self::SameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Some(Number),
+            Self::Lookup {
+                key, if_missing, ..
+            } => (key.expression_type() == Some(Number)
+                && if_missing
+                    .as_deref()
+                    .is_none_or(|value| value.expression_type() == Some(Number)))
+            .then_some(Number),
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter()
                 .all(|criterion| {
@@ -1062,6 +1089,7 @@ impl Expression {
                 Self::SameRowReference(field) => {
                     references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
                 }
+                Self::Lookup { key, .. } => pending.push(key),
                 Self::If { condition, .. } => pending.push(condition),
                 Self::IfError { value, .. } => pending.push(value),
                 Self::IsBlank(_) => {}
@@ -1088,6 +1116,16 @@ impl Expression {
                 Self::Days { end, start } => {
                     pending.push((end, false));
                     pending.push((start, false));
+                }
+                Self::Lookup {
+                    key, if_missing, ..
+                } => {
+                    let bare =
+                        matches!(key.as_ref(), Self::Reference(_) | Self::SameRowReference(_));
+                    pending.push((key, !bare));
+                    if let Some(value) = if_missing {
+                        pending.push((value, true));
+                    }
                 }
                 Self::IsBlank(value) => pending.push((value, false)),
                 // A criterion that is itself a cell reference is compared to
@@ -1126,6 +1164,7 @@ impl Expression {
                 Self::ColumnTotal(column) | Self::ColumnAggregate { column, .. } => {
                     columns.push(column);
                 }
+                Self::Lookup { result_column, .. } => columns.push(result_column),
                 Self::ColumnConditional { aggregate, .. } => {
                     if let ConditionalAggregate::Sum(column)
                     | ConditionalAggregate::Average(column) = aggregate.as_ref()
@@ -1149,6 +1188,15 @@ impl Expression {
             match node {
                 Self::ColumnTotal(column) | Self::ColumnAggregate { column, .. } => {
                     columns.push(column);
+                }
+                Self::Lookup {
+                    key_column,
+                    result_column,
+                    ..
+                } => {
+                    columns.push(key_column);
+                    columns.push(result_column);
+                    pending.extend(node.children().into_iter().rev());
                 }
                 // Row membership comes from every column the node reads: the
                 // values column when there is one, and every criterion column.

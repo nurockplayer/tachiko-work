@@ -270,6 +270,7 @@ the `op` and `args` form:
 | `column_total` | `schema`, `field` |
 | `column_aggregate` | `function`, `column` |
 | `column_conditional` | `aggregate`, optional `values`, `criteria` |
+| `lookup` | `key`, `key_column`, `result_column`, optional `if_missing` |
 | `add`, `subtract`, `multiply`, `divide`, `minimum`, `maximum` | `left`, `right` |
 | `compare` | `operator`, `left`, `right` |
 | `if` | `condition`, `then_value`, `else_value` |
@@ -290,6 +291,13 @@ A `column` is an object with `schema` and `field`. `column_aggregate`'s `functio
 or `count`; `values` is a column; and each `criteria` element has members `column`,
 `operator` and optional `value`, an Expression, in that order. Members appear in the
 order shown here.
+
+`lookup` stores `key` as an Expression, both columns as `{schema, field}`,
+and `if_missing` as an Expression only when present. Its canonical argument
+order is `key`, `key_column`, `result_column`, `if_missing`. Explicit null,
+missing required members and extra members are refused. Matching, typing and
+lazy fallback follow [exact lookup](formula-engine-spec.md#exact-lookup).
+Frozen `.roproj/v1`, `.roproj/v2` and direct `.ro/v2` refuse this node.
 
 The strict reader accepts only the listed operation shapes and members. It rejects
 unknown members, invalid digit precisions, and wrong argument shapes without repair.
