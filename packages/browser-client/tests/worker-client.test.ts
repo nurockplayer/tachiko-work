@@ -425,6 +425,21 @@ describe("working-size Worker transport", () => {
     expect(sent[5]).toMatchObject({ kind: "open_portable_ro", profile: "working_size" });
   });
 
+  it("creates working-size Tracker and Budget starters", async () => {
+    const { client, sent } = await transport(windowReply);
+    await expect(client.newTrackerWorkingSize()).resolves.toEqual(openedWindow);
+    await expect(client.newBudgetWorkingSize()).resolves.toEqual(openedWindow);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({ kind: "command", request: { type: "new_tracker", profile: "working_size" } });
+    expect(sent[1]).toMatchObject({ kind: "command", request: { type: "new_budget", profile: "working_size" } });
+  });
+
+  it("rejects a non-window reply from working-size starters", async () => {
+    const { client } = await transport(openedReply);
+    await expect(client.newTrackerWorkingSize()).rejects.toThrow("Expected 'opened_window' response, received 'opened'.");
+    await expect(client.newBudgetWorkingSize()).rejects.toThrow("Expected 'opened_window' response, received 'opened'.");
+  });
+
   it("leaves every ordinary route without a profile field", async () => {
     const { client, sent } = await transport(openedReply);
     await client.newTable("Ordinary", []);
