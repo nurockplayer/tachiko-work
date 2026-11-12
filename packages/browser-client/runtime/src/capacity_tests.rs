@@ -899,6 +899,18 @@ fn tracker_and_budget_working_size_starters_open_with_working_profile() {
 
 #[test]
 fn working_size_tracker_admits_a_129th_row_while_ordinary_tracker_refuses_it() {
+    fn append(runtime: &mut DesignerRuntime) -> Result<(), DesignerError> {
+        let expected_revision = runtime.current_revision().to_owned();
+        runtime
+            .handle(DesignerRequest::AppendRow {
+                expected_revision,
+                collection: "tracker".into(),
+            })
+            .map(|_| ())
+    }
+    fn rows(runtime: &DesignerRuntime) -> usize {
+        runtime.collection_specs["tracker"].entities.len()
+    }
     let occurrence = "00000000-0000-4000-8000-000000000539";
     let (mut working, _) = super::starter_candidate(
         occurrence,
@@ -906,35 +918,22 @@ fn working_size_tracker_admits_a_129th_row_while_ordinary_tracker_refuses_it() {
         super::Starter::Tracker,
     )
     .unwrap();
-    let working_collection = working.default_collection.clone();
-    for _ in 0..=DEFAULT_LIMITS.table_rows {
-        let expected = working.current_revision().to_owned();
-        working
-            .insert_row(&expected, &working_collection, &[])
-            .unwrap();
+    while rows(&working) <= DEFAULT_LIMITS.table_rows {
+        append(&mut working).unwrap();
     }
-    assert_eq!(
-        working.query_table(&working_collection).unwrap().rows.len(),
-        DEFAULT_LIMITS.table_rows + 1
-    );
+    assert_eq!(rows(&working), DEFAULT_LIMITS.table_rows + 1);
 
     let (mut ordinary, _) =
         super::starter_candidate(occurrence, None, super::Starter::Tracker).unwrap();
-    let ordinary_collection = ordinary.default_collection.clone();
-    assert_eq!(ordinary_collection, "tracker");
-    for _ in 0..DEFAULT_LIMITS.table_rows {
-        let expected = ordinary.current_revision().to_owned();
-        ordinary
-            .insert_row(&expected, &ordinary_collection, &[])
-            .unwrap();
+    while rows(&ordinary) < DEFAULT_LIMITS.table_rows {
+        append(&mut ordinary).unwrap();
     }
-    let expected = ordinary.current_revision().to_owned();
-    let error = ordinary
-        .insert_row(&expected, &ordinary_collection, &[])
-        .unwrap_err();
+    let error = append(&mut ordinary).unwrap_err();
     assert!(
         matches!(error, DesignerError::CapacityExceeded(ref capacity)
         if capacity.limit == CapacityLimit::TableRows
-            && capacity.maximum == DEFAULT_LIMITS.table_rows)
+            && capacity.maximum == DEFAULT_LIMITS.table_rows),
+        "the ordinary Tracker must refuse its 129th row, got {error:?}"
     );
+    assert_eq!(rows(&ordinary), DEFAULT_LIMITS.table_rows);
 }
