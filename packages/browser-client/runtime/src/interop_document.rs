@@ -1424,8 +1424,8 @@ pub(crate) fn bound_import_presentation(
     let mut dropped = false;
     for (key, style) in pending {
         let id = tachiko_storage::style_id(&style).expect("bounded style encodes");
-        if dropped
-            || store.cells.len() >= limit
+        // A later record may still reuse an admitted palette style.
+        if store.cells.len() >= limit
             || (store.styles.len() >= 4096 && !store.styles.contains_key(&id))
         {
             dropped = true;

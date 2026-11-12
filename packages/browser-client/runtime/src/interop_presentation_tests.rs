@@ -781,8 +781,9 @@ fn stage5_unmapped_presentation_stays_in_metadata_and_export() {
     // The XLSX reader only yields hex `rgb` fills, and invalid fills are
     // refused by the import's export proof, so only an unmapped number
     // pattern can stay behind in metadata.
+    // Column 2 keeps its `#,##0.00` field format: the cell's own pattern must
+    // survive export instead of being replaced by the field default.
     let (mut source, selection) = stage5_fixture();
-    source.sheets[0].columns[2].number_format = None;
     source.sheets[0].rows[0][2].style.number_format = Some("0.00E+00".into());
     let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
     assert_eq!(
@@ -815,7 +816,7 @@ fn stage5_palette_bound_drops_cell_and_validates() {
         },
     );
     let mut pending = BTreeMap::new();
-    for index in 0..4097 {
+    for index in 0..4098 {
         let id = format!("row{index:04}");
         document.entities.insert(
             id.clone().into(),
@@ -829,16 +830,18 @@ fn stage5_palette_bound_drops_cell_and_validates() {
         pending.insert(
             (id.into(), "text".into()),
             StoredStyle {
-                fill: Some(format!("#{index:06X}")),
+                // The last record reuses the first record's admitted style.
+                fill: Some(format!("#{:06X}", index % 4097)),
                 ..Default::default()
             },
         );
     }
     let mut store = PresentationStore::default();
     assert!(crate::interop_document::bound_import_presentation(
-        &mut store, pending, 4097
+        &mut store, pending, 4098
     ));
     assert_eq!(store.styles.len(), 4096);
-    assert_eq!(store.cells.len(), 4096);
+    assert_eq!(store.cells.len(), 4097);
+    assert!(store.cells.contains_key(&("row4097".into(), "text".into())));
     tachiko_semantic_core::validate_presentation(&store, &document).unwrap();
 }
