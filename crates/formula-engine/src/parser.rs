@@ -199,6 +199,7 @@ pub fn validate_unbound_expression_structure(
 
 /// Render an unbound expression in deterministic copy/paste-safe syntax.
 #[must_use]
+#[allow(clippy::too_many_lines)] // One arm per closed-world expression node.
 pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
     match expression {
         UnboundExpression::Number(number) => format_number(*number),
