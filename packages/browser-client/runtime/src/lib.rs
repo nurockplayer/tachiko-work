@@ -10318,6 +10318,21 @@ fn map_copy_references(
             Expression::SameRowReference(_) => Ok(()),
             _ => unreachable!("ISBLANK has a bound reference child"),
         },
+        // A bare key reference is compared by its own type, like a criterion;
+        // the columns name schema columns and the fallback is a Number.
+        Expression::Lookup {
+            key, if_missing, ..
+        } => {
+            match key.as_mut() {
+                Expression::Reference(reference) => visit(reference, false)?,
+                Expression::SameRowReference(_) => {}
+                other => map_copy_references(other, visit)?,
+            }
+            if let Some(fallback) = if_missing {
+                map_copy_references(fallback, visit)?;
+            }
+            Ok(())
+        }
         _ => {
             for child in expression.children_mut() {
                 map_copy_references(child, visit)?;
@@ -10450,6 +10465,20 @@ fn map_duplicate_expression(
                 if let Some(expression) = &mut criterion.value {
                     map_duplicate_expression(expression, entities, fields, schemas)?;
                 }
+            }
+            Ok(())
+        }
+        Expression::Lookup {
+            key,
+            key_column,
+            result_column,
+            if_missing,
+        } => {
+            map_duplicate_column(key_column, fields, schemas)?;
+            map_duplicate_column(result_column, fields, schemas)?;
+            map_duplicate_expression(key, entities, fields, schemas)?;
+            if let Some(fallback) = if_missing {
+                map_duplicate_expression(fallback, entities, fields, schemas)?;
             }
             Ok(())
         }
@@ -15186,6 +15215,62 @@ mod tests {
                 function: tachiko_workspace_engine::ColumnAggregateFunction::Average,
                 column: ColumnRef::new("plan_copy_schema", "reserve_copy"),
             }
+        );
+    }
+
+    #[test]
+    fn duplicated_lookups_move_own_columns_and_keep_foreign_ones() {
+        let lookup = |schema: &str, key: &str, result: &str| Expression::Lookup {
+            key: Box::new(Expression::SameRowReference(FieldId::from("name"))),
+            key_column: ColumnRef::new(schema, key),
+            result_column: ColumnRef::new(schema, result),
+            if_missing: Some(Box::new(Expression::SameRowReference(FieldId::from(
+                "reserve",
+            )))),
+        };
+        let mut own = lookup("plan", "name", "reserve");
+        let mut foreign = lookup("settings", "label", "rate");
+        let fields = BTreeMap::from([
+            (FieldId::from("name"), FieldId::from("name_copy")),
+            (FieldId::from("reserve"), FieldId::from("reserve_copy")),
+        ]);
+        let schemas =
+            BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]);
+        for expression in [&mut own, &mut foreign] {
+            super::map_duplicate_expression(expression, &BTreeMap::new(), &fields, &schemas)
+                .expect("the duplicated lookup maps");
+        }
+        let copied = |schema: &str, key: &str, result: &str| Expression::Lookup {
+            key: Box::new(Expression::SameRowReference(FieldId::from("name_copy"))),
+            key_column: ColumnRef::new(schema, key),
+            result_column: ColumnRef::new(schema, result),
+            if_missing: Some(Box::new(Expression::SameRowReference(FieldId::from(
+                "reserve_copy",
+            )))),
+        };
+        assert_eq!(own, copied("plan_copy_schema", "name_copy", "reserve_copy"));
+        assert_eq!(foreign, copied("settings", "label", "rate"));
+    }
+
+    #[test]
+    fn copied_lookups_visit_a_bare_key_as_non_numeric() {
+        let mut expression = Expression::Lookup {
+            key: Box::new(Expression::Reference(FieldRef::new("r1", "name"))),
+            key_column: ColumnRef::new("plan", "name"),
+            result_column: ColumnRef::new("plan", "reserve"),
+            if_missing: Some(Box::new(Expression::Reference(FieldRef::new(
+                "r1", "reserve",
+            )))),
+        };
+        let mut visited = Vec::new();
+        super::map_copy_references(&mut expression, &mut |reference, numeric| {
+            visited.push((reference.field.as_str().to_owned(), numeric));
+            Ok(())
+        })
+        .expect("the lookup copy walk succeeds");
+        assert_eq!(
+            visited,
+            [("name".to_owned(), false), ("reserve".to_owned(), true)]
         );
     }
 
