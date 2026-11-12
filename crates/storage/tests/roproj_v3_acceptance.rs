@@ -695,3 +695,57 @@ fn writer_checks_shared_semantics_and_preserves_date_extremes() {
         );
     }
 }
+
+#[test]
+fn abs_and_directed_rounding_have_fixed_bytes_and_strict_reader_refusals() {
+    let mut document = fixture();
+    document
+        .entities
+        .get_mut("entity-a")
+        .unwrap()
+        .fields
+        .insert(
+            "formula".into(),
+            Value::Formula(Expression::Abs(Box::new(Expression::RoundUp {
+                value: Box::new(Expression::RoundDown {
+                    value: Box::new(Expression::Number(number(1.29))),
+                    digits: 2,
+                }),
+                digits: 2,
+            }))),
+        );
+    let tree = encode_roproj_v3(&document).unwrap();
+    let entity = std::str::from_utf8(tree.file("entities/6.jsonl").unwrap()).unwrap();
+    let abs = r#"{"op":"abs","args":{"op":"round_up","args":{"value":{"op":"round_down","args":{"value":{"op":"number","args":1.29},"digits":2}},"digits":2}}}"#;
+    let round_up = r#"{"op":"round_up","args":{"value":{"op":"round_down","args":{"value":{"op":"number","args":1.29},"digits":2}},"digits":2}}"#;
+    let round_down =
+        r#"{"op":"round_down","args":{"value":{"op":"number","args":1.29},"digits":2}}"#;
+    assert!(entity.contains(abs), "{entity}");
+    assert!(entity.contains(round_up), "{entity}");
+    assert!(entity.contains(round_down), "{entity}");
+    assert_eq!(decode_roproj_v3(&tree).unwrap(), document);
+
+    let invalid = [
+        (
+            round_up,
+            r#"{"op":"round_up","args":{"value":{"op":"round_down","args":{"value":{"op":"number","args":1.29},"digits":2}},"digits":11}}"#,
+        ),
+        (
+            r#"{"op":"abs","args":{"op":"round_up","args":{"value":{"op":"round_down","args":{"value":{"op":"number","args":1.29},"digits":2}},"digits":2}}}"#,
+            r#"{"op":"abs","args":[{"op":"number","args":1.29},{"op":"number","args":1.29}]}"#,
+        ),
+        (
+            round_up,
+            r#"{"op":"round_up","args":{"value":{"op":"round_down","args":{"value":{"op":"number","args":1.29},"digits":2}},"digits":2,"extra":0}}"#,
+        ),
+    ];
+    for (old, new) in invalid {
+        let error =
+            CanonicalRoProjectV3::try_from_files(replace(&tree, "entities/6.jsonl", old, new))
+                .unwrap_err();
+        assert!(
+            matches!(error, FormatError::InvalidRoProjectRepresentation { .. }),
+            "{error:?}"
+        );
+    }
+}

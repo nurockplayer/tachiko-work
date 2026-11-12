@@ -274,8 +274,9 @@ the `op` and `args` form:
 | `compare` | `operator`, `left`, `right` |
 | `if` | `condition`, `then_value`, `else_value` |
 | `and`, `or` | An array of Expressions |
-| `not`, `is_blank` | One Expression |
-| `round` | `value`, `digits` |
+| `not`, `is_blank`, `abs` | One Expression |
+| `round` | `value`, `digits` (integer precision in `0..=10`) |
+| `round_up`, `round_down` | `value`, `digits` (integer precision in `0..=10`) |
 
 A `column` is an object with `schema` and `field`. `column_aggregate`'s `function` is
 `average`, `count`, `minimum` or `maximum`. `compare`'s and a criterion's `operator` is
@@ -284,6 +285,10 @@ or `count`; `values` is a column; and each `criteria` element has members `colum
 `operator` and optional `value`, an Expression, in that order. Members appear in the
 order shown here.
 
+The strict reader accepts only the listed operation shapes and members. It rejects
+unknown members, invalid digit precisions, and wrong argument shapes without repair.
+Canonical expression bytes use compact operation objects, for example
+`{"op":"round_up","args":{"value":{"op":"number","args":1.25},"digits":2}}`.
 The ADR-0047 and ADR-0048 sections add to this table once implemented. #579 freezes it.
 
 An optional stored value remains absent from the entity `fields` object; no
