@@ -272,14 +272,21 @@ fn wire_commands_dispatch_and_return_column_publications() {
     let mut runtime = runtime();
     let collection = runtime.default_collection.clone();
     for (kind, property, value) in [
-        ("set_column_alignment", "alignment", Value::String("left".to_owned())),
+        (
+            "set_column_alignment",
+            "alignment",
+            Value::String("left".to_owned()),
+        ),
         ("set_column_wrap", "wrap", Value::Bool(false)),
         ("set_column_width", "width", Value::from(256_u32)),
     ] {
         let revision = runtime.current_revision().to_owned();
         let mut request = Map::new();
         request.insert("type".to_owned(), Value::String(kind.to_owned()));
-        request.insert("expected_revision".to_owned(), Value::String(revision.clone()));
+        request.insert(
+            "expected_revision".to_owned(),
+            Value::String(revision.clone()),
+        );
         request.insert("collection".to_owned(), Value::String(collection.clone()));
         request.insert("field".to_owned(), Value::String(FIELD.to_owned()));
         request.insert(property.to_owned(), value);
