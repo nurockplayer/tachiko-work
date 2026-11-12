@@ -349,6 +349,30 @@ fn bind_criterion_value(
     }
 }
 
+fn lookup_key_type<'a>(
+    document: &'a Document,
+    owner: &FieldRef,
+    key: &Expression,
+) -> Option<&'a FieldType> {
+    let (entity, field) = match key {
+        Expression::Reference(reference) => (&reference.entity, &reference.field),
+        Expression::SameRowReference(field) => (&owner.entity, field),
+        _ => {
+            return (key.expression_type() == Some(FormulaExpressionType::Number))
+                .then_some(&FieldType::Number);
+        }
+    };
+    let entity = document.entities.get(entity)?;
+    Some(
+        &document
+            .schemas
+            .get(&entity.schema)?
+            .fields
+            .get(field)?
+            .field_type,
+    )
+}
+
 #[allow(clippy::too_many_lines)] // One arm per closed-world expression node.
 fn bind_node(
     document: &Document,
@@ -385,6 +409,38 @@ fn bind_node(
             aggregate,
             criteria,
         } => bind_conditional(document, index, owner, aggregate, criteria)?,
+        UnboundExpression::Lookup {
+            key,
+            key_column,
+            result_column,
+            if_missing,
+        } => {
+            let key_column = bind_criterion_column(document, index, key_column)?;
+            let result_column = bind_column_reference(document, index, result_column)?;
+            let key = bind_criterion_value(document, index, owner, key)?;
+            if key_column.schema != result_column.schema
+                || lookup_key_type(document, owner, &key)
+                    != Some(
+                        &document.schemas[&key_column.schema].fields[&key_column.field].field_type,
+                    )
+            {
+                return Err(FormulaBindError::TypeMismatch {
+                    message:
+                        "LOOKUP requires columns in one schema and a key of the key column's type"
+                            .into(),
+                });
+            }
+            let if_missing = if_missing
+                .as_deref()
+                .map(|value| bind_node(document, index, owner, value).map(Box::new))
+                .transpose()?;
+            Expression::Lookup {
+                key: Box::new(key),
+                key_column,
+                result_column,
+                if_missing,
+            }
+        }
         UnboundExpression::Add { left, right } => Expression::Add {
             left: Box::new(bind_node(document, index, owner, left)?),
             right: Box::new(bind_node(document, index, owner, right)?),
@@ -744,6 +800,27 @@ fn render_bound(
             aggregate,
             criteria,
         } => render_conditional(aggregate, criteria, owner, addresses, columns),
+        Expression::Lookup {
+            key,
+            key_column,
+            result_column,
+            if_missing,
+        } => {
+            let keys = &columns[key_column];
+            let results = &columns[result_column];
+            let fallback = if_missing
+                .as_deref()
+                .map(|value| format!(", {}", render_bound(value, owner, addresses, columns)))
+                .unwrap_or_default();
+            format!(
+                "LOOKUP({}, [{}.{}:column], [{}.{}:column]{fallback})",
+                render_bound(key, owner, addresses, columns),
+                keys.schema,
+                keys.field,
+                results.schema,
+                results.field
+            )
+        }
         Expression::Add { left, right } => {
             render_bound_binary(left, "+", right, owner, addresses, columns)
         }
@@ -1566,6 +1643,11 @@ impl CalculationFailures {
                     field = dependency;
                     failure = dependency_failure;
                 }
+                CalculationFailure::LookupMissingKey => {
+                    return CalculationError::LookupMissingKey {
+                        formula: field.clone(),
+                    };
+                }
                 CalculationFailure::EmptyAggregate => {
                     return CalculationError::EmptyAggregate {
                         formula: field.clone(),
@@ -1676,6 +1758,7 @@ pub enum CalculationFailure {
     },
     DivisionByZero,
     EmptyAggregate,
+    LookupMissingKey,
     NonFiniteResult,
     InvalidColumn {
         columns: BTreeMap<ColumnRef, ColumnFailure>,
@@ -1762,6 +1845,8 @@ pub enum CalculationError {
     DivisionByZero { formula: FieldRef },
     #[error("formula '{formula}' reads an empty aggregate")]
     EmptyAggregate { formula: FieldRef },
+    #[error("lookup key has no matching row for formula '{formula}'")]
+    LookupMissingKey { formula: FieldRef },
     #[error("formula dependency cycle: {path:?}")]
     Cycle { path: Vec<FieldRef> },
     #[error("calculation for '{field}' produced a non-finite result")]
@@ -2173,6 +2258,7 @@ impl DependencyGraph {
     }
 }
 
+#[allow(clippy::too_many_lines)] // One arm per closed-world expression node.
 fn pregraph_failures(
     document: &Document,
     nodes: &ValueNodes<'_>,
@@ -2195,6 +2281,30 @@ fn pregraph_failures(
     // field fails the naming formula before any row-level target check.
     for (formula, expression) in formulas {
         if failures.contains_key(formula) {
+            continue;
+        }
+        let mut pending = vec![*expression];
+        let mut invalid_lookup = false;
+        while let Some(node) = pending.pop() {
+            if let Expression::Lookup {
+                key,
+                key_column,
+                result_column,
+                ..
+            } = node
+            {
+                let column_type = document
+                    .schemas
+                    .get(&key_column.schema)
+                    .and_then(|schema| schema.fields.get(&key_column.field))
+                    .map(|field| &field.field_type);
+                invalid_lookup |= key_column.schema != result_column.schema
+                    || lookup_key_type(document, formula, key) != column_type;
+            }
+            pending.extend(node.children());
+        }
+        if invalid_lookup {
+            failures.insert(formula.clone(), CalculationFailure::TypeMismatch);
             continue;
         }
         let columns = column_failures(document, expression);

@@ -4661,6 +4661,7 @@ fn export_in(
         Expression::ColumnAggregate { function, column } => {
             export_column_aggregate(*function, column, columns)
         }
+        Expression::Lookup { .. } => Err(tracker_error("LOOKUP export is not supported yet")),
         Expression::ColumnConditional {
             aggregate,
             criteria,

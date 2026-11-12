@@ -516,7 +516,7 @@ impl ExpressionV2 {
             }
             // `validate_semantic_expressions` refuses conditional aggregates
             // before any expression reaches this encoder.
-            Expression::ColumnConditional { .. } => {
+            Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {
                 unreachable!("conditional aggregates are refused before encoding")
             }
             Expression::Add { left, right } => Self::Add(BinaryArgsV2::from_semantic(left, right)),
@@ -851,9 +851,10 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
             Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => {
                 return invalid("date functions are not representable in direct .ro/v2".to_owned());
             }
-            Expression::ColumnConditional { .. } => {
+            Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {
                 return invalid(
-                    "conditional aggregates are not representable in direct .ro/v2".to_owned(),
+                    "lookups and conditional aggregates are not representable in direct .ro/v2"
+                        .to_owned(),
                 );
             }
             Expression::Number(_)

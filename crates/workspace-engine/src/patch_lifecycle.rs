@@ -628,6 +628,11 @@ fn expression_node_approx_bytes(node: &Expression) -> usize {
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
             column_ref_approx_bytes(column)
         }
+        Expression::Lookup {
+            key_column,
+            result_column,
+            ..
+        } => column_ref_approx_bytes(key_column) + column_ref_approx_bytes(result_column),
         Expression::ColumnConditional {
             aggregate,
             criteria,

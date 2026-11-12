@@ -179,7 +179,7 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "is_blank",
             "args": expression_json(expression)
         }),
-        Expression::ColumnConditional { .. } => {
+        Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {
             panic!("conditional aggregates are not representable in the frozen formats")
         }
         Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => {

@@ -11698,6 +11698,7 @@ fn calculation_failure_code(failure: &CalculationFailure) -> &'static str {
         CalculationFailure::Cycle { .. } => "cycle",
         CalculationFailure::FailedDependencies { .. } => "failed_dependencies",
         CalculationFailure::DivisionByZero => "division_by_zero",
+        CalculationFailure::LookupMissingKey => "lookup_missing_key",
         CalculationFailure::EmptyAggregate => "aggregate_empty",
         CalculationFailure::NonFiniteResult => "non_finite_result",
     }
@@ -11720,6 +11721,7 @@ fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
             "A formula dependency could not be calculated."
         }
         CalculationFailure::DivisionByZero => "The formula divides by zero.",
+        CalculationFailure::LookupMissingKey => "The lookup key has no matching row.",
         CalculationFailure::EmptyAggregate => "The column has no values to aggregate.",
         CalculationFailure::NonFiniteResult => "The formula result is not a finite number.",
     }

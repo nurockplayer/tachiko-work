@@ -454,6 +454,14 @@ fn validate_rule_condition(
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 check_column(document, column)?;
             }
+            Expression::Lookup {
+                key_column,
+                result_column,
+                ..
+            } => {
+                check_column(document, key_column)?;
+                check_column(document, result_column)?;
+            }
             Expression::ColumnConditional {
                 aggregate,
                 criteria,
@@ -592,6 +600,15 @@ fn rule_survives_prune(rule: &ConditionalRule, document: &Document) -> bool {
             }
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 if !column_exists(document, column) {
+                    return false;
+                }
+            }
+            Expression::Lookup {
+                key_column,
+                result_column,
+                ..
+            } => {
+                if !column_exists(document, key_column) || !column_exists(document, result_column) {
                     return false;
                 }
             }

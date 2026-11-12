@@ -751,6 +751,163 @@ fn abs_and_directed_rounding_have_fixed_bytes_and_strict_reader_refusals() {
 }
 
 #[test]
+fn lookup_has_pinned_bytes_with_and_without_fallback() {
+    let without = r#"{"op":"lookup","args":{"key":{"op":"number","args":10},"key_column":{"schema":"schema","field":"number"},"result_column":{"schema":"schema","field":"number"}}}"#;
+    let with = r#"{"op":"lookup","args":{"key":{"op":"number","args":10},"key_column":{"schema":"schema","field":"number"},"result_column":{"schema":"schema","field":"number"},"if_missing":{"op":"number","args":0}}}"#;
+    for (fallback, expected) in [
+        (None, without),
+        (Some(Box::new(Expression::Number(number(0.0)))), with),
+    ] {
+        let mut document = fixture();
+        document
+            .entities
+            .get_mut("entity-a")
+            .unwrap()
+            .fields
+            .insert(
+                "formula".into(),
+                Value::Formula(Expression::Lookup {
+                    key: Box::new(Expression::Number(number(10.0))),
+                    key_column: ColumnRef::new("schema", "number"),
+                    result_column: ColumnRef::new("schema", "number"),
+                    if_missing: fallback,
+                }),
+            );
+        let tree = encode_roproj_v3(&document).unwrap();
+        let expected_entity = format!(
+            "{{\"id\":\"entity-a\",\"key\":\"item\",\"schema\":\"schema\",\"fields\":{{\"date\":{{\"kind\":\"date\",\"value\":\"2024-02-29\"}},\"formula\":{{\"kind\":\"formula\",\"value\":{expected}}},\"number\":{{\"kind\":\"number\",\"value\":10}},\"text\":{{\"kind\":\"text\",\"value\":\"封筒\"}}}}}}\n"
+        );
+        assert_eq!(
+            tree.file("entities/6.jsonl").unwrap(),
+            expected_entity.as_bytes()
+        );
+        assert_eq!(decode_roproj_v3(&tree).unwrap(), document);
+        assert_eq!(
+            encode_roproj_v3(&decode_roproj_v3(&tree).unwrap()).unwrap(),
+            tree
+        );
+    }
+}
+
+#[test]
+fn lookup_strict_reader_refuses_missing_extra_and_null_members() {
+    let mut document = fixture();
+    document
+        .entities
+        .get_mut("entity-a")
+        .unwrap()
+        .fields
+        .insert(
+            "formula".into(),
+            Value::Formula(Expression::Lookup {
+                key: Box::new(Expression::Number(number(10.0))),
+                key_column: ColumnRef::new("schema", "number"),
+                result_column: ColumnRef::new("schema", "number"),
+                if_missing: None,
+            }),
+        );
+    let tree = encode_roproj_v3(&document).unwrap();
+    let valid = r#"{"op":"lookup","args":{"key":{"op":"number","args":10},"key_column":{"schema":"schema","field":"number"},"result_column":{"schema":"schema","field":"number"}}}"#;
+    for invalid in [
+        r#"{"op":"lookup","args":{"key":{"op":"number","args":10},"key_column":{"schema":"schema","field":"number"}}}"#,
+        r#"{"op":"lookup","args":{"key":{"op":"number","args":10},"key_column":{"schema":"schema","field":"number"},"result_column":{"schema":"schema","field":"number"},"extra":0}}"#,
+        r#"{"op":"lookup","args":{"key":{"op":"number","args":10},"key_column":{"schema":"schema","field":"number"},"result_column":{"schema":"schema","field":"number"},"if_missing":null}}"#,
+    ] {
+        assert!(
+            CanonicalRoProjectV3::try_from_files(replace(
+                &tree,
+                "entities/6.jsonl",
+                valid,
+                invalid
+            ))
+            .is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
+fn frozen_and_direct_formats_refuse_lookup() {
+    let mut document = fixture();
+    let schema = document.schemas.get_mut("schema").unwrap();
+    schema
+        .fields
+        .retain(|id, _| id.as_str() == "number" || id.as_str() == "formula");
+    for field in schema.fields.values_mut() {
+        field.constraint = FieldConstraint::None;
+    }
+    document
+        .entities
+        .get_mut("entity-a")
+        .unwrap()
+        .fields
+        .retain(|id, _| id.as_str() == "number" || id.as_str() == "formula");
+    // Prove the same document without LOOKUP is representable in each format.
+    let v1 = encode_roproj_v1(&document).unwrap();
+    let v2 = encode_roproj_v2(&document).unwrap();
+    let direct = tachiko_storage::to_canonical_string(&document).unwrap();
+    let lookup = serde_json::json!({"op": "lookup", "args": {
+        "key": {"op": "number", "args": 10},
+        "key_column": {"schema": "schema", "field": "number"},
+        "result_column": {"schema": "schema", "field": "number"},
+    }});
+    let mutate = |mut files: Vec<(String, Vec<u8>)>| {
+        let (_, bytes) = files
+            .iter_mut()
+            .find(|(path, _)| path == "entities/6.jsonl")
+            .unwrap();
+        let mut entity: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        entity["fields"]["formula"]["value"] = lookup.clone();
+        *bytes = serde_json::to_vec(&entity).unwrap();
+        bytes.push(b'\n');
+        files
+    };
+    assert!(
+        tachiko_storage::CanonicalRoProjectV1::try_from_files(mutate(
+            v1.files()
+                .iter()
+                .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
+                .collect()
+        ))
+        .is_err()
+    );
+    assert!(
+        tachiko_storage::CanonicalRoProjectV2::try_from_files(mutate(
+            v2.files()
+                .iter()
+                .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
+                .collect()
+        ))
+        .is_err()
+    );
+    let mut direct: serde_json::Value = serde_json::from_str(&direct).unwrap();
+    direct["entities"]["entity-a"]["fields"]["formula"]["value"] = lookup;
+    assert!(tachiko_storage::from_str(&serde_json::to_string(&direct).unwrap()).is_err());
+    document
+        .entities
+        .get_mut("entity-a")
+        .unwrap()
+        .fields
+        .insert(
+            "formula".into(),
+            Value::Formula(Expression::Lookup {
+                key: Box::new(Expression::Number(number(10.0))),
+                key_column: ColumnRef::new("schema", "number"),
+                result_column: ColumnRef::new("schema", "number"),
+                if_missing: None,
+            }),
+        );
+    for error in [
+        encode_roproj_v1(&document).unwrap_err(),
+        encode_roproj_v2(&document).unwrap_err(),
+    ] {
+        assert!(error.to_string().contains("lookups"), "{error}");
+    }
+    let error = tachiko_storage::to_canonical_string(&document).unwrap_err();
+    assert!(error.to_string().contains("lookups"), "{error}");
+}
+
+#[test]
 fn iferror_has_fixed_bytes_and_strict_reader_refusals() {
     let mut document = fixture();
     document

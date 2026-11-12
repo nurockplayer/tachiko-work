@@ -466,7 +466,7 @@ fn generated_row(random: &mut SplitMix64, schema: &str, index: usize) -> Entity 
             fields.insert(FieldId::from("c0"), Value::Text("not a number".to_owned()));
         }
     }
-    let c1 = match index % 5 {
+    let c1 = match index % 7 {
         0 => divide(same_row("c0"), total(schema, "c0")),
         1 => conditional_sum(schema, "c0", "c0", same_row("c0")),
         2 => conditional_sum(schema, "c0", "c1", literal(2.0)),
@@ -477,6 +477,18 @@ fn generated_row(random: &mut SplitMix64, schema: &str, index: usize) -> Entity 
                 aggregate(ColumnAggregateFunction::Maximum, schema, "c2"),
                 aggregate(ColumnAggregateFunction::Minimum, schema, "c0"),
             )),
+        },
+        4 => Expression::Lookup {
+            key: Box::new(same_row("c0")),
+            key_column: column(schema, "c0"),
+            result_column: column(schema, "c0"),
+            if_missing: None,
+        },
+        5 => Expression::Lookup {
+            key: Box::new(literal(99.0)),
+            key_column: column(schema, "c0"),
+            result_column: column(schema, "c0"),
+            if_missing: Some(Box::new(divide(literal(1.0), literal(0.0)))),
         },
         _ => add(
             aggregate(ColumnAggregateFunction::Count, schema, "c0"),

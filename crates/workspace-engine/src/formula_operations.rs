@@ -87,6 +87,9 @@ pub struct FormulaReasoningFacts {
 
 /// One formula-reasoning target outcome from the exact source snapshot.
 #[derive(Clone, Debug, PartialEq)]
+// Formula is the common outcome; boxing it would allocate on every reasoning
+// call to shrink the two rare refusal variants.
+#[allow(clippy::large_enum_variant)]
 pub enum FormulaReasoningOutcome {
     Formula(FormulaReasoningFacts),
     UnresolvedTarget {
@@ -1134,6 +1137,7 @@ fn calculation_evidence_subjects(outcome: &FormulaCalculationOutcome) -> BTreeSe
         CalculationFailure::TypeMismatch
         | CalculationFailure::InvalidExpression { .. }
         | CalculationFailure::DivisionByZero
+        | CalculationFailure::LookupMissingKey
         | CalculationFailure::EmptyAggregate
         | CalculationFailure::NonFiniteResult
         | CalculationFailure::InvalidColumn { .. } => BTreeSet::new(),

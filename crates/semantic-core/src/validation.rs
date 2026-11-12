@@ -874,6 +874,22 @@ fn validate_expression(
                 validate_date_operand(document, owner, end, path, diagnostics);
                 validate_date_operand(document, owner, start, path, diagnostics);
             }
+            Expression::Lookup {
+                key,
+                key_column,
+                result_column,
+                ..
+            } => {
+                validate_lookup(
+                    document,
+                    owner,
+                    key,
+                    key_column,
+                    result_column,
+                    path,
+                    diagnostics,
+                );
+            }
             Expression::ColumnConditional {
                 aggregate,
                 criteria,
@@ -890,6 +906,47 @@ fn validate_expression(
             _ => {}
         }
         pending.extend(node.children());
+    }
+}
+
+fn validate_lookup(
+    document: &Document,
+    owner: &FieldRef,
+    key: &Expression,
+    key_column: &ColumnRef,
+    result_column: &ColumnRef,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    validate_formula_scalar_column(document, owner, key_column, path, diagnostics);
+    validate_formula_column(document, owner, result_column, path, diagnostics);
+    let column_type = document
+        .schemas
+        .get(&key_column.schema)
+        .and_then(|schema| schema.fields.get(&key_column.field))
+        .map(|field| &field.field_type);
+    let key_type = match key {
+        Expression::Reference(reference) => document
+            .entities
+            .get(&reference.entity)
+            .and_then(|entity| document.schemas.get(&entity.schema))
+            .and_then(|schema| schema.fields.get(&reference.field))
+            .map(|field| &field.field_type),
+        Expression::SameRowReference(field) => document
+            .entities
+            .get(&owner.entity)
+            .and_then(|entity| document.schemas.get(&entity.schema))
+            .and_then(|schema| schema.fields.get(field))
+            .map(|field| &field.field_type),
+        _ => Some(&FieldType::Number),
+    };
+    if key_column.schema != result_column.schema || key_type != column_type {
+        diagnostics.push(core_diagnostic(
+            path,
+            DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+            "LOOKUP requires columns in one schema and a key of the key column's type",
+            vec![SemanticSubject::EntityField(owner.clone())],
+        ));
     }
 }
 
@@ -1745,6 +1802,30 @@ mod issue_175_research {
                 ),
                 Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                     validate_formula_column(document, owner, column, path, diagnostics);
+                }
+                Expression::Lookup {
+                    key,
+                    key_column,
+                    result_column,
+                    if_missing,
+                } => {
+                    super::validate_lookup(
+                        document,
+                        owner,
+                        key,
+                        key_column,
+                        result_column,
+                        path,
+                        diagnostics,
+                    );
+                    let bare = matches!(
+                        key.as_ref(),
+                        Expression::Reference(_) | Expression::SameRowReference(_)
+                    );
+                    pending.push((key, !bare));
+                    if let Some(value) = if_missing {
+                        pending.push((value, true));
+                    }
                 }
                 Expression::ColumnConditional {
                     aggregate,
