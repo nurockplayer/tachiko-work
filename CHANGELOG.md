@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Working-size XLSX and CSV imports admit up to 10,000 data rows and
+  100,000 populated cells, with typed capacity refusals. Supported date
+  formats on blank Date cells survive import and export.
+
 - Formula engine supports `YEAR`, `MONTH`, `DAY`, `WEEKDAY`, and `DAYS` on
   Date field references, with Gregorian day differences and `.roproj/v3`
   persistence. A1 and XLSX support follow separately; `TODAY()` is deferred.

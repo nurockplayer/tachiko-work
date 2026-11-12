@@ -32,7 +32,7 @@ export type ImportedProjection = { opened: OpenedProjection; metadata: InteropMe
 export type ImportedWindowProjection = { opened: OpenedWindowProjection; metadata: InteropMetadata; ledger: FidelityFinding[] };
 export type SpreadsheetExport = { revision: string; bytes: ArrayBuffer; ledger: FidelityFinding[] };
 export type SpreadsheetOperation =
-  | {type: "inspect"; format: SpreadsheetFormat; csv_options: ImportOptions}
+  | {type: "inspect"; format: SpreadsheetFormat; csv_options: ImportOptions; profile?: "working_size"}
   | {type: "import"; format: SpreadsheetFormat; csv_options: ImportOptions; selection: ImportSelection; occurrence_id: string; install: boolean; profile?: "working_size"}
   | {type: "inspect_project"; metadata: InteropMetadata; profile?: "working_size"}
   | {type: "open_project"; occurrence_id: string; metadata: InteropMetadata; profile?: "working_size"}

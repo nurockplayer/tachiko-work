@@ -894,7 +894,7 @@ fn working_size_import_binds_formulas() {
 }
 
 #[test]
-fn working_size_import_keeps_todays_geometry_for_a_promoted_csv() {
+fn working_size_import_accepts_a_promoted_csv() {
     let source = headered_csv(&["a", "b"], &["x", "y"], 200);
 
     // Today's ordinary import accepts this eligible rectangle through the text
@@ -917,7 +917,6 @@ fn working_size_import_keeps_todays_geometry_for_a_promoted_csv() {
     let mut host = DesignerHost::new();
     let resident = json_of(&host.open_local_document(GAME_BALANCE_RO, FIRST.as_bytes()));
     assert_eq!(resident["status"], "ok", "{resident}");
-    let observed = host.observe_occurrence();
     let reply = json_of(
         &host
             .spreadsheet(
@@ -926,22 +925,10 @@ fn working_size_import_keeps_todays_geometry_for_a_promoted_csv() {
             )
             .reply,
     );
+    assert_eq!(reply["status"], "ok", "{reply}");
     assert_eq!(
-        reply["status"], "error",
-        "the metadata profile refuses above today's geometry: {reply}"
-    );
-    assert_eq!(
-        reply["error"]["code"], "imported_spreadsheet_export_refused",
-        "the import path keeps today's 128-row metadata geometry: {reply}"
-    );
-    assert_eq!(
-        reply["error"]["diagnostics"][0]["code"], "imported_spreadsheet_unrepresentable",
-        "{reply}"
-    );
-    assert_eq!(
-        host.observe_occurrence(),
-        observed,
-        "a refused working-size import installs nothing"
+        reply["response"]["payload"]["opened"]["window"]["total_rows"],
+        200
     );
 }
 

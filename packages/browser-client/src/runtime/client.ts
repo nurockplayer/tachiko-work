@@ -39,7 +39,7 @@ import type {
 } from "./protocol.ts";
 
 export interface DesignerClient {
-  inspectSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions): Promise<SourceWorkbook>;
+  inspectSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, profile?: "working_size"): Promise<SourceWorkbook>;
   importSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedProjection) => void): Promise<ImportedProjection>;
   /** Import with the working-size profile: the reply carries one bounded window, not the whole table. */
   importSpreadsheetWorkingSize?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedWindowProjection) => void): Promise<ImportedWindowProjection>;

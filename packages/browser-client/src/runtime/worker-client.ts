@@ -100,8 +100,8 @@ export class WorkerDesignerClient implements DesignerClient {
     return this.#send({id: this.#claimId(), kind: "spreadsheet", operation, bytes: copy}, [copy]);
   }
 
-  async inspectSpreadsheet(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions): Promise<SourceWorkbook> {
-    const reply = await this.#spreadsheet({type: "inspect", format, csv_options: csvOptions}, bytes);
+  async inspectSpreadsheet(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, profile?: "working_size"): Promise<SourceWorkbook> {
+    const reply = await this.#spreadsheet({type: "inspect", format, csv_options: csvOptions, ...(profile === undefined ? {} : {profile})}, bytes);
     if (reply.status !== "ok") throw new Error("Expected spreadsheet inspection.");
     return expectResponse("import_preview", reply.response);
   }

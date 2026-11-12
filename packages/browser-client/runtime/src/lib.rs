@@ -9514,6 +9514,11 @@ pub(crate) fn ensure_wire_reply_size(
 ) -> Result<(), DesignerError> {
     let maximum = match reply {
         DesignerWireReply::Ok {
+            response: DesignerResponse::ImportPreview(_),
+        } if profile == SessionProfile::WorkingSize => {
+            interop_adapter::MAX_WORKING_SERIALIZED_SOURCE_BYTES + REPLY_ENVELOPE_RESERVE
+        }
+        DesignerWireReply::Ok {
             response: DesignerResponse::Opened(opened),
         } if opened.table.tracker_profile == Some(true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
         DesignerWireReply::Ok {

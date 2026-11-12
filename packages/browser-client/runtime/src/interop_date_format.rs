@@ -97,10 +97,13 @@ pub(crate) fn cell_style(
         .and_then(|style| style.date_format)
         .or_else(|| column.and_then(|style| style.date_format))
         .or(field.date_format);
-    if let SourceValue::Date { .. } = value {
+    if matches!(value, SourceValue::Date { .. })
+        || (field.field_type == tachiko_workspace_engine::FieldType::Date
+            && matches!(value, SourceValue::Empty))
+    {
         if let Some(format) = date_format {
             result.number_format = Some(to_excel(format).into());
-        } else if result.number_format.is_none() {
+        } else if matches!(value, SourceValue::Date { .. }) && result.number_format.is_none() {
             result.number_format = Some(to_excel(DateFormat::Iso).into());
         }
     }
