@@ -76,8 +76,8 @@ use tachiko_workspace_engine::{
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
         PatchLifecycleError, PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId,
         ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
-        SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticRevision,
-        SemanticScope, TrustedInstant,
+        SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
+        SemanticRevision, SemanticScope, TrustedInstant,
     },
     prune_presentation,
     resident_session::{
@@ -95,6 +95,8 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod presentation_revision_tests;
 use interop_document::PendingCleanup;
 pub use interop_document::{
     CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
@@ -2234,13 +2236,14 @@ pub struct DesignerRuntime {
     duplicate_serial: usize,
     opened_from_v3: bool,
     /// Stored presentation beside the semantic document. It is never part of
-    /// the session, so it never moves the revision. Each save prunes a copy
+    /// the session's document: a change to it moves only the revision, through
+    /// [`DesignerRuntime::publish_presentation`]. Each save prunes a copy
     /// against the snapshot's document.
     presentation: PresentationStore,
     /// Encoded length of `presentation` when it was stored, added to the
-    /// working-size saved-size bound. Any future command that changes
-    /// presentation must go through [`DesignerRuntime::set_presentation`] so
-    /// this stays current.
+    /// working-size saved-size bound. Any command that changes presentation
+    /// must go through [`DesignerRuntime::set_presentation`] or
+    /// [`DesignerRuntime::publish_presentation`] so this stays current.
     presentation_saved_bytes: u64,
 }
 
@@ -2366,6 +2369,16 @@ impl ViewIndexCache {
     fn insert(&mut self, entry: ViewIndexEntry) {
         self.entries.push_front(entry);
         self.entries.truncate(MAX_VIEW_INDEX_ENTRIES);
+    }
+
+    fn rekey(&mut self, from: &str, to: &str) {
+        self.entries
+            .retain(|entry| entry.revision == from || entry.revision == to);
+        for entry in &mut self.entries {
+            if entry.revision == from {
+                to.clone_into(&mut entry.revision);
+            }
+        }
     }
 
     fn retain_revision(&mut self, revision: &str) {
@@ -3191,6 +3204,54 @@ impl DesignerRuntime {
         };
         self.presentation = presentation;
         Ok(())
+    }
+
+    /// Install a style-only change, carrying revision-keyed caches forward.
+    // Presentation commands will call this when they are wired into the runtime.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn publish_presentation(
+        &mut self,
+        expected_revision: &str,
+        presentation: PresentationStore,
+    ) -> Result<String, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let bytes = match self.profile {
+            SessionProfile::WorkingSize => {
+                let bytes = save_size::presentation_saved_bytes(&presentation)?;
+                capacity::check_working_saved_bytes(self.session.document(), bytes)?;
+                bytes
+            }
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => 0,
+        };
+        let scope = self.session.document_scope().clone();
+        let revision = self.session.revision().clone();
+        let (new_revision, ()) = self
+            .session
+            .publication_authority(&mut self.clock)
+            .publish_presentation_if_current(&scope, &revision, |_| Some(()))
+            .map_err(|error| {
+                DesignerError::Lifecycle(match error {
+                    SemanticPublicationError::NoChange => PatchLifecycleError::NoChange,
+                    SemanticPublicationError::Stale => PatchLifecycleError::Stale,
+                    SemanticPublicationError::Conflict => PatchLifecycleError::Conflict,
+                    SemanticPublicationError::DocumentScopeMismatch
+                    | SemanticPublicationError::AuthorizationDenied => {
+                        PatchLifecycleError::AuthorizationDenied
+                    }
+                })
+            })?;
+        let new_revision = new_revision.as_str().to_owned();
+        self.view_index.rekey(expected_revision, &new_revision);
+        if let Some((revision, _, _)) = &mut self.totals_cache {
+            if revision == expected_revision {
+                revision.clone_from(&new_revision);
+            } else {
+                self.totals_cache = None;
+            }
+        }
+        self.presentation = presentation;
+        self.presentation_saved_bytes = bytes;
+        Ok(new_revision)
     }
 
     /// Check one candidate document against the same bound, adding the bytes
@@ -4764,6 +4825,8 @@ impl DesignerRuntime {
         if let Some(order) = self.view_index.get(&revision, collection, &key) {
             return Ok(order);
         }
+        #[cfg(test)]
+        view_index_counters::record_build();
         let order = Arc::from(self.build_view_order(collection, view)?);
         self.view_index.insert(ViewIndexEntry {
             revision,
@@ -10739,6 +10802,20 @@ mod totals_cache_counters {
 
     pub(super) fn hits() -> usize {
         HITS.with(Cell::get)
+    }
+}
+
+#[cfg(test)]
+mod view_index_counters {
+    use std::cell::Cell;
+    thread_local! {
+        static BUILDS: Cell<usize> = const { Cell::new(0) };
+    }
+    pub(super) fn record_build() {
+        BUILDS.with(|count| count.set(count.get().saturating_add(1)));
+    }
+    pub(super) fn builds() -> usize {
+        BUILDS.with(Cell::get)
     }
 }
 
