@@ -191,6 +191,7 @@ fn write_formulas(
                             Some(&column.field_type),
                             document.entities[entity].fields.get(&column.id),
                         ),
+                        column.field_type == FieldType::Date && !column.required,
                     ),
                 );
                 count += usize::from(matches!(

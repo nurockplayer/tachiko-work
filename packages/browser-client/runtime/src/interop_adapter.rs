@@ -4063,6 +4063,35 @@ pub(crate) fn split_arguments(argument: &str) -> Option<Vec<(usize, &str)>> {
     Some(parts)
 }
 
+/// Recognize the blank-date guard emitted for a direct cell reference.
+pub(crate) fn guarded_date_cell(source: &str) -> Option<&str> {
+    fn call<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+        let source = source.trim();
+        let prefix = source.get(..name.len())?;
+        if !prefix.eq_ignore_ascii_case(name) {
+            return None;
+        }
+        let rest = source.get(name.len()..)?.trim_start();
+        let (argument, consumed) = call_argument(rest)?;
+        (consumed == rest.len()).then_some(argument)
+    }
+    let parts = split_arguments(call(source, "IF")?)?;
+    if parts.len() != 3 || !call(parts[1].1, "NA")?.trim().is_empty() {
+        return None;
+    }
+    let cell = call(parts[0].1, "ISBLANK")?.trim();
+    let result = parts[2].1.trim();
+    let address = if cell.starts_with('\'') {
+        let mut cursor = 0;
+        quoted_sheet_name(cell, &mut cursor).ok()?;
+        &cell[cursor..]
+    } else {
+        cell.rsplit_once('!').map_or(cell, |(_, address)| address)
+    };
+    (cell_reference_span(address)? == address.len() && cell.eq_ignore_ascii_case(result))
+        .then_some(cell)
+}
+
 /// Whether `text` is exactly one `"` string literal, doubled quotes included.
 pub(crate) fn criterion_literal(text: &str) -> bool {
     let bytes = text.as_bytes();
@@ -4358,7 +4387,7 @@ fn date_admission(
     current: usize,
     sheets: &[SourceSheet],
 ) -> FormulaAdmission {
-    const REASON: &str = "date functions are calculated over filled Date cells, and WEEKDAY with return type 1, 2 or 3";
+    const REASON: &str = "date functions require compatible Date cells on or after 1900-03-01, and WEEKDAY with return type 1, 2 or 3";
     let admitted = || -> Option<()> {
         let arguments = split_arguments(argument)?;
         let date_count = if name == "DAYS" { 2 } else { 1 };
@@ -4372,14 +4401,16 @@ fn date_admission(
             return None;
         }
         for (_, argument) in arguments.iter().take(date_count) {
-            let (sheet, column, row) = criterion_cell(argument.trim(), current, sheets)?;
+            let guard = guarded_date_cell(argument);
+            let (sheet, column, row) =
+                criterion_cell(guard.unwrap_or(argument.trim()), current, sheets)?;
             let source = sheets.get(sheet)?;
             let above = usize::try_from(source.layout.rows_above_header).ok()?;
             let row = row.checked_sub(above + 1 + usize::from(source.has_header))?;
-            if !matches!(
-                source.rows.get(row)?.get(column)?.value,
-                SourceValue::Date { .. }
-            ) {
+            let value = &source.rows.get(row)?.get(column)?.value;
+            if !matches!(value, SourceValue::Date { value } if value.as_str() >= "1900-03-01")
+                && !(guard.is_some() && matches!(value, SourceValue::Empty))
+            {
                 return None;
             }
         }
