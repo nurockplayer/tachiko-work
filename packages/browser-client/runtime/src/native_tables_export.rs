@@ -161,6 +161,7 @@ fn write_formulas(
     specs: &[&CollectionSpec],
     sheets: &mut [SourceSheet],
     ledger: &mut Vec<FidelityFinding>,
+    max_formulas: usize,
 ) {
     let mut addresses = BTreeMap::new();
     let mut columns = BTreeMap::new();
@@ -201,7 +202,7 @@ fn write_formulas(
         }
         formula_counts.push(count);
     }
-    if formula_counts.iter().sum::<usize>() > crate::interop_adapter::MAX_FORMULAS {
+    if formula_counts.iter().sum::<usize>() > max_formulas {
         for (spec, count) in specs.iter().zip(formula_counts) {
             if count > 0 {
                 ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_value_only", &spec.summary.id,
@@ -588,6 +589,7 @@ impl DesignerRuntime {
         self.native_tables_workbook(expected_revision, collection, true)
     }
 
+    #[allow(clippy::too_many_lines)] // One ordered projection, including working-size preflight.
     fn native_tables_workbook(
         &self,
         expected_revision: &str,
@@ -604,8 +606,68 @@ impl DesignerRuntime {
         })?;
         let snapshot = self.session.export_snapshot();
         let document = snapshot.document();
+        let working = self.profile == crate::capacity::SessionProfile::WorkingSize;
+        let profile = if working {
+            OutputProfile::WorkingSize
+        } else {
+            OutputProfile::NativeTables
+        };
+        if working {
+            let specs = self
+                .collection_specs
+                .values()
+                .filter(|spec| !csv || spec.summary.id == selected.summary.id)
+                .collect::<Vec<_>>();
+            let limits = crate::capacity::WORKING_LIMITS;
+            crate::capacity::check_limit(
+                crate::CapacityLimit::Collections,
+                limits.collections,
+                specs.len(),
+                None,
+            )?;
+            let mut rows = 0;
+            let mut formulas = 0;
+            for spec in specs {
+                crate::capacity::check_limit(
+                    crate::CapacityLimit::TableFields,
+                    limits.table_fields,
+                    spec.columns.len(),
+                    Some(&spec.summary.id),
+                )?;
+                crate::capacity::check_limit(
+                    crate::CapacityLimit::TableRows,
+                    limits.table_rows,
+                    spec.entities.len(),
+                    Some(&spec.summary.id),
+                )?;
+                rows += spec.entities.len();
+                formulas += spec
+                    .entities
+                    .iter()
+                    .map(|id| {
+                        document.entities[id]
+                            .fields
+                            .values()
+                            .filter(|value| matches!(value, Value::Formula(_)))
+                            .count()
+                    })
+                    .sum::<usize>();
+            }
+            crate::capacity::check_limit(
+                crate::CapacityLimit::TotalEntities,
+                limits.total_entities,
+                rows,
+                None,
+            )?;
+            crate::capacity::check_limit(
+                crate::CapacityLimit::Formulas,
+                limits.formulas,
+                formulas,
+                None,
+            )?;
+        }
         let mut ledger = vec![finding(FidelityCategory::NativeEquivalent, "native_tables_outbound_profile", "workbook",
-            "Native scalar output: at most 32 collections, 32 columns, 128 rows per collection, 1,024 total rows, 8 MiB encoded bytes and 24 MiB expanded XLSX. The shared incoming geometry is 32 sheets, 32 columns, 128 rows per sheet and 1,024 total rows, with separate 2 MiB source/8 MiB expanded bounds; its restricted Text-capacity exception is unchanged. Larger output is not promised reimportable.".into())];
+            if working { "Native scalar output uses the working-size geometry, with 8 MiB encoded and 24 MiB expanded XLSX bounds." } else { "Native scalar output: at most 32 collections, 32 columns, 128 rows per collection, 1,024 total rows, 8 MiB encoded bytes and 24 MiB expanded XLSX. The shared incoming geometry is 32 sheets, 32 columns, 128 rows per sheet and 1,024 total rows, with separate 2 MiB source/8 MiB expanded bounds; its restricted Text-capacity exception is unchanged. Larger output is not promised reimportable." }.into())];
         let mut sheets = Vec::new();
         let mut exported = Vec::new();
         let mut names = BTreeSet::new();
@@ -639,7 +701,17 @@ impl DesignerRuntime {
             exported.push(spec);
         }
         if !csv {
-            write_formulas(document, &exported, &mut sheets, &mut ledger);
+            write_formulas(
+                document,
+                &exported,
+                &mut sheets,
+                &mut ledger,
+                if working {
+                    crate::capacity::WORKING_LIMITS.formulas
+                } else {
+                    crate::interop_adapter::MAX_FORMULAS
+                },
+            );
         }
         exclusion_findings(&mut ledger);
         for id in document.keyed_grouped_sum_definitions.keys() {
@@ -673,12 +745,21 @@ impl DesignerRuntime {
             validate_native_tables_csv(&workbook.sheets[0])
                 .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
         } else {
-            validate_native_tables_xlsx(&workbook)
-                .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
+            (if working {
+                crate::interop_adapter::validate_xlsx_compatibility(&workbook)
+            } else {
+                validate_native_tables_xlsx(&workbook)
+            })
+            .map_err(|finding| DesignerError::NativeTablesExport { finding })?;
             let precision_findings = native_tables_xlsx_number_findings(&workbook);
             workbook.ledger.extend(precision_findings);
         }
-        validate_output_for_profile(&workbook, OutputProfile::NativeTables).map_err(|error| {
+        validate_output_for_profile(&workbook, profile).map_err(|error| {
+            if let (true, crate::interop_adapter::InteropError::Capacity(capacity)) =
+                (working, &error)
+            {
+                return DesignerError::CapacityExceeded(capacity.clone());
+            }
             refused(
                 "native_tables_output_refused",
                 "workbook",
@@ -697,12 +778,24 @@ pub(crate) fn encode_native_tables_spreadsheet(
     csv: bool,
 ) -> Result<(DesignerResponse, Vec<u8>), DesignerError> {
     let workbook = runtime.native_tables_workbook(revision, collection, csv)?;
-    let bytes = if csv {
-        export_csv_for_profile(&workbook.sheets[0], OutputProfile::NativeTables)
+    let profile = if runtime.profile == crate::capacity::SessionProfile::WorkingSize {
+        OutputProfile::WorkingSize
     } else {
-        export_xlsx_for_profile(&workbook, OutputProfile::NativeTables)
+        OutputProfile::NativeTables
+    };
+    let bytes = if csv {
+        export_csv_for_profile(&workbook.sheets[0], profile)
+    } else {
+        export_xlsx_for_profile(&workbook, profile)
     }
     .map_err(|error| {
+        if let (
+            OutputProfile::WorkingSize,
+            crate::interop_adapter::InteropError::Capacity(capacity),
+        ) = (profile, &error)
+        {
+            return DesignerError::CapacityExceeded(capacity.clone());
+        }
         refused(
             "native_tables_output_refused",
             collection,

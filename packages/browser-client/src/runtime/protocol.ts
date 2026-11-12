@@ -22,7 +22,7 @@ export type BootstrapProjection = {
 
 /** `projection_bytes` refuses an import and `saved_bytes` a whole-session save; neither is a counted resource. */
 export type CapacityLimits = Record<
-  Exclude<CapacityLimitName, "projection_bytes" | "saved_bytes" | "source_bytes" | "expanded_bytes" | "xml_nodes" | "serialized_source_bytes">,
+  Exclude<CapacityLimitName, "projection_bytes" | "saved_bytes" | "source_bytes" | "expanded_bytes" | "xml_nodes" | "serialized_source_bytes" | "output_bytes">,
   number
 >;
 
@@ -484,6 +484,7 @@ export type CapacityLimitName =
   | "expanded_bytes"
   | "xml_nodes"
   | "serialized_source_bytes"
+  | "output_bytes"
   | "saved_bytes";
 
 export type CapacityFailureProjection = FailureProjection & {
@@ -510,6 +511,7 @@ const CAPACITY_LIMIT_NAMES: readonly CapacityLimitName[] = [
   "expanded_bytes",
   "xml_nodes",
   "serialized_source_bytes",
+  "output_bytes",
   "saved_bytes",
 ];
 

@@ -3092,6 +3092,14 @@ fn current_import_metadata(
     let mut entities = BTreeSet::new();
     for sheet in &mut result.sheets {
         let location = format!("collection {}", sheet.schema_id);
+        if profile == SessionProfile::WorkingSize {
+            super::capacity::check_limit(
+                super::CapacityLimit::TableFields,
+                super::capacity::WORKING_LIMITS.table_fields,
+                sheet.columns.len(),
+                Some(&sheet.name),
+            )?;
+        }
         check_label(&sheet.name).map_err(|error| refuse(&location, &error.to_string()))?;
         let schema = document
             .schemas
@@ -3249,6 +3257,14 @@ fn validate_historical_envelope(
     profile: SessionProfile,
 ) -> Result<(), DesignerError> {
     let refuse = imported_export_error;
+    if profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::Collections,
+            super::capacity::WORKING_LIMITS.collections,
+            metadata.sheets.len(),
+            None,
+        )?;
+    }
     if !(metadata.version == 1 || metadata.version == 2 && profile == SessionProfile::WorkingSize)
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
@@ -3269,7 +3285,13 @@ fn validate_historical_envelope(
             SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
         },
     )
-    .map_err(|error| refuse("workbook", &error.to_string()))?;
+    .map_err(|error| {
+        if profile == SessionProfile::WorkingSize {
+            error
+        } else {
+            refuse("workbook", &error.to_string())
+        }
+    })?;
     Ok(())
 }
 
@@ -3307,6 +3329,20 @@ fn reconcile_import_rows(
             entity_id: entity.id.to_string(),
             styles: vec![CellStyle::default(); sheet.columns.len()],
         });
+    }
+    if profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::TableFields,
+            super::capacity::WORKING_LIMITS.table_fields,
+            sheet.columns.len(),
+            Some(&sheet.name),
+        )?;
+        super::capacity::check_limit(
+            super::CapacityLimit::TableRows,
+            super::capacity::WORKING_LIMITS.table_rows,
+            sheet.rows.len(),
+            Some(&sheet.name),
+        )?;
     }
     if sheet.columns.is_empty()
         || sheet.columns.len()
@@ -3567,6 +3603,28 @@ fn validate_metadata_envelope(
     metadata: &InteropMetadata,
     profile: SessionProfile,
 ) -> Result<(), DesignerError> {
+    if profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::Collections,
+            super::capacity::WORKING_LIMITS.collections,
+            metadata.sheets.len(),
+            None,
+        )?;
+        for sheet in &metadata.sheets {
+            super::capacity::check_limit(
+                super::CapacityLimit::TableFields,
+                super::capacity::WORKING_LIMITS.table_fields,
+                sheet.columns.len(),
+                Some(&sheet.name),
+            )?;
+            super::capacity::check_limit(
+                super::CapacityLimit::TableRows,
+                super::capacity::WORKING_LIMITS.table_rows,
+                sheet.rows.len(),
+                Some(&sheet.name),
+            )?;
+        }
+    }
     if !(metadata.version == 1 || metadata.version == 2 && profile == SessionProfile::WorkingSize)
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
@@ -3681,7 +3739,8 @@ impl DesignerRuntime {
     pub(crate) fn imported_output_profile(&self) -> OutputProfile {
         match self.profile {
             SessionProfile::TextCapacity => OutputProfile::TextCapacity,
-            SessionProfile::Ordinary | SessionProfile::WorkingSize => OutputProfile::Shared,
+            SessionProfile::Ordinary => OutputProfile::Shared,
+            SessionProfile::WorkingSize => OutputProfile::WorkingSize,
         }
     }
 
@@ -3704,13 +3763,7 @@ impl DesignerRuntime {
             }
             SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
         }
-        let profile = if self.profile == SessionProfile::WorkingSize
-            && matches!(output, ImportedOutput::Projection)
-        {
-            OutputProfile::WorkingSize
-        } else {
-            self.imported_output_profile()
-        };
+        let profile = self.imported_output_profile();
         let mut workbook = self
             .rebuild_workbook_from_metadata(
                 expected_revision,
@@ -3719,7 +3772,14 @@ impl DesignerRuntime {
                 profile,
                 matches!(output, ImportedOutput::Csv(_)),
             )
-            .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
+            .map_err(|error| match error {
+                DesignerError::CapacityExceeded(_) | DesignerError::ProjectionTooLarge { .. }
+                    if profile == OutputProfile::WorkingSize =>
+                {
+                    error
+                }
+                other => imported_export_error("workbook", &other.to_string()),
+            })?;
         match output {
             ImportedOutput::Xlsx => {
                 super::interop_adapter::validate_xlsx_compatibility(&workbook)
@@ -3749,8 +3809,17 @@ impl DesignerRuntime {
             append_saved_export_findings(snapshot.document(), &mut workbook);
             workbook
         } else {
-            finalize_export_workbook(snapshot.document(), workbook, profile)
-                .map_err(|error| imported_export_error("workbook", &error.to_string()))?
+            finalize_export_workbook(snapshot.document(), workbook, profile).map_err(|error| {
+                match error {
+                    DesignerError::CapacityExceeded(_)
+                    | DesignerError::ImportCapacityExceeded { .. }
+                        if profile == OutputProfile::WorkingSize =>
+                    {
+                        error
+                    }
+                    other => imported_export_error("workbook", &other.to_string()),
+                }
+            })?
         };
         workbook.ledger.extend(ledger);
         Ok(workbook)
@@ -3772,12 +3841,17 @@ impl DesignerRuntime {
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
-        let metadata = native_tracker_metadata(snapshot.document(), presentation)?;
+        self.preflight_working_native_export(snapshot.document())?;
+        let metadata = native_tracker_metadata(snapshot.document(), presentation, self.profile)?;
         self.export_workbook_from_metadata(
             expected_revision,
             snapshot.document(),
             &metadata,
-            OutputProfile::NativeTracker,
+            if self.profile == SessionProfile::WorkingSize {
+                OutputProfile::WorkingSize
+            } else {
+                OutputProfile::NativeTracker
+            },
         )
     }
 
@@ -3798,13 +3872,14 @@ impl DesignerRuntime {
         presentation: &NativeBudgetExportPresentation,
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
-        let metadata = native_budget_metadata(self, presentation)?;
         let snapshot = self.session.export_snapshot();
+        self.preflight_working_native_export(snapshot.document())?;
+        let metadata = native_budget_metadata(self, presentation)?;
         self.export_workbook_from_metadata(
             expected_revision,
             snapshot.document(),
             &metadata,
-            OutputProfile::Shared,
+            self.imported_output_profile(),
         )
     }
 
@@ -3825,8 +3900,9 @@ impl DesignerRuntime {
         presentation: &NativeBudgetExportPresentation,
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
-        let (active, collection, spec) = native_budget_active_csv_mapping(self, presentation)?;
         let snapshot = self.session.export_snapshot();
+        self.preflight_working_native_export(snapshot.document())?;
+        let (active, collection, spec) = native_budget_active_csv_mapping(self, presentation)?;
         let document = snapshot.document();
         let schema = document
             .schemas
@@ -3834,14 +3910,19 @@ impl DesignerRuntime {
             .ok_or_else(|| tracker_error("native Budget active schema is unavailable"))?;
         if schema.id.as_str() != active.collection_id
             || spec.columns.is_empty()
-            || spec.columns.len() > MAX_NATIVE_BUDGET_COLUMNS
+            || spec.columns.len()
+                > if self.profile == SessionProfile::WorkingSize {
+                    super::capacity::WORKING_LIMITS.table_fields
+                } else {
+                    MAX_NATIVE_BUDGET_COLUMNS
+                }
             || schema.fields.len() != spec.columns.len()
         {
             return Err(tracker_error(
                 "native Budget active schema identity changed during export",
             ));
         }
-        let row_styles = native_budget_active_csv_styles(collection, spec)?;
+        let row_styles = native_budget_active_csv_styles(collection, spec, self.profile)?;
         let rows =
             native_budget_active_csv_rows(self, expected_revision, document, spec, &row_styles)?;
 
@@ -3872,7 +3953,61 @@ impl DesignerRuntime {
                 blocking: false,
             }],
         };
-        finalize_export_workbook(document, workbook, OutputProfile::Shared)
+        finalize_export_workbook(document, workbook, self.imported_output_profile())
+    }
+
+    fn preflight_working_native_export(&self, document: &Document) -> Result<(), DesignerError> {
+        if self.profile != SessionProfile::WorkingSize {
+            return Ok(());
+        }
+        let limits = super::capacity::WORKING_LIMITS;
+        super::capacity::check_limit(
+            super::CapacityLimit::Collections,
+            limits.collections,
+            self.collection_specs.len(),
+            None,
+        )?;
+        let mut rows = 0;
+        let mut formulas = 0;
+        for spec in self.collection_specs.values() {
+            super::capacity::check_limit(
+                super::CapacityLimit::TableFields,
+                limits.table_fields,
+                spec.columns.len(),
+                Some(&spec.summary.id),
+            )?;
+            super::capacity::check_limit(
+                super::CapacityLimit::TableRows,
+                limits.table_rows,
+                spec.entities.len(),
+                Some(&spec.summary.id),
+            )?;
+            rows += spec.entities.len();
+            formulas += spec
+                .entities
+                .iter()
+                .map(|id| {
+                    document.entities[id]
+                        .fields
+                        .values()
+                        .filter(|value| matches!(value, Value::Formula(_)))
+                        .count()
+                })
+                .sum::<usize>();
+        }
+        super::capacity::check_limit(
+            super::CapacityLimit::TotalEntities,
+            limits.total_entities,
+            rows,
+            None,
+        )?;
+        super::capacity::check_limit(
+            super::CapacityLimit::Formulas,
+            limits.formulas,
+            formulas,
+            None,
+        )?;
+        Ok(())
     }
 
     fn export_workbook_from_metadata(
@@ -3936,10 +4071,16 @@ impl DesignerRuntime {
                                 expression, &target, &addresses, &columns,
                             )?)
                         };
-                        if formula
+                        if let Some(formula) = formula
                             .as_ref()
-                            .is_some_and(|formula| formula.len() > MAX_PROFILE_STRING_BYTES)
+                            .filter(|formula| formula.len() > MAX_PROFILE_STRING_BYTES)
                         {
+                            if profile == OutputProfile::WorkingSize {
+                                return Err(DesignerError::ProjectionTooLarge {
+                                    actual: formula.len(),
+                                    maximum: MAX_PROFILE_STRING_BYTES,
+                                });
+                            }
                             return Err(tracker_error(
                                 "export formula exceeds the bounded reimport authoring profile",
                             ));
@@ -4019,8 +4160,16 @@ fn finalize_export_workbook(
     profile: OutputProfile,
 ) -> Result<SourceWorkbook, DesignerError> {
     append_saved_export_findings(document, &mut workbook);
-    super::interop_adapter::validate_output_for_profile(&workbook, profile)
-        .map_err(interop_admission_error)?;
+    super::interop_adapter::validate_output_for_profile(&workbook, profile).map_err(|error| {
+        match error {
+            super::interop_adapter::InteropError::Capacity(capacity)
+                if profile == OutputProfile::WorkingSize =>
+            {
+                DesignerError::CapacityExceeded(capacity)
+            }
+            other => interop_admission_error(other),
+        }
+    })?;
     Ok(workbook)
 }
 
@@ -4093,10 +4242,29 @@ fn native_budget_active_csv_mapping<'a>(
 fn native_budget_active_csv_styles(
     collection: &NativeBudgetExportCollection,
     spec: &CollectionSpec,
+    profile: SessionProfile,
 ) -> Result<BTreeMap<String, Vec<CellStyle>>, DesignerError> {
-    if spec.columns.len() > MAX_NATIVE_BUDGET_COLUMNS
+    if profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::TableRows,
+            super::capacity::WORKING_LIMITS.table_rows,
+            collection.rows.len(),
+            Some(&collection.collection_id),
+        )?;
+    }
+    if spec.columns.len()
+        > if profile == SessionProfile::WorkingSize {
+            super::capacity::WORKING_LIMITS.table_fields
+        } else {
+            MAX_NATIVE_BUDGET_COLUMNS
+        }
         || collection.rows.len() != spec.entities.len()
-        || collection.rows.len() > MAX_NATIVE_BUDGET_DATA_ROWS
+        || collection.rows.len()
+            > if profile == SessionProfile::WorkingSize {
+                super::capacity::WORKING_LIMITS.table_rows
+            } else {
+                MAX_NATIVE_BUDGET_DATA_ROWS
+            }
     {
         return Err(tracker_error(
             "native Budget active collection mapping must cover every bounded source row exactly once",
@@ -4200,11 +4368,40 @@ fn native_budget_metadata(
     runtime: &DesignerRuntime,
     presentation: &NativeBudgetExportPresentation,
 ) -> Result<InteropMetadata, DesignerError> {
+    if runtime.profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::Collections,
+            super::capacity::WORKING_LIMITS.collections,
+            presentation.collections.len(),
+            None,
+        )?;
+        let mut total = 0;
+        for collection in &presentation.collections {
+            super::capacity::check_limit(
+                super::CapacityLimit::TableRows,
+                super::capacity::WORKING_LIMITS.table_rows,
+                collection.rows.len(),
+                Some(&collection.collection_id),
+            )?;
+            total += collection.rows.len();
+        }
+        super::capacity::check_limit(
+            super::CapacityLimit::TotalEntities,
+            super::capacity::WORKING_LIMITS.total_entities,
+            total,
+            None,
+        )?;
+    }
     if presentation.version != 1
         || presentation.views.is_empty()
         || presentation.views.len() > super::MAX_COLLECTIONS
         || presentation.collections.is_empty()
-        || presentation.collections.len() > MAX_NATIVE_BUDGET_SHEETS
+        || presentation.collections.len()
+            > if runtime.profile == SessionProfile::WorkingSize {
+                super::capacity::WORKING_LIMITS.collections
+            } else {
+                MAX_NATIVE_BUDGET_SHEETS
+            }
     {
         return Err(tracker_error(
             "native Budget export presentation is outside the bounded profile",
@@ -4263,9 +4460,19 @@ fn native_budget_metadata(
             .ok_or_else(|| {
                 tracker_error("native Budget collection mapping references an unavailable source")
             })?;
-        if spec.columns.len() > MAX_NATIVE_BUDGET_COLUMNS
+        if spec.columns.len()
+            > if runtime.profile == SessionProfile::WorkingSize {
+                super::capacity::WORKING_LIMITS.table_fields
+            } else {
+                MAX_NATIVE_BUDGET_COLUMNS
+            }
             || collection.rows.len() != spec.entities.len()
-            || collection.rows.len() > MAX_NATIVE_BUDGET_DATA_ROWS
+            || collection.rows.len()
+                > if runtime.profile == SessionProfile::WorkingSize {
+                    super::capacity::WORKING_LIMITS.table_rows
+                } else {
+                    MAX_NATIVE_BUDGET_DATA_ROWS
+                }
         {
             return Err(tracker_error(
                 "native Budget collection mapping must cover every bounded source row exactly once",
@@ -4415,8 +4622,22 @@ fn tracker_column_order(schema: &Schema) -> Vec<&str> {
 fn native_tracker_metadata(
     document: &Document,
     presentation: &NativeTrackerExportPresentation,
+    profile: SessionProfile,
 ) -> Result<InteropMetadata, DesignerError> {
-    if presentation.version != 1 || presentation.rows.len() > MAX_TABLE_ROWS {
+    let max_rows = if profile == SessionProfile::WorkingSize {
+        super::capacity::WORKING_LIMITS.table_rows
+    } else {
+        MAX_TABLE_ROWS
+    };
+    if profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::TableRows,
+            max_rows,
+            presentation.rows.len(),
+            Some("Tracker"),
+        )?;
+    }
+    if presentation.version != 1 || presentation.rows.len() > max_rows {
         return Err(tracker_error(
             "native Tracker export presentation is outside the 128-row profile",
         ));
@@ -4438,17 +4659,51 @@ fn native_tracker_metadata(
                 .get(&FieldId::from(*id))
                 .is_none_or(|field| field.key.to_string() != *id || field.field_type != *field_type)
         })
-        || document.entities.len() > MAX_TABLE_ROWS
+        || document.entities.len() > max_rows
     {
         return Err(tracker_error(
             "native Tracker export requires the stock task, estimate, done fields",
         ));
     }
+    validate_tracker_rows(document, presentation, schema, fields.len())?;
+    let order = tracker_column_order(schema);
+    Ok(InteropMetadata {
+        version: 1,
+        sheets: vec![InteropSheetMetadata {
+            schema_id: "tracker".to_owned(),
+            name: "Tracker".to_owned(),
+            has_header: true,
+            columns: order
+                .iter()
+                .map(|id| InteropColumnMetadata {
+                    field_id: (*id).to_owned(),
+                    name: (*id).to_owned(),
+                    width: None,
+                })
+                .collect(),
+            rows: presentation
+                .rows
+                .iter()
+                .map(|row| InteropRowMetadata {
+                    entity_id: row.entity_id.clone(),
+                    styles: row.styles.clone(),
+                })
+                .collect(),
+        }],
+    })
+}
+
+fn validate_tracker_rows(
+    document: &Document,
+    presentation: &NativeTrackerExportPresentation,
+    schema: &Schema,
+    field_count: usize,
+) -> Result<(), DesignerError> {
     let mut seen = BTreeSet::new();
     for row in &presentation.rows {
         check_label(&row.entity_id)?;
         if !seen.insert(row.entity_id.as_str())
-            || row.styles.len() != fields.len()
+            || row.styles.len() != field_count
             || document
                 .entities
                 .get(&EntityId::from(row.entity_id.clone()))
@@ -4481,31 +4736,7 @@ fn native_tracker_metadata(
             "native Tracker export must map every accepted row exactly once",
         ));
     }
-    let order = tracker_column_order(schema);
-    Ok(InteropMetadata {
-        version: 1,
-        sheets: vec![InteropSheetMetadata {
-            schema_id: "tracker".to_owned(),
-            name: "Tracker".to_owned(),
-            has_header: true,
-            columns: order
-                .iter()
-                .map(|id| InteropColumnMetadata {
-                    field_id: (*id).to_owned(),
-                    name: (*id).to_owned(),
-                    width: None,
-                })
-                .collect(),
-            rows: presentation
-                .rows
-                .iter()
-                .map(|row| InteropRowMetadata {
-                    entity_id: row.entity_id.clone(),
-                    styles: row.styles.clone(),
-                })
-                .collect(),
-        }],
-    })
+    Ok(())
 }
 
 /// Inspect canonical bytes plus their private source mappings without replacing
@@ -4545,7 +4776,12 @@ pub(crate) fn validate_saved_open_closure(
     let profile = candidate.imported_output_profile();
     let encoded = super::interop_adapter::export_xlsx_for_profile(&workbook, profile)
         .map_err(interop_admission_error)?;
-    super::interop_adapter::import_xlsx(&encoded).map_err(interop_admission_error)?;
+    super::interop_adapter::import_xlsx_profile(
+        &encoded,
+        &super::interop_adapter::ImportOptions::default(),
+        candidate.profile == SessionProfile::WorkingSize,
+    )
+    .map_err(interop_admission_error)?;
     for sheet in &workbook.sheets {
         super::interop_adapter::export_csv_for_profile(sheet, profile)
             .map_err(interop_admission_error)?;

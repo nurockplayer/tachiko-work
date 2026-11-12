@@ -125,6 +125,7 @@ pub enum CapacityLimit {
     ExpandedBytes,
     XmlNodes,
     SerializedSourceBytes,
+    OutputBytes,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Error, PartialEq, Serialize)]
