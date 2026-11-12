@@ -5813,7 +5813,9 @@ impl DesignerRuntime {
         width: Option<u32>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
-        let mut candidate = self.presentation.clone();
+        // A removed column or table leaves its entries in the live store until
+        // save; drop them so they do not fail validation of this edit.
+        let mut candidate = prune_presentation(&self.presentation, self.session.document());
         let table = candidate.tables.entry(schema.clone()).or_default();
         let old_style = table.column_styles.remove(field);
         if let Some(style) = style {

@@ -1,7 +1,7 @@
 use super::{
-    CellAlignment, CellStyle, ColumnAlignment, DesignerError, DesignerRuntime, PatchLifecycleError,
-    PresentationStore, SortDirection, TableView, ViewFilter, ViewSortKey, ViewTextOrder,
-    admit_project, totals_tests, view_index_counters,
+    CellAlignment, CellStyle, ColumnAlignment, DesignerError, DesignerRequest, DesignerRuntime,
+    PatchLifecycleError, PresentationStore, SortDirection, TableView, ViewFilter, ViewSortKey,
+    ViewTextOrder, admit_project, totals_tests, view_index_counters,
 };
 use serde_json::{Map, Value};
 use tachiko_workspace_engine::{FieldId, SchemaId, TablePresentation};
@@ -330,4 +330,54 @@ fn changing_one_column_keeps_a_style_used_by_another() {
     let revision = runtime.current_revision().to_owned();
     runtime.history_edit(&revision, false).unwrap();
     assert_eq!(runtime.presentation, store);
+}
+
+#[test]
+fn edits_after_a_styled_column_is_removed() {
+    let mut runtime = runtime();
+    let collection = runtime.default_collection.clone();
+    let others = window(&mut runtime, &TableView::default())
+        .columns
+        .iter()
+        .filter(|column| column.id != FIELD)
+        .map(|column| column.id.clone())
+        .collect::<Vec<_>>();
+    let removed = others
+        .into_iter()
+        .find(|other| {
+            let revision = runtime.current_revision().to_owned();
+            runtime
+                .set_column_width(&revision, &collection, other, Some(512))
+                .unwrap();
+            let revision = runtime.current_revision().to_owned();
+            runtime
+                .handle(DesignerRequest::RemoveColumn {
+                    expected_revision: revision,
+                    collection: collection.clone(),
+                    field: other.clone(),
+                })
+                .is_ok()
+        })
+        .expect("a removable column");
+    let removed = FieldId::from(removed);
+    let stale = |runtime: &DesignerRuntime| {
+        runtime
+            .presentation
+            .tables
+            .values()
+            .any(|table| table.column_widths.contains_key(&removed))
+    };
+    assert!(stale(&runtime));
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .set_column_wrap(&revision, &collection, FIELD, Some(true))
+        .unwrap();
+    assert!(!stale(&runtime));
+    assert_eq!(
+        column(&window(&mut runtime, &TableView::default()))
+            .style
+            .as_ref()
+            .and_then(|style| style.wrap),
+        Some(true)
+    );
 }
