@@ -3626,7 +3626,7 @@ pub(crate) fn import_xlsx_profile(
                         SourceValue::Empty
                     }
                 };
-                let mut source = formula.map(|f| days_ooxml_formula(&f.text, false));
+                let mut source = formula.map(|f| future_ooxml_formula(&f.text, false));
                 if let Some(f) = formula {
                     formula_count += 1;
                     check_import_limit(
@@ -4252,6 +4252,164 @@ pub(crate) fn guarded_date_cell(source: &str) -> Option<&str> {
         .then_some(cell)
 }
 
+/// One complete call, excluding surrounding whitespace and its parentheses.
+pub(crate) fn named_call<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+    let source = source.trim();
+    if !source.get(..name.len())?.eq_ignore_ascii_case(name) {
+        return None;
+    }
+    let rest = source.get(name.len()..)?.trim_start();
+    let (argument, consumed) = call_argument(rest)?;
+    (consumed == rest.len()).then_some(argument)
+}
+
+/// The three Excel spellings share one entry shape. VLOOKUP also validates
+/// the last column of its rectangle, even when it returns an earlier column.
+pub(crate) struct LookupCall<'a> {
+    pub key: &'a str,
+    pub keys: String,
+    pub results: String,
+    pub range_end: Option<String>,
+    pub if_missing: Option<&'a str>,
+    pub wildcards: bool,
+}
+
+pub(crate) fn lookup_call<'a>(name: &str, argument: &'a str) -> Option<LookupCall<'a>> {
+    let parts = split_arguments(argument)?;
+    let mut call = LookupCall {
+        key: parts.first()?.1.trim(),
+        keys: String::new(),
+        results: String::new(),
+        range_end: None,
+        if_missing: None,
+        wildcards: name != "XLOOKUP",
+    };
+    match name {
+        "VLOOKUP" if parts.len() == 4 => {
+            if !parts[3].1.trim().eq_ignore_ascii_case("FALSE") && parts[3].1.trim() != "0" {
+                return None;
+            }
+            let index = parts[2].1.trim();
+            if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            let index = index.parse::<usize>().ok()?.checked_sub(1)?;
+            let (start, end) = parts[1].1.trim().rsplit_once(':')?;
+            let (prefix, start) = start.rsplit_once('!').map_or(("", start), |(sheet, cell)| {
+                (&parts[1].1.trim()[..=sheet.len()], cell)
+            });
+            let (first, first_row) = cell_reference(start.trim())?;
+            let (last, last_row) = cell_reference(end.trim())?;
+            // cell_reference reads a prefix, so reject trailing source text.
+            if cell_reference_span(start.trim())? != start.trim().len()
+                || cell_reference_span(end.trim())? != end.trim().len()
+            {
+                return None;
+            }
+            let first = column_index(&first)?;
+            let last = column_index(&last)?;
+            let selected = first.checked_add(index)?;
+            if first > last || selected > last {
+                return None;
+            }
+            let column = |index| {
+                let letters = column_name(index);
+                format!("{prefix}{letters}{first_row}:{letters}{last_row}")
+            };
+            call.keys = column(first);
+            call.results = column(selected);
+            call.range_end = Some(column(last));
+        }
+        "XLOOKUP" if matches!(parts.len(), 3 | 4) => {
+            parts[1].1.trim().clone_into(&mut call.keys);
+            parts[2].1.trim().clone_into(&mut call.results);
+            call.if_missing = parts.get(3).map(|(_, part)| part.trim());
+        }
+        "INDEX" if parts.len() == 2 => {
+            let matched = split_arguments(named_call(parts[1].1, "MATCH")?)?;
+            if matched.len() != 3 || matched[2].1.trim() != "0" {
+                return None;
+            }
+            call.key = matched[0].1.trim();
+            matched[1].1.trim().clone_into(&mut call.keys);
+            parts[0].1.trim().clone_into(&mut call.results);
+        }
+        "IFNA" if parts.len() == 2 => {
+            call = lookup_call("INDEX", named_call(parts[0].1, "INDEX")?)?;
+            call.if_missing = Some(parts[1].1.trim());
+        }
+        _ => return None,
+    }
+    Some(call)
+}
+
+/// Strip only the literal-match and blank-key wrappers emitted by export.
+/// The text wrapper encloses the blank guard when both are needed.
+pub(crate) fn lookup_key(source: &str) -> (&str, bool, bool) {
+    let mut key = source.trim();
+    let escaped = (|| {
+        for (from, to) in [
+            ("\"?\"", "\"~?\""),
+            ("\"*\"", "\"~*\""),
+            ("\"~\"", "\"~~\""),
+        ] {
+            let parts = split_arguments(named_call(key, "SUBSTITUTE")?)?;
+            if parts.len() != 3 || parts[1].1.trim() != from || parts[2].1.trim() != to {
+                return None;
+            }
+            key = parts[0].1.trim();
+        }
+        Some(key)
+    })();
+    key = escaped.unwrap_or(source.trim());
+    let guarded = (|| {
+        let parts = split_arguments(named_call(key, "IF")?)?;
+        if parts.len() != 3 || parts[1].1.trim() != "1/0" {
+            return None;
+        }
+        let cell = named_call(parts[0].1, "ISBLANK")?.trim();
+        let address = cell.rsplit_once('!').map_or(cell, |(_, address)| address);
+        (cell_reference_span(address)? == address.len()
+            && cell.eq_ignore_ascii_case(parts[2].1.trim()))
+        .then_some(cell)
+    })();
+    (guarded.unwrap_or(key), guarded.is_some(), escaped.is_some())
+}
+
+/// Identify lookup formulas for the typed import boundary's cached-value path.
+pub(crate) fn contains_lookup_call(source: &str) -> bool {
+    let mut quote = None;
+    let mut token = String::new();
+    let mut chars = source.chars().peekable();
+    while let Some(character) = chars.next() {
+        if let Some(open) = quote {
+            if character == open {
+                if chars.peek() == Some(&open) {
+                    chars.next();
+                } else {
+                    quote = None;
+                }
+            }
+        } else if matches!(character, '\'' | '"') {
+            quote = Some(character);
+            token.clear();
+        } else if character.is_ascii_alphanumeric() || matches!(character, '_' | '.') {
+            token.push(character);
+        } else if character == '(' {
+            if matches!(
+                token.to_ascii_uppercase().as_str(),
+                "LOOKUP" | "VLOOKUP" | "XLOOKUP" | "INDEX" | "MATCH" | "IFNA"
+            ) {
+                return true;
+            }
+            token.clear();
+        } else if !character.is_whitespace() {
+            token.clear();
+        }
+    }
+    false
+}
+
 /// Whether `text` is exactly one `"` string literal, doubled quotes included.
 pub(crate) fn criterion_literal(text: &str) -> bool {
     let bytes = text.as_bytes();
@@ -4461,6 +4619,7 @@ enum FormulaAdmission {
 /// Every SUM, AVERAGE or COUNT call, every conditional aggregate call, and
 /// every MIN/MAX call whose argument holds a range, must stay inside the
 /// translated profile.
+#[allow(clippy::too_many_lines)] // Scan each admitted function family without evaluating formulas.
 fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> FormulaAdmission {
     let mut cursor = 0;
     while cursor < formula.len() {
@@ -4498,16 +4657,22 @@ fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> F
                 "SUMIF" | "SUMIFS" | "AVERAGEIF" | "AVERAGEIFS" | "COUNTIF" | "COUNTIFS"
             );
             let date = matches!(name.as_str(), "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "DAYS");
+            let lookup = matches!(
+                name.as_str(),
+                "VLOOKUP" | "XLOOKUP" | "INDEX" | "MATCH" | "IFNA"
+            );
             // Excel's MIN/MAX of an all-blank range is 0 while a Tachiko column
             // min/max fails, so a range MIN/MAX is never translated.
-            if required || conditional || date || matches!(name.as_str(), "MIN" | "MAX") {
+            if required || conditional || date || lookup || matches!(name.as_str(), "MIN" | "MAX") {
                 let call = skip_whitespace(formula, cursor);
                 if formula[call..].starts_with('(') {
                     let Some((argument, consumed)) = call_argument(&formula[call..]) else {
                         return FormulaAdmission::Refused(None);
                     };
-                    if conditional || date {
-                        let admission = if date {
+                    if conditional || date || lookup {
+                        let admission = if lookup {
+                            lookup_admission(&name, argument, current, sheets)
+                        } else if date {
                             date_admission(&name, argument, current, sheets)
                         } else {
                             conditional_admission(&name, argument, current, sheets)
@@ -4538,6 +4703,117 @@ fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> F
         }
     }
     FormulaAdmission::Admitted
+}
+
+fn lookup_value_type(value: &SourceValue) -> Option<tachiko_workspace_engine::FieldType> {
+    use tachiko_workspace_engine::FieldType;
+    match value {
+        SourceValue::Empty => None,
+        SourceValue::Text { value } if value.is_empty() => None,
+        SourceValue::Text { .. } => Some(FieldType::Text),
+        SourceValue::Number { .. } => Some(FieldType::Number),
+        SourceValue::Date { .. } => Some(FieldType::Date),
+        SourceValue::Boolean { .. } => Some(FieldType::Boolean),
+    }
+}
+
+/// Admit literal matching only where the source values have the same meaning.
+fn lookup_admission(
+    name: &str,
+    argument: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+) -> FormulaAdmission {
+    const REASON: &str = "lookup requires exact-match arguments, whole data columns of one table, numeric results, a filled key of the key column's type, and no unescaped VLOOKUP/MATCH wildcards";
+    let admitted = || -> Option<()> {
+        let call = lookup_call(name, argument)?;
+        let (sheet, keys, first, last) = whole_column_argument(&call.keys, current, sheets, false)?;
+        let (result_sheet, _, result_first, result_last) =
+            whole_column_argument(&call.results, current, sheets, true)?;
+        if (sheet, first, last) != (result_sheet, result_first, result_last)
+            || last + 1 - first != sheets[sheet].rows.len()
+        {
+            return None;
+        }
+        if let Some(end) = &call.range_end {
+            let (end_sheet, _, end_first, end_last) =
+                whole_column_argument(end, current, sheets, false)?;
+            if (end_sheet, end_first, end_last) != (sheet, first, last) {
+                return None;
+            }
+        }
+        let (key, guarded, escaped) = lookup_key(call.key);
+        let wildcard = |value: &SourceValue| matches!(value, SourceValue::Text { value } if value.contains(['*', '?', '~']));
+        let column_type = sheets[sheet]
+            .rows
+            .iter()
+            .filter_map(|row| row.get(keys))
+            .find_map(|cell| lookup_value_type(&cell.value));
+        if escaped && column_type != Some(tachiko_workspace_engine::FieldType::Text) {
+            return None;
+        }
+        let key_type = if let Some((key_sheet, column, row)) = criterion_cell(key, current, sheets)
+        {
+            let source = &sheets[key_sheet];
+            let above = usize::try_from(source.layout.rows_above_header).ok()?;
+            let row = row.checked_sub(above + 1 + usize::from(source.has_header))?;
+            let value = &source.rows.get(row)?.get(column)?.value;
+            if call.wildcards && !escaped && wildcard(value) {
+                return None;
+            }
+            let kind = lookup_value_type(value);
+            if kind.is_none() && !guarded {
+                return None;
+            }
+            kind.or_else(|| {
+                source
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.get(column))
+                    .find_map(|cell| lookup_value_type(&cell.value))
+            })
+            .or_else(|| guarded.then(|| column_type.clone()).flatten())
+        } else {
+            // A non-reference key must be a Number expression. Translation
+            // and binding validate its syntax and operands at the typed boundary.
+            if criterion_literal(key)
+                || key.is_empty()
+                || !matches!(
+                    formula_admission(key, current, sheets),
+                    FormulaAdmission::Admitted
+                )
+            {
+                return None;
+            }
+            Some(tachiko_workspace_engine::FieldType::Number)
+        };
+        if key_type != column_type {
+            return None;
+        }
+        for row in &sheets[sheet].rows {
+            if let Some(cell) = row.get(keys) {
+                if lookup_value_type(&cell.value).is_some_and(|kind| Some(kind) != column_type)
+                    || call.wildcards && !escaped && wildcard(&cell.value)
+                {
+                    return None;
+                }
+            }
+        }
+        if let Some(fallback) = call.if_missing {
+            if !matches!(
+                formula_admission(fallback, current, sheets),
+                FormulaAdmission::Admitted
+            ) {
+                return None;
+            }
+        }
+        Some(())
+    };
+    if admitted().is_some() {
+        FormulaAdmission::Admitted
+    } else {
+        FormulaAdmission::Refused(Some(REASON))
+    }
 }
 
 /// Admit date calls only when their source operands have Excel-compatible values.
@@ -4787,7 +5063,7 @@ fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<Fideli
     }
 }
 
-const ADMITTED_FORMULAS: &str = "Tachiko calculates numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND, ISBLANK, YEAR, MONTH, DAY, WEEKDAY, DAYS, SUM, AVERAGE or COUNT over one whole column, and SUMIF, SUMIFS, AVERAGEIF, AVERAGEIFS, COUNTIF or COUNTIFS over whole columns with written number or blank criteria or a cell reference";
+const ADMITTED_FORMULAS: &str = "Tachiko calculates numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND, ISBLANK, YEAR, MONTH, DAY, WEEKDAY, DAYS, SUM, AVERAGE or COUNT over one whole column, SUMIF, SUMIFS, AVERAGEIF, AVERAGEIFS, COUNTIF or COUNTIFS over whole columns with written number or blank criteria or a cell reference, and exact VLOOKUP, XLOOKUP or INDEX/MATCH over whole columns with numeric results (IFNA supplies a missing-key fallback)";
 
 /// A formula Tachiko does not calculate keeps Excel's last calculated value as
 /// a plain value, with the original formula named in the finding. Without a
@@ -5030,8 +5306,14 @@ fn value_text(value: &SourceValue) -> String {
         SourceValue::Boolean { value } => value.to_string(),
     }
 }
-/// Convert DAYS function tokens between Excel display text and OOXML spelling.
-fn days_ooxml_formula(formula: &str, writing: bool) -> String {
+const FUTURE_FUNCTIONS: [(&str, &str); 3] = [
+    ("DAYS", "_xlfn.DAYS"),
+    ("XLOOKUP", "_xlfn.XLOOKUP"),
+    ("IFNA", "_xlfn.IFNA"),
+];
+
+/// Convert future-function tokens between Excel display text and OOXML spelling.
+fn future_ooxml_formula(formula: &str, writing: bool) -> String {
     let mut result = String::with_capacity(formula.len());
     let mut cursor = 0;
     let mut quote = None;
@@ -5064,12 +5346,17 @@ fn days_ooxml_formula(formula: &str, writing: bool) -> String {
                 cursor += next.len_utf8();
             }
             let token = &formula[start..cursor];
-            let target = if writing { "DAYS" } else { "_xlfn.DAYS" };
-            if token.eq_ignore_ascii_case(target) && formula[cursor..].starts_with('(') {
-                result.push_str(if writing { "_xlfn.DAYS" } else { "DAYS" });
-            } else {
-                result.push_str(token);
-            }
+            let replacement = FUTURE_FUNCTIONS.iter().find_map(|(display, ooxml)| {
+                let (target, replacement) = if writing {
+                    (display, ooxml)
+                } else {
+                    (ooxml, display)
+                };
+                (token.eq_ignore_ascii_case(target)
+                    && formula[skip_whitespace(formula, cursor)..].starts_with('('))
+                .then_some(*replacement)
+            });
+            result.push_str(replacement.unwrap_or(token));
         } else {
             result.push(character);
             cursor += character.len_utf8();
@@ -5078,6 +5365,7 @@ fn days_ooxml_formula(formula: &str, writing: bool) -> String {
     result
 }
 
+#[allow(clippy::too_many_lines)] // Inventory tokens and skip only recognized export wrappers.
 pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool) -> bool {
     // Inventory function names only, without parsing or evaluating expression semantics.
     let mut token = String::new();
@@ -5097,20 +5385,48 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
         } else if c == '(' {
             if !token.is_empty() {
                 let name = token.to_ascii_uppercase();
-                let date_call =
-                    matches!(name.as_str(), "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "DAYS")
-                        .then(|| call_argument(&source[index..]))
-                        .flatten()
-                        .and_then(|(argument, consumed)| {
-                            split_arguments(argument).map(|parts| (parts, consumed))
+                let name = FUTURE_FUNCTIONS
+                    .iter()
+                    .find(|(_, ooxml)| name.eq_ignore_ascii_case(ooxml))
+                    .map_or(name.as_str(), |(display, _)| *display);
+                let lookup = matches!(name, "VLOOKUP" | "XLOOKUP" | "INDEX" | "IFNA")
+                    .then(|| call_argument(&source[index..]))
+                    .flatten()
+                    .and_then(|(argument, consumed)| {
+                        lookup_call(name, argument).map(|call| (call, consumed))
+                    });
+                if let Some((call, consumed)) = lookup {
+                    if unsupported_formula_function(lookup_key(call.key).0, column_aggregates)
+                        || unsupported_formula_function(&call.keys, column_aggregates)
+                        || unsupported_formula_function(&call.results, column_aggregates)
+                        || call.if_missing.is_some_and(|fallback| {
+                            unsupported_formula_function(fallback, column_aggregates)
                         })
-                        .filter(|(parts, _)| {
-                            let date_count = if name == "DAYS" { 2 } else { 1 };
-                            parts
-                                .iter()
-                                .take(date_count)
-                                .any(|(_, part)| guarded_date_cell(part).is_some())
-                        });
+                    {
+                        return true;
+                    }
+                    while chars
+                        .peek()
+                        .is_some_and(|(next, _)| *next < index + consumed)
+                    {
+                        chars.next();
+                    }
+                    token.clear();
+                    continue;
+                }
+                let date_call = matches!(name, "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "DAYS")
+                    .then(|| call_argument(&source[index..]))
+                    .flatten()
+                    .and_then(|(argument, consumed)| {
+                        split_arguments(argument).map(|parts| (parts, consumed))
+                    })
+                    .filter(|(parts, _)| {
+                        let date_count = if name == "DAYS" { 2 } else { 1 };
+                        parts
+                            .iter()
+                            .take(date_count)
+                            .any(|(_, part)| guarded_date_cell(part).is_some())
+                    });
                 if let Some((parts, consumed)) = date_call {
                     let date_count = if name == "DAYS" { 2 } else { 1 };
                     for (part_index, (_, part)) in parts.iter().enumerate() {
@@ -5131,7 +5447,7 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
                     continue;
                 }
                 let allowed = matches!(
-                    name.as_str(),
+                    name,
                     "MIN"
                         | "MAX"
                         | "IF"
@@ -5151,9 +5467,14 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
                         | "ISBLANK"
                         | "TRUE"
                         | "FALSE"
+                        | "VLOOKUP"
+                        | "XLOOKUP"
+                        | "INDEX"
+                        | "MATCH"
+                        | "IFNA"
                 ) || (column_aggregates
                     && matches!(
-                        name.as_str(),
+                        name,
                         "SUM"
                             | "AVERAGE"
                             | "COUNT"
@@ -5664,7 +5985,7 @@ pub(crate) fn export_xlsx_for_profile(
                     .map(|f| {
                         format!(
                             "<f>{}</f>",
-                            escape(&days_ooxml_formula(f.trim_start_matches('='), true))
+                            escape(&future_ooxml_formula(f.trim_start_matches('='), true))
                         )
                     })
                     .unwrap_or_default();
@@ -7081,23 +7402,45 @@ mod xstring_tests {
 }
 
 #[cfg(test)]
-mod days_ooxml_tests {
-    use super::days_ooxml_formula;
+mod future_ooxml_tests {
+    use super::future_ooxml_formula;
 
     #[test]
-    fn converts_only_days_function_tokens() {
-        assert_eq!(
-            days_ooxml_formula("_xlfn.DAYS(B2,A2)", false),
-            "DAYS(B2,A2)"
-        );
-        assert_eq!(days_ooxml_formula("DAYS(B2,A2)", true), "_xlfn.DAYS(B2,A2)");
-        assert_eq!(
-            days_ooxml_formula("_xlfn.days(B2,A2)", false),
-            "DAYS(B2,A2)"
-        );
-        for text in ["'DAYS(x'!A1", "\"DAYS(\"", "_xlfn.OTHER(A1)", "MYDAYS(A1)"] {
-            assert_eq!(days_ooxml_formula(text, false), text);
-            assert_eq!(days_ooxml_formula(text, true), text);
+    fn converts_only_future_function_tokens() {
+        for name in ["DAYS", "XLOOKUP", "IFNA"] {
+            let display = format!("{name}(B2,A2)");
+            let ooxml = format!("_xlfn.{display}");
+            assert_eq!(future_ooxml_formula(&ooxml, false), display);
+            assert_eq!(future_ooxml_formula(&display, true), ooxml);
+            assert_eq!(
+                future_ooxml_formula(&ooxml.to_ascii_lowercase(), false),
+                format!("{name}(b2,a2)")
+            );
+            assert_eq!(future_ooxml_formula(&ooxml, true), ooxml);
+            let spaced = format!("{name} (B2,A2)");
+            assert_eq!(
+                future_ooxml_formula(&spaced, true),
+                format!("_xlfn.{spaced}")
+            );
+            for text in [
+                format!("'{name}(x'!A1"),
+                format!("\"{name}(\""),
+                format!("MY{name}(A1)"),
+                format!("{name}!A1"),
+                format!("'{name}''(x'!A1"),
+                format!("\"a\"\"{name}(\""),
+            ] {
+                assert_eq!(future_ooxml_formula(&text, false), text);
+                assert_eq!(future_ooxml_formula(&text, true), text);
+            }
         }
+        let nested = "IFNA(INDEX(C2:C4,MATCH(A2,A2:A4,0)),DAYS(B2,A2))";
+        let xml = "_xlfn.IFNA(INDEX(C2:C4,MATCH(A2,A2:A4,0)),_xlfn.DAYS(B2,A2))";
+        assert_eq!(future_ooxml_formula(nested, true), xml);
+        assert_eq!(future_ooxml_formula(xml, false), nested);
+        assert_eq!(
+            future_ooxml_formula("_xlfn.OTHER(A1)", false),
+            "_xlfn.OTHER(A1)"
+        );
     }
 }

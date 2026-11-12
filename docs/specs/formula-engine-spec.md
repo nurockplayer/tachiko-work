@@ -99,10 +99,17 @@ case-folded first-row index is built lazily per key column per calculation
 pass, shared by every lookup in that pass and discarded with the other column
 caches. Retained edits rebuild the needed index for their new pass.
 
-`LOOKUP` is the Tachiko text spelling. Excel LOOKUP is not an admitted A1/XLSX
-function; Excel lookup spellings and translation belong to the separate
-interoperability change. This node persists only in `.roproj/v3`.
-IFERROR integration remains TODO(#795) until that node lands.
+`LOOKUP` is the Tachiko text spelling, and `IFERROR` catches
+`lookup_missing_key`. Excel's own `LOOKUP` is not admitted from A1 or XLSX.
+A1 entry and XLSX import accept three exact spellings and bind them to this
+node: `VLOOKUP(key, range, n, FALSE)` over whole table columns,
+`XLOOKUP(key, keys, results[, if_not_found])`, and
+`INDEX(results, MATCH(key, keys, 0))`. Keys never use wildcards: `*`, `?` and
+`~` match themselves, where Excel's `VLOOKUP` and `MATCH` treat them as
+wildcards. A formula typed in A1 form calculates with Tachiko's meaning; XLSX
+import keeps Excel's cached value with a finding when a key or key column holds
+one of those characters. Export writes `INDEX`/`MATCH` with escaped Text keys,
+so Excel matches literally too. This node persists only in `.roproj/v3`.
 
 ### Same-row references
 
