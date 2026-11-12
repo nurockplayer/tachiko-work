@@ -83,6 +83,15 @@ pub enum UnboundExpression {
         value: Box<Self>,
         digits: Box<Self>,
     },
+    Abs(Box<Self>),
+    RoundUp {
+        value: Box<Self>,
+        digits: Box<Self>,
+    },
+    RoundDown {
+        value: Box<Self>,
+        digits: Box<Self>,
+    },
     IsBlank(Box<Self>),
 }
 
@@ -219,6 +228,17 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
         UnboundExpression::Not(value) => format!("NOT({})", format_unbound_expression(value)),
         UnboundExpression::Round { value, digits } => format!(
             "ROUND({}, {})",
+            format_unbound_expression(value),
+            format_unbound_expression(digits)
+        ),
+        UnboundExpression::Abs(value) => format!("ABS({})", format_unbound_expression(value)),
+        UnboundExpression::RoundUp { value, digits } => format!(
+            "ROUNDUP({}, {})",
+            format_unbound_expression(value),
+            format_unbound_expression(digits)
+        ),
+        UnboundExpression::RoundDown { value, digits } => format!(
+            "ROUNDDOWN({}, {})",
             format_unbound_expression(value),
             format_unbound_expression(digits)
         ),
@@ -363,7 +383,9 @@ fn push_children<'expression>(
                     .map(|argument| (argument, child_depth)),
             );
         }
-        UnboundExpression::Not(value) | UnboundExpression::IsBlank(value) => {
+        UnboundExpression::Not(value)
+        | UnboundExpression::Abs(value)
+        | UnboundExpression::IsBlank(value) => {
             stack.push((value, child_depth));
         }
         UnboundExpression::Add { left, right }
@@ -374,6 +396,14 @@ fn push_children<'expression>(
         | UnboundExpression::Maximum { left, right }
         | UnboundExpression::Compare { left, right, .. }
         | UnboundExpression::Round {
+            value: left,
+            digits: right,
+        }
+        | UnboundExpression::RoundUp {
+            value: left,
+            digits: right,
+        }
+        | UnboundExpression::RoundDown {
             value: left,
             digits: right,
         } => {
@@ -710,7 +740,7 @@ impl<'input> Parser<'input> {
         let upper = name.to_ascii_uppercase();
         if matches!(
             upper.as_str(),
-            "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
+            "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ABS" | "ROUNDUP" | "ROUNDDOWN" | "ISBLANK"
         ) {
             return self.parse_extended_function(start, &upper);
         }
@@ -727,7 +757,7 @@ impl<'input> Parser<'input> {
                 return Err(FormulaParseError::new(
                     start,
                     format!(
-                        "unknown function '{name}'; expected min, max, IF, AND, OR, NOT, ROUND, ISBLANK, or a conditional aggregate"
+                        "unknown function '{name}'; expected min, max, IF, AND, OR, NOT, ROUND, ABS, ROUNDUP, ROUNDDOWN, ISBLANK, or a conditional aggregate"
                     ),
                 ));
             }
@@ -783,8 +813,8 @@ impl<'input> Parser<'input> {
         })?;
         let valid_arity = match name {
             "IF" => arguments.len() == 3,
-            "ROUND" => arguments.len() == 2,
-            "NOT" | "ISBLANK" => arguments.len() == 1,
+            "ROUND" | "ROUNDUP" | "ROUNDDOWN" => arguments.len() == 2,
+            "NOT" | "ABS" | "ISBLANK" => arguments.len() == 1,
             _ => !arguments.is_empty(),
         };
         if !valid_arity {
@@ -807,11 +837,16 @@ impl<'input> Parser<'input> {
             "AND" => UnboundExpression::And(arguments),
             "OR" => UnboundExpression::Or(arguments),
             "NOT" => UnboundExpression::Not(Box::new(arguments.remove(0))),
+            "ABS" => UnboundExpression::Abs(Box::new(arguments.remove(0))),
             "ISBLANK" => UnboundExpression::IsBlank(Box::new(arguments.remove(0))),
-            "ROUND" => {
+            "ROUND" | "ROUNDUP" | "ROUNDDOWN" => {
                 let digits = Box::new(arguments.pop().expect("checked arity"));
                 let value = Box::new(arguments.pop().expect("checked arity"));
-                UnboundExpression::Round { value, digits }
+                match name {
+                    "ROUND" => UnboundExpression::Round { value, digits },
+                    "ROUNDUP" => UnboundExpression::RoundUp { value, digits },
+                    _ => UnboundExpression::RoundDown { value, digits },
+                }
             }
             _ => unreachable!("known function"),
         })

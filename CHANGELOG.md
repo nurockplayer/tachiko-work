@@ -10,6 +10,9 @@ All notable changes to Tachiko Work are documented in this file.
   100,000 populated cells, with typed capacity refusals. Supported date
   formats on blank Date cells survive import and export.
 
+- Formula authoring and XLSX interoperability support `ABS`, `ROUNDUP` and
+  `ROUNDDOWN`, including decimal-directed rounding and canonical persistence.
+
 - XLSX imports promote supported date formats, alignment, wrapping and column
   widths into editable presentation while preserving other source styles.
 

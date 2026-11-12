@@ -160,3 +160,58 @@ fn legacy_direct_v1_refuses_new_expression_operations() {
         "{error}"
     );
 }
+
+#[test]
+fn absolute_and_directed_rounding_round_trip_and_refuse_frozen_projects() {
+    let number = || Box::new(Expression::Number(Number::new(-1.29).unwrap()));
+    let expressions = [
+        Expression::Abs(number()),
+        Expression::RoundUp {
+            value: number(),
+            digits: 1,
+        },
+        Expression::RoundDown {
+            value: number(),
+            digits: 1,
+        },
+    ];
+    let mut document = document_with_conditional();
+    let entity = document.entities.get_mut("row").unwrap();
+    for (field, expression) in ["expense", "reserve", "rate"].into_iter().zip(expressions) {
+        entity
+            .fields
+            .insert(FieldId::from(field), Value::Formula(expression));
+    }
+    let project = encode_roproj_v3(&document).unwrap();
+    for op in ["abs", "round_up", "round_down"] {
+        assert!(
+            project
+                .files()
+                .iter()
+                .any(|file| String::from_utf8_lossy(file.bytes()).contains(&format!("\"{op}\"")))
+        );
+    }
+    assert_eq!(decode_roproj_v3(&project).unwrap(), document);
+    let direct = to_canonical_string(&document).unwrap();
+    assert_eq!(from_str(&direct).unwrap(), document);
+    for field in ["expense", "reserve", "rate"] {
+        let mut single = document_with_conditional();
+        let expr = document.entities["row"].fields[field].clone();
+        let entity = single.entities.get_mut("row").unwrap();
+        entity.fields.insert(
+            FieldId::from("reserve"),
+            Value::Number(Number::new(0.0).unwrap()),
+        );
+        entity.fields.insert(FieldId::from(field), expr);
+        for error in [
+            encode_roproj_v1(&single).unwrap_err(),
+            encode_roproj_v2(&single).unwrap_err(),
+        ] {
+            assert!(
+                error
+                    .to_string()
+                    .contains("conditional and rounding formula expressions")
+            );
+        }
+    }
+}

@@ -2676,7 +2676,17 @@ fn translate_a1_inner(
                     }
                     if matches!(
                         name.as_str(),
-                        "MIN" | "MAX" | "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ISBLANK"
+                        "MIN"
+                            | "MAX"
+                            | "IF"
+                            | "AND"
+                            | "OR"
+                            | "NOT"
+                            | "ROUND"
+                            | "ABS"
+                            | "ROUNDUP"
+                            | "ROUNDDOWN"
+                            | "ISBLANK"
                     ) {
                         output.push_str(&name.to_ascii_lowercase());
                         return Ok(());
@@ -4764,6 +4774,18 @@ fn export_in(
         )),
         Expression::Round { value, digits } => Ok(format!(
             "ROUND({},{digits})",
+            export_in(value, owner, addresses, columns, present)?
+        )),
+        Expression::Abs(value) => Ok(format!(
+            "ABS({})",
+            export_in(value, owner, addresses, columns, present)?
+        )),
+        Expression::RoundUp { value, digits } => Ok(format!(
+            "ROUNDUP({},{digits})",
+            export_in(value, owner, addresses, columns, present)?
+        )),
+        Expression::RoundDown { value, digits } => Ok(format!(
+            "ROUNDDOWN({},{digits})",
             export_in(value, owner, addresses, columns, present)?
         )),
         Expression::IsBlank(reference) => Ok(format!(

@@ -729,3 +729,20 @@ fn translate_a1_leaves_column_rules_to_the_commit() {
         "{reply}"
     );
 }
+
+#[test]
+fn translate_a1_absolute_and_directed_rounding() {
+    let mut rt = Some(fixture());
+    ok(
+        &mut rt,
+        "ROUNDUP(B2*1.1,2)",
+        "roundup([r1.qty]*1.1,2)",
+        &["relative_copy_semantics_changed"],
+    );
+    ok(
+        &mut rt,
+        "ABS(C2)",
+        "abs([r1.price])",
+        &["relative_copy_semantics_changed"],
+    );
+}

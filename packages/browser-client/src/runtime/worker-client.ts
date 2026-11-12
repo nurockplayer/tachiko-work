@@ -90,6 +90,11 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", await this.#command({type: "new_tracker", occurrence_id: freshOccurrenceId()}));
   }
 
+  /** Create a Tracker whose session profile is the working-size one. */
+  async newTrackerWorkingSize(): Promise<OpenedWindowProjection> {
+    return expectResponse("opened_window", await this.#command({type: "new_tracker", occurrence_id: freshOccurrenceId(), profile: "working_size"}));
+  }
+
   async #spreadsheet(operation: SpreadsheetOperation, bytes = new ArrayBuffer(0)): Promise<Exclude<WorkerReply, {status: "error"}>> {
     const copy = bytes.slice(0);
     return this.#send({id: this.#claimId(), kind: "spreadsheet", operation, bytes: copy}, [copy]);
@@ -200,6 +205,11 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async newBudget(): Promise<OpenedProjection> {
     return expectResponse("opened", await this.#command({type: "new_budget", occurrence_id: freshOccurrenceId()}));
+  }
+
+  /** Create a Budget whose session profile is the working-size one. */
+  async newBudgetWorkingSize(): Promise<OpenedWindowProjection> {
+    return expectResponse("opened_window", await this.#command({type: "new_budget", occurrence_id: freshOccurrenceId(), profile: "working_size"}));
   }
 
   async newTable(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection> {

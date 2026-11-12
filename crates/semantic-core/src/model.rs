@@ -806,6 +806,15 @@ pub enum Expression {
         value: Box<Self>,
         digits: u8,
     },
+    Abs(Box<Self>),
+    RoundUp {
+        value: Box<Self>,
+        digits: u8,
+    },
+    RoundDown {
+        value: Box<Self>,
+        digits: u8,
+    },
     IsBlank(Box<Self>),
 }
 
@@ -868,7 +877,12 @@ impl Expression {
                 else_value,
             } => vec![condition, then_value, else_value],
             Self::And(arguments) | Self::Or(arguments) => arguments.iter().collect(),
-            Self::Not(value) | Self::Round { value, .. } | Self::IsBlank(value) => vec![value],
+            Self::Not(value)
+            | Self::Abs(value)
+            | Self::Round { value, .. }
+            | Self::RoundUp { value, .. }
+            | Self::RoundDown { value, .. }
+            | Self::IsBlank(value) => vec![value],
         }
     }
 
@@ -897,7 +911,12 @@ impl Expression {
                 else_value,
             } => vec![condition, then_value, else_value],
             Self::And(arguments) | Self::Or(arguments) => arguments.iter_mut().collect(),
-            Self::Not(value) | Self::Round { value, .. } | Self::IsBlank(value) => vec![value],
+            Self::Not(value)
+            | Self::Abs(value)
+            | Self::Round { value, .. }
+            | Self::RoundUp { value, .. }
+            | Self::RoundDown { value, .. }
+            | Self::IsBlank(value) => vec![value],
         }
     }
 
@@ -945,7 +964,10 @@ impl Expression {
                     .all(|argument| argument.expression_type() == Some(Condition)))
             .then_some(Condition),
             Self::Not(value) => (value.expression_type() == Some(Condition)).then_some(Condition),
-            Self::Round { value, digits } => {
+            Self::Abs(value) => (value.expression_type() == Some(Number)).then_some(Number),
+            Self::Round { value, digits }
+            | Self::RoundUp { value, digits }
+            | Self::RoundDown { value, digits } => {
                 (*digits <= 10 && value.expression_type() == Some(Number)).then_some(Number)
             }
             Self::IsBlank(value) => matches!(

@@ -32,19 +32,25 @@ revision unchanged.
 | Conditional Number | `IF([.expense] > 0, [.expense], 0)` |
 | Logical conditions | `IF(AND([.expense] > 0, NOT([.expense] >= 100)), 1, 0)` |
 | Decimal rounding, half away from zero | `ROUND(2.675, 2)` yields `2.68` |
+| Absolute value | `ABS(-2)` yields `2`; negative zero becomes zero |
+| Directed decimal rounding | `ROUNDUP(-1.21, 1)` yields `-1.3`; `ROUNDDOWN(-1.29, 1)` yields `-1.2` |
 | Percent literal | `50%` is `0.5` |
 | Blank predicate | `IF(ISBLANK([.expense]), 0, [.expense])` |
 
-IF, AND, OR, NOT, ROUND and ISBLANK accept upper- or lowercase names; canonical
-source uses uppercase. Existing binary min/max retain their lowercase form.
+IF, AND, OR, NOT, ROUND, ABS, ROUNDUP, ROUNDDOWN and ISBLANK accept upper- or
+lowercase names; canonical source uses uppercase. Existing binary min/max retain their lowercase form.
 A formula source has no leading `=`.
 
 Conditions are not values: they may appear only as IF's condition or inside
 AND/OR/NOT. Numeric truthiness and comparisons between non-Numbers are refused
-as `formula_type_mismatch`. ROUND's second argument must be an integer literal
-in `0..=10`; negative, fractional, calculated, and reference precisions are
-refused with the same typed code. AND/OR require at least one condition; NOT
-and ISBLANK require one argument and IF requires three.
+as `formula_type_mismatch`. The second argument of ROUND, ROUNDUP and ROUNDDOWN
+must be an integer literal in `0..=10`; negative, fractional, calculated, and reference precisions are
+refused with the same typed code. AND/OR require at least one condition; NOT,
+ABS and ISBLANK require one argument and IF requires three.
+
+ROUNDUP rounds away from zero and ROUNDDOWN truncates toward zero using the
+shortest round-trip decimal, so `ROUNDUP(1.1, 1)` is `1.1` and
+`ROUNDDOWN(2.3, 1)` is `2.3`.
 
 Only the selected IF branch is evaluated, but every reference in both branches
 remains a dependency and participates in cycle checks. AND/OR evaluate all their

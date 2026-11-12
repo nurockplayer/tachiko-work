@@ -616,8 +616,8 @@ export type DesignerRequest =
   | {type: "commit_cleanup"; expected_revision: string; preview_id: string}
   | TrackerCommand
   | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
-  | { type: "new_tracker"; occurrence_id: string }
-  | { type: "new_budget"; occurrence_id: string }
+  | { type: "new_tracker"; occurrence_id: string; profile?: "working_size" }
+  | { type: "new_budget"; occurrence_id: string; profile?: "working_size" }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
   | { type: "delete_table"; expected_revision: string; collection: string }

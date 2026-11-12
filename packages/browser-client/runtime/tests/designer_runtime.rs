@@ -1147,6 +1147,7 @@ fn budget_open_and_formula_updates_use_the_authoritative_cross_collection_lifecy
     let DesignerResponse::Opened(opened) = runtime
         .handle(DesignerRequest::NewBudget {
             occurrence_id: OCCURRENCE_ONE.to_owned(),
+            profile: None,
         })
         .expect("new budget should replace the active occurrence")
     else {

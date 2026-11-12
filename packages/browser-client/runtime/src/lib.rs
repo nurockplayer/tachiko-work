@@ -76,8 +76,8 @@ use tachiko_workspace_engine::{
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
         PatchLifecycleError, PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId,
         ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
-        SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticRevision,
-        SemanticScope, TrustedInstant,
+        SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
+        SemanticRevision, SemanticScope, TrustedInstant,
     },
     prune_presentation,
     resident_session::{
@@ -95,6 +95,8 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod presentation_revision_tests;
 use interop_document::PendingCleanup;
 pub use interop_document::{
     CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
@@ -231,9 +233,13 @@ pub enum DesignerRequest {
     },
     NewTracker {
         occurrence_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     NewBudget {
         occurrence_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     NewTable {
         occurrence_id: String,
@@ -2234,13 +2240,14 @@ pub struct DesignerRuntime {
     duplicate_serial: usize,
     opened_from_v3: bool,
     /// Stored presentation beside the semantic document. It is never part of
-    /// the session, so it never moves the revision. Each save prunes a copy
+    /// the session's document: a change to it moves only the revision, through
+    /// [`DesignerRuntime::publish_presentation`]. Each save prunes a copy
     /// against the snapshot's document.
     presentation: PresentationStore,
     /// Encoded length of `presentation` when it was stored, added to the
-    /// working-size saved-size bound. Any future command that changes
-    /// presentation must go through [`DesignerRuntime::set_presentation`] so
-    /// this stays current.
+    /// working-size saved-size bound. Any command that changes presentation
+    /// must go through [`DesignerRuntime::set_presentation`] or
+    /// [`DesignerRuntime::publish_presentation`] so this stays current.
     presentation_saved_bytes: u64,
 }
 
@@ -2366,6 +2373,16 @@ impl ViewIndexCache {
     fn insert(&mut self, entry: ViewIndexEntry) {
         self.entries.push_front(entry);
         self.entries.truncate(MAX_VIEW_INDEX_ENTRIES);
+    }
+
+    fn rekey(&mut self, from: &str, to: &str) {
+        self.entries
+            .retain(|entry| entry.revision == from || entry.revision == to);
+        for entry in &mut self.entries {
+            if entry.revision == from {
+                to.clone_into(&mut entry.revision);
+            }
+        }
     }
 
     fn retain_revision(&mut self, revision: &str) {
@@ -3193,6 +3210,54 @@ impl DesignerRuntime {
         Ok(())
     }
 
+    /// Install a style-only change, carrying revision-keyed caches forward.
+    // Presentation commands will call this when they are wired into the runtime.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn publish_presentation(
+        &mut self,
+        expected_revision: &str,
+        presentation: PresentationStore,
+    ) -> Result<String, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let bytes = match self.profile {
+            SessionProfile::WorkingSize => {
+                let bytes = save_size::presentation_saved_bytes(&presentation)?;
+                capacity::check_working_saved_bytes(self.session.document(), bytes)?;
+                bytes
+            }
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => 0,
+        };
+        let scope = self.session.document_scope().clone();
+        let revision = self.session.revision().clone();
+        let (new_revision, ()) = self
+            .session
+            .publication_authority(&mut self.clock)
+            .publish_presentation_if_current(&scope, &revision, |_| Some(()))
+            .map_err(|error| {
+                DesignerError::Lifecycle(match error {
+                    SemanticPublicationError::NoChange => PatchLifecycleError::NoChange,
+                    SemanticPublicationError::Stale => PatchLifecycleError::Stale,
+                    SemanticPublicationError::Conflict => PatchLifecycleError::Conflict,
+                    SemanticPublicationError::DocumentScopeMismatch
+                    | SemanticPublicationError::AuthorizationDenied => {
+                        PatchLifecycleError::AuthorizationDenied
+                    }
+                })
+            })?;
+        let new_revision = new_revision.as_str().to_owned();
+        self.view_index.rekey(expected_revision, &new_revision);
+        if let Some((revision, _, _)) = &mut self.totals_cache {
+            if revision == expected_revision {
+                revision.clone_from(&new_revision);
+            } else {
+                self.totals_cache = None;
+            }
+        }
+        self.presentation = presentation;
+        self.presentation_saved_bytes = bytes;
+        Ok(new_revision)
+    }
+
     /// Check one candidate document against the same bound, adding the bytes
     /// the stored presentation contributes to a save.
     fn ensure_working_saved_bytes_for(&self, document: &Document) -> Result<(), DesignerError> {
@@ -3527,25 +3592,23 @@ impl DesignerRuntime {
     #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
     fn dispatch(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
-            DesignerRequest::NewTracker { occurrence_id } => {
-                let candidate = Self::tracker(&occurrence_id)?;
-                let opened = OpenedProjection {
-                    bootstrap: candidate.bootstrap_projection(),
-                    table: candidate.query_table("tracker")?,
-                };
-                ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+            DesignerRequest::NewTracker {
+                occurrence_id,
+                profile,
+            } => {
+                let (candidate, response) =
+                    starter_candidate(&occurrence_id, profile, Starter::Tracker)?;
                 *self = candidate;
-                Ok(DesignerResponse::Opened(Box::new(opened)))
+                Ok(response)
             }
-            DesignerRequest::NewBudget { occurrence_id } => {
-                let candidate = Self::budget(&occurrence_id)?;
-                let opened = OpenedProjection {
-                    bootstrap: candidate.bootstrap_projection(),
-                    table: candidate.query_table(&candidate.default_collection)?,
-                };
-                ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+            DesignerRequest::NewBudget {
+                occurrence_id,
+                profile,
+            } => {
+                let (candidate, response) =
+                    starter_candidate(&occurrence_id, profile, Starter::Budget)?;
                 *self = candidate;
-                Ok(DesignerResponse::Opened(Box::new(opened)))
+                Ok(response)
             }
             DesignerRequest::NewTable {
                 occurrence_id,
@@ -4764,6 +4827,8 @@ impl DesignerRuntime {
         if let Some(order) = self.view_index.get(&revision, collection, &key) {
             return Ok(order);
         }
+        #[cfg(test)]
+        view_index_counters::record_build();
         let order = Arc::from(self.build_view_order(collection, view)?);
         self.view_index.insert(ViewIndexEntry {
             revision,
@@ -7466,6 +7531,20 @@ impl DesignerRuntime {
     /// # Errors
     /// Returns an admission error without replacing an existing occurrence.
     pub fn tracker(occurrence_id: &str) -> Result<Self, DesignerError> {
+        Self::from_document(Self::tracker_document(occurrence_id), occurrence_id)
+    }
+
+    /// Create a working-size operational tracker.
+    ///
+    /// The document is identical to [`Self::tracker`]; only the admission profile differs.
+    ///
+    /// # Errors
+    /// Returns an admission error without replacing an existing occurrence.
+    pub fn tracker_working_size(occurrence_id: &str) -> Result<Self, DesignerError> {
+        Self::from_document_working_size(Self::tracker_document(occurrence_id), occurrence_id)
+    }
+
+    fn tracker_document(occurrence_id: &str) -> Document {
         let mut document = Document::empty(occurrence_id, "Driver Tracker");
         let schema = Schema {
             field_order: None,
@@ -7497,7 +7576,7 @@ impl DesignerRuntime {
             .collect(),
         };
         document.schemas.insert(schema.id.clone(), schema);
-        Self::from_document(document, occurrence_id)
+        document
     }
 
     /// Create one bounded ordinary native table from user-facing labels.
@@ -7607,8 +7686,22 @@ impl DesignerRuntime {
     /// # Errors
     ///
     /// Returns an admission error without replacing an existing occurrence.
-    #[allow(clippy::too_many_lines)] // Keep the bounded fixture readable as one document.
     pub fn budget(occurrence_id: &str) -> Result<Self, DesignerError> {
+        Self::from_document(Self::budget_document(occurrence_id)?, occurrence_id)
+    }
+
+    /// Create a working-size monthly budget.
+    ///
+    /// The document is identical to [`Self::budget`]; only the admission profile differs.
+    ///
+    /// # Errors
+    /// Returns an admission error without replacing an existing occurrence.
+    pub fn budget_working_size(occurrence_id: &str) -> Result<Self, DesignerError> {
+        Self::from_document_working_size(Self::budget_document(occurrence_id)?, occurrence_id)
+    }
+
+    #[allow(clippy::too_many_lines)] // Keep the bounded fixture readable as one document.
+    fn budget_document(occurrence_id: &str) -> Result<Document, DesignerError> {
         let mut document = Document::empty(occurrence_id, "Monthly Budget");
         let budget_items = SchemaId::from("budget_items");
         let budget_summary = SchemaId::from("budget_summary");
@@ -7723,7 +7816,7 @@ impl DesignerRuntime {
                 },
             ),
         ]);
-        Self::from_document(document, occurrence_id)
+        Ok(document)
     }
 
     fn check_revision(&self, expected: &str) -> Result<(), DesignerError> {
@@ -8816,6 +8909,34 @@ fn new_table_candidate(
     }
 }
 
+#[derive(Clone, Copy)]
+enum Starter {
+    Tracker,
+    Budget,
+}
+
+/// Build a Tracker or Budget candidate and its opening reply for the requested profile.
+fn starter_candidate(
+    occurrence_id: &str,
+    profile: Option<DesignerProfile>,
+    starter: Starter,
+) -> Result<(DesignerRuntime, DesignerResponse), DesignerError> {
+    match (profile, starter) {
+        (None, Starter::Tracker) => ordinary_new_project(DesignerRuntime::tracker(occurrence_id)?),
+        (None, Starter::Budget) => ordinary_new_project(DesignerRuntime::budget(occurrence_id)?),
+        (Some(DesignerProfile::WorkingSize), Starter::Tracker) => {
+            let mut candidate = DesignerRuntime::tracker_working_size(occurrence_id)?;
+            let opened = candidate.opened_window()?;
+            Ok((candidate, DesignerResponse::OpenedWindow(Box::new(opened))))
+        }
+        (Some(DesignerProfile::WorkingSize), Starter::Budget) => {
+            let mut candidate = DesignerRuntime::budget_working_size(occurrence_id)?;
+            let opened = candidate.opened_window()?;
+            Ok((candidate, DesignerResponse::OpenedWindow(Box::new(opened))))
+        }
+    }
+}
+
 /// Fully admit a canonical project candidate before replacing the occurrence.
 ///
 /// `occurrence_id` is a trusted host identity, not an identifier read from the
@@ -9883,17 +10004,17 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
     let reply = match serde_json::from_slice::<DesignerRequest>(input) {
         Ok(request) => {
             if let Some(occurrence_id) = match &request {
-                DesignerRequest::NewTracker { occurrence_id }
-                | DesignerRequest::NewBudget { occurrence_id }
+                DesignerRequest::NewTracker { occurrence_id, .. }
+                | DesignerRequest::NewBudget { occurrence_id, .. }
                 | DesignerRequest::NewTable { occurrence_id, .. } => Some(occurrence_id),
                 _ => None,
             } {
                 let result = (match &request {
-                    DesignerRequest::NewTracker { .. } => {
-                        DesignerRuntime::tracker(occurrence_id).and_then(ordinary_new_project)
+                    DesignerRequest::NewTracker { profile, .. } => {
+                        starter_candidate(occurrence_id, *profile, Starter::Tracker)
                     }
-                    DesignerRequest::NewBudget { .. } => {
-                        DesignerRuntime::budget(occurrence_id).and_then(ordinary_new_project)
+                    DesignerRequest::NewBudget { profile, .. } => {
+                        starter_candidate(occurrence_id, *profile, Starter::Budget)
                     }
                     DesignerRequest::NewTable {
                         name,
@@ -10744,6 +10865,20 @@ mod totals_cache_counters {
 
     pub(super) fn hits() -> usize {
         HITS.with(Cell::get)
+    }
+}
+
+#[cfg(test)]
+mod view_index_counters {
+    use std::cell::Cell;
+    thread_local! {
+        static BUILDS: Cell<usize> = const { Cell::new(0) };
+    }
+    pub(super) fn record_build() {
+        BUILDS.with(|count| count.set(count.get().saturating_add(1)));
+    }
+    pub(super) fn builds() -> usize {
+        BUILDS.with(Cell::get)
     }
 }
 

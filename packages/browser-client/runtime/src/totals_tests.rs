@@ -73,7 +73,7 @@ fn multiply(left: Expression, right: f64) -> Expression {
 
 /// A valid fixture: blank cells, `-0` beside `0`, a tiny and a huge value in
 /// an order that changes the float sum, stored Numbers, and calculated cells.
-fn valid_document() -> Document {
+pub(super) fn valid_document() -> Document {
     let mut document = Document::empty("totals_direct_seed", "Totals direct seed");
     let schema = SchemaId::from("rows");
     document.schemas.insert(
@@ -281,7 +281,7 @@ fn view_totals(runtime: &mut DesignerRuntime, view: TableView) -> ColumnTotalsPr
     }
 }
 
-fn window_totals(runtime: &mut DesignerRuntime) -> BTreeMap<String, Option<f64>> {
+pub(super) fn window_totals(runtime: &mut DesignerRuntime) -> BTreeMap<String, Option<f64>> {
     let expected_revision = runtime.current_revision().to_owned();
     let collection = runtime.default_collection.clone();
     match runtime.handle(DesignerRequest::QueryTableWindow {

@@ -402,6 +402,13 @@ impl Evaluation<'_> {
                 criteria,
             } => self.conditional(aggregate, criteria),
             Expression::Round { value, digits } => round(self.number(value)?, *digits),
+            Expression::Abs(value) => number_result(self.number(value)?.get().abs()),
+            Expression::RoundUp { value, digits } => {
+                directed_round(self.number(value)?, *digits, true)
+            }
+            Expression::RoundDown { value, digits } => {
+                directed_round(self.number(value)?, *digits, false)
+            }
             Expression::Add { left, right } => {
                 self.binary(left, right, |left, right| number_result(left + right))
             }
@@ -774,7 +781,18 @@ fn round(value: Number, digits: u8) -> Result<Number, CalculationFailure> {
     if value.fract() == 0.0 {
         return number_result(value);
     }
-    number_result(round_decimal(value, usize::from(digits)))
+    number_result(round_decimal(value, usize::from(digits), None))
+}
+
+fn directed_round(value: Number, digits: u8, away: bool) -> Result<Number, CalculationFailure> {
+    if digits > 10 {
+        return Err(CalculationFailure::TypeMismatch);
+    }
+    let value = value.get();
+    if value.fract() == 0.0 {
+        return number_result(value);
+    }
+    number_result(round_decimal(value, usize::from(digits), Some(away)))
 }
 
 /// Round half away from zero on the decimal the user sees, not on the binary64
@@ -782,7 +800,7 @@ fn round(value: Number, digits: u8) -> Result<Number, CalculationFailure> {
 /// while spreadsheets give `ROUND(1.005, 2) = 1.01`. Rust's `Display` prints
 /// the shortest decimal that round-trips to the same binary64 value, so the
 /// digit after the kept places decides, then the result is parsed back.
-fn round_decimal(value: f64, digits: usize) -> f64 {
+fn round_decimal(value: f64, digits: usize, directed: Option<bool>) -> f64 {
     let text = format!("{}", value.abs());
     let (integer, fraction) = text.split_once('.').unwrap_or((text.as_str(), ""));
     if fraction.len() <= digits {
@@ -792,7 +810,15 @@ fn round_decimal(value: f64, digits: usize) -> f64 {
         .bytes()
         .chain(fraction.bytes().take(digits))
         .collect::<Vec<_>>();
-    if fraction.as_bytes()[digits] >= b'5' {
+    let increment = match directed {
+        None => fraction.as_bytes()[digits] >= b'5',
+        Some(away) => {
+            away && fraction.as_bytes()[digits..]
+                .iter()
+                .any(|digit| *digit != b'0')
+        }
+    };
+    if increment {
         let mut index = kept.len();
         loop {
             if index == 0 {
