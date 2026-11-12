@@ -4847,39 +4847,7 @@ pub(crate) fn export_csv_for_profile(
         );
     }
     if profile == OutputProfile::WorkingSize {
-        let encoded_len = |value: &str| {
-            value.len()
-                + if value.contains([',', '"', '\n', '\r']) || value.is_empty() {
-                    2 + value.bytes().filter(|byte| *byte == b'"').count()
-                } else {
-                    0
-                }
-        };
-        let mut length = 0_usize;
-        if sheet.has_header {
-            length += sheet
-                .columns
-                .iter()
-                .map(|column| encoded_len(&column.name))
-                .sum::<usize>()
-                + sheet.columns.len().saturating_sub(1)
-                + 2;
-        }
-        for row in &sheet.rows {
-            length += row
-                .iter()
-                .map(|cell| encoded_len(&value_text(&cell.value)))
-                .sum::<usize>()
-                + row.len().saturating_sub(1)
-                + 2;
-        }
-        check_import_limit(
-            crate::CapacityLimit::OutputBytes,
-            profile.max_output_bytes(),
-            length,
-            None,
-            false,
-        )?;
+        check_working_csv_bytes(sheet, profile)?;
     }
     let mut output = String::new();
     let mut rows = Vec::new();
@@ -4927,6 +4895,42 @@ pub(crate) fn export_csv_for_profile(
         });
     }
     Ok(output.into_bytes())
+}
+fn check_working_csv_bytes(sheet: &SourceSheet, profile: OutputProfile) -> Result<()> {
+    let encoded_len = |value: &str| {
+        value.len()
+            + if value.contains([',', '"', '\n', '\r']) || value.is_empty() {
+                2 + value.bytes().filter(|byte| *byte == b'"').count()
+            } else {
+                0
+            }
+    };
+    let mut length = 0_usize;
+    if sheet.has_header {
+        length += sheet
+            .columns
+            .iter()
+            .map(|column| encoded_len(&column.name))
+            .sum::<usize>()
+            + sheet.columns.len().saturating_sub(1)
+            + 2;
+    }
+    for row in &sheet.rows {
+        length += row
+            .iter()
+            .map(|cell| encoded_len(&value_text(&cell.value)))
+            .sum::<usize>()
+            + row.len().saturating_sub(1)
+            + 2;
+    }
+    check_import_limit(
+        crate::CapacityLimit::OutputBytes,
+        profile.max_output_bytes(),
+        length,
+        None,
+        false,
+    )?;
+    Ok(())
 }
 pub(crate) fn csv_formula_text(value: &str) -> bool {
     value

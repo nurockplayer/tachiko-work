@@ -3092,6 +3092,14 @@ fn current_import_metadata(
     let mut entities = BTreeSet::new();
     for sheet in &mut result.sheets {
         let location = format!("collection {}", sheet.schema_id);
+        if profile == SessionProfile::WorkingSize {
+            super::capacity::check_limit(
+                super::CapacityLimit::TableFields,
+                super::capacity::WORKING_LIMITS.table_fields,
+                sheet.columns.len(),
+                Some(&sheet.name),
+            )?;
+        }
         check_label(&sheet.name).map_err(|error| refuse(&location, &error.to_string()))?;
         let schema = document
             .schemas
@@ -3249,6 +3257,14 @@ fn validate_historical_envelope(
     profile: SessionProfile,
 ) -> Result<(), DesignerError> {
     let refuse = imported_export_error;
+    if profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::Collections,
+            super::capacity::WORKING_LIMITS.collections,
+            metadata.sheets.len(),
+            None,
+        )?;
+    }
     if !(metadata.version == 1 || metadata.version == 2 && profile == SessionProfile::WorkingSize)
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
@@ -4192,6 +4208,14 @@ fn native_budget_active_csv_styles(
     spec: &CollectionSpec,
     profile: SessionProfile,
 ) -> Result<BTreeMap<String, Vec<CellStyle>>, DesignerError> {
+    if profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::TableRows,
+            super::capacity::WORKING_LIMITS.table_rows,
+            collection.rows.len(),
+            Some(&collection.collection_id),
+        )?;
+    }
     if spec.columns.len()
         > if profile == SessionProfile::WorkingSize {
             super::capacity::WORKING_LIMITS.table_fields
@@ -4308,6 +4332,30 @@ fn native_budget_metadata(
     runtime: &DesignerRuntime,
     presentation: &NativeBudgetExportPresentation,
 ) -> Result<InteropMetadata, DesignerError> {
+    if runtime.profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::Collections,
+            super::capacity::WORKING_LIMITS.collections,
+            presentation.collections.len(),
+            None,
+        )?;
+        let mut total = 0;
+        for collection in &presentation.collections {
+            super::capacity::check_limit(
+                super::CapacityLimit::TableRows,
+                super::capacity::WORKING_LIMITS.table_rows,
+                collection.rows.len(),
+                Some(&collection.collection_id),
+            )?;
+            total += collection.rows.len();
+        }
+        super::capacity::check_limit(
+            super::CapacityLimit::TotalEntities,
+            super::capacity::WORKING_LIMITS.total_entities,
+            total,
+            None,
+        )?;
+    }
     if presentation.version != 1
         || presentation.views.is_empty()
         || presentation.views.len() > super::MAX_COLLECTIONS
@@ -4581,11 +4629,45 @@ fn native_tracker_metadata(
             "native Tracker export requires the stock task, estimate, done fields",
         ));
     }
+    validate_tracker_rows(document, presentation, schema, fields.len())?;
+    let order = tracker_column_order(schema);
+    Ok(InteropMetadata {
+        version: 1,
+        sheets: vec![InteropSheetMetadata {
+            schema_id: "tracker".to_owned(),
+            name: "Tracker".to_owned(),
+            has_header: true,
+            columns: order
+                .iter()
+                .map(|id| InteropColumnMetadata {
+                    field_id: (*id).to_owned(),
+                    name: (*id).to_owned(),
+                    width: None,
+                })
+                .collect(),
+            rows: presentation
+                .rows
+                .iter()
+                .map(|row| InteropRowMetadata {
+                    entity_id: row.entity_id.clone(),
+                    styles: row.styles.clone(),
+                })
+                .collect(),
+        }],
+    })
+}
+
+fn validate_tracker_rows(
+    document: &Document,
+    presentation: &NativeTrackerExportPresentation,
+    schema: &Schema,
+    field_count: usize,
+) -> Result<(), DesignerError> {
     let mut seen = BTreeSet::new();
     for row in &presentation.rows {
         check_label(&row.entity_id)?;
         if !seen.insert(row.entity_id.as_str())
-            || row.styles.len() != fields.len()
+            || row.styles.len() != field_count
             || document
                 .entities
                 .get(&EntityId::from(row.entity_id.clone()))
@@ -4618,31 +4700,7 @@ fn native_tracker_metadata(
             "native Tracker export must map every accepted row exactly once",
         ));
     }
-    let order = tracker_column_order(schema);
-    Ok(InteropMetadata {
-        version: 1,
-        sheets: vec![InteropSheetMetadata {
-            schema_id: "tracker".to_owned(),
-            name: "Tracker".to_owned(),
-            has_header: true,
-            columns: order
-                .iter()
-                .map(|id| InteropColumnMetadata {
-                    field_id: (*id).to_owned(),
-                    name: (*id).to_owned(),
-                    width: None,
-                })
-                .collect(),
-            rows: presentation
-                .rows
-                .iter()
-                .map(|row| InteropRowMetadata {
-                    entity_id: row.entity_id.clone(),
-                    styles: row.styles.clone(),
-                })
-                .collect(),
-        }],
-    })
+    Ok(())
 }
 
 /// Inspect canonical bytes plus their private source mappings without replacing

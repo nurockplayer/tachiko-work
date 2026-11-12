@@ -92,7 +92,23 @@ impl DesignerHost {
     pub fn spreadsheet(&mut self, request: &[u8], source: &[u8]) -> HostReply {
         let runtime = &mut self.runtime;
         // The browser request arena refuses these before anything reads them.
-        if request.len() > MAX_SPREADSHEET_METADATA_REQUEST_BYTES {
+        let working_native = runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.profile == SessionProfile::WorkingSize)
+            && serde_json::from_slice::<MetadataControl>(request).is_ok_and(|control| {
+                matches!(
+                    control.kind,
+                    MetadataControlKind::ExportNativeTracker
+                        | MetadataControlKind::ExportNativeBudget
+                )
+            });
+        if request.len()
+            > if working_native {
+                MAX_HOST_WORKING_WIRE_REQUEST_BYTES
+            } else {
+                MAX_SPREADSHEET_METADATA_REQUEST_BYTES
+            }
+        {
             return HostReply {
                 reply: request_too_large_reply(runtime.as_ref()),
                 bytes: None,
@@ -110,7 +126,13 @@ impl DesignerHost {
                         MetadataControlKind::Export
                             | MetadataControlKind::InspectProject
                             | MetadataControlKind::OpenProject
-                    )
+                    ) || (matches!(
+                        control.kind,
+                        MetadataControlKind::ExportNativeTracker
+                            | MetadataControlKind::ExportNativeBudget
+                    ) && runtime
+                        .as_ref()
+                        .is_some_and(|runtime| runtime.profile == SessionProfile::WorkingSize))
                 })
         } else {
             true
@@ -483,10 +505,12 @@ struct MetadataControl {
     kind: MetadataControlKind,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum MetadataControlKind {
     Export,
+    ExportNativeTracker,
+    ExportNativeBudget,
     InspectProject,
     OpenProject,
 }

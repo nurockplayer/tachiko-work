@@ -89,10 +89,12 @@ struct MetadataControl {
     kind: MetadataControlKind,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum MetadataControlKind {
     Export,
+    ExportNativeTracker,
+    ExportNativeBudget,
     InspectProject,
     OpenProject,
 }
@@ -301,13 +303,34 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
                         MetadataControlKind::Export
                             | MetadataControlKind::InspectProject
                             | MetadataControlKind::OpenProject
-                    )
+                    ) || (matches!(
+                        control.kind,
+                        MetadataControlKind::ExportNativeTracker
+                            | MetadataControlKind::ExportNativeBudget
+                    ) && runtime
+                        .as_ref()
+                        .is_some_and(|runtime| runtime.profile == SessionProfile::WorkingSize))
                 })
         } else {
             true
         };
+        let working_native = runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.profile == SessionProfile::WorkingSize)
+            && serde_json::from_slice::<MetadataControl>(&request).is_ok_and(|control| {
+                matches!(
+                    control.kind,
+                    MetadataControlKind::ExportNativeTracker
+                        | MetadataControlKind::ExportNativeBudget
+                )
+            });
         if request_too_large
-            || request.len() > MAX_SPREADSHEET_METADATA_REQUEST_BYTES
+            || request.len()
+                > if working_native {
+                    crate::MAX_WORKING_WIRE_REQUEST_BYTES
+                } else {
+                    MAX_SPREADSHEET_METADATA_REQUEST_BYTES
+                }
             || !metadata_control
         {
             RESPONSE.with(|response| {
