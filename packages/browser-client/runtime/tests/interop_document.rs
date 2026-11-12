@@ -2611,6 +2611,7 @@ fn iferror_round_trips_through_xlsx_with_success_and_caught_failure() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One import, export and reopen walk.
 fn date_functions_round_trip_through_xlsx() {
     use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
 
