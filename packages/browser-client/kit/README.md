@@ -201,7 +201,7 @@ after emitting these artifacts, including during producer rollback.
 ## Working-size sessions
 
 A host can ask for the working-size session profile when the occurrence is
-created or opened, through `newTableWorkingSize`, `inspectProjectWorkingSize`,
+created or opened, through `newTableWorkingSize`, `newTrackerWorkingSize`, `newBudgetWorkingSize`, `inspectProjectWorkingSize`,
 `openProjectWorkingSize`, `openCanonicalTreeWorkingSize`,
 `openLocalDocumentWorkingSize` and `openPortableRoWorkingSize`, and when it
 imports a workbook or inspects and opens a saved import, through

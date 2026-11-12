@@ -57,7 +57,9 @@ export interface DesignerClient {
   commitCleanup?(expectedRevision: string, previewId: string): Promise<PublicationProjection>;
   copyFormula?(expectedRevision: string, request: FormulaCopy): Promise<PublicationProjection>;
   newTracker?(): Promise<OpenedProjection>;
+  newTrackerWorkingSize?(): Promise<OpenedWindowProjection>;
   newBudget?(): Promise<OpenedProjection>;
+  newBudgetWorkingSize?(): Promise<OpenedWindowProjection>;
   newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
   /** Create a table whose session profile is the working-size one. */
   newTableWorkingSize?(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
