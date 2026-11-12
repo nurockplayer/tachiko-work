@@ -7,7 +7,8 @@ use tachiko_designer_runtime::interop_adapter::{
 };
 use tachiko_designer_runtime::{
     CapacityLimit, DesignerError, DesignerRuntime, ImportColumnSpec, ImportFieldType,
-    ImportSelection, import_workbook, inspect_imported_project, open_imported_project,
+    ImportSelection, import_workbook, import_workbook_working_size, inspect_imported_project,
+    open_imported_project,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, Expression, FieldConstraint, FieldDefinition, FieldId,
@@ -846,4 +847,43 @@ fn small_shared_dates_keep_their_nondefault_style() {
         .export_workbook(&reopened.observe_occurrence().revision, &imported.metadata)
         .unwrap();
     assert_eq!(after.sheets[0].rows, source.sheets[0].rows);
+}
+
+#[test]
+fn working_size_blank_date_format_survives_export_and_reimport() {
+    let mut source = date_workbook(2, 1);
+    source.sheets[0].rows[0][0].style.number_format = Some("mmm d, yyyy".into());
+    source.sheets[0].rows[1][0].value = SourceValue::Empty;
+    source.sheets[0].rows[1][0].style.number_format = Some("m/d/yyyy".into());
+    let selected = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Date]],
+        extra_columns: vec![Vec::new()],
+    };
+    let parsed = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook_working_size(&parsed, &selected, ORIGINAL).unwrap();
+    assert!(
+        !imported
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "presentation_not_kept")
+    );
+    let exported = runtime
+        .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
+        .unwrap();
+    let reparsed = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook_working_size(&reparsed, &selected, FRESH).unwrap();
+    assert!(
+        !imported
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "presentation_not_kept")
+    );
+    let reopened = runtime
+        .export_workbook(&runtime.observe_occurrence().revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(reopened.sheets[0].rows[1][0].value, SourceValue::Empty);
+    assert_eq!(
+        reopened.sheets[0].rows[1][0].style.number_format.as_deref(),
+        Some("m/d/yyyy")
+    );
 }

@@ -421,3 +421,311 @@ fn malformed_geometry_remains_invalid_project() {
         wire_refusal(&output.finish().unwrap().into_inner(), "xlsx", None, false);
     }
 }
+
+// Generate package XML directly so the bounded output encoder is never asked
+// to create an input outside its own profile.
+#[allow(clippy::format_push_string)]
+fn working_xlsx(rows: usize, columns: usize, populated: usize, formulas: bool) -> Vec<u8> {
+    let template = source_xlsx(1, 1, 1, false, false);
+    let mut archive = ZipArchive::new(Cursor::new(template)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            let mut xml = String::from(
+                "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData><row r=\"1\">",
+            );
+            for col in 0..columns {
+                xml.push_str(&format!(
+                    "<c r=\"{}1\" t=\"inlineStr\"><is><t>C{col}</t></is></c>",
+                    column(col)
+                ));
+            }
+            xml.push_str("</row>");
+            let mut count = 0;
+            for row in 2..=rows + 1 {
+                xml.push_str(&format!("<row r=\"{row}\">"));
+                for col in 0..columns {
+                    if count >= populated {
+                        break;
+                    }
+                    // Sparse success fixtures distribute four values across every row.
+                    if populated == rows * 4 && col >= 4 {
+                        break;
+                    }
+                    let address = format!("{}{row}", column(col));
+                    if formulas {
+                        xml.push_str(&format!("<c r=\"{address}\"><f>1+1</f><v>2</v></c>"));
+                    } else if populated == rows * 4 && col == 3 {
+                        xml.push_str(&format!(
+                            "<c r=\"{address}\"><f>B{row}*C{row}</f><v>6</v></c>"
+                        ));
+                    } else {
+                        let value = if col == 0 {
+                            row - 1
+                        } else if col == 1 {
+                            2
+                        } else {
+                            3
+                        };
+                        xml.push_str(&format!("<c r=\"{address}\"><v>{value}</v></c>"));
+                    }
+                    count += 1;
+                }
+                xml.push_str("</row>");
+            }
+            xml.push_str("</sheetData></worksheet>");
+            bytes = xml.into_bytes();
+        }
+        output.start_file(name, options).unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    output.finish().unwrap().into_inner()
+}
+
+fn working_request(format: &str, columns: usize) -> Vec<u8> {
+    let kind = if format == "csv" { "text" } else { "number" };
+    serde_json::to_vec(&serde_json::json!({
+        "type": "import", "format": format,
+        "csv_options": {"delimiter": ",", "header": true},
+        "selection": {"column_types": [vec![kind; columns]], "extra_columns": [[]]},
+        "occurrence_id": OCCURRENCE, "install": true, "profile": "working_size"
+    }))
+    .unwrap()
+}
+
+fn assert_working_success(source: &[u8], format: &str) {
+    let mut host = DesignerHost::new();
+    let inspect = serde_json::to_vec(&serde_json::json!({
+        "type": "inspect", "format": format,
+        "csv_options": {"delimiter": ",", "header": true}, "profile": "working_size"
+    }))
+    .unwrap();
+    let inspected = host.spreadsheet(&inspect, source);
+    let inspected: Value = serde_json::from_slice(&inspected.reply).unwrap();
+    assert_eq!(inspected["status"], "ok", "{inspected}");
+    drop(inspected);
+    let request = working_request(format, 30);
+    let response: Value =
+        serde_json::from_slice(&host.spreadsheet(&request, source).reply).unwrap();
+    assert_eq!(response["status"], "ok", "{response}");
+    let payload = &response["response"]["payload"];
+    let window = &payload["opened"]["window"];
+    assert_eq!(window["total_rows"], 10_000);
+    let revision = window["revision"].as_str().unwrap();
+    let collection = window["collection"]["id"].as_str().unwrap();
+    let control = serde_json::to_vec(&serde_json::json!({
+        "type": "export", "format": "xlsx", "expected_revision": revision,
+        "collection": collection, "metadata": payload["metadata"]
+    }))
+    .unwrap();
+    assert!(control.len() < 4 * 1024 * 1024);
+    let mut last_id = String::new();
+    let mut start = 0;
+    while start < 10_000 {
+        let query = serde_json::to_vec(&serde_json::json!({"type":"query_table_window", "expected_revision":revision, "collection":collection, "start":start, "count":256})).unwrap();
+        let reply: Value = serde_json::from_slice(&host.request(&query)).unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let rows = reply["response"]["payload"]["rows"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let id = row["id"].as_str().unwrap();
+            assert!(last_id.as_str() < id);
+            last_id = id.to_owned();
+            if start == 0 || start == 9_999 {
+                let value = &row["fields"][0]["stored"]["value"];
+                if format == "csv" {
+                    assert_eq!(value.as_str().unwrap(), (start + 1).to_string());
+                } else {
+                    assert_eq!(
+                        value.as_f64().unwrap(),
+                        f64::from(u32::try_from(start + 1).unwrap())
+                    );
+                    assert_eq!(row["fields"][3]["calculated"]["value"], 6.0);
+                }
+            }
+            start += 1;
+        }
+    }
+}
+
+fn assert_working_refusal(source: &[u8], format: &str, limit: &str) {
+    tachiko_designer_project_close();
+    let mut host = DesignerHost::new();
+    let new = format!(r#"{{"type":"new_tracker","occurrence_id":"{OCCURRENCE}"}}"#);
+    let before = host.request(new.as_bytes());
+    REQUEST.with(|slot| *slot.borrow_mut() = new.as_bytes().to_vec());
+    super::tachiko_designer_request_run();
+    assert_eq!(RESPONSE.with(|slot| slot.borrow().clone()), before);
+    let resident = host.observe_occurrence();
+    let query = br#"{"type":"query_capacity"}"#;
+    let before_capacity = host.request(query);
+    for operation in ["inspect", "import"] {
+        let mut request: Value = serde_json::from_slice(&working_request(format, 30)).unwrap();
+        request["type"] = operation.into();
+        if operation == "inspect" {
+            for field in ["selection", "occurrence_id", "install"] {
+                let _ = request.as_object_mut().unwrap().remove(field);
+            }
+        }
+        let request = serde_json::to_vec(&request).unwrap();
+        REQUEST.with(|slot| *slot.borrow_mut() = request.clone());
+        PROJECT.with(|slot| *slot.borrow_mut() = source.to_vec());
+        tachiko_designer_spreadsheet_run();
+        let reply = host.spreadsheet(&request, source);
+        assert_eq!(RESPONSE.with(|slot| slot.borrow().clone()), reply.reply);
+        let value: Value = serde_json::from_slice(&reply.reply).unwrap();
+        assert_eq!(value["error"]["code"], "capacity_exceeded", "{value}");
+        assert_eq!(value["error"]["limit"], limit, "{value}");
+        assert_eq!(host.observe_occurrence(), resident);
+        REQUEST.with(|slot| *slot.borrow_mut() = query.to_vec());
+        super::tachiko_designer_request_run();
+        assert_eq!(RESPONSE.with(|slot| slot.borrow().clone()), before_capacity);
+    }
+    tachiko_designer_project_close();
+}
+
+#[test]
+fn working_size_sparse_xlsx_ten_thousand_rows() {
+    let source = working_xlsx(10_000, 30, 40_000, false);
+    assert_working_success(&source, "xlsx");
+    // Add one physical data row to the same package.
+    let mut input = ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            let xml = String::from_utf8(bytes).unwrap().replace(
+                "</sheetData>",
+                "<row r=\"10002\"><c r=\"A10002\"><v>10001</v></c></row></sheetData>",
+            );
+            bytes = xml.into_bytes();
+        }
+        output
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
+            )
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    assert_working_refusal(&output.finish().unwrap().into_inner(), "xlsx", "table_rows");
+}
+
+#[test]
+fn working_size_sparse_csv_ten_thousand_rows() {
+    let mut source = (0..30)
+        .map(|col| format!("C{col}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    source.push('\n');
+    for row in 1..=10_000 {
+        source.push_str(&row.to_string());
+        source.push_str(&",".repeat(29));
+        source.push('\n');
+    }
+    assert_working_success(source.as_bytes(), "csv");
+    source.push_str("10001");
+    source.push_str(&",".repeat(29));
+    source.push('\n');
+    assert_working_refusal(source.as_bytes(), "csv", "table_rows");
+}
+
+#[test]
+fn working_size_geometry_and_formula_refusals_are_typed() {
+    assert_working_refusal(&source_xlsx(33, 1, 1, false, false), "xlsx", "collections");
+    assert_working_refusal(
+        &source_xlsx(2, 1, 5_000, true, false),
+        "xlsx",
+        "total_entities",
+    );
+    assert_working_refusal(&working_xlsx(1, 33, 1, false), "xlsx", "table_fields");
+    assert_working_refusal(
+        &working_xlsx(9_091, 11, 100_001, false),
+        "xlsx",
+        "populated_cells",
+    );
+    assert_working_refusal(&working_xlsx(9_091, 11, 100_001, true), "xlsx", "formulas");
+}
+
+#[test]
+fn working_size_source_bytes_refusal_is_typed() {
+    let source = vec![b'x'; 16 * 1024 * 1024 + 1];
+    assert_working_refusal(&source, "xlsx", "source_bytes");
+    assert_working_refusal(&source, "csv", "source_bytes");
+}
+
+fn package_with_extra(name: &str, bytes: &[u8]) -> Vec<u8> {
+    let template = source_xlsx(1, 1, 1, false, false);
+    let mut input = ZipArchive::new(Cursor::new(template)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        output.start_file(name, options).unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    output.start_file(name, options).unwrap();
+    output.write_all(bytes).unwrap();
+    output.finish().unwrap().into_inner()
+}
+
+#[test]
+fn working_size_expanded_bytes_and_xml_nodes_refusals_are_typed() {
+    let expanded = vec![b' '; 64 * 1024 * 1024 + 1];
+    assert_working_refusal(
+        &package_with_extra("xl/extra.bin", &expanded),
+        "xlsx",
+        "expanded_bytes",
+    );
+    drop(expanded);
+    let mut xml = String::from("<root>");
+    for _ in 0..1_500_000 {
+        xml.push_str("<x/>");
+    }
+    xml.push_str("</root>");
+    assert_working_refusal(
+        &package_with_extra("xl/extra.xml", xml.as_bytes()),
+        "xlsx",
+        "xml_nodes",
+    );
+}
+
+#[test]
+fn working_size_serialized_source_refusal_is_typed() {
+    let template = source_xlsx(1, 1, 1, false, false);
+    let mut input = ZipArchive::new(Cursor::new(template)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            let mut xml = String::from(
+                "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Name</t></is></c></row><row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>",
+            );
+            xml.push_str(&"x".repeat(48 * 1024 * 1024 + 1));
+            xml.push_str("</t></is></c></row></sheetData></worksheet>");
+            bytes = xml.into_bytes();
+        }
+        output.start_file(name, options).unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    assert_working_refusal(
+        &output.finish().unwrap().into_inner(),
+        "xlsx",
+        "serialized_source_bytes",
+    );
+}
