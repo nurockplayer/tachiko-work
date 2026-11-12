@@ -30,6 +30,7 @@ revision unchanged.
 | Two-argument minimum and maximum | `min(0, [attacker.power] - [target.armor])` |
 | Number comparisons (below arithmetic in precedence) | `=`, `<>`, `<`, `<=`, `>`, `>=` |
 | Conditional Number | `IF([.expense] > 0, [.expense], 0)` |
+| Runtime error fallback | `IFERROR([.expense] / [.rate], 0)` |
 | Logical conditions | `IF(AND([.expense] > 0, NOT([.expense] >= 100)), 1, 0)` |
 | Decimal rounding, half away from zero | `ROUND(2.675, 2)` yields `2.68` |
 | Absolute value | `ABS(-2)` yields `2`; negative zero becomes zero |
@@ -37,7 +38,7 @@ revision unchanged.
 | Percent literal | `50%` is `0.5` |
 | Blank predicate | `IF(ISBLANK([.expense]), 0, [.expense])` |
 
-IF, AND, OR, NOT, ROUND, ABS, ROUNDUP, ROUNDDOWN and ISBLANK accept upper- or
+IF, IFERROR, AND, OR, NOT, ROUND, ABS, ROUNDUP, ROUNDDOWN and ISBLANK accept upper- or
 lowercase names; canonical source uses uppercase. Existing binary min/max retain their lowercase form.
 A formula source has no leading `=`.
 
@@ -46,11 +47,35 @@ AND/OR/NOT. Numeric truthiness and comparisons between non-Numbers are refused
 as `formula_type_mismatch`. The second argument of ROUND, ROUNDUP and ROUNDDOWN
 must be an integer literal in `0..=10`; negative, fractional, calculated, and reference precisions are
 refused with the same typed code. AND/OR require at least one condition; NOT,
-ABS and ISBLANK require one argument and IF requires three.
+ABS and ISBLANK require one argument, IFERROR requires two Number arguments,
+and IF requires three.
 
 ROUNDUP rounds away from zero and ROUNDDOWN truncates toward zero using the
 shortest round-trip decimal, so `ROUNDUP(1.1, 1)` is `1.1` and
 `ROUNDDOWN(2.3, 1)` is `2.3`.
+
+IFERROR returns `value` when it succeeds and lazily evaluates `fallback` only
+when `value` raises `DivisionByZero`, runtime `TypeMismatch`, `NonFiniteResult`,
+`EmptyAggregate`, or runtime `FailedDependencies` raised while evaluating `value`
+(for example, inside a selected IF branch).
+Its result is a Number; if the fallback fails, that failure propagates. Caught
+failures add no owner-cell failure entry or diagnostic. For example,
+`IFERROR(1 / 0, 0)` yields zero and `IFERROR(1, 1 / 0)` yields one.
+
+Parse/bind errors, `InvalidExpression`, `InvalidReferences`, `InvalidColumn`,
+`Cycle`, and pre-evaluation upstream checks are not caught. Both operands are
+structurally checked and retained as dependencies, including cycle checks,
+invalidation and disclosure. Required-value prechecks always inspect `value`;
+`fallback` is branch-only, so a required blank read there does not fail a
+successful `value`. This does not remove independent required-field diagnostics.
+MVP 1.0 cannot catch upstream failed cells: a failed declared cell already makes
+the document invalid and its edit is refused. Excel-style upstream catching
+waits for ADR-0047 per-cell publication in 1.1. Column `first_failed` and
+conditional-aggregate prechecks keep their existing behavior.
+
+IFERROR round-trips in `.roproj/v3` (`if_error` with named `value` and `fallback`
+operands) and direct `.ro/v2`; frozen `.roproj/v1/v2` refuse it. XLSX import,
+export and A1 entry support `IFERROR(a,b)`.
 
 Only the selected IF branch is evaluated, but every reference in both branches
 remains a dependency and participates in cycle checks. AND/OR evaluate all their

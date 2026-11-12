@@ -494,6 +494,10 @@ fn generated_row(random: &mut SplitMix64, schema: &str, index: usize) -> Entity 
             digits: 1,
         },
     };
+    let c1 = Expression::IfError {
+        value: Box::new(c1),
+        fallback: Box::new(literal(-1.0)),
+    };
     let c2 = if schema == BETA && index == 0 {
         total(schema, "c2")
     } else {
@@ -1586,6 +1590,44 @@ fn order_dependent_total_document() -> Document {
     )
 }
 
+fn iferror_document(denominator: f64) -> Document {
+    fixed_document(
+        vec![fixed_schema(
+            "r",
+            &[
+                ("a", FieldType::Number),
+                ("b", FieldType::Number),
+                ("result", FieldType::Number),
+            ],
+        )],
+        vec![fixed_row(
+            "r",
+            "r",
+            &[
+                ("a", fixed_number(8.0)),
+                ("b", fixed_number(denominator)),
+                (
+                    "result",
+                    Value::Formula(Expression::IfError {
+                        value: Box::new(divide(same_row("a"), same_row("b"))),
+                        fallback: Box::new(literal(0.0)),
+                    }),
+                ),
+            ],
+        )],
+    )
+}
+
+fn flip_iferror_denominator(document: &mut Document) -> BTreeSet<FieldRef> {
+    let entity = document.entities.get_mut("r").expect("row exists");
+    let Value::Number(previous) = &entity.fields["b"] else {
+        panic!("denominator is a Number");
+    };
+    let next = if previous.get() == 0.0 { 2.0 } else { 0.0 };
+    entity.fields.insert(FieldId::from("b"), fixed_number(next));
+    BTreeSet::from([FieldRef::new("r", "b")])
+}
+
 /// A named document, and the retained edit applied to it after the full run.
 type FixedCase = (
     &'static str,
@@ -1596,6 +1638,16 @@ type FixedCase = (
 #[test]
 fn fixed_column_documents_match_the_expanded_reference() {
     let cases: Vec<FixedCase> = vec![
+        (
+            "IFERROR switches to fallback",
+            iferror_document(2.0),
+            flip_iferror_denominator,
+        ),
+        (
+            "IFERROR switches back to value",
+            iferror_document(0.0),
+            flip_iferror_denominator,
+        ),
         (
             "failed member read by totals and conditionals",
             failed_member_document(),

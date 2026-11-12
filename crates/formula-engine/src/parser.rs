@@ -76,6 +76,10 @@ pub enum UnboundExpression {
         then_value: Box<Self>,
         else_value: Box<Self>,
     },
+    IfError {
+        value: Box<Self>,
+        fallback: Box<Self>,
+    },
     And(Vec<Self>),
     Or(Vec<Self>),
     Not(Box<Self>),
@@ -230,6 +234,11 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
             "ROUND({}, {})",
             format_unbound_expression(value),
             format_unbound_expression(digits)
+        ),
+        UnboundExpression::IfError { value, fallback } => format!(
+            "IFERROR({}, {})",
+            format_unbound_expression(value),
+            format_unbound_expression(fallback)
         ),
         UnboundExpression::Abs(value) => format!("ABS({})", format_unbound_expression(value)),
         UnboundExpression::RoundUp { value, digits } => format!(
@@ -395,6 +404,10 @@ fn push_children<'expression>(
         | UnboundExpression::Minimum { left, right }
         | UnboundExpression::Maximum { left, right }
         | UnboundExpression::Compare { left, right, .. }
+        | UnboundExpression::IfError {
+            value: left,
+            fallback: right,
+        }
         | UnboundExpression::Round {
             value: left,
             digits: right,
@@ -740,7 +753,15 @@ impl<'input> Parser<'input> {
         let upper = name.to_ascii_uppercase();
         if matches!(
             upper.as_str(),
-            "IF" | "AND" | "OR" | "NOT" | "ROUND" | "ABS" | "ROUNDUP" | "ROUNDDOWN" | "ISBLANK"
+            "IF" | "IFERROR"
+                | "AND"
+                | "OR"
+                | "NOT"
+                | "ROUND"
+                | "ABS"
+                | "ROUNDUP"
+                | "ROUNDDOWN"
+                | "ISBLANK"
         ) {
             return self.parse_extended_function(start, &upper);
         }
@@ -757,7 +778,7 @@ impl<'input> Parser<'input> {
                 return Err(FormulaParseError::new(
                     start,
                     format!(
-                        "unknown function '{name}'; expected min, max, IF, AND, OR, NOT, ROUND, ABS, ROUNDUP, ROUNDDOWN, ISBLANK, or a conditional aggregate"
+                        "unknown function '{name}'; expected min, max, IF, IFERROR, AND, OR, NOT, ROUND, ABS, ROUNDUP, ROUNDDOWN, ISBLANK, or a conditional aggregate"
                     ),
                 ));
             }
@@ -813,7 +834,7 @@ impl<'input> Parser<'input> {
         })?;
         let valid_arity = match name {
             "IF" => arguments.len() == 3,
-            "ROUND" | "ROUNDUP" | "ROUNDDOWN" => arguments.len() == 2,
+            "IFERROR" | "ROUND" | "ROUNDUP" | "ROUNDDOWN" => arguments.len() == 2,
             "NOT" | "ABS" | "ISBLANK" => arguments.len() == 1,
             _ => !arguments.is_empty(),
         };
@@ -833,6 +854,11 @@ impl<'input> Parser<'input> {
                     then_value,
                     else_value,
                 }
+            }
+            "IFERROR" => {
+                let fallback = Box::new(arguments.pop().expect("checked arity"));
+                let value = Box::new(arguments.pop().expect("checked arity"));
+                UnboundExpression::IfError { value, fallback }
             }
             "AND" => UnboundExpression::And(arguments),
             "OR" => UnboundExpression::Or(arguments),

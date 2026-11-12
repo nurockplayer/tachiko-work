@@ -273,6 +273,7 @@ the `op` and `args` form:
 | `add`, `subtract`, `multiply`, `divide`, `minimum`, `maximum` | `left`, `right` |
 | `compare` | `operator`, `left`, `right` |
 | `if` | `condition`, `then_value`, `else_value` |
+| `if_error` | `value`, `fallback` |
 | `and`, `or` | An array of Expressions |
 | `not`, `is_blank`, `abs` | One Expression |
 | `round` | `value`, `digits` (integer precision in `0..=10`) |

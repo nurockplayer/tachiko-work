@@ -655,6 +655,7 @@ fn expression_node_approx_bytes(node: &Expression) -> usize {
         | Expression::Minimum { .. }
         | Expression::Maximum { .. }
         | Expression::Compare { .. }
+        | Expression::IfError { .. }
         | Expression::If { .. }
         | Expression::And(_)
         | Expression::Or(_)

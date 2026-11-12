@@ -405,6 +405,7 @@ pub(crate) enum ExpressionV3 {
     Maximum(BinaryArgumentsV3),
     Compare(ComparisonArgumentsV3),
     If(IfArgumentsV3),
+    IfError(IfErrorArgumentsV3),
     And(Vec<ExpressionV3>),
     Or(Vec<ExpressionV3>),
     Not(Box<ExpressionV3>),
@@ -475,6 +476,13 @@ pub(crate) struct IfArgumentsV3 {
     condition: Box<ExpressionV3>,
     then_value: Box<ExpressionV3>,
     else_value: Box<ExpressionV3>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IfErrorArgumentsV3 {
+    value: Box<ExpressionV3>,
+    fallback: Box<ExpressionV3>,
 }
 
 #[derive(Deserialize)]
@@ -1150,6 +1158,10 @@ impl ExpressionV3 {
                     stack.push((&arguments.then_value, depth + 1));
                     stack.push((&arguments.condition, depth + 1));
                 }
+                Self::IfError(args) => {
+                    stack.push((&args.fallback, depth + 1));
+                    stack.push((&args.value, depth + 1));
+                }
                 Self::And(expressions) | Self::Or(expressions) => {
                     stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
                 }
@@ -1228,6 +1240,10 @@ impl ExpressionV3 {
                 condition: Box::new(arguments.condition.into_semantic()?),
                 then_value: Box::new(arguments.then_value.into_semantic()?),
                 else_value: Box::new(arguments.else_value.into_semantic()?),
+            },
+            Self::IfError(args) => Expression::IfError {
+                value: Box::new(args.value.into_semantic()?),
+                fallback: Box::new(args.fallback.into_semantic()?),
             },
             Self::And(expressions) => Expression::And(
                 expressions
@@ -1559,6 +1575,10 @@ impl ExpressionV3 {
                 condition: Box::new(Self::from_semantic(condition)),
                 then_value: Box::new(Self::from_semantic(then_value)),
                 else_value: Box::new(Self::from_semantic(else_value)),
+            }),
+            Expression::IfError { value, fallback } => Self::IfError(IfErrorArgumentsV3 {
+                value: Box::new(Self::from_semantic(value)),
+                fallback: Box::new(Self::from_semantic(fallback)),
             }),
             Expression::And(expressions) => {
                 Self::And(expressions.iter().map(Self::from_semantic).collect())
@@ -2078,6 +2098,17 @@ pub(crate) fn write_expression(
             write_expression(output, &args.else_value)?;
             output.push('}');
         }
+        ExpressionV3::IfError(args) => {
+            compact_member_string(output, "op", "if_error", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_prefix(output, "value")?;
+            write_expression(output, &args.value)?;
+            output.push(',');
+            compact_member_prefix(output, "fallback")?;
+            write_expression(output, &args.fallback)?;
+            output.push('}');
+        }
         ExpressionV3::And(expressions) | ExpressionV3::Or(expressions) => {
             let op = if matches!(expression, ExpressionV3::And(_)) {
                 "and"
@@ -2304,7 +2335,11 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     | Expression::Divide { left, right }
                     | Expression::Minimum { left, right }
                     | Expression::Maximum { left, right }
-                    | Expression::Compare { left, right, .. } => {
+                    | Expression::Compare { left, right, .. }
+                    | Expression::IfError {
+                        value: left,
+                        fallback: right,
+                    } => {
                         stack.push((right, depth + 1));
                         stack.push((left, depth + 1));
                     }

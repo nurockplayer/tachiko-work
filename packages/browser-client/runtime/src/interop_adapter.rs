@@ -4742,6 +4742,7 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
                         | "AND"
                         | "OR"
                         | "NOT"
+                        | "IFERROR"
                         | "ABS"
                         | "ROUNDUP"
                         | "ROUNDDOWN"

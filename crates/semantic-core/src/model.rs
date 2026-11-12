@@ -799,6 +799,10 @@ pub enum Expression {
         then_value: Box<Self>,
         else_value: Box<Self>,
     },
+    IfError {
+        value: Box<Self>,
+        fallback: Box<Self>,
+    },
     And(Vec<Self>),
     Or(Vec<Self>),
     Not(Box<Self>),
@@ -876,6 +880,7 @@ impl Expression {
                 then_value,
                 else_value,
             } => vec![condition, then_value, else_value],
+            Self::IfError { value, fallback } => vec![value, fallback],
             Self::And(arguments) | Self::Or(arguments) => arguments.iter().collect(),
             Self::Not(value)
             | Self::Abs(value)
@@ -910,6 +915,7 @@ impl Expression {
                 then_value,
                 else_value,
             } => vec![condition, then_value, else_value],
+            Self::IfError { value, fallback } => vec![value, fallback],
             Self::And(arguments) | Self::Or(arguments) => arguments.iter_mut().collect(),
             Self::Not(value)
             | Self::Abs(value)
@@ -963,6 +969,9 @@ impl Expression {
                     .iter()
                     .all(|argument| argument.expression_type() == Some(Condition)))
             .then_some(Condition),
+            Self::IfError { value, fallback } => (value.expression_type() == Some(Number)
+                && fallback.expression_type() == Some(Number))
+            .then_some(Number),
             Self::Not(value) => (value.expression_type() == Some(Condition)).then_some(Condition),
             Self::Abs(value) => (value.expression_type() == Some(Number)).then_some(Number),
             Self::Round { value, digits }
@@ -979,7 +988,7 @@ impl Expression {
     }
 
     /// References whose value is read on every evaluation: everything except
-    /// IF's `then`/`else` branches (the condition is always read) and ISBLANK's
+    /// IF's `then`/`else` branches, IFERROR's fallback, and ISBLANK's
     /// presence-only probe. A missing value here fails the formula before
     /// evaluation; inside a branch it fails only when that branch is selected.
     #[must_use]
@@ -995,6 +1004,7 @@ impl Expression {
                     references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
                 }
                 Self::If { condition, .. } => pending.push(condition),
+                Self::IfError { value, .. } => pending.push(value),
                 Self::IsBlank(_) => {}
                 _ => pending.extend(node.children()),
             }
