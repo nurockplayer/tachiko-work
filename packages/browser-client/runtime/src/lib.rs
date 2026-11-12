@@ -2376,7 +2376,7 @@ impl ViewIndexCache {
             .retain(|entry| entry.revision == from || entry.revision == to);
         for entry in &mut self.entries {
             if entry.revision == from {
-                entry.revision = to.to_owned();
+                to.clone_into(&mut entry.revision);
             }
         }
     }
@@ -3244,7 +3244,7 @@ impl DesignerRuntime {
         self.view_index.rekey(expected_revision, &new_revision);
         if let Some((revision, _, _)) = &mut self.totals_cache {
             if revision == expected_revision {
-                *revision = new_revision.clone();
+                revision.clone_from(&new_revision);
             } else {
                 self.totals_cache = None;
             }
