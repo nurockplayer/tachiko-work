@@ -3285,7 +3285,13 @@ fn validate_historical_envelope(
             SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
         },
     )
-    .map_err(|error| refuse("workbook", &error.to_string()))?;
+    .map_err(|error| {
+        if profile == SessionProfile::WorkingSize {
+            error
+        } else {
+            refuse("workbook", &error.to_string())
+        }
+    })?;
     Ok(())
 }
 
@@ -3597,6 +3603,28 @@ fn validate_metadata_envelope(
     metadata: &InteropMetadata,
     profile: SessionProfile,
 ) -> Result<(), DesignerError> {
+    if profile == SessionProfile::WorkingSize {
+        super::capacity::check_limit(
+            super::CapacityLimit::Collections,
+            super::capacity::WORKING_LIMITS.collections,
+            metadata.sheets.len(),
+            None,
+        )?;
+        for sheet in &metadata.sheets {
+            super::capacity::check_limit(
+                super::CapacityLimit::TableFields,
+                super::capacity::WORKING_LIMITS.table_fields,
+                sheet.columns.len(),
+                Some(&sheet.name),
+            )?;
+            super::capacity::check_limit(
+                super::CapacityLimit::TableRows,
+                super::capacity::WORKING_LIMITS.table_rows,
+                sheet.rows.len(),
+                Some(&sheet.name),
+            )?;
+        }
+    }
     if !(metadata.version == 1 || metadata.version == 2 && profile == SessionProfile::WorkingSize)
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
@@ -3745,7 +3773,9 @@ impl DesignerRuntime {
                 matches!(output, ImportedOutput::Csv(_)),
             )
             .map_err(|error| match error {
-                DesignerError::CapacityExceeded(_) if profile == OutputProfile::WorkingSize => {
+                DesignerError::CapacityExceeded(_) | DesignerError::ProjectionTooLarge { .. }
+                    if profile == OutputProfile::WorkingSize =>
+                {
                     error
                 }
                 other => imported_export_error("workbook", &other.to_string()),
@@ -4041,10 +4071,16 @@ impl DesignerRuntime {
                                 expression, &target, &addresses, &columns,
                             )?)
                         };
-                        if formula
+                        if let Some(formula) = formula
                             .as_ref()
-                            .is_some_and(|formula| formula.len() > MAX_PROFILE_STRING_BYTES)
+                            .filter(|formula| formula.len() > MAX_PROFILE_STRING_BYTES)
                         {
+                            if profile == OutputProfile::WorkingSize {
+                                return Err(DesignerError::ProjectionTooLarge {
+                                    actual: formula.len(),
+                                    maximum: MAX_PROFILE_STRING_BYTES,
+                                });
+                            }
                             return Err(tracker_error(
                                 "export formula exceeds the bounded reimport authoring profile",
                             ));

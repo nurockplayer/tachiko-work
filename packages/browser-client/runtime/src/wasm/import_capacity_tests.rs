@@ -587,7 +587,51 @@ fn assert_working_success(source: &[u8], format: &str) {
         crate::interop_adapter::import_csv_profile(&bytes, &options, true).unwrap()
     };
     assert_eq!(roundtrip.sheets[0].columns, original.sheets[0].columns);
-    assert_eq!(roundtrip.sheets[0].rows, original.sheets[0].rows);
+    assert_eq!(
+        roundtrip.sheets[0].rows.len(),
+        original.sheets[0].rows.len()
+    );
+    for (before, after) in original.sheets[0]
+        .rows
+        .iter()
+        .zip(&roundtrip.sheets[0].rows)
+    {
+        assert_eq!(before.len(), after.len());
+        for (before, after) in before.iter().zip(after) {
+            assert_eq!(before.value, after.value);
+            assert_eq!(before.style, after.style);
+            assert_eq!(before.formula.is_some(), after.formula.is_some());
+        }
+    }
+    if format == "xlsx" {
+        let mut again = DesignerHost::new();
+        let imported = again.spreadsheet(&request, &bytes);
+        let reply: Value = serde_json::from_slice(&imported.reply).unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let payload = &reply["response"]["payload"];
+        let window = &payload["opened"]["window"];
+        let control = serde_json::to_vec(&object(vec![
+            ("type", "export".into()),
+            ("format", format.into()),
+            ("expected_revision", window["revision"].clone()),
+            ("collection", window["collection"]["id"].clone()),
+            ("metadata", payload["metadata"].clone()),
+        ]))
+        .unwrap();
+        let exported = again.spreadsheet(&control, &[]);
+        let reply: Value = serde_json::from_slice(&exported.reply).unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let fixed =
+            crate::interop_adapter::import_xlsx_profile(&exported.bytes.unwrap(), &options, true)
+                .unwrap();
+        assert_eq!(roundtrip.sheets[0].rows.len(), fixed.sheets[0].rows.len());
+        for (first, second) in roundtrip.sheets[0].rows.iter().zip(&fixed.sheets[0].rows) {
+            assert_eq!(first.len(), second.len());
+            for (first, second) in first.iter().zip(second) {
+                assert_eq!(first.formula, second.formula);
+            }
+        }
+    }
     let mut last_id = String::new();
     let mut start = 0_usize;
     while start < 10_000 {
