@@ -867,6 +867,13 @@ fn validate_expression(
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
                 validate_formula_column(document, owner, column, path, diagnostics);
             }
+            Expression::DatePart { operand, .. } | Expression::Weekday { operand, .. } => {
+                validate_date_operand(document, owner, operand, path, diagnostics);
+            }
+            Expression::Days { end, start } => {
+                validate_date_operand(document, owner, end, path, diagnostics);
+                validate_date_operand(document, owner, start, path, diagnostics);
+            }
             Expression::ColumnConditional {
                 aggregate,
                 criteria,
@@ -1001,6 +1008,43 @@ fn validate_formula_scalar_column(
                 field: column.field.clone(),
             }])
             .with_fact(DiagnosticFact::new("actual_kind", "reference")),
+        );
+    }
+}
+
+fn validate_date_operand(
+    document: &Document,
+    owner: &FieldRef,
+    operand: &Expression,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let reference = match operand {
+        Expression::Reference(reference) => reference.clone(),
+        Expression::SameRowReference(field) => FieldRef::new(owner.entity.clone(), field.clone()),
+        _ => return,
+    };
+    let definition = document
+        .entities
+        .get(&reference.entity)
+        .and_then(|entity| document.schemas.get(&entity.schema))
+        .and_then(|schema| schema.fields.get(&reference.field));
+    if let Some(definition) =
+        definition.filter(|definition| definition.field_type != FieldType::Date)
+    {
+        diagnostics.push(
+            core_diagnostic(
+                path,
+                DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
+                format!("formula reference '{reference}' does not target a Date field"),
+                vec![SemanticSubject::EntityField(owner.clone())],
+            )
+            .with_related_subjects(vec![SemanticSubject::EntityField(reference)])
+            .with_fact(DiagnosticFact::new("expected_kind", "date"))
+            .with_fact(DiagnosticFact::new(
+                "actual_kind",
+                field_type_name(&definition.field_type),
+            )),
         );
     }
 }
@@ -1723,6 +1767,16 @@ mod issue_175_research {
                             pending.push((expression, !bare));
                         }
                     }
+                }
+                Expression::DatePart { operand, .. } | Expression::Weekday { operand, .. } => {
+                    super::validate_date_operand(document, owner, operand, path, diagnostics);
+                    pending.push((operand, false));
+                }
+                Expression::Days { end, start } => {
+                    super::validate_date_operand(document, owner, end, path, diagnostics);
+                    super::validate_date_operand(document, owner, start, path, diagnostics);
+                    pending.push((end, false));
+                    pending.push((start, false));
                 }
                 Expression::IsBlank(value) => pending.push((value, false)),
                 _ => pending.extend(

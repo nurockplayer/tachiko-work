@@ -32,10 +32,11 @@ pub use keyed_grouped_sum::{
 };
 pub use model::{
     ColumnAddress, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
-    ConditionalAggregate, Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
-    FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
-    FormulaExpressionType, InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES,
-    Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema, SchemaId, SchemaKey, Value,
+    ConditionalAggregate, Date, DatePartKind, Document, DocumentId, Entity, EntityId, EntityKey,
+    Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, FormulaExpressionType, InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH,
+    MAX_EXPRESSION_NODES, Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema,
+    SchemaId, SchemaKey, Value,
 };
 pub use presentation::{
     BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate,

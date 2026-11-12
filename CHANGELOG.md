@@ -10,6 +10,10 @@ All notable changes to Tachiko Work are documented in this file.
   (`setColumnAlignment`, `setColumnWrap`, `setColumnWidth`), each undoable on
   its own, and table windows report them per column.
 
+- Formula engine supports `YEAR`, `MONTH`, `DAY`, `WEEKDAY`, and `DAYS` on
+  Date field references, with Gregorian day differences and `.roproj/v3`
+  persistence. A1 and XLSX support follow separately; `TODAY()` is deferred.
+
 - `IFERROR(value, fallback)` catches own-expression runtime failures with a lazy
   Number fallback across formula authoring, canonical v3/direct v2 persistence,
   A1 entry and XLSX import/export. Upstream failures retain existing refusal

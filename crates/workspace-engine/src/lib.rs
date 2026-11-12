@@ -3325,6 +3325,10 @@ fn drop_expression_iteratively(expression: Expression) {
             | Expression::Minimum { left, right }
             | Expression::Maximum { left, right }
             | Expression::Compare { left, right, .. }
+            | Expression::Days {
+                end: left,
+                start: right,
+            }
             | Expression::IfError {
                 value: left,
                 fallback: right,
@@ -3347,6 +3351,8 @@ fn drop_expression_iteratively(expression: Expression) {
             | Expression::Round { value, .. }
             | Expression::RoundUp { value, .. }
             | Expression::RoundDown { value, .. }
+            | Expression::DatePart { operand: value, .. }
+            | Expression::Weekday { operand: value, .. }
             | Expression::IsBlank(value) => stack.push(*value),
             Expression::ColumnConditional { criteria, .. } => {
                 stack.extend(

@@ -10612,6 +10612,26 @@ fn map_copy_references(
             Ok(())
         }
         Expression::Reference(reference) => visit(reference, true),
+        Expression::DatePart {
+            operand: reference, ..
+        }
+        | Expression::Weekday {
+            operand: reference, ..
+        } => match reference.as_mut() {
+            Expression::Reference(reference) => visit(reference, false),
+            Expression::SameRowReference(_) => Ok(()),
+            _ => unreachable!("date function has a bound reference child"),
+        },
+        Expression::Days { end, start } => {
+            for operand in [end, start] {
+                match operand.as_mut() {
+                    Expression::Reference(reference) => visit(reference, false)?,
+                    Expression::SameRowReference(_) => {}
+                    _ => unreachable!("date function has a bound reference child"),
+                }
+            }
+            Ok(())
+        }
         Expression::IsBlank(reference) => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
             Expression::SameRowReference(_) => Ok(()),
