@@ -2609,3 +2609,401 @@ fn iferror_round_trips_through_xlsx_with_success_and_caught_failure() {
         );
     }
 }
+
+#[test]
+#[allow(clippy::too_many_lines)] // One import, export and reopen walk.
+fn date_functions_round_trip_through_xlsx() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: [
+                "Start",
+                "End",
+                "Year",
+                "Weekday",
+                "Days",
+                "Month",
+                "Day",
+                "Default weekday",
+            ]
+            .into_iter()
+            .map(|name| SourceColumn {
+                name: name.into(),
+                width: None,
+                number_format: None,
+            })
+            .collect(),
+            rows: vec![vec![
+                source_cell(
+                    SourceValue::Date {
+                        value: "2026-09-05".into(),
+                    },
+                    None,
+                ),
+                source_cell(
+                    SourceValue::Date {
+                        value: "2026-09-08".into(),
+                    },
+                    None,
+                ),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=YEAR(A2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=WEEKDAY(A2,2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=DAYS(B2,A2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=MONTH(A2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=DAY(A2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=WEEKDAY(A2)")),
+            ]],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![
+            ImportFieldType::Date,
+            ImportFieldType::Date,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+        ]],
+        extra_columns: vec![vec![]],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for (index, formula, value) in [
+        (2, "YEAR(IF(ISBLANK(A2),NA(),A2))", 2026.0),
+        (3, "WEEKDAY(IF(ISBLANK(A2),NA(),A2),2)", 6.0),
+        (
+            4,
+            "DAYS(IF(ISBLANK(B2),NA(),B2),IF(ISBLANK(A2),NA(),A2))",
+            3.0,
+        ),
+        (5, "MONTH(IF(ISBLANK(A2),NA(),A2))", 9.0),
+        (6, "DAY(IF(ISBLANK(A2),NA(),A2))", 5.0),
+        (7, "WEEKDAY(IF(ISBLANK(A2),NA(),A2))", 7.0),
+    ] {
+        assert_eq!(
+            exported.sheets[0].rows[0][index].formula.as_deref(),
+            Some(formula)
+        );
+        assert_eq!(
+            exported.sheets[0].rows[0][index].value,
+            SourceValue::Number { value }
+        );
+    }
+    let bytes = export_xlsx(&exported).unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_name("xl/worksheets/sheet1.xml").unwrap(),
+        &mut xml,
+    )
+    .unwrap();
+    assert!(
+        xml.contains("<f>_xlfn.DAYS(IF(ISBLANK(B2),NA(),B2),IF(ISBLANK(A2),NA(),A2))</f>"),
+        "{xml}"
+    );
+    let reopened_source = import_xlsx(&bytes).unwrap();
+    assert_eq!(
+        reopened_source.sheets[0].rows[0][4].formula.as_deref(),
+        Some("DAYS(IF(ISBLANK(B2),NA(),B2),IF(ISBLANK(A2),NA(),A2))")
+    );
+    let (runtime, imported) = import_workbook(&reopened_source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let reopened = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for index in 2..8 {
+        assert_eq!(
+            reopened.sheets[0].rows[0][index].formula,
+            exported.sheets[0].rows[0][index].formula
+        );
+        assert_eq!(
+            reopened.sheets[0].rows[0][index].value,
+            exported.sheets[0].rows[0][index].value
+        );
+    }
+}
+
+#[test]
+fn unsupported_date_calls_keep_cached_values() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+
+    for (input, input_type, formula, cached) in [
+        (
+            SourceValue::Date {
+                value: "1900-01-01".into(),
+            },
+            ImportFieldType::Date,
+            "=WEEKDAY(A2)",
+            1.0,
+        ),
+        (
+            SourceValue::Empty,
+            ImportFieldType::Date,
+            "=IFERROR(YEAR(A2),0)",
+            1900.0,
+        ),
+        (
+            SourceValue::Date {
+                value: "2026-09-05".into(),
+            },
+            ImportFieldType::Date,
+            "=WEEKDAY(A2,11)",
+            6.0,
+        ),
+        (
+            SourceValue::Number { value: 46270.0 },
+            ImportFieldType::Number,
+            "=YEAR(A2)",
+            2026.0,
+        ),
+    ] {
+        let source = SourceWorkbook {
+            ledger: vec![],
+            sheets: vec![SourceSheet {
+                name: "Data".into(),
+                has_header: true,
+                columns: ["Input", "Result"]
+                    .into_iter()
+                    .map(|name| SourceColumn {
+                        name: name.into(),
+                        width: None,
+                        number_format: None,
+                    })
+                    .collect(),
+                rows: vec![vec![
+                    source_cell(input, None),
+                    source_cell(SourceValue::Number { value: cached }, Some(formula)),
+                ]],
+                layout: SourceLayout::default(),
+            }],
+        };
+        let selection = ImportSelection {
+            column_types: vec![vec![input_type, ImportFieldType::Number]],
+            extra_columns: vec![vec![]],
+        };
+        let source = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+        let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        assert!(
+            imported.ledger.iter().any(
+                |finding| finding.code == "unsupported_formula_kept_value" && !finding.blocking
+            ),
+            "{:?}",
+            imported.ledger
+        );
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        let cell = &exported.sheets[0].rows[0][1];
+        assert_eq!(cell.value, SourceValue::Number { value: cached });
+        assert_eq!(cell.formula, None);
+    }
+}
+
+#[test]
+fn optional_date_formulas_round_trip_with_blank_and_filled_rows() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: ["Date", "Year"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows: vec![
+                vec![
+                    source_cell(SourceValue::Empty, None),
+                    source_cell(SourceValue::Number { value: 0.0 }, None),
+                ],
+                vec![
+                    source_cell(
+                        SourceValue::Date {
+                            value: "1900-03-01".into(),
+                        },
+                        None,
+                    ),
+                    source_cell(SourceValue::Number { value: 0.0 }, None),
+                ],
+            ],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Date, ImportFieldType::Number]],
+        extra_columns: vec![vec![]],
+    };
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let mut revision = "resident/0".to_owned();
+    for row in &imported.metadata.sheets[0].rows {
+        let DesignerResponse::Published(published) = runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: revision,
+                target: FieldTarget {
+                    entity: row.entity_id.clone(),
+                    field: imported.metadata.sheets[0].columns[1].field_id.clone(),
+                },
+                source: "IFERROR(YEAR([.column_1]),0)".into(),
+            })
+            .unwrap()
+        else {
+            panic!("formula update publishes")
+        };
+        revision = published.resulting_revision;
+    }
+    let exported = runtime
+        .export_workbook(&revision, &imported.metadata)
+        .unwrap();
+    for (index, value) in [0.0, 1900.0].into_iter().enumerate() {
+        let cell = &exported.sheets[0].rows[index][1];
+        assert_eq!(
+            cell.formula.as_deref(),
+            Some(
+                format!(
+                    "IFERROR(YEAR(IF(ISBLANK(A{}),NA(),A{})),0)",
+                    index + 2,
+                    index + 2
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(cell.value, SourceValue::Number { value });
+    }
+    let reopened = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&reopened, &selection, OCCURRENCE).unwrap();
+    let findings: Vec<_> = imported
+        .ledger
+        .iter()
+        .filter(|finding| finding.code == "unsupported_formula_kept_value")
+        .collect();
+    assert!(findings.is_empty(), "{findings:?}");
+    let reexported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for index in 0..2 {
+        assert_eq!(
+            reexported.sheets[0].rows[index][1].formula,
+            exported.sheets[0].rows[index][1].formula
+        );
+        assert_eq!(
+            reexported.sheets[0].rows[index][1].value,
+            exported.sheets[0].rows[index][1].value
+        );
+    }
+}
+
+#[test]
+fn march_1900_date_imports_as_live_formula() {
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: ["Date", "Year"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows: vec![vec![
+                source_cell(
+                    SourceValue::Date {
+                        value: "1900-03-01".into(),
+                    },
+                    None,
+                ),
+                source_cell(SourceValue::Number { value: 1900.0 }, Some("=YEAR(A2)")),
+            ]],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Date, ImportFieldType::Number]],
+        extra_columns: vec![vec![]],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let findings: Vec<_> = imported
+        .ledger
+        .iter()
+        .filter(|finding| finding.code == "unsupported_formula_kept_value")
+        .collect();
+    assert!(findings.is_empty(), "{findings:?}");
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][1].formula.as_deref(),
+        Some("YEAR(IF(ISBLANK(A2),NA(),A2))")
+    );
+}
+
+#[test]
+fn bare_na_import_keeps_cached_value() {
+    use std::io::{Cursor, Read, Write};
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+    let (mut source, selection) = extremum_fixture("=1+1");
+    source.sheets[0].rows[0][0].value = SourceValue::Number { value: 42.0 };
+    let bytes = export_xlsx(&source).unwrap();
+    let mut input = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut content = Vec::new();
+        entry.read_to_end(&mut content).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            let xml = String::from_utf8(content).unwrap();
+            assert!(xml.contains("<f>1+1</f>"), "{xml}");
+            content = xml.replace("<f>1+1</f>", "<f>NA()</f>").into_bytes();
+        }
+        output
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&content).unwrap();
+    }
+    let source = import_xlsx(&output.finish().unwrap().into_inner()).unwrap();
+    assert!(
+        source
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value"),
+        "{:?}",
+        source.ledger
+    );
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 42.0 }
+    );
+    assert_eq!(exported.sheets[0].rows[0][0].formula, None);
+}

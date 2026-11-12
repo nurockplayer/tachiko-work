@@ -641,7 +641,8 @@ use super::interop_adapter::{
     MAX_NATIVE_BUDGET_COLUMNS, MAX_NATIVE_BUDGET_DATA_ROWS, MAX_NATIVE_BUDGET_SHEETS, MAX_SHEETS,
     MAX_TEXT_CAPACITY_COLUMNS, OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet,
     SourceValue, SourceWorkbook, SummaryAggregate, SummaryRow, call_argument, conditional_shape,
-    criterion_literal, split_arguments, whole_column_argument, writable_criterion,
+    criterion_literal, guarded_date_cell, split_arguments, whole_column_argument,
+    writable_criterion,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use crate::translate_a1::{A1RefusalCode, A1TokenSpan};
@@ -2041,6 +2042,13 @@ fn export_a1_maps(
                                 .get(row.entity_id.as_str())
                                 .and_then(|entity| entity.fields.get(definition.field_id.as_str())),
                         ),
+                        document
+                            .schemas
+                            .get(sheet.schema_id.as_str())
+                            .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
+                            .is_some_and(|field| {
+                                field.field_type == FieldType::Date && !field.required
+                            }),
                     ),
                 );
             }
@@ -2412,6 +2420,23 @@ mod extremum_tests {
             Expression::If { .. }
         ));
     }
+
+    #[test]
+    fn required_date_reference_exports_bare() {
+        let owner = FieldRef::new("row", "result");
+        let addresses = BTreeMap::from([(
+            FieldRef::new("row", "d"),
+            super::ExportCell::new("Data".into(), "A".into(), 2, Some(FieldType::Date), false),
+        )]);
+        let expression = Expression::DatePart {
+            part: tachiko_semantic_core::DatePartKind::Year,
+            operand: Box::new(Expression::SameRowReference("d".into())),
+        };
+        assert_eq!(
+            super::export_expression(&expression, &owner, &addresses, &BTreeMap::new()).unwrap(),
+            "YEAR(A2)"
+        );
+    }
 }
 
 // Both explicit A1 boundaries share tokenization; geometry owns address resolution.
@@ -2651,6 +2676,45 @@ fn translate_a1_inner(
                 let token = &source[token_start..cursor];
                 if sheet_name.is_none() && !token.contains('!') {
                     let name = token.to_ascii_uppercase();
+                    if matches!(name.as_str(), "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "DAYS") {
+                        let call = skip_spaces(source, cursor);
+                        if source[call..].starts_with('(') {
+                            let (argument, consumed) = call_argument(&source[call..])
+                                .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+                            let parts = split_arguments(argument)
+                                .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+                            let date_count = if name == "DAYS" { 2 } else { 1 };
+                            if parts
+                                .iter()
+                                .take(date_count)
+                                .any(|(_, part)| guarded_date_cell(part).is_some())
+                            {
+                                let mut rendered = Vec::new();
+                                for (index, (_, part)) in parts.iter().enumerate() {
+                                    let text = if index < date_count {
+                                        guarded_date_cell(part).unwrap_or(part)
+                                    } else {
+                                        part
+                                    };
+                                    let (translated, nested) = translate_a1_inner(
+                                        text,
+                                        geometry,
+                                        current_sheet,
+                                        document,
+                                        false,
+                                    )?;
+                                    references.extend(nested);
+                                    rendered.push(translated);
+                                }
+                                output.push_str(&name.to_ascii_lowercase());
+                                output.push('(');
+                                output.push_str(&rendered.join(","));
+                                output.push(')');
+                                cursor = call + consumed;
+                                return Ok(());
+                            }
+                        }
+                    }
                     let aggregate = match name.as_str() {
                         "SUM" => Some(SummaryAggregate::Total),
                         "AVERAGE" => Some(SummaryAggregate::Average),
@@ -2684,6 +2748,11 @@ fn translate_a1_inner(
                             | "NOT"
                             | "ROUND"
                             | "IFERROR"
+                            | "YEAR"
+                            | "MONTH"
+                            | "DAY"
+                            | "WEEKDAY"
+                            | "DAYS"
                             | "ABS"
                             | "ROUNDUP"
                             | "ROUNDDOWN"
@@ -4818,6 +4887,7 @@ pub(crate) struct ExportCell {
     column: String,
     row: usize,
     criterion_type: Option<FieldType>,
+    optional_date: bool,
 }
 
 impl ExportCell {
@@ -4826,12 +4896,14 @@ impl ExportCell {
         column: String,
         row: usize,
         criterion_type: Option<FieldType>,
+        optional_date: bool,
     ) -> Self {
         Self {
             sheet,
             column,
             row,
             criterion_type,
+            optional_date,
         }
     }
 
@@ -5032,14 +5104,51 @@ fn export_in(
             "ROUNDDOWN({},{digits})",
             export_in(value, owner, addresses, columns, present)?
         )),
-        Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => Err(
-            tracker_error("date formulas are not supported in spreadsheet export"),
-        ),
+        Expression::DatePart { part, operand } => Ok(format!(
+            "{}({})",
+            part.as_str().to_ascii_uppercase(),
+            export_date_argument(operand, owner, addresses, columns, present)?
+        )),
+        Expression::Weekday {
+            operand,
+            return_type,
+        } => {
+            let operand = export_date_argument(operand, owner, addresses, columns, present)?;
+            if *return_type == 1 {
+                Ok(format!("WEEKDAY({operand})"))
+            } else {
+                Ok(format!("WEEKDAY({operand},{return_type})"))
+            }
+        }
+        Expression::Days { end, start } => Ok(format!(
+            "DAYS({},{})",
+            export_date_argument(end, owner, addresses, columns, present)?,
+            export_date_argument(start, owner, addresses, columns, present)?
+        )),
         Expression::IsBlank(reference) => Ok(format!(
             "ISBLANK({})",
             export_in(reference, owner, addresses, columns, present)?
         )),
     }
+}
+
+fn export_date_argument(
+    argument: &Expression,
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
+    columns: &BTreeMap<ColumnRef, ExportColumn>,
+    present: &std::collections::BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
+    let exported = export_in(argument, owner, addresses, columns, present)?;
+    let optional = direct_reference(argument, owner)
+        .filter(|reference| !present.contains(reference))
+        .and_then(|reference| addresses.get(&reference))
+        .is_some_and(|cell| cell.optional_date);
+    Ok(if optional {
+        format!("IF(ISBLANK({exported}),NA(),{exported})")
+    } else {
+        exported
+    })
 }
 
 /// Tachiko reads a blank optional Number as 0, but Excel's MIN and MAX skip a

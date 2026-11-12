@@ -648,6 +648,26 @@ fn date_request(text: &str) -> Json {
 }
 
 #[test]
+fn translate_a1_date_functions() {
+    let mut rt = Some(date_runtime());
+    for (text, expected) in [
+        ("YEAR(E2)", "year([r1.when])"),
+        (
+            "YEAR( if ( isblank ( E2 ) , na ( ) , e2 ) )",
+            "year([r1.when])",
+        ),
+        ("WEEKDAY(E2,2)", "weekday([r1.when],2)"),
+        ("DAYS(E2,E3)", "days([r1.when],[.when])"),
+    ] {
+        let reply = call(&mut rt, &date_request(text));
+        assert_eq!(reply["status"], "ok", "{text}: {reply}");
+        assert_eq!(reply["response"]["payload"]["source"], expected);
+    }
+    refused(&mut rt, &date_request("TODAY()"), "unsupported_function");
+    refused(&mut rt, &date_request("NA()"), "unsupported_function");
+}
+
+#[test]
 fn translate_a1_conditional_number_criteria_cannot_test_a_date_column() {
     let mut rt = Some(date_runtime());
     for (text, start, end) in [

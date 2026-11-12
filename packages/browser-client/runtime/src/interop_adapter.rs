@@ -3626,7 +3626,7 @@ pub(crate) fn import_xlsx_profile(
                         SourceValue::Empty
                     }
                 };
-                let mut source = formula.map(|f| f.text.clone());
+                let mut source = formula.map(|f| days_ooxml_formula(&f.text, false));
                 if let Some(f) = formula {
                     formula_count += 1;
                     check_import_limit(
@@ -3664,7 +3664,10 @@ pub(crate) fn import_xlsx_profile(
                             true,
                         ));
                         value = SourceValue::Empty;
-                    } else if unsupported_formula_function(&f.text, true) {
+                    } else if unsupported_formula_function(
+                        source.as_deref().unwrap_or(&f.text),
+                        true,
+                    ) {
                         keep_cached_value(&mut value, &mut source, &location, &mut ledger, None);
                     }
                 }
@@ -4220,6 +4223,35 @@ pub(crate) fn split_arguments(argument: &str) -> Option<Vec<(usize, &str)>> {
     Some(parts)
 }
 
+/// Recognize the blank-date guard emitted for a direct cell reference.
+pub(crate) fn guarded_date_cell(source: &str) -> Option<&str> {
+    fn call<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+        let source = source.trim();
+        let prefix = source.get(..name.len())?;
+        if !prefix.eq_ignore_ascii_case(name) {
+            return None;
+        }
+        let rest = source.get(name.len()..)?.trim_start();
+        let (argument, consumed) = call_argument(rest)?;
+        (consumed == rest.len()).then_some(argument)
+    }
+    let parts = split_arguments(call(source, "IF")?)?;
+    if parts.len() != 3 || !call(parts[1].1, "NA")?.trim().is_empty() {
+        return None;
+    }
+    let cell = call(parts[0].1, "ISBLANK")?.trim();
+    let result = parts[2].1.trim();
+    let address = if cell.starts_with('\'') {
+        let mut cursor = 0;
+        quoted_sheet_name(cell, &mut cursor).ok()?;
+        &cell[cursor..]
+    } else {
+        cell.rsplit_once('!').map_or(cell, |(_, address)| address)
+    };
+    (cell_reference_span(address)? == address.len() && cell.eq_ignore_ascii_case(result))
+        .then_some(cell)
+}
+
 /// Whether `text` is exactly one `"` string literal, doubled quotes included.
 pub(crate) fn criterion_literal(text: &str) -> bool {
     let bytes = text.as_bytes();
@@ -4465,16 +4497,22 @@ fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> F
                 name.as_str(),
                 "SUMIF" | "SUMIFS" | "AVERAGEIF" | "AVERAGEIFS" | "COUNTIF" | "COUNTIFS"
             );
+            let date = matches!(name.as_str(), "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "DAYS");
             // Excel's MIN/MAX of an all-blank range is 0 while a Tachiko column
             // min/max fails, so a range MIN/MAX is never translated.
-            if required || conditional || matches!(name.as_str(), "MIN" | "MAX") {
+            if required || conditional || date || matches!(name.as_str(), "MIN" | "MAX") {
                 let call = skip_whitespace(formula, cursor);
                 if formula[call..].starts_with('(') {
                     let Some((argument, consumed)) = call_argument(&formula[call..]) else {
                         return FormulaAdmission::Refused(None);
                     };
-                    if conditional {
-                        match conditional_admission(&name, argument, current, sheets) {
+                    if conditional || date {
+                        let admission = if date {
+                            date_admission(&name, argument, current, sheets)
+                        } else {
+                            conditional_admission(&name, argument, current, sheets)
+                        };
+                        match admission {
                             FormulaAdmission::Admitted => {}
                             refused @ FormulaAdmission::Refused(_) => return refused,
                         }
@@ -4500,6 +4538,49 @@ fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> F
         }
     }
     FormulaAdmission::Admitted
+}
+
+/// Admit date calls only when their source operands have Excel-compatible values.
+fn date_admission(
+    name: &str,
+    argument: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+) -> FormulaAdmission {
+    const REASON: &str = "date functions require compatible Date cells on or after 1900-03-01, and WEEKDAY with return type 1, 2 or 3";
+    let admitted = || -> Option<()> {
+        let arguments = split_arguments(argument)?;
+        let date_count = if name == "DAYS" { 2 } else { 1 };
+        if name == "WEEKDAY" {
+            if !(1..=2).contains(&arguments.len())
+                || (arguments.len() == 2 && !matches!(arguments[1].1.trim(), "1" | "2" | "3"))
+            {
+                return None;
+            }
+        } else if arguments.len() != date_count {
+            return None;
+        }
+        for (_, argument) in arguments.iter().take(date_count) {
+            let guard = guarded_date_cell(argument);
+            let (sheet, column, row) =
+                criterion_cell(guard.unwrap_or(argument.trim()), current, sheets)?;
+            let source = sheets.get(sheet)?;
+            let above = usize::try_from(source.layout.rows_above_header).ok()?;
+            let row = row.checked_sub(above + 1 + usize::from(source.has_header))?;
+            let value = &source.rows.get(row)?.get(column)?.value;
+            if !(matches!(value, SourceValue::Date { value } if value.as_str() >= "1900-03-01")
+                || guard.is_some() && matches!(value, SourceValue::Empty))
+            {
+                return None;
+            }
+        }
+        Some(())
+    };
+    if admitted().is_some() {
+        FormulaAdmission::Admitted
+    } else {
+        FormulaAdmission::Refused(Some(REASON))
+    }
 }
 
 /// A conditional call is admitted only when the translator will accept every
@@ -4706,7 +4787,7 @@ fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<Fideli
     }
 }
 
-const ADMITTED_FORMULAS: &str = "Tachiko calculates numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND, ISBLANK, SUM, AVERAGE or COUNT over one whole column, and SUMIF, SUMIFS, AVERAGEIF, AVERAGEIFS, COUNTIF or COUNTIFS over whole columns with written number or blank criteria or a cell reference";
+const ADMITTED_FORMULAS: &str = "Tachiko calculates numeric arithmetic, comparisons, binary MIN/MAX, IF, AND, OR, NOT, ROUND, ISBLANK, YEAR, MONTH, DAY, WEEKDAY, DAYS, SUM, AVERAGE or COUNT over one whole column, and SUMIF, SUMIFS, AVERAGEIF, AVERAGEIFS, COUNTIF or COUNTIFS over whole columns with written number or blank criteria or a cell reference";
 
 /// A formula Tachiko does not calculate keeps Excel's last calculated value as
 /// a plain value, with the original formula named in the finding. Without a
@@ -4949,11 +5030,60 @@ fn value_text(value: &SourceValue) -> String {
         SourceValue::Boolean { value } => value.to_string(),
     }
 }
+/// Convert DAYS function tokens between Excel display text and OOXML spelling.
+fn days_ooxml_formula(formula: &str, writing: bool) -> String {
+    let mut result = String::with_capacity(formula.len());
+    let mut cursor = 0;
+    let mut quote = None;
+    while cursor < formula.len() {
+        let character = formula[cursor..]
+            .chars()
+            .next()
+            .expect("cursor at character");
+        if let Some(open) = quote {
+            result.push(character);
+            cursor += character.len_utf8();
+            if character == open {
+                if formula[cursor..].starts_with(open) {
+                    result.push(open);
+                    cursor += open.len_utf8();
+                } else {
+                    quote = None;
+                }
+            }
+        } else if character == '\'' || character == '"' {
+            quote = Some(character);
+            result.push(character);
+            cursor += character.len_utf8();
+        } else if character.is_alphanumeric() || character == '_' || character == '.' {
+            let start = cursor;
+            while let Some(next) = formula[cursor..].chars().next() {
+                if !(next.is_alphanumeric() || next == '_' || next == '.') {
+                    break;
+                }
+                cursor += next.len_utf8();
+            }
+            let token = &formula[start..cursor];
+            let target = if writing { "DAYS" } else { "_xlfn.DAYS" };
+            if token.eq_ignore_ascii_case(target) && formula[cursor..].starts_with('(') {
+                result.push_str(if writing { "_xlfn.DAYS" } else { "DAYS" });
+            } else {
+                result.push_str(token);
+            }
+        } else {
+            result.push(character);
+            cursor += character.len_utf8();
+        }
+    }
+    result
+}
+
 pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool) -> bool {
     // Inventory function names only, without parsing or evaluating expression semantics.
     let mut token = String::new();
     let mut quoted = false;
-    for c in source.chars() {
+    let mut chars = source.char_indices().peekable();
+    while let Some((index, c)) = chars.next() {
         if c == '\'' {
             quoted = !quoted;
             token.clear();
@@ -4967,6 +5097,39 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
         } else if c == '(' {
             if !token.is_empty() {
                 let name = token.to_ascii_uppercase();
+                let date_call =
+                    matches!(name.as_str(), "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "DAYS")
+                        .then(|| call_argument(&source[index..]))
+                        .flatten()
+                        .and_then(|(argument, consumed)| {
+                            split_arguments(argument).map(|parts| (parts, consumed))
+                        })
+                        .filter(|(parts, _)| {
+                            let date_count = if name == "DAYS" { 2 } else { 1 };
+                            parts
+                                .iter()
+                                .take(date_count)
+                                .any(|(_, part)| guarded_date_cell(part).is_some())
+                        });
+                if let Some((parts, consumed)) = date_call {
+                    let date_count = if name == "DAYS" { 2 } else { 1 };
+                    for (part_index, (_, part)) in parts.iter().enumerate() {
+                        if part_index < date_count && guarded_date_cell(part).is_some() {
+                            continue;
+                        }
+                        if unsupported_formula_function(part, column_aggregates) {
+                            return true;
+                        }
+                    }
+                    while chars
+                        .peek()
+                        .is_some_and(|(next, _)| *next < index + consumed)
+                    {
+                        chars.next();
+                    }
+                    token.clear();
+                    continue;
+                }
                 let allowed = matches!(
                     name.as_str(),
                     "MIN"
@@ -4976,6 +5139,11 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
                         | "OR"
                         | "NOT"
                         | "IFERROR"
+                        | "YEAR"
+                        | "MONTH"
+                        | "DAY"
+                        | "WEEKDAY"
+                        | "DAYS"
                         | "ABS"
                         | "ROUNDUP"
                         | "ROUNDDOWN"
@@ -5493,7 +5661,12 @@ pub(crate) fn export_xlsx_for_profile(
                 let formula = c
                     .formula
                     .as_ref()
-                    .map(|f| format!("<f>{}</f>", escape(f.trim_start_matches('='))))
+                    .map(|f| {
+                        format!(
+                            "<f>{}</f>",
+                            escape(&days_ooxml_formula(f.trim_start_matches('='), true))
+                        )
+                    })
                     .unwrap_or_default();
                 let (kind, body) = if profile == OutputProfile::TextCapacity && r == 0 {
                     ("s", format!("<v>{col}</v>"))
@@ -5621,6 +5794,30 @@ pub(crate) fn export_xlsx_for_profile(
         source_bound(&bytes)?;
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod date_guard_inventory_tests {
+    use super::unsupported_formula_function;
+
+    #[test]
+    fn only_date_operands_accept_the_exact_blank_guard() {
+        for formula in [
+            "IFERROR(YEAR(IF(ISBLANK(A2),NA(),A2)),0)",
+            "DAYS( if ( isblank ( A2 ), na ( ), a2 ),IF(ISBLANK(B2),NA(),B2))",
+        ] {
+            assert!(!unsupported_formula_function(formula, true), "{formula}");
+        }
+        for formula in [
+            "NA()",
+            "IF(ISBLANK(A2),NA(),A2)",
+            "YEAR(IF(ISBLANK(A2),NA(),B2))",
+            "WEEKDAY(A2,IF(ISBLANK(B2),NA(),B2))",
+            "YEAR(IF(ISBLANK(A2),NA(),A2))+NA()",
+        ] {
+            assert!(unsupported_formula_function(formula, true), "{formula}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -6879,6 +7076,28 @@ mod xstring_tests {
             "_xFFFF_",
         ] {
             assert!(decode_xstring(source).is_err(), "{source}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod days_ooxml_tests {
+    use super::days_ooxml_formula;
+
+    #[test]
+    fn converts_only_days_function_tokens() {
+        assert_eq!(
+            days_ooxml_formula("_xlfn.DAYS(B2,A2)", false),
+            "DAYS(B2,A2)"
+        );
+        assert_eq!(days_ooxml_formula("DAYS(B2,A2)", true), "_xlfn.DAYS(B2,A2)");
+        assert_eq!(
+            days_ooxml_formula("_xlfn.days(B2,A2)", false),
+            "DAYS(B2,A2)"
+        );
+        for text in ["'DAYS(x'!A1", "\"DAYS(\"", "_xlfn.OTHER(A1)", "MYDAYS(A1)"] {
+            assert_eq!(days_ooxml_formula(text, false), text);
+            assert_eq!(days_ooxml_formula(text, true), text);
         }
     }
 }
