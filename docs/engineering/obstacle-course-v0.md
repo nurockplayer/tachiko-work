@@ -75,6 +75,7 @@ orchestrates them.
 | `git-review-roundtrip` | Direct `.ro` materializes to canonical `.roproj`, a scalar edit remains one Git-reviewable shard record, semantic review agrees inside/outside Git, package consistency is fail-closed, and invalid representation/semantics are rejected. | `examples/game-balance/game-balance.ro` and `scripts/git-ci-smoke.sh`. Storage fixtures remain under `crates/storage/tests/`. |
 | `semantic-runtime` | Repeated bounded Query lineage is exact; an approved proposal previews, executes, verifies, and records provenance; a scalar publication invalidates the changed field and downstream formula projection at the new revision; failed-formula diagnostics retain stable subjects. | Focused existing tests in `crates/workspace-engine/tests/{analysis_operations,patch_lifecycle,resident_session}.rs` and their `tests/common/` fixture. |
 | `retained-workspace` | Across deterministic 10/100/1,000-entity generated workspaces and 20 edits, retained calculation/validation equals the fresh full oracle and the exact recompute/reuse counters remain bounded. | `crates/workspace-engine/tests/retained_state_benchmark.rs`. |
+| `lookup-benchmark` | Release-mode full calculations report timings for 1,000 and 10,000 LOOKUPs, verify results, and guard against quadratic scaling. | `crates/formula-engine/tests/lookup_benchmark.rs` (run explicitly with `--ignored --nocapture`). |
 
 The Git-review stage supplies durable intentional-failure proof through normal
 product boundaries. It creates a noncanonical extra `.roproj` shard and a
