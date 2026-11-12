@@ -75,7 +75,7 @@ impl OutputProfile {
     }
 
     const fn max_output_bytes(self) -> usize {
-        if matches!(self, Self::NativeTables) {
+        if matches!(self, Self::NativeTables | Self::WorkingSize) {
             MAX_NATIVE_TABLES_OUTPUT_BYTES
         } else {
             MAX_SOURCE_BYTES
@@ -3561,15 +3561,17 @@ pub(crate) fn import_xlsx_profile(
             if row_index == 0 || row_index > 1_048_576 {
                 return fail("Invalid row index");
             }
-            if !working {
-                check_import_limit(
-                    crate::CapacityLimit::TableRows,
-                    MAX_TEXT_CAPACITY_ROWS,
-                    row_index - 1,
-                    Some(&name),
-                    true,
-                )?;
-            }
+            check_import_limit(
+                crate::CapacityLimit::TableRows,
+                if working {
+                    crate::capacity::WORKING_LIMITS.table_rows
+                } else {
+                    MAX_TEXT_CAPACITY_ROWS
+                },
+                row_index - 1,
+                Some(&name),
+                true,
+            )?;
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
                 let address = c
@@ -4786,6 +4788,22 @@ pub(crate) fn export_csv_for_profile(
     sheet: &SourceSheet,
     profile: OutputProfile,
 ) -> Result<Vec<u8>> {
+    if profile == OutputProfile::WorkingSize {
+        check_import_limit(
+            crate::CapacityLimit::TableFields,
+            profile.max_columns(),
+            sheet.columns.len(),
+            Some(&sheet.name),
+            false,
+        )?;
+        check_import_limit(
+            crate::CapacityLimit::TableRows,
+            profile.max_data_rows(),
+            sheet.rows.len(),
+            Some(&sheet.name),
+            false,
+        )?;
+    }
     if profile == OutputProfile::NativeTables {
         validate_native_tables_csv(sheet).map_err(|finding| {
             InteropError::Invalid(format!(
@@ -4828,6 +4846,41 @@ pub(crate) fn export_csv_for_profile(
             "CSV text/header could be interpreted as a spreadsheet formula; export typed XLSX to preserve literal Text",
         );
     }
+    if profile == OutputProfile::WorkingSize {
+        let encoded_len = |value: &str| {
+            value.len()
+                + if value.contains([',', '"', '\n', '\r']) || value.is_empty() {
+                    2 + value.bytes().filter(|byte| *byte == b'"').count()
+                } else {
+                    0
+                }
+        };
+        let mut length = 0_usize;
+        if sheet.has_header {
+            length += sheet
+                .columns
+                .iter()
+                .map(|column| encoded_len(&column.name))
+                .sum::<usize>()
+                + sheet.columns.len().saturating_sub(1)
+                + 2;
+        }
+        for row in &sheet.rows {
+            length += row
+                .iter()
+                .map(|cell| encoded_len(&value_text(&cell.value)))
+                .sum::<usize>()
+                + row.len().saturating_sub(1)
+                + 2;
+        }
+        check_import_limit(
+            crate::CapacityLimit::OutputBytes,
+            profile.max_output_bytes(),
+            length,
+            None,
+            false,
+        )?;
+    }
     let mut output = String::new();
     let mut rows = Vec::new();
     if sheet.has_header {
@@ -4856,6 +4909,15 @@ pub(crate) fn export_csv_for_profile(
                 .join(","),
         );
         output.push_str("\r\n");
+    }
+    if profile == OutputProfile::WorkingSize {
+        check_import_limit(
+            crate::CapacityLimit::OutputBytes,
+            profile.max_output_bytes(),
+            output.len(),
+            None,
+            false,
+        )?;
     }
     if output.len() > profile.max_output_bytes() {
         return fail(if profile == OutputProfile::NativeTables {
@@ -4992,6 +5054,39 @@ fn validate_output_collection_bounds(
     workbook: &SourceWorkbook,
     profile: OutputProfile,
 ) -> Result<()> {
+    if profile == OutputProfile::WorkingSize {
+        check_import_limit(
+            crate::CapacityLimit::Collections,
+            profile.max_sheets(),
+            workbook.sheets.len(),
+            None,
+            false,
+        )?;
+        for sheet in &workbook.sheets {
+            check_import_limit(
+                crate::CapacityLimit::TableFields,
+                profile.max_columns(),
+                sheet.columns.len(),
+                Some(&sheet.name),
+                false,
+            )?;
+            check_import_limit(
+                crate::CapacityLimit::TableRows,
+                profile.max_data_rows(),
+                sheet.rows.len(),
+                Some(&sheet.name),
+                false,
+            )?;
+        }
+        let total = workbook.sheets.iter().map(|sheet| sheet.rows.len()).sum();
+        check_import_limit(
+            crate::CapacityLimit::TotalEntities,
+            crate::capacity::WORKING_LIMITS.total_entities,
+            total,
+            None,
+            false,
+        )?;
+    }
     if workbook.sheets.is_empty() || workbook.sheets.len() > profile.max_sheets() {
         return fail(format!(
             "Export requires 1..={} sheets",
@@ -5050,6 +5145,22 @@ pub(crate) fn validate_output_for_profile(
     let mut names = BTreeSet::new();
     let mut formulas = 0;
     for s in &workbook.sheets {
+        if profile == OutputProfile::WorkingSize {
+            check_import_limit(
+                crate::CapacityLimit::TableFields,
+                profile.max_columns(),
+                s.columns.len(),
+                Some(&s.name),
+                false,
+            )?;
+            check_import_limit(
+                crate::CapacityLimit::TableRows,
+                profile.max_data_rows(),
+                s.rows.len(),
+                Some(&s.name),
+                false,
+            )?;
+        }
         if st_xstring(&s.name) {
             return fail(format!(
                 "native_tables_xlsx_escape_sequence at worksheet {:?}/sheet-name: SpreadsheetML escape patterns in worksheet names are refused",
@@ -5433,11 +5544,23 @@ pub(crate) fn export_xlsx_for_profile(
         ""
     };
     parts.insert("[Content_Types].xml".into(),format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>{strings_type}{types}</Types>"));
-    let expanded_limit = if profile == OutputProfile::NativeTables {
+    let expanded_limit = if matches!(
+        profile,
+        OutputProfile::NativeTables | OutputProfile::WorkingSize
+    ) {
         MAX_NATIVE_TABLES_EXPANDED_BYTES
     } else {
         MAX_EXPANDED_BYTES
     };
+    if profile == OutputProfile::WorkingSize {
+        check_import_limit(
+            crate::CapacityLimit::ExpandedBytes,
+            expanded_limit,
+            parts.values().map(String::len).sum(),
+            None,
+            false,
+        )?;
+    }
     if matches!(
         profile,
         OutputProfile::TextCapacity | OutputProfile::NativeTables
@@ -5474,7 +5597,15 @@ pub(crate) fn export_xlsx_for_profile(
             .map_err(|e| InteropError::Invalid(e.to_string()))?;
     }
     let bytes = output.into_inner();
-    if profile == OutputProfile::NativeTables {
+    if profile == OutputProfile::WorkingSize {
+        check_import_limit(
+            crate::CapacityLimit::OutputBytes,
+            profile.max_output_bytes(),
+            bytes.len(),
+            None,
+            false,
+        )?;
+    } else if profile == OutputProfile::NativeTables {
         if bytes.len() > profile.max_output_bytes() {
             return fail("Native tables XLSX output exceeds 8 MiB");
         }

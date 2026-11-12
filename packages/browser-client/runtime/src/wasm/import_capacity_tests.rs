@@ -6,7 +6,8 @@ use super::{
 };
 use crate::host_bridge::DesignerHost;
 use crate::interop_adapter::{
-    ImportOptions, InteropError, SourceWorkbook, export_xlsx, import_csv, import_xlsx,
+    ImportOptions, InteropError, OutputProfile, SourceValue, SourceWorkbook,
+    export_csv_for_profile, export_xlsx, import_csv, import_xlsx, validate_output_for_profile,
 };
 use crate::{
     CapacityExceeded, CapacityLimit, DesignerError, ImportFieldType, ImportSelection,
@@ -536,8 +537,13 @@ fn assert_working_success(source: &[u8], format: &str) {
     assert_eq!(inspected["status"], "ok", "{inspected}");
     drop(inspected);
     let request = working_request(format, 30);
-    let response: Value =
-        serde_json::from_slice(&host.spreadsheet(&request, source).reply).unwrap();
+    let imported = host.spreadsheet(&request, source);
+    tachiko_designer_project_close();
+    REQUEST.with(|slot| *slot.borrow_mut() = request.clone());
+    PROJECT.with(|slot| *slot.borrow_mut() = source.to_vec());
+    tachiko_designer_spreadsheet_run();
+    assert_eq!(RESPONSE.with(|slot| slot.borrow().clone()), imported.reply);
+    let response: Value = serde_json::from_slice(&imported.reply).unwrap();
     assert_eq!(response["status"], "ok", "{response}");
     let payload = &response["response"]["payload"];
     let window = &payload["opened"]["window"];
@@ -546,13 +552,36 @@ fn assert_working_success(source: &[u8], format: &str) {
     let collection = window["collection"]["id"].as_str().unwrap();
     let control = serde_json::to_vec(&object(vec![
         ("type", "export".into()),
-        ("format", "xlsx".into()),
+        ("format", format.into()),
         ("expected_revision", revision.into()),
         ("collection", collection.into()),
         ("metadata", payload["metadata"].clone()),
     ]))
     .unwrap();
     assert!(control.len() < 4 * 1024 * 1024);
+    let exported = host.spreadsheet(&control, &[]);
+    REQUEST.with(|slot| *slot.borrow_mut() = control.clone());
+    PROJECT.with(|slot| slot.borrow_mut().clear());
+    tachiko_designer_spreadsheet_run();
+    assert_eq!(RESPONSE.with(|slot| slot.borrow().clone()), exported.reply);
+    let reply: Value = serde_json::from_slice(&exported.reply).unwrap();
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let bytes = exported.bytes.unwrap();
+    assert_eq!(PROJECT.with(|slot| slot.borrow().clone()), bytes);
+    tachiko_designer_project_close();
+    let options = ImportOptions::default();
+    let original = if format == "xlsx" {
+        crate::interop_adapter::import_xlsx_profile(source, &options, true).unwrap()
+    } else {
+        crate::interop_adapter::import_csv_profile(source, &options, true).unwrap()
+    };
+    let roundtrip = if format == "xlsx" {
+        crate::interop_adapter::import_xlsx_profile(&bytes, &options, true).unwrap()
+    } else {
+        crate::interop_adapter::import_csv_profile(&bytes, &options, true).unwrap()
+    };
+    assert_eq!(roundtrip.sheets[0].columns, original.sheets[0].columns);
+    assert_eq!(roundtrip.sheets[0].rows, original.sheets[0].rows);
     let mut last_id = String::new();
     let mut start = 0_usize;
     while start < 10_000 {
@@ -623,6 +652,105 @@ fn assert_working_refusal(source: &[u8], format: &str, limit: &str) {
         assert_eq!(RESPONSE.with(|slot| slot.borrow().clone()), before_capacity);
     }
     tachiko_designer_project_close();
+}
+
+#[test]
+fn working_size_xlsx_last_excel_row_refuses_before_allocation() {
+    let source = source_xlsx(1, 1, 1, false, false);
+    let mut input = ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            bytes = String::from_utf8(bytes)
+                .unwrap()
+                .replace("r=\"2\"", "r=\"1048576\"")
+                .replace("A2", "A1048576")
+                .into_bytes();
+        }
+        output
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    let bytes = output.finish().unwrap().into_inner();
+    let error =
+        crate::interop_adapter::import_xlsx_profile(&bytes, &ImportOptions::default(), true)
+            .unwrap_err();
+    assert_eq!(
+        error,
+        InteropError::CapacityLowerBound(CapacityExceeded {
+            limit: CapacityLimit::TableRows,
+            maximum: crate::capacity::WORKING_LIMITS.table_rows,
+            attempted: 1_048_575,
+            collection: Some("Sales1".into()),
+        })
+    );
+    assert_working_refusal(&bytes, "xlsx", "table_rows");
+}
+
+#[test]
+fn working_size_output_bounds_are_typed() {
+    let mut book = import_xlsx(&source_xlsx(1, 1, 1, false, false)).unwrap();
+    let row = book.sheets[0].rows[0].clone();
+    book.sheets[0].rows = vec![row; crate::capacity::WORKING_LIMITS.table_rows + 1];
+    let error = validate_output_for_profile(&book, OutputProfile::WorkingSize).unwrap_err();
+    assert_eq!(
+        error,
+        InteropError::Capacity(CapacityExceeded {
+            limit: CapacityLimit::TableRows,
+            maximum: crate::capacity::WORKING_LIMITS.table_rows,
+            attempted: crate::capacity::WORKING_LIMITS.table_rows + 1,
+            collection: Some("Sales1".into()),
+        })
+    );
+
+    book.sheets[0].rows.truncate(1);
+    book.sheets[0].rows[0][0].value = SourceValue::Text {
+        value: "x".repeat(crate::interop_adapter::MAX_NATIVE_TABLES_OUTPUT_BYTES),
+    };
+    let error = export_csv_for_profile(&book.sheets[0], OutputProfile::WorkingSize).unwrap_err();
+    assert!(matches!(
+        error,
+        InteropError::Capacity(CapacityExceeded {
+            limit: CapacityLimit::OutputBytes,
+            maximum: crate::interop_adapter::MAX_NATIVE_TABLES_OUTPUT_BYTES,
+            ..
+        })
+    ));
+
+    book.sheets[0].rows[0][0].value = SourceValue::Number { value: 2.0 };
+    let column = book.sheets[0].columns[0].clone();
+    book.sheets[0].columns = vec![column; crate::capacity::WORKING_LIMITS.table_fields + 1];
+    assert!(matches!(
+        validate_output_for_profile(&book, OutputProfile::WorkingSize),
+        Err(InteropError::Capacity(CapacityExceeded {
+            limit: CapacityLimit::TableFields,
+            attempted: 33,
+            maximum: 32,
+            ..
+        }))
+    ));
+
+    book.sheets[0].columns.truncate(11);
+    for (index, column) in book.sheets[0].columns.iter_mut().enumerate() {
+        column.name = format!("C{index}");
+    }
+    let mut cell = book.sheets[0].rows[0][0].clone();
+    cell.formula = Some("1+1".into());
+    book.sheets[0].rows = vec![vec![cell; 11]; 9_091];
+    assert!(matches!(
+        validate_output_for_profile(&book, OutputProfile::WorkingSize),
+        Err(InteropError::Capacity(CapacityExceeded {
+            limit: CapacityLimit::Formulas,
+            attempted: 100_001,
+            maximum: 100_000,
+            ..
+        }))
+    ));
 }
 
 #[test]

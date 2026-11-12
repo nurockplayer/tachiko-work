@@ -6,6 +6,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Working-size XLSX and CSV export supports 10,000 rows for imported
+  workbooks and native Tracker, Budget and tables, with typed capacity refusals.
+
 - A column's alignment, wrapping and width are set through the kit
   (`setColumnAlignment`, `setColumnWrap`, `setColumnWidth`), each undoable on
   its own, and table windows report them per column.

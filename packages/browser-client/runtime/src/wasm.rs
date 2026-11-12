@@ -388,6 +388,17 @@ fn interop_error(error: InteropError) -> DesignerError {
     }
 }
 
+fn output_error(error: InteropError, working: bool) -> DesignerError {
+    match error {
+        InteropError::Capacity(capacity) | InteropError::CapacityLowerBound(capacity)
+            if working =>
+        {
+            DesignerError::CapacityExceeded(capacity)
+        }
+        other => interop_error(other),
+    }
+}
+
 fn spreadsheet_operation(
     runtime: Option<&DesignerRuntime>,
     operation: SpreadsheetOperation,
@@ -596,7 +607,7 @@ fn export_native_tracker_spreadsheet(
         category: FidelityCategory::NativeEquivalent,
         code: "native_tracker_outbound_profile".to_owned(),
         location: "Tracker".to_owned(),
-        message: "Native Tracker export maps every accepted task, estimate, and done row by stable identity. It supports 0..=128 outbound rows; the separate incoming spreadsheet profile remains limited to 64 rows.".to_owned(),
+        message: if runtime.profile == SessionProfile::WorkingSize { "Native Tracker export maps every accepted task, estimate, and done row by stable identity, up to the working-size row limit.".to_owned() } else { "Native Tracker export maps every accepted task, estimate, and done row by stable identity. It supports 0..=128 outbound rows; the separate incoming spreadsheet profile remains limited to 64 rows.".to_owned() },
         blocking: false,
     });
     workbook.ledger.push(FidelityFinding {
@@ -615,8 +626,15 @@ fn export_native_tracker_spreadsheet(
                     .ok_or_else(|| DesignerError::InvalidProjectTransfer {
                         message: "Native Tracker export has no worksheet.".to_owned(),
                     })?;
-            let bytes = export_csv_for_profile(sheet, OutputProfile::NativeTracker)
-                .map_err(interop_error)?;
+            let bytes = export_csv_for_profile(
+                sheet,
+                if runtime.profile == SessionProfile::WorkingSize {
+                    OutputProfile::WorkingSize
+                } else {
+                    OutputProfile::NativeTracker
+                },
+            )
+            .map_err(|error| output_error(error, runtime.profile == SessionProfile::WorkingSize))?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,
                 code: "csv_values_only".to_owned(),
@@ -626,8 +644,15 @@ fn export_native_tracker_spreadsheet(
             });
             bytes
         }
-        SpreadsheetFormat::Xlsx => export_xlsx_for_profile(&workbook, OutputProfile::NativeTracker)
-            .map_err(interop_error)?,
+        SpreadsheetFormat::Xlsx => export_xlsx_for_profile(
+            &workbook,
+            if runtime.profile == SessionProfile::WorkingSize {
+                OutputProfile::WorkingSize
+            } else {
+                OutputProfile::NativeTracker
+            },
+        )
+        .map_err(|error| output_error(error, runtime.profile == SessionProfile::WorkingSize))?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
@@ -679,8 +704,15 @@ fn export_native_budget_spreadsheet(
                     .ok_or_else(|| DesignerError::InvalidProjectTransfer {
                         message: "Native Budget export active view is unavailable.".to_owned(),
                     })?;
-            let bytes =
-                export_csv_for_profile(sheet, OutputProfile::Shared).map_err(interop_error)?;
+            let bytes = export_csv_for_profile(
+                sheet,
+                if runtime.profile == SessionProfile::WorkingSize {
+                    OutputProfile::WorkingSize
+                } else {
+                    OutputProfile::Shared
+                },
+            )
+            .map_err(|error| output_error(error, runtime.profile == SessionProfile::WorkingSize))?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,
                 code: "csv_values_only".to_owned(),
@@ -690,9 +722,15 @@ fn export_native_budget_spreadsheet(
             });
             bytes
         }
-        SpreadsheetFormat::Xlsx => {
-            export_xlsx_for_profile(&workbook, OutputProfile::Shared).map_err(interop_error)?
-        }
+        SpreadsheetFormat::Xlsx => export_xlsx_for_profile(
+            &workbook,
+            if runtime.profile == SessionProfile::WorkingSize {
+                OutputProfile::WorkingSize
+            } else {
+                OutputProfile::Shared
+            },
+        )
+        .map_err(|error| output_error(error, runtime.profile == SessionProfile::WorkingSize))?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
@@ -753,8 +791,15 @@ fn export_spreadsheet(
     let bytes = match format {
         SpreadsheetFormat::Csv => {
             let sheet = &workbook.sheets[0];
-            let bytes = export_csv_for_profile(sheet, profile).map_err(|error| {
-                crate::interop_document::imported_export_error("workbook", &error.to_string())
+            let bytes = export_csv_for_profile(sheet, profile).map_err(|error| match error {
+                InteropError::Capacity(capacity) | InteropError::CapacityLowerBound(capacity)
+                    if profile == OutputProfile::WorkingSize =>
+                {
+                    DesignerError::CapacityExceeded(capacity)
+                }
+                other => {
+                    crate::interop_document::imported_export_error("workbook", &other.to_string())
+                }
             })?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,
@@ -766,8 +811,15 @@ fn export_spreadsheet(
             bytes
         }
         SpreadsheetFormat::Xlsx => {
-            export_xlsx_for_profile(&workbook, profile).map_err(|error| {
-                crate::interop_document::imported_export_error("workbook", &error.to_string())
+            export_xlsx_for_profile(&workbook, profile).map_err(|error| match error {
+                InteropError::Capacity(capacity) | InteropError::CapacityLowerBound(capacity)
+                    if profile == OutputProfile::WorkingSize =>
+                {
+                    DesignerError::CapacityExceeded(capacity)
+                }
+                other => {
+                    crate::interop_document::imported_export_error("workbook", &other.to_string())
+                }
             })?
         }
     };

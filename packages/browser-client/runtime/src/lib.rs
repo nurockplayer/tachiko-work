@@ -1906,7 +1906,12 @@ impl DesignerError {
                 _ => None,
             },
             code: code.to_owned(),
-            message: message.unwrap_or_else(|| self.to_string()),
+            message: message.unwrap_or_else(|| match self {
+                Self::CapacityExceeded(capacity) if capacity.limit == CapacityLimit::OutputBytes => {
+                    format!("Workbook is too large to export: it needs {} bytes and the limit is {}. The workbook was not exported.", capacity.attempted, capacity.maximum)
+                }
+                _ => self.to_string(),
+            }),
             current_revision: current_revision.to_owned(),
             diagnostics,
             name_failures: match self {
