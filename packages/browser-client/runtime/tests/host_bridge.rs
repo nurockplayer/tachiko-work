@@ -815,7 +815,19 @@ fn working_size_import_matches_the_ordinary_mapping() {
     assert_eq!(working["status"], "ok", "{working}");
     let ordinary = &ordinary["response"]["payload"];
     let working = &working["response"]["payload"];
-    assert_eq!(ordinary["metadata"], working["metadata"]);
+    // Working size carries metadata version 2: the ordinary version-1 sheets
+    // without rows and widths.
+    assert_eq!(ordinary["metadata"]["version"], 1);
+    assert_eq!(working["metadata"]["version"], 2);
+    let mut expected = ordinary["metadata"]["sheets"].clone();
+    for sheet in expected.as_array_mut().unwrap() {
+        let sheet = sheet.as_object_mut().unwrap();
+        sheet.remove("rows");
+        for column in sheet["columns"].as_array_mut().unwrap() {
+            column.as_object_mut().unwrap().remove("width");
+        }
+    }
+    assert_eq!(expected, working["metadata"]["sheets"]);
     assert_eq!(ordinary["ledger"], working["ledger"]);
     assert_eq!(working["opened"]["window"]["total_rows"], 2);
     assert_eq!(

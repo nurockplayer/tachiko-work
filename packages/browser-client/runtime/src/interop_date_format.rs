@@ -74,7 +74,9 @@ pub(crate) fn cell_style(
         if let Some(borders) = &style.borders {
             result.border = !borders.is_empty();
         }
-        if let (Some(format), SourceValue::Number { .. }) = (&style.number_format, value) {
+        if let (Some(format), SourceValue::Number { .. } | SourceValue::Empty) =
+            (&style.number_format, value)
+        {
             result.number_format = Some(crate::interop_number_format::to_excel(format));
         }
         if let Some(alignment) = style.alignment {

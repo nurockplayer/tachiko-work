@@ -487,7 +487,7 @@ describe("working-size Worker transport", () => {
     const validate = vi.fn();
     const options = { delimiter: "," as const, header: true };
     const selection = { column_types: [], extra_columns: [] };
-    const metadata = { version: 1, sheets: [] };
+    const metadata = { version: 1 as const, sheets: [] };
 
     await expect(client.importSpreadsheetWorkingSize(new Uint8Array([1]).buffer, "csv", options, selection, validate))
       .resolves.toEqual(importedWindow);
