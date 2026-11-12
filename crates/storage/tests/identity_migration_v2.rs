@@ -162,6 +162,15 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "round",
             "args": {"value": expression_json(value), "digits": digits}
         }),
+        Expression::Abs(expression) => {
+            serde_json::json!({"op": "abs", "args": expression_json(expression)})
+        }
+        Expression::RoundUp { value, digits } => {
+            serde_json::json!({"op": "round_up", "args": {"value": expression_json(value), "digits": digits}})
+        }
+        Expression::RoundDown { value, digits } => {
+            serde_json::json!({"op": "round_down", "args": {"value": expression_json(value), "digits": digits}})
+        }
         Expression::IsBlank(expression) => serde_json::json!({
             "op": "is_blank",
             "args": expression_json(expression)

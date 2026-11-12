@@ -659,7 +659,10 @@ fn expression_node_approx_bytes(node: &Expression) -> usize {
         | Expression::And(_)
         | Expression::Or(_)
         | Expression::Not(_)
+        | Expression::Abs(_)
         | Expression::Round { .. }
+        | Expression::RoundUp { .. }
+        | Expression::RoundDown { .. }
         | Expression::IsBlank(_) => 0,
     }
 }

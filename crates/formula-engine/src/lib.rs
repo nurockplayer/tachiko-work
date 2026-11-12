@@ -437,7 +437,18 @@ fn bind_node(
         }
         UnboundExpression::Round { value, digits } => Expression::Round {
             value: Box::new(bind_node(document, index, owner, value)?),
-            digits: bind_round_digits(digits)?,
+            digits: bind_round_digits(digits, "ROUND")?,
+        },
+        UnboundExpression::Abs(value) => {
+            Expression::Abs(Box::new(bind_node(document, index, owner, value)?))
+        }
+        UnboundExpression::RoundUp { value, digits } => Expression::RoundUp {
+            value: Box::new(bind_node(document, index, owner, value)?),
+            digits: bind_round_digits(digits, "ROUNDUP")?,
+        },
+        UnboundExpression::RoundDown { value, digits } => Expression::RoundDown {
+            value: Box::new(bind_node(document, index, owner, value)?),
+            digits: bind_round_digits(digits, "ROUNDDOWN")?,
         },
         UnboundExpression::IsBlank(reference) => Expression::IsBlank(Box::new(
             bind_blank_reference(document, index, owner, reference)?,
@@ -445,22 +456,22 @@ fn bind_node(
     })
 }
 
-fn bind_round_digits(expression: &UnboundExpression) -> Result<u8, FormulaBindError> {
+fn bind_round_digits(expression: &UnboundExpression, name: &str) -> Result<u8, FormulaBindError> {
     let UnboundExpression::Number(digits) = expression else {
-        return Err(round_digits_error());
+        return Err(round_digits_error(name));
     };
     let digits = digits.get();
     if !(0.0..=10.0).contains(&digits) || digits.fract() != 0.0 {
-        return Err(round_digits_error());
+        return Err(round_digits_error(name));
     }
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     // The literal was checked to be an integer in 0..=10.
     Ok(digits as u8)
 }
 
-fn round_digits_error() -> FormulaBindError {
+fn round_digits_error(name: &str) -> FormulaBindError {
     FormulaBindError::TypeMismatch {
-        message: "ROUND digits must be an integer literal in 0..=10".into(),
+        message: format!("{name} digits must be an integer literal in 0..=10"),
     }
 }
 
@@ -703,6 +714,17 @@ fn render_bound(
                 render_bound(value, owner, addresses, columns)
             )
         }
+        Expression::Abs(value) => {
+            format!("ABS({})", render_bound(value, owner, addresses, columns))
+        }
+        Expression::RoundUp { value, digits } => format!(
+            "ROUNDUP({}, {digits})",
+            render_bound(value, owner, addresses, columns)
+        ),
+        Expression::RoundDown { value, digits } => format!(
+            "ROUNDDOWN({}, {digits})",
+            render_bound(value, owner, addresses, columns)
+        ),
         Expression::IsBlank(value) => format!(
             "ISBLANK({})",
             render_bound(value, owner, addresses, columns)

@@ -2447,3 +2447,76 @@ fn import_binds_the_same_document_as_per_formula_updates() {
     let reference_bytes = reference.export_project_v3(&revision).unwrap().bytes;
     assert_eq!(reference_bytes, imported_bytes);
 }
+
+#[test]
+fn absolute_and_directed_rounding_round_trip_through_xlsx() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let columns = ["Input", "Absolute", "Up", "Down"]
+        .into_iter()
+        .map(|name| SourceColumn {
+            name: name.into(),
+            width: None,
+            number_format: None,
+        })
+        .collect();
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns,
+            rows: vec![vec![
+                source_cell(SourceValue::Number { value: -1.29 }, None),
+                source_cell(SourceValue::Number { value: 1.29 }, Some("=ABS(A2)")),
+                source_cell(SourceValue::Number { value: -1.3 }, Some("=ROUNDUP(A2,1)")),
+                source_cell(
+                    SourceValue::Number { value: -1.2 },
+                    Some("=ROUNDDOWN(A2,1)"),
+                ),
+            ]],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 4]],
+        extra_columns: vec![vec![]],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for (index, formula, value) in [
+        (1, "ABS(A2)", 1.29),
+        (2, "ROUNDUP(A2,1)", -1.3),
+        (3, "ROUNDDOWN(A2,1)", -1.2),
+    ] {
+        assert_eq!(
+            exported.sheets[0].rows[0][index].formula.as_deref(),
+            Some(formula)
+        );
+        assert_eq!(
+            exported.sheets[0].rows[0][index].value,
+            SourceValue::Number { value }
+        );
+    }
+    let source = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let reopened = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for index in 1..4 {
+        assert_eq!(
+            reopened.sheets[0].rows[0][index].formula,
+            exported.sheets[0].rows[0][index].formula
+        );
+        assert_eq!(
+            reopened.sheets[0].rows[0][index].value,
+            exported.sheets[0].rows[0][index].value
+        );
+    }
+}

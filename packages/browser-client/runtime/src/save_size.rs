@@ -767,9 +767,38 @@ fn expression_bytes(expression: &Expression) -> u64 {
             expression_bytes(value),
             1,
         ]),
+        Expression::Abs(value) => total([
+            1,
+            compact_string("op", "abs", true),
+            compact_prefix("args"),
+            expression_bytes(value),
+            1,
+        ]),
         Expression::Round { value, digits } => total([
             1, // "{"
             compact_string("op", "round", true),
+            compact_prefix("args"),
+            1, // "{"
+            compact_prefix("value"),
+            expression_bytes(value),
+            1, // ","
+            compact_literal("digits", number_text_bytes(f64::from(*digits)), false),
+            2, // "}}"
+        ]),
+        Expression::RoundUp { value, digits } => total([
+            1, // "{"
+            compact_string("op", "round_up", true),
+            compact_prefix("args"),
+            1, // "{"
+            compact_prefix("value"),
+            expression_bytes(value),
+            1, // ","
+            compact_literal("digits", number_text_bytes(f64::from(*digits)), false),
+            2, // "}}"
+        ]),
+        Expression::RoundDown { value, digits } => total([
+            1, // "{"
+            compact_string("op", "round_down", true),
             compact_prefix("args"),
             1, // "{"
             compact_prefix("value"),

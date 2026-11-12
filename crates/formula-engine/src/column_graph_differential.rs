@@ -483,6 +483,17 @@ fn generated_row(random: &mut SplitMix64, schema: &str, index: usize) -> Entity 
             aggregate(ColumnAggregateFunction::Count, schema, "c2"),
         ),
     };
+    let c1 = match index % 3 {
+        0 => Expression::Abs(Box::new(c1)),
+        1 => Expression::RoundUp {
+            value: Box::new(c1),
+            digits: 1,
+        },
+        _ => Expression::RoundDown {
+            value: Box::new(c1),
+            digits: 1,
+        },
+    };
     let c2 = if schema == BETA && index == 0 {
         total(schema, "c2")
     } else {
