@@ -15255,12 +15255,14 @@ mod tests {
     #[test]
     fn copied_lookups_visit_a_bare_key_as_non_numeric() {
         let mut expression = Expression::Lookup {
-            key: Box::new(Expression::Reference(FieldRef::new("r1", "name"))),
+            key: Box::new(Expression::Reference(tachiko_semantic_core::FieldRef::new(
+                "r1", "name",
+            ))),
             key_column: ColumnRef::new("plan", "name"),
             result_column: ColumnRef::new("plan", "reserve"),
-            if_missing: Some(Box::new(Expression::Reference(FieldRef::new(
-                "r1", "reserve",
-            )))),
+            if_missing: Some(Box::new(Expression::Reference(
+                tachiko_semantic_core::FieldRef::new("r1", "reserve"),
+            ))),
         };
         let mut visited = Vec::new();
         super::map_copy_references(&mut expression, &mut |reference, numeric| {
