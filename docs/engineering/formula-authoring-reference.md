@@ -309,5 +309,9 @@ Without a match, the formula reports `lookup_missing_key`. The fourth argument,
 when present, supplies a Number fallback evaluated only on no match. Both whole
 columns remain dependencies, so key/result edits and row membership changes
 update the result. Lookup saves in `.roproj/v3`; frozen project formats and
-direct `.ro/v2` refuse it. `LOOKUP` is Tachiko syntax only; A1/XLSX lookup
-spellings are handled separately. IFERROR support is pending #795.
+direct `.ro/v2` refuse it. `IFERROR` catches a missing key.
+
+In A1 form, write `VLOOKUP(key, range, n, FALSE)`, `XLOOKUP(key, keys,
+results[, if_not_found])` or `INDEX(results, MATCH(key, keys, 0))`; each becomes
+this lookup. Approximate match is refused. Unlike Excel, `*`, `?` and `~` in a
+key are ordinary characters, not wildcards.
