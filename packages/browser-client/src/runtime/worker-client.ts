@@ -96,7 +96,7 @@ export class WorkerDesignerClient implements DesignerClient {
   }
 
   async inspectSpreadsheet(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, profile?: "working_size"): Promise<SourceWorkbook> {
-    const reply = await this.#spreadsheet({type: "inspect", format, csv_options: csvOptions, profile}, bytes);
+    const reply = await this.#spreadsheet({type: "inspect", format, csv_options: csvOptions, ...(profile === undefined ? {} : {profile})}, bytes);
     if (reply.status !== "ok") throw new Error("Expected spreadsheet inspection.");
     return expectResponse("import_preview", reply.response);
   }
