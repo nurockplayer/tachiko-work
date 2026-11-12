@@ -641,7 +641,7 @@ impl ExpressionV2 {
                     stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
                 }
                 Self::Not(expression) | Self::Abs(expression) => {
-                    stack.push((expression, depth + 1))
+                    stack.push((expression, depth + 1));
                 }
                 Self::Round(args) | Self::RoundUp(args) | Self::RoundDown(args) => {
                     if args.digits > 10 {
@@ -800,7 +800,7 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
                 stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
             }
             Expression::Not(expression) | Expression::Abs(expression) => {
-                stack.push((expression, depth + 1))
+                stack.push((expression, depth + 1));
             }
             Expression::Round { value, digits }
             | Expression::RoundUp { value, digits }
@@ -1036,6 +1036,7 @@ fn write_value(output: &mut String, value: &ValueV2, indent: usize) -> Result<()
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // One closed-world expression writer keeps the canonical wire shape visible.
 fn write_expression(
     output: &mut String,
     expression: &ExpressionV2,

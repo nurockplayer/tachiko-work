@@ -1154,7 +1154,7 @@ impl ExpressionV3 {
                     stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
                 }
                 Self::Not(expression) | Self::Abs(expression) => {
-                    stack.push((expression, depth + 1))
+                    stack.push((expression, depth + 1));
                 }
                 Self::Round(arguments) | Self::RoundUp(arguments) | Self::RoundDown(arguments) => {
                     if arguments.digits > 10 {
@@ -1478,6 +1478,7 @@ impl ValueV3 {
 }
 
 impl ExpressionV3 {
+    #[allow(clippy::too_many_lines)] // One arm per closed-world expression node.
     pub(crate) fn from_semantic(expression: &Expression) -> Self {
         match expression {
             Expression::Number(number) => Self::Number(NumberV3(number.get())),
@@ -2320,7 +2321,7 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                         stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
                     }
                     Expression::Not(expression) | Expression::Abs(expression) => {
-                        stack.push((expression, depth + 1))
+                        stack.push((expression, depth + 1));
                     }
                     Expression::Round { value, digits }
                     | Expression::RoundUp { value, digits }
